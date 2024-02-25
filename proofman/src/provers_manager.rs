@@ -1,6 +1,5 @@
 use log::debug;
 use util::{timer_start, timer_stop_and_log};
-use std::time::Instant;
 use crate::proof_manager::ProverStatus;
 use crate::proof_ctx::ProofCtx;
 
@@ -42,7 +41,7 @@ impl<T> ProversManager<T> {
             timer_start!(BUILDING_PROVERS);
             info!("{}: ==> CREATING PROVERS {}", Self::MY_NAME, stage_id);
 
-            // TODO! When VADCOPS we will iterate and selecte the prover for each air instance.
+            // TODO! When VADCOPS we will iterate and select the prover for each air instance.
             let prover = self.prover_builder.build();
             self.provers.push(prover);
 
