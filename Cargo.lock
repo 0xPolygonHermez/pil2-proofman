@@ -722,7 +722,10 @@ dependencies = [
  "colored",
  "env_logger",
  "log",
+ "pilout",
  "proofman",
+ "serde",
+ "tinytemplate",
  "util",
 ]
 
