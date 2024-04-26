@@ -10,6 +10,10 @@
 pub use p3_field::*;
 pub use p3_goldilocks::*;
 
+mod goldilocks_cubic_extension;
+
+pub use goldilocks_cubic_extension::*;
+
 #[cfg(test)]
 mod tests {
     use super::Goldilocks;
