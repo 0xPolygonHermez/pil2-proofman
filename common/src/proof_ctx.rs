@@ -39,7 +39,12 @@ impl<F> ProofCtx<F> {
         // challenges.push(vec![F::default(); 1]);
         // challenges.push(vec![F::default(); 2]);
 
-        Self { public_inputs: Vec::new(), pilout, challenges: None, air_instances: Vec::new() /*, transcript: None*/ }
+        Self {
+            public_inputs: Vec::new(),
+            pilout,
+            challenges: None,
+            air_instances: Vec::new(), /*, transcript: None*/
+        }
     }
 
     pub fn find_air_instances(&self, air_group_id: usize, air_id: usize) -> Vec<(usize, &AirInstanceCtx)> {
