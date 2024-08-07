@@ -9,5 +9,4 @@ build = "build.rs"
 log = { workspace = true }
 
 [features]
-default = ["no_lib_link"]
-no_lib_link = []
+default = []

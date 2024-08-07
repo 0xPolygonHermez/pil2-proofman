@@ -135,6 +135,8 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
 
         let stark_info = self.stark_info.as_ref().unwrap();
 
+        //init_hints_c();
+
         self.p_publics_calculated = get_vector_pointer_c(p_stark, "publicsCalculated");
         self.p_const_calculated = get_vector_pointer_c(p_stark, "constsCalculated");
         self.p_subproof_values_calculated = get_vector_pointer_c(p_stark, "subProofValuesCalculated");
@@ -186,6 +188,8 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
             });
 
             self.evals = vec![F::zero(); stark_info.ev_map.len() * Self::FIELD_EXTENSION as usize];
+
+            //println!("RICK SUBPROOF: {}", stark_info.n_subproof_values);
 
             self.subproof_values =
                 vec![F::zero(); stark_info.n_subproof_values as usize * Self::FIELD_EXTENSION as usize];
@@ -252,6 +256,7 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
             self.compute_evals(opening_id, proof_ctx);
         } else if opening_id == 2 {
             self.compute_fri_pol(opening_id, proof_ctx);
+            
         } else if opening_id < last_stage_id {
             self.compute_fri_folding(opening_id, proof_ctx);
         } else if opening_id == last_stage_id {

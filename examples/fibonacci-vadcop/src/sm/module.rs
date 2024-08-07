@@ -9,8 +9,11 @@ use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
 use crate::{FibonacciVadcopPublicInputs, ModuleTrace, MODULE_SUBPROOF_ID, MODULE_AIR_IDS};
 
+//use super::RangeCheck;
+
 pub struct Module {
     inputs: RefCell<Vec<(u64, u64)>>,
+    //range_check: Arc<RangeCheck>,
 }
 
 impl Module {
@@ -24,6 +27,15 @@ impl Module {
         let module = Arc::new(Module { inputs: RefCell::new(Vec::new()) });
         module
     }
+    /*pub fn new<F>(wcm: &mut WCManager<F>, range_check: &Arc<RangeCheck>) -> Arc<Self> {
+        let module = Arc::new(Module { inputs: RefCell::new(Vec::new()), range_check: Arc::clone(range_check) });
+        wcm.register_component(Arc::clone(&module) as Arc<dyn WCComponent<F>>, Some(MODULE_SUBPROOF_ID));
+        module
+    }
+    pub fn new_no_register<F>(wcm: &mut WCManager<F>, range_check: &Arc<RangeCheck>) -> Arc<Self> {
+        let module = Arc::new(Module { inputs: RefCell::new(Vec::new()), range_check: Arc::clone(range_check) });
+        module
+    }*/
 }
 
 impl WCOpCalculator for Module {
@@ -75,12 +87,14 @@ impl<F> WCComponent<F> for Module {
             trace.x[i] = Goldilocks::from_canonical_u64(x as u64);
             trace.q[i] = Goldilocks::from_canonical_u64(q as u64);
             trace.x_mod[i] = Goldilocks::from_canonical_u64(x_mod as u64);
+            //self.range_check.proves(module - x_mod, 1, 255); //TODO: understnd -1
         }
 
         for i in inputs.len()..num_rows {
             trace.x[i] = Goldilocks::zero();
             trace.q[i] = Goldilocks::zero();
             trace.x_mod[i] = Goldilocks::zero();
+            //self.range_check.proves(module, 1, 255); //TODO: understnd -1
         }
     }
 

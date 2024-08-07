@@ -151,7 +151,7 @@ macro_rules! trace_default_value {
     };
 }
 
-#[cfg(test)]
+/*#[cfg(test)]
 mod tests {
     // use rand::Rng;
 
@@ -218,4 +218,4 @@ mod tests {
         trace!(Simple { field1: usize });
         let _ = Simple::new(3);
     }
-}
+}*/

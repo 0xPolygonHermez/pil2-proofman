@@ -53,6 +53,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         Self::initialize_provers(&proving_key_path, &mut provers, &mut pctx);
 
         ectx.discovering = false;
+        println!("Num stages: {}", pctx.pilout.num_stages());
         for stage in 1..=(pctx.pilout.num_stages() + 1) {
             wc_lib.calculate_witness(stage, &mut pctx, &ectx, &provers);
             Self::get_challenges(stage, &mut provers, &mut pctx);
@@ -72,7 +73,6 @@ impl<F: AbstractField + 'static> ProofMan<F> {
     fn init_proof(wc_lib: &mut Box<dyn WCLibrary<F>>, pctx: &mut ProofCtx<F>, ectx: &mut ExecutionCtx) {
         wc_lib.start_proof(pctx, ectx);
         wc_lib.execute(pctx, ectx);
-
         wc_lib.calculate_plan(ectx);
 
         trace!("{}: Plan: ", Self::MY_NAME);
@@ -145,7 +145,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
     }
 
     pub fn opening_stages(provers: &mut Vec<Box<dyn Prover<F>>>, pctx: &mut ProofCtx<F>) {
-        for opening_id in 1..=3 {
+        for opening_id in 1..=2 { //TODO: not harcoded
             Self::get_challenges(pctx.pilout.num_stages() + 1 + opening_id, provers, pctx);
             for (idx, prover) in provers.iter_mut().enumerate() {
                 info!("{}: Opening stage {}, for prover {}", Self::MY_NAME, opening_id, idx);

@@ -134,11 +134,10 @@ pub struct StarkInfo {
     #[serde(rename = "nPublics")]
     pub n_publics: u64,
     // Default value for nSubAirValues is 0
-    #[serde(default, rename = "nSubAirValues")]
+    #[serde(default, rename = "nSubproofValues")]
     pub n_subproof_values: u64,
     #[serde(rename = "nConstants")]
     pub n_constants: u64,
-
     #[serde(default, rename = "nStages")]
     pub n_stages: u32,
 

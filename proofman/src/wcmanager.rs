@@ -85,7 +85,7 @@ impl<F> WCManager<F> {
         provers: &Vec<Box<dyn Prover<F>>>,
     ) {
         info!("{}: Calculating witness (stage {})", Self::MY_NAME, stage);
-        for air_instance_ctx in ectx.instances.iter().rev() {
+        for air_instance_ctx in ectx.instances.iter() {
             let component = self.airs.get(&air_instance_ctx.air_group_id).unwrap();
             component.calculate_witness(stage, air_instance_ctx, pctx, ectx, provers);
         }
