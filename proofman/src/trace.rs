@@ -167,7 +167,7 @@ mod tests {
         trace!(Trace { a: usize, b: usize }, offset: OFFSET, stride: STRIDE);
 
         let buffer = vec![0u8; num_rows * 2 * std::mem::size_of::<usize>() + OFFSET + offset];
-        let mut trace = Trace::from_buffer(&buffer, num_rows, offset);
+        let mut trace = unsafe { Trace::from_buffer(&buffer, num_rows, offset) };
 
         for i in 0..num_rows {
             trace.a[i] = i;
@@ -196,7 +196,7 @@ mod tests {
     fn test_errors_are_launched_when_num_rows_is_invalid_1() {
         let buffer = vec![0u8; 3];
         trace!(Simple { field1: usize });
-        let _ = Simple::from_buffer(&buffer, 1, 0);
+        let _ = unsafe { Simple::from_buffer(&buffer, 1, 0) };
     }
 
     #[test]
@@ -204,7 +204,7 @@ mod tests {
     fn test_errors_are_launched_when_num_rows_is_invalid_2() {
         let buffer = vec![0u8; 3];
         trace!(Simple { field1: usize });
-        let _ = Simple::from_buffer(&buffer, 3, 0);
+        let _ = unsafe { Simple::from_buffer(&buffer, 3, 0) };
     }
 
     #[test]

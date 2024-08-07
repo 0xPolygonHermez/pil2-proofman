@@ -29,7 +29,7 @@ fn default_bool() -> bool {
 impl StarkProverSettings {
     //TODO! Remove filename here, it's used while developing
     pub fn from_json(config_json: &str, filename: &str) -> StarkProverSettings {
-        let mut config: StarkProverSettings = serde_json::from_str(&config_json).expect("Failed to parse JSON");
+        let mut config: StarkProverSettings = serde_json::from_str(config_json).expect("Failed to parse JSON");
 
         // TODO! Remove this line, the path is stored here to be used by the executor
         config.current_path = filename.to_string();

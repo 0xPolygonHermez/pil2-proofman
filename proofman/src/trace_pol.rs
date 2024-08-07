@@ -49,7 +49,7 @@ impl<T> Index<usize> for TracePol<T> {
     #[inline(always)]
     fn index(&self, i: usize) -> &T {
         assert!(i < self.num_rows);
-        unsafe { &*(self.ptr.offset((self.stride * i) as isize) as *mut T) }
+        unsafe { &*(self.ptr.add(self.stride * i) as *mut T) }
     }
 }
 
@@ -57,7 +57,7 @@ impl<T> IndexMut<usize> for TracePol<T> {
     #[inline(always)]
     fn index_mut(&mut self, i: usize) -> &mut T {
         assert!(i < self.num_rows);
-        unsafe { &mut *(self.ptr.offset((i * self.stride) as isize) as *mut T) }
+        unsafe { &mut *(self.ptr.add(self.stride * i) as *mut T) }
     }
 }
 

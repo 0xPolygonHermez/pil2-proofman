@@ -1,24 +1,23 @@
 use log::info;
 
-use crate::{Prover, WCPilout};
-use transcript::FFITranscript;
+use crate::WitnessPilout;
 
 #[allow(dead_code)]
 pub struct ProofCtx<F> {
     pub public_inputs: Vec<u8>,
-    pub pilout: WCPilout,
+    pub pilout: WitnessPilout,
     pub challenges: Option<Vec<F>>,
     pub air_instances: Vec<AirInstanceCtx>,
-    pub transcript: Option<FFITranscript>,
+    // pub transcript: Option<FFITranscript>,
 }
 
 impl<F> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
-    pub fn create_ctx(pilout: WCPilout, public_inputs: Vec<u8>) -> Self {
+    pub fn create_ctx(pilout: WitnessPilout) -> Self {
         info!("{}: ··· Creating proof context", Self::MY_NAME);
-        if pilout.air_groups().len() == 0 {
-            panic!("No subproofs found in PilOut");
+        if pilout.air_groups().is_empty() {
+            panic!("No air groups found in PilOut");
         }
 
         // pilout.print_pilout_info();
@@ -26,7 +25,7 @@ impl<F> ProofCtx<F> {
         // NOTE: consider Vec::with_capacity() instead of Vec::new()
         //let challenges: Vec<Vec<F>> = Vec::<Vec<F>>::new();
 
-        // TODO! Review this
+        // TODO Review this
         // if !pilout.num_challenges.is_empty() {
         //     for i in 0..pilout.num_challenges.len() {
         //         challenges.push(vec![T::default(); pilout.num_challenges[i] as usize]);
@@ -40,7 +39,7 @@ impl<F> ProofCtx<F> {
         // challenges.push(vec![F::default(); 1]);
         // challenges.push(vec![F::default(); 2]);
 
-        Self { public_inputs, pilout, challenges: None, air_instances: Vec::new(), transcript: None }
+        Self { public_inputs: Vec::new(), pilout, challenges: None, air_instances: Vec::new() /*, transcript: None*/ }
     }
 
     pub fn find_air_instances(&self, air_group_id: usize, air_id: usize) -> Vec<(usize, &AirInstanceCtx)> {
@@ -67,7 +66,7 @@ impl AirInstanceCtx {
     }
 
     pub fn get_buffer_ptr(&mut self) -> *mut u8 {
-        self.buffer.as_mut_ptr() as *mut u8
+        self.buffer.as_mut_ptr()
     }
 }
 

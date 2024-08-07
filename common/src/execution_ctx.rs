@@ -1,4 +1,6 @@
-use crate::AirInstance;
+use std::sync::Arc;
+
+use crate::{AirInstance, BufferAllocator};
 #[allow(dead_code)]
 /// Represents the context when executing a witness computer plugin
 pub struct ExecutionCtx {
@@ -9,6 +11,7 @@ pub struct ExecutionCtx {
 
     pub instances: Vec<AirInstance>,
     pub owned_instances: Vec<usize>,
+    pub buffer_allocator: Arc<dyn BufferAllocator>,
 }
 
 impl ExecutionCtx {
@@ -20,11 +23,18 @@ impl ExecutionCtx {
 pub struct ExecutionCtxBuilder {
     public_output: bool,
     pub discovering: bool,
+    buffer_allocator: Option<Arc<dyn BufferAllocator>>,
+}
+
+impl Default for ExecutionCtxBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ExecutionCtxBuilder {
     pub fn new() -> Self {
-        ExecutionCtxBuilder { public_output: true, discovering: false }
+        ExecutionCtxBuilder { public_output: true, discovering: false, buffer_allocator: None }
     }
 
     pub fn is_discovery_execution(mut self) -> Self {
@@ -32,12 +42,22 @@ impl ExecutionCtxBuilder {
         self
     }
 
+    pub fn with_buffer_allocator(mut self, buffer_allocator: Arc<dyn BufferAllocator>) -> Self {
+        self.buffer_allocator = Some(buffer_allocator);
+        self
+    }
+
     pub fn build(self) -> ExecutionCtx {
+        if self.buffer_allocator.is_none() {
+            panic!("Buffer allocator is required");
+        }
+
         ExecutionCtx {
             public_output: self.public_output,
             discovering: self.discovering,
             instances: vec![],
             owned_instances: vec![],
+            buffer_allocator: self.buffer_allocator.unwrap(),
         }
     }
 }

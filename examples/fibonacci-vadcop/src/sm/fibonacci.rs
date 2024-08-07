@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use log::debug;
 
-use common::{AirInstance, ExecutionCtx, ProofCtx, Prover};
+use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, Prover};
 use proofman::WCManager;
-use wchelpers::{WCComponent, WCOpCalculator};
+use witness_helpers::{WCComponent, WCOpCalculator};
 
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;

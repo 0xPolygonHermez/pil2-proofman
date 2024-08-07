@@ -7,9 +7,9 @@ edition = "2021"
 crate-type = ["dylib"]
 
 [dependencies]
-common = { path = "../../common" }
+proofman-common = { path = "../../common" }
 proofman = { path = "../../proofman" }
-wchelpers = { path = "../../wchelpers" }
+witness-helpers = { path = "../../witness-helpers" }
 
 env_logger = { workspace = true }
 log = { workspace = true }

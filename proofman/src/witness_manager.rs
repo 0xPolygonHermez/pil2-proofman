@@ -2,26 +2,31 @@ use std::{collections::HashMap, sync::Arc};
 
 use log::info;
 
-use common::{ExecutionCtx, ProofCtx};
-use wchelpers::WCComponent;
+use proofman_common::{ExecutionCtx, ProofCtx};
+use witness_helpers::WitnessComponent;
 
 use crate::{DefaultPlanner, Planner};
-use common::Prover;
 
-pub struct WCManager<F> {
-    components: Vec<Arc<dyn WCComponent<F>>>,
-    airs: HashMap<usize, Arc<dyn WCComponent<F>>>,
+pub struct WitnessManager<F> {
+    components: Vec<Arc<dyn WitnessComponent<F>>>,
+    airs: HashMap<usize, Arc<dyn WitnessComponent<F>>>,
     planner: Box<dyn Planner<F>>,
 }
 
-impl<F> WCManager<F> {
+impl<F> Default for WitnessManager<F> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<F> WitnessManager<F> {
     const MY_NAME: &'static str = "WCMnager";
 
     pub fn new() -> Self {
-        WCManager { components: Vec::new(), airs: HashMap::new(), planner: Box::new(DefaultPlanner) }
+        WitnessManager { components: Vec::new(), airs: HashMap::new(), planner: Box::new(DefaultPlanner) }
     }
 
-    pub fn register_component(&mut self, component: Arc<dyn WCComponent<F>>, air_ids: Option<&[usize]>) {
+    pub fn register_component(&mut self, component: Arc<dyn WitnessComponent<F>>, air_ids: Option<&[usize]>) {
         if let Some(air_ids) = air_ids {
             self.register_airs(air_ids, component.clone());
         }
@@ -29,13 +34,13 @@ impl<F> WCManager<F> {
         self.components.push(component);
     }
 
-    pub fn register_airs(&mut self, air_ids: &[usize], air: Arc<dyn WCComponent<F>>) {
+    pub fn register_airs(&mut self, air_ids: &[usize], air: Arc<dyn WitnessComponent<F>>) {
         for air_id in air_ids.iter() {
             self.register_air(*air_id, air.clone());
         }
     }
 
-    pub fn register_air(&mut self, air_id: usize, air: Arc<dyn WCComponent<F>>) {
+    pub fn register_air(&mut self, air_id: usize, air: Arc<dyn WitnessComponent<F>>) {
         if self.airs.contains_key(&air_id) {
             panic!("{}: Air ID {} already registered", Self::MY_NAME, air_id);
         }
@@ -77,17 +82,11 @@ impl<F> WCManager<F> {
         self.planner.calculate_plan(&self.components, ectx);
     }
 
-    pub fn calculate_witness(
-        &self,
-        stage: u32,
-        pctx: &mut ProofCtx<F>,
-        ectx: &ExecutionCtx,
-        provers: &Vec<Box<dyn Prover<F>>>,
-    ) {
+    pub fn calculate_witness(&self, stage: u32, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
         info!("{}: Calculating witness (stage {})", Self::MY_NAME, stage);
         for air_instance_ctx in ectx.instances.iter().rev() {
             let component = self.airs.get(&air_instance_ctx.air_group_id).unwrap();
-            component.calculate_witness(stage, air_instance_ctx, pctx, ectx, provers);
+            component.calculate_witness(stage, air_instance_ctx, pctx, ectx);
         }
     }
 }

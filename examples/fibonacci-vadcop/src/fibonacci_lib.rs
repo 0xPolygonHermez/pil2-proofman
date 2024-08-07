@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use common::{ExecutionCtx, ProofCtx, WCPilout};
+use proofman_common::{ExecutionCtx, ProofCtx, WitnessPilout};
 use p3_field::AbstractField;
 use p3_goldilocks::Goldilocks;
-use wchelpers::{WCComponent, WCLibrary, WCExecutor};
+use witness_helpers::{WCComponent, WCLibrary, WCExecutor};
 use proofman::WCManager;
-use common::Prover;
+use proofman_common::Prover;
 use crate::MODULE_SUBPROOF_ID;
 
 use crate::{FibonacciSquare, FibonacciVadcopPilout, Module};
@@ -57,7 +57,7 @@ impl<F> WCLibrary<F> for FibonacciVadcop<F> {
         self.wcm.calculate_witness(stage, pctx, ectx, provers);
     }
 
-    fn pilout(&self) -> WCPilout {
+    fn pilout(&self) -> WitnessPilout {
         FibonacciVadcopPilout::pilout()
     }
 }
