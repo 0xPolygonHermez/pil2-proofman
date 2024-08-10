@@ -26,8 +26,8 @@ pub struct GlobalInfo {
 #[derive(Deserialize)]
 pub struct GlobalInfoAir {
     pub name: String,
-    #[serde(rename = "hasCompressor")]
-    pub has_compressor: bool,
+    //#[serde(rename = "hasCompressor")]
+    //pub has_compressor: bool,
 }
 
 #[derive(Deserialize)]

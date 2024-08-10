@@ -390,3 +390,13 @@ extern "C" {
         domainExtended: bool,
     );
 }
+extern "C" {
+    #[link_name = "\u{1}_Z22calculate_expression_qPvmS_S_b"]
+    pub fn calculate_expression_q(
+        pStarks: *mut ::std::os::raw::c_void,
+        id: u64,
+        pParams: *mut ::std::os::raw::c_void,
+        pChelpersSteps: *mut ::std::os::raw::c_void,
+        domainExtended: bool,
+    );
+}

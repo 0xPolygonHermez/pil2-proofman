@@ -328,6 +328,19 @@ pub fn calculate_expression_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn calculate_expression_q_c(
+    p_starks: *mut ::std::os::raw::c_void,
+    id: u64,
+    p_params: *mut ::std::os::raw::c_void,
+    p_chelpers_steps: *mut ::std::os::raw::c_void,
+    domain_extended: bool,
+) {
+    unsafe {
+        calculate_expression_q(p_starks, id, p_params, p_chelpers_steps, domain_extended);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn commit_stage_c(
     p_starks: *mut ::std::os::raw::c_void,
     element_type: u32,
@@ -841,6 +854,17 @@ pub fn compute_stage_expressions_c(
 pub fn calculate_expression_c(
     _p_starks: *mut ::std::os::raw::c_void,
     _dest: *mut ::std::os::raw::c_void,
+    _id: u64,
+    _p_params: *mut ::std::os::raw::c_void,
+    _p_chelpers_steps: *mut ::std::os::raw::c_void,
+    _domain_extended: bool,
+) {
+    trace!("{}: ··· {}", "mckzkevm", "calculate_expression: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn calculate_expression_q_c(
+    _p_starks: *mut ::std::os::raw::c_void,
     _id: u64,
     _p_params: *mut ::std::os::raw::c_void,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,

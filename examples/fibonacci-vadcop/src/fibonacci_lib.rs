@@ -9,7 +9,7 @@ use common::Prover;
 use crate::MODULE_SUBPROOF_ID;
 //use crate::U_8_AIR_SUBPROOF_ID;
 
-use crate::{FibonacciSquare, FibonacciVadcopPilout, Module/* , RangeCheck*/};
+use crate::{FibonacciSquare, FibonacciVadcopPilout, Module /* , RangeCheck*/};
 
 pub struct FibonacciVadcop<F> {
     pub wcm: WCManager<F>,
@@ -22,12 +22,12 @@ impl<F: AbstractField> FibonacciVadcop<F> {
     pub fn new() -> Self {
         let mut wcm = WCManager::new();
         /*let range_check = RangeCheck::new_no_register(&mut wcm);*/
-        let module = Module::new_no_register(&mut wcm/* , &range_check*/);
+        let module = Module::new_no_register(&mut wcm /* , &range_check*/);
         let fibonacci = FibonacciSquare::new(&mut wcm, &module);
         // Register the module component after the fibonacci component
         wcm.register_component(Arc::clone(&module) as Arc<dyn WCComponent<F>>, Some(MODULE_SUBPROOF_ID));
         //wcm.register_component(Arc::clone(&range_check) as Arc<dyn WCComponent<F>>, Some(U_8_AIR_SUBPROOF_ID));
-        FibonacciVadcop { wcm, fibonacci, module/* , range_check*/ }
+        FibonacciVadcop { wcm, fibonacci, module /* , range_check*/ }
     }
 }
 

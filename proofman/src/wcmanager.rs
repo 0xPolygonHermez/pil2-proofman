@@ -85,6 +85,7 @@ impl<F> WCManager<F> {
         provers: &Vec<Box<dyn Prover<F>>>,
     ) {
         info!("{}: Calculating witness (stage {})", Self::MY_NAME, stage);
+        //NOTE: Here we are assuming that each air instance has a differnt air group id, which will not be the case! we should use the paris of air_group_id and air_id
         for air_instance_ctx in ectx.instances.iter() {
             let component = self.airs.get(&air_instance_ctx.air_group_id).unwrap();
             component.calculate_witness(stage, air_instance_ctx, pctx, ectx, provers);
