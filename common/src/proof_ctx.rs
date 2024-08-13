@@ -50,7 +50,7 @@ impl<F> ProofCtx<F> {
 
     pub fn find_air_instances(&self, air_group_id: usize, air_id: usize) -> Vec<usize> {
         let air_instances = self.air_instances.lock().unwrap();
-    
+
         let mut indices = Vec::new();
         for (index, air_instance) in air_instances.iter().enumerate() {
             if air_instance.air_group_id == air_group_id && air_instance.air_id == air_id {
