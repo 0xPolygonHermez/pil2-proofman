@@ -175,15 +175,7 @@ pub fn starks_new_c(
     const_pols: *mut c_void,
     p_address: *mut c_void,
 ) -> *mut c_void {
-    unsafe {
-        starks_new(
-            p_config,
-            stark_info,
-            chelpers,
-            const_pols,
-            p_address,
-        )
-    }
+    unsafe { starks_new(p_config, stark_info, chelpers, const_pols, p_address) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -193,14 +185,7 @@ pub fn starks_new_default_c(
     const_pols: *mut c_void,
     p_address: *mut c_void,
 ) -> *mut c_void {
-    unsafe {
-        starks_new_default(
-            stark_info,
-            chelpers,
-            const_pols,
-            p_address,
-        )
-    }
+    unsafe { starks_new_default(stark_info, chelpers, const_pols, p_address) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -373,10 +358,7 @@ pub fn compute_fri_pol_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_fri_pol_c(
-    p_stark: *mut c_void,
-    p_params: *mut c_void,
-) -> *mut ::std::os::raw::c_void {
+pub fn get_fri_pol_c(p_stark: *mut c_void, p_params: *mut c_void) -> *mut ::std::os::raw::c_void {
     unsafe { get_fri_pol(p_stark, p_params) }
 }
 
@@ -620,92 +602,92 @@ pub fn save_proof_c<T>(
     _public_outputs_file: &str,
     _file_prefix: &str,
 ) {
-    trace!("{}: ··· {}", "mckzkevm", "save_proof: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "save_proof: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn zkevm_steps_new_c() -> *mut std::os::raw::c_void {
-    trace!("{}: ··· {}", "mckzkevm", "zkevm_steps_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "zkevm_steps_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn zkevm_steps_free_c(_p_zkevm_steps: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "zkevm_steps_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "zkevm_steps_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn c12a_steps_new_c() -> *mut std::os::raw::c_void {
-    trace!("{}: ··· {}", "mckzkevm", "c12a_steps_new_c: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "c12a_steps_new_c: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn c12a_steps_free_c(_p_c12a_steps: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "c12a_steps_free_c: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "c12a_steps_free_c: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn recursive1_steps_new_c() -> *mut std::os::raw::c_void {
-    trace!("{}: ··· {}", "mckzkevm", "recursive1_steps_new_c: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "recursive1_steps_new_c: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn recursive1_steps_free_c(_p_recursive1_steps: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "recursive1_steps_free_c: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "recursive1_steps_free_c: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn _recursive2_steps_new_c() -> *mut std::os::raw::c_void {
-    trace!("{}: ··· {}", "mckzkevm", "recursive2_steps_new_c: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "recursive2_steps_new_c: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn _recursive2_steps_free_c(_p_recursive2_steps: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "recursive2_steps_free_c: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "recursive2_steps_free_c: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn generic_steps_new_c() -> *mut ::std::os::raw::c_void {
-    trace!("{}: ··· {}", "mckzkevm", "generic_steps_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "generic_steps_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn generic_steps_free_c(_p_generic_steps: *mut ::std::os::raw::c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "generic_steps_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "generic_steps_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn fri_proof_new_c(_p_starks: *mut c_void) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "fri_proof_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "fri_proof_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn fri_proof_get_root_c(_pFriProof: *mut c_void, _root_index: u64, _root_subindex: u64) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "fri_proof_get_root: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "fri_proof_get_root: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn fri_proof_get_tree_root_c(_pFriProof: *mut c_void, _tree_index: u64, _root_index: u64) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "fri_proof_get_tree_root: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "fri_proof_get_tree_root: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn fri_proof_free_c(_p_zkevm_steps: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "fri_proof_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "fri_proof_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn config_new_c(config_filename: &str) -> *mut std::os::raw::c_void {
     trace!(
         "{}: ··· {} {}",
-        "mckzkevm",
+        "ffi     ",
         "config_new: This is a mock call because there is no linked library.",
         config_filename
     );
@@ -714,36 +696,36 @@ pub fn config_new_c(config_filename: &str) -> *mut std::os::raw::c_void {
 
 #[cfg(feature = "no_lib_link")]
 pub fn config_free_c(_pConfig: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "config_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "config_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn stark_info_new_c(_filename: &str) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "starkinfo_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_map_totaln_c(_p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
-    trace!("{}: ··· {}", "mckzkevm", "get_map_totaln_c: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_map_totaln_c: This is a mock call because there is no linked library");
     10000
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_map_offsets_c(_p_stark_info: *mut c_void, _stage: &str, _flag: bool) -> u64 {
-    trace!("{}: ··· {}", "mckzkevm", "get_map_offsets: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_map_offsets: This is a mock call because there is no linked library");
     0
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_map_sections_n_c(_p_stark_info: *mut ::std::os::raw::c_void, _stage: &str) -> u64 {
-    trace!("{}: ··· {}", "mckzkevm", "get_map_sections_n: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_map_sections_n: This is a mock call because there is no linked library");
     0
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn stark_info_free_c(_p_stark_info: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "starkinfo_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "starkinfo_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -756,7 +738,7 @@ pub fn starks_new_c(
     _chelpers: *mut c_void,
     _p_address: *mut c_void,
 ) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "starks_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "starks_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
@@ -769,27 +751,26 @@ pub fn starks_new_default_c(
     _chelpers: *mut c_void,
     _p_address: *mut c_void,
 ) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "starks_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "starks_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_stark_info_c(_p_stark: *mut c_void) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "get_stark_info: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_stark_info: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn starks_free_c(_p_stark: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "starks_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "starks_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn chelpers_new_c(_chelpers_filename: &str) -> *mut ::std::os::raw::c_void {
-    trace!("{}: ··· {}", "mckzkevm", "chelpers_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "chelpers_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
-
 
 #[cfg(feature = "no_lib_link")]
 pub fn const_pols_new_c(_p_stark_info: *mut c_void, _const_pols_filename: &str) {
@@ -797,15 +778,14 @@ pub fn const_pols_new_c(_p_stark_info: *mut c_void, _const_pols_filename: &str) 
     std::ptr::null_mut()
 }
 
-
 #[cfg(feature = "no_lib_link")]
 pub fn chelpers_free_c(_p_chelpers: *mut ::std::os::raw::c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "chelpers_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "chelpers_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn init_hints_c() {
-    trace!("{}: ··· {}", "mckzkevm", "init_hints: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "init_hints: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -816,29 +796,29 @@ pub fn steps_params_new_c(
     _p_evals: *mut c_void,
     _p_public_inputs: *mut c_void,
 ) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "steps_params_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "steps_params_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_steps_params_field_c(_p_steps_params: *mut c_void, _name: &str) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "get_steps_params_field: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_steps_params_field: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn steps_params_free_c(_p_stepsParams: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "steps_params_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "steps_params_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn extend_and_merkelize_c(_p_stark: *mut c_void, _step: u64, _p_params: *mut c_void, _proof: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "extend_and_merkelize: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "extend_and_merkelize: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn treesGL_get_root_c(_pStark: *mut c_void, _index: u64, _root: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "treesGL_get_root: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "treesGL_get_root: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -851,7 +831,7 @@ pub fn compute_stage_c(
     _p_transcript: *mut ::std::os::raw::c_void,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,
 ) {
-    trace!("{}: ··· {}", "mckzkevm", "compute_stage: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "compute_stage: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -865,7 +845,7 @@ pub fn compute_stage_expressions_c(
 ) {
     trace!(
         "{}: ··· {}",
-        "mckzkevm",
+        "ffi     ",
         "compute_stage_expressions: This is a mock call because there is no linked library"
     );
 }
@@ -880,9 +860,7 @@ pub fn get_polynomial_c(
     deg: u64,
 ) {
     trace!("{}: ··· {}", "mckzkevm", "get_polynomial: This is a mock call because there is no linked library");
-
 }
-
 
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_expression_c(
@@ -895,7 +873,7 @@ pub fn calculate_expression_c(
     _im_pol: bool,
     _inverse: bool,
 ) {
-    trace!("{}: ··· {}", "mckzkevm", "calculate_expression: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "calculate_expression: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -905,7 +883,11 @@ pub fn calculate_impols_expressions_c(
     _p_params: *mut ::std::os::raw::c_void,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,
 ) {
-    trace!("{}: ··· {}", "mckzkevm", "calculate_impols_expression: This is a mock call because there is no linked library");
+    trace!(
+        "{}: ··· {}",
+        "mckzkevm",
+        "calculate_impols_expression: This is a mock call because there is no linked library"
+    );
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -916,12 +898,12 @@ pub fn commit_stage_c(
     _p_params: *mut ::std::os::raw::c_void,
     _p_proof: *mut ::std::os::raw::c_void,
 ) {
-    trace!("{}: ··· {}", "mckzkevm", "commit_stage: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "commit_stage: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn compute_evals_c(_p_stark: *mut c_void, _p_params: *mut c_void, _pProof: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "compute_evals: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "compute_evals: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -931,7 +913,7 @@ pub fn compute_fri_pol_c(
     _p_params: *mut c_void,
     _p_chelpers_steps: *mut c_void,
 ) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "compute_fri_pol: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "compute_fri_pol: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
@@ -943,12 +925,12 @@ pub fn compute_fri_folding_c(
     _step: u64,
     _challenge: *mut c_void,
 ) {
-    trace!("{}: ··· {}", "mckzkevm", "compute_fri_folding: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "compute_fri_folding: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn compute_fri_queries_c(_p_stark: *mut c_void, _p_proof: *mut c_void, _p_fri_queries: *mut u64) {
-    trace!("{}: ··· {}", "mckzkevm", "compute_fri_queries: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "compute_fri_queries: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -957,38 +939,38 @@ pub fn get_proof_root_c(
     _stage_id: u64,
     _index: u64,
 ) -> *mut ::std::os::raw::c_void {
-    trace!("{}: ··· {}", "mckzkevm", "get_proof_root: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_proof_root: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_vector_pointer_c(_p_stark: *mut c_void, _name: &str) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "get_vector_pointer: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_vector_pointer: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn resize_vector_c(_p_vector: *mut c_void, _new_size: u64, _value: bool) {
-    trace!("{}: ··· {}", "mckzkevm", "resize_vector: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "resize_vector: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn set_bool_vector_value_c(_p_vector: *mut c_void, _index: u64, _value: bool) {
-    trace!("{}: ··· {}", "mckzkevm", "set_bool_vector_value: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "set_bool_vector_value: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn clean_symbols_calculated_c(_pStarks: *mut ::std::os::raw::c_void) {
     trace!(
         "{}: ··· {}",
-        "mckzkevm",
+        "ffi     ",
         "clean_symbols_calculated: This is a mock call because there is no linked library"
     );
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_hash_c(_pStarks: *mut c_void, _pHhash: *mut c_void, _pBuffer: *mut c_void, _nElements: u64) {
-    trace!("{}: ··· {}", "mckzkevm", "calculate_hash: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "calculate_hash: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -997,13 +979,13 @@ pub fn commit_pols_starks_new_c(
     _degree: u64,
     _n_committed_pols: u64,
 ) -> *mut std::os::raw::c_void {
-    trace!("{}: ··· {}", "mckzkevm", "commit_pols_starks_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "commit_pols_starks_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn commit_pols_starks_free_c(_p_commit_pols_starks: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "commit_pols_starks_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "commit_pols_starks_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1017,7 +999,7 @@ pub fn circom_get_commited_pols_c(
 ) {
     trace!(
         "{}: ··· {}",
-        "mckzkevm",
+        "ffi     ",
         "circom_get_commited_pols: This is a mock call because there is no linked library"
     );
 }
@@ -1033,7 +1015,7 @@ pub fn circom_recursive1_get_commited_pols_c(
 ) {
     trace!(
         "{}: ··· {}",
-        "mckzkevm",
+        "ffi     ",
         "circom_recursive1_get_commited_pols: This is a mock call because there is no linked library"
     );
 }
@@ -1045,67 +1027,67 @@ pub fn zkin_new_c<T>(
     _public_inputs: &[T],
     _root_c: &[T],
 ) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "zkin_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "zkin_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn transcript_new_c(_element_type: u32, _arity: u64, _custom: bool) -> *mut ::std::os::raw::c_void {
-    trace!("{}: ··· {}", "mckzkevm", "transcript_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "transcript_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn transcript_add_c(_p_transcript: *mut c_void, _p_input: *mut c_void, _size: u64) {
-    trace!("{}: ··· {}", "mckzkevm", "transcript_add: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "transcript_add: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn transcript_add_polinomial_c(_p_transcript: *mut c_void, _p_polinomial: *mut c_void) {
     trace!(
         "{}: ··· {}",
-        "mckzkevm",
+        "ffi     ",
         "transcript_add_polinomial: This is a mock call because there is no linked library"
     );
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn transcript_free_c(_p_transcript: *mut ::std::os::raw::c_void, _element_type: u32) {
-    trace!("{}: ··· {}", "mckzkevm", "transcript_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "transcript_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_challenge_c(_p_starks: *mut c_void, _p_transcript: *mut c_void, _p_element: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "get_challenges: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_challenges: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_permutations_c(_p_transcript: *mut c_void, _res: *mut u64, _n: u64, _n_bits: u64) {
-    trace!("{}: ··· {}", "mckzkevm", "get_permutations: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_permutations: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn polinomial_new_c(_degree: u64, _dim: u64, _name: &str) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "polinomial_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "polinomial_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn polinomial_get_p_element_c(_p_polinomial: *mut c_void, _index: u64) -> *mut c_void {
-    trace!("{}: ··· {}", "mckzkevm", "get_p_element: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "get_p_element: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn polinomial_free_c(_p_polinomial: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "polinomial_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "polinomial_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn goldilocks_linear_hash_c(_p_input: *mut c_void, _p_output: *mut c_void) {
     trace!(
         "{}: ··· {}",
-        "mckzkevm",
+        "ffi     ",
         "goldilocks_linear_hash_c: This is a mock call because there is no linked library"
     );
 }

@@ -1,14 +1,14 @@
 #[derive(Debug)]
-pub struct WCPilout {
+pub struct WitnessPilout {
     name: String,
     hash: Vec<u8>,
     num_stages: u32,
     air_groups: Vec<AirGroup>,
 }
 
-impl WCPilout {
+impl WitnessPilout {
     pub fn new(name: &str, num_stages: u32, hash: Vec<u8>) -> Self {
-        WCPilout { name: name.to_string(), num_stages, air_groups: Vec::new(), hash }
+        WitnessPilout { name: name.to_string(), num_stages, air_groups: Vec::new(), hash }
     }
 
     pub fn add_air_group(&mut self, air_group_name: Option<&str>) -> &mut AirGroup {

@@ -8,7 +8,7 @@ members = [
     "proofman",
     "transcript",
     "util",    
-    "wchelpers", 
+    "witness-helpers", 
     "examples/fibonacci-vadcop",
 ]
 

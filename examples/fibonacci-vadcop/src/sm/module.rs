@@ -1,9 +1,12 @@
 use log::debug;
 use std::{cell::RefCell, sync::Arc};
 
-use common::{AirInstance, ExecutionCtx, ProofCtx, Prover};
-use proofman::WCManager;
-use wchelpers::{WCComponent, WCOpCalculator};
+use std::mem;
+use std::slice;
+
+use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, Prover};
+use proofman::WitnessManager;
+use witness_helpers::{WitnessComponent, WCOpCalculator};
 
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
@@ -17,22 +20,25 @@ pub struct Module {
 }
 
 impl Module {
-    pub fn new<F>(wcm: &mut WCManager<F>) -> Arc<Self> {
+    // TODO: REVIEW
+    fn convert_u8_to_slice<F>(ptr: *mut u8, len: usize) -> &'static mut [F] { assert_eq!(len % mem::size_of::<F>(), 0, "Length must be a multiple of element size"); let len_f = len / mem::size_of::<F>(); unsafe { slice::from_raw_parts_mut(ptr as *mut F, len_f) } }
+
+    pub fn new<F>(wcm: &mut WitnessManager<F>) -> Arc<Self> {
         let module = Arc::new(Module { inputs: RefCell::new(Vec::new()) });
-        wcm.register_component(Arc::clone(&module) as Arc<dyn WCComponent<F>>, Some(MODULE_SUBPROOF_ID));
+        wcm.register_component(Arc::clone(&module) as Arc<dyn WitnessComponent<F>>, Some(MODULE_SUBPROOF_ID));
 
         module
     }
-    pub fn new_no_register<F>(wcm: &mut WCManager<F>) -> Arc<Self> {
+    pub fn new_no_register<F>(wcm: &mut WitnessManager<F>) -> Arc<Self> {
         let module = Arc::new(Module { inputs: RefCell::new(Vec::new()) });
         module
     }
-    /*pub fn new<F>(wcm: &mut WCManager<F>, range_check: &Arc<RangeCheck>) -> Arc<Self> {
+    /*pub fn new<F>(wcm: &mut WitnessManager<F>, range_check: &Arc<RangeCheck>) -> Arc<Self> {
         let module = Arc::new(Module { inputs: RefCell::new(Vec::new()), range_check: Arc::clone(range_check) });
-        wcm.register_component(Arc::clone(&module) as Arc<dyn WCComponent<F>>, Some(MODULE_SUBPROOF_ID));
+        wcm.register_component(Arc::clone(&module) as Arc<dyn WitnessComponent<F>>, Some(MODULE_SUBPROOF_ID));
         module
     }
-    pub fn new_no_register<F>(wcm: &mut WCManager<F>, range_check: &Arc<RangeCheck>) -> Arc<Self> {
+    pub fn new_no_register<F>(wcm: &mut WitnessManager<F>, range_check: &Arc<RangeCheck>) -> Arc<Self> {
         let module = Arc::new(Module { inputs: RefCell::new(Vec::new()), range_check: Arc::clone(range_check) });
         module
     }*/
@@ -53,7 +59,7 @@ impl WCOpCalculator for Module {
     }
 }
 
-impl<F> WCComponent<F> for Module {
+impl<F> WitnessComponent<F> for Module {
     fn calculate_witness(
         &self,
         stage: u32,
@@ -71,29 +77,32 @@ impl<F> WCComponent<F> for Module {
         let pi: FibonacciVadcopPublicInputs = pctx.public_inputs.as_slice().into();
         let module = pi.module as u64;
 
-        let (air_idx, air_instance_ctx) = &mut pctx.find_air_instances(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0])[0];
+        let air_idx = pctx.find_air_instances(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0])[0];
+        let mut air_instances = pctx.air_instances.lock().unwrap();
 
-        let interval = air_instance.inputs_interval.unwrap();
+        let interval = _ectx.instances[air_idx].inputs_interval.unwrap();
         let inputs = &self.inputs.borrow()[interval.0..interval.1];
-        let offset = (provers[*air_idx].get_map_offsets("cm1", false) * 8) as usize;
+        let offset = (provers[air_idx].get_map_offsets("cm1", false) * 8) as usize;
+        let buffer = air_instances[air_idx].trace.as_mut().unwrap().get_buffer_ptr();
         let num_rows = pctx.pilout.get_air(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0]).num_rows();
-        let mut trace = unsafe { Box::new(ModuleTrace::from_buffer(&air_instance_ctx.buffer, num_rows, offset)) };
+        let mut trace =
+                unsafe { Box::new(ModuleTrace::from_buffer(Self::convert_u8_to_slice(buffer, num_rows*8*2), num_rows, offset).unwrap()) };
 
         for (i, input) in inputs.iter().enumerate() {
             let x = input.0;
             let q = x / module;
             let x_mod = input.1;
 
-            trace.x[i] = Goldilocks::from_canonical_u64(x as u64);
-            trace.q[i] = Goldilocks::from_canonical_u64(q as u64);
-            trace.x_mod[i] = Goldilocks::from_canonical_u64(x_mod as u64);
+            trace[i].x = Goldilocks::from_canonical_u64(x as u64);
+            trace[i].q = Goldilocks::from_canonical_u64(q as u64);
+            trace[i].x_mod = Goldilocks::from_canonical_u64(x_mod as u64);
             //self.range_check.proves(module - x_mod, 1, 255); //TODO: understnd -1
         }
 
         for i in inputs.len()..num_rows {
-            trace.x[i] = Goldilocks::zero();
-            trace.q[i] = Goldilocks::zero();
-            trace.x_mod[i] = Goldilocks::zero();
+            trace[i].x = Goldilocks::zero();
+            trace[i].q = Goldilocks::zero();
+            trace[i].x_mod = Goldilocks::zero();
             //self.range_check.proves(module, 1, 255); //TODO: understnd -1
         }
     }

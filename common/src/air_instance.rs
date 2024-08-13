@@ -13,8 +13,8 @@ impl AirInstance {
     }
 }
 
-impl Into<AirInstanceCtx> for &AirInstance {
-    fn into(self) -> AirInstanceCtx {
-        AirInstanceCtx::new(self.air_group_id, self.air_id)
+impl<F> From<&AirInstance> for AirInstanceCtx<F> {
+    fn from(air_instance: &AirInstance) -> Self {
+        AirInstanceCtx::new(air_instance.air_group_id, air_instance.air_id, None)
     }
 }

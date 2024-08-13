@@ -1,24 +1,24 @@
+use std::sync::Mutex;
+
 use log::info;
 
-use crate::{WCPilout};
-use transcript::FFITranscript;
+use crate::{trace::Trace, WitnessPilout};
 
 #[allow(dead_code)]
 pub struct ProofCtx<F> {
     pub public_inputs: Vec<u8>,
-    pub pilout: WCPilout,
+    pub pilout: WitnessPilout,
     pub challenges: Option<Vec<F>>,
-    pub air_instances: Vec<AirInstanceCtx>,
-    pub transcript: Option<FFITranscript>,
+    pub air_instances: Mutex<Vec<AirInstanceCtx<F>>>,
 }
 
 impl<F> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
-    pub fn create_ctx(pilout: WCPilout, public_inputs: Vec<u8>) -> Self {
+    pub fn create_ctx(pilout: WitnessPilout) -> Self {
         info!("{}: ··· Creating proof context", Self::MY_NAME);
-        if pilout.air_groups().len() == 0 {
-            panic!("No subproofs found in PilOut");
+        if pilout.air_groups().is_empty() {
+            panic!("No air groups found in PilOut");
         }
 
         // pilout.print_pilout_info();
@@ -26,7 +26,7 @@ impl<F> ProofCtx<F> {
         // NOTE: consider Vec::with_capacity() instead of Vec::new()
         //let challenges: Vec<Vec<F>> = Vec::<Vec<F>>::new();
 
-        // TODO! Review this
+        // TODO Review this
         // if !pilout.num_challenges.is_empty() {
         //     for i in 0..pilout.num_challenges.len() {
         //         challenges.push(vec![T::default(); pilout.num_challenges[i] as usize]);
@@ -40,34 +40,39 @@ impl<F> ProofCtx<F> {
         // challenges.push(vec![F::default(); 1]);
         // challenges.push(vec![F::default(); 2]);
 
-        Self { public_inputs, pilout, challenges: None, air_instances: Vec::new(), transcript: None }
+        Self { public_inputs: Vec::new(), pilout, challenges: None, air_instances: Mutex::new(Vec::new()) }
     }
 
-    pub fn find_air_instances(&self, air_group_id: usize, air_id: usize) -> Vec<(usize, &AirInstanceCtx)> {
-        self.air_instances
-            .iter()
-            .enumerate()
-            .filter(|&(_, air_instance)| air_instance.air_group_id == air_group_id && air_instance.air_id == air_id)
-            .collect()
+    pub fn find_air_instances(&self, air_group_id: usize, air_id: usize) -> Vec<usize> {
+        let air_instances = self.air_instances.lock().unwrap();
+
+        let mut indices = Vec::new();
+        for (index, air_instance) in air_instances.iter().enumerate() {
+            if air_instance.air_group_id == air_group_id && air_instance.air_id == air_id {
+                indices.push(index);
+            }
+        }
+
+        indices
     }
 }
 
 /// Air instance context for managing air instances (traces)
-#[derive(Debug)]
 #[allow(dead_code)]
-pub struct AirInstanceCtx {
+pub struct AirInstanceCtx<F> {
     pub air_group_id: usize,
     pub air_id: usize,
-    pub buffer: Vec<u8>,
+    pub trace: Option<Box<dyn Trace>>,
+    pub buffer: Vec<F>,
 }
 
-impl AirInstanceCtx {
-    pub fn new(air_group_id: usize, air_id: usize) -> Self {
-        AirInstanceCtx { air_group_id, air_id, buffer: Vec::new() }
+impl<F> AirInstanceCtx<F> {
+    pub fn new(air_group_id: usize, air_id: usize, trace: Option<Box<dyn Trace>>) -> Self {
+        AirInstanceCtx { air_group_id, air_id, trace, buffer: Vec::new() }
     }
 
     pub fn get_buffer_ptr(&mut self) -> *mut u8 {
-        self.buffer.as_mut_ptr() as *mut u8
+        self.trace.as_mut().unwrap().get_buffer_ptr()
     }
 }
 

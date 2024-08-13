@@ -1,8 +1,8 @@
 use log::debug;
 use std::{cell::RefCell, sync::Arc};
 use common::{AirInstance, ExecutionCtx, ProofCtx, Prover};
-use proofman::WCManager;
-use wchelpers::WCComponent;
+use proofman::WitnessManager;
+use wchelpers::WitnessComponent;
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
 use crate::{U8AirTrace, U_8_AIR_AIR_IDS, U_8_AIR_SUBPROOF_ID};
@@ -12,12 +12,12 @@ pub struct RangeCheck {
 }
 
 impl RangeCheck {
-    pub fn new<F>(wcm: &mut WCManager<F>) -> Arc<Self> {
+    pub fn new<F>(wcm: &mut WitnessManager<F>) -> Arc<Self> {
         let range_check = Arc::new(RangeCheck { inputs: RefCell::new(vec![0; 256]) });
-        wcm.register_component(Arc::clone(&range_check) as Arc<dyn WCComponent<F>>, Some(U_8_AIR_SUBPROOF_ID));
+        wcm.register_component(Arc::clone(&range_check) as Arc<dyn WitnessComponent<F>>, Some(U_8_AIR_SUBPROOF_ID));
         range_check
     }
-    pub fn new_no_register<F>(wcm: &mut WCManager<F>) -> Arc<Self> {
+    pub fn new_no_register<F>(wcm: &mut WitnessManager<F>) -> Arc<Self> {
         let range_check = Arc::new(RangeCheck { inputs: RefCell::new(vec![0; 256]) });
         range_check
     }
@@ -29,7 +29,7 @@ impl RangeCheck {
     }
 }
 
-impl<F> WCComponent<F> for RangeCheck {
+impl<F> WitnessComponent<F> for RangeCheck {
     fn calculate_witness(
         &self,
         stage: u32,

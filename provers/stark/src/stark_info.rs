@@ -1,6 +1,6 @@
 // use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use util::{timer_start, timer_stop_and_log};
+use proofman_util::{timer_start, timer_stop_and_log};
 use log::debug;
 use serde::{Deserialize, Deserializer};
 
@@ -194,7 +194,7 @@ impl StarkInfo {
         timer_start!(STARK_INFO_LOAD);
 
         debug!("strkinfo: ··· Loading StarkInfo JSON");
-        let stark_info: StarkInfo = serde_json::from_str(&stark_info_json).expect("Failed to parse JSON file");
+        let stark_info: StarkInfo = serde_json::from_str(stark_info_json).expect("Failed to parse JSON file");
 
         timer_stop_and_log!(STARK_INFO_LOAD);
 
