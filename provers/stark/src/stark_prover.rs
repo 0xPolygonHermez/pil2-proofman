@@ -9,7 +9,7 @@ use log::{debug, trace};
 use util::{timer_start, timer_stop_and_log};
 use starks_lib_c::*;
 use common::ProofCtx;
-use crate::stark_info::{OpType, StarkInfo};
+use crate::stark_info::{StarkInfo};
 use crate::stark_prover_settings::StarkProverSettings;
 use crate::GlobalInfo;
 use p3_goldilocks::Goldilocks;
@@ -22,6 +22,7 @@ pub struct StarkProver<T: AbstractField> {
     initialized: bool,
     config: StarkProverSettings,
     p_chelpers: *mut c_void,
+    p_constpols: *mut c_void,
     p_steps: *mut c_void,
     pub p_stark: Option<*mut c_void>,
     p_params: Option<*mut c_void>,
@@ -61,13 +62,14 @@ impl<T: AbstractField> StarkProver<T> {
         let chelpers_path = base_filename_path.clone() + ".bin";
 
         let p_starkinfo = stark_info_new_c(&stark_info_path);
+
         let p_chelpers = chelpers_new_c(&chelpers_path);
+
+        let const_pols_filename = base_filename_path.clone() + ".const";
+        let p_constpols = const_pols_new_c(p_starkinfo, const_pols_filename.as_str());
 
         let config = StarkProverSettings {
             current_path: air_setup_folder.to_str().unwrap().to_string(),
-            const_pols_filename: base_filename_path.clone() + ".const",
-            map_const_pols_file: false,
-            const_tree_filename: base_filename_path.clone() + ".consttree",
             stark_info_filename: stark_info_path,
             verkey_filename: base_filename_path.clone() + ".verkey.json",
             chelpers_filename: chelpers_path,
@@ -79,6 +81,7 @@ impl<T: AbstractField> StarkProver<T> {
             initialized: true,
             config,
             p_chelpers,
+            p_constpols,
             p_steps,
             p_stark: None,
             p_params: None,
@@ -111,16 +114,13 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
         self.stark_info = Some(StarkInfo::from_json(&stark_info_json));
 
         let p_stark = starks_new_default_c(
-            self.config.const_pols_filename.as_str(),
-            self.config.map_const_pols_file,
-            self.config.const_tree_filename.as_str(),
             self.p_starkinfo,
             self.p_chelpers,
+            self.p_constpols,
             ptr,
         );
 
         self.p_stark = Some(p_stark);
-
         let stark_info = self.stark_info.as_ref().unwrap();
 
         if stark_info.stark_struct.verification_hash_type == "BN128" {
@@ -161,13 +161,9 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
             proof_ctx.public_inputs.as_ptr() as *mut c_void,
         ));
 
-        let high_bound = *stark_info.map_sections_n.get("cm1").unwrap() as usize;
-        for i in 0..high_bound {
-            set_symbol_calculated_c(p_stark, OpType::Cm.as_integer(), i as u64);
-        }
-
-        for i in 0..stark_info.n_publics as usize {
-            set_symbol_calculated_c(p_stark, OpType::Public.as_integer(), i as u64);
+        let number_stage1_commits = *stark_info.map_sections_n.get("cm1").unwrap() as usize;
+        for i in 0..number_stage1_commits {
+            set_commit_calculated_c(p_stark, i as u64);
         }
 
         self.initialized = true;
@@ -185,7 +181,6 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
 
     fn commit_stage(&mut self, stage_id: u32, proof_ctx: &mut ProofCtx<F>) -> ProverStatus {
         let p_stark: *mut std::ffi::c_void = self.p_stark.unwrap();
-        let stark_info: &StarkInfo = self.stark_info.as_ref().unwrap();
 
         debug!("{}: ··· Computing commit stage {}", Self::MY_NAME, stage_id);
 
@@ -197,10 +192,11 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
 
         if stage_id <= proof_ctx.pilout.num_stages() {
             compute_stage_expressions_c(p_stark, element_type, stage_id as u64, p_params, p_proof, self.p_steps);
+            calculate_impols_expressions_c(p_stark, stage_id as u64, p_params, self.p_steps);
         } else {
-            calculate_expression_q_c(p_stark, stark_info.c_exp_id, p_params, self.p_steps, true);
+            calculate_quotient_polynomial_c(p_stark, p_params, self.p_steps);
         }
-
+        
         commit_stage_c(p_stark, element_type, stage_id as u64, p_params, p_proof);
 
         timer_stop_and_log!(STARK_COMMIT_STAGE_, stage_id);
@@ -267,21 +263,9 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
 
     //TODO: This funciton could leave outside the prover trait, for now is confortable to get the hash and the configs
     fn add_publics_to_transcript(&self, proof_ctx: &mut ProofCtx<F>) {
-        let p_stark: *mut std::ffi::c_void = self.p_stark.unwrap();
         let stark_info: &StarkInfo = self.stark_info.as_ref().unwrap();
         let transcript: &FFITranscript = proof_ctx.transcript.as_ref().unwrap();
-        if stark_info.stark_struct.hash_commits {
-            let hash: Vec<F> = vec![F::zero(); self.n_field_elements];
-            calculate_hash_c(
-                p_stark,
-                hash.as_ptr() as *mut c_void,
-                proof_ctx.public_inputs.as_ptr() as *mut c_void,
-                stark_info.n_publics,
-            );
-            transcript.add_elements(hash.as_ptr() as *mut c_void, self.n_field_elements);
-        } else {
-            transcript.add_elements(proof_ctx.public_inputs.as_mut_ptr() as *mut c_void, stark_info.n_publics as usize);
-        }
+        transcript.add_elements(proof_ctx.public_inputs.as_mut_ptr() as *mut c_void, stark_info.n_publics as usize);
     }
 
     // fn get_subproof_values(&self) -> Vec<T> {
@@ -295,7 +279,6 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
         } else if stage_id <= self.num_stages() + 3 { //num stages + 1 + evals + fri_pol (then starts fri folding...)
 
             let stark_info = self.stark_info.as_ref().unwrap();
-            let p_stark = self.p_stark.unwrap();
             let transcript: &FFITranscript = proof_ctx.transcript.as_ref().unwrap();
 
             let challenges_map = stark_info.challenges_map.as_ref().unwrap();
@@ -304,7 +287,6 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
             for i in 0..challenges_map.len() {
                 if challenges_map[i].stage == stage_id as u64 {
                     transcript.get_challenge(&challenges[i * Self::FIELD_EXTENSION] as *const F as *mut c_void);
-                    set_symbol_calculated_c(p_stark, OpType::Challenge.as_integer(), i as u64);
                 }
             }
         } else {
@@ -353,7 +335,7 @@ impl<F: AbstractField> StarkProver<F> {
         let challenge: Vec<F> = challenges.iter().skip(challenges.len() - 4).cloned().collect();
 
         let transcript: &FFITranscript = proof_ctx.transcript.as_ref().unwrap();
-        let fri_pol = get_steps_params_field_c(self.p_params.unwrap(), "f_2ns");
+        let fri_pol = get_fri_pol_c(p_stark, self.p_params.unwrap());
         let n_steps = self.stark_info.as_ref().unwrap().stark_struct.steps.len();
 
         compute_fri_folding_c(p_stark, p_proof, fri_pol, step as u64, challenge.as_ptr() as *mut c_void);

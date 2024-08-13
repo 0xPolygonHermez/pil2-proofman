@@ -1,6 +1,6 @@
 use log::info;
 
-use crate::{Prover, WCPilout};
+use crate::{WCPilout};
 use transcript::FFITranscript;
 
 #[allow(dead_code)]

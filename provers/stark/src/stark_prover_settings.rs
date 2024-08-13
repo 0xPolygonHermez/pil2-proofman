@@ -4,12 +4,6 @@ use serde::Deserialize;
 pub struct StarkProverSettings {
     #[serde(default = "default_string", rename = "currentPath")]
     pub current_path: String,
-    #[serde(default = "default_string", rename = "constPolsFilename")]
-    pub const_pols_filename: String,
-    #[serde(default = "default_bool", rename = "mapConstPolsFile")]
-    pub map_const_pols_file: bool,
-    #[serde(default = "default_string", rename = "constTreeFilename")]
-    pub const_tree_filename: String,
     #[serde(default = "default_string", rename = "starkInfoFilename")]
     pub stark_info_filename: String,
     #[serde(default = "default_string", rename = "verifierFilename")]
@@ -22,9 +16,6 @@ fn default_string() -> String {
     "".to_owned()
 }
 
-fn default_bool() -> bool {
-    false
-}
 
 impl StarkProverSettings {
     //TODO! Remove filename here, it's used while developing

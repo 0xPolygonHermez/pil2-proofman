@@ -10,5 +10,5 @@ node ../pil2-compiler/src/pil.js ../pil2-components/test/fibonacci/pil/build.pil
 To generate the setup files:
 
 ```
-node ../pil2-proofman-js/src/setup/main_genSetup.js -a ../pil2-components/test/fibonacci/pil/build.pilout -s ../pil2-components/test/fibonacci/js/stark_structs.json -b ./examples/fibonacci-vadcop/build
+node ../pil2-proofman-js/src/setup/main_genSetup.js -a ../pil2-components/test/fibonacci/pil/build.pilout -b ./examples/fibonacci-vadcop/build
 ```

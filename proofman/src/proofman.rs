@@ -114,6 +114,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
             prover.build(pctx, idx);
         }
         Self::calculate_challenges(0, provers, pctx);
+        provers[0].add_publics_to_transcript(pctx);
     }
 
     pub fn commit_stage(stage: u32, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: &mut ProofCtx<F>) {
@@ -129,9 +130,6 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         info!("{}: Calculating challenges for stage {}", Self::MY_NAME, stage);
         for prover in provers.iter_mut() {
             prover.add_challenges_to_transcript(stage as u64, pctx);
-        }
-        if stage == 0 {
-            provers[0].add_publics_to_transcript(pctx);
         }
     }
 

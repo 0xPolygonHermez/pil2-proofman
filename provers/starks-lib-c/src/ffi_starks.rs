@@ -149,13 +149,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn set_mapOffsets_c(p_stark_info: *mut c_void, p_chelpers: *mut c_void) {
-    unsafe {
-        set_mapOffsets(p_stark_info, p_chelpers);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn get_map_offsets_c(pStarkInfo: *mut c_void, stage: &str, flag: bool) -> u64 {
     let stage = CString::new(stage).unwrap();
     unsafe { get_map_offsets(pStarkInfo, stage.as_ptr() as *mut std::os::raw::c_char, flag) }
@@ -177,24 +170,17 @@ pub fn stark_info_free_c(p_stark_info: *mut c_void) {
 #[cfg(not(feature = "no_lib_link"))]
 pub fn starks_new_c(
     p_config: *mut c_void,
-    const_pols: &str,
-    map_const_pols_file: bool,
-    constants_tree: &str,
     stark_info: *mut c_void,
     chelpers: *mut c_void,
+    const_pols: *mut c_void,
     p_address: *mut c_void,
 ) -> *mut c_void {
     unsafe {
-        let const_pols = CString::new(const_pols).unwrap();
-        let constants_tree = CString::new(constants_tree).unwrap();
-
         starks_new(
             p_config,
-            const_pols.as_ptr() as *mut std::os::raw::c_char,
-            map_const_pols_file,
-            constants_tree.as_ptr() as *mut std::os::raw::c_char,
             stark_info,
             chelpers,
+            const_pols,
             p_address,
         )
     }
@@ -202,23 +188,16 @@ pub fn starks_new_c(
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn starks_new_default_c(
-    const_pols: &str,
-    map_const_pols_file: bool,
-    constants_tree: &str,
     stark_info: *mut c_void,
     chelpers: *mut c_void,
+    const_pols: *mut c_void,
     p_address: *mut c_void,
 ) -> *mut c_void {
     unsafe {
-        let const_pols = CString::new(const_pols).unwrap();
-        let constants_tree = CString::new(constants_tree).unwrap();
-
         starks_new_default(
-            const_pols.as_ptr() as *mut std::os::raw::c_char,
-            map_const_pols_file,
-            constants_tree.as_ptr() as *mut std::os::raw::c_char,
             stark_info,
             chelpers,
+            const_pols,
             p_address,
         )
     }
@@ -244,6 +223,13 @@ pub fn chelpers_new_c(chelpers_filename: &str) -> *mut ::std::os::raw::c_void {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn const_pols_new_c(p_stark_info: *mut c_void, _const_pols_filename: &str) -> *mut ::std::os::raw::c_void {
+    let const_pols_f = CString::new(_const_pols_filename).unwrap();
+
+    unsafe { const_pols_new(p_stark_info, const_pols_f.as_ptr() as *mut std::os::raw::c_char) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn chelpers_free_c(p_chelpers: *mut ::std::os::raw::c_void) {
     unsafe {
         chelpers_free(p_chelpers);
@@ -260,22 +246,12 @@ pub fn init_hints_c() {
 #[cfg(not(feature = "no_lib_link"))]
 pub fn steps_params_new_c(
     p_stark: *mut c_void,
-    p_challenges: *const c_void,
+    p_challenges: *mut c_void,
     p_subproof_values: *mut c_void,
     p_evals: *mut c_void,
     p_public_inputs: *mut c_void,
 ) -> *mut c_void {
     unsafe { steps_params_new(p_stark, p_challenges, p_subproof_values, p_evals, p_public_inputs) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_steps_params_field_c(
-    p_steps_params: *mut ::std::os::raw::c_void,
-    name: &str,
-) -> *mut ::std::os::raw::c_void {
-    let name = CString::new(name).unwrap();
-
-    unsafe { get_steps_params_field(p_steps_params, name.as_ptr() as *mut std::os::raw::c_char) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -314,29 +290,55 @@ pub fn compute_stage_expressions_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn calculate_expression_c(
+pub fn get_polynomial_c(
     p_starks: *mut ::std::os::raw::c_void,
     dest: *mut ::std::os::raw::c_void,
-    id: u64,
-    p_params: *mut ::std::os::raw::c_void,
-    p_chelpers_steps: *mut ::std::os::raw::c_void,
-    domain_extended: bool,
+    p_address: *mut ::std::os::raw::c_void,
+    committed: bool,
+    idPol: u64,
+    deg: u64,
 ) {
     unsafe {
-        calculate_expression(p_starks, dest, id, p_params, p_chelpers_steps, domain_extended);
+        get_polynomial(p_starks, dest, p_address, committed, idPol, deg);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn calculate_expression_q_c(
+pub fn calculate_expression_c(
     p_starks: *mut ::std::os::raw::c_void,
+    polinomial: *mut ::std::os::raw::c_void,
     id: u64,
     p_params: *mut ::std::os::raw::c_void,
     p_chelpers_steps: *mut ::std::os::raw::c_void,
     domain_extended: bool,
+    im_pol: bool,
+    inverse: bool,
 ) {
     unsafe {
-        calculate_expression_q(p_starks, id, p_params, p_chelpers_steps, domain_extended);
+        calculate_expression(p_starks, polinomial, id, p_params, p_chelpers_steps, domain_extended, im_pol, inverse);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn calculate_impols_expressions_c(
+    p_starks: *mut ::std::os::raw::c_void,
+    id: u64,
+    p_params: *mut ::std::os::raw::c_void,
+    p_chelpers_steps: *mut ::std::os::raw::c_void,
+) {
+    unsafe {
+        calculate_impols_expressions(p_starks, id, p_params, p_chelpers_steps);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn calculate_quotient_polynomial_c(
+    p_starks: *mut ::std::os::raw::c_void,
+    p_params: *mut ::std::os::raw::c_void,
+    p_chelpers_steps: *mut ::std::os::raw::c_void,
+) {
+    unsafe {
+        calculate_quotient_polynomial(p_starks, p_params, p_chelpers_steps);
     }
 }
 
@@ -368,6 +370,14 @@ pub fn compute_fri_pol_c(
     p_chelpers_steps: *mut c_void,
 ) -> *mut c_void {
     unsafe { compute_fri_pol(p_stark, step, p_params, p_chelpers_steps) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_fri_pol_c(
+    p_stark: *mut c_void,
+    p_params: *mut c_void,
+) -> *mut ::std::os::raw::c_void {
+    unsafe { get_fri_pol(p_stark, p_params) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -428,9 +438,16 @@ pub fn clean_symbols_calculated_c(pStarks: *mut ::std::os::raw::c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn set_symbol_calculated_c(pStarks: *mut ::std::os::raw::c_void, operand: u32, id: u64) {
+pub fn set_commit_calculated_c(pStarks: *mut ::std::os::raw::c_void, id: u64) {
     unsafe {
-        set_symbol_calculated(pStarks, operand, id);
+        set_commit_calculated(pStarks, id);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_subproofvalue_calculated_c(pStarks: *mut ::std::os::raw::c_void, id: u64) {
+    unsafe {
+        set_subproofvalue_calculated(pStarks, id);
     }
 }
 
@@ -713,11 +730,6 @@ pub fn get_map_totaln_c(_p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn set_mapOffsets_c(_pStarkInfo: *mut c_void, _pChelpers: *mut c_void) {
-    trace!("{}: ··· {}", "mckzkevm", "set_mapOffsets: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
 pub fn get_map_offsets_c(_p_stark_info: *mut c_void, _stage: &str, _flag: bool) -> u64 {
     trace!("{}: ··· {}", "mckzkevm", "get_map_offsets: This is a mock call because there is no linked library");
     0
@@ -777,6 +789,14 @@ pub fn chelpers_new_c(_chelpers_filename: &str) -> *mut ::std::os::raw::c_void {
     trace!("{}: ··· {}", "mckzkevm", "chelpers_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
+
+
+#[cfg(feature = "no_lib_link")]
+pub fn const_pols_new_c(_p_stark_info: *mut c_void, _const_pols_filename: &str) {
+    trace!("{}: ··· {}", "mckzkevm", "const_pols_new: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
+}
+
 
 #[cfg(feature = "no_lib_link")]
 pub fn chelpers_free_c(_p_chelpers: *mut ::std::os::raw::c_void) {
@@ -851,26 +871,41 @@ pub fn compute_stage_expressions_c(
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn get_polynomial_c(
+    p_starks: *mut ::std::os::raw::c_void,
+    dest: *mut ::std::os::raw::c_void,
+    p_address: *mut ::std::os::raw::c_void,
+    committed: bool,
+    idPol: u64,
+    deg: u64,
+) {
+    trace!("{}: ··· {}", "mckzkevm", "get_polynomial: This is a mock call because there is no linked library");
+
+}
+
+
+#[cfg(feature = "no_lib_link")]
 pub fn calculate_expression_c(
     _p_starks: *mut ::std::os::raw::c_void,
-    _dest: *mut ::std::os::raw::c_void,
+    _p_polinomial: *mut ::std::os::raw::c_void,
     _id: u64,
     _p_params: *mut ::std::os::raw::c_void,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,
     _domain_extended: bool,
+    _im_pol: bool,
+    _inverse: bool,
 ) {
     trace!("{}: ··· {}", "mckzkevm", "calculate_expression: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn calculate_expression_q_c(
+pub fn calculate_impols_expressions_c(
     _p_starks: *mut ::std::os::raw::c_void,
     _id: u64,
     _p_params: *mut ::std::os::raw::c_void,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,
-    _domain_extended: bool,
 ) {
-    trace!("{}: ··· {}", "mckzkevm", "calculate_expression: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "mckzkevm", "calculate_impols_expression: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -949,11 +984,6 @@ pub fn clean_symbols_calculated_c(_pStarks: *mut ::std::os::raw::c_void) {
         "mckzkevm",
         "clean_symbols_calculated: This is a mock call because there is no linked library"
     );
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn set_symbol_calculated_c(_pStarks: *mut c_void, _operand: u32, _id: u64) {
-    trace!("{}: ··· {}", "mckzkevm", "set_symbol_calculated: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

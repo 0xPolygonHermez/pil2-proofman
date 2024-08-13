@@ -1,4 +1,4 @@
-use crate::{AirInstanceCtx, ProofCtx};
+use crate::{ProofCtx};
 
 #[derive(Debug, PartialEq)]
 pub enum ProverStatus {
