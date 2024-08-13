@@ -53,14 +53,12 @@ impl<F> WitnessManager<F> {
     }
 
     pub fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &mut ExecutionCtx) {
-        info!("{}: Starting proof", Self::MY_NAME);
         for component in self.components.iter() {
             component.start_proof(pctx, ectx);
         }
     }
 
     pub fn end_proof(&mut self) {
-        info!("{}: Ending proof", Self::MY_NAME);
         for component in self.components.iter() {
             component.end_proof();
         }

@@ -1,14 +1,15 @@
+use std::sync::Mutex;
+
 use log::info;
 
-use crate::WitnessPilout;
+use crate::{trace::Trace, WitnessPilout};
 
 #[allow(dead_code)]
 pub struct ProofCtx<F> {
     pub public_inputs: Vec<u8>,
     pub pilout: WitnessPilout,
     pub challenges: Option<Vec<F>>,
-    pub air_instances: Vec<AirInstanceCtx>,
-    // pub transcript: Option<FFITranscript>,
+    pub air_instances: Mutex<Vec<AirInstanceCtx>>,
 }
 
 impl<F> ProofCtx<F> {
@@ -43,35 +44,39 @@ impl<F> ProofCtx<F> {
             public_inputs: Vec::new(),
             pilout,
             challenges: None,
-            air_instances: Vec::new(), /*, transcript: None*/
+            air_instances: Mutex::new(Vec::new()), /*, transcript: None*/
         }
     }
 
-    pub fn find_air_instances(&self, air_group_id: usize, air_id: usize) -> Vec<(usize, &AirInstanceCtx)> {
-        self.air_instances
-            .iter()
-            .enumerate()
-            .filter(|&(_, air_instance)| air_instance.air_group_id == air_group_id && air_instance.air_id == air_id)
-            .collect()
+    pub fn find_air_instances(&self, air_group_id: usize, air_id: usize) -> Vec<usize> {
+        let air_instances = self.air_instances.lock().unwrap();
+    
+        let mut indices = Vec::new();
+        for (index, air_instance) in air_instances.iter().enumerate() {
+            if air_instance.air_group_id == air_group_id && air_instance.air_id == air_id {
+                indices.push(index);
+            }
+        }
+
+        indices
     }
 }
 
 /// Air instance context for managing air instances (traces)
-#[derive(Debug)]
 #[allow(dead_code)]
 pub struct AirInstanceCtx {
     pub air_group_id: usize,
     pub air_id: usize,
-    pub buffer: Vec<u8>,
+    pub trace: Option<Box<dyn Trace>>,
 }
 
 impl AirInstanceCtx {
-    pub fn new(air_group_id: usize, air_id: usize) -> Self {
-        AirInstanceCtx { air_group_id, air_id, buffer: Vec::new() }
+    pub fn new(air_group_id: usize, air_id: usize, trace: Option<Box<dyn Trace>>) -> Self {
+        AirInstanceCtx { air_group_id, air_id, trace }
     }
 
     pub fn get_buffer_ptr(&mut self) -> *mut u8 {
-        self.buffer.as_mut_ptr()
+        self.trace.as_mut().unwrap().get_buffer_ptr()
     }
 }
 

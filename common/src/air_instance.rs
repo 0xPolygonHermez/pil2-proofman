@@ -15,6 +15,6 @@ impl AirInstance {
 
 impl From<&AirInstance> for AirInstanceCtx {
     fn from(air_instance: &AirInstance) -> Self {
-        AirInstanceCtx::new(air_instance.air_group_id, air_instance.air_id)
+        AirInstanceCtx::new(air_instance.air_group_id, air_instance.air_id, None)
     }
 }

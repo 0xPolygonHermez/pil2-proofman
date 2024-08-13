@@ -103,6 +103,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         wc_lib.calculate_plan(ectx);
 
         trace!("{}: Plan: ", Self::MY_NAME);
+
         for air_instance in ectx.instances.iter() {
             let air = pctx.pilout.get_air(air_instance.air_group_id, air_instance.air_id);
             let name = if air.name().is_some() { air.name().unwrap() } else { "Unnamed" };
@@ -110,8 +111,9 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         }
 
         // Initialize air instances
+        let mut air_instances = pctx.air_instances.lock().unwrap();
         for id in ectx.owned_instances.iter() {
-            pctx.air_instances.push((&ectx.instances[*id]).into());
+            air_instances.push((&ectx.instances[*id]).into());
         }
     }
 
@@ -120,7 +122,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
 
         let global_info = GlobalInfo::from_file(&proving_key_path.join("pilout.globalInfo.json"));
 
-        for air_instance in pctx.air_instances.iter_mut() {
+        for air_instance in pctx.air_instances.lock().unwrap().iter_mut() {
             debug!(
                 "{}: Initializing prover for air instance ({}, {})",
                 Self::MY_NAME,
@@ -137,7 +139,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
 
             let buffer_size = prover.get_total_bytes();
             trace!("{}: ··· Preallocating a buffer of {} bytes", Self::MY_NAME, buffer_size);
-            air_instance.buffer = vec![0u8; buffer_size];
+            // air_instance.buffer = vec![0u8; buffer_size];
 
             prover.as_mut().build(air_instance);
             provers.push(prover);

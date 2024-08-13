@@ -1,3 +1,8 @@
+pub trait Trace: Send {
+    fn num_rows(&self) -> usize;
+    fn get_buffer_ptr(&mut self) -> *mut u8;
+}
+
 #[macro_export]
 macro_rules! trace {
     ($row_struct_name:ident, $trace_struct_name:ident<$generic:ident> {
@@ -64,13 +69,19 @@ macro_rules! trace {
                 })
             }
 
+            pub fn from_vec<'a>(vector: Vec<$row_struct_name<$generic>>) -> Self {
+                let num_rows = vector.len();
+                let slice = vector.into_boxed_slice();
+                $trace_struct_name { slice, num_rows }
+            }
+
             pub fn num_rows(&self) -> usize {
                 self.num_rows
             }
         }
 
         // Implement Index trait for immutable access
-        impl<F> std::ops::Index<usize> for $trace_struct_name<$generic> {
+        impl<$generic> std::ops::Index<usize> for $trace_struct_name<$generic> {
             type Output = $row_struct_name<$generic>;
 
             fn index(&self, index: usize) -> &Self::Output {
@@ -79,9 +90,20 @@ macro_rules! trace {
         }
 
         // Implement IndexMut trait for mutable access
-        impl<F> std::ops::IndexMut<usize> for $trace_struct_name<F> {
+        impl<$generic> std::ops::IndexMut<usize> for $trace_struct_name<$generic> {
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
                 &mut self.slice[index]
+            }
+        }
+
+                // Implement the Trace trait
+        impl<$generic: Send > $crate::trace::Trace for $trace_struct_name<$generic> {
+            fn num_rows(&self) -> usize {
+                self.num_rows
+            }
+
+            fn get_buffer_ptr(&mut self) -> *mut u8 {
+                self.slice.as_mut_ptr() as *mut u8
             }
         }
     };
@@ -93,6 +115,7 @@ macro_rules! trace {
     (@count_elements $elem_type:ty) => {
         1
     };
+
 }
 
 #[cfg(test)]
@@ -104,10 +127,10 @@ mod tests {
         const OFFSET: usize = 1;
         let num_rows = 8;
 
-        trace!(TraceRow, Trace<F> { a: F, b: F });
+        trace!(TraceRow, MyTrace<F> { a: F, b: F });
 
         let buffer = vec![0usize; num_rows * TraceRow::<usize>::ROW_SIZE + OFFSET];
-        let trace = Trace::from_buffer(&buffer, num_rows, OFFSET);
+        let trace = MyTrace::from_buffer(&buffer, num_rows, OFFSET);
         let mut trace = trace.unwrap();
 
         // Set values
@@ -123,33 +146,33 @@ mod tests {
         }
     }
 
-        #[test]
-        #[should_panic]
-        fn test_errors_are_launched_when_num_rows_is_invalid_1() {
-            let buffer = vec![0u8; 3];
-            trace!(SimpleRow, Simple<F> { a: F });
-            let _ = Simple::from_buffer(&buffer, 1, 0);
-        }
+    #[test]
+    #[should_panic]
+    fn test_errors_are_launched_when_num_rows_is_invalid_1() {
+        let buffer = vec![0u8; 3];
+        trace!(SimpleRow, Simple<F> { a: F });
+        let _ = Simple::from_buffer(&buffer, 1, 0);
+    }
 
-        #[test]
-        #[should_panic]
-        fn test_errors_are_launched_when_num_rows_is_invalid_2() {
-            let buffer = vec![0u8; 3];
-            trace!(SimpleRow, Simple<F> { a: F });
-            let _ = Simple::from_buffer(&buffer, 3, 0);
-        }
+    #[test]
+    #[should_panic]
+    fn test_errors_are_launched_when_num_rows_is_invalid_2() {
+        let buffer = vec![0u8; 3];
+        trace!(SimpleRow, Simple<F> { a: F });
+        let _ = Simple::from_buffer(&buffer, 3, 0);
+    }
 
-        #[test]
-        #[should_panic]
-        fn test_errors_are_launched_when_num_rows_is_invalid_3() {
-            trace!(SimpleRow, Simple<F> { a: F });
-            let _ = Simple::<u8>::new(1);
-        }
+    #[test]
+    #[should_panic]
+    fn test_errors_are_launched_when_num_rows_is_invalid_3() {
+        trace!(SimpleRow, Simple<F> { a: F });
+        let _ = Simple::<u8>::new(1);
+    }
 
-        #[test]
-        #[should_panic]
-        fn test_errors_are_launched_when_num_rows_is_invalid_4() {
-            trace!(SimpleRow, Simple<F> { a: F });
-            let _ = Simple::<u8>::new(3);
-        }
+    #[test]
+    #[should_panic]
+    fn test_errors_are_launched_when_num_rows_is_invalid_4() {
+        trace!(SimpleRow, Simple<F> { a: F });
+        let _ = Simple::<u8>::new(3);
+    }
 }

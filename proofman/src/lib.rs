@@ -1,6 +1,5 @@
 mod planner;
 mod proofman;
-pub mod trace;
 mod witness_manager;
 
 // pub use buffer_allocator::*;
