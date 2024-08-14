@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use std::any::type_name;
 
@@ -345,10 +345,9 @@ impl<F: AbstractField> StarkProver<F> {
             transcript.add_elements(root, self.n_field_elements);
         } else {
             let hash: Vec<F> = vec![F::zero(); self.n_field_elements];
-            let n_hash = 1
-                << ((self.stark_info.as_ref().unwrap().stark_struct.steps[n_steps - 1].n_bits)
-                    * Self::FIELD_EXTENSION as u64);
-            calculate_hash_c(p_stark, hash.as_ptr() as *mut c_void, fri_pol, n_hash);
+            let n_hash = ((1 << (self.stark_info.as_ref().unwrap().stark_struct.steps[n_steps - 1].n_bits))
+                * Self::FIELD_EXTENSION as u64) as u64;
+            calculate_hash_c(p_stark, hash.as_ptr() as *mut c_void, fri_pol, n_hash as u64);
             transcript.add_elements(hash.as_ptr() as *mut c_void, self.n_field_elements);
         }
     }
@@ -384,12 +383,28 @@ impl<F: AbstractField> StarkProver<F> {
     }
 }
 
-pub struct StarkBufferAllocator;
+pub struct StarkBufferAllocator {
+    pub proving_key_path: PathBuf,
+}
+
+impl StarkBufferAllocator {
+    pub fn new(proving_key_path: PathBuf) -> Self {
+        Self { proving_key_path }
+    }
+}
 
 impl BufferAllocator for StarkBufferAllocator {
-    fn get_buffer_info(&self, air_pk_folder: &Path) -> Result<(u64, Vec<u64>), Box<dyn Error>> {
+    fn get_buffer_info(&self, air_name: String, air_id: usize) -> Result<(u64, Vec<u64>), Box<dyn Error>> {
         // Get inside the proving key folder the unique file ending with "starkinfo.json", if not error
         let mut stark_info_path = None;
+
+        let air_pk_folder = self
+            .proving_key_path
+            .join("build")
+            .join(air_name.clone())
+            .join("airs")
+            .join(format!("{}_{}", air_name, air_id))
+            .join("air");
 
         if !air_pk_folder.exists() {
             return Err("The path does not exist".into());
@@ -420,6 +435,6 @@ impl BufferAllocator for StarkBufferAllocator {
 
         let p_stark_info = stark_info_new_c(stark_info_path.unwrap().to_str().unwrap());
 
-        Ok((get_map_totaln_c(p_stark_info), vec![0, 0]))
+        Ok((get_map_totaln_c(p_stark_info), vec![get_map_offsets_c(p_stark_info, "cm1", false)]))
     }
 }

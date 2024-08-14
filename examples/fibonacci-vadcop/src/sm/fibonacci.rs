@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 use log::debug;
 
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx};
@@ -40,14 +40,23 @@ impl FibonacciSquare {
         let (module, mut a, mut b, _out) = pi.inner();
         let num_rows = pctx.pilout.get_air(air_group_id, air_id).num_rows();
 
-        let air_instances = pctx.air_instances.read().unwrap();
+        let mut buffer = None;
+
         let mut trace = if ectx.discovering {
             None
         } else {
-            let air_idx = pctx.find_air_instances(air_group_id, air_id)[0];
+            // let air_instances = pctx.air_instances.write().unwrap();
+            // let air_idx = air_instances.iter().position(|air| air.air_id == air_id).unwrap();
 
-            let offset = 111; // TODO !!!!!!! (provers[air_idx].get_map_offsets("cm1", false) * 8) as usize;
-            let mut trace = FibonacciSquare0Trace::map_buffer(&air_instances[air_idx].buffer, num_rows, offset)?;
+            let buffer_allocator = ectx.buffer_allocator.as_ref();
+            let buffer_info =
+                buffer_allocator.get_buffer_info("FibonacciSquare".to_owned(), FIBONACCI_SQUARE_AIR_IDS[0])?;
+            let buffer_size = buffer_info.0;
+            let offset = buffer_info.1[0];
+
+            buffer = Some(vec![F::default(); buffer_size as usize / mem::size_of::<F>()]);
+
+            let mut trace = FibonacciSquare0Trace::map_buffer(&buffer.as_ref().unwrap(), num_rows, offset as usize)?;
 
             trace[0].a = F::from_canonical_u64(a);
             trace[0].b = F::from_canonical_u64(b);
@@ -65,6 +74,11 @@ impl FibonacciSquare {
             }
         }
         pctx.public_inputs[24..32].copy_from_slice(&b.to_le_bytes());
+
+        let air_idx = pctx.find_air_instances(air_group_id, air_id)[0];
+        let mut air_instances = pctx.air_instances.write().unwrap();
+        air_instances[air_idx].buffer = buffer;
+
         Ok(b)
     }
 }

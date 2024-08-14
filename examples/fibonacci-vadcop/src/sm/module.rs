@@ -1,5 +1,5 @@
 use log::debug;
-use std::{cell::RefCell, sync::Arc};
+use std::{cell::RefCell, mem, sync::Arc};
 
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx};
 use proofman::WitnessManager;
@@ -52,7 +52,7 @@ impl WCOpCalculator for Module {
 }
 
 impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
-    fn calculate_witness(&self, stage: u32, _air_instance: &AirInstance, pctx: &mut ProofCtx<F>, _ectx: &ExecutionCtx) {
+    fn calculate_witness(&self, stage: u32, _air_instance: &AirInstance, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
         if stage != 1 {
             return;
         }
@@ -63,16 +63,20 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
         let module = pi.module;
 
         let air_idx = pctx.find_air_instances(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0])[0];
-        let air_instances = pctx.air_instances.read().unwrap();
-
-        let interval = _ectx.instances[air_idx].inputs_interval.unwrap();
+        let interval = ectx.instances[air_idx].inputs_interval.unwrap();
 
         let inputs = &self.inputs.borrow()[interval.0..interval.1];
 
-        let offset = 111; // TODO !!!!!  (provers[air_idx].get_map_offsets("cm1", false) * 8) as usize;
+        let buffer_allocator = ectx.buffer_allocator.as_ref();
+        let buffer_info = buffer_allocator.get_buffer_info("FibonacciSquare".to_owned(), MODULE_AIR_IDS[0]).unwrap();
+        let buffer_size = buffer_info.0;
+        let offset = buffer_info.1[0];
+
+        let buffer = Some(vec![F::default(); buffer_size as usize / mem::size_of::<F>()]);
+
 
         let num_rows = pctx.pilout.get_air(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0]).num_rows();
-        let mut trace = Module0Trace::map_buffer(&air_instances[air_idx].buffer, num_rows, offset).unwrap();
+        let mut trace = Module0Trace::map_buffer(&buffer.as_ref().unwrap(), num_rows, offset as usize).unwrap();
 
         for (i, input) in inputs.iter().enumerate() {
             let x = input.0;
@@ -91,6 +95,10 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
             trace[i].x_mod = F::zero();
             //self.range_check.proves(module, 1, 255); //TODO: understnd -1
         }
+
+        let mut air_instances = pctx.air_instances.write().unwrap();
+        air_instances[air_idx].buffer = buffer;
+
     }
 
     fn suggest_plan(&self, ectx: &mut ExecutionCtx) {
