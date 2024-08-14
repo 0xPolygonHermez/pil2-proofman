@@ -66,7 +66,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
 
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
 
-        let buffer_allocator = Arc::new(StarkBufferAllocator);
+        let buffer_allocator = Arc::new(StarkBufferAllocator::new(proving_key_path.clone()));
         let mut ectx = ExecutionCtx::builder().is_discovery_execution().with_buffer_allocator(buffer_allocator).build();
 
         Self::initialize_witness(&mut witness_lib, &mut pctx, &mut ectx);
@@ -83,7 +83,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         // Commit stages
         let num_commit_stages = pctx.pilout.num_stages() + 1;
         for stage in 1..=num_commit_stages {
-            witness_lib.calculate_witness(stage, &mut pctx, &ectx, &provers);
+            witness_lib.calculate_witness(stage, &mut pctx, &ectx);
             Self::get_challenges(stage, &mut provers, &mut pctx, &transcript);
             Self::commit_stage(stage, &mut provers, &mut pctx);
             Self::calculate_challenges(stage, &mut provers, &mut pctx, &mut transcript);
@@ -143,9 +143,9 @@ impl<F: AbstractField + 'static> ProofMan<F> {
                 air_instance.air_id,
             ));
 
-            let buffer_size = prover.get_total_bytes();
-            trace!("{}: ··· Preallocating a buffer of {} bytes", Self::MY_NAME, buffer_size);
-            air_instance.buffer = vec![F::default(); buffer_size]; // TODO: MODIFY
+            // let buffer_size = prover.get_total_bytes();
+            // trace!("{}: ··· Preallocating a buffer of {} bytes", Self::MY_NAME, buffer_size);
+            // air_instance.buffer = vec![F::default(); buffer_size]; // TODO: MODIFY
 
             provers.push(prover);
         }

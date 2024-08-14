@@ -62,16 +62,20 @@ impl<F> ProofCtx<F> {
 pub struct AirInstanceCtx<F> {
     pub air_group_id: usize,
     pub air_id: usize,
-    pub buffer: Vec<F>,
+    pub buffer: Option<Vec<F>>,
 }
 
 impl<F> AirInstanceCtx<F> {
     pub fn new(air_group_id: usize, air_id: usize) -> Self {
-        AirInstanceCtx { air_group_id, air_id, buffer: Vec::new() }
+        AirInstanceCtx { air_group_id, air_id, buffer: None }
     }
 
     pub fn get_buffer_ptr(&mut self) -> *mut u8 {
-        self.buffer.as_mut_ptr() as *mut u8
+        if self.buffer.is_some() {
+            self.buffer.as_mut().unwrap().as_mut_ptr() as *mut u8
+        } else {
+            panic!("Buffer not initialized");
+        }
     }
 }
 

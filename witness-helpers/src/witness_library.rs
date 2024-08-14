@@ -1,6 +1,6 @@
 use std::{error::Error, path::PathBuf};
 
-use proofman_common::{ExecutionCtx, ProofCtx, WitnessPilout, Prover};
+use proofman_common::{ExecutionCtx, ProofCtx, WitnessPilout};
 
 /// This is the type of the function that is used to load a witness library.
 pub type WitnessLibInitFn<F> =
@@ -11,13 +11,7 @@ pub trait WitnessLibrary<F> {
     fn end_proof(&mut self);
     fn execute(&self, pctx: &mut ProofCtx<F>, ectx: &mut ExecutionCtx);
     fn calculate_plan(&mut self, ectx: &mut ExecutionCtx);
-    fn calculate_witness(
-        &mut self,
-        stage: u32,
-        pctx: &mut ProofCtx<F>,
-        ectx: &ExecutionCtx,
-        provers: &[Box<dyn Prover<F>>],
-    );
+    fn calculate_witness(&mut self, stage: u32, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx);
 
     fn pilout(&self) -> WitnessPilout;
 }
