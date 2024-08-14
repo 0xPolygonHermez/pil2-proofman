@@ -56,7 +56,7 @@ impl FibonacciSquare {
 
             buffer = Some(vec![F::default(); buffer_size as usize / mem::size_of::<F>()]);
 
-            let mut trace = FibonacciSquare0Trace::map_buffer(&buffer.as_ref().unwrap(), num_rows, offset as usize)?;
+            let mut trace = FibonacciSquare0Trace::map_buffer(buffer.as_ref().unwrap(), num_rows, offset as usize)?;
 
             trace[0].a = F::from_canonical_u64(a);
             trace[0].b = F::from_canonical_u64(b);

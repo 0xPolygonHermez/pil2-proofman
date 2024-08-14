@@ -74,9 +74,8 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
 
         let buffer = Some(vec![F::default(); buffer_size as usize / mem::size_of::<F>()]);
 
-
         let num_rows = pctx.pilout.get_air(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0]).num_rows();
-        let mut trace = Module0Trace::map_buffer(&buffer.as_ref().unwrap(), num_rows, offset as usize).unwrap();
+        let mut trace = Module0Trace::map_buffer(buffer.as_ref().unwrap(), num_rows, offset as usize).unwrap();
 
         for (i, input) in inputs.iter().enumerate() {
             let x = input.0;
@@ -98,7 +97,6 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
 
         let mut air_instances = pctx.air_instances.write().unwrap();
         air_instances[air_idx].buffer = buffer;
-
     }
 
     fn suggest_plan(&self, ectx: &mut ExecutionCtx) {
