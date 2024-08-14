@@ -80,7 +80,13 @@ impl<F> WitnessManager<F> {
         self.planner.calculate_plan(&self.components, ectx);
     }
 
-    pub fn calculate_witness(&self, stage: u32, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx, provers: &Vec<Box<dyn Prover<F>>>) {
+    pub fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: &mut ProofCtx<F>,
+        ectx: &ExecutionCtx,
+        provers: &[Box<dyn Prover<F>>],
+    ) {
         info!("{}: Calculating witness (stage {})", Self::MY_NAME, stage);
         //NOTE: Here we are assuming that each air instance has a differnt air group id, which will not be the case! we should use the paris of air_group_id and air_id
         for air_instance_ctx in ectx.instances.iter() {

@@ -744,11 +744,9 @@ pub fn starks_new_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn starks_new_default_c(
-    _const_pols: &str,
-    _map_const_pols_file: bool,
-    _constants_tree: &str,
     _stark_info: *mut c_void,
     _chelpers: *mut c_void,
+    _const_pols: *mut c_void,
     _p_address: *mut c_void,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starks_new: This is a mock call because there is no linked library");
@@ -773,7 +771,7 @@ pub fn chelpers_new_c(_chelpers_filename: &str) -> *mut ::std::os::raw::c_void {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn const_pols_new_c(_p_stark_info: *mut c_void, _const_pols_filename: &str) {
+pub fn const_pols_new_c(_p_stark_info: *mut c_void, _const_pols_filename: &str) -> *mut ::std::os::raw::c_void {
     trace!("{}: ··· {}", "mckzkevm", "const_pols_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -852,12 +850,12 @@ pub fn compute_stage_expressions_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_polynomial_c(
-    p_starks: *mut ::std::os::raw::c_void,
-    dest: *mut ::std::os::raw::c_void,
-    p_address: *mut ::std::os::raw::c_void,
-    committed: bool,
-    idPol: u64,
-    deg: u64,
+    _p_starks: *mut ::std::os::raw::c_void,
+    _dest: *mut ::std::os::raw::c_void,
+    _p_address: *mut ::std::os::raw::c_void,
+    _committed: bool,
+    _idPol: u64,
+    _deg: u64,
 ) {
     trace!("{}: ··· {}", "mckzkevm", "get_polynomial: This is a mock call because there is no linked library");
 }
@@ -891,6 +889,15 @@ pub fn calculate_impols_expressions_c(
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn calculate_quotient_polynomial_c(
+    _p_starks: *mut ::std::os::raw::c_void,
+    _p_params: *mut ::std::os::raw::c_void,
+    _p_chelpers_steps: *mut ::std::os::raw::c_void,
+) {
+    trace!("mckzkevm: ··· {}", "calculate_quotient_polynomial: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn commit_stage_c(
     _p_starks: *mut ::std::os::raw::c_void,
     _element_type: u32,
@@ -914,6 +921,12 @@ pub fn compute_fri_pol_c(
     _p_chelpers_steps: *mut c_void,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "compute_fri_pol: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_fri_pol_c(_p_stark: *mut c_void, _p_params: *mut c_void) -> *mut ::std::os::raw::c_void {
+    trace!("ffi     : ··· {}", "get_fri_pol: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
@@ -966,6 +979,16 @@ pub fn clean_symbols_calculated_c(_pStarks: *mut ::std::os::raw::c_void) {
         "ffi     ",
         "clean_symbols_calculated: This is a mock call because there is no linked library"
     );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_commit_calculated_c(_pStarks: *mut ::std::os::raw::c_void, _id: u64) {
+    trace!("ffi     : ··· {}", "set_commit_calculated: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_subproofvalue_calculated_c(_pStarks: *mut ::std::os::raw::c_void, _id: u64) {
+    trace!("ffi     : ··· {}", "set_subproofvalue_calculated: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

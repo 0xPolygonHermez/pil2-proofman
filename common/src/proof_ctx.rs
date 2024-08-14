@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use log::info;
 
-use crate::{trace::Trace, WitnessPilout};
+use crate::WitnessPilout;
 
 #[allow(dead_code)]
 pub struct ProofCtx<F> {
@@ -62,17 +62,16 @@ impl<F> ProofCtx<F> {
 pub struct AirInstanceCtx<F> {
     pub air_group_id: usize,
     pub air_id: usize,
-    pub trace: Option<Box<dyn Trace>>,
     pub buffer: Vec<F>,
 }
 
 impl<F> AirInstanceCtx<F> {
-    pub fn new(air_group_id: usize, air_id: usize, trace: Option<Box<dyn Trace>>) -> Self {
-        AirInstanceCtx { air_group_id, air_id, trace, buffer: Vec::new() }
+    pub fn new(air_group_id: usize, air_id: usize) -> Self {
+        AirInstanceCtx { air_group_id, air_id, buffer: Vec::new() }
     }
 
     pub fn get_buffer_ptr(&mut self) -> *mut u8 {
-        self.trace.as_mut().unwrap().get_buffer_ptr()
+        self.buffer.as_mut_ptr() as *mut u8
     }
 }
 

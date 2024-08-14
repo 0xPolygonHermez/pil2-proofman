@@ -83,8 +83,8 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         // Commit stages
         let num_commit_stages = pctx.pilout.num_stages() + 1;
         for stage in 1..=num_commit_stages {
-            witness_lib.calculate_witness(stage, &mut pctx, &ectx, &mut provers);
-            Self::get_challenges(stage, &mut provers, &mut pctx, &mut transcript);
+            witness_lib.calculate_witness(stage, &mut pctx, &ectx, &provers);
+            Self::get_challenges(stage, &mut provers, &mut pctx, &transcript);
             Self::commit_stage(stage, &mut provers, &mut pctx);
             Self::calculate_challenges(stage, &mut provers, &mut pctx, &mut transcript);
         }
@@ -103,7 +103,6 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         pctx: &mut ProofCtx<F>,
         ectx: &mut ExecutionCtx,
     ) {
-
         witness_lib.start_proof(pctx, ectx);
         witness_lib.execute(pctx, ectx);
         witness_lib.calculate_plan(ectx);
@@ -186,11 +185,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         provers[0].get_challenges(stage, pctx, transcript); // Any prover can get the challenges which are common among them
     }
 
-    pub fn opening_stages(
-        provers: &mut Vec<Box<dyn Prover<F>>>,
-        pctx: &mut ProofCtx<F>,
-        transcript: &mut FFITranscript,
-    ) {
+    pub fn opening_stages(provers: &mut [Box<dyn Prover<F>>], pctx: &mut ProofCtx<F>, transcript: &mut FFITranscript) {
         for opening_id in 1..=provers[0].num_opening_stages() {
             Self::get_challenges(pctx.pilout.num_stages() + 1 + opening_id, provers, pctx, transcript);
             for (idx, prover) in provers.iter_mut().enumerate() {

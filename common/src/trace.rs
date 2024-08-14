@@ -21,12 +21,13 @@ macro_rules! trace {
         }
 
         // Define the trace structure (Main0Trace) that manages the row structure
-        pub struct $trace_struct_name<$generic> {
-            pub slice: Box<[$row_struct_name<$generic>]>,
+        pub struct $trace_struct_name<'a, $generic> {
+            pub buffer: Option<Vec<F>>,
+            pub slice: &'a mut [$row_struct_name<$generic>],
             num_rows: usize,
         }
 
-        impl<$generic: Default + Clone + Copy> $trace_struct_name<$generic> {
+        impl<'a, $generic: Default + Clone + Copy> $trace_struct_name<'a, $generic> {
             // Constructor for creating a new buffer
             pub fn new(num_rows: usize) -> Self {
                 // PRECONDITIONS
@@ -35,14 +36,17 @@ macro_rules! trace {
                 // num_rows must be a power of 2
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer = Box::new(vec![$row_struct_name::<$generic>::default(); num_rows]);
-                let slice = buffer.into_boxed_slice();
+                let buffer = vec![$generic::default(); num_rows * $row_struct_name::<$generic>::ROW_SIZE];
 
-                $trace_struct_name { slice, num_rows }
+                let slice = unsafe {
+                    std::slice::from_raw_parts_mut(buffer.as_ptr() as *mut $row_struct_name<$generic>, num_rows)
+                };
+
+                $trace_struct_name { buffer: Some(buffer), slice, num_rows }
             }
 
             // Constructor to map over an external buffer
-            pub fn from_buffer<'a>(external_buffer: &'a [$generic], num_rows: usize, offset: usize) -> Result<Self, Box<dyn std::error::Error>> {
+            pub fn from_buffer(external_buffer: &'a [$generic], num_rows: usize, offset: usize) -> Result<Self, Box<dyn std::error::Error>> {
                 // PRECONDITIONS
                 // num_rows must be greater than or equal to 2
                 assert!(num_rows >= 2);
@@ -57,22 +61,17 @@ macro_rules! trace {
                 }
 
                 let slice = unsafe {
-                    std::slice::from_raw_parts(
-                        external_buffer[start..end].as_ptr() as *const $row_struct_name<$generic>,
+                    std::slice::from_raw_parts_mut(
+                        external_buffer[start..end].as_ptr() as *mut $row_struct_name<$generic>,
                         num_rows,
                     )
                 };
 
                 Ok($trace_struct_name {
-                    slice: slice.into(),
+                    buffer: None,
+                    slice: slice,
                     num_rows,
                 })
-            }
-
-            pub fn from_vec<'a>(vector: Vec<$row_struct_name<$generic>>) -> Self {
-                let num_rows = vector.len();
-                let slice = vector.into_boxed_slice();
-                $trace_struct_name { slice, num_rows }
             }
 
             pub fn num_rows(&self) -> usize {
@@ -81,7 +80,7 @@ macro_rules! trace {
         }
 
         // Implement Index trait for immutable access
-        impl<$generic> std::ops::Index<usize> for $trace_struct_name<$generic> {
+        impl<'a, $generic> std::ops::Index<usize> for $trace_struct_name<'a, $generic> {
             type Output = $row_struct_name<$generic>;
 
             fn index(&self, index: usize) -> &Self::Output {
@@ -90,20 +89,21 @@ macro_rules! trace {
         }
 
         // Implement IndexMut trait for mutable access
-        impl<$generic> std::ops::IndexMut<usize> for $trace_struct_name<$generic> {
+        impl<'a, $generic> std::ops::IndexMut<usize> for $trace_struct_name<'a, $generic> {
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
                 &mut self.slice[index]
             }
         }
 
                 // Implement the Trace trait
-        impl<$generic: Send > $crate::trace::Trace for $trace_struct_name<$generic> {
+        impl<'a, $generic: Send > $crate::trace::Trace for $trace_struct_name<'a, $generic> {
             fn num_rows(&self) -> usize {
                 self.num_rows
             }
 
             fn get_buffer_ptr(&mut self) -> *mut u8 {
-                self.slice.as_mut_ptr() as *mut u8
+                let buffer = self.buffer.as_mut().expect("Buffer is not available");
+                buffer.as_mut_ptr() as *mut u8
             }
         }
     };

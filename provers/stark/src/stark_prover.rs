@@ -131,14 +131,14 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
 
         //initialize the common challenges if have not been initialized by another prover
         proof_ctx.challenges.get_or_insert_with(|| {
-            vec![F::zero(); stark_info.challenges_map.as_ref().unwrap().len() * Self::FIELD_EXTENSION as usize]
+            vec![F::zero(); stark_info.challenges_map.as_ref().unwrap().len() * Self::FIELD_EXTENSION]
         });
 
-        self.evals = vec![F::zero(); stark_info.ev_map.len() * Self::FIELD_EXTENSION as usize];
+        self.evals = vec![F::zero(); stark_info.ev_map.len() * Self::FIELD_EXTENSION];
 
         //println!("RICK SUBPROOF: {}", stark_info.n_subproof_values);
 
-        self.subproof_values = vec![F::zero(); stark_info.n_subproof_values as usize * Self::FIELD_EXTENSION as usize];
+        self.subproof_values = vec![F::zero(); stark_info.n_subproof_values as usize * Self::FIELD_EXTENSION];
 
         self.p_proof = Some(fri_proof_new_c(p_stark));
 
@@ -238,7 +238,7 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
     fn add_challenges_to_transcript(&self, stage: u64, _proof_ctx: &mut ProofCtx<F>, transcript: &FFITranscript) {
         let p_stark: *mut std::ffi::c_void = self.p_stark.unwrap();
 
-        if stage <= (Self::num_stages(&self) + 1) as u64 {
+        if stage <= (Self::num_stages(self) + 1) as u64 {
             let root = vec![F::zero(); self.n_field_elements];
 
             let tree_index = if stage == 0 {
@@ -250,7 +250,7 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
 
             treesGL_get_root_c(p_stark, tree_index, root.as_ptr() as *mut c_void);
             transcript.add_elements(root.as_ptr() as *mut c_void, self.n_field_elements);
-        } else if stage == (Self::num_stages(&self) + 2) as u64 {
+        } else if stage == (Self::num_stages(self) + 2) as u64 {
             //TODO: hardcoded, option no hash must be included
             let hash: Vec<F> = vec![F::zero(); self.n_field_elements];
             calculate_hash_c(
@@ -344,8 +344,8 @@ impl<F: AbstractField> StarkProver<F> {
         } else {
             let hash: Vec<F> = vec![F::zero(); self.n_field_elements];
             let n_hash = ((1 << (self.stark_info.as_ref().unwrap().stark_struct.steps[n_steps - 1].n_bits))
-                * Self::FIELD_EXTENSION as u64) as u64;
-            calculate_hash_c(p_stark, hash.as_ptr() as *mut c_void, fri_pol, n_hash as u64);
+                * Self::FIELD_EXTENSION as u64);
+            calculate_hash_c(p_stark, hash.as_ptr() as *mut c_void, fri_pol, n_hash);
             transcript.add_elements(hash.as_ptr() as *mut c_void, self.n_field_elements);
         }
     }

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use crate::MODULE_SUBPROOF_ID;
 //use crate::U_8_AIR_SUBPROOF_ID;
 
-use crate::{FibonacciSquare, FibonacciVadcopPilout, Module /* , RangeCheck*/};
+use crate::{FibonacciSquare, Pilout, Module /* , RangeCheck*/};
 
 pub struct FibonacciVadcop<F> {
     pub wcm: WitnessManager<F>,
@@ -22,7 +22,7 @@ pub struct FibonacciVadcop<F> {
     //pub range_check: Arc<RangeCheck>,
 }
 
-impl<F: AbstractField> FibonacciVadcop<F> {
+impl<F: AbstractField + Copy> FibonacciVadcop<F> {
     pub fn new() -> Self {
         let mut wcm = WitnessManager::new();
 
@@ -37,14 +37,10 @@ impl<F: AbstractField> FibonacciVadcop<F> {
     }
 }
 
-impl<F> WitnessLibrary<F> for FibonacciVadcop<F> {
+impl<F: AbstractField + Copy> WitnessLibrary<F> for FibonacciVadcop<F> {
     fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &mut ExecutionCtx) {
-        pctx.public_inputs = vec![
-            25, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0,
-            2,  0, 0, 0, 0, 0, 0, 0,
-            9,  0, 0, 0, 0, 0, 0, 0,
-        ]; // TODO: NOT SHOULD BE HARDCODED!
+        pctx.public_inputs =
+            vec![25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0]; // TODO: NOT SHOULD BE HARDCODED!
         self.wcm.start_proof(pctx, ectx);
     }
 
@@ -65,21 +61,21 @@ impl<F> WitnessLibrary<F> for FibonacciVadcop<F> {
         stage: u32,
         pctx: &mut ProofCtx<F>,
         ectx: &ExecutionCtx,
-        provers: &Vec<Box<dyn Prover<F>>>,
+        provers: &[Box<dyn Prover<F>>],
     ) {
         self.wcm.calculate_witness(stage, pctx, ectx, provers);
     }
 
     fn pilout(&self) -> WitnessPilout {
-        FibonacciVadcopPilout::pilout()
+        Pilout::pilout()
     }
 }
 
 #[no_mangle]
 pub extern "Rust" fn init_library(
-    rom_path: Option<PathBuf>,
-    public_inputs_path: PathBuf,
-    proving_key_path: PathBuf,
+    _rom_path: Option<PathBuf>,
+    _public_inputs_path: PathBuf,
+    _proving_key_path: PathBuf,
 ) -> Result<Box<dyn WitnessLibrary<Goldilocks>>, Box<dyn Error>> {
     env_logger::builder()
         .format_timestamp(None)
