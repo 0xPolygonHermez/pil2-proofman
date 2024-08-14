@@ -1,7 +1,7 @@
 use log::debug;
 use std::{cell::RefCell, sync::Arc};
 
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, Prover};
+use proofman_common::{AirInstance, ExecutionCtx, ProofCtx};
 use proofman::WitnessManager;
 use witness_helpers::{WitnessComponent, WCOpCalculator};
 
@@ -52,14 +52,7 @@ impl WCOpCalculator for Module {
 }
 
 impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
-    fn calculate_witness(
-        &self,
-        stage: u32,
-        _air_instance: &AirInstance,
-        pctx: &mut ProofCtx<F>,
-        _ectx: &ExecutionCtx,
-        provers: &[Box<dyn Prover<F>>],
-    ) {
+    fn calculate_witness(&self, stage: u32, _air_instance: &AirInstance, pctx: &mut ProofCtx<F>, _ectx: &ExecutionCtx) {
         if stage != 1 {
             return;
         }
@@ -76,10 +69,10 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
 
         let inputs = &self.inputs.borrow()[interval.0..interval.1];
 
-        let offset = (provers[air_idx].get_map_offsets("cm1", false) * 8) as usize;
+        let offset = 111; // TODO !!!!!  (provers[air_idx].get_map_offsets("cm1", false) * 8) as usize;
 
         let num_rows = pctx.pilout.get_air(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0]).num_rows();
-        let mut trace = Module0Trace::from_buffer(&air_instances[air_idx].buffer, num_rows, offset).unwrap();
+        let mut trace = Module0Trace::map_buffer(&air_instances[air_idx].buffer, num_rows, offset).unwrap();
 
         for (i, input) in inputs.iter().enumerate() {
             let x = input.0;

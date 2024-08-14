@@ -1,4 +1,4 @@
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, Prover};
+use proofman_common::{AirInstance, ExecutionCtx, ProofCtx};
 
 pub trait WitnessComponent<F> {
     fn start_proof(&self, _pctx: &ProofCtx<F>, _ectx: &ExecutionCtx) {}
@@ -11,12 +11,5 @@ pub trait WitnessComponent<F> {
 
     fn suggest_plan(&self, _ectx: &mut ExecutionCtx) {}
 
-    fn calculate_witness(
-        &self,
-        stage: u32,
-        air_instance: &AirInstance,
-        pctx: &mut ProofCtx<F>,
-        ectx: &ExecutionCtx,
-        provers: &[Box<dyn Prover<F>>],
-    );
+    fn calculate_witness(&self, stage: u32, air_instance: &AirInstance, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx);
 }

@@ -5,13 +5,11 @@ use p3_field::AbstractField;
 use p3_goldilocks::Goldilocks;
 use witness_helpers::{WitnessComponent, WitnessLibrary};
 use proofman::WitnessManager;
-use proofman_common::Prover;
 
 use std::error::Error;
 use std::path::PathBuf;
 
 use crate::MODULE_SUBPROOF_ID;
-//use crate::U_8_AIR_SUBPROOF_ID;
 
 use crate::{FibonacciSquare, Pilout, Module /* , RangeCheck*/};
 
@@ -56,14 +54,8 @@ impl<F: AbstractField + Copy> WitnessLibrary<F> for FibonacciVadcop<F> {
         self.wcm.calculate_plan(ectx);
     }
 
-    fn calculate_witness(
-        &mut self,
-        stage: u32,
-        pctx: &mut ProofCtx<F>,
-        ectx: &ExecutionCtx,
-        provers: &[Box<dyn Prover<F>>],
-    ) {
-        self.wcm.calculate_witness(stage, pctx, ectx, provers);
+    fn calculate_witness(&mut self, stage: u32, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
+        self.wcm.calculate_witness(stage, pctx, ectx);
     }
 
     fn pilout(&self) -> WitnessPilout {

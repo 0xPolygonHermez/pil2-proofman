@@ -22,8 +22,9 @@ macro_rules! trace {
 
         // Define the trace structure (Main0Trace) that manages the row structure
         pub struct $trace_struct_name<'a, $generic> {
-            pub buffer: Option<Vec<F>>,
-            pub slice: &'a mut [$row_struct_name<$generic>],
+            pub buffer: Option<Vec<$generic>>,
+            pub slice_buffer: &'a mut [$generic],
+            pub slice_trace: &'a mut [$row_struct_name<$generic>],
             num_rows: usize,
         }
 
@@ -38,15 +39,19 @@ macro_rules! trace {
 
                 let buffer = vec![$generic::default(); num_rows * $row_struct_name::<$generic>::ROW_SIZE];
 
-                let slice = unsafe {
+                let slice_trace = unsafe {
                     std::slice::from_raw_parts_mut(buffer.as_ptr() as *mut $row_struct_name<$generic>, num_rows)
                 };
 
-                $trace_struct_name { buffer: Some(buffer), slice, num_rows }
+                let slice_buffer = unsafe {
+                    std::slice::from_raw_parts_mut(buffer.as_ptr() as *mut $generic, num_rows * $row_struct_name::<$generic>::ROW_SIZE)
+                };
+
+                $trace_struct_name { buffer: Some(buffer), slice_buffer, slice_trace, num_rows }
             }
 
             // Constructor to map over an external buffer
-            pub fn from_buffer(external_buffer: &'a [$generic], num_rows: usize, offset: usize) -> Result<Self, Box<dyn std::error::Error>> {
+            pub fn map_buffer(external_buffer: &'a [$generic], num_rows: usize, offset: usize) -> Result<Self, Box<dyn std::error::Error>> {
                 // PRECONDITIONS
                 // num_rows must be greater than or equal to 2
                 assert!(num_rows >= 2);
@@ -60,7 +65,12 @@ macro_rules! trace {
                     return Err("Buffer is too small to fit the trace".into());
                 }
 
-                let slice = unsafe {
+                let slice_buffer = unsafe {
+                    let ptr = external_buffer.as_ptr() as *mut $generic;
+                    std::slice::from_raw_parts_mut(ptr, external_buffer.len())
+                };
+
+                let slice_trace = unsafe {
                     std::slice::from_raw_parts_mut(
                         external_buffer[start..end].as_ptr() as *mut $row_struct_name<$generic>,
                         num_rows,
@@ -69,7 +79,38 @@ macro_rules! trace {
 
                 Ok($trace_struct_name {
                     buffer: None,
-                    slice: slice,
+                    slice_buffer,
+                    slice_trace,
+                    num_rows,
+                })
+            }
+
+            // Constructor to map over an external buffer
+            pub fn map_vec(external_buffer: Vec<$row_struct_name<$generic>>) -> Result<Self, Box<dyn std::error::Error>> {
+                let num_rows = external_buffer.len().next_power_of_two();
+
+                // PRECONDITIONS
+                // num_rows must be greater than or equal to 2
+                assert!(num_rows >= 2);
+                // num_rows must be a power of 2
+                assert!(num_rows & (num_rows - 1) == 0);
+
+                let slice_buffer = unsafe {
+                    let ptr = external_buffer.as_ptr() as *mut $generic;
+                    std::slice::from_raw_parts_mut(ptr, num_rows * $row_struct_name::<$generic>::ROW_SIZE)
+                };
+
+                let slice_trace = unsafe {
+                    let ptr = external_buffer.as_ptr() as *mut $row_struct_name<$generic>;
+                    std::slice::from_raw_parts_mut(ptr,
+                        num_rows,
+                    )
+                };
+
+                Ok($trace_struct_name {
+                    buffer: None,
+                    slice_buffer,
+                    slice_trace,
                     num_rows,
                 })
             }
@@ -84,14 +125,14 @@ macro_rules! trace {
             type Output = $row_struct_name<$generic>;
 
             fn index(&self, index: usize) -> &Self::Output {
-                &self.slice[index]
+                &self.slice_trace[index]
             }
         }
 
         // Implement IndexMut trait for mutable access
         impl<'a, $generic> std::ops::IndexMut<usize> for $trace_struct_name<'a, $generic> {
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.slice[index]
+                &mut self.slice_trace[index]
             }
         }
 

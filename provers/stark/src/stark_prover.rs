@@ -276,7 +276,9 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
     fn get_challenges(&self, stage_id: u32, proof_ctx: &mut ProofCtx<F>, transcript: &FFITranscript) {
         if stage_id == 1 {
             return;
-        } else if stage_id <= self.num_stages() + 3 {
+        }
+
+        if stage_id <= self.num_stages() + 3 {
             //num stages + 1 + evals + fri_pol (then starts fri folding...)
 
             let stark_info = self.stark_info.as_ref().unwrap();
@@ -343,8 +345,9 @@ impl<F: AbstractField> StarkProver<F> {
             transcript.add_elements(root, self.n_field_elements);
         } else {
             let hash: Vec<F> = vec![F::zero(); self.n_field_elements];
-            let n_hash = 1 << (self.stark_info.as_ref().unwrap().stark_struct.steps[n_steps - 1].n_bits)
-                * Self::FIELD_EXTENSION as u64;
+            let n_hash = 1
+                << ((self.stark_info.as_ref().unwrap().stark_struct.steps[n_steps - 1].n_bits)
+                    * Self::FIELD_EXTENSION as u64);
             calculate_hash_c(p_stark, hash.as_ptr() as *mut c_void, fri_pol, n_hash);
             transcript.add_elements(hash.as_ptr() as *mut c_void, self.n_field_elements);
         }
