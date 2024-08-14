@@ -116,7 +116,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         }
 
         // Initialize air instances
-        let mut air_instances = pctx.air_instances.lock().unwrap();
+        let mut air_instances = pctx.air_instances.write().unwrap();
         for id in ectx.owned_instances.iter() {
             air_instances.push((&ectx.instances[*id]).into());
         }
@@ -128,7 +128,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
 
         let global_info = GlobalInfo::from_file(&proving_key_path.join("pilout.globalInfo.json"));
 
-        for air_instance in pctx.air_instances.lock().unwrap().iter_mut() {
+        for air_instance in pctx.air_instances.write().unwrap().iter_mut() {
             debug!(
                 "{}: Initializing prover for air instance ({}, {})",
                 Self::MY_NAME,

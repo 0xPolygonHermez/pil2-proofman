@@ -104,7 +104,7 @@ impl<T: AbstractField> StarkProver<T> {
 impl<F: AbstractField> Prover<F> for StarkProver<F> {
     fn build(&mut self, proof_ctx: &mut ProofCtx<F>, air_idx: usize) {
         timer_start!(ESTARK_PROVER_BUILD);
-        let air_instance_ctx = &mut proof_ctx.air_instances.lock().unwrap()[air_idx];
+        let air_instance_ctx = &mut proof_ctx.air_instances.write().unwrap()[air_idx];
         let stark_info_json = std::fs::read_to_string(&self.config.stark_info_filename)
             .unwrap_or_else(|_| panic!("Failed to read file {}", &self.config.stark_info_filename));
 
@@ -343,8 +343,8 @@ impl<F: AbstractField> StarkProver<F> {
             transcript.add_elements(root, self.n_field_elements);
         } else {
             let hash: Vec<F> = vec![F::zero(); self.n_field_elements];
-            let n_hash = ((1 << (self.stark_info.as_ref().unwrap().stark_struct.steps[n_steps - 1].n_bits))
-                * Self::FIELD_EXTENSION as u64);
+            let n_hash = 1 << (self.stark_info.as_ref().unwrap().stark_struct.steps[n_steps - 1].n_bits)
+                * Self::FIELD_EXTENSION as u64;
             calculate_hash_c(p_stark, hash.as_ptr() as *mut c_void, fri_pol, n_hash);
             transcript.add_elements(hash.as_ptr() as *mut c_void, self.n_field_elements);
         }

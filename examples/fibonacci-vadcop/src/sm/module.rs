@@ -70,7 +70,7 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
         let module = pi.module;
 
         let air_idx = pctx.find_air_instances(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0])[0];
-        let air_instances = pctx.air_instances.lock().unwrap();
+        let air_instances = pctx.air_instances.read().unwrap();
 
         let interval = _ectx.instances[air_idx].inputs_interval.unwrap();
 

@@ -49,7 +49,7 @@ impl FibonacciSquare {
         let (module, mut a, mut b, _out) = pi.inner();
         let num_rows = pctx.pilout.get_air(air_group_id, air_id).num_rows();
 
-        let air_instances = pctx.air_instances.lock().unwrap();
+        let air_instances = pctx.air_instances.read().unwrap();
         let mut trace = if ectx.discovering {
             None
         } else {

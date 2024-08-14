@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::RwLock;
 
 use log::info;
 
@@ -9,7 +9,7 @@ pub struct ProofCtx<F> {
     pub public_inputs: Vec<u8>,
     pub pilout: WitnessPilout,
     pub challenges: Option<Vec<F>>,
-    pub air_instances: Mutex<Vec<AirInstanceCtx<F>>>,
+    pub air_instances: RwLock<Vec<AirInstanceCtx<F>>>,
 }
 
 impl<F> ProofCtx<F> {
@@ -40,11 +40,11 @@ impl<F> ProofCtx<F> {
         // challenges.push(vec![F::default(); 1]);
         // challenges.push(vec![F::default(); 2]);
 
-        Self { public_inputs: Vec::new(), pilout, challenges: None, air_instances: Mutex::new(Vec::new()) }
+        Self { public_inputs: Vec::new(), pilout, challenges: None, air_instances: RwLock::new(Vec::new()) }
     }
 
     pub fn find_air_instances(&self, air_group_id: usize, air_id: usize) -> Vec<usize> {
-        let air_instances = self.air_instances.lock().unwrap();
+        let air_instances = self.air_instances.read().unwrap();
 
         let mut indices = Vec::new();
         for (index, air_instance) in air_instances.iter().enumerate() {
