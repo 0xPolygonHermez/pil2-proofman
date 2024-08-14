@@ -47,7 +47,7 @@ impl<F> WitnessComponent<F> for RangeCheck {
 
         let interval = air_instance.inputs_interval.unwrap();
         let inputs = &self.inputs.borrow()[interval.0..interval.1];
-        let offset = (provers[*air_idx].get_map_offsets("cm1", false) * 8) as usize;
+        let offset = (provers[*air_idx].get_map_offsets("cm1", false)) as usize;
         let num_rows = pctx.pilout.get_air(U_8_AIR_SUBPROOF_ID[0], U_8_AIR_AIR_IDS[0]).num_rows();
         let mut trace = unsafe { Box::new(U8AirTrace::from_buffer(&air_instance_ctx.buffer, num_rows, offset)) };
 

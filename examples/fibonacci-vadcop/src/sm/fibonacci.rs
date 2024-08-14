@@ -8,7 +8,7 @@ use witness_helpers::{WitnessComponent, WCOpCalculator};
 use p3_field::AbstractField;
 
 use crate::{
-    FibonacciSquare0Trace, FibonacciVadcopPublicInputs, Module, FIBONACCI_SQUARE_SUBPROOF_ID, FIBONACCI_SQUARE_AIR_IDS,
+    FibonacciSquareTrace, FibonacciVadcopPublicInputs, Module, FIBONACCI_SQUARE_SUBPROOF_ID, FIBONACCI_SQUARE_AIR_IDS,
 };
 
 pub struct FibonacciSquare {
@@ -53,10 +53,10 @@ impl FibonacciSquare {
         let mut trace = if ectx.discovering {
             None
         } else {
-            let air_idx = pctx.find_air_instances(air_group_id, air_id)[0];
+           let air_idx = pctx.find_air_instances(air_group_id, air_id)[0];
 
-            let offset = (provers[air_idx].get_map_offsets("cm1", false) * 8) as usize;
-            let mut trace = FibonacciSquare0Trace::from_buffer(&air_instances[air_idx].buffer, num_rows, offset)?;
+            let offset = (provers[air_idx].get_map_offsets("cm1", false)) as usize;
+            let mut trace = FibonacciSquareTrace::from_buffer(&air_instances[air_idx].buffer, num_rows, offset)?;
 
             trace[0].a = F::from_canonical_u64(a);
             trace[0].b = F::from_canonical_u64(b);

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use crate::MODULE_SUBPROOF_ID;
 //use crate::U_8_AIR_SUBPROOF_ID;
 
-use crate::{FibonacciSquare, Pilout, Module /* , RangeCheck*/};
+use crate::{FibonacciSquare, FibonacciVadcopPilout, Module /* , RangeCheck*/};
 
 pub struct FibonacciVadcop<F> {
     pub wcm: WitnessManager<F>,
@@ -67,7 +67,7 @@ impl<F: AbstractField + Copy> WitnessLibrary<F> for FibonacciVadcop<F> {
     }
 
     fn pilout(&self) -> WitnessPilout {
-        Pilout::pilout()
+        FibonacciVadcopPilout::pilout()
     }
 }
 

@@ -6,7 +6,7 @@ use proofman::WitnessManager;
 use witness_helpers::{WitnessComponent, WCOpCalculator};
 
 use p3_field::AbstractField;
-use crate::{FibonacciVadcopPublicInputs, Module0Trace, MODULE_SUBPROOF_ID, MODULE_AIR_IDS};
+use crate::{FibonacciVadcopPublicInputs, ModuleTrace, MODULE_SUBPROOF_ID, MODULE_AIR_IDS};
 
 //use super::RangeCheck;
 
@@ -76,10 +76,10 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
 
         let inputs = &self.inputs.borrow()[interval.0..interval.1];
 
-        let offset = (provers[air_idx].get_map_offsets("cm1", false) * 8) as usize;
+        let offset = (provers[air_idx].get_map_offsets("cm1", false)) as usize;
 
         let num_rows = pctx.pilout.get_air(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0]).num_rows();
-        let mut trace = Module0Trace::from_buffer(&air_instances[air_idx].buffer, num_rows, offset).unwrap();
+        let mut trace: ModuleTrace<F> = ModuleTrace::from_buffer(&air_instances[air_idx].buffer, num_rows, offset).unwrap();
 
         for (i, input) in inputs.iter().enumerate() {
             let x = input.0;
