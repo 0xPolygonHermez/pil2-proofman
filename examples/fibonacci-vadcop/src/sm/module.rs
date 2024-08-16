@@ -68,7 +68,7 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
         let inputs = &self.inputs.borrow()[interval.0..interval.1];
 
         let buffer_allocator = ectx.buffer_allocator.as_ref();
-        let buffer_info = buffer_allocator.get_buffer_info("FibonacciSquare".to_owned(), MODULE_AIR_IDS[0]).unwrap();
+        let buffer_info = buffer_allocator.get_buffer_info("Module".to_owned(), MODULE_AIR_IDS[0]).unwrap();
         let buffer_size = buffer_info.0;
         let offset = buffer_info.1[0];
 
