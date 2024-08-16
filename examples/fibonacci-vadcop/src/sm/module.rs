@@ -72,10 +72,10 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
         let buffer_size = buffer_info.0;
         let offset = buffer_info.1[0];
 
-        let buffer = Some(vec![F::default(); buffer_size as usize / mem::size_of::<F>()]);
+        let mut buffer = Some(vec![F::default(); buffer_size as usize / mem::size_of::<F>()]);
 
         let num_rows = pctx.pilout.get_air(MODULE_SUBPROOF_ID[0], MODULE_AIR_IDS[0]).num_rows();
-        let mut trace = Module0Trace::map_buffer(buffer.as_ref().unwrap(), num_rows, offset as usize).unwrap();
+        let mut trace = Module0Trace::map_buffer(buffer.as_mut().unwrap(), num_rows, offset as usize).unwrap();
 
         for (i, input) in inputs.iter().enumerate() {
             let x = input.0;

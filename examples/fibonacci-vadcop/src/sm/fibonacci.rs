@@ -25,8 +25,9 @@ impl FibonacciSquare {
         fibonacci
     }
     pub fn execute<F: AbstractField + Copy>(&self, pctx: &mut ProofCtx<F>, ectx: &mut ExecutionCtx) {
-        Self::calculate_fibonacci(self, FIBONACCI_SQUARE_SUBPROOF_ID[0], FIBONACCI_SQUARE_AIR_IDS[0], pctx, ectx)
-            .unwrap();
+        if let Err(e) = Self::calculate_fibonacci(self, FIBONACCI_SQUARE_SUBPROOF_ID[0], FIBONACCI_SQUARE_AIR_IDS[0], pctx, ectx) {
+            panic!("Failed to calculate fibonacci: {:?}", e);
+        }
     }
 
     fn calculate_fibonacci<F: AbstractField + Copy>(
@@ -36,39 +37,30 @@ impl FibonacciSquare {
         pctx: &mut ProofCtx<F>,
         ectx: &ExecutionCtx,
     ) -> Result<u64, Box<dyn std::error::Error>> {
-        let pi: FibonacciVadcopPublicInputs = pctx.public_inputs.as_slice().into();
-        let (module, mut a, mut b, _out) = pi.inner();
+        let public_inputs: FibonacciVadcopPublicInputs = pctx.public_inputs.as_slice().into();
+
+        let (module, mut a, mut b, _out) = public_inputs.inner();
+
         let num_rows = pctx.pilout.get_air(air_group_id, air_id).num_rows();
 
-        let mut buffer = None;
+        let buffer_allocator = ectx.buffer_allocator.as_ref();
+        let buffer_info = buffer_allocator.get_buffer_info("FibonacciSquare".into(), FIBONACCI_SQUARE_AIR_IDS[0])?;
+        let buffer_size = buffer_info.0;
+        let offset = buffer_info.1[0];
 
-        let mut trace = if ectx.discovering {
-            None
-        } else {
-            // let air_instances = pctx.air_instances.write().unwrap();
-            // let air_idx = air_instances.iter().position(|air| air.air_id == air_id).unwrap();
+        let mut buffer = vec![F::default(); buffer_size as usize / mem::size_of::<F>()];
 
-            let buffer_allocator = ectx.buffer_allocator.as_ref();
-            let buffer_info =
-                buffer_allocator.get_buffer_info("FibonacciSquare".to_owned(), FIBONACCI_SQUARE_AIR_IDS[0])?;
-            let buffer_size = buffer_info.0;
-            let offset = buffer_info.1[0];
+        let mut trace = FibonacciSquare0Trace::map_buffer(&mut buffer, num_rows, offset as usize)?;
 
-            buffer = Some(vec![F::default(); buffer_size as usize / mem::size_of::<F>()]);
-
-            let mut trace = FibonacciSquare0Trace::map_buffer(buffer.as_ref().unwrap(), num_rows, offset as usize)?;
-
-            trace[0].a = F::from_canonical_u64(a);
-            trace[0].b = F::from_canonical_u64(b);
-            Some(trace)
-        };
+        trace[0].a = F::from_canonical_u64(a);
+        trace[0].b = F::from_canonical_u64(b);
 
         for i in 1..num_rows {
             let tmp = b;
             let result = self.module.calculate_verify(ectx.discovering, vec![a.pow(2) + b.pow(2), module])?;
             (a, b) = (tmp, result[0]);
 
-            if let Some(trace) = &mut trace {
+            if !ectx.discovering {
                 trace[i].b = F::from_canonical_u64(b);
                 trace[i].a = F::from_canonical_u64(a);
             }
@@ -77,7 +69,7 @@ impl FibonacciSquare {
 
         let air_idx = pctx.find_air_instances(air_group_id, air_id)[0];
         let mut air_instances = pctx.air_instances.write().unwrap();
-        air_instances[air_idx].buffer = buffer;
+        air_instances[air_idx].buffer = Some(buffer);
 
         Ok(b)
     }

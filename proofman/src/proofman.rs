@@ -70,6 +70,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         let mut ectx = ExecutionCtx::builder().is_discovery_execution().with_buffer_allocator(buffer_allocator).build();
 
         Self::initialize_witness(&mut witness_lib, &mut pctx, &mut ectx);
+
         Self::initialize_provers(&proving_key_path, &mut provers, &mut pctx);
 
         if provers.is_empty() {
@@ -142,10 +143,6 @@ impl<F: AbstractField + 'static> ProofMan<F> {
                 air_instance.air_group_id,
                 air_instance.air_id,
             ));
-
-            // let buffer_size = prover.get_total_bytes();
-            // trace!("{}: ··· Preallocating a buffer of {} bytes", Self::MY_NAME, buffer_size);
-            // air_instance.buffer = vec![F::default(); buffer_size]; // TODO: MODIFY
 
             provers.push(prover);
         }
