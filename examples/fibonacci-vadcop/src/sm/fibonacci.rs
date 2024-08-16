@@ -43,34 +43,42 @@ impl FibonacciSquare {
 
         let num_rows = pctx.pilout.get_air(air_group_id, air_id).num_rows();
 
-        let buffer_allocator = ectx.buffer_allocator.as_ref();
-        let buffer_info = buffer_allocator.get_buffer_info("FibonacciSquare".into(), FIBONACCI_SQUARE_AIR_IDS[0])?;
-        let buffer_size = buffer_info.0;
-        let offset = buffer_info.1[0];
+        let mut buffer: Vec<F> = Vec::new();
+        let mut trace = if ectx.discovering {
+            None
+        } else {
+            let buffer_allocator = ectx.buffer_allocator.as_ref();
+            let buffer_info = buffer_allocator.get_buffer_info("FibonacciSquare".into(), FIBONACCI_SQUARE_AIR_IDS[0])?;
+            let buffer_size = buffer_info.0;
+            let offset = buffer_info.1[0];
 
-        let mut buffer = vec![F::default(); buffer_size as usize / mem::size_of::<F>()];
+            buffer = vec![F::default(); buffer_size as usize];
 
-        let mut trace = FibonacciSquare0Trace::map_buffer(&mut buffer, num_rows, offset as usize)?;
+            let mut trace = FibonacciSquare0Trace::map_buffer(&mut buffer, num_rows, offset as usize)?;
 
-        trace[0].a = F::from_canonical_u64(a);
-        trace[0].b = F::from_canonical_u64(b);
+            trace[0].a = F::from_canonical_u64(a);
+            trace[0].b = F::from_canonical_u64(b);
+            Some(trace)
+        };
 
         for i in 1..num_rows {
             let tmp = b;
             let result = self.module.calculate_verify(ectx.discovering, vec![a.pow(2) + b.pow(2), module])?;
             (a, b) = (tmp, result[0]);
 
-            if !ectx.discovering {
+            if let Some(trace) = &mut trace {
                 trace[i].b = F::from_canonical_u64(b);
                 trace[i].a = F::from_canonical_u64(a);
             }
         }
         pctx.public_inputs[24..32].copy_from_slice(&b.to_le_bytes());
+        
 
-        let air_idx = pctx.find_air_instances(air_group_id, air_id)[0];
-        let mut air_instances = pctx.air_instances.write().unwrap();
-        air_instances[air_idx].buffer = Some(buffer);
-
+        if !ectx.discovering {
+            let air_idx = pctx.find_air_instances(air_group_id, air_id)[0];
+            let mut air_instances = pctx.air_instances.write().unwrap();
+            air_instances[air_idx].buffer = Some(buffer);
+        }
         Ok(b)
     }
 }
