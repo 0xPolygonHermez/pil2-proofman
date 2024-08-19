@@ -9,7 +9,7 @@ use std::{
 
 use transcript::FFITranscript;
 
-use witness_helpers::{WitnessLibrary, WitnessLibInitFn};
+use crate::{WitnessLibrary, WitnessLibInitFn};
 
 use proofman_common::{Prover, ExecutionCtx, ProofCtx};
 
@@ -109,15 +109,18 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         ectx: &mut ExecutionCtx,
     ) {
         witness_lib.start_proof(pctx, ectx);
+
         witness_lib.execute(pctx, ectx);
+
         witness_lib.calculate_plan(ectx);
 
         trace!("{}: Plan: ", Self::MY_NAME);
 
         for air_instance in ectx.instances.iter() {
             let air = pctx.pilout.get_air(air_instance.air_group_id, air_instance.air_id);
+
             let name = if air.name().is_some() { air.name().unwrap() } else { "Unnamed" };
-            trace!("{}:     + Air[{}][{}] {}", Self::MY_NAME, air_instance.air_group_id, air_instance.air_id, name);
+            trace!("{}:     + Air[{}][{}] {}", Self::MY_NAME, air.air_group_id, air.air_id, name);
         }
 
         // Initialize air instances
@@ -125,7 +128,10 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         for id in ectx.owned_instances.iter() {
             air_instances.push((&ectx.instances[*id]).into());
         }
-        ectx.discovering = false;
+
+        println!("Air instances: {:?}", air_instances.len());
+
+        panic!("Stop here");
     }
 
     fn initialize_provers(proving_key_path: &Path, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: &mut ProofCtx<F>) {

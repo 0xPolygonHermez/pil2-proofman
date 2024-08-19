@@ -9,8 +9,6 @@
         "./proofman/Cargo.toml",
         "./transcript/Cargo.toml",
         "./util/Cargo.toml",
-        "./witness-helpers/Cargo.toml",
-
-        // "./examples/fibonacci-vadcop/Cargo.toml",
+        "./examples/fibonacci-vadcop/Cargo.toml",
     ]
 }

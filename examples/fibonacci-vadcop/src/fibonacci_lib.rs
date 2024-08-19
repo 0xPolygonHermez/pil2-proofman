@@ -3,35 +3,27 @@ use std::sync::Arc;
 use proofman_common::{ExecutionCtx, ProofCtx, WitnessPilout};
 use p3_field::AbstractField;
 use p3_goldilocks::Goldilocks;
-use witness_helpers::{WitnessComponent, WitnessLibrary};
-use proofman::WitnessManager;
+use proofman::{WitnessLibrary, WitnessManager};
 
 use std::error::Error;
 use std::path::PathBuf;
 
-use crate::MODULE_SUBPROOF_ID;
-
-use crate::{FibonacciSquare, Pilout, Module /* , RangeCheck*/};
+use crate::{FibonacciSquare, Pilout, Module};
 
 pub struct FibonacciVadcop<F> {
     pub wcm: WitnessManager<F>,
     pub fibonacci: Arc<FibonacciSquare>,
     pub module: Arc<Module>,
-    //pub range_check: Arc<RangeCheck>,
 }
 
 impl<F: AbstractField + Copy> FibonacciVadcop<F> {
     pub fn new() -> Self {
         let mut wcm = WitnessManager::new();
 
-        /*let range_check = RangeCheck::new_no_register(&mut wcm);*/
-        let module = Module::new_no_register(&mut wcm /* , &range_check*/);
-        let fibonacci = FibonacciSquare::new(&mut wcm, &module);
-        // Register the module component after the fibonacci component
-        wcm.register_component(Arc::clone(&module) as Arc<dyn WitnessComponent<F>>, Some(MODULE_SUBPROOF_ID));
-        //wcm.register_component(Arc::clone(&range_check) as Arc<dyn WitnessComponent<F>>, Some(U_8_AIR_SUBPROOF_ID));
+        let module = Module::new(&mut wcm);
+        let fibonacci = FibonacciSquare::new(&mut wcm, module.clone());
 
-        FibonacciVadcop { wcm, fibonacci, module /* , range_check*/ }
+        FibonacciVadcop { wcm, fibonacci, module }
     }
 }
 

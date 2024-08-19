@@ -7,8 +7,6 @@ pub struct ExecutionCtx {
     /// If true, the plugin must generate the public outputs
     pub public_output: bool,
 
-    pub discovering: bool,
-
     pub instances: Vec<AirInstance>,
     pub owned_instances: Vec<usize>,
     pub buffer_allocator: Arc<dyn BufferAllocator>,
@@ -54,7 +52,6 @@ impl ExecutionCtxBuilder {
 
         ExecutionCtx {
             public_output: self.public_output,
-            discovering: self.discovering,
             instances: vec![],
             owned_instances: vec![],
             buffer_allocator: self.buffer_allocator.unwrap(),

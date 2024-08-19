@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use log::info;
 
 use proofman_common::{ExecutionCtx, ProofCtx};
-use witness_helpers::WitnessComponent;
+use crate::WitnessComponent;
 
 use crate::{DefaultPlanner, Planner};
 
@@ -61,18 +61,6 @@ impl<F> WitnessManager<F> {
     pub fn end_proof(&mut self) {
         for component in self.components.iter() {
             component.end_proof();
-        }
-    }
-
-    pub fn start_execute(&self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
-        for component in self.components.iter() {
-            component.start_execute(pctx, ectx);
-        }
-    }
-
-    pub fn end_execute(&self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
-        for component in self.components.iter() {
-            component.end_execute(pctx, ectx);
         }
     }
 

@@ -90,9 +90,9 @@ impl AirGroup {
 
 #[derive(Debug)]
 pub struct BasicAir {
-    air_group_id: usize,
-    air_id: usize,
-    name: Option<String>,
+    pub air_group_id: usize,
+    pub air_id: usize,
+    pub name: Option<String>,
     /// log2(n), where n is the number of rows
     num_rows: usize,
 }
