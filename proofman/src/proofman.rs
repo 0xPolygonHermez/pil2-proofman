@@ -70,7 +70,6 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         let mut ectx = ExecutionCtx::builder().with_buffer_allocator(buffer_allocator).build();
 
         Self::initialize_witness(&mut witness_lib, &mut pctx, &mut ectx);
-
         witness_lib.calculate_witness(1, &mut pctx, &ectx);
 
         Self::initialize_provers(&proving_key_path, &mut provers, &mut pctx);
@@ -120,14 +119,6 @@ impl<F: AbstractField + 'static> ProofMan<F> {
             let name = if air.name().is_some() { air.name().unwrap() } else { "Unnamed" };
             trace!("{}:     + Air[{}][{}] {}", Self::MY_NAME, air.air_group_id, air.air_id, name);
         }
-
-        // Initialize air instances
-        // let mut air_instances = pctx.air_instances.write().unwrap();
-        // for id in ectx.owned_instances.iter() {
-        //     air_instances.push((&ectx.instances[*id]).into());
-        // }
-
-        // println!("Air instances: {:?}", air_instances.len());
     }
 
     fn initialize_provers(proving_key_path: &Path, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: &mut ProofCtx<F>) {

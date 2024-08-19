@@ -65,8 +65,8 @@ impl FibonacciSquare {
         pctx.public_inputs[24..32].copy_from_slice(&b.to_le_bytes());
 
         let mut result = F::zero();
-        for i in 0..buffer.len() {
-            result = result + buffer[i] * F::from_canonical_u64(i as u64);
+        for (i, _) in buffer.iter().enumerate() {
+            result += buffer[i] * F::from_canonical_u64(i as u64);
         }
         println!("Result Fibonacci buffer: {:?}", result);
 
@@ -82,13 +82,7 @@ impl FibonacciSquare {
 }
 
 impl<F: AbstractField + Copy> WitnessComponent<F> for FibonacciSquare {
-    fn calculate_witness(
-        &self,
-        _stage: u32,
-        _air_instance_id: usize,
-        _pctx: &mut ProofCtx<F>,
-        _ectx: &ExecutionCtx,
-    ) {
+    fn calculate_witness(&self, _stage: u32, _air_instance_id: usize, _pctx: &mut ProofCtx<F>, _ectx: &ExecutionCtx) {
         // Nothing to calculate, the witness is already stored in the buffer
         return;
     }

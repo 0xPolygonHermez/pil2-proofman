@@ -45,7 +45,7 @@ impl<F> WitnessManager<F> {
         self.airs.insert(air_id, air);
     }
 
-    pub fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &mut ExecutionCtx) {
+    pub fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
         for component in self.components.iter() {
             component.start_proof(pctx, ectx);
         }

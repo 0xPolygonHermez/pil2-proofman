@@ -28,7 +28,7 @@ impl<F: AbstractField + Copy> FibonacciVadcop<F> {
 }
 
 impl<F: AbstractField + Copy> WitnessLibrary<F> for FibonacciVadcop<F> {
-    fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &mut ExecutionCtx) {
+    fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
         pctx.public_inputs =
             vec![25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0]; // TODO: NOT SHOULD BE HARDCODED!
         self.wcm.start_proof(pctx, ectx);
