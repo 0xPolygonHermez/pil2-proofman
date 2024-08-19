@@ -124,14 +124,12 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         }
 
         // Initialize air instances
-        let mut air_instances = pctx.air_instances.write().unwrap();
-        for id in ectx.owned_instances.iter() {
-            air_instances.push((&ectx.instances[*id]).into());
-        }
+        // let mut air_instances = pctx.air_instances.write().unwrap();
+        // for id in ectx.owned_instances.iter() {
+        //     air_instances.push((&ectx.instances[*id]).into());
+        // }
 
-        println!("Air instances: {:?}", air_instances.len());
-
-        panic!("Stop here");
+        // println!("Air instances: {:?}", air_instances.len());
     }
 
     fn initialize_provers(proving_key_path: &Path, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: &mut ProofCtx<F>) {
