@@ -1,7 +1,7 @@
 use log::debug;
 use std::{cell::RefCell, sync::Arc};
 
-use proofman_common::{AirInstance, AirInstanceCtx, ExecutionCtx, ProofCtx};
+use proofman_common::{AirInstanceCtx, ExecutionCtx, ProofCtx};
 use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::AbstractField;
@@ -67,20 +67,5 @@ impl Module {
 }
 
 impl<F: AbstractField + Copy> WitnessComponent<F> for Module {
-    fn calculate_witness(
-        &self,
-        _stage: u32,
-        _air_instance: &AirInstance,
-        _pctx: &mut ProofCtx<F>,
-        _ectx: &ExecutionCtx,
-    ) {
-    }
-
-    fn suggest_plan(&self, ectx: &mut ExecutionCtx) {
-        ectx.instances.push(AirInstance::new(
-            MODULE_SUBPROOF_ID[0],
-            MODULE_AIR_IDS[0],
-            Some((0, self.inputs.borrow().len())),
-        ));
-    }
+    fn calculate_witness(&self, _stage: u32, _air_instance_id: usize, _pctx: &mut ProofCtx<F>, _ectx: &ExecutionCtx) {}
 }

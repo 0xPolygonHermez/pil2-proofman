@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_common::{AirInstance, AirInstanceCtx, ExecutionCtx, ProofCtx};
+use proofman_common::{AirInstanceCtx, ExecutionCtx, ProofCtx};
 use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::AbstractField;
@@ -85,15 +85,11 @@ impl<F: AbstractField + Copy> WitnessComponent<F> for FibonacciSquare {
     fn calculate_witness(
         &self,
         _stage: u32,
-        _air_instance: &AirInstance,
+        _air_instance_id: usize,
         _pctx: &mut ProofCtx<F>,
         _ectx: &ExecutionCtx,
     ) {
         // Nothing to calculate, the witness is already stored in the buffer
         return;
-    }
-
-    fn suggest_plan(&self, ectx: &mut ExecutionCtx) {
-        ectx.instances.push(AirInstance::new(FIBONACCI_SQUARE_SUBPROOF_ID[0], FIBONACCI_SQUARE_AIR_IDS[0], None));
     }
 }

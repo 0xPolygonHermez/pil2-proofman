@@ -67,7 +67,7 @@ impl<F: AbstractField + 'static> ProofMan<F> {
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
 
         let buffer_allocator = Arc::new(StarkBufferAllocator::new(proving_key_path.clone()));
-        let mut ectx = ExecutionCtx::builder().is_discovery_execution().with_buffer_allocator(buffer_allocator).build();
+        let mut ectx = ExecutionCtx::builder().with_buffer_allocator(buffer_allocator).build();
 
         Self::initialize_witness(&mut witness_lib, &mut pctx, &mut ectx);
 
@@ -112,11 +112,9 @@ impl<F: AbstractField + 'static> ProofMan<F> {
 
         witness_lib.execute(pctx, ectx);
 
-        witness_lib.calculate_plan(ectx);
+        trace!("{}: Air instances: ", Self::MY_NAME);
 
-        trace!("{}: Plan: ", Self::MY_NAME);
-
-        for air_instance in ectx.instances.iter() {
+        for air_instance in pctx.air_instances.read().unwrap().iter() {
             let air = pctx.pilout.get_air(air_instance.air_group_id, air_instance.air_id);
 
             let name = if air.name().is_some() { air.name().unwrap() } else { "Unnamed" };

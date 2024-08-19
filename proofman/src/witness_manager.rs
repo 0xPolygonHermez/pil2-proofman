@@ -5,12 +5,9 @@ use log::info;
 use proofman_common::{ExecutionCtx, ProofCtx};
 use crate::WitnessComponent;
 
-use crate::{DefaultPlanner, Planner};
-
 pub struct WitnessManager<F> {
     components: Vec<Arc<dyn WitnessComponent<F>>>,
     airs: HashMap<usize, Arc<dyn WitnessComponent<F>>>,
-    planner: Box<dyn Planner<F>>,
 }
 
 impl<F> Default for WitnessManager<F> {
@@ -23,7 +20,7 @@ impl<F> WitnessManager<F> {
     const MY_NAME: &'static str = "WCMnager";
 
     pub fn new() -> Self {
-        WitnessManager { components: Vec::new(), airs: HashMap::new(), planner: Box::new(DefaultPlanner) }
+        WitnessManager { components: Vec::new(), airs: HashMap::new() }
     }
 
     pub fn register_component(&mut self, component: Arc<dyn WitnessComponent<F>>, air_ids: Option<&[usize]>) {
@@ -48,10 +45,6 @@ impl<F> WitnessManager<F> {
         self.airs.insert(air_id, air);
     }
 
-    pub fn set_planner(&mut self, planner: Box<dyn Planner<F>>) {
-        self.planner = planner;
-    }
-
     pub fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &mut ExecutionCtx) {
         for component in self.components.iter() {
             component.start_proof(pctx, ectx);
@@ -64,16 +57,28 @@ impl<F> WitnessManager<F> {
         }
     }
 
-    pub fn calculate_plan(&self, ectx: &mut ExecutionCtx) {
-        self.planner.calculate_plan(&self.components, ectx);
-    }
-
     pub fn calculate_witness(&self, stage: u32, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
         info!("{}: Calculating witness (stage {})", Self::MY_NAME, stage);
-        //NOTE: Here we are assuming that each air instance has a differnt air group id, which will not be the case! we should use the paris of air_group_id and air_id
-        for air_instance_ctx in ectx.instances.iter() {
-            let component = self.airs.get(&air_instance_ctx.air_group_id).unwrap();
-            component.calculate_witness(stage, air_instance_ctx, pctx, ectx);
+
+        let air_instances = pctx.air_instances.read().unwrap();
+
+        // Initialize an empty HashMap to store components
+        let mut components = HashMap::new();
+
+        // Iterate over air_instances with enumeration for indexing
+        for (air_instance_id, air_instance_ctx) in air_instances.iter().enumerate() {
+            let component = self.airs.get(&air_instance_ctx.air_id).unwrap();
+
+            // Use the `entry` API to efficiently insert or push to the Vec
+            components.entry(air_instance_ctx.air_id).or_insert_with(Vec::new).push((component, air_instance_id));
+        }
+
+        drop(air_instances);
+
+        for component_group in components.values() {
+            for (component, id) in component_group.iter() {
+                component.calculate_witness(stage, *id, pctx, ectx);
+            }
         }
     }
 }

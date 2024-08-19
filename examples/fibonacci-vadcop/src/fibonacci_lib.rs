@@ -42,10 +42,6 @@ impl<F: AbstractField + Copy> WitnessLibrary<F> for FibonacciVadcop<F> {
         self.fibonacci.execute(pctx, ectx);
     }
 
-    fn calculate_plan(&mut self, ectx: &mut ExecutionCtx) {
-        self.wcm.calculate_plan(ectx);
-    }
-
     fn calculate_witness(&mut self, stage: u32, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
         self.wcm.calculate_witness(stage, pctx, ectx);
     }
