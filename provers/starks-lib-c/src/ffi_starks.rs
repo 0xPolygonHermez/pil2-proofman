@@ -37,66 +37,6 @@ pub fn save_proof_c<T>(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn zkevm_steps_new_c() -> *mut std::os::raw::c_void {
-    unsafe { zkevm_steps_new() }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn zkevm_steps_free_c(p_zkevm_steps: *mut c_void) {
-    unsafe {
-        zkevm_steps_free(p_zkevm_steps);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn c12a_steps_new_c() -> *mut std::os::raw::c_void {
-    unsafe { c12a_steps_new() }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn c12a_steps_free_c(p_c12a_steps: *mut c_void) {
-    unsafe {
-        c12a_steps_free(p_c12a_steps);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn recursive1_steps_new_c() -> *mut std::os::raw::c_void {
-    unsafe { recursive1_steps_new() }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn recursive1_steps_free_c(p_recursive1_steps: *mut c_void) {
-    unsafe {
-        recursive1_steps_free(p_recursive1_steps);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn _recursive2_steps_new_c() -> *mut std::os::raw::c_void {
-    unsafe { recursive2_steps_new() }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn _recursive2_steps_free_c(p_recursive2_steps: *mut c_void) {
-    unsafe {
-        recursive2_steps_free(p_recursive2_steps);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn generic_steps_new_c() -> *mut ::std::os::raw::c_void {
-    unsafe { generic_steps_new() }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn generic_steps_free_c(p_generic_steps: *mut ::std::os::raw::c_void) {
-    unsafe {
-        generic_steps_free(p_generic_steps);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn fri_proof_new_c(p_stark: *mut c_void) -> *mut c_void {
     unsafe { fri_proof_new(p_stark) }
 }
@@ -230,13 +170,14 @@ pub fn init_hints_c() {
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn steps_params_new_c(
-    p_stark: *mut c_void,
+    p_pols: *mut c_void,
+    p_const_pols: *mut c_void,
     p_challenges: *mut c_void,
     p_subproof_values: *mut c_void,
     p_evals: *mut c_void,
     p_public_inputs: *mut c_void,
 ) -> *mut c_void {
-    unsafe { steps_params_new(p_stark, p_challenges, p_subproof_values, p_evals, p_public_inputs) }
+    unsafe { steps_params_new(p_pols, p_const_pols, p_challenges, p_subproof_values, p_evals, p_public_inputs) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -271,36 +212,6 @@ pub fn compute_stage_expressions_c(
 ) {
     unsafe {
         compute_stage_expressions(p_starks, element_type, step, p_params, p_proof, p_chelpers_steps);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_polynomial_c(
-    p_starks: *mut ::std::os::raw::c_void,
-    dest: *mut ::std::os::raw::c_void,
-    p_address: *mut ::std::os::raw::c_void,
-    committed: bool,
-    idPol: u64,
-    deg: u64,
-) {
-    unsafe {
-        get_polynomial(p_starks, dest, p_address, committed, idPol, deg);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn calculate_expression_c(
-    p_starks: *mut ::std::os::raw::c_void,
-    polinomial: *mut ::std::os::raw::c_void,
-    id: u64,
-    p_params: *mut ::std::os::raw::c_void,
-    p_chelpers_steps: *mut ::std::os::raw::c_void,
-    domain_extended: bool,
-    im_pol: bool,
-    inverse: bool,
-) {
-    unsafe {
-        calculate_expression(p_starks, polinomial, id, p_params, p_chelpers_steps, domain_extended, im_pol, inverse);
     }
 }
 
@@ -392,13 +303,6 @@ pub fn get_proof_root_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_vector_pointer_c(p_stark: *mut c_void, name: &str) -> *mut c_void {
-    let name = CString::new(name).unwrap();
-
-    unsafe { get_vector_pointer(p_stark, name.as_ptr() as *mut std::os::raw::c_char) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn resize_vector_c(p_vector: *mut c_void, new_size: u64, value: bool) {
     unsafe {
         resize_vector(p_vector, new_size, value);
@@ -409,27 +313,6 @@ pub fn resize_vector_c(p_vector: *mut c_void, new_size: u64, value: bool) {
 pub fn set_bool_vector_value_c(p_vector: *mut c_void, index: u64, value: bool) {
     unsafe {
         set_bool_vector_value(p_vector, index, value);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn clean_symbols_calculated_c(pStarks: *mut ::std::os::raw::c_void) {
-    unsafe {
-        clean_symbols_calculated(pStarks);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn set_commit_calculated_c(pStarks: *mut ::std::os::raw::c_void, id: u64) {
-    unsafe {
-        set_commit_calculated(pStarks, id);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn set_subproofvalue_calculated_c(pStarks: *mut ::std::os::raw::c_void, id: u64) {
-    unsafe {
-        set_subproofvalue_calculated(pStarks, id);
     }
 }
 
@@ -591,6 +474,53 @@ pub fn goldilocks_linear_hash_c(pInput: *mut c_void, pOutput: *mut c_void) {
     }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn chelpers_steps_new_c(p_stark_info: *mut c_void, p_chelpers: *mut c_void, p_params: *mut c_void) -> *mut c_void {
+    unsafe { chelpers_steps_new(p_stark_info, p_chelpers, p_params) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_commit_calculated_c(p_chelpers_steps: *mut c_void, id: u64) {
+    unsafe {
+        set_commit_calculated(p_chelpers_steps, id)
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn can_stage_be_calculated_c(p_chelpers_steps: *mut c_void, step: u64) {
+    unsafe {
+        can_stage_be_calculated(p_chelpers_steps, step)
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn can_impols_be_calculated_c(p_chelpers_steps: *mut c_void, step: u64) {
+    unsafe {
+        can_impols_be_calculated(p_chelpers_steps, step)
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn chelpers_steps_free_c(p_chelpers_steps: *mut c_void) {
+    unsafe {
+        chelpers_steps_free(p_chelpers_steps);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_hint_field_c(p_chelpers_steps: *mut c_void, values: *mut c_void, hint_id: u64, hint_field_name: &str) {
+    unsafe {
+        let field_name = CString::new(hint_field_name).unwrap();
+        set_hint_field(p_chelpers_steps, values, hint_id, field_name.as_ptr() as *mut std::os::raw::c_char);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_hint_field_c(p_chelpers_steps: *mut c_void, hint_id: u64, hint_field_name: &str, dest: bool) ->  *mut c_void  {
+    let field_name = CString::new(hint_field_name).unwrap();
+    unsafe { get_hint_field(p_chelpers_steps, hint_id, field_name.as_ptr() as *mut std::os::raw::c_char, dest) }
+}
+
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -605,60 +535,6 @@ pub fn save_proof_c<T>(
     trace!("{}: ··· {}", "ffi     ", "save_proof: This is a mock call because there is no linked library");
 }
 
-#[cfg(feature = "no_lib_link")]
-pub fn zkevm_steps_new_c() -> *mut std::os::raw::c_void {
-    trace!("{}: ··· {}", "ffi     ", "zkevm_steps_new: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn zkevm_steps_free_c(_p_zkevm_steps: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "zkevm_steps_free: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn c12a_steps_new_c() -> *mut std::os::raw::c_void {
-    trace!("{}: ··· {}", "ffi     ", "c12a_steps_new_c: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn c12a_steps_free_c(_p_c12a_steps: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "c12a_steps_free_c: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn recursive1_steps_new_c() -> *mut std::os::raw::c_void {
-    trace!("{}: ··· {}", "ffi     ", "recursive1_steps_new_c: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn recursive1_steps_free_c(_p_recursive1_steps: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "recursive1_steps_free_c: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn _recursive2_steps_new_c() -> *mut std::os::raw::c_void {
-    trace!("{}: ··· {}", "ffi     ", "recursive2_steps_new_c: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn _recursive2_steps_free_c(_p_recursive2_steps: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "recursive2_steps_free_c: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn generic_steps_new_c() -> *mut ::std::os::raw::c_void {
-    trace!("{}: ··· {}", "ffi     ", "generic_steps_new: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn generic_steps_free_c(_p_generic_steps: *mut ::std::os::raw::c_void) {
-    trace!("{}: ··· {}", "ffi     ", "generic_steps_free: This is a mock call because there is no linked library");
-}
 
 #[cfg(feature = "no_lib_link")]
 pub fn fri_proof_new_c(_p_starks: *mut c_void) -> *mut c_void {
@@ -849,32 +725,6 @@ pub fn compute_stage_expressions_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_polynomial_c(
-    _p_starks: *mut ::std::os::raw::c_void,
-    _dest: *mut ::std::os::raw::c_void,
-    _p_address: *mut ::std::os::raw::c_void,
-    _committed: bool,
-    _idPol: u64,
-    _deg: u64,
-) {
-    trace!("{}: ··· {}", "mckzkevm", "get_polynomial: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn calculate_expression_c(
-    _p_starks: *mut ::std::os::raw::c_void,
-    _p_polinomial: *mut ::std::os::raw::c_void,
-    _id: u64,
-    _p_params: *mut ::std::os::raw::c_void,
-    _p_chelpers_steps: *mut ::std::os::raw::c_void,
-    _domain_extended: bool,
-    _im_pol: bool,
-    _inverse: bool,
-) {
-    trace!("{}: ··· {}", "ffi     ", "calculate_expression: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
 pub fn calculate_impols_expressions_c(
     _p_starks: *mut ::std::os::raw::c_void,
     _id: u64,
@@ -957,12 +807,6 @@ pub fn get_proof_root_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_vector_pointer_c(_p_stark: *mut c_void, _name: &str) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "get_vector_pointer: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
 pub fn resize_vector_c(_p_vector: *mut c_void, _new_size: u64, _value: bool) {
     trace!("{}: ··· {}", "ffi     ", "resize_vector: This is a mock call because there is no linked library");
 }
@@ -972,24 +816,7 @@ pub fn set_bool_vector_value_c(_p_vector: *mut c_void, _index: u64, _value: bool
     trace!("{}: ··· {}", "ffi     ", "set_bool_vector_value: This is a mock call because there is no linked library");
 }
 
-#[cfg(feature = "no_lib_link")]
-pub fn clean_symbols_calculated_c(_pStarks: *mut ::std::os::raw::c_void) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "clean_symbols_calculated: This is a mock call because there is no linked library"
-    );
-}
 
-#[cfg(feature = "no_lib_link")]
-pub fn set_commit_calculated_c(_pStarks: *mut ::std::os::raw::c_void, _id: u64) {
-    trace!("ffi     : ··· {}", "set_commit_calculated: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn set_subproofvalue_calculated_c(_pStarks: *mut ::std::os::raw::c_void, _id: u64) {
-    trace!("ffi     : ··· {}", "set_subproofvalue_calculated: This is a mock call because there is no linked library");
-}
 
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_hash_c(_pStarks: *mut c_void, _pHhash: *mut c_void, _pBuffer: *mut c_void, _nElements: u64) {
@@ -1112,5 +939,24 @@ pub fn goldilocks_linear_hash_c(_p_input: *mut c_void, _p_output: *mut c_void) {
         "{}: ··· {}",
         "ffi     ",
         "goldilocks_linear_hash_c: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn chelpers_steps_new_c(_p_stark_info: *mut c_void, _p_chelpers: *mut c_void, _p_params: *mut c_void) -> *mut c_void {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "chelpers_steps_new_c: This is a mock call because there is no linked library"
+    );
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_commit_calculated_c(_p_chelpers_steps: *mut c_void, _id: u64) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "set_commit_calculated_c: This is a mock call because there is no linked library"
     );
 }

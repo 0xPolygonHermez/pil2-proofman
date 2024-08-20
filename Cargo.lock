@@ -641,6 +641,7 @@ name = "proofman-common"
 version = "0.1.0"
 dependencies = [
  "log",
+ "p3-field",
  "pilout",
  "transcript",
 ]

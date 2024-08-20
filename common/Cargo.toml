@@ -7,4 +7,5 @@ edition = "2021"
 pilout = { path = "../pilout" }
 log = { workspace = true }
 transcript = { path = "../transcript" }
+p3-field = { workspace = true }
 

@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 
 use std::any::type_name;
 
-use proofman_common::{BufferAllocator, Prover, ProverStatus, ProofCtx};
+use proofman_common::{BufferAllocator, Prover, ProverStatus, ProofCtx, HintFieldInfo};
 use log::{debug, trace};
 use transcript::FFITranscript;
 use proofman_util::{timer_start, timer_stop_and_log};
 use starks_lib_c::*;
-use crate::stark_info::{StarkInfo};
+use crate::stark_info::StarkInfo;
 use crate::stark_prover_settings::StarkProverSettings;
 use crate::GlobalInfo;
 use p3_goldilocks::Goldilocks;
@@ -22,7 +22,7 @@ pub struct StarkProver<T: AbstractField> {
     config: StarkProverSettings,
     p_chelpers: *mut c_void,
     p_constpols: *mut c_void,
-    p_steps: *mut c_void,
+    p_steps: Option<*mut c_void>,
     pub p_stark: Option<*mut c_void>,
     p_params: Option<*mut c_void>,
     p_proof: Option<*mut c_void>,
@@ -74,14 +74,12 @@ impl<T: AbstractField> StarkProver<T> {
             chelpers_filename: chelpers_path,
         };
 
-        let p_steps = generic_steps_new_c();
-
         Self {
             initialized: true,
             config,
             p_chelpers,
             p_constpols,
-            p_steps,
+            p_steps: None,
             p_stark: None,
             p_params: None,
             p_proof: None,
@@ -127,8 +125,6 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
             self.merkle_tree_custom = Some(true);
         }
 
-        clean_symbols_calculated_c(p_stark);
-
         //initialize the common challenges if have not been initialized by another prover
         proof_ctx.challenges.get_or_insert_with(|| {
             vec![F::zero(); stark_info.challenges_map.as_ref().unwrap().len() * Self::FIELD_EXTENSION]
@@ -143,16 +139,19 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
         self.p_proof = Some(fri_proof_new_c(p_stark));
 
         self.p_params = Some(steps_params_new_c(
-            p_stark,
+            ptr,
+            self.p_constpols,
             proof_ctx.challenges.as_ref().unwrap().as_ptr() as *mut c_void,
             self.subproof_values.as_ptr() as *mut c_void,
             self.evals.as_ptr() as *mut c_void,
             proof_ctx.public_inputs.as_ptr() as *mut c_void,
         ));
 
+        self.p_steps = Some(chelpers_steps_new_c(self.p_starkinfo, self.p_chelpers, self.p_params.unwrap()));
+
         let number_stage1_commits = *stark_info.map_sections_n.get("cm1").unwrap() as usize;
         for i in 0..number_stage1_commits {
-            set_commit_calculated_c(p_stark, i as u64);
+            set_commit_calculated_c(self.p_steps.unwrap(), i as u64);
         }
 
         self.initialized = true;
@@ -185,14 +184,26 @@ impl<F: AbstractField> Prover<F> for StarkProver<F> {
 
         let p_params = self.p_params.unwrap();
         let p_proof = self.p_proof.unwrap();
+        let p_steps = self.p_steps.unwrap();
         let element_type = if type_name::<F>() == type_name::<Goldilocks>() { 1 } else { 0 };
 
+        // EXAMPLE OF CALLS TO GET_HINT_FIELD: REMOVE
+        // if stage_id == 2 {
+        //     let hint_field_info_ptr = get_hint_field_c(p_steps, 0, "max", false)  as *mut HintFieldInfo<F>;
+        //     unsafe {
+        //         println!("SIZE is {}", (*hint_field_info_ptr).get_size());
+        //         println!("TYPE is {:?}", (*hint_field_info_ptr).get_type());
+        //         println!("FIRST ELEMENT is {:?}", *((*hint_field_info_ptr).get_dest().wrapping_add(0)));
+        //     }
+        // }
         if stage_id <= proof_ctx.pilout.num_stages() {
-            compute_stage_expressions_c(p_stark, element_type, stage_id as u64, p_params, p_proof, self.p_steps);
-            calculate_impols_expressions_c(p_stark, stage_id as u64, p_params, self.p_steps);
+            can_impols_be_calculated_c(p_steps, stage_id as u64);
+            calculate_impols_expressions_c(p_stark, stage_id as u64, p_params, p_steps);
         } else {
-            calculate_quotient_polynomial_c(p_stark, p_params, self.p_steps);
+            calculate_quotient_polynomial_c(p_stark, p_params, p_steps);
         }
+
+        can_stage_be_calculated_c(p_steps, stage_id as u64);
 
         commit_stage_c(p_stark, element_type, stage_id as u64, p_params, p_proof);
 
@@ -323,7 +334,7 @@ impl<F: AbstractField> StarkProver<F> {
 
         debug!("{}: ··· Computing FRI Polynomial", Self::MY_NAME);
 
-        self.p_fri_pol = Some(compute_fri_pol_c(p_stark, stark_info.n_stages as u64 + 2, p_params, self.p_steps));
+        self.p_fri_pol = Some(compute_fri_pol_c(p_stark, stark_info.n_stages as u64 + 2, p_params, self.p_steps.unwrap()));
     }
 
     fn compute_fri_folding(&mut self, opening_id: u32, proof_ctx: &mut ProofCtx<F>, transcript: &FFITranscript) {
