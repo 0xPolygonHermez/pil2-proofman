@@ -16,6 +16,7 @@ proofman-util = { path = "../../util" }
 log = { workspace = true }
 starks-lib-c = { path = "../starks-lib-c" }
 transcript = { path = "../../transcript" }
+hints = { path = "../../hints" }
 p3-goldilocks = { workspace = true }
 p3-field = { workspace = true }
 proofman-common = { path = "../../common" }

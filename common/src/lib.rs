@@ -4,7 +4,7 @@ mod execution_ctx;
 mod lib_pilout;
 mod proof_ctx;
 mod prover;
-mod hint;
+mod extended_field;
 pub mod trace;
 
 pub use air_instance::*;
@@ -13,4 +13,4 @@ pub use execution_ctx::*;
 pub use lib_pilout::*;
 pub use proof_ctx::*;
 pub use prover::*;
-pub use hint::*;
+pub use extended_field::*;
