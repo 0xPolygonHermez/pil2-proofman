@@ -2,13 +2,13 @@ use p3_field::AbstractField;
 use starks_lib_c::get_hint_field_c;
 
 use ::std::os::raw::c_void;
-use std::ops::{Index, IndexMut};    
+use std::ops::{Index, IndexMut};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HintFieldType {
-    Field = 0, // F
-    FieldExtended = 1, // [F; 3]
-    Column = 2, // Vec<F>
+    Field = 0,          // F
+    FieldExtended = 1,  // [F; 3]
+    Column = 2,         // Vec<F>
     ColumnExtended = 3, // Vec<[F;3]>
 }
 
@@ -16,70 +16,70 @@ pub enum HintFieldType {
 #[allow(dead_code)]
 pub struct HintFieldInfo<F> {
     size: u64,
-    offset: u64,
+    offset: u8, // 1 or 3
     type_: HintFieldType,
     pub values: *mut F,
 }
 
-
-pub struct HintCol<F> {
-    inner: Vec<F>,
-    offset: usize,
-    is_column: bool,
+pub enum HintFieldValue<F> {
+    Field(F),
+    FieldExtended([F; 3]),
+    Column(Vec<F>),
+    ColumnExtended(Vec<[F; 3]>),
 }
 
+pub struct HintCol;
 
-impl<F> HintCol<F> {
-    pub fn from_hint_field(hint_field: &HintFieldInfo<F>) -> Self {
-        HintCol {
-            inner: unsafe { Vec::from_raw_parts(hint_field.values, hint_field.size as usize, hint_field.size as usize) },
-            offset: hint_field.offset as usize,
-            is_column: hint_field.type_ == HintFieldType::Column || hint_field.type_ == HintFieldType::ColumnExtended,
-        }    
-    }
-}
-
-impl<F> Index<usize> for HintCol<F> {
-    type Output = [F];  // Return a slice of F
-
-    fn index(&self, index: usize) -> &Self::Output {
-        let start = index * self.offset;
-        let end = start + self.offset;
-
-        if self.is_column {
-            &self.inner[start..end]
-        } else {
-            &self.inner[0..self.offset]
+impl HintCol {
+    pub fn from_hint_field<F: Clone>(hint_field: &HintFieldInfo<F>) -> HintFieldValue<F> {
+        unsafe {
+            match hint_field.type_ {
+                HintFieldType::Field => {
+                    // Dereference the first element in the raw pointer
+                    HintFieldValue::Field((*hint_field.values).clone())
+                }
+                HintFieldType::FieldExtended => {
+                    // Create an array [F; 3] from the first three elements in the raw pointer
+                    let array: [F; 3] = [
+                        (*hint_field.values).clone(),
+                        (*hint_field.values.wrapping_add(1)).clone(),
+                        (*hint_field.values.wrapping_add(2)).clone(),
+                    ];
+                    HintFieldValue::FieldExtended(array)
+                }
+                HintFieldType::Column => {
+                    let vec =
+                        Vec::from_raw_parts(hint_field.values, hint_field.size as usize, hint_field.size as usize);
+                    HintFieldValue::Column(vec)
+                }
+                HintFieldType::ColumnExtended => {
+                    let mut extended_vec: Vec<[F; 3]> = Vec::with_capacity(hint_field.size as usize / 3);
+                    for i in 0..(hint_field.size as usize / 3) {
+                        let base_ptr = hint_field.values.wrapping_add(i * 3);
+                        extended_vec.push([
+                            (*base_ptr).clone(),
+                            (*base_ptr.wrapping_add(1)).clone(),
+                            (*base_ptr.wrapping_add(2)).clone(),
+                        ]);
+                    }
+                    HintFieldValue::ColumnExtended(extended_vec)
+                }
+            }
         }
     }
 }
 
-impl<F> IndexMut<usize> for HintCol<F> {
-    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        let start = index * self.offset;
-        let end = start + self.offset;
-
-        if self.is_column {
-            &mut self.inner[start..end]
-        } else {
-            &mut self.inner[0..self.offset] 
-        }
-    }
-}
-
-
-
-pub fn get_hint_field<F> (p_chelpers_steps: *mut c_void, hint_id: u64, hint_field_name: &str, dest: bool) -> HintCol<F>
-{
+pub fn get_hint_field<F: Clone>(
+    p_chelpers_steps: *mut c_void,
+    hint_id: u64,
+    hint_field_name: &str,
+    dest: bool,
+) -> HintFieldValue<F> {
     let raw_ptr = get_hint_field_c(p_chelpers_steps, hint_id, hint_field_name, dest);
 
     let hint_field = unsafe { Box::from_raw(raw_ptr as *mut HintFieldInfo<F>) };
 
-    HintCol {
-        inner: unsafe { Vec::from_raw_parts(hint_field.values, hint_field.size as usize, hint_field.size as usize) },
-        offset: hint_field.offset as usize,
-        is_column: hint_field.type_ == HintFieldType::Column || hint_field.type_ == HintFieldType::ColumnExtended,
-    }
+    HintCol::from_hint_field(hint_field.as_ref())
 }
 
 mod tests {
@@ -92,15 +92,14 @@ mod tests {
             buffer[i] = i + 144;
         }
 
-        let hint_field: HintFieldInfo<usize> = HintFieldInfo::<usize> {
-            size: 1,
-            offset: 1,
-            type_: HintFieldType::Field,
-            values: buffer.as_mut_ptr(),
-        };
+        let hint_field: HintFieldInfo<usize> =
+            HintFieldInfo::<usize> { size: 1, offset: 1, type_: HintFieldType::Field, values: buffer.as_mut_ptr() };
 
-        let hint_col = HintCol::<usize>::from_hint_field(&hint_field);
-
-        assert_eq!(hint_col[0][0], 144);
+        match HintCol::from_hint_field(&hint_field) {
+            HintFieldValue::Field(value) => {
+                assert_eq!(value, 144);
+            }
+            _ => panic!("Expected a field value"),
+        }
     }
 }
