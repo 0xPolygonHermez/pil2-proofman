@@ -41,9 +41,6 @@ impl ExecutionCtxBuilder {
             panic!("Buffer allocator is required");
         }
 
-        ExecutionCtx {
-            public_output: self.public_output,
-            buffer_allocator: self.buffer_allocator.unwrap(),
-        }
+        ExecutionCtx { public_output: self.public_output, buffer_allocator: self.buffer_allocator.unwrap() }
     }
 }
