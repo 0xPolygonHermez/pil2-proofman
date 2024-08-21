@@ -6,7 +6,6 @@ use std::any::type_name;
 use proofman_common::{BufferAllocator, Prover, ProverStatus, ProofCtx};
 use log::{debug, trace};
 use transcript::FFITranscript;
-use hints::get_hint_field;
 use proofman_util::{timer_start, timer_stop_and_log};
 use starks_lib_c::*;
 use crate::stark_info::StarkInfo;

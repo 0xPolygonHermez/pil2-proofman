@@ -1,8 +1,6 @@
-use p3_field::AbstractField;
 use starks_lib_c::get_hint_field_c;
 
 use ::std::os::raw::c_void;
-use std::ops::{Index, IndexMut};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HintFieldType {
@@ -82,6 +80,7 @@ pub fn get_hint_field<F: Clone>(
     HintCol::from_hint_field(hint_field.as_ref())
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
