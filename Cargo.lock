@@ -652,7 +652,6 @@ dependencies = [
  "log",
  "p3-field",
  "pilout",
- "starks-lib-c",
  "transcript",
 ]
 
