@@ -1,4 +1,4 @@
-mod air_instance;
+mod air_instance_ctx;
 mod buffer_allocator;
 mod execution_ctx;
 mod lib_pilout;
@@ -7,7 +7,7 @@ mod prover;
 mod extended_field;
 pub mod trace;
 
-pub use air_instance::*;
+pub use air_instance_ctx::*;
 pub use buffer_allocator::*;
 pub use execution_ctx::*;
 pub use lib_pilout::*;
