@@ -17,7 +17,7 @@ pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: AbstractField + Copy + 'static> ProofMan<F> {
+impl<F: AbstractField + 'static> ProofMan<F> {
     const MY_NAME: &'static str = "ProofMan";
 
     pub fn generate_proof(
