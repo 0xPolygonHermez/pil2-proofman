@@ -1,6 +1,6 @@
 use libloading::{Library, Symbol};
 use log::{debug, info, trace};
-use p3_field::AbstractField;
+use p3_field::Field;
 use stark::{GlobalInfo, StarkBufferAllocator, StarkProver};
 use std::{
     path::{Path, PathBuf},
@@ -21,7 +21,7 @@ pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: AbstractField + 'static> ProofMan<F> {
+impl<F: Field + 'static> ProofMan<F> {
     const MY_NAME: &'static str = "ProofMan";
 
     pub fn generate_proof(

@@ -19,6 +19,7 @@ transcript = { path = "../../transcript" }
 p3-goldilocks = { workspace = true }
 p3-field = { workspace = true }
 proofman-common = { path = "../../common" }
+hints = { path = "../../hints" }
 
 [features]
 default = []

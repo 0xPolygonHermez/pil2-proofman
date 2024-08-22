@@ -134,7 +134,7 @@ extern "C" {
     pub fn extend_and_merkelize(
         pStarks: *mut ::std::os::raw::c_void,
         step: u64,
-        pParams: *mut ::std::os::raw::c_void,
+        pChelpersSteps: *mut ::std::os::raw::c_void,
         proof: *mut ::std::os::raw::c_void,
     );
 }
@@ -147,31 +147,28 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z29calculate_quotient_polynomialPvS_S_"]
+    #[link_name = "\u{1}_Z29calculate_quotient_polynomialPvS_"]
     pub fn calculate_quotient_polynomial(
         pStarks: *mut ::std::os::raw::c_void,
-        pParams: *mut ::std::os::raw::c_void,
         pChelpersSteps: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z28calculate_impols_expressionsPvmS_S_"]
+    #[link_name = "\u{1}_Z28calculate_impols_expressionsPvmS_"]
     pub fn calculate_impols_expressions(
         pStarks: *mut ::std::os::raw::c_void,
         step: u64,
-        pParams: *mut ::std::os::raw::c_void,
         pChelpersSteps: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z25compute_stage_expressionsPvjmS_S_S_"]
+    #[link_name = "\u{1}_Z25compute_stage_expressionsPvjmS_S_"]
     pub fn compute_stage_expressions(
         pStarks: *mut ::std::os::raw::c_void,
         elementType: u32,
         step: u64,
-        pParams: *mut ::std::os::raw::c_void,
-        pProof: *mut ::std::os::raw::c_void,
         pChelpersSteps: *mut ::std::os::raw::c_void,
+        pProof: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
@@ -180,7 +177,7 @@ extern "C" {
         pStarks: *mut ::std::os::raw::c_void,
         elementType: u32,
         step: u64,
-        pParams: *mut ::std::os::raw::c_void,
+        pChelpersSteps: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
     );
 }
@@ -188,16 +185,15 @@ extern "C" {
     #[link_name = "\u{1}_Z13compute_evalsPvS_S_"]
     pub fn compute_evals(
         pStarks: *mut ::std::os::raw::c_void,
-        pParams: *mut ::std::os::raw::c_void,
+        pChelpersSteps: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15compute_fri_polPvmS_S_"]
+    #[link_name = "\u{1}_Z15compute_fri_polPvmS_"]
     pub fn compute_fri_pol(
         pStarks: *mut ::std::os::raw::c_void,
         step: u64,
-        pParams: *mut ::std::os::raw::c_void,
         cHelpersSteps: *mut ::std::os::raw::c_void,
     ) -> *mut ::std::os::raw::c_void;
 }
@@ -205,17 +201,17 @@ extern "C" {
     #[link_name = "\u{1}_Z11get_fri_polPvS_"]
     pub fn get_fri_pol(
         pStarks: *mut ::std::os::raw::c_void,
-        pParams: *mut ::std::os::raw::c_void,
+        pChelpersSteps: *mut ::std::os::raw::c_void,
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19compute_fri_foldingPvS_S_mS_"]
+    #[link_name = "\u{1}_Z19compute_fri_foldingPvmS_S_S_"]
     pub fn compute_fri_folding(
         pStarks: *mut ::std::os::raw::c_void,
-        pProof: *mut ::std::os::raw::c_void,
-        pFriPol: *mut ::std::os::raw::c_void,
         step: u64,
+        pChelpersSteps: *mut ::std::os::raw::c_void,
         pChallenge: *mut ::std::os::raw::c_void,
+        pProof: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {

@@ -188,9 +188,9 @@ pub fn steps_params_free_c(p_steps_params: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn extend_and_merkelize_c(p_stark: *mut c_void, step: u64, p_params: *mut c_void, proof: *mut c_void) {
+pub fn extend_and_merkelize_c(p_stark: *mut c_void, step: u64, p_chelpers_steps: *mut c_void, proof: *mut c_void) {
     unsafe {
-        extend_and_merkelize(p_stark, step, p_params, proof);
+        extend_and_merkelize(p_stark, step, p_chelpers_steps, proof);
     }
 }
 
@@ -206,12 +206,11 @@ pub fn compute_stage_expressions_c(
     p_starks: *mut ::std::os::raw::c_void,
     element_type: u32,
     step: u64,
-    p_params: *mut ::std::os::raw::c_void,
-    p_proof: *mut ::std::os::raw::c_void,
     p_chelpers_steps: *mut ::std::os::raw::c_void,
+    p_proof: *mut ::std::os::raw::c_void,
 ) {
     unsafe {
-        compute_stage_expressions(p_starks, element_type, step, p_params, p_proof, p_chelpers_steps);
+        compute_stage_expressions(p_starks, element_type, step, p_chelpers_steps, p_proof);
     }
 }
 
@@ -219,22 +218,20 @@ pub fn compute_stage_expressions_c(
 pub fn calculate_impols_expressions_c(
     p_starks: *mut ::std::os::raw::c_void,
     id: u64,
-    p_params: *mut ::std::os::raw::c_void,
     p_chelpers_steps: *mut ::std::os::raw::c_void,
 ) {
     unsafe {
-        calculate_impols_expressions(p_starks, id, p_params, p_chelpers_steps);
+        calculate_impols_expressions(p_starks, id, p_chelpers_steps);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn calculate_quotient_polynomial_c(
     p_starks: *mut ::std::os::raw::c_void,
-    p_params: *mut ::std::os::raw::c_void,
     p_chelpers_steps: *mut ::std::os::raw::c_void,
 ) {
     unsafe {
-        calculate_quotient_polynomial(p_starks, p_params, p_chelpers_steps);
+        calculate_quotient_polynomial(p_starks, p_chelpers_steps);
     }
 }
 
@@ -243,18 +240,18 @@ pub fn commit_stage_c(
     p_starks: *mut ::std::os::raw::c_void,
     element_type: u32,
     step: u64,
-    p_params: *mut ::std::os::raw::c_void,
+    p_chelpers_steps: *mut ::std::os::raw::c_void,
     p_proof: *mut ::std::os::raw::c_void,
 ) {
     unsafe {
-        commit_stage(p_starks, element_type, step, p_params, p_proof);
+        commit_stage(p_starks, element_type, step, p_chelpers_steps, p_proof);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn compute_evals_c(p_stark: *mut c_void, p_params: *mut c_void, pProof: *mut c_void) {
+pub fn compute_evals_c(p_stark: *mut c_void, p_chelpers_steps: *mut c_void, pProof: *mut c_void) {
     unsafe {
-        compute_evals(p_stark, p_params, pProof);
+        compute_evals(p_stark, p_chelpers_steps, pProof);
     }
 }
 
@@ -262,27 +259,26 @@ pub fn compute_evals_c(p_stark: *mut c_void, p_params: *mut c_void, pProof: *mut
 pub fn compute_fri_pol_c(
     p_stark: *mut c_void,
     step: u64,
-    p_params: *mut c_void,
     p_chelpers_steps: *mut c_void,
 ) -> *mut c_void {
-    unsafe { compute_fri_pol(p_stark, step, p_params, p_chelpers_steps) }
+    unsafe { compute_fri_pol(p_stark, step, p_chelpers_steps) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_fri_pol_c(p_stark: *mut c_void, p_params: *mut c_void) -> *mut ::std::os::raw::c_void {
-    unsafe { get_fri_pol(p_stark, p_params) }
+pub fn get_fri_pol_c(p_stark: *mut c_void, p_chelpers_steps: *mut c_void) -> *mut ::std::os::raw::c_void {
+    unsafe { get_fri_pol(p_stark, p_chelpers_steps) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn compute_fri_folding_c(
     p_stark: *mut c_void,
-    pProof: *mut c_void,
-    pFriPol: *mut c_void,
     step: u64,
+    p_chelpers_steps: *mut c_void,
     challenge: *mut c_void,
+    pProof: *mut c_void,
 ) {
     unsafe {
-        compute_fri_folding(p_stark, pProof, pFriPol, step, challenge);
+        compute_fri_folding(p_stark, step, p_chelpers_steps, challenge, pProof);
     }
 }
 
@@ -688,7 +684,7 @@ pub fn steps_params_free_c(_p_stepsParams: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn extend_and_merkelize_c(_p_stark: *mut c_void, _step: u64, _p_params: *mut c_void, _proof: *mut c_void) {
+pub fn extend_and_merkelize_c(_p_stark: *mut c_void, _step: u64, _p_chelpers_steps: *mut c_void, _proof: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "extend_and_merkelize: This is a mock call because there is no linked library");
 }
 
@@ -702,10 +698,9 @@ pub fn compute_stage_c(
     _p_starks: *mut ::std::os::raw::c_void,
     _element_type: u32,
     _step: u64,
-    _p_params: *mut ::std::os::raw::c_void,
+    _p_chelpers_steps: *mut ::std::os::raw::c_void,
     _p_proof: *mut ::std::os::raw::c_void,
     _p_transcript: *mut ::std::os::raw::c_void,
-    _p_chelpers_steps: *mut ::std::os::raw::c_void,
 ) {
     trace!("{}: ··· {}", "ffi     ", "compute_stage: This is a mock call because there is no linked library");
 }
@@ -715,9 +710,8 @@ pub fn compute_stage_expressions_c(
     _p_starks: *mut ::std::os::raw::c_void,
     _element_type: u32,
     _step: u64,
-    _p_params: *mut ::std::os::raw::c_void,
-    _p_proof: *mut ::std::os::raw::c_void,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,
+    _p_proof: *mut ::std::os::raw::c_void,
 ) {
     trace!(
         "{}: ··· {}",
@@ -730,7 +724,6 @@ pub fn compute_stage_expressions_c(
 pub fn calculate_impols_expressions_c(
     _p_starks: *mut ::std::os::raw::c_void,
     _id: u64,
-    _p_params: *mut ::std::os::raw::c_void,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,
 ) {
     trace!(
@@ -743,7 +736,6 @@ pub fn calculate_impols_expressions_c(
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_quotient_polynomial_c(
     _p_starks: *mut ::std::os::raw::c_void,
-    _p_params: *mut ::std::os::raw::c_void,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,
 ) {
     trace!("mckzkevm: ··· {}", "calculate_quotient_polynomial: This is a mock call because there is no linked library");
@@ -754,14 +746,14 @@ pub fn commit_stage_c(
     _p_starks: *mut ::std::os::raw::c_void,
     _element_type: u32,
     _step: u64,
-    _p_params: *mut ::std::os::raw::c_void,
+    _p_chelpers_steps: *mut ::std::os::raw::c_void,
     _p_proof: *mut ::std::os::raw::c_void,
 ) {
     trace!("{}: ··· {}", "ffi     ", "commit_stage: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn compute_evals_c(_p_stark: *mut c_void, _p_params: *mut c_void, _pProof: *mut c_void) {
+pub fn compute_evals_c(_p_stark: *mut c_void, _p_chelpers_steps: *mut c_void, _pProof: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "compute_evals: This is a mock call because there is no linked library");
 }
 
@@ -769,7 +761,6 @@ pub fn compute_evals_c(_p_stark: *mut c_void, _p_params: *mut c_void, _pProof: *
 pub fn compute_fri_pol_c(
     _p_stark: *mut c_void,
     _step: u64,
-    _p_params: *mut c_void,
     _p_chelpers_steps: *mut c_void,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "compute_fri_pol: This is a mock call because there is no linked library");
@@ -777,7 +768,7 @@ pub fn compute_fri_pol_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_fri_pol_c(_p_stark: *mut c_void, _p_params: *mut c_void) -> *mut ::std::os::raw::c_void {
+pub fn get_fri_pol_c(_p_stark: *mut c_void, _p_chelpers_steps: *mut c_void) -> *mut ::std::os::raw::c_void {
     trace!("ffi     : ··· {}", "get_fri_pol: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -785,10 +776,10 @@ pub fn get_fri_pol_c(_p_stark: *mut c_void, _p_params: *mut c_void) -> *mut ::st
 #[cfg(feature = "no_lib_link")]
 pub fn compute_fri_folding_c(
     _p_stark: *mut c_void,
-    _pProof: *mut c_void,
-    _pFriPol: *mut c_void,
     _step: u64,
+    _p_chelpers_steps: *mut c_void,
     _challenge: *mut c_void,
+    _pProof: *mut c_void,
 ) {
     trace!("{}: ··· {}", "ffi     ", "compute_fri_folding: This is a mock call because there is no linked library");
 }
