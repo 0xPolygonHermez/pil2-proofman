@@ -21,7 +21,7 @@ impl Setup {
         let global_info = GlobalInfo::from_file(&proving_key_path.join("pilout.globalInfo.json"));
 
         let air_setup_folder = proving_key_path.join(global_info.get_air_setup_path(air_group_id, air_id));
-        trace!("{}: ··· Setup AIR folder: {:?}", Self::MY_NAME, air_setup_folder);
+        trace!("{}   : ··· Setup AIR folder: {:?}", Self::MY_NAME, air_setup_folder);
 
         // Check path exists and is a folder
         if !air_setup_folder.exists() {

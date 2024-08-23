@@ -47,19 +47,23 @@ impl<F> WitnessManager<F> {
     }
 
     pub fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx, sctx: &SetupCtx) {
+        log::info!("{}: --> Starting proof", Self::MY_NAME);
+
         for component in self.components.iter() {
             component.start_proof(pctx, ectx, sctx);
         }
     }
 
     pub fn end_proof(&mut self) {
+        log::info!("{}: <-- Finalizing proof", Self::MY_NAME);
+
         for component in self.components.iter() {
             component.end_proof();
         }
     }
 
     pub fn calculate_witness(&self, stage: u32, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx, sctx: &SetupCtx) {
-        info!("{}: Calculating witness (stage {})", Self::MY_NAME, stage);
+        info!("{}: --> Calculating witness (stage {})", Self::MY_NAME, stage);
 
         let air_instances = pctx.air_instances.read().unwrap();
 
