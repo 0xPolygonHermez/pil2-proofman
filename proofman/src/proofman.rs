@@ -105,20 +105,19 @@ impl<F: Field + 'static> ProofMan<F> {
             } else {
                 Self::commit_stage(stage, &mut provers, &mut pctx, debug_mode);
             }
-            
+
             Self::calculate_challenges(stage, &mut provers, &mut pctx, &mut transcript, debug_mode);
         }
 
         witness_lib.end_proof();
 
         if debug_mode {
-
-            // TODO: Verify global constraints! 
+            // TODO: Verify global constraints!
 
             if !valid_constraints {
-                println!("{}", format!("Not all constraints were verified.").bright_red().bold());
+                log::debug!("{}", "Not all constraints were verified.".bright_red().bold());
             } else {
-                println!("{}", format!("All constraints were successfully verified.").bright_green().bold());
+                log::debug!("{}", "All constraints were successfully verified.".bright_green().bold());
             }
 
             return Ok(vec![]);
@@ -156,7 +155,12 @@ impl<F: Field + 'static> ProofMan<F> {
         }
     }
 
-    fn initialize_provers(sctx: &SetupCtx, proving_key_path: &Path, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: &mut ProofCtx<F>) {
+    fn initialize_provers(
+        sctx: &SetupCtx,
+        proving_key_path: &Path,
+        provers: &mut Vec<Box<dyn Prover<F>>>,
+        pctx: &mut ProofCtx<F>,
+    ) {
         info!("{}: Initializing prover and creating buffers", Self::MY_NAME);
 
         for air_instance in pctx.air_instances.write().unwrap().iter_mut() {
@@ -167,12 +171,8 @@ impl<F: Field + 'static> ProofMan<F> {
                 air_instance.air_id
             );
 
-            let prover = Box::new(StarkProver::new(
-                sctx,
-                proving_key_path,
-                air_instance.air_group_id,
-                air_instance.air_id,
-            ));
+            let prover =
+                Box::new(StarkProver::new(sctx, proving_key_path, air_instance.air_group_id, air_instance.air_id));
 
             provers.push(prover);
         }
@@ -193,7 +193,9 @@ impl<F: Field + 'static> ProofMan<F> {
     }
 
     pub fn commit_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], pctx: &mut ProofCtx<F>, debug_mode: bool) {
-        if debug_mode { return; }
+        if debug_mode {
+            return;
+        }
 
         info!("{}: Committing stage {}", Self::MY_NAME, stage);
 
@@ -213,11 +215,11 @@ impl<F: Field + 'static> ProofMan<F> {
         info!("{}: Calculating challenges for stage {}", Self::MY_NAME, stage);
         for prover in provers.iter_mut() {
             if debug_mode {
-                let dummy_elements = vec![F::zero(), F::one(), F::two(), F::neg_one()];
+                let dummy_elements = [F::zero(), F::one(), F::two(), F::neg_one()];
                 transcript.add_elements(dummy_elements.as_ptr() as *mut c_void, 4);
             } else {
                 prover.add_challenges_to_transcript(stage as u64, pctx, transcript);
-            }  
+            }
         }
     }
 

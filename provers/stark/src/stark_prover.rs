@@ -53,14 +53,15 @@ impl<T: Field> StarkProver<T> {
             panic!("Setup AIR path is not a folder: {:?}", air_setup_folder);
         }
 
-        let base_filename_path = air_setup_folder.join(global_info.get_air_name(air_group_id, air_id)).display().to_string();
+        let base_filename_path =
+            air_setup_folder.join(global_info.get_air_name(air_group_id, air_id)).display().to_string();
 
         let stark_info_path = base_filename_path.clone() + ".starkinfo.json";
 
         let p_starkinfo = stark_info_new_c(&stark_info_path);
 
         let p_steps = sctx.get_setup(air_group_id, air_id).expect("REASON");
-        
+
         let p_stark = starks_new_default_c(p_starkinfo, p_steps);
 
         let stark_info_json = std::fs::read_to_string(&stark_info_path)
@@ -113,21 +114,20 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn build(&mut self, proof_ctx: &mut ProofCtx<F>, air_idx: usize) {
         timer_start!(ESTARK_PROVER_BUILD);
         let air_instance_ctx = &mut proof_ctx.air_instances.write().unwrap()[air_idx];
-        
+
         let ptr: *mut std::ffi::c_void = air_instance_ctx.get_buffer_ptr() as *mut c_void;
-        
+
         //initialize the common challenges if have not been initialized by another prover
         proof_ctx.challenges.get_or_insert_with(|| {
             vec![F::zero(); self.stark_info.challenges_map.as_ref().unwrap().len() * Self::FIELD_EXTENSION]
         });
-        
+
         self.evals = vec![F::zero(); self.stark_info.ev_map.len() * Self::FIELD_EXTENSION];
 
         self.subproof_values = vec![F::zero(); self.stark_info.n_subproof_values as usize * Self::FIELD_EXTENSION];
 
-
         init_params_c(
-            self.p_steps, 
+            self.p_steps,
             proof_ctx.challenges.as_ref().unwrap().as_ptr() as *mut c_void,
             self.subproof_values.as_ptr() as *mut c_void,
             self.evals.as_ptr() as *mut c_void,
@@ -136,7 +136,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
         set_trace_pointer_c(self.p_steps, ptr);
 
-        self.p_proof = Some(fri_proof_new_c(self.p_stark));        
+        self.p_proof = Some(fri_proof_new_c(self.p_stark));
 
         let number_stage1_commits = *self.stark_info.map_sections_n.get("cm1").unwrap() as usize;
         for i in 0..number_stage1_commits {
@@ -189,7 +189,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
         //     let num = get_hint_field::<F>(p_steps, 0, "numerator", false, false);
         //     let den = get_hint_field::<F>(p_steps, 0, "denominator", false,  false);
-            
+
         //     let mut reference = get_hint_field::<F>(p_steps, 0, "reference", true, false);
 
         //     reference.set(0, num.get(0) / den.get(0));
@@ -199,7 +199,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
         //     set_hint_field_val(p_steps, 0, "result", reference.get(n -1));
 
-        //     set_hint_field(p_steps, 0, "reference", &reference);            
+        //     set_hint_field(p_steps, 0, "reference", &reference);
         // }
 
         if stage_id <= proof_ctx.pilout.num_stages() {
@@ -344,25 +344,28 @@ impl<F: Field> StarkProver<F> {
         let p_steps = self.p_steps;
         let step = opening_id - 3;
 
-        let steps =  &self.stark_info.stark_struct.steps;
+        let steps = &self.stark_info.stark_struct.steps;
         let n_steps = steps.len();
 
         if step < (n_steps - 1) as u32 {
-            debug!("{}: ··· Computing FRI folding from {} to {}", Self::MY_NAME, steps[step as usize].n_bits, steps[(step + 1) as usize].n_bits);
+            debug!(
+                "{}: ··· Computing FRI folding from {} to {}",
+                Self::MY_NAME,
+                steps[step as usize].n_bits,
+                steps[(step + 1) as usize].n_bits
+            );
         }
         let challenges: &Vec<F> = proof_ctx.challenges.as_ref().unwrap();
         let challenge: Vec<F> = challenges.iter().skip(challenges.len() - 4).cloned().collect();
 
-
         compute_fri_folding_c(p_stark, step as u64, p_steps, challenge.as_ptr() as *mut c_void, p_proof);
 
         if step < (n_steps - 1) as u32 {
-            let root = fri_proof_get_tree_root_c(p_proof, (step + 1) as u64, 0);            
+            let root = fri_proof_get_tree_root_c(p_proof, (step + 1) as u64, 0);
             transcript.add_elements(root, self.n_field_elements);
         } else {
             let hash: Vec<F> = vec![F::zero(); self.n_field_elements];
-            let n_hash = (1 << (steps[n_steps - 1].n_bits))
-                * Self::FIELD_EXTENSION as u64;
+            let n_hash = (1 << (steps[n_steps - 1].n_bits)) * Self::FIELD_EXTENSION as u64;
             let fri_pol = get_fri_pol_c(p_stark, p_steps);
             calculate_hash_c(p_stark, hash.as_ptr() as *mut c_void, fri_pol, n_hash);
             transcript.add_elements(hash.as_ptr() as *mut c_void, self.n_field_elements);
@@ -381,12 +384,8 @@ impl<F: Field> StarkProver<F> {
         let challenge: Vec<F> = challenges.iter().skip(challenges.len() - 4).cloned().collect();
 
         let element_type = if type_name::<F>() == type_name::<Goldilocks>() { 1 } else { 0 };
-        let transcript_permutation = FFITranscript::new(
-            p_stark,
-            element_type,
-            self.merkle_tree_arity,
-            self.merkle_tree_custom,
-        );
+        let transcript_permutation =
+            FFITranscript::new(p_stark, element_type, self.merkle_tree_arity, self.merkle_tree_custom);
 
         transcript_permutation.add_elements(challenge.as_ptr() as *mut c_void, Self::FIELD_EXTENSION);
         transcript_permutation.get_permutations(

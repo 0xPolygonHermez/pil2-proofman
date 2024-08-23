@@ -21,13 +21,7 @@ impl SetupCtx {
                     .airs()
                     .iter()
                     .enumerate()
-                    .map(move |(air_id, _)| {
-                        Setup::new(
-                            proving_key_path,
-                            air_group_id,
-                            air_id,
-                        )
-                    })
+                    .map(move |(air_id, _)| Setup::new(proving_key_path, air_group_id, air_id))
             })
             .collect::<Vec<Setup>>();
 
@@ -36,8 +30,8 @@ impl SetupCtx {
 
     pub fn get_setup(&self, air_group_id: usize, air_id: usize) -> Result<*mut c_void, String> {
         println!("Searching setup for Air_group_id: {}, Air_id: {}", air_group_id, air_id);
-    
-        for (_, setup) in self.setups.iter().enumerate() {
+
+        for setup in &self.setups {
             if setup.air_group_id == air_group_id && setup.air_id == air_id {
                 return Ok(setup.p_steps);
             }
