@@ -121,6 +121,11 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             vec![F::zero(); self.stark_info.challenges_map.as_ref().unwrap().len() * Self::FIELD_EXTENSION]
         });
         
+        self.evals = vec![F::zero(); self.stark_info.ev_map.len() * Self::FIELD_EXTENSION];
+
+        self.subproof_values = vec![F::zero(); self.stark_info.n_subproof_values as usize * Self::FIELD_EXTENSION];
+
+
         init_params_c(
             self.p_steps, 
             proof_ctx.challenges.as_ref().unwrap().as_ptr() as *mut c_void,
