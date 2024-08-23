@@ -6,7 +6,7 @@ use std::any::type_name;
 // use hints::{get_hint_field, set_hint_field, set_hint_field_val};
 use proofman_common::{BufferAllocator, Prover, ProverStatus, ProofCtx};
 use log::{debug, trace};
-use setup::{GlobalInfo, SetupCtx};
+use proofman_setup::{GlobalInfo, SetupCtx};
 use transcript::FFITranscript;
 use proofman_util::{timer_start, timer_stop_and_log};
 use starks_lib_c::*;

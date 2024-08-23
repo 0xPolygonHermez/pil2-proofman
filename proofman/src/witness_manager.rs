@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use log::info;
 
 use proofman_common::{ExecutionCtx, ProofCtx};
+use proofman_setup::SetupCtx;
 use crate::WitnessComponent;
 
 pub struct WitnessManager<F> {
@@ -45,9 +46,9 @@ impl<F> WitnessManager<F> {
         self.airs.insert(air_id, air);
     }
 
-    pub fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
+    pub fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx, sctx: &SetupCtx) {
         for component in self.components.iter() {
-            component.start_proof(pctx, ectx);
+            component.start_proof(pctx, ectx, sctx);
         }
     }
 
@@ -57,7 +58,7 @@ impl<F> WitnessManager<F> {
         }
     }
 
-    pub fn calculate_witness(&self, stage: u32, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
+    pub fn calculate_witness(&self, stage: u32, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx, sctx: &SetupCtx) {
         info!("{}: Calculating witness (stage {})", Self::MY_NAME, stage);
 
         let air_instances = pctx.air_instances.read().unwrap();
@@ -74,7 +75,7 @@ impl<F> WitnessManager<F> {
 
         for component_group in components.values() {
             for (component, id) in component_group.iter() {
-                component.calculate_witness(stage, *id, pctx, ectx);
+                component.calculate_witness(stage, *id, pctx, ectx, sctx);
             }
         }
     }

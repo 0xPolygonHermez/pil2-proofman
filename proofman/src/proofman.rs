@@ -2,7 +2,7 @@ use libloading::{Library, Symbol};
 use log::{debug, info, trace};
 use p3_field::Field;
 use stark::{StarkBufferAllocator, StarkProver};
-use setup::SetupCtx;
+use proofman_setup::SetupCtx;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -64,7 +64,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
 
-        let mut witness_lib = witness_lib(rom_path.clone(), public_inputs_path.clone(), proving_key_path.clone())?;
+        let mut witness_lib = witness_lib(rom_path.clone(), public_inputs_path.clone())?;
 
         let mut pctx = ProofCtx::create_ctx(witness_lib.pilout());
 
@@ -76,8 +76,8 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let sctx = SetupCtx::new(witness_lib.pilout(), &proving_key_path);
 
-        Self::initialize_witness(&mut witness_lib, &mut pctx, &mut ectx);
-        witness_lib.calculate_witness(1, &mut pctx, &ectx);
+        Self::initialize_witness(&mut witness_lib, &mut pctx, &mut ectx, &sctx);
+        witness_lib.calculate_witness(1, &mut pctx, &ectx, &sctx);
 
         Self::initialize_provers(&sctx, &proving_key_path, &mut provers, &mut pctx);
 
@@ -95,7 +95,7 @@ impl<F: Field + 'static> ProofMan<F> {
         let num_commit_stages = pctx.pilout.num_stages();
         for stage in 1..=num_commit_stages {
             if stage != 1 {
-                witness_lib.calculate_witness(stage, &mut pctx, &ectx);
+                witness_lib.calculate_witness(stage, &mut pctx, &ectx, &sctx);
             }
 
             Self::get_challenges(stage, &mut provers, &mut pctx, &transcript);
@@ -140,10 +140,11 @@ impl<F: Field + 'static> ProofMan<F> {
         witness_lib: &mut Box<dyn WitnessLibrary<F>>,
         pctx: &mut ProofCtx<F>,
         ectx: &mut ExecutionCtx,
+        sctx: &SetupCtx,
     ) {
-        witness_lib.start_proof(pctx, ectx);
+        witness_lib.start_proof(pctx, ectx, sctx);
 
-        witness_lib.execute(pctx, ectx);
+        witness_lib.execute(pctx, ectx, sctx);
 
         trace!("{}: Air instances: ", Self::MY_NAME);
 
