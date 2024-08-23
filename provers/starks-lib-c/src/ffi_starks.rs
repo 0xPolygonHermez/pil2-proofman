@@ -111,21 +111,17 @@ pub fn stark_info_free_c(p_stark_info: *mut c_void) {
 pub fn starks_new_c(
     p_config: *mut c_void,
     stark_info: *mut c_void,
-    chelpers: *mut c_void,
-    const_pols: *mut c_void,
-    p_address: *mut c_void,
+    p_chelpers_steps: *mut c_void,
 ) -> *mut c_void {
-    unsafe { starks_new(p_config, stark_info, chelpers, const_pols, p_address) }
+    unsafe { starks_new(p_config, stark_info, p_chelpers_steps) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn starks_new_default_c(
     stark_info: *mut c_void,
-    chelpers: *mut c_void,
-    const_pols: *mut c_void,
-    p_address: *mut c_void,
+    p_chelpers_steps: *mut c_void,
 ) -> *mut c_void {
-    unsafe { starks_new_default(stark_info, chelpers, const_pols, p_address) }
+    unsafe { starks_new_default(stark_info, p_chelpers_steps) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -162,32 +158,6 @@ pub fn chelpers_free_c(p_chelpers: *mut ::std::os::raw::c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn init_hints_c() {
-    unsafe {
-        init_hints();
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn steps_params_new_c(
-    p_pols: *mut c_void,
-    p_const_pols: *mut c_void,
-    p_challenges: *mut c_void,
-    p_subproof_values: *mut c_void,
-    p_evals: *mut c_void,
-    p_public_inputs: *mut c_void,
-) -> *mut c_void {
-    unsafe { steps_params_new(p_pols, p_const_pols, p_challenges, p_subproof_values, p_evals, p_public_inputs) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn steps_params_free_c(p_steps_params: *mut c_void) {
-    unsafe {
-        steps_params_free(p_steps_params);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn extend_and_merkelize_c(p_stark: *mut c_void, step: u64, p_chelpers_steps: *mut c_void, proof: *mut c_void) {
     unsafe {
         extend_and_merkelize(p_stark, step, p_chelpers_steps, proof);
@@ -216,22 +186,20 @@ pub fn compute_stage_expressions_c(
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn calculate_impols_expressions_c(
-    p_starks: *mut ::std::os::raw::c_void,
-    id: u64,
     p_chelpers_steps: *mut ::std::os::raw::c_void,
+    id: u64,
 ) {
     unsafe {
-        calculate_impols_expressions(p_starks, id, p_chelpers_steps);
+        calculate_impols_expressions(p_chelpers_steps, id);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn calculate_quotient_polynomial_c(
-    p_starks: *mut ::std::os::raw::c_void,
     p_chelpers_steps: *mut ::std::os::raw::c_void,
 ) {
     unsafe {
-        calculate_quotient_polynomial(p_starks, p_chelpers_steps);
+        calculate_quotient_polynomial(p_chelpers_steps);
     }
 }
 
@@ -471,8 +439,31 @@ pub fn goldilocks_linear_hash_c(pInput: *mut c_void, pOutput: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn chelpers_steps_new_c(p_stark_info: *mut c_void, p_chelpers: *mut c_void, p_params: *mut c_void) -> *mut c_void {
-    unsafe { chelpers_steps_new(p_stark_info, p_chelpers, p_params) }
+pub fn chelpers_steps_new_c(p_stark_info: *mut c_void, p_chelpers: *mut c_void, p_const_pols: *mut c_void) -> *mut c_void {
+    unsafe { chelpers_steps_new(p_stark_info, p_chelpers, p_const_pols) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn init_params_c(
+    p_chelpers_steps: *mut c_void,
+    p_challenges: *mut c_void,
+    p_subproof_values: *mut c_void,
+    p_evals: *mut c_void,
+    p_public_inputs: *mut c_void,
+) {
+    unsafe { init_params(p_chelpers_steps, p_challenges, p_subproof_values, p_evals, p_public_inputs) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn reset_params_c(
+    p_chelpers_steps: *mut c_void,
+) {
+    unsafe { reset_params(p_chelpers_steps) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_trace_pointer_c(p_chelpers_steps: *mut c_void, ptr: *mut c_void) {
+    unsafe { set_trace_pointer(p_chelpers_steps, ptr) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -604,12 +595,8 @@ pub fn stark_info_free_c(_p_stark_info: *mut c_void) {
 #[cfg(feature = "no_lib_link")]
 pub fn starks_new_c(
     _p_config: *mut c_void,
-    _const_pols: &str,
-    _map_const_pols_file: bool,
-    _constants_tree: &str,
     _stark_info: *mut c_void,
-    _chelpers: *mut c_void,
-    _p_address: *mut c_void,
+    _p_chelpers_steps: *mut c_void,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starks_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
@@ -618,11 +605,9 @@ pub fn starks_new_c(
 #[cfg(feature = "no_lib_link")]
 pub fn starks_new_default_c(
     _stark_info: *mut c_void,
-    _chelpers: *mut c_void,
-    _const_pols: *mut c_void,
-    _p_address: *mut c_void,
+    _p_chelpers_steps: *mut c_void,
 ) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "starks_new: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "starks_new_default: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
@@ -654,33 +639,11 @@ pub fn chelpers_free_c(_p_chelpers: *mut ::std::os::raw::c_void) {
     trace!("{}: ··· {}", "ffi     ", "chelpers_free: This is a mock call because there is no linked library");
 }
 
-#[cfg(feature = "no_lib_link")]
-pub fn init_hints_c() {
-    trace!("{}: ··· {}", "ffi     ", "init_hints: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn steps_params_new_c(
-    _p_stark: *mut c_void,
-    _p_const_pols: *mut c_void,
-    _p_challenges: *mut c_void,
-    _p_subproof_values: *mut c_void,
-    _p_evals: *mut c_void,
-    _p_public_inputs: *mut c_void,
-) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "steps_params_new: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_steps_params_field_c(_p_steps_params: *mut c_void, _name: &str) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "get_steps_params_field: This is a mock call because there is no linked library");
     std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn steps_params_free_c(_p_stepsParams: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "steps_params_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -722,9 +685,8 @@ pub fn compute_stage_expressions_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_impols_expressions_c(
-    _p_starks: *mut ::std::os::raw::c_void,
-    _id: u64,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,
+    _id: u64,
 ) {
     trace!(
         "{}: ··· {}",
@@ -735,7 +697,6 @@ pub fn calculate_impols_expressions_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_quotient_polynomial_c(
-    _p_starks: *mut ::std::os::raw::c_void,
     _p_chelpers_steps: *mut ::std::os::raw::c_void,
 ) {
     trace!("mckzkevm: ··· {}", "calculate_quotient_polynomial: This is a mock call because there is no linked library");
@@ -937,10 +898,35 @@ pub fn goldilocks_linear_hash_c(_p_input: *mut c_void, _p_output: *mut c_void) {
 pub fn chelpers_steps_new_c(
     _p_stark_info: *mut c_void,
     _p_chelpers: *mut c_void,
-    _p_params: *mut c_void,
+    _p_const_pols: *mut c_void,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "chelpers_steps_new_c: This is a mock call because there is no linked library");
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn init_params_c(
+    _p_chelpers_steps: *mut c_void,
+    _p_challenges: *mut c_void,
+    _p_subproof_values: *mut c_void,
+    _p_evals: *mut c_void,
+    _p_public_inputs: *mut c_void,
+) {
+    trace!("{}: ··· {}", "ffi     ", "init_params_c: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn reset_params_c(
+    _p_chelpers_steps: *mut c_void,
+) {
+    trace!("{}: ··· {}", "ffi     ", "reset_params_c: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_trace_pointer_c(
+    _p_chelpers_steps: *mut c_void, 
+    _ptr: *mut c_void) {
+    trace!("{}: ··· {}", "ffi     ", "set_trace_pointer_c: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

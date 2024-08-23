@@ -1,7 +1,8 @@
 use libloading::{Library, Symbol};
 use log::{debug, info, trace};
 use p3_field::Field;
-use stark::{GlobalInfo, StarkBufferAllocator, StarkProver};
+use stark::{StarkBufferAllocator, StarkProver};
+use setup::SetupCtx;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -65,19 +66,20 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let mut witness_lib = witness_lib(rom_path.clone(), public_inputs_path.clone(), proving_key_path.clone())?;
 
-        let pilout = witness_lib.pilout();
-
-        let mut pctx = ProofCtx::create_ctx(pilout);
+        let mut pctx = ProofCtx::create_ctx(witness_lib.pilout());
 
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
 
-        let buffer_allocator = Arc::new(StarkBufferAllocator::new(proving_key_path.clone()));
+        let buffer_allocator: Arc<StarkBufferAllocator> = Arc::new(StarkBufferAllocator::new(proving_key_path.clone()));
+
         let mut ectx = ExecutionCtx::builder().with_buffer_allocator(buffer_allocator).build();
+
+        let sctx = SetupCtx::new(witness_lib.pilout(), &proving_key_path);
 
         Self::initialize_witness(&mut witness_lib, &mut pctx, &mut ectx);
         witness_lib.calculate_witness(1, &mut pctx, &ectx);
 
-        Self::initialize_provers(&proving_key_path, &mut provers, &mut pctx);
+        Self::initialize_provers(&sctx, &proving_key_path, &mut provers, &mut pctx);
 
         if provers.is_empty() {
             return Err("No instances found".into());
@@ -154,10 +156,8 @@ impl<F: Field + 'static> ProofMan<F> {
         }
     }
 
-    fn initialize_provers(proving_key_path: &Path, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: &mut ProofCtx<F>) {
+    fn initialize_provers(sctx: &SetupCtx, proving_key_path: &Path, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: &mut ProofCtx<F>) {
         info!("{}: Initializing prover and creating buffers", Self::MY_NAME);
-
-        let global_info = GlobalInfo::from_file(&proving_key_path.join("pilout.globalInfo.json"));
 
         for air_instance in pctx.air_instances.write().unwrap().iter_mut() {
             debug!(
@@ -168,8 +168,8 @@ impl<F: Field + 'static> ProofMan<F> {
             );
 
             let prover = Box::new(StarkProver::new(
+                sctx,
                 proving_key_path,
-                &global_info,
                 air_instance.air_group_id,
                 air_instance.air_id,
             ));

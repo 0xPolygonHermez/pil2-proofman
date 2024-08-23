@@ -7,9 +7,7 @@ pub struct StarkProverSettings {
     #[serde(default = "default_string", rename = "starkInfoFilename")]
     pub stark_info_filename: String,
     #[serde(default = "default_string", rename = "verifierFilename")]
-    pub verkey_filename: String,
-    #[serde(default = "default_string", rename = "cHelpers")]
-    pub chelpers_filename: String,
+    pub verkey_filename: String
 }
 
 fn default_string() -> String {
