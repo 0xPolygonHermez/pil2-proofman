@@ -29,20 +29,21 @@ impl<F> WitnessManager<F> {
     pub fn register_component(
         &mut self,
         component: Arc<dyn WitnessComponent<F>>,
-        air_ids: Option<&(AirGroupId, [AirId])>,
+        air_group_id: Option<AirGroupId>,
+        air_ids: Option<&[AirId]>,
     ) {
         self.components.push(component);
 
         let idx = self.components.len() - 1;
 
         if let Some(air_ids) = air_ids {
-            self.register_airs(air_ids, idx);
+            self.register_airs(air_group_id.unwrap(), air_ids, idx);
         }
     }
 
-    pub fn register_airs(&mut self, air_ids: &(AirGroupId, [AirId]), component_idx: usize) {
-        for air_id in air_ids.1.iter() {
-            self.register_air(air_ids.0, *air_id, component_idx);
+    pub fn register_airs(&mut self, air_group_id: AirGroupId, air_ids: &[AirId], component_idx: usize) {
+        for air_id in air_ids.iter() {
+            self.register_air(air_group_id, *air_id, component_idx);
         }
     }
 
