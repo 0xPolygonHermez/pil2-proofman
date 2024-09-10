@@ -5,9 +5,12 @@ use log::info;
 use proofman_common::{ExecutionCtx, ProofCtx, SetupCtx};
 use crate::WitnessComponent;
 
+type AirGroupId = usize;
+type AirId = usize;
+
 pub struct WitnessManager<F> {
     components: Vec<Arc<dyn WitnessComponent<F>>>,
-    airs: HashMap<usize, usize>, // First usize is the air_id, second usize is the index of the component in the components vector
+    airs: HashMap<(AirGroupId, AirId), usize>, // First usize is the air_id, second usize is the index of the component in the components vector
 }
 
 impl<F> Default for WitnessManager<F> {
@@ -23,7 +26,11 @@ impl<F> WitnessManager<F> {
         WitnessManager { components: Vec::new(), airs: HashMap::new() }
     }
 
-    pub fn register_component(&mut self, component: Arc<dyn WitnessComponent<F>>, air_ids: Option<&[usize]>) {
+    pub fn register_component(
+        &mut self,
+        component: Arc<dyn WitnessComponent<F>>,
+        air_ids: Option<&(AirGroupId, [AirId])>,
+    ) {
         self.components.push(component);
 
         let idx = self.components.len() - 1;
@@ -33,18 +40,18 @@ impl<F> WitnessManager<F> {
         }
     }
 
-    pub fn register_airs(&mut self, air_ids: &[usize], component_idx: usize) {
-        for air_id in air_ids.iter() {
-            self.register_air(*air_id, component_idx);
+    pub fn register_airs(&mut self, air_ids: &(AirGroupId, [AirId]), component_idx: usize) {
+        for air_id in air_ids.1.iter() {
+            self.register_air(air_ids.0, *air_id, component_idx);
         }
     }
 
-    pub fn register_air(&mut self, air_id: usize, component_idx: usize) {
-        if self.airs.contains_key(&air_id) {
+    pub fn register_air(&mut self, air_group_id: AirGroupId, air_id: AirId, component_idx: usize) {
+        if self.airs.contains_key(&(air_group_id, air_id)) {
             panic!("{}: Air ID {} already registered", Self::MY_NAME, air_id);
         }
 
-        self.airs.insert(air_id, component_idx);
+        self.airs.insert((air_group_id, air_id), component_idx);
     }
 
     pub fn start_proof(&mut self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx, sctx: &SetupCtx) {
@@ -70,7 +77,7 @@ impl<F> WitnessManager<F> {
 
         let mut components = HashMap::new();
         for (air_instance_id, air_instance_ctx) in air_instances.iter().enumerate() {
-            let component = self.airs.get(&air_instance_ctx.air_id).unwrap();
+            let component = self.airs.get(&(air_instance_ctx.air_group_id, air_instance_ctx.air_id)).unwrap();
 
             components.entry(air_instance_ctx.air_id).or_insert_with(Vec::new).push((component, air_instance_id));
         }
