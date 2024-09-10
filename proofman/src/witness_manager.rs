@@ -80,9 +80,8 @@ impl<F> WitnessManager<F> {
         for (air_instance_id, air_instance_ctx) in air_instances.iter().enumerate() {
             let component = self.airs.get(&(air_instance_ctx.air_group_id, air_instance_ctx.air_id)).unwrap();
 
-            components.entry(air_instance_ctx.air_id).or_insert_with(Vec::new).push((component, air_instance_id));
+            components.entry((air_instance_ctx.air_group_id, air_instance_ctx.air_id)).or_insert_with(Vec::new).push((component, air_instance_id));
         }
-
         drop(air_instances);
 
         // Call all used components
