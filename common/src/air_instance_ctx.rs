@@ -22,7 +22,7 @@ impl<F> AirInstanceCtx<F> {
         buffer: Option<Vec<F>>,
     ) -> Self {
         AirInstanceCtx {
-            airgroup_id: airgroup_id,
+            airgroup_id,
             air_id,
             air_segment_id,
             prover_idx,
