@@ -5,9 +5,11 @@ use proofman_starks_lib_c::{
 use p3_field::Field;
 use proofman_common::{AirInstance, ExtensionField, ProofCtx, SetupCtx, SetupRepository};
 
+use std::cell::RefCell;
 use std::os::raw::c_void;
 use std::ops::{Mul, Add, Sub, Div};
 use std::fmt::Debug;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
@@ -214,7 +216,8 @@ pub fn get_hint_ids_by_name(p_setup: *mut c_void, name: &str) -> Vec<u64> {
 #[allow(clippy::too_many_arguments)]
 pub fn get_hint_field<F: Clone + Copy + Debug>(
     setup_repo: &SetupRepository,
-    proof_ctx: &ProofCtx<F>,
+    public_inputs: Arc<Vec<u8>>,
+    challenges: Arc<RefCell<Vec<F>>>,
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_name: &str,
@@ -223,8 +226,8 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
     print_expression: bool,
 ) -> HintFieldValue<F> {
     let buffer = air_instance.get_buffer_ptr() as *mut c_void;
-    let public_inputs = proof_ctx.public_inputs.as_ptr() as *mut c_void;
-    let challenges = proof_ctx.challenges.as_ptr() as *mut c_void;
+    let public_inputs = public_inputs.as_ptr() as *mut c_void;
+    let challenges = challenges.as_ptr() as *mut c_void;
     let evals = air_instance.evals.as_ptr() as *mut c_void;
     let subproof_values = air_instance.subproof_values.as_ptr() as *mut c_void;
 
