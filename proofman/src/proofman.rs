@@ -262,11 +262,11 @@ impl<F: Field + 'static> ProofMan<F> {
 
             if valid_constraints && global_constraints_verified {
                 log::debug!("{}: ··· {}", Self::MY_NAME, "All constraints were verified!".bright_green().bold());
+                return Ok(vec![]);
             } else {
                 log::debug!("{}: ··· {}", Self::MY_NAME, "Not all constraints were verified.".bright_red().bold());
+                return Err(format!("Failed to verify constraints").into());
             }
-
-            return Ok(vec![]);
         }
 
         // Compute Quotient polynomial

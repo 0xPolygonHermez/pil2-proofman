@@ -2,14 +2,15 @@ name: CI Checks
 on:
   push:
     branches: [main, develop]
-  pull_request:
+  pull_request: 
+    branches: [main, develop]
 jobs:
   cargo-test:
     name: cargo test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Set up Rust Toolchain
@@ -21,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Set up Rust Toolchain
@@ -33,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       - name: Set up Rust Toolchain
         run: curl https://sh.rustup.rs -sSf | sh -s -- -y
       - name: cargo fmt
@@ -43,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Set up Rust Toolchain
@@ -65,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Set up Rust Toolchain
@@ -77,10 +78,113 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
       - name: Set up Rust Toolchain
         run: curl https://sh.rustup.rs -sSf | sh -s -- -y
       - name: install cargo-audit
         run: cargo install cargo-audit
       - name: cargo audit
         run: cargo audit
+  fibonacci-square:
+    name: Test fibonacci square
+    runs-on: ubuntu-latest
+    env:
+      STARKS_LIB_C: zkevm-prover/lib/libstarks.a
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Check out pil2-components
+        uses: actions/checkout@v3
+        with:
+          repository: 0xPolygonHermez/pil2-components
+          token: ${{ secrets.ZISK_CI_TOKEN }}
+          ref: fix/dependencies_proofman
+          path: pil2-components
+
+      - name: Install pil2-components dependencies
+        working-directory: pil2-components
+        run: |
+          npm install
+
+      - name: Check out pil2-proofman-js
+        uses: actions/checkout@v3
+        with:
+          repository: 0xPolygonHermez/pil2-proofman-js
+          token: ${{ secrets.ZISK_CI_TOKEN }}
+          ref: feature/setup
+          path: pil2-proofman-js
+
+      - name: Install pil2-proofman-js dependencies
+        working-directory: pil2-proofman-js
+        run: npm install
+
+      - name: Check out pil2-compiler
+        uses: actions/checkout@v3
+        with:
+          repository: 0xPolygonHermez/pil2-compiler
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: develop
+          path: pil2-compiler
+
+      - name: Install pil2-compiler dependencies
+        working-directory: pil2-compiler
+        run: npm install
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt install build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev postgresql libpqxx-dev libpqxx-doc nasm libsecp256k1-dev grpc-proto libsodium-dev libprotobuf-dev libssl-dev cmake libgrpc++-dev uuid-dev
+          sudo apt-get install -y protobuf-compiler
+          
+      - name: Check out zkevm-prover
+        uses: actions/checkout@v3
+        with:
+          repository: 0xPolygonHermez/zkevm-prover
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: develop_rust_lib
+          path: zkevm-prover
+
+      - name: Install zkevm-prover
+        working-directory: zkevm-prover
+        run: |
+          git submodule init
+          git submodule update
+          make clean
+          make starks_lib -j
+          make -j bctree
+
+      - name: Compile PIL
+        run: |
+          node pil2-compiler/src/pil.js pil2-components/test/fibonacci/pil/build.pil -I pil2-components/lib/std/pil -o ./examples/fibonacci-square/pil/build.pilout
+
+      - name: Generate setup
+        run: |
+          node pil2-proofman-js/src/main_setup.js -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -t zkevm-prover/build/bctree
+
+      - name: Generate PIL Helpers
+        run: |
+          cargo run --bin proofman-cli pil-helpers --pilout ./examples/fibonacci-square/pil/build.pilout --path ./examples/fibonacci-square/src -o
+
+      - name: Modify Cargo.toml
+        run: |
+          sed -i 's/# examples\/fibonacci-square/examples\/fibonacci-square/g' ./Cargo.toml
+
+      - name: Modify stark-prover-lib
+        run: |
+          sed -i 's/default = \["no_lib_link"\]/default = \[\]/g' ./provers/starks-lib-c/Cargo.toml
+
+      - name: Cargo build
+        run:  RUST_BACKTRACE=1 cargo build -v
+
+      - name: Verify constraints
+        run: |
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json
+
+      - name: Generate proof
+        run: |
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json --output-dir examples/fibonacci-square/build/proofs
+
+      - name: Verify proof
+        run: |
+          node pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build -p examples/fibonacci-square/build/proofs
