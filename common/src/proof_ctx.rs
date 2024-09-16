@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cell::RefCell, sync::Arc};
 
 use log::info;
 
@@ -6,9 +6,9 @@ use crate::{AirInstancesRepository, WitnessPilout};
 
 #[allow(dead_code)]
 pub struct ProofCtx<F> {
-    pub public_inputs: Vec<u8>,
+    pub public_inputs: Arc<Vec<u8>>,
     pub pilout: WitnessPilout,
-    pub challenges: Vec<F>,
+    pub challenges: Arc<RefCell<Vec<F>>>,
     pub air_instance_repo: Arc<AirInstancesRepository<F>>, // RwLock<Vec<AirInstance<F>>>,
 }
 
@@ -21,7 +21,12 @@ impl<F> ProofCtx<F> {
             panic!("No air groups found in PilOut");
         }
 
-        Self { public_inputs: Vec::new(), pilout, challenges: Vec::new(), air_instance_repo }
+        Self {
+            public_inputs: Arc::new(Vec::new()),
+            pilout,
+            challenges: Arc::new(RefCell::new(Vec::new())),
+            air_instance_repo,
+        }
     }
 }
 

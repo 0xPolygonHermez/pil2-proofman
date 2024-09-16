@@ -1,7 +1,9 @@
+use std::cell::RefCell;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
 use std::any::type_name;
+use std::sync::Arc;
 
 use proofman_common::{
     BufferAllocator, ConstraintInfo, ConstraintsResults, GlobalInfo, ProofCtx, Prover, ProverInfo, ProverStatus,
@@ -119,8 +121,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
 
         //initialize the common challenges if have not been initialized by another prover
-        proof_ctx.challenges =
+        let challenges =
             vec![F::zero(); self.stark_info.challenges_map.as_ref().unwrap().len() * Self::FIELD_EXTENSION];
+        proof_ctx.challenges = Arc::new(RefCell::new(challenges));
 
         let n_commits = self.stark_info.cm_pols_map.as_ref().expect("REASON").len();
         let n_subproof_values = self.stark_info.subproofvalues_map.as_ref().expect("REASON").len();
@@ -356,7 +359,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
             let challenges_map = self.stark_info.challenges_map.as_ref().unwrap();
 
-            let challenges: &Vec<F> = &proof_ctx.challenges;
+            let challenges = &proof_ctx.challenges.borrow();
             for i in 0..challenges_map.len() {
                 if challenges_map[i].stage == stage_id as u64 {
                     transcript.get_challenge(&challenges[i * Self::FIELD_EXTENSION] as *const F as *mut c_void);
@@ -364,8 +367,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             }
         } else {
             //Fri folding + . queries: add one challenge for each step
-            proof_ctx.challenges.extend(std::iter::repeat(F::zero()).take(3));
-            let challenges: &Vec<F> = &proof_ctx.challenges;
+            let mut challenges = proof_ctx.challenges.borrow_mut();
+            challenges.extend(std::iter::repeat(F::zero()).take(3));
+            let challenges = proof_ctx.challenges.borrow();
             transcript.get_challenge(&challenges[challenges.len() - 3] as *const F as *mut c_void);
         }
     }
@@ -442,7 +446,7 @@ impl<F: Field> StarkProver<F> {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
         let buffer = air_instance.get_buffer_ptr() as *mut c_void;
 
-        let challenges: &Vec<F> = &proof_ctx.challenges;
+        let challenges: &Vec<F> = &proof_ctx.challenges.borrow();
         let challenge: Vec<F> = challenges.iter().skip(challenges.len() - 3).cloned().collect();
 
         compute_fri_folding_c(p_stark, step_index as u64, p_proof, buffer, challenge.as_ptr() as *mut c_void);
@@ -467,7 +471,7 @@ impl<F: Field> StarkProver<F> {
 
         let mut fri_queries = vec![u64::default(); self.stark_info.stark_struct.n_queries as usize];
 
-        let challenges: &Vec<F> = &proof_ctx.challenges;
+        let challenges: &Vec<F> = &proof_ctx.challenges.borrow();
         let challenge: Vec<F> = challenges.iter().skip(challenges.len() - 3).cloned().collect();
 
         let element_type = if type_name::<F>() == type_name::<Goldilocks>() { 1 } else { 0 };
