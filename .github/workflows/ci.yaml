@@ -84,3 +84,59 @@ jobs:
         run: cargo install cargo-audit
       - name: cargo audit
         run: cargo audit
+  fibonacci-square:
+    name: Test fibonacci square
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install pil2-components
+        uses: actions/checkout@v4
+        run: |
+          bash -c 'cd .. && git clone https://github.com/0xPolygonHermez/pil2-components.git pil2-components && cd pil2-components && git checkout fix/dependencies_proofman && npm install && cd ..'
+      - name: Install pil2-compiler
+        uses: actions/checkout@v4
+        run: |
+          bash -c 'git clone https://github.com/0xPolygonHermez/pil2-compiler.git pil2-compiler && cd pil2-compiler && npm install && cd ..'
+      - name: Install pil2-proofman-js
+        uses: actions/checkout@v4
+        run: |
+          bash -c 'git clone https://github.com/0xPolygonHermez/pil2-proofman-js.git pil2-proofman-js && cd pil2-proofman-js && git checkout feature/setup && npm install && cd ..'
+      - name: Install zkevm-prover
+        uses: actions/checkout@v4
+        run: |
+          bash -c 'git clone https://github.com/0xPolygonHermez/zkevm-prover.git zkevm-prover && cd zkevm-prover && git checkout develop_rust_lib && git submodule init && git submodule update && make clean && make starks_lib -j && make -j bctree && cd ..'
+      - name: Compile PIL
+        uses: actions/checkout@v4
+        run: |
+          bash -c 'cd pil2-proofman && node ../pil2-compiler/src/pil.js ../pil2-components/test/fibonacci/pil/build.pil -I ../pil2-components/lib/std/pil -o ./examples/fibonacci-square/pil/build.pilout'
+      - name: Generate setup
+        uses: actions/checkout@v4
+        run: |
+          bash -c 'node ../pil2-proofman-js/src/main_setup.js -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build'
+      - name: Generate PIL Helpers
+        uses: actions/checkout@v4
+        run: |
+          cargo run --bin proofman-cli pil-helpers --pilout ./examples/fibonacci-square/pil/build.pilout --path ./examples/fibonacci-square/src -o
+      
+      - name: Modify Cargo.toml
+        uses: actions/checkout@v4
+        run: |
+          sed -i 's/# examples\/fibonacci-square/examples\/fibonacci-square/g' ./Cargo.toml
+      - name: Modify stark-prover-lib
+        uses: actions/checkout@v4
+        run: |
+          sed -i 's/default = \["no_lib_link"\]/default = \[\]/g' ./provers/starks-lib-c/Cargo.toml
+      - name: Cargo build
+        uses: actions/checkout@v4
+        run: cargo build
+      - name: Verify constraints
+        uses: actions/checkout@v4
+        run: |
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json
+      - name: Generate proof
+        uses: actions/checkout@v4
+        run: |
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json --output-dir examples/fibonacci-square/build/proofs
+      - name: Verify proof
+        uses: actions/checkout@v4
+        run: |
+          node ../pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build -p examples/fibonacci-square/build/proofs
