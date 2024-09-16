@@ -283,7 +283,7 @@ pub fn get_hint_field_constant<F: Clone + Copy>(
 }
 
 pub fn set_hint_field<F: Copy + core::fmt::Debug>(
-    setup_ctx: &SetupCtx,
+    setup_repo: &SetupRepository,
     air_instance: &mut AirInstance<F>,
     hint_id: u64,
     hint_field_name: &str,
@@ -291,7 +291,7 @@ pub fn set_hint_field<F: Copy + core::fmt::Debug>(
 ) {
     let buffer = air_instance.get_buffer_ptr() as *mut c_void;
 
-    let setup = setup_ctx.setups.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+    let setup = setup_repo.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
 
     let values_ptr: *mut c_void = match values {
         HintFieldValue::Column(vec) => vec.as_ptr() as *mut c_void,
