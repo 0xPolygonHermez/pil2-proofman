@@ -89,7 +89,7 @@ jobs:
     name: Test fibonacci square
     runs-on: self-hosted
     env:
-      STARKS_LIB_C: zkevm-prover/lib/libstarks.a
+      STARKS_LIB_C: ${{ github.workspace }}/zkevm-prover/lib/libstarks.a
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
