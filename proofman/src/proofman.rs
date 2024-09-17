@@ -265,7 +265,7 @@ impl<F: Field + 'static> ProofMan<F> {
                 return Ok(vec![]);
             } else {
                 log::debug!("{}: ··· {}", Self::MY_NAME, "Not all constraints were verified.".bright_red().bold());
-                return Err(format!("Failed to verify constraints").into());
+                return Err("Failed to verify constraints".to_string().into());
             }
         }
 

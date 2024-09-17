@@ -2,12 +2,12 @@ name: CI Checks
 on:
   push:
     branches: [main, develop]
-  pull_request: 
+  pull_request:
     branches: [main, develop]
 jobs:
   cargo-test:
     name: cargo test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -19,7 +19,7 @@ jobs:
         run: cargo test --workspace --all-features
   cargo-check:
     name: cargo check
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -31,7 +31,7 @@ jobs:
         run: cargo check --workspace --all-features
   cargo-fmt:
     name: cargo fmt
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -41,7 +41,7 @@ jobs:
         run: cargo fmt -- --check
   cargo-fix:
     name: cargo fix
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -63,7 +63,7 @@ jobs:
           fi
   cargo-clippy:
     name: cargo clippy
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -75,7 +75,7 @@ jobs:
         run: cargo clippy --workspace --all-features -- -D warnings
   cargo-audit:
     name: cargo audit
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -87,7 +87,7 @@ jobs:
         run: cargo audit
   fibonacci-square:
     name: Test fibonacci square
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       STARKS_LIB_C: zkevm-prover/lib/libstarks.a
     steps:
@@ -136,7 +136,7 @@ jobs:
           sudo apt-get update
           sudo apt install build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev postgresql libpqxx-dev libpqxx-doc nasm libsecp256k1-dev grpc-proto libsodium-dev libprotobuf-dev libssl-dev cmake libgrpc++-dev uuid-dev
           sudo apt-get install -y protobuf-compiler
-          
+
       - name: Check out zkevm-prover
         uses: actions/checkout@v3
         with:
@@ -175,7 +175,7 @@ jobs:
           sed -i 's/default = \["no_lib_link"\]/default = \[\]/g' ./provers/starks-lib-c/Cargo.toml
 
       - name: Cargo build
-        run:  RUST_BACKTRACE=1 cargo build -v
+        run: RUST_BACKTRACE=1 cargo build -v
 
       - name: Verify constraints
         run: |
