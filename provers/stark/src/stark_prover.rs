@@ -195,7 +195,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             for i in 0..n_commits {
                 let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
                 if (cm_pol.stage < stage_id as u64 || cm_pol.stage == stage_id as u64 && !cm_pol.im_pol)
-                    && !air_instance.commits_calculated[i]
+                    && !air_instance.commits_calculated.contains_key(&i)
                 {
                     panic!("Intermediate polynomials for stage {} cannot be calculated: Witness column {} is not calculated", stage_id, cm_pol.name);
                 }
@@ -246,7 +246,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let n_commits = self.stark_info.cm_pols_map.as_ref().expect("REASON").len();
         for i in 0..n_commits {
             let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
-            if cm_pol.stage == stage_id as u64 && !air_instance.commits_calculated[i] {
+            if cm_pol.stage == stage_id as u64 && !air_instance.commits_calculated.contains_key(&i) {
                 panic!("Stage {} cannot be committed: Witness column {} is not calculated", stage_id, cm_pol.name);
             }
         }

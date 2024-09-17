@@ -1,4 +1,4 @@
-use std::mem;
+use std::{collections::HashMap, mem};
 
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
@@ -10,7 +10,7 @@ pub struct AirInstance<F> {
     pub buffer: Vec<F>,
     pub subproof_values: Vec<F>,
     pub evals: Vec<F>,
-    pub commits_calculated: Vec<bool>,
+    pub commits_calculated: HashMap<usize, bool>,
     pub subproofvalue_calculated: Vec<bool>,
 }
 
@@ -23,7 +23,7 @@ impl<F> AirInstance<F> {
             buffer,
             subproof_values: Vec::new(),
             evals: Vec::new(),
-            commits_calculated: Vec::new(),
+            commits_calculated: HashMap::new(),
             subproofvalue_calculated: Vec::new(),
         }
     }
@@ -36,12 +36,12 @@ impl<F> AirInstance<F> {
         self.evals = evals;
         self.subproof_values = subproof_values;
 
-        self.commits_calculated = vec![false; n_commits];
+        // self.commits_calculated = vec![false; n_commits];
         self.subproofvalue_calculated = vec![false; n_subproofvalues];
     }
 
     pub fn set_commit_calculated(&mut self, id: usize) {
-        self.commits_calculated[id] = true;
+        self.commits_calculated.insert(id, true);
     }
 
     pub fn set_subproofvalue_calculated(&mut self, id: usize) {
