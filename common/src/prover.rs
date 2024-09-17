@@ -11,6 +11,13 @@ pub enum ProverStatus {
     OpeningStage,
     StagesCompleted,
 }
+#[derive(Clone)]
+pub enum ProofType {
+    Basic,
+    Compressor,
+    Recursive1,
+    Recursive2,
+}
 
 pub struct ProverInfo {
     pub airgroup_id: usize,

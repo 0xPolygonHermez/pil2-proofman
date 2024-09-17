@@ -2,24 +2,27 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::Setup;
+use crate::ProofType;
 use crate::WitnessPilout;
+use crate::GlobalInfo;
 
 pub struct SetupRepository {
     pub setups: Vec<Setup>,
 }
 
 impl SetupRepository {
-    pub fn new(pilout: WitnessPilout, proving_key_path: &Path) -> Self {
+    pub fn new(pilout: &WitnessPilout, global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
         let setups = pilout
             .air_groups()
             .iter()
             .enumerate()
             .flat_map(|(airgroup_id, air_group)| {
+                let setup_type: ProofType = setup_type.clone();
                 air_group
                     .airs()
                     .iter()
                     .enumerate()
-                    .map(move |(air_id, _)| Setup::new(proving_key_path, airgroup_id, air_id))
+                    .map(move |(air_id, _)| Setup::new(global_info, airgroup_id, air_id, &setup_type))
             })
             .collect::<Vec<Setup>>();
 
@@ -43,8 +46,8 @@ pub struct SetupCtx {
 }
 
 impl SetupCtx {
-    pub fn new(pilout: WitnessPilout, proving_key_path: &Path) -> Self {
-        let setups = Arc::new(SetupRepository::new(pilout, proving_key_path));
+    pub fn new(pilout: &WitnessPilout, global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
+        let setups = Arc::new(SetupRepository::new(pilout, global_info,setup_type));
 
         SetupCtx { setups }
     }

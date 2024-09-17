@@ -6,8 +6,8 @@ use std::any::type_name;
 use std::sync::Arc;
 
 use proofman_common::{
-    BufferAllocator, ConstraintInfo, ConstraintsResults, GlobalInfo, ProofCtx, Prover, ProverInfo, ProverStatus,
-    SetupCtx,
+    BufferAllocator, ConstraintInfo, ConstraintsResults, GlobalInfo, ProofCtx, ProofType, Prover, ProverInfo,
+    ProverStatus, SetupCtx,
 };
 use log::{debug, trace};
 use transcript::FFITranscript;
@@ -53,9 +53,9 @@ impl<F: Field> StarkProver<F> {
     const FIELD_EXTENSION: usize = 3;
 
     pub fn new(sctx: &SetupCtx, proving_key_path: &Path, airgroup_id: usize, air_id: usize, prover_idx: usize) -> Self {
-        let global_info = GlobalInfo::from_file(&proving_key_path.join("pilout.globalInfo.json"));
+        let global_info = GlobalInfo::from_file(&proving_key_path.display().to_string());
 
-        let air_setup_folder = proving_key_path.join(global_info.get_air_setup_path(airgroup_id, air_id));
+        let air_setup_folder = global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);
         trace!("{}   : ··· Setup AIR folder: {:?}", Self::MY_NAME, air_setup_folder);
 
         // Check path exists and is a folder
@@ -500,7 +500,7 @@ impl StarkBufferAllocator {
 
 impl BufferAllocator for StarkBufferAllocator {
     fn get_buffer_info(&self, air_name: String, air_id: usize) -> Result<(u64, Vec<u64>), Box<dyn Error>> {
-        let global_info_name = GlobalInfo::from_file(&self.proving_key_path.join("pilout.globalInfo.json")).name;
+        let global_info_name = GlobalInfo::from_file(&self.proving_key_path.display().to_string()).name;
 
         // Get inside the proving key folder the unique file ending with "starkinfo.json", if not error
         let mut stark_info_path = None;

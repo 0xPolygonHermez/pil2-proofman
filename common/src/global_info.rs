@@ -3,10 +3,14 @@ use std::path::PathBuf;
 // use serde_json::Value as JsonValue;
 use log::debug;
 use serde::Deserialize;
+use serde_json::{Value, from_str};
 use proofman_util::{timer_start, timer_stop_and_log};
+use crate::ProofType;
+use std::fs;
 
 #[derive(Deserialize)]
 pub struct GlobalInfo {
+    pub folder_path: String,
     pub name: String,
     pub airs: Vec<Vec<GlobalInfoAir>>,
     pub subproofs: Vec<String>,
@@ -43,27 +47,46 @@ pub struct GlobalInfoStepsFRI {
 }
 
 impl GlobalInfo {
-    pub fn from_file(global_info_path: &PathBuf) -> Self {
-        let global_info_json = std::fs::read_to_string(global_info_path)
-            .unwrap_or_else(|_| panic!("Failed to read file {}", global_info_path.display()));
+    pub fn from_file(folder_path: &String) -> Self {
+        let file_path = folder_path.to_string() + "/pilout.globalInfo.json";
+        let global_info_json =
+            fs::read_to_string(&file_path).unwrap_or_else(|_| panic!("Failed to read file {}", file_path));
 
-        GlobalInfo::from_json(&global_info_json)
-    }
+        let mut global_info_value: Value = serde_json::from_str(&global_info_json)
+            .unwrap_or_else(|err| panic!("Failed to parse JSON file: {}: {}", file_path, err));
 
-    pub fn from_json(global_info_json: &str) -> Self {
-        timer_start!(GLOBAL_INFO_LOAD);
+        // Add the folder_path to the JSON object
+        if let Some(obj) = global_info_value.as_object_mut() {
+            obj.insert("folder_path".to_string(), Value::String(folder_path.clone()));
+        } else {
+            panic!("JSON is not an object: {}", file_path);
+        }
 
-        debug!("glblinfo: ··· Loading GlobalInfo JSON");
-        let global_info: GlobalInfo = serde_json::from_str(global_info_json).expect("Failed to parse JSON file");
+        // Serialize the updated JSON object back to a string
+        let updated_global_info_json = serde_json::to_string(&global_info_value)
+            .unwrap_or_else(|err| panic!("Failed to serialize updated JSON: {}", err));
 
-        timer_stop_and_log!(GLOBAL_INFO_LOAD);
-
+        // Deserialize the updated JSON string into the `GlobalInfo` struct
+        let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)
+            .unwrap_or_else(|err| panic!("Failed to parse updated JSON file: {}: {}", file_path, err));
         global_info
     }
 
-    pub fn get_air_setup_path(&self, airgroup_id: usize, air_id: usize) -> PathBuf {
-        let air_setup_folder =
-            format!("{}/{}/airs/{}/air", self.name, self.subproofs[airgroup_id], self.airs[airgroup_id][air_id].name);
+    pub fn get_proving_key_path(&self) -> PathBuf {
+        PathBuf::from(self.folder_path.clone())
+    }
+
+    pub fn get_air_setup_path(&self, airgroup_id: usize, air_id: usize, proof_type: &ProofType) -> PathBuf {
+        let type_str = match proof_type {
+            ProofType::Basic => "air",
+            ProofType::Compressor => "compressor",
+            ProofType::Recursive1 => "recursive1",
+            ProofType::Recursive2 => "recursive2",
+        };
+        let air_setup_folder = format!(
+            "{}/{}/{}/airs/{}/{}",
+            self.folder_path, self.name, self.subproofs[airgroup_id], self.airs[airgroup_id][air_id].name, type_str
+        );
 
         PathBuf::from(air_setup_folder)
     }

@@ -5,6 +5,7 @@ use stark::{StarkBufferAllocator, StarkProver};
 use proofman_starks_lib_c::{save_challenges_c, save_publics_c, verify_global_constraints_c};
 use std::ffi::CStr;
 use std::{cmp, fs};
+use std::process;
 
 use std::{
     collections::HashMap,
@@ -16,7 +17,7 @@ use transcript::FFITranscript;
 
 use crate::{WitnessLibrary, WitnessLibInitFn};
 
-use proofman_common::{AirInstancesRepository, ConstraintInfo, ExecutionCtx, ProofCtx, Prover, SetupCtx};
+use proofman_common::{AirInstancesRepository, ConstraintInfo, ExecutionCtx, ProofCtx, Prover, SetupCtx, GlobalInfo, WitnessPilout, ProofType};
 
 use colored::*;
 
@@ -36,7 +37,7 @@ impl<F: Field + 'static> ProofMan<F> {
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
         debug_mode: u64,
-    ) -> Result<Vec<F>, Box<dyn std::error::Error>> {
+    ) -> Result<(ProofCtx<F>, WitnessPilout, GlobalInfo), Box<dyn std::error::Error>> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
             return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
@@ -85,7 +86,9 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
 
-        let sctx = SetupCtx::new(witness_lib.pilout(), &proving_key_path);
+        let global_info = GlobalInfo::from_file(&proving_key_path.display().to_string());
+
+        let sctx = SetupCtx::new(&witness_lib.pilout(), &global_info, &ProofType::Basic);
 
         let buffer_allocator: Arc<StarkBufferAllocator> = Arc::new(StarkBufferAllocator::new(proving_key_path.clone()));
 
@@ -266,7 +269,7 @@ impl<F: Field + 'static> ProofMan<F> {
                 log::debug!("{}: ··· {}", Self::MY_NAME, "Not all constraints were verified.".bright_red().bold());
             }
 
-            return Ok(vec![]);
+            return Ok((pctx, witness_lib.pilout(), global_info));
         }
 
         // Compute Quotient polynomial
@@ -285,7 +288,7 @@ impl<F: Field + 'static> ProofMan<F> {
             output_dir_path.to_string_lossy().as_ref(),
         );
 
-        Ok(proof)
+        Ok((pctx, witness_lib.pilout(), global_info))
     }
 
     fn initialize_witness(
@@ -453,5 +456,23 @@ impl<F: Field + 'static> ProofMan<F> {
         );
 
         vec![]
+    }
+
+    //
+    // Compressor prove
+    //
+    pub fn generate_recursion_proof(
+        pctx: &ProofCtx<F>,
+        witness_pilout: &WitnessPilout,
+        global_info: &GlobalInfo,
+        proof_type: &ProofType,
+    ) {
+        println!("Generating compressor proof");
+
+        let sctx = SetupCtx::new(witness_pilout, global_info, proof_type); /*problem*/
+        let mut provers: Vec<*mut c_void> = Vec::new();
+
+        //WC
+        // call starks
     }
 }
