@@ -41,8 +41,7 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
     ) -> Result<u64, Box<dyn std::error::Error>> {
         log::info!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        let public_inputs: FibonacciSquarePublics = pctx.public_inputs.as_slice().into();
-
+        let public_inputs: FibonacciSquarePublics = pctx.public_inputs.borrow().as_slice().into();
         let (module, mut a, mut b, _out) = public_inputs.inner();
 
         let (buffer_size, offsets) =
@@ -65,9 +64,7 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
             trace[i].b = F::from_canonical_u64(b);
         }
 
-        // hint!
-
-        pctx.public_inputs[24..32].copy_from_slice(&b.to_le_bytes());
+        pctx.public_inputs.borrow_mut()[24..32].copy_from_slice(&b.to_le_bytes());
 
         // Not needed, for debugging!
         // let mut result = F::zero();

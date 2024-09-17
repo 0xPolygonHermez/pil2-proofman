@@ -23,11 +23,12 @@ impl SetupRepository {
             })
             .collect::<Vec<Setup>>();
 
+        println!("SETUPS LEN {}", setups.len());
         Self { setups }
     }
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> Result<&Setup, String> {
-        for setup in self.setups.iter() {
+                for setup in self.setups.iter() {
             if setup.airgroup_id == airgroup_id && setup.air_id == air_id {
                 return Ok(setup);
             }
