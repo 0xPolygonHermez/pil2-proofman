@@ -171,7 +171,7 @@ pub fn get_hint_field_c(
             steps_params.buffer,
             steps_params.public_inputs,
             steps_params.challenges,
-            steps_params.subproofValues,
+            steps_params.subproof_values,
             steps_params.evals,
             hint_id,
             field_name.as_ptr() as *mut std::os::raw::c_char,

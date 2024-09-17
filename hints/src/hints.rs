@@ -559,8 +559,8 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
 
     let steps_params = StepsParams {
         buffer: air_instance.get_buffer_ptr() as *mut c_void,
-        public_inputs: proof_ctx.challenges.as_ptr() as *mut c_void,
-        challenges: proof_ctx.challenges.as_ptr() as *mut c_void,
+        public_inputs: public_inputs.as_ptr() as *mut c_void,
+        challenges: challenges.as_ptr() as *mut c_void,
         subproof_values: air_instance.evals.as_ptr() as *mut c_void,
         evals: air_instance.subproof_values.as_ptr() as *mut c_void,
     };
