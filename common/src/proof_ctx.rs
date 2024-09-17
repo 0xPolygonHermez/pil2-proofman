@@ -6,7 +6,7 @@ use crate::{AirInstancesRepository, WitnessPilout};
 
 #[allow(dead_code)]
 pub struct ProofCtx<F> {
-    pub public_inputs: Arc<Vec<u8>>,
+    pub public_inputs: Arc<RefCell<Vec<u8>>>,
     pub pilout: WitnessPilout,
     pub challenges: Arc<RefCell<Vec<F>>>,
     pub air_instance_repo: Arc<AirInstancesRepository<F>>, // RwLock<Vec<AirInstance<F>>>,
@@ -22,7 +22,7 @@ impl<F> ProofCtx<F> {
         }
 
         Self {
-            public_inputs: Arc::new(Vec::new()),
+            public_inputs: Arc::new(RefCell::new(Vec::new())),
             pilout,
             challenges: Arc::new(RefCell::new(Vec::new())),
             air_instance_repo,

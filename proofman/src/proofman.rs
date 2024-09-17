@@ -241,7 +241,7 @@ impl<F: Field + 'static> ProofMan<F> {
             let global_constraints_verified = verify_global_constraints_c(
                 proving_key_path.join("pilout.globalInfo.json").to_str().unwrap(),
                 proving_key_path.join("pilout.globalConstraints.bin").to_str().unwrap(),
-                pctx.public_inputs.as_ptr() as *mut c_void,
+                pctx.public_inputs.clone().as_ptr() as *mut c_void,
                 proofs.as_mut_ptr() as *mut c_void,
                 provers.len() as u64,
             );
@@ -440,10 +440,10 @@ impl<F: Field + 'static> ProofMan<F> {
             prover.save_proof(idx as u64, output_dir);
         }
 
-        save_publics_c((pctx.public_inputs.len() / 8) as u64, pctx.public_inputs.as_ptr() as *mut c_void, output_dir);
+        save_publics_c((pctx.public_inputs.borrow().len() / 8) as u64, (*pctx.public_inputs.borrow()).as_ptr() as *mut c_void, output_dir);
 
         save_challenges_c(
-            pctx.challenges.as_ptr() as *mut c_void,
+            (*pctx.challenges.borrow()).as_ptr() as *mut c_void,
             proving_key_path.join("pilout.globalInfo.json").to_str().unwrap(),
             output_dir,
         );

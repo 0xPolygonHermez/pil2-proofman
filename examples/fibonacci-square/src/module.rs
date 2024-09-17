@@ -38,7 +38,7 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
     fn calculate_trace(&self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx) {
         log::info!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        let pi: FibonacciSquarePublics = pctx.public_inputs.as_slice().into();
+        let pi: FibonacciSquarePublics = pctx.public_inputs.borrow().as_slice().into();
         let module = pi.module;
 
         let (buffer_size, offsets) =

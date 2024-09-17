@@ -165,9 +165,11 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn verify_constraints(&self, proof_ctx: &mut ProofCtx<F>) -> Vec<ConstraintInfo> {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
 
+        println!("RICK {:?}", proof_ctx.public_inputs);
+
         let buffer = air_instance.get_buffer_ptr() as *mut c_void;
-        let public_inputs = proof_ctx.public_inputs.as_ptr() as *mut c_void;
-        let challenges = proof_ctx.challenges.as_ptr() as *mut c_void;
+        let public_inputs = (*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void;
+        let challenges = (*proof_ctx.challenges.borrow()).as_ptr() as *mut c_void;
         let evals = air_instance.evals.as_ptr() as *mut c_void;
         let subproof_values = air_instance.subproof_values.as_ptr() as *mut c_void;
 
@@ -184,8 +186,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
 
         let buffer = air_instance.get_buffer_ptr() as *mut c_void;
-        let public_inputs = proof_ctx.public_inputs.as_ptr() as *mut c_void;
-        let challenges = proof_ctx.challenges.as_ptr() as *mut c_void;
+        let public_inputs = (*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void;
+        let challenges = (*proof_ctx.challenges.borrow()).as_ptr() as *mut c_void;
         let evals = air_instance.evals.as_ptr() as *mut c_void;
         let subproof_values = air_instance.subproof_values.as_ptr() as *mut c_void;
 
@@ -346,7 +348,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     //TODO: This funciton could leave outside the prover trait, for now is confortable to get the hash and the configs
     fn add_publics_to_transcript(&self, proof_ctx: &mut ProofCtx<F>, transcript: &FFITranscript) {
         let stark_info: &StarkInfo = &self.stark_info;
-        transcript.add_elements(proof_ctx.public_inputs.as_ptr() as *mut c_void, stark_info.n_publics as usize);
+        transcript.add_elements((*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void, stark_info.n_publics as usize);
     }
 
     fn get_challenges(&self, stage_id: u32, proof_ctx: &mut ProofCtx<F>, transcript: &FFITranscript) {
@@ -359,7 +361,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
             let challenges_map = self.stark_info.challenges_map.as_ref().unwrap();
 
-            let challenges = &proof_ctx.challenges.borrow();
+            let challenges = &proof_ctx.challenges.borrow_mut();
             for i in 0..challenges_map.len() {
                 if challenges_map[i].stage == stage_id as u64 {
                     transcript.get_challenge(&challenges[i * Self::FIELD_EXTENSION] as *const F as *mut c_void);
@@ -369,7 +371,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             //Fri folding + . queries: add one challenge for each step
             let mut challenges = proof_ctx.challenges.borrow_mut();
             challenges.extend(std::iter::repeat(F::zero()).take(3));
-            let challenges = proof_ctx.challenges.borrow();
             transcript.get_challenge(&challenges[challenges.len() - 3] as *const F as *mut c_void);
         }
     }
@@ -397,7 +398,7 @@ impl<F: Field> StarkProver<F> {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
 
         let buffer = air_instance.get_buffer_ptr() as *mut c_void;
-        let challenges = proof_ctx.challenges.as_ptr() as *mut c_void;
+        let challenges = (*proof_ctx.challenges.borrow()).as_ptr() as *mut c_void;
         let evals = air_instance.evals.as_mut_ptr() as *mut c_void;
 
         let p_stark = self.p_stark;
@@ -412,8 +413,8 @@ impl<F: Field> StarkProver<F> {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
 
         let buffer = air_instance.get_buffer_ptr() as *mut c_void;
-        let public_inputs = proof_ctx.public_inputs.as_ptr() as *mut c_void;
-        let challenges = proof_ctx.challenges.as_ptr() as *mut c_void;
+        let public_inputs = (*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void;
+        let challenges = (*proof_ctx.challenges.borrow()).as_ptr() as *mut c_void;
         let evals = air_instance.evals.as_ptr() as *mut c_void;
         let subproof_values = air_instance.subproof_values.as_ptr() as *mut c_void;
 

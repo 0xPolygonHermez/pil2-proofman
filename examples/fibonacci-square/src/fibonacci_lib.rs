@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::io::Read;
 use std::{fs::File, sync::Arc};
 
@@ -52,7 +53,7 @@ impl<F: PrimeField> WitnessLibrary<F> for FibonacciWitness<F> {
             FibonacciSquarePublics::default()
         };
 
-        pctx.public_inputs = public_inputs.into();
+        pctx.public_inputs = Arc::new(RefCell::new(public_inputs.into()));
 
         self.wcm.start_proof(pctx, ectx, sctx);
     }
