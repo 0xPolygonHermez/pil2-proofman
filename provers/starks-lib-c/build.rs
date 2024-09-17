@@ -7,11 +7,16 @@ fn main() {
         let library_folder: String;
         let library_path = if let Ok(path) = env::var("STARKS_LIB_C") {
             // If STARKS_LIB_C is set, use its value
-            library_folder = Path::new(&path).parent().unwrap_or_else(|| Path::new(".")).to_str().unwrap().to_string();
+            library_folder = std::path::absolute(Path::new(&path).parent().unwrap_or_else(|| Path::new(".")))
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+            println!("Library folder: {}  and library path: {}", library_folder, path);
             path
         } else {
             // Fallback if STARKS_LIB_C is not set
-            library_folder = "../../../zkevm-proverrrrrrrr/lib".to_string();
+            library_folder = "../../../zkevm-prover/lib".to_string();
             format!("{}/lib{}.a", library_folder, library_short_name)
         };
 
