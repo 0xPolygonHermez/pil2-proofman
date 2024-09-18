@@ -22,15 +22,20 @@ impl Setup {
     const MY_NAME: &'static str = "Setup";
 
     pub fn new(global_info: &GlobalInfo, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> Self {
-        let air_setup_folder = global_info.get_air_setup_path(airgroup_id, air_id, setup_type);
-        trace!("{}   : ··· Setup AIR folder: {:?}", Self::MY_NAME, air_setup_folder);
+        let air_setup_folder;
+        if setup_type != &ProofType::Final {
+            air_setup_folder = global_info.get_air_setup_path(airgroup_id, air_id, setup_type);
+            trace!("{}   : ··· Setup AIR folder: {:?}", Self::MY_NAME, air_setup_folder);
 
-        // Check path exists and is a folder
-        if !air_setup_folder.exists() {
-            panic!("Setup AIR folder not found at path: {:?}", air_setup_folder);
-        }
-        if !air_setup_folder.is_dir() {
-            panic!("Setup AIR path is not a folder: {:?}", air_setup_folder);
+            // Check path exists and is a folder
+            if !air_setup_folder.exists() {
+                panic!("Setup AIR folder not found at path: {:?}", air_setup_folder);
+            }
+            if !air_setup_folder.is_dir() {
+                panic!("Setup AIR path is not a folder: {:?}", air_setup_folder);
+            }
+        } else {
+            air_setup_folder = global_info.get_proving_key_path().join("final/");
         }
         let base_filename_path = match setup_type {
             ProofType::Basic => {
@@ -39,6 +44,7 @@ impl Setup {
             ProofType::Compressor => air_setup_folder.join("compressor").display().to_string(),
             ProofType::Recursive1 => air_setup_folder.join("recursive1").display().to_string(),
             ProofType::Recursive2 => air_setup_folder.join("recursive2").display().to_string(),
+            ProofType::Final => air_setup_folder.join("final").display().to_string(),
         };
         let stark_info_path = base_filename_path.clone() + ".starkinfo.json";
         let expressions_bin_path = base_filename_path.clone() + ".bin";

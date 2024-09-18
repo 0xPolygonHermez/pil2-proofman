@@ -11,20 +11,25 @@ pub struct SetupRepository {
 
 impl SetupRepository {
     pub fn new(pilout: &WitnessPilout, global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
-        let setups = pilout
-            .air_groups()
-            .iter()
-            .enumerate()
-            .flat_map(|(airgroup_id, air_group)| {
-                let setup_type: ProofType = setup_type.clone();
-                air_group
-                    .airs()
-                    .iter()
-                    .enumerate()
-                    .map(move |(air_id, _)| Setup::new(global_info, airgroup_id, air_id, &setup_type))
-            })
-            .collect::<Vec<Setup>>();
-
+        let mut setups = Vec::new();
+        if setup_type != &ProofType::Final {
+            setups = pilout
+                .air_groups()
+                .iter()
+                .enumerate()
+                .flat_map(|(airgroup_id, air_group)| {
+                    let setup_type: ProofType = setup_type.clone();
+                    air_group
+                        .airs()
+                        .iter()
+                        .enumerate()
+                        .map(move |(air_id, _)| Setup::new(global_info, airgroup_id, air_id, &setup_type))
+                })
+                .collect::<Vec<Setup>>();
+        } else {
+            setups.push(Setup::new(global_info, 0, 0, &setup_type));
+            println!("Final setup");
+        }
         Self { setups }
     }
 

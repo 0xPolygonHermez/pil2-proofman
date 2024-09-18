@@ -102,8 +102,18 @@ impl ProveCmd {
                 &comp_proofs,
                 &ProofType::Recursive1,
             ),
-        };
+        }?;
         println!("Recursive1 proofs generated successfully");
+        let _recursive2_proofs = match self.field {
+            Field::Goldilocks => ProofMan::<GL>::generate_recursion_proof(
+                &mut basic_out.0,
+                &basic_out.1,
+                &basic_out.2,
+                &recursive1_proofs,
+                &ProofType::Recursive2,
+            ),
+        };
+        println!("Recursive2 proofs generated successfully");
 
         Ok(())
     }

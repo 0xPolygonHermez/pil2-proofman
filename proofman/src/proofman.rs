@@ -498,94 +498,156 @@ impl<F: Field + 'static> ProofMan<F> {
         proves: &Vec<*mut c_void>,
         proof_type: &ProofType,
     ) -> Result<Vec<*mut c_void>, Box<dyn std::error::Error>> {
-        //
+        //Create setup contexts
         let sctx = SetupCtx::new(pilout, global_setup_info, proof_type); /*problem*/
         let mut proves_out: Vec<*mut c_void> = Vec::new();
 
         // Run proves
-        for (prover_idx, air_instance) in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut().enumerate() {
-            let air_setup_folder =
-                global_setup_info.get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, proof_type);
-            trace!("{}   : ··· Setup AIR folder: {:?}", Self::MY_NAME, air_setup_folder);
+        match *proof_type {
+            ProofType::Compressor | ProofType::Recursive1 => {
+                for (prover_idx, air_instance) in
+                    pctx.air_instance_repo.air_instances.write().unwrap().iter_mut().enumerate()
+                {
+                    let air_setup_folder =
+                        global_setup_info.get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, proof_type);
+                    trace!("{}   : ··· Setup AIR folder: {:?}", Self::MY_NAME, air_setup_folder);
 
-            // Check path exists and is a folder
-            if !air_setup_folder.exists() {
-                panic!("Setup AIR folder not found at path: {:?}", air_setup_folder);
-            }
-            if !air_setup_folder.is_dir() {
-                panic!("Setup AIR path is not a folder: {:?}", air_setup_folder);
-            }
+                    // Check path exists and is a folder
+                    if !air_setup_folder.exists() {
+                        panic!("Setup AIR folder not found at path: {:?}", air_setup_folder);
+                    }
+                    if !air_setup_folder.is_dir() {
+                        panic!("Setup AIR path is not a folder: {:?}", air_setup_folder);
+                    }
 
-           
-            if *proof_type == ProofType::Compressor && !global_setup_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) {
-                proves_out.push(proves[prover_idx]);
-            } else {
-                let base_filename_path = match proof_type {
-                    ProofType::Basic => air_setup_folder
-                        .join(global_setup_info.get_air_name(air_instance.airgroup_id, air_instance.air_id))
-                        .display()
-                        .to_string(),
-                    ProofType::Compressor => air_setup_folder.join("compressor").display().to_string(),
-                    ProofType::Recursive1 => air_setup_folder.join("recursive1").display().to_string(),
-                    ProofType::Recursive2 => air_setup_folder.join("recursive2").display().to_string(),
-                };
-    
-                // witness computation
-                let rust_lib_filename = base_filename_path.clone() + ".so";
-                let rust_lib_path = Path::new(rust_lib_filename.as_str());
-    
-                if !rust_lib_path.exists() {
-                    return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
+                    if *proof_type == ProofType::Compressor
+                        && !global_setup_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id)
+                    {
+                        proves_out.push(proves[prover_idx]);
+                    } else {
+                        let base_filename_path = match proof_type {
+                            ProofType::Basic => air_setup_folder
+                                .join(global_setup_info.get_air_name(air_instance.airgroup_id, air_instance.air_id))
+                                .display()
+                                .to_string(),
+                            ProofType::Compressor => air_setup_folder.join("compressor").display().to_string(),
+                            ProofType::Recursive1 => air_setup_folder.join("recursive1").display().to_string(),
+                            ProofType::Recursive2 => air_setup_folder.join("recursive2").display().to_string(),
+                            ProofType::Final => air_setup_folder.join("final").display().to_string(),
+                        };
+
+                        // witness computation
+                        let rust_lib_filename = base_filename_path.clone() + ".so";
+                        let rust_lib_path = Path::new(rust_lib_filename.as_str());
+
+                        if !rust_lib_path.exists() {
+                            return Err(
+                                format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into()
+                            );
+                        }
+
+                        // Load the dynamic library at runtime
+                        let library = unsafe { Library::new(&rust_lib_path)? };
+
+                        // get setup
+                        let setup: &proofman_common::Setup = sctx
+                            .setups
+                            .get_setup(air_instance.airgroup_id, air_instance.air_id)
+                            .expect("Setup not found");
+
+                        let p_setup: *mut c_void = setup.p_setup;
+                        let p_stark_info: *mut c_void = setup.p_stark_info;
+
+                        let n = get_stark_info_n_c(p_stark_info);
+                        let offset_cm1 = get_map_offsets_c(p_stark_info, "cm1", false);
+
+                        let total_n = get_map_totaln_c(p_stark_info);
+                        let n_publics = get_stark_info_n_publics_c(p_stark_info);
+
+                        if total_n > air_instance.buffer.len() as u64 {
+                            air_instance.buffer.resize(total_n as usize, F::zero());
+                            // Replace 0 with a suitable default value if needed
+                        }
+                        let p_address = air_instance.get_buffer_ptr() as *mut c_void;
+
+                        let publics = vec![F::zero(); n_publics as usize];
+                        let p_publics = publics.as_ptr() as *mut c_void;
+
+                        // Load the symbol (function) from the library
+                        unsafe {
+                            let get_commited_pols: Symbol<GetCommitedPolsFunc> = library.get(b"getCommitedPols\0")?;
+
+                            // Call the function
+                            let dat_filename = base_filename_path.clone() + ".dat";
+                            let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
+                            let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
+
+                            let exec_filename = base_filename_path.clone() + ".exec";
+                            let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
+                            let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
+
+                            let zkin = proves[prover_idx];
+                            println!("ZKIN  {:?}", zkin);
+                            println!("BEFORE");
+                            get_commited_pols(
+                                p_address,
+                                p_publics,
+                                zkin,
+                                n,
+                                n_publics,
+                                offset_cm1,
+                                dat_filename_ptr,
+                                exec_filename_ptr,
+                            );
+                            println!("AFTER");
+                        }
+
+                        // prove
+                        let p_prove = gen_recursive_proof_c(p_setup, p_address, publics.as_ptr() as *mut c_void);
+                        println!("ZKIN {:?}", p_prove);
+                        proves_out.push(p_prove);
+                    }
                 }
-    
-                // Load the dynamic library at runtime
-                let library = unsafe { Library::new(&rust_lib_path)? };
-    
-                // get setup
-                let setup: &proofman_common::Setup =
-                    sctx.setups.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("Setup not found");
-    
-                let p_setup: *mut c_void = setup.p_setup;
-                let p_stark_info: *mut c_void = setup.p_stark_info;
-    
-                let n = get_stark_info_n_c(p_stark_info);
-                let offset_cm1 = get_map_offsets_c(p_stark_info, "cm1", false);
-    
-                let total_n = get_map_totaln_c(p_stark_info);
-                let n_publics = get_stark_info_n_publics_c(p_stark_info);
-    
-                if total_n > air_instance.buffer.len() as u64 {
-                    air_instance.buffer.resize(total_n as usize, F::zero()); // Replace 0 with a suitable default value if needed
+            }
+            ProofType::Recursive2 => {
+                // split instances per airgroup
+                let mut map = HashMap::new();
+                for (prover_idx, air_instance) in
+                    pctx.air_instance_repo.air_instances.write().unwrap().iter_mut().enumerate()
+                {
+                    map.entry(air_instance.airgroup_id).or_insert_with(Vec::new).push(proves[prover_idx]);
                 }
-                let p_address = air_instance.get_buffer_ptr() as *mut c_void;
-    
-                let publics = vec![F::zero(); n_publics as usize];
-                let p_publics = publics.as_ptr() as *mut c_void;
-    
-                // Load the symbol (function) from the library
-                unsafe {
-                    let get_commited_pols: Symbol<GetCommitedPolsFunc> = library.get(b"getCommitedPols\0")?;
-    
-                    // Call the function
-                    let dat_filename = base_filename_path.clone() + ".dat";
-                    let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-                    let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
-    
-                    let exec_filename = base_filename_path.clone() + ".exec";
-                    let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
-                    let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
-    
-                    let zkin = proves[prover_idx];
-                    println!("ZKIN  {:?}", zkin);
-                    println!("BEFORE");
-                    get_commited_pols(p_address, p_publics, zkin, n, n_publics, offset_cm1, dat_filename_ptr, exec_filename_ptr);
-                    println!("AFTER");
+                let _n_airgroups = map.len();
+                //agregate each airgrup
+                for (_airgroup_id, indices) in &mut map {
+                    //create a vector of sice indices length
+                    let mut alive = indices.len();
+                    while alive > 1 {
+                        for i in 0..alive / 2 {
+                            let j = i * 2;
+                            if j + 1 < alive {
+                                //initialize zkin with a void pionter
+                                let zkin: *mut std::ffi::c_void = std::ptr::null_mut();
+                                // call the joinzkein
+                                // call witness
+                                // call recursive proof
+                                indices[j] = zkin;
+                            }
+                        }
+                        alive = (alive + 1) / 2;
+                        //compact elements
+                        for i in 0..alive {
+                            indices[i] = indices[i * 2];
+                        }
+                    }
+                    proves_out.push(indices[0]);
                 }
-                
-                // prove
-                let p_prove = gen_recursive_proof_c(p_setup, p_address, publics.as_ptr() as *mut c_void);
-                println!("ZKIN {:?}", p_prove);
-                proves_out.push(p_prove);
+            }
+            ProofType::Final => {
+                println!("Final proof");
+            }   
+            ProofType::Basic => {
+                panic!("Recursion proof whould not be calles for ProofType::Basic ");
             }
         }
         Ok(proves_out)

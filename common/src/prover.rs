@@ -17,6 +17,7 @@ pub enum ProofType {
     Compressor,
     Recursive1,
     Recursive2,
+    Final,
 }
 
 pub struct ProverInfo {

@@ -81,7 +81,17 @@ pub fn fri_proof_get_zkinproof_c(
     let file_dir = CString::new(output_dir_file).unwrap();
     let file_ptr = file_dir.as_ptr() as *mut std::os::raw::c_char;
 
-    unsafe { fri_proof_get_zkinproof(proof_id, p_fri_proof, p_publics, p_challenges, p_stark_info, global_info_file_ptr, file_ptr) }
+    unsafe {
+        fri_proof_get_zkinproof(
+            proof_id,
+            p_fri_proof,
+            p_publics,
+            p_challenges,
+            p_stark_info,
+            global_info_file_ptr,
+            file_ptr,
+        )
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -590,7 +600,6 @@ pub fn get_stark_info_n_publics_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_stark_info_n_c: This is a mock call because there is no linked library");
     100000000
 }
-
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_stark_info_n_c(_p_stark_info: *mut c_void) -> u64 {

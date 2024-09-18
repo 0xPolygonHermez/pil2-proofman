@@ -1,3 +1,4 @@
+use core::panic;
 use std::path::PathBuf;
 
 // use serde_json::Value as JsonValue;
@@ -81,7 +82,11 @@ impl GlobalInfo {
             ProofType::Compressor => "compressor",
             ProofType::Recursive1 => "recursive1",
             ProofType::Recursive2 => "recursive2",
+            ProofType::Final => "final",
         };
+        if *proof_type == ProofType::Final {
+            panic!("air path not meaningful for final");
+        }
         let air_setup_folder = format!(
             "{}/{}/{}/airs/{}/{}",
             self.folder_path, self.name, self.subproofs[airgroup_id], self.airs[airgroup_id][air_id].name, type_str
