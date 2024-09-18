@@ -456,22 +456,31 @@ impl<F: Field + 'static> ProofMan<F> {
         output_dir: &str,
         proves_out: &mut Vec<*mut c_void>,
     ) -> Vec<F> {
+        let n_publics = (pctx.public_inputs.borrow().len() / 8) as u64;
+        let public_inputs = (*pctx.public_inputs.borrow()).as_ptr() as *mut c_void;
+        let challenges = (*pctx.challenges.borrow()).as_ptr() as *mut c_void;
+
+        let global_info_path = proving_key_path.join("pilout.globalInfo.json");
+        let global_info_file: &str = global_info_path.to_str().unwrap();
+
         for (idx, prover) in provers.iter_mut().enumerate() {
-            prover.save_proof(idx as u64, output_dir);
-            proves_out.push(fri_proof_get_zkinproof_c(prover.get_proof(), prover.get_prover_params()));
+            proves_out.push(fri_proof_get_zkinproof_c(
+                idx as u64,
+                prover.get_proof(),
+                public_inputs,
+                challenges,
+                prover.get_prover_params(),
+                global_info_file,
+                output_dir,
+            ));
         }
 
-        save_publics_c(
-            (pctx.public_inputs.borrow().len() / 8) as u64,
-            (*pctx.public_inputs.borrow()).as_ptr() as *mut c_void,
-            output_dir,
-        );
+        for (idx, prover) in provers.iter_mut().enumerate() {
+            prover.save_proof(idx as u64, output_dir);
+        }
 
-        save_challenges_c(
-            (*pctx.challenges.borrow()).as_ptr() as *mut c_void,
-            proving_key_path.join("pilout.globalInfo.json").to_str().unwrap(),
-            output_dir,
-        );
+        save_publics_c(n_publics, public_inputs, output_dir);
+        save_challenges_c(challenges, global_info_file, output_dir);
 
         vec![]
     }
@@ -531,6 +540,7 @@ impl<F: Field + 'static> ProofMan<F> {
             // get setup
             let setup: &proofman_common::Setup =
                 sctx.setups.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("Setup not found");
+                
             let p_setup: *mut c_void = setup.p_setup;
             let p_stark_info: *mut c_void = setup.p_stark_info;
 
