@@ -125,14 +125,13 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             vec![F::zero(); self.stark_info.challenges_map.as_ref().unwrap().len() * Self::FIELD_EXTENSION];
         proof_ctx.challenges = Arc::new(RefCell::new(challenges));
 
-        let n_commits = self.stark_info.cm_pols_map.as_ref().expect("REASON").len();
         let n_subproof_values = self.stark_info.subproofvalues_map.as_ref().expect("REASON").len();
         let n_evals = self.stark_info.ev_map.len();
 
         let evals = vec![F::zero(); n_evals * Self::FIELD_EXTENSION];
         let subproof_values = vec![F::zero(); n_subproof_values * Self::FIELD_EXTENSION];
 
-        air_instance.init_prover(n_commits, n_subproof_values, evals, subproof_values);
+        air_instance.init_prover(evals, subproof_values);
 
         self.p_proof = Some(fri_proof_new_c(self.p_setup));
 
@@ -164,8 +163,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
     fn verify_constraints(&self, proof_ctx: &mut ProofCtx<F>) -> Vec<ConstraintInfo> {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-
-        println!("RICK {:?}", proof_ctx.public_inputs);
 
         let buffer = air_instance.get_buffer_ptr() as *mut c_void;
         let public_inputs = (*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void;
@@ -257,7 +254,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             let n_subproof_values = self.stark_info.subproofvalues_map.as_ref().expect("REASON").len();
             for i in 0..n_subproof_values {
                 let subproof_value = self.stark_info.subproofvalues_map.as_ref().expect("REASON").get(i).unwrap();
-                if !air_instance.subproofvalue_calculated[i] {
+                if !air_instance.subproofvalue_calculated.contains_key(&i) {
                     panic!(
                         "Stage {} cannot be committed: Subproofvalue {} is not calculated",
                         stage_id, subproof_value.name
@@ -348,7 +345,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     //TODO: This funciton could leave outside the prover trait, for now is confortable to get the hash and the configs
     fn add_publics_to_transcript(&self, proof_ctx: &mut ProofCtx<F>, transcript: &FFITranscript) {
         let stark_info: &StarkInfo = &self.stark_info;
-        transcript.add_elements((*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void, stark_info.n_publics as usize);
+        transcript
+            .add_elements((*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void, stark_info.n_publics as usize);
     }
 
     fn get_challenges(&self, stage_id: u32, proof_ctx: &mut ProofCtx<F>, transcript: &FFITranscript) {

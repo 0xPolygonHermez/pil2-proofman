@@ -1,5 +1,5 @@
 use proofman_starks_lib_c::{
-    get_hint_field_c, get_hint_ids_by_name_c, print_by_name_c, print_expression_c, set_hint_field_c, StepsParams
+    get_hint_field_c, get_hint_ids_by_name_c, print_by_name_c, print_expression_c, set_hint_field_c, StepsParams,
 };
 
 use p3_field::Field;
@@ -35,6 +35,27 @@ pub struct HintFieldInfo<F> {
 pub struct HintIdsResult {
     n_hints: u64,
     pub hint_ids: *mut u64,
+}
+
+#[derive(Default)]
+pub struct HintFieldOptions {
+    pub dest: bool,
+    pub inverse: bool,
+    pub print_expression: bool,
+}
+
+impl HintFieldOptions {
+    pub fn dest() -> Self {
+        Self { dest: true, ..Default::default() }
+    }
+
+    pub fn inverse() -> Self {
+        Self { inverse: true, ..Default::default() }
+    }
+
+    pub fn print_expression() -> Self {
+        Self { print_expression: true, ..Default::default() }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -544,9 +565,7 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_name: &str,
-    dest: bool,
-    inverse: bool,
-    print_expression: bool,
+    options: HintFieldOptions,
 ) -> HintFieldValue<F> {
     let setup = setup_repo.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
 
@@ -563,9 +582,9 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
         steps_params,
         hint_id as u64,
         hint_field_name,
-        dest,
-        inverse,
-        print_expression,
+        options.dest,
+        options.inverse,
+        options.print_expression,
     );
 
     let hint_field = unsafe { Box::from_raw(raw_ptr as *mut HintFieldInfo<F>) };
@@ -579,8 +598,7 @@ pub fn get_hint_field_constant<F: Clone + Copy>(
     air_id: usize,
     hint_id: usize,
     hint_field_name: &str,
-    dest: bool,
-    print_expression: bool,
+    options: HintFieldOptions,
 ) -> HintFieldValue<F> {
     let setup = setup_ctx.setups.get_setup(airgroup_id, air_id).expect("REASON");
 
@@ -597,9 +615,9 @@ pub fn get_hint_field_constant<F: Clone + Copy>(
         steps_params,
         hint_id as u64,
         hint_field_name,
-        dest,
-        false,
-        print_expression,
+        options.dest,
+        options.inverse,
+        options.print_expression,
     );
 
     let hint_field = unsafe { Box::from_raw(raw_ptr as *mut HintFieldInfo<F>) };
@@ -699,25 +717,17 @@ pub fn print_by_name<F: Clone + Copy>(
 
     let steps_params = StepsParams {
         buffer: air_instance.get_buffer_ptr() as *mut c_void,
-        public_inputs:(*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void,
+        public_inputs: (*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void,
         challenges: (*proof_ctx.challenges.borrow()).as_ptr() as *mut c_void,
         subproof_values: air_instance.evals.as_ptr() as *mut c_void,
         evals: std::ptr::null_mut(),
     };
 
-
     let mut lengths_vec = lengths.unwrap_or_default();
     let lengths_ptr = lengths_vec.as_mut_ptr();
 
-    let _raw_ptr = print_by_name_c(
-        setup.p_setup,
-        steps_params,
-        name,
-        lengths_ptr,
-        first_print_value,
-        last_print_value,
-        false,
-    );
+    let _raw_ptr =
+        print_by_name_c(setup.p_setup, steps_params, name, lengths_ptr, first_print_value, last_print_value, false);
 
     // TODO: CHECK WHAT IS WRONG WITH RETURN VALUES
     // if return_values {

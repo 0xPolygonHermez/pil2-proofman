@@ -11,7 +11,7 @@ pub struct AirInstance<F> {
     pub subproof_values: Vec<F>,
     pub evals: Vec<F>,
     pub commits_calculated: HashMap<usize, bool>,
-    pub subproofvalue_calculated: Vec<bool>,
+    pub subproofvalue_calculated: HashMap<usize, bool>,
 }
 
 impl<F> AirInstance<F> {
@@ -24,7 +24,7 @@ impl<F> AirInstance<F> {
             subproof_values: Vec::new(),
             evals: Vec::new(),
             commits_calculated: HashMap::new(),
-            subproofvalue_calculated: Vec::new(),
+            subproofvalue_calculated: HashMap::new(),
         }
     }
 
@@ -32,12 +32,9 @@ impl<F> AirInstance<F> {
         self.buffer.as_mut_ptr() as *mut u8
     }
 
-    pub fn init_prover(&mut self, n_commits: usize, n_subproofvalues: usize, evals: Vec<F>, subproof_values: Vec<F>) {
+    pub fn init_prover(&mut self, evals: Vec<F>, subproof_values: Vec<F>) {
         self.evals = evals;
         self.subproof_values = subproof_values;
-
-        // self.commits_calculated = vec![false; n_commits];
-        self.subproofvalue_calculated = vec![false; n_subproofvalues];
     }
 
     pub fn set_commit_calculated(&mut self, id: usize) {
@@ -45,7 +42,7 @@ impl<F> AirInstance<F> {
     }
 
     pub fn set_subproofvalue_calculated(&mut self, id: usize) {
-        self.subproofvalue_calculated[id] = true;
+        self.subproofvalue_calculated.insert(id, true);
     }
 }
 

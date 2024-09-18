@@ -13,7 +13,6 @@ include!("../bindings_starks.rs");
 #[cfg(not(feature = "no_lib_link"))]
 use std::ffi::CString;
 
-
 pub struct StepsParams {
     pub buffer: *mut c_void,
     pub public_inputs: *mut c_void,

@@ -440,7 +440,11 @@ impl<F: Field + 'static> ProofMan<F> {
             prover.save_proof(idx as u64, output_dir);
         }
 
-        save_publics_c((pctx.public_inputs.borrow().len() / 8) as u64, (*pctx.public_inputs.borrow()).as_ptr() as *mut c_void, output_dir);
+        save_publics_c(
+            (pctx.public_inputs.borrow().len() / 8) as u64,
+            (*pctx.public_inputs.borrow()).as_ptr() as *mut c_void,
+            output_dir,
+        );
 
         save_challenges_c(
             (*pctx.challenges.borrow()).as_ptr() as *mut c_void,
