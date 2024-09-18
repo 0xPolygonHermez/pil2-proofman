@@ -124,12 +124,17 @@ pub fn stark_info_new_c(filename: &str) -> *mut c_void {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_stark_info_n_c(p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
+pub fn get_stark_info_n_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_stark_info_n(p_stark_info) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_map_totaln_c(p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
+pub fn get_stark_info_n_publics_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_stark_info_n_publics(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
 }
 
@@ -581,13 +586,20 @@ pub fn stark_info_new_c(_filename: &str) -> *mut c_void {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_stark_info_n_c(_p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
+pub fn get_stark_info_n_publics_c(_p_stark_info: *mut c_void) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_stark_info_n_c: This is a mock call because there is no linked library");
+    100000000
+}
+
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_stark_info_n_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_stark_info_n_c: This is a mock call because there is no linked library");
     100000000
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_map_totaln_c(_p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
+pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_map_totaln_c: This is a mock call because there is no linked library");
     100000000
 }

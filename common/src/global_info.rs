@@ -28,8 +28,9 @@ pub struct GlobalInfo {
 #[derive(Deserialize)]
 pub struct GlobalInfoAir {
     pub name: String,
-    //#[serde(rename = "hasCompressor")]
-    //pub has_compressor: bool,
+
+    #[serde(rename = "hasCompressor")]
+    pub has_compressor: bool,
 }
 
 #[derive(Deserialize)]
@@ -102,5 +103,9 @@ impl GlobalInfo {
 
     pub fn get_air_name(&self, airgroup_id: usize, air_id: usize) -> &str {
         &self.airs[airgroup_id][air_id].name
+    }
+
+    pub fn get_air_has_compressor(&self, airgroup_id: usize, air_id: usize) -> bool {
+        self.airs[airgroup_id][air_id].has_compressor
     }
 }

@@ -90,6 +90,10 @@ extern "C" {
     pub fn get_stark_info_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z24get_stark_info_n_publicsPv"]
+    pub fn get_stark_info_n_publics(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPv"]
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
