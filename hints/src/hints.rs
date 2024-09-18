@@ -557,7 +557,6 @@ pub fn get_hint_ids_by_name(p_setup: *mut c_void, name: &str) -> Vec<u64> {
     slice.to_vec()
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn get_hint_field<F: Clone + Copy + Debug>(
     setup_repo: &SetupRepository,
     public_inputs: Arc<RefCell<Vec<u8>>>,
