@@ -43,6 +43,17 @@ extern "C" {
     );
 }
 extern "C" {
+    #[link_name = "\u{1}_Z23fri_proof_get_zkinproofPvS_"]
+    pub fn fri_proof_get_zkinproof(
+        pFriProof: *mut ::std::os::raw::c_void,
+        pStarkInfo: *mut ::std::os::raw::c_void,
+    ) -> *mut ::std::os::raw::c_void;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z24fri_proof_free_zkinproofPv"]
+    pub fn fri_proof_free_zkinproof(pZkinProof: *mut ::std::os::raw::c_void);
+}
+extern "C" {
     #[link_name = "\u{1}_Z14fri_proof_freePv"]
     pub fn fri_proof_free(pFriProof: *mut ::std::os::raw::c_void);
 }

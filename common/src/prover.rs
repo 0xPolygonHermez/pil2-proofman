@@ -67,6 +67,7 @@ pub trait Prover<F> {
     ) -> ProverStatus;
 
     fn get_proof(&self) -> *mut c_void;
+    fn get_prover_params(&self) -> *mut c_void;
     fn get_prover_info(&self) -> ProverInfo;
     fn save_proof(&self, id: u64, output_dir: &str);
 

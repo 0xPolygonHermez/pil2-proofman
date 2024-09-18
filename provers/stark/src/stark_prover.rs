@@ -384,6 +384,11 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn get_prover_info(&self) -> ProverInfo {
         ProverInfo { airgroup_id: self.airgroup_id, air_id: self.air_id, prover_idx: self.prover_idx }
     }
+
+    fn get_prover_params(&self) -> *mut c_void {
+        self.p_stark_info
+    }
+
 }
 
 impl<F: Field> StarkProver<F> {

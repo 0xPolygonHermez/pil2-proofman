@@ -47,7 +47,7 @@ pub struct SetupCtx {
 
 impl SetupCtx {
     pub fn new(pilout: &WitnessPilout, global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
-        let setups = Arc::new(SetupRepository::new(pilout, global_info,setup_type));
+        let setups = Arc::new(SetupRepository::new(pilout, global_info, setup_type));
 
         SetupCtx { setups }
     }

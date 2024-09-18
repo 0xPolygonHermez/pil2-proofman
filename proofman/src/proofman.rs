@@ -5,6 +5,7 @@ use stark::{StarkBufferAllocator, StarkProver};
 use proofman_starks_lib_c::{save_challenges_c, save_publics_c, verify_global_constraints_c};
 use std::ffi::CStr;
 use std::{cmp, fs};
+use proofman_starks_lib_c::*;
 use std::process;
 
 use std::{
@@ -17,7 +18,10 @@ use transcript::FFITranscript;
 
 use crate::{WitnessLibrary, WitnessLibInitFn};
 
-use proofman_common::{AirInstancesRepository, ConstraintInfo, ExecutionCtx, ProofCtx, Prover, SetupCtx, GlobalInfo, WitnessPilout, ProofType};
+use proofman_common::{
+    AirInstancesRepository, ConstraintInfo, ExecutionCtx, ProofCtx, Prover, SetupCtx, GlobalInfo, WitnessPilout,
+    ProofType,
+};
 
 use colored::*;
 
@@ -37,7 +41,7 @@ impl<F: Field + 'static> ProofMan<F> {
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
         debug_mode: u64,
-    ) -> Result<(ProofCtx<F>, WitnessPilout, GlobalInfo), Box<dyn std::error::Error>> {
+    ) -> Result<(ProofCtx<F>, WitnessPilout, GlobalInfo, Vec<*mut c_void>), Box<dyn std::error::Error>> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
             return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
@@ -269,7 +273,7 @@ impl<F: Field + 'static> ProofMan<F> {
                 log::debug!("{}: ··· {}", Self::MY_NAME, "Not all constraints were verified.".bright_red().bold());
             }
 
-            return Ok((pctx, witness_lib.pilout(), global_info));
+            return Ok((pctx, witness_lib.pilout(), global_info, Vec::new()));
         }
 
         // Compute Quotient polynomial
@@ -281,14 +285,17 @@ impl<F: Field + 'static> ProofMan<F> {
         // Compute openings
         Self::opening_stages(&mut provers, &mut pctx, &mut transcript);
 
-        let proof = Self::finalize_proof(
+        //Generate prooves_out
+        let mut proves_out = Vec::new();
+        let _proof = Self::finalize_proof(
             &proving_key_path,
             &mut provers,
             &mut pctx,
             output_dir_path.to_string_lossy().as_ref(),
+            &mut proves_out
         );
 
-        Ok((pctx, witness_lib.pilout(), global_info))
+        Ok((pctx, witness_lib.pilout(), global_info, proves_out))
     }
 
     fn initialize_witness(
@@ -438,9 +445,11 @@ impl<F: Field + 'static> ProofMan<F> {
         provers: &mut [Box<dyn Prover<F>>],
         pctx: &mut ProofCtx<F>,
         output_dir: &str,
+        proves_out: &mut Vec<*mut c_void>
     ) -> Vec<F> {
         for (idx, prover) in provers.iter_mut().enumerate() {
             prover.save_proof(idx as u64, output_dir);
+            proves_out.push(fri_proof_get_zkinproof_c(prover.get_proof(), prover.get_prover_params()));
         }
 
         save_publics_c(
@@ -459,20 +468,57 @@ impl<F: Field + 'static> ProofMan<F> {
     }
 
     //
-    // Compressor prove
+    // Recursion prove
     //
+
+
     pub fn generate_recursion_proof(
-        pctx: &ProofCtx<F>,
-        witness_pilout: &WitnessPilout,
-        global_info: &GlobalInfo,
+        pctx: &mut ProofCtx<F>,
+        pilout: &WitnessPilout,
+        global_setup_info: &GlobalInfo,
+        proves:  &Vec<*mut c_void>,
         proof_type: &ProofType,
-    ) {
-        println!("Generating compressor proof");
+    ) -> Vec<*mut c_void> {
+        //
+        let sctx = SetupCtx::new(pilout, global_setup_info, proof_type); /*problem*/
+        let mut proves_out: Vec<*mut c_void> = Vec::new();
 
-        let sctx = SetupCtx::new(witness_pilout, global_info, proof_type); /*problem*/
-        let mut provers: Vec<*mut c_void> = Vec::new();
+        // Run proves
+        for (prover_idx, air_instance) in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut().enumerate() {
+            // get buffer address
+            let p_address = air_instance.get_buffer_ptr() as *mut c_void;
 
-        //WC
-        // call starks
+            // witness computation
+            /*let rust_lib_path = Path::new("/home/rick/aux_witness/cpp_witness_lib/libwitness.so");
+            // Load the dynamic library at runtime
+            let library = unsafe { Library::new(rust_lib_path)? };
+        
+            // Load the symbol (function) from the library
+            unsafe {
+                let get_commited_pols: Symbol<GetCommitedPolsFunc> = library.get(b"getCommitedPols_api\0")?;
+        
+                // Call the function
+                let zkevm_verifier = CString::new("zkevm_verifier").unwrap();
+                let exec_file = CString::new("exec_file").unwrap();
+                let mut commit_pols: Vec<u8> = vec![0; 10];
+                let mut zkin: Vec<u8> = vec![0; 10];
+                get_commited_pols(commit_pols.as_mut_ptr(), zkevm_verifier.as_ptr(), exec_file.as_ptr(), zkin.as_mut_ptr(), 10, 10);
+            }*/
+
+            // get setup
+            let setup: &proofman_common::Setup = sctx.setups.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("Setup not found");
+            let p_setup: *mut std::ffi::c_void = setup.p_setup;
+
+            // generate publics
+            //let p_publics;
+            //jProof["publics"] = publicStarkJson;
+            //zkin["publics"] = publicStarkJson;
+
+            // prove
+            let p_prove: *mut std::ffi::c_void = std::ptr::null_mut();
+            //gen_recursive_proof_c(p_setup, p_address, p_publics, p_prove);
+            proves_out.push(p_prove);
+        }
+        proves_out
     }
 }

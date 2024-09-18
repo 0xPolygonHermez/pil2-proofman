@@ -66,6 +66,18 @@ pub fn fri_proof_set_subproof_values_c(p_fri_proof: *mut c_void, p_subproof_valu
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn fri_proof_get_zkinproof_c(p_fri_proof: *mut c_void, pStarkInfo: *mut c_void) -> *mut c_void {
+    unsafe { fri_proof_get_zkinproof(p_fri_proof, pStarkInfo) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn fri_proof_free_zkinproof_c(p_fri_proof: *mut c_void) {
+    unsafe {
+        fri_proof_free_zkinproof(p_fri_proof);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn fri_proof_free_c(p_fri_proof: *mut c_void) {
     unsafe {
         fri_proof_free(p_fri_proof);
@@ -481,6 +493,21 @@ pub fn fri_proof_set_subproof_values_c(_p_fri_proof: *mut c_void, _p_params: *mu
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn fri_proof_get_zkinproof_c(_p_fri_proof: *mut c_void, pStarkInfo: *mut c_void) -> *mut c_void {
+    trace!("{}: ··· {}", "ffi     ", "fri_proof_get_zkinproof: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn fri_proof_free_zkinproof_c(_p_fri_proof: *mut c_void) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "fri_proof_free_zkinproof: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn fri_proof_free_c(_p_fri_proof: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "fri_proof_free: This is a mock call because there is no linked library");
 }
@@ -491,7 +518,7 @@ pub fn setup_ctx_new_c(
     _p_expressions_bin: *mut c_void,
     _p_const_pols: *mut c_void,
 ) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "fri_proof_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "setup_ctx_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
@@ -502,7 +529,7 @@ pub fn setup_ctx_new1_c(
     _const_pols_file: &str,
     _const_tree_file: &str,
 ) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "fri_proof_free: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "setup_ctx_new1: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 

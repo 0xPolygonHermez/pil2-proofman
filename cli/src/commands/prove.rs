@@ -73,7 +73,7 @@ impl ProveCmd {
 
         type GL = Goldilocks;
 
-        let proof_out = match self.field {
+        let mut basic_out = match self.field {
             Field::Goldilocks => ProofMan::<GL>::generate_proof(
                 self.witness_lib.clone(),
                 self.rom.clone(),
@@ -84,16 +84,25 @@ impl ProveCmd {
             )?,
         };
         println!("Proof generated successfully");
-        match self.field {
+        let comp_proofs =match self.field {
             Field::Goldilocks => ProofMan::<GL>::generate_recursion_proof(
-                &proof_out.0,
-                &proof_out.1,
-                &proof_out.2,
+                &mut basic_out.0,
+                &basic_out.1,
+                &basic_out.2,
+                &basic_out.3,
                 &ProofType::Compressor,
             ),
         };
         println!("Compressor proofs generated successfully");
-
+        let recursive1_proofs =match self.field {
+            Field::Goldilocks => ProofMan::<GL>::generate_recursion_proof(
+                &mut basic_out.0,
+                &basic_out.1,
+                &basic_out.2,
+                &comp_proofs,
+                &ProofType::Recursive1,
+            ),
+        };
         println!("Recursive1 proofs generated successfully");
 
         Ok(())
