@@ -388,7 +388,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn get_prover_params(&self) -> *mut c_void {
         self.p_stark_info
     }
-
 }
 
 impl<F: Field> StarkProver<F> {

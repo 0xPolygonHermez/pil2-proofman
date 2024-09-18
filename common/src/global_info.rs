@@ -1,10 +1,8 @@
 use std::path::PathBuf;
 
 // use serde_json::Value as JsonValue;
-use log::debug;
 use serde::Deserialize;
-use serde_json::{Value, from_str};
-use proofman_util::{timer_start, timer_stop_and_log};
+use serde_json::Value;
 use crate::ProofType;
 use std::fs;
 

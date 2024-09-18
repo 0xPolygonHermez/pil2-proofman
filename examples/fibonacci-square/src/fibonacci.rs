@@ -65,7 +65,7 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
         }
 
         pctx.public_inputs.borrow_mut()[24..32].copy_from_slice(&b.to_le_bytes());
-        
+
         // Not needed, for debugging!
         // let mut result = F::zero();
         // for (i, _) in buffer.iter().enumerate() {

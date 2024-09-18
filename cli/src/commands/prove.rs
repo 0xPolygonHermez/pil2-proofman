@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::{Parser, ValueEnum};
-use std::{fmt::Display, path::PathBuf, sync::PoisonError};
+use std::{fmt::Display, path::PathBuf};
 use colored::Colorize;
 
 use p3_goldilocks::Goldilocks;
@@ -8,7 +8,7 @@ use p3_goldilocks::Goldilocks;
 use proofman::ProofMan;
 
 use std::str::FromStr;
-use proofman_common::{ProofCtx, ProofType};
+use proofman_common::ProofType;
 
 #[derive(Parser, Debug, Clone, ValueEnum)]
 pub enum Field {
@@ -84,7 +84,7 @@ impl ProveCmd {
             )?,
         };
         println!("Proof generated successfully");
-        let comp_proofs =match self.field {
+        let comp_proofs = match self.field {
             Field::Goldilocks => ProofMan::<GL>::generate_recursion_proof(
                 &mut basic_out.0,
                 &basic_out.1,
@@ -92,9 +92,9 @@ impl ProveCmd {
                 &basic_out.3,
                 &ProofType::Compressor,
             ),
-        };
+        }?;
         println!("Compressor proofs generated successfully");
-        let recursive1_proofs =match self.field {
+        let recursive1_proofs = match self.field {
             Field::Goldilocks => ProofMan::<GL>::generate_recursion_proof(
                 &mut basic_out.0,
                 &basic_out.1,

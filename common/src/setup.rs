@@ -1,13 +1,11 @@
-use std::{default, os::raw::c_void, path::Path};
+use std::os::raw::c_void;
 
 use log::trace;
 
 use proofman_starks_lib_c::{const_pols_new_c, expressions_bin_new_c, setup_ctx_new_c, stark_info_new_c};
 
-use crate::{setup_ctx, GlobalInfo};
+use crate::GlobalInfo;
 use crate::ProofType;
-
-use std::process;
 
 /// Air instance context for managing air instances (traces)
 

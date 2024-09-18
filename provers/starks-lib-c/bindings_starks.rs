@@ -81,6 +81,10 @@ extern "C" {
     pub fn stark_info_new(filename: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z16get_stark_info_nPv"]
+    pub fn get_stark_info_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPv"]
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
@@ -356,11 +360,10 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvS_S_S_"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvS_S_"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         pAddress: *mut ::std::os::raw::c_void,
-        pFriProof: *mut ::std::os::raw::c_void,
         pPublicInputs: *mut ::std::os::raw::c_void,
-    );
+    ) -> *mut ::std::os::raw::c_void;
 }

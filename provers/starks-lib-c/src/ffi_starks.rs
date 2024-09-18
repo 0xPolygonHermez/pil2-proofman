@@ -110,6 +110,11 @@ pub fn stark_info_new_c(filename: &str) -> *mut c_void {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_stark_info_n_c(p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
+    unsafe { get_stark_info_n(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn get_map_totaln_c(p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
 }
@@ -453,6 +458,15 @@ pub fn print_expression_c(
     }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn gen_recursive_proof_c(
+    p_setup_ctx: *mut c_void,
+    p_address: *mut c_void,
+    p_public_inputs: *mut c_void,
+) -> *mut c_void {
+    unsafe { gen_recursive_proof(p_setup_ctx, p_address, p_public_inputs) }
+}
+
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -542,6 +556,12 @@ pub fn setup_ctx_free_c(_p_setup_ctx: *mut c_void) {
 pub fn stark_info_new_c(_filename: &str) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_stark_info_n_c(_p_stark_info: *mut ::std::os::raw::c_void) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_stark_info_n_c: This is a mock call because there is no linked library");
+    100000000
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -818,4 +838,13 @@ pub fn print_expression_c(
     _last_print_value: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "print_expression_c: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn gen_recursive_proof_c(
+    _p_setup_ctx: *mut c_void,
+    _p_address: *mut c_void,
+    _p_public_inputs: *mut c_void,
+) -> *mut c_void {
+    trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof_c: This is a mock call because there is no linked library");
 }
