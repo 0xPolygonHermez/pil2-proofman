@@ -23,13 +23,11 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
     }
 
     pub fn execute(&self, pctx: &mut ProofCtx<F>, ectx: &ExecutionCtx, _sctx: &SetupCtx) {
-        // TODO: We should create the instance here and fill the trace in calculate witness!!!
         if let Err(e) =
             Self::calculate_trace(self, FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS[0], pctx, ectx)
         {
             panic!("Failed to calculate fibonacci: {:?}", e);
         }
-        self.module.execute(pctx, ectx);
     }
 
     fn calculate_trace(
@@ -65,13 +63,6 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
         }
 
         pctx.public_inputs.borrow_mut()[24..32].copy_from_slice(&b.to_le_bytes());
-        
-        // Not needed, for debugging!
-        // let mut result = F::zero();
-        // for (i, _) in buffer.iter().enumerate() {
-        //     result += buffer[i] * F::from_canonical_u64(i as u64);
-        // }
-        // log::info!("Result Fibonacci buffer: {:?}", result);
 
         let air_instance = AirInstance::new(FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS[0], Some(0), buffer);
         pctx.air_instance_repo.add_air_instance(air_instance);
