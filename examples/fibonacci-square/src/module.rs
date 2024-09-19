@@ -5,6 +5,8 @@ use proofman::{WitnessManager, WitnessComponent};
 use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField};
 
+use num_bigint::BigInt;
+
 use crate::{FibonacciSquarePublics, Module0Trace, MODULE_AIRGROUP_ID, MODULE_AIR_IDS};
 
 pub struct Module<F: PrimeField> {
@@ -19,6 +21,9 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
         let module = Arc::new(Module { inputs: RefCell::new(Vec::new()), std_lib });
 
         wcm.register_component(module.clone(), Some(MODULE_AIRGROUP_ID), Some(MODULE_AIR_IDS));
+
+        // Register dependency relations
+        module.std_lib.register_predecessor();
 
         module
     }
@@ -49,26 +54,29 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
         let num_rows = pctx.pilout.get_air(MODULE_AIRGROUP_ID, MODULE_AIR_IDS[0]).num_rows();
         let mut trace = Module0Trace::map_buffer(&mut buffer, num_rows, offsets[0] as usize).unwrap();
 
+        let range = (BigInt::from(1), BigInt::from((1 << 8) - 1));
+
         for (i, input) in self.inputs.borrow().iter().enumerate() {
             let x = input.0;
             let q = x / module;
             let x_mod = input.1;
+
+            self.std_lib.range_check(F::from_canonical_u64(module - x_mod), range.0.clone(), range.1.clone());
 
             trace[i].x = F::from_canonical_u64(x);
             trace[i].q = F::from_canonical_u64(q);
             trace[i].x_mod = F::from_canonical_u64(x_mod);
         }
 
-        // Not needed, for debugging!
-        // let mut result = F::zero();
-        // for (i, _) in buffer.iter().enumerate() {
-        //     result += buffer[i] * F::from_canonical_u64(i as u64);
-        // }
-        // log::info!("Result Module buffer: {:?}", result);
+        // Trivial range check for the remaining rows
+        for _ in self.inputs.borrow().len()..num_rows {
+            self.std_lib.range_check(F::from_canonical_u64(module), range.0.clone(), range.1.clone());
+        }
 
         let air_instance = AirInstance::new(MODULE_AIRGROUP_ID, MODULE_AIR_IDS[0], Some(0), buffer);
-
         pctx.air_instance_repo.add_air_instance(air_instance);
+
+        self.std_lib.unregister_predecessor(pctx, None);
     }
 }
 
