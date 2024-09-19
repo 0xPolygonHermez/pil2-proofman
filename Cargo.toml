@@ -10,7 +10,11 @@ members = [
     "provers/starks-lib-c",
     "transcript",
     "util",
-    "examples/fibonacci-square",
+    # whoever re-enables this, it has to work out of
+    # the box with `cargo check --workspace` or CI will
+    # break and dev experience will be bad since repo
+    # won't build with a fresh clone
+    # "examples/fibonacci-square",
 ]
 
 resolver = "2"
