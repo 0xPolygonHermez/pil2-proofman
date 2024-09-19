@@ -3,9 +3,8 @@ use proofman_starks_lib_c::{
 };
 
 use p3_field::Field;
-use proofman_common::{AirInstance, ExtensionField, ProofCtx, SetupCtx, SetupRepository};
+use proofman_common::{AirInstance, Challenges, ExtensionField, ProofCtx, PublicInputs, SetupCtx, SetupRepository};
 
-use std::cell::RefCell;
 use std::os::raw::c_void;
 
 use std::ops::{Add, Div, Mul, Sub, AddAssign, DivAssign, MulAssign, SubAssign};
@@ -559,8 +558,8 @@ pub fn get_hint_ids_by_name(p_setup: *mut c_void, name: &str) -> Vec<u64> {
 
 pub fn get_hint_field<F: Clone + Copy + Debug>(
     setup_repo: &SetupRepository,
-    public_inputs: Arc<RefCell<Vec<u8>>>,
-    challenges: Arc<RefCell<Vec<F>>>,
+    public_inputs: &PublicInputs,
+    challenges: &Challenges<F>,
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_name: &str,
@@ -568,10 +567,13 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
 ) -> HintFieldValue<F> {
     let setup = setup_repo.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
 
+    let public_inputs_ptr = (*public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
+    let challenges_ptr = (*challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
+
     let steps_params = StepsParams {
         buffer: air_instance.get_buffer_ptr() as *mut c_void,
-        public_inputs: (*public_inputs.borrow()).as_ptr() as *mut c_void,
-        challenges: (*challenges.borrow()).as_ptr() as *mut c_void,
+        public_inputs: public_inputs_ptr,
+        challenges: challenges_ptr,
         subproof_values: air_instance.evals.as_ptr() as *mut c_void,
         evals: air_instance.subproof_values.as_ptr() as *mut c_void,
     };
@@ -592,7 +594,7 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
 }
 
 pub fn get_hint_field_constant<F: Clone + Copy>(
-    setup_ctx: &SetupCtx,
+    setup_ctx: Arc<SetupCtx>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -647,7 +649,7 @@ pub fn set_hint_field<F: Copy + core::fmt::Debug>(
 }
 
 pub fn set_hint_field_val<F: Clone + Copy + std::fmt::Debug>(
-    setup_ctx: &SetupCtx,
+    setup_ctx: Arc<SetupCtx>,
     air_instance: &mut AirInstance<F>,
     hint_id: u64,
     hint_field_name: &str,
@@ -704,7 +706,7 @@ pub fn print_expression<F: Clone + Copy + Debug>(
 }
 
 pub fn print_by_name<F: Clone + Copy>(
-    setup_ctx: &SetupCtx,
+    setup_ctx: Arc<SetupCtx>,
     proof_ctx: &ProofCtx<F>,
     air_instance: &mut AirInstance<F>,
     name: &str,
@@ -713,11 +715,13 @@ pub fn print_by_name<F: Clone + Copy>(
     last_print_value: u64,
 ) -> Option<HintFieldValue<F>> {
     let setup = setup_ctx.setups.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+    let public_inputs_ptr = (*proof_ctx.public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
+    let challenges_ptr = (*proof_ctx.challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
 
     let steps_params = StepsParams {
         buffer: air_instance.get_buffer_ptr() as *mut c_void,
-        public_inputs: (*proof_ctx.public_inputs.borrow()).as_ptr() as *mut c_void,
-        challenges: (*proof_ctx.challenges.borrow()).as_ptr() as *mut c_void,
+        public_inputs: public_inputs_ptr,
+        challenges: challenges_ptr,
         subproof_values: air_instance.evals.as_ptr() as *mut c_void,
         evals: std::ptr::null_mut(),
     };

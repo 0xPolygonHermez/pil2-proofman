@@ -1,32 +1,47 @@
-use std::{cell::RefCell, sync::Arc};
+use std::sync::RwLock;
 
 use log::info;
 
 use crate::{AirInstancesRepository, WitnessPilout};
 
+pub struct PublicInputs {
+    pub inputs: RwLock<Vec<u8>>,
+}
+
+impl Default for PublicInputs {
+    fn default() -> Self {
+        Self { inputs: RwLock::new(Vec::new()) }
+    }
+}
+
+pub struct Challenges<F> {
+    pub challenges: RwLock<Vec<F>>,
+}
+
+impl<F> Default for Challenges<F> {
+    fn default() -> Self {
+        Self { challenges: RwLock::new(Vec::new()) }
+    }
+}
+
 #[allow(dead_code)]
 pub struct ProofCtx<F> {
-    pub public_inputs: Arc<RefCell<Vec<u8>>>,
+    pub public_inputs: PublicInputs,
+    pub challenges: Challenges<F>,
     pub pilout: WitnessPilout,
-    pub challenges: Arc<RefCell<Vec<F>>>,
-    pub air_instance_repo: Arc<AirInstancesRepository<F>>, // RwLock<Vec<AirInstance<F>>>,
+    pub air_instance_repo: AirInstancesRepository<F>,
 }
 
 impl<F> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
-    pub fn create_ctx(pilout: WitnessPilout, air_instance_repo: Arc<AirInstancesRepository<F>>) -> Self {
+    pub fn create_ctx(pilout: WitnessPilout, air_instance_repo: AirInstancesRepository<F>) -> Self {
         info!("{}: ··· Creating proof context", Self::MY_NAME);
         if pilout.air_groups().is_empty() {
             panic!("No air groups found in PilOut");
         }
 
-        Self {
-            public_inputs: Arc::new(RefCell::new(Vec::new())),
-            pilout,
-            challenges: Arc::new(RefCell::new(Vec::new())),
-            air_instance_repo,
-        }
+        Self { public_inputs: PublicInputs::default(), pilout, challenges: Challenges::default(), air_instance_repo }
     }
 }
 
