@@ -7,48 +7,64 @@ on:
 jobs:
   cargo-test:
     name: cargo test
-    runs-on: self-hosted
+    runs-on: [self-hosted, zisk]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Set up Rust Toolchain
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            override: true
+            components: rustfmt, clippy
       - name: cargo test
         run: cargo test --workspace --all-features
   cargo-check:
     name: cargo check
-    runs-on: self-hosted
+    runs-on: [self-hosted, zisk]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Set up Rust Toolchain
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            override: true
+            components: rustfmt, clippy
       - name: cargo check
         run: cargo check --workspace --all-features
   cargo-fmt:
     name: cargo fmt
-    runs-on: self-hosted
+    runs-on: [self-hosted, zisk]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Set up Rust Toolchain
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            override: true
+            components: rustfmt, clippy
       - name: cargo fmt
         run: cargo fmt -- --check
   cargo-fix:
     name: cargo fix
-    runs-on: self-hosted
+    runs-on: [self-hosted, zisk]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Set up Rust Toolchain
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            override: true
+            components: rustfmt, clippy
       - name: cargo fix --workspace
         run: |
           # Run cargo fix on the project
@@ -63,24 +79,32 @@ jobs:
           fi
   cargo-clippy:
     name: cargo clippy
-    runs-on: self-hosted
+    runs-on: [self-hosted, zisk]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Set up Rust Toolchain
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            override: true
+            components: rustfmt, clippy
       - name: cargo clippy
         run: cargo clippy --workspace --all-features -- -D warnings
   cargo-audit:
     name: cargo audit
-    runs-on: self-hosted
+    runs-on: [self-hosted, zisk]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Set up Rust Toolchain
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            override: true
+            components: rustfmt, clippy
       - name: install cargo-audit
         run: cargo install cargo-audit
       - name: cargo audit
@@ -94,8 +118,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up Rust Toolchain
-        run: curl https://sh.rustup.rs -sSf | sh -s -- -y
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: stable
+            override: true
+            components: rustfmt, clippy
 
       - name: Set up Node.js
         uses: actions/setup-node@v2
