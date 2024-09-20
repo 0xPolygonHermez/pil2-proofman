@@ -111,7 +111,7 @@ jobs:
         run: cargo audit
   fibonacci-square:
     name: Test fibonacci square
-    runs-on: self-hosted
+    runs-on: [self-hosted, zisk]
     env:
       STARKS_LIB_C: ${{ github.workspace }}/zkevm-prover/lib/libstarks.a
     steps:
@@ -128,7 +128,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v2
         with:
-          node-version: '16'
+          node-version: '18'
       - name: Install npm
         run: npm install -g npm
       - name: Check npm version
