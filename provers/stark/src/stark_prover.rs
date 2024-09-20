@@ -76,7 +76,7 @@ impl<F: Field> StarkProver<F> {
 
         let setup = sctx.setups.get_setup(airgroup_id, air_id).expect("REASON");
 
-        let p_setup = setup.p_setup;
+        let p_setup = *setup.p_setup;
 
         let p_stark = starks_new_c(p_setup);
 
@@ -106,8 +106,8 @@ impl<F: Field> StarkProver<F> {
             air_id,
             airgroup_id,
             config,
-            p_setup,
-            p_stark_info: setup.p_stark_info,
+            p_setup: p_setup,
+            p_stark_info: *setup.p_stark_info,
             p_stark,
             p_proof: None,
             stark_info,

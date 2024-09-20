@@ -1,4 +1,4 @@
-use std::{os::raw::c_void, path::Path};
+use std::{os::raw::c_void, path::Path, sync::Arc};
 
 use log::trace;
 
@@ -11,9 +11,12 @@ use crate::GlobalInfo;
 pub struct Setup {
     pub airgroup_id: usize,
     pub air_id: usize,
-    pub p_setup: *mut c_void,
-    pub p_stark_info: *mut c_void,
+    pub p_setup: Arc<*mut c_void>,
+    pub p_stark_info: Arc<*mut c_void>,
 }
+
+unsafe impl Send for Setup {}
+unsafe impl Sync for Setup {}
 
 impl Setup {
     const MY_NAME: &'static str = "Setup";
@@ -45,6 +48,6 @@ impl Setup {
 
         let p_setup = setup_ctx_new_c(p_stark_info, p_expressions_bin, p_const_pols);
 
-        Self { air_id, airgroup_id, p_setup, p_stark_info }
+        Self { air_id, airgroup_id, p_setup: Arc::new(p_setup), p_stark_info: Arc::new(p_stark_info) }
     }
 }

@@ -17,14 +17,14 @@ pub struct WitnessManager<F> {
 
     pub pctx: Arc<ProofCtx<F>>,
     pub ectx: Arc<ExecutionCtx>,
-    // pub sctx: Arc<SetupCtx>,
+    pub sctx: Arc<SetupCtx>,
 }
 
 impl<F> WitnessManager<F> {
     const MY_NAME: &'static str = "WCMnager";
 
-    pub fn new(pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, _sctx: Arc<SetupCtx>) -> Self {
-        WitnessManager { components: RwLock::new(Vec::new()), airs: RwLock::new(HashMap::new()), pctx, ectx, /*sctx*/ }
+    pub fn new(pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) -> Self {
+        WitnessManager { components: RwLock::new(Vec::new()), airs: RwLock::new(HashMap::new()), pctx, ectx, sctx }
     }
 
     pub fn register_component(
@@ -118,7 +118,7 @@ impl<F> WitnessManager<F> {
         self.ectx.as_ref()
     }
 
-    // pub fn get_sctx(&self) -> &SetupCtx {
-    //     self.sctx.as_ref()
-    // }
+    pub fn get_sctx(&self) -> &SetupCtx {
+        self.sctx.as_ref()
+    }
 }

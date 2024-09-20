@@ -579,7 +579,7 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
     };
 
     let raw_ptr = get_hint_field_c(
-        setup.p_setup,
+        *setup.p_setup,
         steps_params,
         hint_id as u64,
         hint_field_name,
@@ -612,7 +612,7 @@ pub fn get_hint_field_constant<F: Clone + Copy>(
     };
 
     let raw_ptr = get_hint_field_c(
-        setup.p_setup,
+        *setup.p_setup,
         steps_params,
         hint_id as u64,
         hint_field_name,
@@ -643,7 +643,7 @@ pub fn set_hint_field<F: Copy + core::fmt::Debug>(
         _ => panic!("Only column and column extended are accepted"),
     };
 
-    let id = set_hint_field_c(setup.p_setup, buffer, std::ptr::null_mut(), values_ptr, hint_id, hint_field_name);
+    let id = set_hint_field_c(*setup.p_setup, buffer, std::ptr::null_mut(), values_ptr, hint_id, hint_field_name);
 
     air_instance.set_commit_calculated(id as usize);
 }
@@ -675,7 +675,7 @@ pub fn set_hint_field_val<F: Clone + Copy + std::fmt::Debug>(
     let values_ptr = value_array.as_ptr() as *mut c_void;
 
     let id =
-        set_hint_field_c(setup.p_setup, std::ptr::null_mut(), subproof_values, values_ptr, hint_id, hint_field_name);
+        set_hint_field_c(*setup.p_setup, std::ptr::null_mut(), subproof_values, values_ptr, hint_id, hint_field_name);
 
     air_instance.set_subproofvalue_calculated(id as usize);
 }
@@ -691,10 +691,10 @@ pub fn print_expression<F: Clone + Copy + Debug>(
 
     match expr {
         HintFieldValue::Column(vec) => {
-            print_expression_c(setup.p_setup, vec.as_ptr() as *mut c_void, 1, first_print_value, last_print_value);
+            print_expression_c(*setup.p_setup, vec.as_ptr() as *mut c_void, 1, first_print_value, last_print_value);
         }
         HintFieldValue::ColumnExtended(vec) => {
-            print_expression_c(setup.p_setup, vec.as_ptr() as *mut c_void, 3, first_print_value, last_print_value);
+            print_expression_c(*setup.p_setup, vec.as_ptr() as *mut c_void, 3, first_print_value, last_print_value);
         }
         HintFieldValue::Field(val) => {
             println!("Field value: {:?}", val);
@@ -730,7 +730,7 @@ pub fn print_by_name<F: Clone + Copy>(
     let lengths_ptr = lengths_vec.as_mut_ptr();
 
     let _raw_ptr =
-        print_by_name_c(setup.p_setup, steps_params, name, lengths_ptr, first_print_value, last_print_value, false);
+        print_by_name_c(*setup.p_setup, steps_params, name, lengths_ptr, first_print_value, last_print_value, false);
 
     // TODO: CHECK WHAT IS WRONG WITH RETURN VALUES
     // if return_values {
