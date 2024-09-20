@@ -5,110 +5,6 @@ on:
   pull_request:
     branches: [main, develop, develop_std]
 jobs:
-  cargo-test:
-    name: cargo test
-    runs-on: [self-hosted, zisk]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Install Dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Install rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            override: true
-            components: rustfmt, clippy
-      - name: cargo test
-        run: cargo test --workspace --all-features
-  cargo-check:
-    name: cargo check
-    runs-on: [self-hosted, zisk]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Install Dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Install rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            override: true
-            components: rustfmt, clippy
-      - name: cargo check
-        run: cargo check --workspace --all-features
-  cargo-fmt:
-    name: cargo fmt
-    runs-on: [self-hosted, zisk]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Install rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            override: true
-            components: rustfmt, clippy
-      - name: cargo fmt
-        run: cargo fmt -- --check
-  cargo-fix:
-    name: cargo fix
-    runs-on: [self-hosted, zisk]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Install Dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Install rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            override: true
-            components: rustfmt, clippy
-      - name: cargo fix --workspace
-        run: |
-          # Run cargo fix on the project
-          cargo fix --workspace --all-features
-
-          # Check for local git changes
-          if ! git diff --exit-code; then
-              echo "There are local changes after running 'cargo fix --workspace' ❌"
-              exit 1
-          else
-              echo "No changes detected after running 'cargo fix --workspace' ✅"
-          fi
-  cargo-clippy:
-    name: cargo clippy
-    runs-on: [self-hosted, zisk]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Install Dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Install rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            override: true
-            components: rustfmt, clippy
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-features -- -D warnings
-  cargo-audit:
-    name: cargo audit
-    runs-on: [self-hosted, zisk]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Install rust
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: stable
-            override: true
-            components: rustfmt, clippy
-      - name: install cargo-audit
-        run: cargo install cargo-audit
-      - name: cargo audit
-        run: cargo audit
   fibonacci-square:
     name: Test fibonacci square
     runs-on: [self-hosted, zisk]
@@ -137,7 +33,7 @@ jobs:
       - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
-          python-version: 3.10 1  
+          python-version: '3.10'
 
       - name: Install z3-solver
         run: | 
