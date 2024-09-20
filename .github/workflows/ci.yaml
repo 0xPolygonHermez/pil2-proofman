@@ -174,7 +174,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt install protobuf-compiler build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev postgresql libpqxx-dev libpqxx-doc nasm libsecp256k1-dev libprotoc-dev libsodium-dev libprotobuf-dev libssl-dev cmake libgrpc++-dev uuid-dev python3 python3-pip
+          sudo apt install -y protobuf-compiler build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev postgresql libpqxx-dev libpqxx-doc nasm libsecp256k1-dev libprotoc-dev libsodium-dev libprotobuf-dev libssl-dev cmake libgrpc++-dev uuid-dev python3 python3-pip
           pip install z3-solver
 
       - name: Check out zkevm-prover
