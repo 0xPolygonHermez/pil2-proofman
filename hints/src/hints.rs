@@ -1,5 +1,5 @@
 use proofman_starks_lib_c::{
-    get_hint_field_c, get_hint_ids_by_name_c, print_by_name_c, print_expression_c, set_hint_field_c, StepsParams,
+    get_hint_field_c, get_hint_ids_by_name_c, print_by_name_c, print_expression_c, print_row_c, set_hint_field_c, StepsParams
 };
 
 use p3_field::Field;
@@ -703,6 +703,19 @@ pub fn print_expression<F: Clone + Copy + Debug>(
             println!("FieldExtended values: {:?}", val);
         }
     }
+}
+
+pub fn print_row<F: Clone + Copy + Debug>(
+    setup_ctx: &SetupCtx,
+    air_instance: &mut AirInstance<F>,
+    stage: u64,
+    row: u64,
+) {
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+
+    let buffer = air_instance.get_buffer_ptr() as *mut c_void;
+
+    print_row_c(*setup.p_setup, buffer, stage, row);
 }
 
 pub fn print_by_name<F: Clone + Copy>(
