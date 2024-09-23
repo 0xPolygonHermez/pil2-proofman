@@ -442,12 +442,7 @@ pub fn print_expression_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn print_row_c(
-    p_setup_ctx: *mut c_void,
-    buffer: *mut c_void,
-    stage: u64,
-    row: u64,
-) {
+pub fn print_row_c(p_setup_ctx: *mut c_void, buffer: *mut c_void, stage: u64, row: u64) {
     unsafe {
         print_row(p_setup_ctx, buffer, stage, row);
     }
@@ -795,12 +790,7 @@ pub fn print_by_name_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn print_row_c(
-    _p_setup_ctx: *mut c_void,
-    _buffer: *mut c_void,
-    _stage: u64,
-    _row: u64,
-) {
+pub fn print_row_c(_p_setup_ctx: *mut c_void, _buffer: *mut c_void, _stage: u64, _row: u64) {
     trace!("{}: ··· {}", "ffi     ", "print_row_c: This is a mock call because there is no linked library");
 }
 

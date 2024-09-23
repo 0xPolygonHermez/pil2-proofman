@@ -65,9 +65,9 @@ pub struct VerifyConstraintsCmd {
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
 
-    //// Debug mode (-d, -dd)
-    // #[arg(short, long, action = clap::ArgAction::Count, help = "Increase debug level")]
-    // pub debug: u8, // Using u8 to hold the number of `-d`
+                     //// Debug mode (-d, -dd)
+                     // #[arg(short, long, action = clap::ArgAction::Count, help = "Increase debug level")]
+                     // pub debug: u8, // Using u8 to hold the number of `-d`
 }
 
 impl VerifyConstraintsCmd {
