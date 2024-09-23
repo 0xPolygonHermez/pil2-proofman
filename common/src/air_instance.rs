@@ -28,8 +28,8 @@ impl<F> AirInstance<F> {
         }
     }
 
-    pub fn get_buffer_ptr(&mut self) -> *mut u8 {
-        self.buffer.as_mut_ptr() as *mut u8
+    pub fn get_buffer_ptr(&self) -> *mut u8 {
+        self.buffer.as_ptr() as *mut u8
     }
 
     pub fn init_prover(&mut self, evals: Vec<F>, subproof_values: Vec<F>) {

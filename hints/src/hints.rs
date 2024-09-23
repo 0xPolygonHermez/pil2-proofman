@@ -3,7 +3,7 @@ use proofman_starks_lib_c::{
 };
 
 use p3_field::Field;
-use proofman_common::{AirInstance, Challenges, ExtensionField, ProofCtx, PublicInputs, SetupCtx, SetupRepository};
+use proofman_common::{AirInstance, Challenges, ExtensionField, ProofCtx, PublicInputs, SetupCtx};
 
 use std::os::raw::c_void;
 
@@ -65,7 +65,7 @@ pub enum HintFieldValue<F: Clone + Copy> {
     ColumnExtended(Vec<ExtensionField<F>>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 // Define an enum to represent the possible return types
 pub enum HintFieldOutput<F: Clone + Copy> {
     Field(F),
@@ -557,7 +557,7 @@ pub fn get_hint_ids_by_name(p_setup: *mut c_void, name: &str) -> Vec<u64> {
 }
 
 pub fn get_hint_field<F: Clone + Copy + Debug>(
-    setup_repo: &SetupRepository,
+    setup_ctx: &SetupCtx,
     public_inputs: &PublicInputs,
     challenges: &Challenges<F>,
     air_instance: &mut AirInstance<F>,
@@ -565,7 +565,7 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> HintFieldValue<F> {
-    let setup = setup_repo.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
 
     let public_inputs_ptr = (*public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
     let challenges_ptr = (*challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
@@ -594,14 +594,14 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
 }
 
 pub fn get_hint_field_constant<F: Clone + Copy>(
-    setup_ctx: Arc<SetupCtx>,
+    setup_ctx: &SetupCtx,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> HintFieldValue<F> {
-    let setup = setup_ctx.setups.get_setup(airgroup_id, air_id).expect("REASON");
+    let setup = setup_ctx.get_setup(airgroup_id, air_id).expect("REASON");
 
     let steps_params = StepsParams {
         buffer: std::ptr::null_mut(),
@@ -627,7 +627,7 @@ pub fn get_hint_field_constant<F: Clone + Copy>(
 }
 
 pub fn set_hint_field<F: Copy + core::fmt::Debug>(
-    setup_repo: &SetupRepository,
+    setup_ctx: &SetupCtx,
     air_instance: &mut AirInstance<F>,
     hint_id: u64,
     hint_field_name: &str,
@@ -635,7 +635,7 @@ pub fn set_hint_field<F: Copy + core::fmt::Debug>(
 ) {
     let buffer = air_instance.get_buffer_ptr() as *mut c_void;
 
-    let setup = setup_repo.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
 
     let values_ptr: *mut c_void = match values {
         HintFieldValue::Column(vec) => vec.as_ptr() as *mut c_void,
@@ -649,7 +649,7 @@ pub fn set_hint_field<F: Copy + core::fmt::Debug>(
 }
 
 pub fn set_hint_field_val<F: Clone + Copy + std::fmt::Debug>(
-    setup_ctx: Arc<SetupCtx>,
+    setup_ctx: &SetupCtx,
     air_instance: &mut AirInstance<F>,
     hint_id: u64,
     hint_field_name: &str,
@@ -657,7 +657,7 @@ pub fn set_hint_field_val<F: Clone + Copy + std::fmt::Debug>(
 ) {
     let subproof_values = air_instance.subproof_values.as_mut_ptr() as *mut c_void;
 
-    let setup = setup_ctx.setups.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
 
     let mut value_array: Vec<F> = Vec::new();
 
@@ -687,7 +687,7 @@ pub fn print_expression<F: Clone + Copy + Debug>(
     first_print_value: u64,
     last_print_value: u64,
 ) {
-    let setup = setup_ctx.setups.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
 
     match expr {
         HintFieldValue::Column(vec) => {
@@ -706,15 +706,15 @@ pub fn print_expression<F: Clone + Copy + Debug>(
 }
 
 pub fn print_by_name<F: Clone + Copy>(
-    setup_ctx: Arc<SetupCtx>,
-    proof_ctx: &ProofCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    setup_ctx: &SetupCtx,
+    proof_ctx: Arc<ProofCtx<F>>,
+    air_instance: &AirInstance<F>,
     name: &str,
     lengths: Option<Vec<u64>>,
     first_print_value: u64,
     last_print_value: u64,
 ) -> Option<HintFieldValue<F>> {
-    let setup = setup_ctx.setups.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
     let public_inputs_ptr = (*proof_ctx.public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
     let challenges_ptr = (*proof_ctx.challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
 

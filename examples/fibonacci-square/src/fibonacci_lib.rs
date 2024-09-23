@@ -96,7 +96,7 @@ pub extern "Rust" fn init_library(
         .format_timestamp(None)
         .format_level(true)
         .format_target(false)
-        .filter_level(log::LevelFilter::Trace)
+        .filter_level(log::LevelFilter::Debug)
         .init();
     let fibonacci_witness = FibonacciWitness::new(public_inputs_path);
     Ok(Box::new(fibonacci_witness))

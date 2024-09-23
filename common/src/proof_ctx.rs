@@ -35,13 +35,18 @@ pub struct ProofCtx<F> {
 impl<F> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
-    pub fn create_ctx(pilout: WitnessPilout, air_instance_repo: AirInstancesRepository<F>) -> Self {
+    pub fn create_ctx(pilout: WitnessPilout) -> Self {
         info!("{}: ··· Creating proof context", Self::MY_NAME);
         if pilout.air_groups().is_empty() {
             panic!("No air groups found in PilOut");
         }
 
-        Self { public_inputs: PublicInputs::default(), pilout, challenges: Challenges::default(), air_instance_repo }
+        Self {
+            public_inputs: PublicInputs::default(),
+            pilout,
+            challenges: Challenges::default(),
+            air_instance_repo: AirInstancesRepository::new(),
+        }
     }
 }
 

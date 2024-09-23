@@ -3,9 +3,10 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use log::info;
+use log::{trace, info};
 
 use proofman_common::{ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_util::{timer_start, timer_stop_and_log};
 use crate::WitnessComponent;
 
 type AirGroupId = usize;
@@ -15,9 +16,9 @@ pub struct WitnessManager<F> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     airs: RwLock<HashMap<(AirGroupId, AirId), usize>>, // First usize is the air_id, second usize is the index of the component in the components vector
 
-    pub pctx: Arc<ProofCtx<F>>,
-    pub ectx: Arc<ExecutionCtx>,
-    pub sctx: Arc<SetupCtx>,
+    pctx: Arc<ProofCtx<F>>,
+    ectx: Arc<ExecutionCtx>,
+    sctx: Arc<SetupCtx>,
 }
 
 impl<F> WitnessManager<F> {
@@ -57,7 +58,7 @@ impl<F> WitnessManager<F> {
     }
 
     pub fn start_proof(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        log::info!("{}: --> Starting proof", Self::MY_NAME);
+        log::info!("{}: ··· STARTING PROOF", Self::MY_NAME);
 
         for component in self.components.read().unwrap().iter() {
             component.start_proof(pctx.clone(), ectx.clone(), sctx.clone());
@@ -73,7 +74,9 @@ impl<F> WitnessManager<F> {
     }
 
     pub fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        info!("{}: --> Calculating witness (stage {})", Self::MY_NAME, stage);
+        info!("{}: ··· CALCULATING WITNESS stage {} / {}", Self::MY_NAME, stage, pctx.pilout.num_stages());
+
+        timer_start!(CALCULATING_WITNESS);
 
         let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
 
@@ -107,7 +110,7 @@ impl<F> WitnessManager<F> {
             }
         }
 
-        info!("{}: <-- Calculated witness (stage {})", Self::MY_NAME, stage);
+        timer_stop_and_log!(CALCULATING_WITNESS);
     }
 
     pub fn get_pctx(&self) -> &ProofCtx<F> {

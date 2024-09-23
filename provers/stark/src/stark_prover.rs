@@ -61,7 +61,6 @@ impl<F: Field> StarkProver<F> {
         let global_info = GlobalInfo::from_file(&proving_key_path.join("pilout.globalInfo.json"));
 
         let air_setup_folder = proving_key_path.join(global_info.get_air_setup_path(airgroup_id, air_id));
-        trace!("{}   : ··· Setup AIR folder: {:?}", Self::MY_NAME, air_setup_folder);
 
         // Check path exists and is a folder
         if !air_setup_folder.exists() {
@@ -74,7 +73,7 @@ impl<F: Field> StarkProver<F> {
         let base_filename_path =
             air_setup_folder.join(global_info.get_air_name(airgroup_id, air_id)).display().to_string();
 
-        let setup = sctx.setups.get_setup(airgroup_id, air_id).expect("REASON");
+        let setup = sctx.get_setup(airgroup_id, air_id).expect("REASON");
 
         let p_setup = *setup.p_setup;
 
@@ -167,7 +166,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn verify_constraints(&self, proof_ctx: Arc<ProofCtx<F>>) -> Vec<ConstraintInfo> {
-        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        let air_instance = &proof_ctx.air_instance_repo.air_instances.read().unwrap()[self.prover_idx];
 
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
@@ -528,49 +527,14 @@ impl StarkBufferAllocator {
 }
 
 impl BufferAllocator for StarkBufferAllocator {
-    fn get_buffer_info(&self, air_name: String, air_id: usize) -> Result<(u64, Vec<u64>), Box<dyn Error>> {
-        let global_info_name = GlobalInfo::from_file(&self.proving_key_path.join("pilout.globalInfo.json")).name;
+    fn get_buffer_info(
+        &self,
+        sctx: &SetupCtx,
+        airgroup_id: usize,
+        air_id: usize,
+    ) -> Result<(u64, Vec<u64>), Box<dyn Error>> {
+        let ps = sctx.get_setup(airgroup_id, air_id).expect("REASON");
 
-        // Get inside the proving key folder the unique file ending with "starkinfo.json", if not error
-        let mut stark_info_path = None;
-
-        let air_pk_folder = self
-            .proving_key_path
-            .join(global_info_name)
-            .join(air_name.clone())
-            .join("airs")
-            .join(format!("{}_{}", air_name, air_id))
-            .join("air");
-
-        if !air_pk_folder.exists() {
-            return Err(format!("The path does not exist: {:?}", air_pk_folder).into());
-        }
-
-        if !air_pk_folder.is_dir() {
-            return Err("The path is not a directory".into());
-        }
-
-        for entry in std::fs::read_dir(air_pk_folder)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(file_name) = path.file_name() {
-                    if let Some(file_name_str) = file_name.to_str() {
-                        if file_name_str.ends_with("starkinfo.json") {
-                            stark_info_path = Some(path);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if stark_info_path.is_none() {
-            return Err("The path does not contain a file with extension 'starkinfo.json'".into());
-        }
-
-        let p_stark_info = stark_info_new_c(stark_info_path.unwrap().to_str().unwrap());
-
-        Ok((get_map_totaln_c(p_stark_info), vec![get_map_offsets_c(p_stark_info, "cm1", false)]))
+        Ok((get_map_totaln_c(*ps.p_stark_info), vec![get_map_offsets_c(*ps.p_stark_info, "cm1", false)]))
     }
 }

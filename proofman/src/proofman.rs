@@ -16,11 +16,13 @@ use transcript::FFITranscript;
 
 use crate::{WitnessLibrary, WitnessLibInitFn};
 
-use proofman_common::{AirInstancesRepository, ConstraintInfo, ExecutionCtx, ProofCtx, Prover, SetupCtx};
+use proofman_common::{ConstraintInfo, ExecutionCtx, ProofCtx, Prover, SetupCtx};
 
 use colored::*;
 
 use std::os::raw::c_void;
+
+use proofman_util::{timer_start, timer_stop_and_log};
 
 pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -78,11 +80,8 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let mut witness_lib = witness_lib(rom_path.clone(), public_inputs_path.clone())?;
 
-        let air_instances_repo = AirInstancesRepository::new();
-        let pctx = ProofCtx::create_ctx(witness_lib.pilout(), air_instances_repo);
+        let pctx = ProofCtx::create_ctx(witness_lib.pilout());
         let pctx = Arc::new(pctx);
-
-        let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
 
         let sctx = SetupCtx::new(witness_lib.pilout(), &proving_key_path);
         let sctx = Arc::new(sctx);
@@ -96,8 +95,10 @@ impl<F: Field + 'static> ProofMan<F> {
 
         witness_lib.calculate_witness(1, pctx.clone(), ectx.clone(), sctx.clone());
 
-        Self::initialize_provers(sctx.clone(), &proving_key_path, &mut provers, pctx.clone());
+        Self::print_summary(pctx.clone());
 
+        let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
+        Self::initialize_provers(sctx.clone(), &proving_key_path, &mut provers, pctx.clone());
         if provers.is_empty() {
             return Err("No instances found".into());
         }
@@ -129,28 +130,20 @@ impl<F: Field + 'static> ProofMan<F> {
         witness_lib.end_proof();
 
         if debug_mode != 0 {
-            let mut proofs: Vec<*mut c_void> = Vec::new();
+            let mut proofs: Vec<*mut c_void> = provers.iter().map(|prover| prover.get_proof()).collect();
 
-            for prover in provers.iter_mut() {
-                let proof = prover.get_proof();
-                proofs.push(proof);
-            }
-
-            log::info!("{}: <-- Verifying constraints", Self::MY_NAME);
+            log::info!("{}: --> Verifying constraints", Self::MY_NAME);
 
             witness_lib.debug(pctx.clone(), ectx.clone(), sctx.clone());
 
             let constraints = Self::verify_constraints(&mut provers, pctx.clone());
 
             let mut valid_constraints = true;
-            for (idx, prover) in provers.iter_mut().enumerate() {
-                let prover_info = prover.get_prover_info();
-                let air_instances =
-                    pctx.air_instance_repo.find_air_instances(prover_info.airgroup_id, prover_info.air_id);
-                let air_instance_index = air_instances.iter().position(|&x| x == prover_info.prover_idx).unwrap();
-                let air = pctx.pilout.get_air(prover_info.airgroup_id, prover_info.air_id);
+            for (idx, air_instance) in pctx.air_instance_repo.air_instances.read().unwrap().iter().enumerate() {
+                let air = pctx.pilout.get_air(air_instance.airgroup_id, air_instance.air_id);
+
                 let mut valid_constraints_prover = true;
-                log::debug!("{}: ··· Air {} Instance {}:", Self::MY_NAME, air.name().unwrap(), air_instance_index);
+                log::debug!("{}: ··· Air {} Instance {}:", Self::MY_NAME, air.name().unwrap(), idx);
                 for constraint in &constraints[idx] {
                     if (debug_mode == 1 && constraint.n_rows == 0) || (debug_mode != 3 && constraint.im_pol) {
                         continue;
@@ -212,7 +205,7 @@ impl<F: Field + 'static> ProofMan<F> {
                         Self::MY_NAME,
                         format!(
                             "Not all constraints for instance {} of air {} were verified!",
-                            air_instance_index,
+                            idx,
                             air.name().unwrap()
                         )
                         .bright_yellow()
@@ -222,13 +215,9 @@ impl<F: Field + 'static> ProofMan<F> {
                     log::debug!(
                         "{}: ··· {}",
                         Self::MY_NAME,
-                        format!(
-                            "All constraints for instance {} of air {} were verified!",
-                            air_instance_index,
-                            air.name().unwrap()
-                        )
-                        .bright_cyan()
-                        .bold()
+                        format!("All constraints for instance {} of air {} were verified!", idx, air.name().unwrap())
+                            .bright_cyan()
+                            .bold()
                     );
                 }
                 log::debug!("{}: ···   ", Self::MY_NAME);
@@ -237,7 +226,9 @@ impl<F: Field + 'static> ProofMan<F> {
                 }
             }
 
-            log::info!("{}: <-- Checking global constraints", Self::MY_NAME);
+            log::info!("{}: <-- Verifying constraints", Self::MY_NAME);
+
+            log::info!("{}: --> Checking global constraints", Self::MY_NAME);
 
             let public_inputs_guard = pctx.public_inputs.inputs.read().unwrap();
             let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
@@ -249,6 +240,8 @@ impl<F: Field + 'static> ProofMan<F> {
                 proofs.as_mut_ptr() as *mut c_void,
                 provers.len() as u64,
             );
+
+            log::info!("{}: <-- Checking global constraints", Self::MY_NAME);
 
             if !global_constraints_verified {
                 log::debug!(
@@ -300,6 +293,7 @@ impl<F: Field + 'static> ProofMan<F> {
     ) {
         witness_lib.start_proof(pctx.clone(), ectx.clone(), sctx.clone());
 
+        log::info!("{}: ··· EXECUTING PROOF", Self::MY_NAME);
         witness_lib.execute(pctx.clone(), ectx, sctx);
 
         // After the execution print the planned instances
@@ -341,22 +335,16 @@ impl<F: Field + 'static> ProofMan<F> {
         provers: &mut Vec<Box<dyn Prover<F>>>,
         pctx: Arc<ProofCtx<F>>,
     ) {
-        info!("{}: Initializing prover and creating buffers", Self::MY_NAME);
+        timer_start!(INITIALIZING_PROVERS);
+        info!("{}: ··· Initializing provers", Self::MY_NAME);
 
-        for (prover_idx, air_instance) in pctx.air_instance_repo.air_instances.read().unwrap().iter().enumerate() {
-            debug!(
-                "{}: Initializing prover for air instance ({}, {})",
-                Self::MY_NAME,
-                air_instance.airgroup_id,
-                air_instance.air_id
-            );
-
+        for (i, air_instance) in pctx.air_instance_repo.air_instances.read().unwrap().iter().enumerate() {
             let prover = Box::new(StarkProver::new(
                 sctx.clone(),
                 proving_key_path,
                 air_instance.airgroup_id,
                 air_instance.air_id,
-                prover_idx,
+                i,
             ));
 
             provers.push(prover);
@@ -365,6 +353,8 @@ impl<F: Field + 'static> ProofMan<F> {
         for prover in provers.iter_mut() {
             prover.build(pctx.clone());
         }
+
+        timer_stop_and_log!(INITIALIZING_PROVERS);
     }
 
     pub fn verify_constraints(
@@ -372,7 +362,7 @@ impl<F: Field + 'static> ProofMan<F> {
         proof_ctx: Arc<ProofCtx<F>>,
     ) -> Vec<Vec<ConstraintInfo>> {
         let mut invalid_constraints = Vec::new();
-        for prover in provers.iter_mut() {
+        for prover in provers.iter() {
             let invalid_constraints_prover = prover.verify_constraints(proof_ctx.clone());
             invalid_constraints.push(invalid_constraints_prover);
         }
@@ -380,11 +370,13 @@ impl<F: Field + 'static> ProofMan<F> {
     }
 
     pub fn calculate_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], proof_ctx: Arc<ProofCtx<F>>) {
-        info!("{}: Calculating stage {}", Self::MY_NAME, stage);
-        for (idx, prover) in provers.iter_mut().enumerate() {
-            info!("{}: Calculating stage {}, for prover {}", Self::MY_NAME, stage, idx);
+        info!("{}: ··· PROVER STAGE {}", Self::MY_NAME, stage);
+        timer_start!(PROVER_STAGE_, stage);
+
+        for prover in provers.iter_mut() {
             prover.calculate_stage(stage, proof_ctx.clone());
         }
+        timer_stop_and_log!(PROVER_STAGE_, stage);
     }
 
     pub fn commit_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], proof_ctx: Arc<ProofCtx<F>>) {
@@ -403,7 +395,7 @@ impl<F: Field + 'static> ProofMan<F> {
         transcript: &mut FFITranscript,
         debug_mode: u64,
     ) {
-        info!("{}: Calculating challenges for stage {}", Self::MY_NAME, stage);
+        info!("{}: ··· Calculating challenges", Self::MY_NAME);
         for prover in provers.iter_mut() {
             if debug_mode != 0 {
                 let dummy_elements = [F::zero(), F::one(), F::two(), F::neg_one()];
@@ -420,7 +412,6 @@ impl<F: Field + 'static> ProofMan<F> {
         proof_ctx: Arc<ProofCtx<F>>,
         transcript: &FFITranscript,
     ) {
-        info!("{}: Getting challenges for stage {}", Self::MY_NAME, stage);
         provers[0].get_challenges(stage, proof_ctx, transcript); // Any prover can get the challenges which are common among them
     }
 
@@ -473,5 +464,39 @@ impl<F: Field + 'static> ProofMan<F> {
         save_challenges_c(challenges, proving_key_path.join("pilout.globalInfo.json").to_str().unwrap(), output_dir);
 
         vec![]
+    }
+
+    fn print_summary(pctx: Arc<ProofCtx<F>>) {
+        let air_instances_repo = pctx.air_instance_repo.air_instances.read().unwrap();
+        let air_instances_repo = &*air_instances_repo;
+
+        let mut air_instances = HashMap::new();
+        for air_instance in air_instances_repo.iter() {
+            let air = pctx.pilout.get_air(air_instance.airgroup_id, air_instance.air_id);
+            let air_name = air.name().unwrap_or("Unnamed");
+            let air_group = pctx.pilout.get_air_group(air_instance.airgroup_id);
+            let air_group_name = air_group.name().unwrap_or("Unnamed");
+            let air_instance = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
+            let air_instance = air_instance.entry(air_name).or_insert(0);
+            *air_instance += 1;
+        }
+
+        let mut air_groups: Vec<_> = air_instances.keys().collect();
+        air_groups.sort();
+
+        info!("---------------------------------------------");
+        info!("{}: {} Air instances found:", Self::MY_NAME, air_instances_repo.len());
+        for air_group in air_groups {
+            let air_group_instances = air_instances.get(air_group).unwrap();
+            let mut air_names: Vec<_> = air_group_instances.keys().collect();
+            air_names.sort();
+
+            info!("{}: AirGroup [{}]", Self::MY_NAME, air_group);
+            for air_name in air_names {
+                let count = air_group_instances.get(air_name).unwrap();
+                info!("{}:   · {} x Air [{}]", Self::MY_NAME, count, air_name);
+            }
+        }
+        info!("---------------------------------------------");
     }
 }
