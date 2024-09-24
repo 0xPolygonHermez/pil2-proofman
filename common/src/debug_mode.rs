@@ -16,12 +16,12 @@ impl VerboseMode {
     }
 }
 
-impl Into<LevelFilter> for VerboseMode {
-    fn into(self) -> LevelFilter {
-        match self {
-            Self::Info => LevelFilter::Info,
-            Self::Debug => LevelFilter::Debug,
-            Self::Trace => LevelFilter::Trace,
+impl From<VerboseMode> for LevelFilter {
+    fn from(val: VerboseMode) -> Self {
+        match val {
+            VerboseMode::Info => LevelFilter::Info,
+            VerboseMode::Debug => LevelFilter::Debug,
+            VerboseMode::Trace => LevelFilter::Trace,
         }
     }
 }

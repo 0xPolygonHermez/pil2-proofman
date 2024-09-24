@@ -53,7 +53,7 @@ pub struct SetupCtx {
 impl SetupCtx {
     pub fn new(pilout: WitnessPilout, proving_key_path: &Path) -> Self {
         SetupCtx {
-            global_info: GlobalInfo::new(&proving_key_path),
+            global_info: GlobalInfo::new(proving_key_path),
             proving_key_path: proving_key_path.to_path_buf(),
             setup_repository: SetupRepository::new(pilout),
         }

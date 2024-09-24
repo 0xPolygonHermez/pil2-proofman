@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::{Parser, ValueEnum};
-use proofman_common::VerboseMode;
+// use proofman_common::VerboseMode;
 use std::{fmt::Display, path::PathBuf};
 use colored::Colorize;
 

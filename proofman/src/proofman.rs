@@ -1,5 +1,5 @@
 use libloading::{Library, Symbol};
-use log::{debug, info, trace};
+use log::{info, trace};
 use p3_field::Field;
 use stark::{StarkBufferAllocator, StarkProver};
 use proofman_starks_lib_c::{save_challenges_c, save_publics_c, verify_global_constraints_c};
