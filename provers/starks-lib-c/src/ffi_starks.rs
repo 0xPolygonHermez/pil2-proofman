@@ -583,6 +583,13 @@ pub fn join_zkin_recursive2_c(
     unsafe { join_zkin_recursive2(global_info_file_ptr, p_publics, p_challenges, zkin1, zkin2, stark_info_recursive2) }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_log_level_c(level: u64) {
+    unsafe {
+        setLogLevel(level);
+    }
+}
+
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -1034,4 +1041,9 @@ pub fn join_zkin_final_c(
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "join_zkin_final: This is a mock call because there is no linked library");
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_log_level_c(_level: u64) {
+    trace!("{}: ··· {}", "ffi     ", "set_log_level_c: This is a mock call because there is no linked library");
 }
