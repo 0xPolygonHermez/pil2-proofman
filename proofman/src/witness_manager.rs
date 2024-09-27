@@ -5,7 +5,8 @@ use std::{
 
 use log::{trace, info};
 
-use proofman_common::{ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{ExecutionCtx, ProofCtx, SetupCtx, VerboseMode};
+use proofman_starks_lib_c::set_log_level_c;
 use proofman_util::{timer_start, timer_stop_and_log};
 use crate::WitnessComponent;
 
@@ -57,8 +58,10 @@ impl<F> WitnessManager<F> {
         self.airs.write().unwrap().insert((airgroup_id, air_id), component_idx);
     }
 
-    pub fn start_proof(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    pub fn start_proof(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>, verbose_mode: VerboseMode) {
         log::info!("{}: ··· STARTING PROOF", Self::MY_NAME);
+
+        set_log_level_c(verbose_mode.into());
 
         for component in self.components.read().unwrap().iter() {
             component.start_proof(pctx.clone(), ectx.clone(), sctx.clone());

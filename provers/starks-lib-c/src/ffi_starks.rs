@@ -448,6 +448,13 @@ pub fn print_row_c(p_setup_ctx: *mut c_void, buffer: *mut c_void, stage: u64, ro
     }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_log_level_c(level: u64) {
+    unsafe {
+        setLogLevel(level);
+    }
+}
+
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -803,4 +810,9 @@ pub fn print_expression_c(
     _last_print_value: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "print_expression_c: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_log_level_c(level: u64) {
+    trace!("{}: ··· {}", "ffi     ", "set_log_level_c: This is a mock call because there is no linked library");
 }

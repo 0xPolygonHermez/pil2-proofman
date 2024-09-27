@@ -1,5 +1,6 @@
 // extern crate env_logger;
 use clap::{Parser, ValueEnum};
+use proofman_common::VerboseMode;
 use std::{fmt::Display, path::PathBuf};
 use colored::Colorize;
 
@@ -63,12 +64,24 @@ pub struct ProveCmd {
 
     #[clap(long, default_value_t = Field::Goldilocks)]
     pub field: Field,
+
+    /// Verbosity (-v, -vv)
+    #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
+    pub verbose: u8, // Using u8 to hold the number of `-v`
 }
 
 impl ProveCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("{} Prove", format!("{: >12}", "Command").bright_green().bold());
         println!();
+
+        let verbose_mode: VerboseMode = self.verbose.into();
+        env_logger::builder()
+            .format_timestamp(None)
+            .format_level(true)
+            .format_target(false)
+            .filter_level(verbose_mode.clone().into())
+            .init();
 
         type GL = Goldilocks;
 
@@ -79,6 +92,7 @@ impl ProveCmd {
                 self.public_inputs.clone(),
                 self.proving_key.clone(),
                 self.output_dir.clone(),
+                verbose_mode,
                 0,
             )?,
         };

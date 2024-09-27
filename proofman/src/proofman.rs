@@ -2,7 +2,7 @@ use libloading::{Library, Symbol};
 use log::{info, trace};
 use p3_field::Field;
 use stark::{StarkBufferAllocator, StarkProver};
-use proofman_starks_lib_c::{save_challenges_c, save_publics_c, verify_global_constraints_c};
+use proofman_starks_lib_c::{save_challenges_c, save_publics_c, set_log_level_c, verify_global_constraints_c};
 use std::ffi::CStr;
 use std::{cmp, fs};
 
@@ -16,7 +16,7 @@ use transcript::FFITranscript;
 
 use crate::{WitnessLibrary, WitnessLibInitFn};
 
-use proofman_common::{ConstraintInfo, ExecutionCtx, ProofCtx, Prover, SetupCtx};
+use proofman_common::{ConstraintInfo, ExecutionCtx, ProofCtx, Prover, SetupCtx, VerboseMode};
 
 use colored::*;
 
@@ -37,8 +37,11 @@ impl<F: Field + 'static> ProofMan<F> {
         public_inputs_path: Option<PathBuf>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
+        verbose_mode: VerboseMode,
         debug_mode: u64,
     ) -> Result<Vec<F>, Box<dyn std::error::Error>> {
+        set_log_level_c(verbose_mode.clone().into());
+
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
             return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
@@ -78,7 +81,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
 
-        let mut witness_lib = witness_lib(rom_path.clone(), public_inputs_path.clone())?;
+        let mut witness_lib = witness_lib(rom_path.clone(), public_inputs_path.clone(), verbose_mode)?;
 
         let pctx = ProofCtx::create_ctx(witness_lib.pilout());
         let pctx = Arc::new(pctx);
@@ -295,38 +298,6 @@ impl<F: Field + 'static> ProofMan<F> {
 
         log::info!("{}: ··· EXECUTING PROOF", Self::MY_NAME);
         witness_lib.execute(pctx.clone(), ectx, sctx);
-
-        // After the execution print the planned instances
-        trace!("{}: --> Air instances: ", Self::MY_NAME);
-
-        let mut group_ids = HashMap::new();
-
-        for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
-            let group_map = group_ids.entry(air_instance.airgroup_id).or_insert_with(HashMap::new);
-            *group_map.entry(air_instance.air_id).or_insert(0) += 1;
-        }
-
-        let mut sorted_group_ids: Vec<_> = group_ids.keys().collect();
-        sorted_group_ids.sort();
-
-        for &airgroup_id in &sorted_group_ids {
-            if let Some(air_map) = group_ids.get(airgroup_id) {
-                let mut sorted_air_ids: Vec<_> = air_map.keys().collect();
-                sorted_air_ids.sort();
-
-                let air_group = pctx.pilout.get_air_group(*airgroup_id);
-                let name = air_group.name().unwrap_or("Unnamed");
-                trace!("{}:     + AirGroup [{}] {}", Self::MY_NAME, *airgroup_id, name);
-
-                for &air_id in &sorted_air_ids {
-                    if let Some(&count) = air_map.get(air_id) {
-                        let air = pctx.pilout.get_air(*airgroup_id, *air_id);
-                        let name = air.name().unwrap_or("Unnamed");
-                        trace!("{}:       · {} x Air[{}] {}", Self::MY_NAME, count, air.air_id, name);
-                    }
-                }
-            }
-        }
     }
 
     fn initialize_provers(
