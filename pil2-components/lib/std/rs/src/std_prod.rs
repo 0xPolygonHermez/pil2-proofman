@@ -221,7 +221,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                     let air_name = air.name().unwrap_or("unknown");
 
                     log::info!(
-                        "{}: Initiating witness computation for AIR '{}' at stage {}",
+                        "{}: ··· Computing witness for AIR '{}' at stage {}",
                         Self::MY_NAME,
                         air_name,
                         stage
@@ -277,13 +277,6 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                     // set the computed gprod column and its associated airgroup_val
                     set_hint_field(&sctx, air_instance, gprod_hint as u64, "reference", &gprod);
                     set_hint_field_val(&sctx, air_instance, gprod_hint as u64, "result", gprod.get(num_rows - 1));
-
-                    log::info!(
-                        "{}: Completed witness computation for AIR '{}' at stage {}",
-                        Self::MY_NAME,
-                        air.name().unwrap_or("unknown"),
-                        stage
-                    );
                 }
             }
         }
