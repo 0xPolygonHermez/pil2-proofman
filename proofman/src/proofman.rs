@@ -488,7 +488,7 @@ impl<F: Field + 'static> ProofMan<F> {
         let mut air_groups: Vec<_> = air_instances.keys().collect();
         air_groups.sort();
 
-        info!("{}: >>> SUMMARY---------------------------------------------", Self::MY_NAME);
+        info!("{}: >>> PROOF INSTANCES SUMMARY ------------------------", Self::MY_NAME);
         info!("{}:     ► {} Air instances found:", Self::MY_NAME, air_instances_repo.len());
         for air_group in air_groups {
             let air_group_instances = air_instances.get(air_group).unwrap();
@@ -505,6 +505,6 @@ impl<F: Field + 'static> ProofMan<F> {
                 );
             }
         }
-        info!("{}: <<< SUMMARY---------------------------------------------", Self::MY_NAME);
+        info!("{}: <<< PROOF INSTANCES SUMMARY ------------------------", Self::MY_NAME);
     }
 }
