@@ -44,16 +44,14 @@ impl ProveCmd {
         println!();
 
         let _proof = match self.field {
-            Field::Goldilocks => {
-                ProofMan::<Goldilocks>::generate_proof(
-                    self.witness_lib.clone(),
-                    self.rom.clone(),
-                    self.public_inputs.clone(),
-                    self.proving_key.clone(),
-                    self.output_dir.clone(),
-                    0,
-                )?
-            }
+            Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
+                self.witness_lib.clone(),
+                self.rom.clone(),
+                self.public_inputs.clone(),
+                self.proving_key.clone(),
+                self.output_dir.clone(),
+                0,
+            )?,
         };
 
         Ok(())
