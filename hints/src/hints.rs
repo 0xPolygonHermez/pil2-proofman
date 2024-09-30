@@ -3,6 +3,8 @@ use proofman_starks_lib_c::{
     StepsParams,
 };
 
+use std::collections::HashMap;
+
 use p3_field::Field;
 use proofman_common::{AirInstance, Challenges, ExtensionField, ProofCtx, PublicInputs, SetupCtx};
 
@@ -32,6 +34,14 @@ pub struct HintFieldInfo<F> {
     field_type: HintFieldType,
     pub values: *mut F,
     pub string_value: *const c_char,
+    matrix_size: u64,
+    pos: *mut u64,
+}
+
+#[repr(C)]
+pub struct HintFieldInfoValues<F> {
+    n_values: u64,
+    pub hint_field_values: *mut HintFieldInfo<F>,
 }
 
 #[repr(C)]
@@ -70,6 +80,10 @@ pub enum HintFieldValue<F: Clone + Copy> {
     String(String),
 }
 
+pub struct HintFieldValues<F: Clone + Copy> {
+    values: HashMap<Vec<u64>, HintFieldValue<F>>,
+}
+
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 // Define an enum to represent the possible return types
 pub enum HintFieldOutput<F: Clone + Copy> {
@@ -104,6 +118,19 @@ impl<F: Clone + Copy> HintFieldValue<F> {
             }
             _ => panic!("Mismatched types in set method"),
         }
+    }
+}
+
+pub trait GetValue<F: Clone + Copy> {
+    fn get(&self, index: usize) -> HashMap<Vec<u64>, HintFieldOutput<F>>;
+}
+
+impl<F: Clone + Copy> GetValue<F> for HintFieldValues<F> {
+    fn get(&self, index: usize) -> HashMap<Vec<u64>, HintFieldOutput<F>> {
+        self.values
+            .iter() // Iterate over key-value pairs in the HashMap
+            .map(|(key, value)| (key.clone(), value.get(index))) // Apply get to each value
+            .collect() // Collect results into a HashMap
     }
 }
 
@@ -609,12 +636,17 @@ pub fn get_hint_field<F: Clone + Copy + Debug>(
         options.print_expression,
     );
 
-    let hint_field = unsafe { Box::from_raw(raw_ptr as *mut HintFieldInfo<F>) };
-
-    HintCol::from_hint_field(hint_field.as_ref())
+    unsafe {
+        let hint_field_values = &*(raw_ptr as *mut HintFieldInfoValues<F>);
+        let value = &*(hint_field_values.hint_field_values.add(0));
+        if value.matrix_size != 0 {
+            panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
+        }
+        HintCol::from_hint_field(value)
+    }
 }
 
-pub fn get_hint_field_constant<F: Clone + Copy>(
+pub fn get_hint_field_constant<F: Clone + Copy + std::fmt::Debug>(
     setup_ctx: &SetupCtx,
     airgroup_id: usize,
     air_id: usize,
@@ -642,9 +674,126 @@ pub fn get_hint_field_constant<F: Clone + Copy>(
         options.print_expression,
     );
 
-    let hint_field = unsafe { Box::from_raw(raw_ptr as *mut HintFieldInfo<F>) };
+    unsafe {
+        let hint_field_values = &*(raw_ptr as *mut HintFieldInfoValues<F>);
+        let value = &*(hint_field_values.hint_field_values.add(0));
+        if value.matrix_size != 0 {
+            panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
+        }
+        HintCol::from_hint_field(value)
+    }
+}
 
-    HintCol::from_hint_field(hint_field.as_ref())
+pub fn get_hint_field_m<F: Clone + Copy + Debug>(
+    setup_ctx: &SetupCtx,
+    public_inputs: &PublicInputs,
+    challenges: &Challenges<F>,
+    air_instance: &mut AirInstance<F>,
+    hint_id: usize,
+    hint_field_name: &str,
+    options: HintFieldOptions,
+) -> HintFieldValues<F> {
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+
+    let public_inputs_ptr = (*public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
+    let challenges_ptr = (*challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
+
+    let steps_params = StepsParams {
+        buffer: air_instance.get_buffer_ptr() as *mut c_void,
+        public_inputs: public_inputs_ptr,
+        challenges: challenges_ptr,
+        subproof_values: air_instance.evals.as_ptr() as *mut c_void,
+        evals: air_instance.subproof_values.as_ptr() as *mut c_void,
+    };
+
+    let raw_ptr = get_hint_field_c(
+        setup.p_setup,
+        steps_params,
+        hint_id as u64,
+        hint_field_name,
+        options.dest,
+        options.inverse,
+        options.print_expression,
+    );
+
+    unsafe {
+        let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
+        let mut hint_field_values = HashMap::with_capacity(hint_field.n_values as usize);
+
+        for v in 0..hint_field.n_values {
+            let h = &*(hint_field.hint_field_values.add(v as usize));
+            if v == 0 {
+                if h.matrix_size != 0 {
+                    panic!(
+                        "get_hint_field_m can only be called with arrays of expressions, but {} is a single one",
+                        hint_field_name
+                    );
+                }
+            }
+            let hint_value = HintCol::from_hint_field(h);
+            let mut pos = Vec::new();
+            for p in 0..h.matrix_size {
+                pos.push(h.pos.wrapping_add(p as usize) as u64);
+            }
+            hint_field_values.insert(pos, hint_value);
+        }
+
+        HintFieldValues { values: hint_field_values }
+    }
+}
+
+pub fn get_hint_field_constant_m<F: Clone + Copy + std::fmt::Debug>(
+    setup_ctx: &SetupCtx,
+    airgroup_id: usize,
+    air_id: usize,
+    hint_id: usize,
+    hint_field_name: &str,
+    options: HintFieldOptions,
+) -> HintFieldValues<F> {
+    let setup = setup_ctx.get_setup(airgroup_id, air_id).expect("REASON");
+
+    let steps_params = StepsParams {
+        buffer: std::ptr::null_mut(),
+        public_inputs: std::ptr::null_mut(),
+        challenges: std::ptr::null_mut(),
+        subproof_values: std::ptr::null_mut(),
+        evals: std::ptr::null_mut(),
+    };
+
+    let raw_ptr = get_hint_field_c(
+        setup.p_setup,
+        steps_params,
+        hint_id as u64,
+        hint_field_name,
+        options.dest,
+        options.inverse,
+        options.print_expression,
+    );
+
+    unsafe {
+        let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
+        let mut hint_field_values = HashMap::with_capacity(hint_field.n_values as usize);
+
+        for v in 0..hint_field.n_values {
+            let h = &*(hint_field.hint_field_values.add(v as usize));
+            if v == 0 {
+                if h.matrix_size != 0 {
+                    panic!(
+                        "get_hint_field_m can only be called with arrays of expressions, but {} is a single one",
+                        hint_field_name
+                    );
+                }
+            }
+            let hint_value = HintCol::from_hint_field(h);
+            let mut pos = Vec::new();
+            for p in 0..h.matrix_size {
+                pos.push(h.pos.wrapping_add(p as usize) as u64);
+            }
+            hint_field_values.insert(pos, hint_value);
+        }
+
+        HintFieldValues { values: hint_field_values }
+    }
 }
 
 pub fn set_hint_field<F: Copy + core::fmt::Debug>(
