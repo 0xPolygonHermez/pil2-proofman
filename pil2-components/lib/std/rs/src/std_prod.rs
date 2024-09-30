@@ -10,13 +10,13 @@ use p3_field::{Field, PrimeField};
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{
-    get_hint_field, get_hint_ids_by_name, set_hint_field, set_hint_field_val, HintFieldOptions, HintFieldOutput,
+    get_hint_field, get_hint_field_a, get_hint_ids_by_name, set_hint_field, set_hint_field_val, GetValueV, HintFieldOptions, HintFieldOutput,
     HintFieldValue,
 };
 
 use crate::{Decider, StdMode, ModeName};
 
-type ProdAirsItem = (usize, usize, Vec<u64>, Vec<u64>, Vec<u64>);
+type ProdAirsItem = (usize, usize, Vec<u64>, Vec<u64>);
 type BusVals<F> = Vec<(usize, Vec<HintFieldOutput<F>>)>;
 
 pub struct StdProd<F: Copy> {
@@ -40,7 +40,6 @@ impl<F: PrimeField> Decider<F> for StdProd<F> {
                 let setup = sctx.get_setup(airgroup_id, air_id).expect("REASON");
                 let gprod_hints = get_hint_ids_by_name(setup.p_setup, "gprod_col");
                 let debug_hints_data = get_hint_ids_by_name(setup.p_setup, "gprod_member_data");
-                let debug_hints = get_hint_ids_by_name(setup.p_setup, "gprod_member");
                 if !gprod_hints.is_empty() {
                     // Save the air for latter witness computation
                     self.prod_airs.lock().unwrap().push((
@@ -48,7 +47,6 @@ impl<F: PrimeField> Decider<F> for StdProd<F> {
                         air_id,
                         gprod_hints,
                         debug_hints_data,
-                        debug_hints,
                     ));
                 }
             }
@@ -82,9 +80,18 @@ impl<F: PrimeField> StdProd<F> {
         air_instance: &mut AirInstance<F>,
         num_rows: usize,
         debug_hints_data: Vec<u64>,
-        debug_hints: Vec<u64>,
     ) {
         for (i, hint) in debug_hints_data.iter().enumerate() {
+            let _name = get_hint_field::<F>(
+                sctx,
+                &pctx.public_inputs,
+                &pctx.challenges,
+                air_instance,
+                *hint as usize,
+                "name_piop",
+                HintFieldOptions::default(),
+            );
+
             let opid = get_hint_field::<F>(
                 sctx,
                 &pctx.public_inputs,
@@ -126,22 +133,6 @@ impl<F: PrimeField> StdProd<F> {
                 panic!();
             };
 
-            let ncols = get_hint_field::<F>(
-                sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
-                air_instance,
-                *hint as usize,
-                "ncols",
-                HintFieldOptions::default(),
-            );
-            let ncols = if let HintFieldValue::Field(ncols) = ncols {
-                ncols.as_canonical_biguint().to_usize().expect("Cannot convert to usize")
-            } else {
-                log::error!("Proves hint must be a field element");
-                panic!();
-            };
-
             let selector = get_hint_field::<F>(
                 sctx,
                 &pctx.public_inputs,
@@ -152,20 +143,25 @@ impl<F: PrimeField> StdProd<F> {
                 HintFieldOptions::default(),
             );
 
-            let mut bus_vals = Vec::new();
-            for hint in debug_hints[i * ncols..(i + 1) * ncols].iter() {
-                let col = get_hint_field::<F>(
-                    sctx,
-                    &pctx.public_inputs,
-                    &pctx.challenges,
-                    air_instance,
-                    *hint as usize,
-                    "reference",
-                    HintFieldOptions::default(),
-                );
+            let expressions = get_hint_field_a::<F>(
+                sctx,
+                &pctx.public_inputs,
+                &pctx.challenges,
+                air_instance,
+                *hint as usize,
+                "references",
+                HintFieldOptions::default(),
+            );
 
-                bus_vals.push(col);
-            }
+            // let _names = get_hint_field::<F>(
+            //     sctx,
+            //     &pctx.public_inputs,
+            //     &pctx.challenges,
+            //     air_instance,
+            //     *hint as usize,
+            //     "names",
+            //     HintFieldOptions::default(),
+            // );
 
             for j in 0..num_rows {
                 let sel = if let HintFieldOutput::Field(selector) = selector.get(j) {
@@ -180,8 +176,7 @@ impl<F: PrimeField> StdProd<F> {
                 };
 
                 if sel {
-                    let bus_value = bus_vals.iter().map(|col| col.get(j)).collect();
-                    self.update_bus_vals(opid, bus_value, j, proves);
+                    self.update_bus_vals(opid, expressions.get(j), j, proves);
                 }
             }
         }
@@ -228,7 +223,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
         if stage == 2 {
             let prod_airs = self.prod_airs.lock().unwrap();
 
-            for (airgroup_id, air_id, gprod_hints, debug_hints_data, debug_hints) in prod_airs.iter() {
+            for (airgroup_id, air_id, gprod_hints, debug_hints_data) in prod_airs.iter() {
                 let air_instance_ids = pctx.air_instance_repo.find_air_instances(*airgroup_id, *air_id);
 
                 for air_instance_id in air_instance_ids {
@@ -246,7 +241,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                     let num_rows = air.num_rows();
 
                     if self.mode.name == ModeName::Debug {
-                        self.debug(&pctx, &sctx, air_instance, num_rows, debug_hints_data.clone(), debug_hints.clone());
+                        self.debug(&pctx, &sctx, air_instance, num_rows, debug_hints_data.clone());
                     }
 
                     // We know that at most one product hint exists
