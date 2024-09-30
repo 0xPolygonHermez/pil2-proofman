@@ -84,6 +84,23 @@ pub struct HintFieldValues<F: Clone + Copy> {
     values: HashMap<Vec<u64>, HintFieldValue<F>>,
 }
 
+impl<F: Clone + Copy + Debug> HintFieldValues<F> {
+    pub fn get(&self, index: usize) -> HashMap<Vec<u64>, HintFieldOutput<F>> {
+        self.values.iter().map(|(key, value)| (key.clone(), value.get(index))).collect()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HintFieldValuesVec<F: Clone + Copy + Debug> {
+    values: Vec<HintFieldValue<F>>,
+}
+
+impl<F: Clone + Copy + Debug> HintFieldValuesVec<F> {
+    pub fn get(&self, index: usize) -> Vec<HintFieldOutput<F>> {
+        self.values.iter().map(|value| value.get(index)).collect()
+    }
+}
+
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
 // Define an enum to represent the possible return types
 pub enum HintFieldOutput<F: Clone + Copy> {
@@ -118,25 +135,6 @@ impl<F: Clone + Copy> HintFieldValue<F> {
             }
             _ => panic!("Mismatched types in set method"),
         }
-    }
-}
-pub trait GetValue<F: Clone + Copy> {
-    fn get(&self, index: usize) -> HashMap<Vec<u64>, HintFieldOutput<F>>;
-}
-
-impl<F: Clone + Copy> GetValue<F> for HintFieldValues<F> {
-    fn get(&self, index: usize) -> HashMap<Vec<u64>, HintFieldOutput<F>> {
-        self.values.iter().map(|(key, value)| (key.clone(), value.get(index))).collect()
-    }
-}
-
-pub trait GetValueV<F: Clone + Copy> {
-    fn get(&self, index: usize) -> Vec<HintFieldOutput<F>>;
-}
-
-impl<F: Clone + Copy> GetValueV<F> for Vec<HintFieldValue<F>> {
-    fn get(&self, index: usize) -> Vec<HintFieldOutput<F>> {
-        self.iter().map(|value| value.get(index)).collect()
     }
 }
 
@@ -698,7 +696,7 @@ pub fn get_hint_field_a<F: Clone + Copy + Debug>(
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
-) -> Vec<HintFieldValue<F>> {
+) -> HintFieldValuesVec<F> {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
 
     let public_inputs_ptr = (*public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
@@ -723,9 +721,8 @@ pub fn get_hint_field_a<F: Clone + Copy + Debug>(
     );
 
     unsafe {
+        let mut hint_field_values = Vec::new();
         let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
-        let mut hint_field_values = Vec::with_capacity(hint_field.n_values as usize);
-
         for v in 0..hint_field.n_values {
             let h = &*(hint_field.hint_field_values.add(v as usize));
             if v == 0 {
@@ -734,11 +731,10 @@ pub fn get_hint_field_a<F: Clone + Copy + Debug>(
                 }
             }
             let hint_value = HintCol::from_hint_field(h);
-            let pos = h.pos.wrapping_add(0) as usize;
-            hint_field_values[pos] = hint_value;
+            hint_field_values.push(hint_value);
         }
 
-        hint_field_values
+        HintFieldValuesVec { values: hint_field_values }
     }
 }
 
@@ -826,9 +822,8 @@ pub fn get_hint_field_constant_a<F: Clone + Copy + std::fmt::Debug>(
     );
 
     unsafe {
+        let mut hint_field_values = Vec::new();
         let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
-        let mut hint_field_values = Vec::with_capacity(hint_field.n_values as usize);
-
         for v in 0..hint_field.n_values {
             let h = &*(hint_field.hint_field_values.add(v as usize));
             if v == 0 {
@@ -837,8 +832,7 @@ pub fn get_hint_field_constant_a<F: Clone + Copy + std::fmt::Debug>(
                 }
             }
             let hint_value = HintCol::from_hint_field(h);
-            let pos = h.pos.wrapping_add(0) as usize;
-            hint_field_values[pos] = hint_value;
+            hint_field_values.push(hint_value);
         }
 
         hint_field_values
