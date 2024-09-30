@@ -75,7 +75,7 @@ impl<F: Field> StarkProver<F> {
 
         let setup = sctx.get_setup(airgroup_id, air_id).expect("REASON");
 
-        let p_stark = starks_new_c(setup.p_setup);
+        let p_stark = starks_new_c((&setup.p_setup).into());
 
         let stark_info_path = base_filename_path.clone() + ".starkinfo.json";
         let stark_info_json = std::fs::read_to_string(&stark_info_path)
@@ -103,8 +103,8 @@ impl<F: Field> StarkProver<F> {
             air_id,
             airgroup_id,
             config,
-            p_setup: setup.p_setup,
-            p_stark_info: setup.p_stark_info,
+            p_setup: (&setup.p_setup).into(),
+            p_stark_info: setup.p_setup.p_stark_info,
             p_stark,
             p_proof: None,
             stark_info,
@@ -531,8 +531,8 @@ impl BufferAllocator for StarkBufferAllocator {
         airgroup_id: usize,
         air_id: usize,
     ) -> Result<(u64, Vec<u64>), Box<dyn Error>> {
-        let ps = sctx.get_setup(airgroup_id, air_id).expect("REASON");
+        let ps = sctx.get_partial_setup(airgroup_id, air_id).expect("REASON");
 
-        Ok((get_map_totaln_c(ps.p_stark_info), vec![get_map_offsets_c(ps.p_stark_info, "cm1", false)]))
+        Ok((get_map_totaln_c(ps.p_setup.p_stark_info), vec![get_map_offsets_c(ps.p_setup.p_stark_info, "cm1", false)]))
     }
 }
