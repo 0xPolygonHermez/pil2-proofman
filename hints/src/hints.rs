@@ -120,17 +120,23 @@ impl<F: Clone + Copy> HintFieldValue<F> {
         }
     }
 }
-
 pub trait GetValue<F: Clone + Copy> {
     fn get(&self, index: usize) -> HashMap<Vec<u64>, HintFieldOutput<F>>;
 }
 
 impl<F: Clone + Copy> GetValue<F> for HintFieldValues<F> {
     fn get(&self, index: usize) -> HashMap<Vec<u64>, HintFieldOutput<F>> {
-        self.values
-            .iter() // Iterate over key-value pairs in the HashMap
-            .map(|(key, value)| (key.clone(), value.get(index))) // Apply get to each value
-            .collect() // Collect results into a HashMap
+        self.values.iter().map(|(key, value)| (key.clone(), value.get(index))).collect()
+    }
+}
+
+pub trait GetValueV<F: Clone + Copy> {
+    fn get(&self, index: usize) -> Vec<HintFieldOutput<F>>;
+}
+
+impl<F: Clone + Copy> GetValueV<F> for Vec<HintFieldValue<F>> {
+    fn get(&self, index: usize) -> Vec<HintFieldOutput<F>> {
+        self.iter().map(|value| value.get(index)).collect()
     }
 }
 
@@ -684,6 +690,58 @@ pub fn get_hint_field_constant<F: Clone + Copy + std::fmt::Debug>(
     }
 }
 
+pub fn get_hint_field_a<F: Clone + Copy + Debug>(
+    setup_ctx: &SetupCtx,
+    public_inputs: &PublicInputs,
+    challenges: &Challenges<F>,
+    air_instance: &mut AirInstance<F>,
+    hint_id: usize,
+    hint_field_name: &str,
+    options: HintFieldOptions,
+) -> Vec<HintFieldValue<F>> {
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+
+    let public_inputs_ptr = (*public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
+    let challenges_ptr = (*challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
+
+    let steps_params = StepsParams {
+        buffer: air_instance.get_buffer_ptr() as *mut c_void,
+        public_inputs: public_inputs_ptr,
+        challenges: challenges_ptr,
+        subproof_values: air_instance.evals.as_ptr() as *mut c_void,
+        evals: air_instance.subproof_values.as_ptr() as *mut c_void,
+    };
+
+    let raw_ptr = get_hint_field_c(
+        setup.p_setup,
+        steps_params,
+        hint_id as u64,
+        hint_field_name,
+        options.dest,
+        options.inverse,
+        options.print_expression,
+    );
+
+    unsafe {
+        let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
+        let mut hint_field_values = Vec::with_capacity(hint_field.n_values as usize);
+
+        for v in 0..hint_field.n_values {
+            let h = &*(hint_field.hint_field_values.add(v as usize));
+            if v == 0 {
+                if h.matrix_size != 1 {
+                    panic!("get_hint_field_m can only be called with an array of expressions!");
+                }
+            }
+            let hint_value = HintCol::from_hint_field(h);
+            let pos = h.pos.wrapping_add(0) as usize;
+            hint_field_values[pos] = hint_value;
+        }
+
+        hint_field_values
+    }
+}
+
 pub fn get_hint_field_m<F: Clone + Copy + Debug>(
     setup_ctx: &SetupCtx,
     public_inputs: &PublicInputs,
@@ -723,11 +781,8 @@ pub fn get_hint_field_m<F: Clone + Copy + Debug>(
         for v in 0..hint_field.n_values {
             let h = &*(hint_field.hint_field_values.add(v as usize));
             if v == 0 {
-                if h.matrix_size != 0 {
-                    panic!(
-                        "get_hint_field_m can only be called with arrays of expressions, but {} is a single one",
-                        hint_field_name
-                    );
+                if h.matrix_size > 2 {
+                    panic!("get_hint_field_m can only be called with a matrix of expressions!",);
                 }
             }
             let hint_value = HintCol::from_hint_field(h);
@@ -739,6 +794,54 @@ pub fn get_hint_field_m<F: Clone + Copy + Debug>(
         }
 
         HintFieldValues { values: hint_field_values }
+    }
+}
+
+pub fn get_hint_field_constant_a<F: Clone + Copy + std::fmt::Debug>(
+    setup_ctx: &SetupCtx,
+    airgroup_id: usize,
+    air_id: usize,
+    hint_id: usize,
+    hint_field_name: &str,
+    options: HintFieldOptions,
+) -> Vec<HintFieldValue<F>> {
+    let setup = setup_ctx.get_setup(airgroup_id, air_id).expect("REASON");
+
+    let steps_params = StepsParams {
+        buffer: std::ptr::null_mut(),
+        public_inputs: std::ptr::null_mut(),
+        challenges: std::ptr::null_mut(),
+        subproof_values: std::ptr::null_mut(),
+        evals: std::ptr::null_mut(),
+    };
+
+    let raw_ptr = get_hint_field_c(
+        setup.p_setup,
+        steps_params,
+        hint_id as u64,
+        hint_field_name,
+        options.dest,
+        options.inverse,
+        options.print_expression,
+    );
+
+    unsafe {
+        let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
+        let mut hint_field_values = Vec::with_capacity(hint_field.n_values as usize);
+
+        for v in 0..hint_field.n_values {
+            let h = &*(hint_field.hint_field_values.add(v as usize));
+            if v == 0 {
+                if h.matrix_size != 1 {
+                    panic!("get_hint_field_m can only be called with an array of expressions!");
+                }
+            }
+            let hint_value = HintCol::from_hint_field(h);
+            let pos = h.pos.wrapping_add(0) as usize;
+            hint_field_values[pos] = hint_value;
+        }
+
+        hint_field_values
     }
 }
 
