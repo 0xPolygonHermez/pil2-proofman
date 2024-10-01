@@ -53,6 +53,8 @@ impl<F: Field + 'static> ProofMan<F> {
         output_dir_path: PathBuf,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        set_log_level_c(options.verbose_mode.clone().into());
+
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
             return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
@@ -92,7 +94,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
 
-        let mut witness_lib = witness_lib(rom_path.clone(), public_inputs_path.clone(), options.verbose_mode)?;
+        let mut witness_lib = witness_lib(rom_path.clone(), public_inputs_path.clone())?;
 
         let pctx = Arc::new(ProofCtx::create_ctx(witness_lib.pilout(), proving_key_path.clone()));
 
@@ -100,7 +102,10 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let buffer_allocator: Arc<StarkBufferAllocator> = Arc::new(StarkBufferAllocator::new(proving_key_path.clone()));
 
-        let ectx = ExecutionCtx::builder().with_buffer_allocator(buffer_allocator).build();
+        let ectx = ExecutionCtx::builder()
+            .with_buffer_allocator(buffer_allocator)
+            .with_verbose_mode(options.verbose_mode)
+            .build();
         let ectx = Arc::new(ectx);
 
         Self::initialize_witness(&mut witness_lib, pctx.clone(), ectx.clone(), sctx.clone());
