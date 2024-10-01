@@ -53,7 +53,7 @@ impl<F: Field + 'static> ProofMan<F> {
         output_dir_path: PathBuf,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        set_log_level_c(options.verbose_mode.clone().into());
+        set_log_level_c(options.verbose_mode.into());
 
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
