@@ -30,7 +30,7 @@ pub enum HintFieldType {
 #[allow(dead_code)]
 pub struct HintFieldInfo<F> {
     size: u64,
-    offset: u8, // 1 or 3
+    offset: u8, // 1 or 3cd 
     field_type: HintFieldType,
     pub values: *mut F,
     pub string_value: *const c_char,

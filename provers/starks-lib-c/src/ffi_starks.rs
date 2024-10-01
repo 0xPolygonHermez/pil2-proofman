@@ -276,19 +276,6 @@ pub fn starks_free_c(p_stark: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn extend_and_merkelize_c(
-    p_stark: *mut c_void,
-    step: u64,
-    buffer: *mut c_void,
-    proof: *mut c_void,
-    p_buff_helper: *mut c_void,
-) {
-    unsafe {
-        extend_and_merkelize(p_stark, step, buffer, proof, p_buff_helper);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn treesGL_get_root_c(pStark: *mut c_void, index: u64, root: *mut c_void) {
     unsafe {
         treesGL_get_root(pStark, index, root);
@@ -787,17 +774,6 @@ pub fn starks_new_c(_p_config: *mut c_void) -> *mut c_void {
 #[cfg(feature = "no_lib_link")]
 pub fn starks_free_c(_p_stark: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "starks_free: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn extend_and_merkelize_c(
-    _p_stark: *mut c_void,
-    _step: u64,
-    _buffer: *mut c_void,
-    _proof: *mut c_void,
-    _p_buff_helper: *mut c_void,
-) {
-    trace!("{}: ··· {}", "ffi     ", "extend_and_merkelize: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
