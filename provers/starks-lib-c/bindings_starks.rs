@@ -187,7 +187,7 @@ extern "C" {
         pStarks: *mut ::std::os::raw::c_void,
         xiChallenge: *mut ::std::os::raw::c_void,
         xDivXSub: *mut ::std::os::raw::c_void,
-    ) -> *mut ::std::os::raw::c_void;
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z11get_fri_polPvS_"]
@@ -435,7 +435,6 @@ extern "C" {
         starkInfoRecursive2: *mut *mut ::std::os::raw::c_void,
     ) -> *mut ::std::os::raw::c_void;
 }
-
 extern "C" {
     #[link_name = "\u{1}_Z11setLogLevelm"]
     pub fn setLogLevel(level: u64);
