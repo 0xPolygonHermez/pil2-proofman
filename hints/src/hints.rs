@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use p3_field::Field;
 use proofman_common::{AirInstance, Challenges, ExtensionField, ProofCtx, PublicInputs, SetupCtx};
 
-use std::ffi::{c_char, CStr};
 use std::os::raw::c_void;
 
 use std::ops::{Add, Div, Mul, Sub, AddAssign, DivAssign, MulAssign, SubAssign};
@@ -32,8 +31,8 @@ pub struct HintFieldInfo<F> {
     size: u64,
     offset: u8, // 1 or 3cd 
     field_type: HintFieldType,
-    pub values: *mut F,
-    pub string_value: *const c_char,
+    values: *mut F,
+    string_value: *mut u8,
     matrix_size: u64,
     pos: *mut u64,
 }
@@ -41,7 +40,7 @@ pub struct HintFieldInfo<F> {
 #[repr(C)]
 pub struct HintFieldInfoValues<F> {
     n_values: u64,
-    pub hint_field_values: *mut HintFieldInfo<F>,
+    hint_field_values: *mut HintFieldInfo<F>,
 }
 
 #[repr(C)]
@@ -585,9 +584,9 @@ impl HintCol {
                 HintFieldValue::ColumnExtended(extended_vec)
             }
             HintFieldType::String => {
-                let str_slice = unsafe { CStr::from_ptr(hint_field.string_value).to_str() };
+                let str_slice = unsafe { std::slice::from_raw_parts(hint_field.string_value, hint_field.size as usize) };
 
-                match str_slice {
+                match std::str::from_utf8(str_slice)  {
                     Ok(value) => HintFieldValue::String(value.to_string()),
                     Err(_) => HintFieldValue::String(String::new()),
                 }
