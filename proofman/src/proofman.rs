@@ -501,8 +501,8 @@ impl<F: Field + 'static> ProofMan<F> {
                         let setup: &proofman_common::Setup =
                             sctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("Setup not found");
 
-                        let p_setup: *mut c_void = setup.p_setup;
-                        let p_stark_info: *mut c_void = setup.p_stark_info;
+                        let p_setup: *mut c_void = (&setup.p_setup).into();
+                        let p_stark_info: *mut c_void = setup.p_setup.p_stark_info;
 
                         let n = get_stark_info_n_c(p_stark_info);
                         let offset_cm1 = get_map_offsets_c(p_stark_info, "cm1", false);
@@ -645,8 +645,8 @@ impl<F: Field + 'static> ProofMan<F> {
                                     let setup: &proofman_common::Setup =
                                         sctx.get_setup(airgroup, 0).expect("Setup not found");
 
-                                    let p_setup: *mut c_void = setup.p_setup;
-                                    let p_stark_info: *mut c_void = setup.p_stark_info;
+                                    let p_setup: *mut c_void = (&setup.p_setup).into();
+                                    let p_stark_info: *mut c_void = setup.p_setup.p_stark_info;
 
                                     let n = get_stark_info_n_c(p_stark_info);
                                     let offset_cm1 = get_map_offsets_c(p_stark_info, "cm1", false);
@@ -740,7 +740,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
                 let mut stark_infos_recursive2 = Vec::new();
                 for (idx, _) in pctx.global_info.subproofs.iter().enumerate() {
-                    stark_infos_recursive2.push(sctx.get_setup(idx, 0).unwrap().p_stark_info);
+                    stark_infos_recursive2.push(sctx.get_setup(idx, 0).unwrap().p_setup.p_stark_info);
                 }
 
                 let proves_recursive2_ptr = proves_recursive2.as_mut_ptr();
@@ -787,8 +787,8 @@ impl<F: Field + 'static> ProofMan<F> {
                 // get setup
                 let setup: &proofman_common::Setup = sctx.get_setup(0, 0).expect("Setup not found");
 
-                let p_setup: *mut c_void = setup.p_setup;
-                let p_stark_info: *mut c_void = setup.p_stark_info;
+                let p_setup: *mut c_void = (&setup.p_setup).into();
+                let p_stark_info: *mut c_void = setup.p_setup.p_stark_info;
 
                 let n = get_stark_info_n_c(p_stark_info);
                 let offset_cm1 = get_map_offsets_c(p_stark_info, "cm1", false);
