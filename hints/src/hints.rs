@@ -29,7 +29,7 @@ pub enum HintFieldType {
 #[allow(dead_code)]
 pub struct HintFieldInfo<F> {
     size: u64,
-    offset: u8, // 1 or 3cd 
+    offset: u8, // 1 or 3cd
     field_type: HintFieldType,
     values: *mut F,
     string_value: *mut u8,
@@ -584,9 +584,10 @@ impl HintCol {
                 HintFieldValue::ColumnExtended(extended_vec)
             }
             HintFieldType::String => {
-                let str_slice = unsafe { std::slice::from_raw_parts(hint_field.string_value, hint_field.size as usize) };
+                let str_slice =
+                    unsafe { std::slice::from_raw_parts(hint_field.string_value, hint_field.size as usize) };
 
-                match std::str::from_utf8(str_slice)  {
+                match std::str::from_utf8(str_slice) {
                     Ok(value) => HintFieldValue::String(value.to_string()),
                     Err(_) => HintFieldValue::String(String::new()),
                 }
@@ -724,10 +725,8 @@ pub fn get_hint_field_a<F: Clone + Copy + Debug>(
         let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
         for v in 0..hint_field.n_values {
             let h = &*(hint_field.hint_field_values.add(v as usize));
-            if v == 0 {
-                if h.matrix_size != 1 {
-                    panic!("get_hint_field_m can only be called with an array of expressions!");
-                }
+            if v == 0 && h.matrix_size != 1 {
+                panic!("get_hint_field_m can only be called with an array of expressions!");
             }
             let hint_value = HintCol::from_hint_field(h);
             hint_field_values.push(hint_value);
@@ -775,10 +774,8 @@ pub fn get_hint_field_m<F: Clone + Copy + Debug>(
 
         for v in 0..hint_field.n_values {
             let h = &*(hint_field.hint_field_values.add(v as usize));
-            if v == 0 {
-                if h.matrix_size > 2 {
-                    panic!("get_hint_field_m can only be called with a matrix of expressions!",);
-                }
+            if v == 0 && h.matrix_size > 2 {
+                panic!("get_hint_field_m can only be called with a matrix of expressions!",);
             }
             let hint_value = HintCol::from_hint_field(h);
             let mut pos = Vec::new();
@@ -825,10 +822,8 @@ pub fn get_hint_field_constant_a<F: Clone + Copy + std::fmt::Debug>(
         let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
         for v in 0..hint_field.n_values {
             let h = &*(hint_field.hint_field_values.add(v as usize));
-            if v == 0 {
-                if h.matrix_size != 1 {
-                    panic!("get_hint_field_m can only be called with an array of expressions!");
-                }
+            if v == 0 && h.matrix_size != 1 {
+                panic!("get_hint_field_m can only be called with an array of expressions!");
             }
             let hint_value = HintCol::from_hint_field(h);
             hint_field_values.push(hint_value);
@@ -872,13 +867,11 @@ pub fn get_hint_field_constant_m<F: Clone + Copy + std::fmt::Debug>(
 
         for v in 0..hint_field.n_values {
             let h = &*(hint_field.hint_field_values.add(v as usize));
-            if v == 0 {
-                if h.matrix_size != 0 {
-                    panic!(
-                        "get_hint_field_m can only be called with arrays of expressions, but {} is a single one",
-                        hint_field_name
-                    );
-                }
+            if v == 0 && h.matrix_size != 0 {
+                panic!(
+                    "get_hint_field_m can only be called with arrays of expressions, but {} is a single one",
+                    hint_field_name
+                );
             }
             let hint_value = HintCol::from_hint_field(h);
             let mut pos = Vec::new();

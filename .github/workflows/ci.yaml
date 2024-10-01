@@ -27,7 +27,7 @@ jobs:
         with:
           repository: 0xPolygonHermez/pil2-stark
           token: ${{ secrets.GITHUB_TOKEN }}
-          ref: develop
+          ref: hints_multiarray
           path: pil2-stark
 
       - name: Install pil2-stark
@@ -147,7 +147,7 @@ jobs:
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
           token: ${{ secrets.ZISK_CI_TOKEN }}
-          ref: feature/setup
+          ref: hints_multiarray
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -176,7 +176,7 @@ jobs:
         with:
           repository: 0xPolygonHermez/pil2-stark
           token: ${{ secrets.GITHUB_TOKEN }}
-          ref: develop
+          ref: hints_multiarray
           path: pil2-stark
 
       - name: Install pil2-stark
