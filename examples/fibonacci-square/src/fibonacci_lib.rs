@@ -88,12 +88,9 @@ impl<F: PrimeField> WitnessLibrary<F> for FibonacciWitness<F> {
 }
 
 #[no_mangle]
-pub extern "Rust" fn init_library(
-    _rom_path: Option<PathBuf>,
-    public_inputs_path: Option<PathBuf>,
-) -> Result<Box<dyn WitnessLibrary<Goldilocks>>, Box<dyn Error>> {
+pub extern "Rust" fn init_library(ectx: &ExecutionCtx) -> Result<Box<dyn WitnessLibrary<Goldilocks>>, Box<dyn Error>> {
     initialize_logger(VerboseMode::Debug);
 
-    let fibonacci_witness = FibonacciWitness::new(public_inputs_path);
+    let fibonacci_witness = FibonacciWitness::new(ectx.public_inputs_path.clone());
     Ok(Box::new(fibonacci_witness))
 }

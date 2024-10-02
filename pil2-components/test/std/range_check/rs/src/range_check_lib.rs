@@ -124,10 +124,7 @@ where
 }
 
 #[no_mangle]
-pub extern "Rust" fn init_library(
-    _rom_path: Option<PathBuf>,
-    _public_inputs_path: Option<PathBuf>,
-) -> Result<Box<dyn WitnessLibrary<Goldilocks>>, Box<dyn Error>> {
+pub extern "Rust" fn init_library(ectx: &ExecutionCtx) -> Result<Box<dyn WitnessLibrary<Goldilocks>>, Box<dyn Error>> {
     initialize_logger(VerboseMode::Trace);
 
     let range_check_witness = RangeCheckWitness::new();
