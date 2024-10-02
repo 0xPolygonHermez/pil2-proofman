@@ -148,7 +148,7 @@ pub fn generate_recursion_proof<F: Field>(
                                 let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
                                 let challenges = (*challenges_guard).as_ptr() as *mut c_void;
 
-                                let zkin_recursive2 = join_zkin_recursive2_c(
+                                let mut zkin_recursive2 = join_zkin_recursive2_c(
                                     public_inputs,
                                     challenges,
                                     global_info_file,
@@ -156,6 +156,14 @@ pub fn generate_recursion_proof<F: Field>(
                                     proves_recursive2_airgroup[j + 1],
                                     p_stark_info,
                                 );
+
+                                let recursive2_verkey = pctx
+                                    .global_info
+                                    .get_air_setup_path(airgroup, 0, &ProofType::Recursive2)
+                                    .display()
+                                    .to_string()
+                                    + ".verkey.json";
+                                zkin_recursive2 = add_recursive2_verkey_c(zkin_recursive2, recursive2_verkey.as_str());
 
                                 let (buffer, publics) =
                                     generate_witness(pctx, airgroup, 0, p_stark_info, zkin_recursive2, proof_type)?;
