@@ -306,7 +306,7 @@ impl<F: Field + 'static> ProofMan<F> {
             let value = prover.calculate_hash(buffer);
             result.push(value);
         }
-        
+
         if values.len() % 2 != 0 {
             result.push(values[values.len() - 1].clone());
         }
