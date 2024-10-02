@@ -300,11 +300,15 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let mut result = Vec::new();
 
-        for i in (0..values.len()).step_by(2) {
+        for i in (0..values.len() - 1).step_by(2) {
             let mut buffer = values[i].clone();
             buffer.extend(values[i + 1].clone());
             let value = prover.calculate_hash(buffer);
             result.push(value);
+        }
+        
+        if values.len() % 2 != 0 {
+            result.push(values[values.len() - 1].clone());
         }
 
         Self::hash_b_tree(prover, result)
