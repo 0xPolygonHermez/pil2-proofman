@@ -24,7 +24,6 @@ type GetCommitedPolsFunc = unsafe extern "C" fn(
 
 type GenWitnessResult<F> = Result<(Vec<MaybeUninit<F>>, Vec<MaybeUninit<F>>), Box<dyn std::error::Error>>;
 
-
 pub fn generate_recursion_proof<F: Field>(
     pctx: &ProofCtx<F>,
     proves: &[*mut c_void],
@@ -253,7 +252,6 @@ pub fn generate_recursion_proof<F: Field>(
 
     Ok(proves_out)
 }
-
 
 fn generate_witness<F: Field>(
     pctx: &ProofCtx<F>,
