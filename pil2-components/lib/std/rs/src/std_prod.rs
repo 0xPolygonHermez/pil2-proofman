@@ -2,7 +2,7 @@ use core::panic;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
-    fmt::Display
+    fmt::Display,
 };
 
 use num_traits::ToPrimitive;

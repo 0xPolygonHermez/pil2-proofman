@@ -1,4 +1,7 @@
-use std::{fmt::Display, sync::{atomic::AtomicU64, Arc, Mutex}};
+use std::{
+    fmt::Display,
+    sync::{atomic::AtomicU64, Arc, Mutex},
+};
 
 use num_traits::ToPrimitive;
 use p3_field::PrimeField;
