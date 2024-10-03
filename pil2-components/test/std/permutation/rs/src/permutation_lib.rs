@@ -1,4 +1,4 @@
-use std::{error::Error, path::PathBuf, sync::Arc};
+use std::{error::Error, sync::Arc};
 
 use pil_std_lib::Std;
 use proofman::{WitnessLibrary, WitnessManager};
@@ -105,24 +105,88 @@ pub extern "Rust" fn init_library(
 
 #[cfg(test)]
 mod tests {
-    use proofman_cli::commands::verify_constraints::{Field, VerifyConstraintsCmd};
+    use proofman_cli::commands::verify_constraints::VerifyConstraintsCmd;
+    use proofman_cli::commands::prove::ProveCmd;
+    use proofman_cli::commands::field::Field;
+    use std::path::{Path, PathBuf};
+    use std::env;
+    use std::fs;
+
+    fn get_root_path() -> PathBuf {
+        std::fs::canonicalize(std::env::current_dir().expect("Failed to get current directory").join("../../../../../"))
+            .expect("Failed to canonicalize root path")
+    }
+
+    fn get_witness_lib_path() -> PathBuf {
+        get_root_path().join("target/debug/libpermutation.so")
+    }
+
+    fn get_proving_key_path() -> PathBuf {
+        get_root_path().join("pil2-components/test/std/permutation/build/provingKey")
+    }
 
     #[test]
     fn test_verify_constraints() {
-        let root_path = std::env::current_dir().expect("Failed to get current directory").join("../../../../");
-        let root_path = std::fs::canonicalize(root_path).expect("Failed to canonicalize root path");
-
         let verify_constraints = VerifyConstraintsCmd {
-            witness_lib: root_path.join("target/debug/libpermutation.so"),
+            witness_lib: get_witness_lib_path(),
             rom: None,
             public_inputs: None,
-            proving_key: root_path.join("test/std/permutation/build/provingKey"),
+            proving_key: get_proving_key_path(),
             field: Field::Goldilocks,
+            debug: 1,
             verbose: 0,
         };
 
         if let Err(e) = verify_constraints.run() {
             eprintln!("Failed to verify constraints: {:?}", e);
+            std::process::exit(1);
+        }
+    }
+
+    #[test]
+    fn test_gen_proof() {
+        let proof_dir = get_root_path().join("pil2-components/test/std/permutation/build/proofs");
+
+        if proof_dir.exists() {
+            std::fs::remove_dir_all(&proof_dir).expect("Failed to remove proof directory");
+        }
+
+        let gen_proof = ProveCmd {
+            witness_lib: get_witness_lib_path(),
+            rom: None,
+            public_inputs: None,
+            proving_key: get_proving_key_path(),
+            field: Field::Goldilocks,
+            debug: true,
+            aggregation: false,
+            output_dir: proof_dir.clone(),
+            verbose: 0,
+        };
+
+        if let Err(e) = gen_proof.run() {
+            eprintln!("Failed to verify constraints: {:?}", e);
+            std::process::exit(1);
+        }
+
+        let pil2_proofman_js_path = if let Ok(path) = env::var("PIL_PROOFMAN_JS") {
+            // If PIL_PROOFMAN_JS is set, use its value
+            fs::canonicalize(Path::new(&path).parent().unwrap_or_else(|| Path::new("."))).expect("Failed")
+        } else {
+            // Fallback if PIL_PROOFMAN_JS is not set
+            get_root_path().join("../pil2-proofman-js")
+        };
+
+        let proof_verification = std::process::Command::new("node")
+            .arg(pil2_proofman_js_path.join("src/main_verify.js"))
+            .arg("-k")
+            .arg(get_proving_key_path())
+            .arg("-p")
+            .arg(proof_dir.clone())
+            .status()
+            .expect("Failed to execute proof verification command");
+
+        if !proof_verification.success() {
+            eprintln!("Error: Proof verification failed.");
             std::process::exit(1);
         }
     }

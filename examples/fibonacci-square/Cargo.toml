@@ -2,14 +2,16 @@
 name = "fibonacci-square"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [lib]
 crate-type = ["dylib"]
 
 [dependencies]
-proofman-common = { path = "../../common" }
+proofman-common.workspace = true
 proofman-macros.workspace = true
-proofman = { path = "../../proofman" }
+proofman-cli.workspace = true
+proofman.workspace = true
 pil-std-lib = {path = "../../pil2-components/lib/std/rs" }
 
 env_logger.workspace = true
@@ -20,3 +22,6 @@ p3-field.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.68"
 num-bigint = "0.4"
+
+[build-dependencies]
+proofman-cli.workspace = true

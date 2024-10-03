@@ -5,13 +5,13 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     let root_path =
-        std::fs::canonicalize(std::env::current_dir().expect("Failed to get current directory").join("../../../../"))
+        std::fs::canonicalize(std::env::current_dir().expect("Failed to get current directory").join("../../../"))
             .expect("Failed to canonicalize root path");
 
-    let pil_file = root_path.join("test/std/lookup/lookup.pil");
-    let build_dir = root_path.join("test/std/lookup/build");
-    let pilout_file = build_dir.join("lookup.pilout");
-    let pil_helpers_dir = root_path.join("test/std/lookup/src/pil_helpers");
+    let pil_file = root_path.join("test/simple/simple.pil");
+    let build_dir = root_path.join("test/simple/build");
+    let pilout_file = build_dir.join("build.pilout");
+    let pil_helpers_dir = root_path.join("test/simple/src/pil_helpers");
 
     // Always rerun if the pil changes
     println!("cargo:rerun-if-changed={}", pil_file.display());
@@ -52,7 +52,7 @@ fn main() {
     // Generate pil_helpers
     let pil_helpers = PilHelpersCmd {
         pilout: pilout_file.clone(),
-        path: root_path.join("test/std/lookup/rs/src"),
+        path: root_path.join("test/simple/rs/src"),
         overide: true,
         verbose: 0,
     };
@@ -70,12 +70,13 @@ fn main() {
         // Fallback if PIL_PROOFMAN_JS is not set
         root_path.join("../../pil2-proofman-js")
     };
+
     let proving_key_generation = std::process::Command::new("node")
         .arg(pil2_proofman_js_path.join("src/main_setup.js"))
         .arg("-a")
         .arg(pilout_file.clone())
         .arg("-b")
-        .arg(build_dir.clone())
+        .arg(build_dir)
         .status()
         .expect("Failed to execute proving key generation command");
 

@@ -2,6 +2,7 @@
 name = "simple"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [lib]
 crate-type = ["dylib"]
@@ -11,7 +12,6 @@ proofman.workspace = true
 proofman-common.workspace = true
 proofman-macros.workspace = true
 proofman-cli.workspace = true
-pilout.workspace = true
 pil-std-lib = { path = "../../../lib/std/rs" }
 
 env_logger.workspace = true
@@ -20,6 +20,9 @@ rand.workspace = true
 num-bigint.workspace = true
 p3-goldilocks.workspace = true
 p3-field.workspace = true
+
+[build-dependencies]
+proofman-cli.workspace = true
 
 [features]
 default = []

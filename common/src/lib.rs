@@ -27,11 +27,11 @@ pub use setup::*;
 pub use setup_ctx::*;
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
-    env_logger::builder()
+    let _ = env_logger::builder()
         .format_timestamp(None)
         .format_level(true)
         .format_target(false)
         .filter_level(verbose_mode.into())
-        .init();
+        .try_init();
     set_log_level_c(verbose_mode.into());
 }
