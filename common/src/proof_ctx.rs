@@ -60,7 +60,7 @@ impl<F> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
     pub fn create_ctx(pilout: WitnessPilout, proving_key_path: PathBuf) -> Self {
-        log::info!("{}: ··· Creating proof context", Self::MY_NAME);
+        log::info!("{}: Creating proof context", Self::MY_NAME);
 
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
 
