@@ -241,25 +241,18 @@ impl<F: Field + 'static> ProofMan<F> {
     fn initialize_provers(sctx: Arc<SetupCtx>, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: Arc<ProofCtx<F>>) {
         info!("{}: ··· INITIALIZING PROVER CLIENTS", Self::MY_NAME);
 
-        let mut air_instance_counts: HashMap<(usize, usize), usize> = HashMap::new();
-
-        for (prover_idx, air_instance) in pctx.air_instance_repo.air_instances.read().unwrap().iter().enumerate() {
+        for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
             let air_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
             log::debug!("{}: Initializing prover for air instance {}", Self::MY_NAME, air_name);
-
-            let (airgroup_id, air_id) = (air_instance.airgroup_id, air_instance.air_id);
-            let count = air_instance_counts.entry((airgroup_id, air_id)).or_insert(0);
 
             let prover = Box::new(StarkProver::new(
                 sctx.clone(),
                 pctx.clone(),
                 air_instance.airgroup_id,
                 air_instance.air_id,
-                *count,
-                prover_idx,
+                air_instance.air_instance_id.unwrap(),
+                air_instance.idx.unwrap(),
             ));
-
-            *count += 1; // Increment the count for this (airgroup_id, air_id)
 
             provers.push(prover);
         }
