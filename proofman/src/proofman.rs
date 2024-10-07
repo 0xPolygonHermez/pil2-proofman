@@ -69,7 +69,7 @@ impl<F: Field + 'static> ProofMan<F> {
             return Err(format!("Proving key parameter must be a folder: {:?}", proving_key_path).into());
         }
 
-        if options.debug_mode == 0 && !output_dir_path.exists() {
+        if !options.verify_constraints && !output_dir_path.exists() {
             fs::create_dir_all(&output_dir_path)
                 .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
         }
@@ -106,7 +106,7 @@ impl<F: Field + 'static> ProofMan<F> {
         }
         let mut transcript = provers[0].new_transcript();
 
-        Self::calculate_challenges(0, &mut provers, pctx.clone(), &mut transcript, 0);
+        Self::calculate_challenges(0, &mut provers, pctx.clone(), &mut transcript, false);
 
         // Commit stages
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
@@ -119,19 +119,19 @@ impl<F: Field + 'static> ProofMan<F> {
 
             Self::calculate_stage(stage, &mut provers, pctx.clone());
 
-            if options.debug_mode == 0 {
+            if !options.verify_constraints {
                 Self::commit_stage(stage, &mut provers, pctx.clone());
             }
 
-            if options.debug_mode == 0 || stage < num_commit_stages {
-                Self::calculate_challenges(stage, &mut provers, pctx.clone(), &mut transcript, options.debug_mode);
+            if !options.verify_constraints || stage < num_commit_stages {
+                Self::calculate_challenges(stage, &mut provers, pctx.clone(), &mut transcript, options.verify_constraints);
             }
         }
 
         witness_lib.end_proof();
 
-        if options.debug_mode != 0 {
-            verify_constraints_proof(pctx, ectx, sctx, provers, witness_lib, options);
+        if options.verify_constraints {
+            verify_constraints_proof(pctx, ectx, sctx, provers, witness_lib);
             return Ok(());
         }
 
@@ -139,7 +139,7 @@ impl<F: Field + 'static> ProofMan<F> {
         Self::get_challenges(num_commit_stages + 1, &mut provers, pctx.clone(), &transcript);
         Self::calculate_stage(num_commit_stages + 1, &mut provers, pctx.clone());
         Self::commit_stage(num_commit_stages + 1, &mut provers, pctx.clone());
-        Self::calculate_challenges(num_commit_stages + 1, &mut provers, pctx.clone(), &mut transcript, 0);
+        Self::calculate_challenges(num_commit_stages + 1, &mut provers, pctx.clone(), &mut transcript, false);
 
         // Compute openings
         Self::opening_stages(&mut provers, pctx.clone(), sctx.clone(), &mut transcript);
@@ -333,14 +333,14 @@ impl<F: Field + 'static> ProofMan<F> {
         provers: &mut [Box<dyn Prover<F>>],
         proof_ctx: Arc<ProofCtx<F>>,
         transcript: &mut FFITranscript,
-        debug_mode: u64,
+        verify_constraints: bool,
     ) {
         if stage != 0 {
             info!("{}: Calculating challenges", Self::MY_NAME);
         }
         let airgroups = proof_ctx.global_info.subproofs.clone();
         for (airgroup_id, _airgroup) in airgroups.iter().enumerate() {
-            if debug_mode != 0 {
+            if verify_constraints {
                 let dummy_elements = [F::zero(), F::one(), F::two(), F::neg_one()];
                 transcript.add_elements(dummy_elements.as_ptr() as *mut c_void, 4);
             } else {
@@ -404,7 +404,7 @@ impl<F: Field + 'static> ProofMan<F> {
             }
         }
         timer_stop_and_log_debug!(CALCULATING_EVALS);
-        Self::calculate_challenges(num_commit_stages + 2, provers, proof_ctx.clone(), transcript, 0);
+        Self::calculate_challenges(num_commit_stages + 2, provers, proof_ctx.clone(), transcript, false);
 
         // Calculate fri polynomial
         Self::get_challenges(num_commit_stages + 3, provers, proof_ctx.clone(), transcript);
@@ -456,7 +456,7 @@ impl<F: Field + 'static> ProofMan<F> {
                     provers,
                     proof_ctx.clone(),
                     transcript,
-                    0,
+                    false,
                 );
             }
             timer_stop_and_log_debug!(CALCULATING_FRI_STEP);

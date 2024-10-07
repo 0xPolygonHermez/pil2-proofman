@@ -34,15 +34,15 @@ impl<F> Default for BuffHelper<F> {
 }
 
 pub struct ProofOptions {
-    pub debug_mode: u64,
+    pub verify_constraints: bool,
     pub verbose_mode: VerboseMode,
     pub aggregation: bool,
     pub save_proofs: bool,
 }
 
 impl ProofOptions {
-    pub fn new(debug_mode: u64, verbose_mode: VerboseMode, aggregation: bool, save_proofs: bool) -> Self {
-        Self { debug_mode, verbose_mode, aggregation, save_proofs }
+    pub fn new(verify_constraints: bool, verbose_mode: VerboseMode, aggregation: bool, save_proofs: bool) -> Self {
+        Self { verify_constraints, verbose_mode, aggregation, save_proofs }
     }
 }
 

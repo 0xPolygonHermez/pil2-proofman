@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::WitnessLibrary;
 
-use proofman_common::{ExecutionCtx, ExtensionField, ProofCtx, ProofOptions, Prover, SetupCtx};
+use proofman_common::{ExecutionCtx, ExtensionField, ProofCtx, Prover, SetupCtx};
 
 use colored::*;
 
@@ -18,8 +18,7 @@ pub fn verify_constraints_proof<F: Field>(
     ectx: Arc<ExecutionCtx>,
     sctx: Arc<SetupCtx>,
     provers: Vec<Box<dyn Prover<F>>>,
-    mut witness_lib: Box<dyn WitnessLibrary<F>>,
-    options: ProofOptions,
+    mut witness_lib: Box<dyn WitnessLibrary<F>>
 ) {
     const MY_NAME: &str = "CstrVrfy";
     const FIELD_EXTENSION: usize = 3;
@@ -47,9 +46,6 @@ pub fn verify_constraints_proof<F: Field>(
             air_name,
         );
         for constraint in &constraints[air_instance_index] {
-            if (options.debug_mode == 1 && constraint.n_rows == 0) || (options.debug_mode != 3 && constraint.im_pol) {
-                continue;
-            }
             let line_str = unsafe { CStr::from_ptr(constraint.line) };
             let valid = if constraint.n_rows > 0 {
                 format!("has {} invalid rows", constraint.n_rows).bright_red()
@@ -57,7 +53,7 @@ pub fn verify_constraints_proof<F: Field>(
                 "is valid".bright_green()
             };
             if constraint.im_pol {
-                log::info!(
+                log::trace!(
                     "{}: ···    Intermediate polynomial (stage {}) {} -> {:?}",
                     MY_NAME,
                     constraint.stage,
@@ -65,14 +61,26 @@ pub fn verify_constraints_proof<F: Field>(
                     line_str.to_str().unwrap()
                 );
             } else {
-                log::info!(
-                    "{}:     · Constraint #{} (stage {}) {} -> {:?}",
-                    MY_NAME,
-                    constraint.id,
-                    constraint.stage,
-                    valid,
-                    line_str.to_str().unwrap()
-                );
+                if constraint.n_rows == 0 {
+                    log::debug!(
+                        "{}:     · Constraint #{} (stage {}) {} -> {:?}",
+                        MY_NAME,
+                        constraint.id,
+                        constraint.stage,
+                        valid,
+                        line_str.to_str().unwrap()
+                    );
+                } else {
+                    log::info!(
+                        "{}:     · Constraint #{} (stage {}) {} -> {:?}",
+                        MY_NAME,
+                        constraint.id,
+                        constraint.stage,
+                        valid,
+                        line_str.to_str().unwrap()
+                    );
+                }
+                
             }
             if constraint.n_rows > 0 {
                 valid_constraints_prover = false;
