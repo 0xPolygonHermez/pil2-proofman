@@ -124,7 +124,13 @@ impl<F: Field + 'static> ProofMan<F> {
             }
 
             if !options.verify_constraints || stage < num_commit_stages {
-                Self::calculate_challenges(stage, &mut provers, pctx.clone(), &mut transcript, options.verify_constraints);
+                Self::calculate_challenges(
+                    stage,
+                    &mut provers,
+                    pctx.clone(),
+                    &mut transcript,
+                    options.verify_constraints,
+                );
             }
         }
 

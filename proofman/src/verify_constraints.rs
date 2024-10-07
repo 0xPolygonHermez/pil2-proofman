@@ -18,7 +18,7 @@ pub fn verify_constraints_proof<F: Field>(
     ectx: Arc<ExecutionCtx>,
     sctx: Arc<SetupCtx>,
     provers: Vec<Box<dyn Prover<F>>>,
-    mut witness_lib: Box<dyn WitnessLibrary<F>>
+    mut witness_lib: Box<dyn WitnessLibrary<F>>,
 ) {
     const MY_NAME: &str = "CstrVrfy";
     const FIELD_EXTENSION: usize = 3;
@@ -60,27 +60,24 @@ pub fn verify_constraints_proof<F: Field>(
                     valid,
                     line_str.to_str().unwrap()
                 );
+            } else if constraint.n_rows == 0 {
+                log::debug!(
+                    "{}:     · Constraint #{} (stage {}) {} -> {:?}",
+                    MY_NAME,
+                    constraint.id,
+                    constraint.stage,
+                    valid,
+                    line_str.to_str().unwrap()
+                );
             } else {
-                if constraint.n_rows == 0 {
-                    log::debug!(
-                        "{}:     · Constraint #{} (stage {}) {} -> {:?}",
-                        MY_NAME,
-                        constraint.id,
-                        constraint.stage,
-                        valid,
-                        line_str.to_str().unwrap()
-                    );
-                } else {
-                    log::info!(
-                        "{}:     · Constraint #{} (stage {}) {} -> {:?}",
-                        MY_NAME,
-                        constraint.id,
-                        constraint.stage,
-                        valid,
-                        line_str.to_str().unwrap()
-                    );
-                }
-                
+                log::info!(
+                    "{}:     · Constraint #{} (stage {}) {} -> {:?}",
+                    MY_NAME,
+                    constraint.id,
+                    constraint.stage,
+                    valid,
+                    line_str.to_str().unwrap()
+                );
             }
             if constraint.n_rows > 0 {
                 valid_constraints_prover = false;
