@@ -52,8 +52,6 @@ impl<F: PrimeField> U8Air<F> {
 
             // Update the multiplicity column
             self.update_multiplicity(drained_inputs);
-
-            log::info!("{}: Updated inputs for AIR '{}'", Self::MY_NAME, "U8Air");
         }
     }
 
@@ -73,7 +71,7 @@ impl<F: PrimeField> U8Air<F> {
         let mul = &*self.mul.lock().unwrap();
         set_hint_field(self.wcm.get_sctx(), air_instance, self.hint.load(Ordering::Acquire), "reference", mul);
 
-        log::info!("{}: Drained inputs for AIR '{}'", Self::MY_NAME, "U8Air");
+        log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "U8Air");
     }
 
     fn update_multiplicity(&self, drained_inputs: Vec<F>) {

@@ -59,8 +59,6 @@ impl<F: PrimeField> SpecifiedRanges<F> {
 
             // Update the multiplicity column
             self.update_multiplicity(drained_inputs);
-
-            log::info!("{}: Updated inputs for AIR '{}'", Self::MY_NAME, "SpecifiedRanges");
         }
     }
 
@@ -85,7 +83,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             set_hint_field(self.wcm.get_sctx(), air_instance, *hint, "reference", &mul[index - 1]);
         }
 
-        log::info!("{}: Drained inputs for AIR '{}'", Self::MY_NAME, "SpecifiedRanges");
+        log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "SpecifiedRanges");
     }
 
     fn update_multiplicity(&self, drained_inputs: Vec<(Range<F>, F)>) {
