@@ -9,6 +9,7 @@ use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{
     get_hint_field, get_hint_field_constant, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue,
 };
+use proofman_util::create_buffer_fast;
 
 use crate::Range;
 
@@ -210,7 +211,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
 
         let (buffer_size, _) =
             ectx.buffer_allocator.as_ref().get_buffer_info(&sctx, self.airgroup_id, self.air_id).unwrap();
-        let buffer = vec![F::zero(); buffer_size as usize];
+        let buffer = create_buffer_fast(buffer_size as usize);
 
         // Add a new air instance. Since Specified Ranges is a table, only this air instance is needed
         let mut air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
