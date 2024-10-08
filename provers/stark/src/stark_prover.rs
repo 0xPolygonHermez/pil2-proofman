@@ -431,7 +431,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 let n_steps = steps.len() - 1;
                 if step_index < n_steps {
                     let p_proof = self.p_proof.unwrap();
-                    fri_proof_get_tree_root_c(p_proof, value.as_mut_ptr() as *mut c_void, (step_index + 1) as u64);
+                    fri_proof_get_tree_root_c(p_proof, value.as_mut_ptr() as *mut c_void, step_index as u64);
                 } else {
                     let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
                     let buffer = air_instance.get_buffer_ptr() as *mut c_void;
@@ -595,10 +595,16 @@ impl<F: Field> StarkProver<F> {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
         let buffer = air_instance.get_buffer_ptr() as *mut c_void;
 
+        let fri_pol = get_fri_pol_c(self.p_setup, buffer);
+
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
         let challenge: Vec<F> = challenges_guard.iter().skip(challenges_guard.len() - 3).cloned().collect();
 
-        compute_fri_folding_c(p_stark, step_index as u64, p_proof, buffer, challenge.as_ptr() as *mut c_void);
+        compute_fri_folding_c(p_stark, step_index as u64, fri_pol, challenge.as_ptr() as *mut c_void);
+
+        if step_index != n_steps {
+            compute_fri_merkelize_c(p_stark, p_proof, step_index as u64, fri_pol);
+        }
     }
 
     fn compute_fri_queries(&mut self, _opening_id: u32, proof_ctx: Arc<ProofCtx<F>>) {
@@ -633,7 +639,13 @@ impl<F: Field> StarkProver<F> {
             &fri_queries,
         );
 
-        compute_fri_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr());
+        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        let buffer = air_instance.get_buffer_ptr() as *mut c_void;
+
+        let fri_pol = get_fri_pol_c(self.p_setup, buffer);
+
+        compute_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr());
+        compute_fri_queries_c(p_stark, p_proof, fri_pol, fri_queries.as_mut_ptr());
     }
 }
 
