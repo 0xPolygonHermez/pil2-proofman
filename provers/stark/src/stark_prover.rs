@@ -41,6 +41,7 @@ pub struct StarkProver<F: Field> {
     merkle_tree_custom: bool,
     p_proof: Option<*mut c_void>,
     global_steps_fri: Vec<usize>,
+    trees_fri: Vec<*mut c_void>,
     global_n_stages: usize,
     _marker: PhantomData<F>, // Add PhantomData to track the type F
 }
@@ -63,7 +64,7 @@ impl<F: Field> StarkProver<F> {
 
         let setup = sctx.get_setup(airgroup_id, air_id).expect("REASON");
 
-        let p_stark = starks_new_c((&setup.p_setup).into());
+        let p_stark = starks_new_c((&setup.p_setup).into(), false);
 
         let stark_info_path = air_setup_path.display().to_string() + ".starkinfo.json";
         let stark_info_json = std::fs::read_to_string(&stark_info_path)
@@ -74,11 +75,18 @@ impl<F: Field> StarkProver<F> {
             if stark_info.stark_struct.verification_hash_type == "BN128" {
                 (1, stark_info.stark_struct.merkle_tree_arity, stark_info.stark_struct.merkle_tree_custom)
             } else {
-                (Self::HASH_SIZE, 2, true)
+                (Self::HASH_SIZE, 2, false)
             };
 
         let global_steps_fri: Vec<usize> = pctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
         let global_n_stages = pctx.global_info.n_challenges.len();
+
+        let mut trees_fri: Vec<*mut c_void> = Vec::new();
+        for step in 0..stark_info.stark_struct.steps.len() - 1 {
+            let height = 1 << stark_info.stark_struct.steps[(step + 1) as usize].n_bits as u64;
+            let width = ((1 << stark_info.stark_struct.steps[step as usize].n_bits) / height) * Self::FIELD_EXTENSION as u64;
+            trees_fri.push(merkle_tree_new_c(height, width, merkle_tree_arity, merkle_tree_custom));
+        }
 
         Self {
             initialized: true,
@@ -96,6 +104,7 @@ impl<F: Field> StarkProver<F> {
             merkle_tree_custom,
             global_steps_fri,
             global_n_stages,
+            trees_fri,
             _marker: PhantomData,
         }
     }
@@ -574,7 +583,6 @@ impl<F: Field> StarkProver<F> {
     }
 
     fn compute_fri_folding(&mut self, step_index: u32, proof_ctx: Arc<ProofCtx<F>>) {
-        let p_stark = self.p_stark;
         let p_proof = self.p_proof.unwrap();
 
         let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
@@ -603,12 +611,11 @@ impl<F: Field> StarkProver<F> {
         let current_bits = steps[step_index as usize].n_bits;
         let prev_bits = if step_index == 0 { current_bits } else { steps[(step_index - 1) as usize].n_bits };
 
-        println!("{} {} {}", self.stark_info.stark_struct.n_bits_ext, current_bits, prev_bits);
-        compute_fri_folding_c(p_stark, step_index as u64, fri_pol, challenge.as_ptr() as *mut c_void, self.stark_info.stark_struct.n_bits_ext, prev_bits, current_bits );
+        compute_fri_folding_c(step_index as u64, fri_pol, challenge.as_ptr() as *mut c_void, self.stark_info.stark_struct.n_bits_ext, prev_bits, current_bits );
 
         if step_index != n_steps {
             let next_bits = steps[(step_index + 1) as usize].n_bits;
-            compute_fri_merkelize_c(p_stark, p_proof, step_index as u64, fri_pol, current_bits, next_bits);
+            compute_fri_merkelize_c(self.trees_fri[step_index as usize], p_proof, step_index as u64, fri_pol, current_bits, next_bits);
         }
     }
 
@@ -653,7 +660,7 @@ impl<F: Field> StarkProver<F> {
 
         compute_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr(), n_queries, (self.num_stages() + 2) as u64);
         for step in 1..self.stark_info.stark_struct.steps.len() {
-            compute_fri_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr(), n_queries, step as u64, steps[step].n_bits);
+            compute_fri_queries_c(self.trees_fri[step - 1], p_proof, fri_queries.as_mut_ptr(), n_queries, step as u64, steps[step].n_bits);
         }
 
         set_fri_final_pol_c(p_proof, fri_pol, self.stark_info.stark_struct.steps[self.stark_info.stark_struct.steps.len() - 1].n_bits);

@@ -266,14 +266,28 @@ pub fn set_hint_field_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn starks_new_c(p_setup_ctx: *mut c_void) -> *mut c_void {
-    unsafe { starks_new(p_setup_ctx) }
+pub fn starks_new_c(p_setup_ctx: *mut c_void, multi_fri: bool) -> *mut c_void {
+    unsafe { starks_new(p_setup_ctx, multi_fri) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn starks_free_c(p_stark: *mut c_void) {
     unsafe {
         starks_free(p_stark);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn merkle_tree_new_c(height: u64, width: u64, arity: u64, custom: bool) -> *mut c_void {
+    unsafe {
+        merkle_tree_new(height, width, arity, custom)
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn merkle_tree_free_c(merkle_tree: *mut c_void) {
+    unsafe {
+        merkle_tree_free(merkle_tree);
     }
 }
 
@@ -375,16 +389,16 @@ pub fn compute_evals_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn compute_fri_folding_c(p_stark: *mut c_void, step: u64, buffer: *mut c_void, challenge: *mut c_void, n_bits_ext: u64, prev_bits: u64, current_bits: u64) {
+pub fn compute_fri_folding_c(step: u64, buffer: *mut c_void, challenge: *mut c_void, n_bits_ext: u64, prev_bits: u64, current_bits: u64) {
     unsafe {
-        compute_fri_folding(p_stark, step, buffer, challenge, n_bits_ext, prev_bits, current_bits);
+        compute_fri_folding(step, buffer, challenge, n_bits_ext, prev_bits, current_bits);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn compute_fri_merkelize_c(p_stark: *mut c_void, p_proof: *mut c_void, step: u64, buffer: *mut c_void, current_bits: u64, next_bits: u64) {
+pub fn compute_fri_merkelize_c(tree_fri: *mut c_void, p_proof: *mut c_void, step: u64, buffer: *mut c_void, current_bits: u64, next_bits: u64) {
     unsafe {
-        compute_fri_merkelize(p_stark, p_proof, step, buffer, current_bits, next_bits);
+        compute_fri_merkelize(tree_fri, p_proof, step, buffer, current_bits, next_bits);
     }
 }
 
@@ -396,9 +410,9 @@ pub fn compute_queries_c(p_stark: *mut c_void, p_proof: *mut c_void, p_fri_queri
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn compute_fri_queries_c(p_stark: *mut c_void, p_proof: *mut c_void, p_fri_queries: *mut u64, n_queries: u64, step: u64, current_bits: u64) {
+pub fn compute_fri_queries_c(tree_fri: *mut c_void, p_proof: *mut c_void, p_fri_queries: *mut u64, n_queries: u64, step: u64, current_bits: u64) {
     unsafe {
-        compute_fri_queries(p_stark, p_proof, p_fri_queries, n_queries, step, current_bits);
+        compute_fri_queries(tree_fri, p_proof, p_fri_queries, n_queries, step, current_bits);
     }
 }
 
@@ -792,7 +806,7 @@ pub fn set_hint_field_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn starks_new_c(_p_config: *mut c_void) -> *mut c_void {
+pub fn starks_new_c(_p_config: *mut c_void, _multi_fri: bool) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starks_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -800,6 +814,16 @@ pub fn starks_new_c(_p_config: *mut c_void) -> *mut c_void {
 #[cfg(feature = "no_lib_link")]
 pub fn starks_free_c(_p_stark: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "starks_free: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn merkle_tree_new_c(_height: u64, _width: u64, _arity: u64, _custom: bool) -> *mut c_void {
+    trace!("{}: ··· {}", "ffi     ", "merkle_tree_new: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn merkle_tree_free_c(_merkle_tree: *mut c_void) {
+    trace!("{}: ··· {}", "ffi     ", "merkle_tree_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -889,12 +913,12 @@ pub fn get_fri_pol_c(_p_setup_ctx: *mut c_void, _buffer: *mut c_void) -> *mut c_
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn compute_fri_folding_c(_p_stark: *mut c_void, _step: u64, _buffer: *mut c_void, _challenge: *mut c_void, _n_bits_ext: u64, _prev_bits: u64, _current_bits: u64) {
+pub fn compute_fri_folding_c(step: u64, _buffer: *mut c_void, _challenge: *mut c_void, _n_bits_ext: u64, _prev_bits: u64, _current_bits: u64) {
     trace!("{}: ··· {}", "ffi     ", "compute_fri_folding: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn compute_fri_merkelize_c(_p_stark: *mut c_void, _p_proof: *mut c_void, _step: u64, _buffer: *mut c_void, _current_bits: u64, _next_bits: u64) {
+pub fn compute_fri_merkelize_c(tree_fri: *mut c_void, _p_proof: *mut c_void, _step: u64, _buffer: *mut c_void, _current_bits: u64, _next_bits: u64) {
     trace!("{}: ··· {}", "ffi     ", "compute_fri_merkelize: This is a mock call because there is no linked library");
 }
 
@@ -905,7 +929,7 @@ pub fn compute_queries_c(_p_stark: *mut c_void, _p_proof: *mut c_void, _p_fri_qu
 
 #[cfg(feature = "no_lib_link")]
 pub fn compute_fri_queries_c(
-    _p_stark: *mut c_void,
+    _tree_fri: *mut c_void,
     _p_proof: *mut c_void,
     _p_fri_queries: *mut u64,
     _n_queries: u64, 
