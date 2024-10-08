@@ -600,10 +600,15 @@ impl<F: Field> StarkProver<F> {
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
         let challenge: Vec<F> = challenges_guard.iter().skip(challenges_guard.len() - 3).cloned().collect();
 
-        compute_fri_folding_c(p_stark, step_index as u64, fri_pol, challenge.as_ptr() as *mut c_void);
+        let current_bits = steps[step_index as usize].n_bits;
+        let prev_bits = if step_index == 0 { current_bits } else { steps[(step_index - 1) as usize].n_bits };
+
+        println!("{} {} {}", self.stark_info.stark_struct.n_bits_ext, current_bits, prev_bits);
+        compute_fri_folding_c(p_stark, step_index as u64, fri_pol, challenge.as_ptr() as *mut c_void, self.stark_info.stark_struct.n_bits_ext, prev_bits, current_bits );
 
         if step_index != n_steps {
-            compute_fri_merkelize_c(p_stark, p_proof, step_index as u64, fri_pol);
+            let next_bits = steps[(step_index + 1) as usize].n_bits;
+            compute_fri_merkelize_c(p_stark, p_proof, step_index as u64, fri_pol, current_bits, next_bits);
         }
     }
 
@@ -611,10 +616,12 @@ impl<F: Field> StarkProver<F> {
         let p_stark = self.p_stark;
         let p_proof = self.p_proof.unwrap();
 
+        let n_queries = self.stark_info.stark_struct.n_queries;
+        let steps = &self.stark_info.stark_struct.steps;
         let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
         debug!("{}: ··· Calculating FRI queries of instance {} of {}", Self::MY_NAME, self.instance_id, air_name);
 
-        let mut fri_queries = vec![u64::default(); self.stark_info.stark_struct.n_queries as usize];
+        let mut fri_queries = vec![u64::default(); n_queries as usize];
 
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
 
@@ -627,7 +634,7 @@ impl<F: Field> StarkProver<F> {
         transcript_permutation.add_elements(challenge.as_ptr() as *mut c_void, Self::FIELD_EXTENSION);
         transcript_permutation.get_permutations(
             fri_queries.as_mut_ptr(),
-            self.stark_info.stark_struct.n_queries,
+            n_queries,
             self.stark_info.stark_struct.steps[0].n_bits,
         );
 
@@ -644,8 +651,12 @@ impl<F: Field> StarkProver<F> {
 
         let fri_pol = get_fri_pol_c(self.p_setup, buffer);
 
-        compute_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr());
-        compute_fri_queries_c(p_stark, p_proof, fri_pol, fri_queries.as_mut_ptr());
+        compute_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr(), n_queries, (self.num_stages() + 2) as u64);
+        for step in 1..self.stark_info.stark_struct.steps.len() {
+            compute_fri_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr(), n_queries, step as u64, steps[step].n_bits);
+        }
+
+        set_fri_final_pol_c(p_proof, fri_pol, self.stark_info.stark_struct.steps[self.stark_info.stark_struct.steps.len() - 1].n_bits);
     }
 }
 

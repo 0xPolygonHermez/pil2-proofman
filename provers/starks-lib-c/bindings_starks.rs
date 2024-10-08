@@ -261,38 +261,55 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19compute_fri_foldingPvmS_S_"]
+    #[link_name = "\u{1}_Z19compute_fri_foldingPvmS_S_mmm"]
     pub fn compute_fri_folding(
         pStarks: *mut ::std::os::raw::c_void,
         step: u64,
         buffer: *mut ::std::os::raw::c_void,
         pChallenge: *mut ::std::os::raw::c_void,
+        nBitsExt: u64,
+        prevBits: u64,
+        currentBits: u64,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z21compute_fri_merkelizePvS_mS_"]
+    #[link_name = "\u{1}_Z21compute_fri_merkelizePvS_mS_mm"]
     pub fn compute_fri_merkelize(
         pStarks: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
         step: u64,
         buffer: *mut ::std::os::raw::c_void,
+        currentBits: u64,
+        nextBits: u64,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15compute_queriesPvS_Pm"]
+    #[link_name = "\u{1}_Z15compute_queriesPvS_Pmmm"]
     pub fn compute_queries(
         pStarks: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
         friQueries: *mut u64,
+        nQueries: u64,
+        nTrees: u64,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19compute_fri_queriesPvS_S_Pm"]
+    #[link_name = "\u{1}_Z19compute_fri_queriesPvS_Pmmmm"]
     pub fn compute_fri_queries(
         pStarks: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
-        buffer: *mut ::std::os::raw::c_void,
         friQueries: *mut u64,
+        nQueries: u64,
+        step: u64,
+        currentBits: u64,
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z17set_fri_final_polPvS_m"]
+    pub fn set_fri_final_pol(
+        pProof: *mut ::std::os::raw::c_void,
+        buffer: *mut ::std::os::raw::c_void,
+        nBits: u64,
     );
 }
 extern "C" {

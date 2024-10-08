@@ -375,30 +375,37 @@ pub fn compute_evals_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn compute_fri_folding_c(p_stark: *mut c_void, step: u64, buffer: *mut c_void, challenge: *mut c_void) {
+pub fn compute_fri_folding_c(p_stark: *mut c_void, step: u64, buffer: *mut c_void, challenge: *mut c_void, n_bits_ext: u64, prev_bits: u64, current_bits: u64) {
     unsafe {
-        compute_fri_folding(p_stark, step, buffer, challenge);
+        compute_fri_folding(p_stark, step, buffer, challenge, n_bits_ext, prev_bits, current_bits);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn compute_fri_merkelize_c(p_stark: *mut c_void, p_proof: *mut c_void, step: u64, buffer: *mut c_void) {
+pub fn compute_fri_merkelize_c(p_stark: *mut c_void, p_proof: *mut c_void, step: u64, buffer: *mut c_void, current_bits: u64, next_bits: u64) {
     unsafe {
-        compute_fri_merkelize(p_stark, p_proof, step, buffer);
+        compute_fri_merkelize(p_stark, p_proof, step, buffer, current_bits, next_bits);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn compute_queries_c(p_stark: *mut c_void, p_proof: *mut c_void, p_fri_queries: *mut u64) {
+pub fn compute_queries_c(p_stark: *mut c_void, p_proof: *mut c_void, p_fri_queries: *mut u64, n_queries: u64, n_trees: u64) {
     unsafe {
-        compute_queries(p_stark, p_proof, p_fri_queries);
+        compute_queries(p_stark, p_proof, p_fri_queries, n_queries, n_trees);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn compute_fri_queries_c(p_stark: *mut c_void, p_proof: *mut c_void, buffer: *mut c_void, p_fri_queries: *mut u64) {
+pub fn compute_fri_queries_c(p_stark: *mut c_void, p_proof: *mut c_void, p_fri_queries: *mut u64, n_queries: u64, step: u64, current_bits: u64) {
     unsafe {
-        compute_fri_queries(p_stark, p_proof, buffer, p_fri_queries);
+        compute_fri_queries(p_stark, p_proof, p_fri_queries, n_queries, step, current_bits);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_fri_final_pol_c(p_proof: *mut c_void, buffer: *mut c_void, n_bits: u64) {
+    unsafe {
+        set_fri_final_pol(p_proof, buffer, n_bits);
     }
 }
 
@@ -882,17 +889,17 @@ pub fn get_fri_pol_c(_p_setup_ctx: *mut c_void, _buffer: *mut c_void) -> *mut c_
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn compute_fri_folding_c(_p_stark: *mut c_void, _step: u64, _buffer: *mut c_void, _challenge: *mut c_void) {
+pub fn compute_fri_folding_c(_p_stark: *mut c_void, _step: u64, _buffer: *mut c_void, _challenge: *mut c_void, _n_bits_ext: u64, _prev_bits: u64, _current_bits: u64) {
     trace!("{}: ··· {}", "ffi     ", "compute_fri_folding: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn compute_fri_merkelize_c(_p_stark: *mut c_void, _p_proof: *mut c_void, _step: u64, _buffer: *mut c_void) {
+pub fn compute_fri_merkelize_c(_p_stark: *mut c_void, _p_proof: *mut c_void, _step: u64, _buffer: *mut c_void, _current_bits: u64, _next_bits: u64) {
     trace!("{}: ··· {}", "ffi     ", "compute_fri_merkelize: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn compute_queries_c(_p_stark: *mut c_void, _p_proof: *mut c_void, _p_fri_queries: *mut u64) {
+pub fn compute_queries_c(_p_stark: *mut c_void, _p_proof: *mut c_void, _p_fri_queries: *mut u64, _n_queries: u64, _n_trees: u64) {
     trace!("{}: ··· {}", "ffi     ", "compute_queries: This is a mock call because there is no linked library");
 }
 
@@ -900,11 +907,20 @@ pub fn compute_queries_c(_p_stark: *mut c_void, _p_proof: *mut c_void, _p_fri_qu
 pub fn compute_fri_queries_c(
     _p_stark: *mut c_void,
     _p_proof: *mut c_void,
-    _buffer: *mut c_vodi,
     _p_fri_queries: *mut u64,
+    _n_queries: u64, 
+    _step: u64, 
+    _current_bits: u64
 ) {
     trace!("{}: ··· {}", "ffi     ", "compute_fri_queries: This is a mock call because there is no linked library");
 }
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_fri_final_pol_c(_p_proof: *mut c_void, _buffer: *mut c_void, _n_bits: u64) {
+    unsafe {
+        trace!("{}: ··· {}", "ffi     ", "set_fri_final_pol: This is a mock call because there is no linked library");    }
+}
+
 
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_hash_c(_pStarks: *mut c_void, _pHhash: *mut c_void, _pBuffer: *mut c_void, _nElements: u64) {
