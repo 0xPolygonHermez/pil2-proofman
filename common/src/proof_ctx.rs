@@ -1,4 +1,4 @@
-use std::sync::RwLock;
+use std::{mem::MaybeUninit, sync::RwLock};
 use std::path::PathBuf;
 
 use crate::{AirInstancesRepository, GlobalInfo, VerboseMode, WitnessPilout};
@@ -24,7 +24,7 @@ impl<F> Default for Challenges<F> {
 }
 
 pub struct BuffHelper<F> {
-    pub buff_helper: RwLock<Vec<F>>,
+    pub buff_helper: RwLock<Vec<MaybeUninit<F>>>,
 }
 
 impl<F> Default for BuffHelper<F> {
