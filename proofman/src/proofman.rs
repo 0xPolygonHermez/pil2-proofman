@@ -237,7 +237,6 @@ impl<F: Field + 'static> ProofMan<F> {
         pctx: Arc<ProofCtx<F>>,
         _ectx: Arc<ExecutionCtx>,
     ) -> usize {
-        info!("{}: ··· INITIALIZING PROVER CLIENTS", Self::MY_NAME);
         let mut cont = 0;
         for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
             cont += 1;
