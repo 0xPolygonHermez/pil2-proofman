@@ -15,15 +15,6 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z10save_proofmPvS_Pc"]
-    pub fn save_proof(
-        proof_id: u64,
-        pStarkInfo: *mut ::std::os::raw::c_void,
-        pFriProof: *mut ::std::os::raw::c_void,
-        fileDir: *mut ::std::os::raw::c_char,
-    );
-}
-extern "C" {
     #[link_name = "\u{1}_Z13fri_proof_newPv"]
     pub fn fri_proof_new(pSetupCtx: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 }

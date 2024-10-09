@@ -43,14 +43,6 @@ pub fn save_publics_c(n_publics: u64, public_inputs: *mut std::os::raw::c_void, 
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn save_proof_c(proof_id: u64, p_stark_info: *mut c_void, p_fri_proof: *mut c_void, output_dir: &str) {
-    let file_dir = CString::new(output_dir).unwrap();
-    unsafe {
-        save_proof(proof_id, p_stark_info, p_fri_proof, file_dir.as_ptr() as *mut std::os::raw::c_char);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn fri_proof_new_c(p_setup_ctx: *mut c_void) -> *mut c_void {
     unsafe { fri_proof_new(p_setup_ctx) }
 }
@@ -634,11 +626,6 @@ pub fn save_challenges_c(_p_challenges: *mut std::os::raw::c_void, _global_info_
 #[cfg(feature = "no_lib_link")]
 pub fn save_publics_c(_n_publics: u64, _public_inputs: *mut c_void, _output_dir: &str) {
     trace!("{}: ··· {}", "ffi     ", "save_publics_c: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn save_proof_c(_proof_id: u64, _p_stark_info: *mut c_void, _p_fri_proof: *mut c_void, _output_dir: &str) {
-    trace!("{}: ··· {}", "ffi     ", "save_proof: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

@@ -499,10 +499,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn save_proof(&self, proof_ctx: Arc<ProofCtx<F>>, output_dir: &str, save_json: bool) -> *mut c_void {
-        if save_json {
-            save_proof_c(self.prover_idx as u64, self.p_stark_info, self.p_proof.unwrap(), output_dir);
-        }
-
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
         let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
 
