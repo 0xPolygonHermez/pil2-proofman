@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::{verify_global_constraints_proof, WitnessLibrary};
 
-use proofman_common::{ExecutionCtx, ExtensionField, ProofCtx, Prover, SetupCtx};
+use proofman_common::{ExecutionCtx, ProofCtx, Prover, SetupCtx};
 
 use colored::*;
 
