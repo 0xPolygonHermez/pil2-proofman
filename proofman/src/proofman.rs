@@ -2,10 +2,11 @@ use libloading::{Library, Symbol};
 use log::{info, trace};
 use p3_field::Field;
 use stark::{StarkBufferAllocator, StarkProver};
-use proofman_starks_lib_c::{save_challenges_c, save_publics_c};
-use std::fs;
+use proofman_starks_lib_c::{save_challenges_c, save_publics_c, stark_verify_c};
+use std::fs::{self, File};
 use std::error::Error;
 use std::mem::MaybeUninit;
+use std::io::Read;
 
 use colored::*;
 
@@ -13,7 +14,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use transcript::FFITranscript;
 
-use crate::{WitnessLibrary, WitnessLibInitFn};
+use crate::{verify_global_constraints_proof, WitnessLibInitFn, WitnessLibrary};
 use crate::verify_constraints_proof;
 use crate::generate_recursion_proof;
 
@@ -144,12 +145,13 @@ impl<F: Field + 'static> ProofMan<F> {
             &mut provers,
             pctx.clone(),
             output_dir_path.to_string_lossy().as_ref(),
-            options.aggregation,
-            options.save_proofs,
         );
 
         timer_stop_and_log_info!(GENERATING_PROOF);
-
+        
+        if options.verify_proof {
+            Self::verify_proof(&mut provers, pctx.clone(), sctx.clone());
+        }
         if !options.aggregation {
             return Ok(());
         }
@@ -163,7 +165,7 @@ impl<F: Field + 'static> ProofMan<F> {
             &proves_out,
             &ProofType::Compressor,
             output_dir_path.clone(),
-            options.save_proofs,
+            options.verify_proof,
         )?;
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_PROOFS);
         log::info!("{}: Compressor proofs generated successfully", Self::MY_NAME);
@@ -174,7 +176,7 @@ impl<F: Field + 'static> ProofMan<F> {
             &comp_proofs,
             &ProofType::Recursive1,
             output_dir_path.clone(),
-            options.save_proofs,
+            options.verify_proof,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE1_PROOFS);
         log::info!("{}: Recursive1 proofs generated successfully", Self::MY_NAME);
@@ -185,7 +187,7 @@ impl<F: Field + 'static> ProofMan<F> {
             &recursive1_proofs,
             &ProofType::Recursive2,
             output_dir_path.clone(),
-            options.save_proofs,
+            options.verify_proof,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
         log::info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
@@ -558,7 +560,12 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_start_debug!(CALCULATING_FRI);
         for opening_id in 0..=num_opening_stages {
             timer_start_debug!(CALCULATING_FRI_STEP);
-            Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 4 + opening_id, provers, pctx.clone(), transcript);
+            Self::get_challenges(
+                pctx.global_info.n_challenges.len() as u32 + 4 + opening_id,
+                provers,
+                pctx.clone(),
+                transcript,
+            );
             if opening_id == num_opening_stages - 1 {
                 info!(
                     "{}: Calculating final FRI polynomial at {}",
@@ -592,20 +599,17 @@ impl<F: Field + 'static> ProofMan<F> {
             timer_stop_and_log_debug!(CALCULATING_FRI_STEP);
         }
         timer_stop_and_log_debug!(CALCULATING_FRI);
-        
     }
 
     fn finalize_proof(
         provers: &mut [Box<dyn Prover<F>>],
         proof_ctx: Arc<ProofCtx<F>>,
         output_dir: &str,
-        aggregation: bool,
-        save_proofs: bool,
     ) -> Vec<*mut c_void> {
-        timer_start_debug!(SAVING_PROOF);
+        timer_start_debug!(FINALIZING_PROOF);
         let mut proves = Vec::new();
         for prover in provers.iter_mut() {
-            proves.push(prover.save_proof(proof_ctx.clone(), output_dir, save_proofs));
+            proves.push(prover.get_zkin_proof(proof_ctx.clone()));
         }
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
@@ -617,13 +621,79 @@ impl<F: Field + 'static> ProofMan<F> {
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
-        if aggregation || save_proofs {
-            save_publics_c(n_publics, public_inputs, output_dir);
-            save_challenges_c(challenges, global_info_file, output_dir);
+        save_publics_c(n_publics, public_inputs, output_dir);
+        save_challenges_c(challenges, global_info_file, output_dir);
+
+        timer_stop_and_log_debug!(FINALIZING_PROOF);
+        proves
+    }
+
+    fn verify_proof(
+        provers: &mut [Box<dyn Prover<F>>],
+        proof_ctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx>,
+    ) -> bool {
+      
+        timer_start_debug!(VERIFY_PROOF);
+        let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
+        let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
+
+        let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
+
+        let mut is_valid = true;
+        for prover in provers.iter_mut() {
+            let p_proof = prover.get_proof();
+            let prover_info = prover.get_prover_info();
+
+            let air_name = &proof_ctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
+
+            let setup = sctx.get_setup(prover_info.airgroup_id, prover_info.air_id).expect("REASON");
+
+            let verkey_file = proof_ctx
+                .global_info
+                .get_air_setup_path(prover_info.airgroup_id, prover_info.air_id, &ProofType::Basic)
+                .with_extension("verkey.json");
+            let mut contents = String::new();
+            let mut file = File::open(verkey_file).unwrap();
+
+            let _ =
+                file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
+            let verkey_json: Vec<u64> = serde_json::from_str(&contents).unwrap();
+            let verkey: Vec<F> = verkey_json.into_iter().map(|element| F::from_canonical_u64(element)).collect();
+
+            let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
+            let proof_challenges = prover.get_proof_challenges(steps_fri, challenges_guard.clone());
+            let is_valid_proof = stark_verify_c(p_proof, setup.p_setup.p_stark_info, setup.p_setup.p_expressions_bin, verkey.as_ptr() as *mut c_void, public_inputs, proof_challenges.as_ptr() as *mut c_void);
+            if !is_valid_proof {
+                is_valid = false;
+                log::info!(
+                    "{}: ··· {}",
+                    Self::MY_NAME,
+                    format!("\u{2717} Proof of {}: Instance #{} was verified", air_name, prover_info.instance_id,)
+                        .bright_red()
+                        .bold()
+                );
+            } else {
+                log::info!(
+                    "{}:     {}",
+                    Self::MY_NAME,
+                    format!("\u{2713} Proof of {}: Instance #{} was verified", air_name, prover_info.instance_id,)
+                        .bright_green()
+                       .bold()
+                );
+            }
         }
 
-        timer_stop_and_log_debug!(SAVING_PROOF);
-        proves
+        let global_constraints_verified = verify_global_constraints_proof(proof_ctx.clone(), sctx.clone());
+
+        if is_valid && global_constraints_verified {
+            log::info!("{}: ··· {}", Self::MY_NAME, "\u{2713} All proofs were verified".bright_green().bold());
+        } else {
+            log::info!("{}: ··· {}", Self::MY_NAME, "\u{2717} Not all proofs were verified.".bright_red().bold());
+        }
+
+        timer_stop_and_log_debug!(VERIFY_PROOF);
+        is_valid
     }
 
     fn print_summary(pctx: Arc<ProofCtx<F>>) {

@@ -803,6 +803,7 @@ dependencies = [
  "proofman-hints",
  "proofman-starks-lib-c",
  "proofman-util",
+ "serde_json",
  "stark",
  "transcript",
 ]

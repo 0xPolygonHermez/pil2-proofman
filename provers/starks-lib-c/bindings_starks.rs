@@ -489,3 +489,14 @@ extern "C" {
     #[link_name = "\u{1}_Z11setLogLevelm"]
     pub fn setLogLevel(level: u64);
 }
+extern "C" {
+    #[link_name = "\u{1}_Z12stark_verifyPvS_S_S_S_S_"]
+    pub fn stark_verify(
+        fProof: *mut ::std::os::raw::c_void,
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pExpressionsBin: *mut ::std::os::raw::c_void,
+        verkey: *mut ::std::os::raw::c_void,
+        pPublics: *mut ::std::os::raw::c_void,
+        challenges: *mut ::std::os::raw::c_void,
+    ) -> bool;
+}

@@ -417,7 +417,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
             let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
             let step_index =
-                self.stark_info.stark_struct.steps.iter().position(|s| s.n_bits as usize ==  steps_fri[(stage as u32 - (Self::num_stages(self) + 4)) as usize]);
+                self.stark_info.stark_struct.steps.iter().position(|s| {
+                    s.n_bits as usize == steps_fri[(stage as u32 - (Self::num_stages(self) + 4)) as usize]
+                });
 
             if let Some(step_index) = step_index {
                 let n_steps = steps.len() - 1;
@@ -464,7 +466,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
             let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
             let step_index =
-                self.stark_info.stark_struct.steps.iter().position(|s| s.n_bits as usize ==  steps_fri[(stage as u32 - (Self::num_stages(self) + 4)) as usize]);
+                self.stark_info.stark_struct.steps.iter().position(|s| {
+                    s.n_bits as usize == steps_fri[(stage as u32 - (Self::num_stages(self) + 4)) as usize]
+                });
 
             if let Some(step_index) = step_index {
                 let n_steps = steps.len() - 1;
@@ -532,7 +536,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         self.p_proof.unwrap()
     }
 
-    fn save_proof(&self, proof_ctx: Arc<ProofCtx<F>>, output_dir: &str, save_json: bool) -> *mut c_void {
+    fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>) -> *mut c_void {
         let idx = self.prover_idx;
         #[cfg(feature = "distributed")]
         {
@@ -550,8 +554,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
-        let output_json_dir = if save_json { output_dir } else { "" };
-
         fri_proof_get_zkinproof_c(
             idx as u64,
             self.p_proof.unwrap(),
@@ -559,7 +561,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             challenges,
             self.p_stark_info,
             global_info_file,
-            output_json_dir,
+            "",
         )
     }
 
@@ -570,6 +572,31 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             prover_idx: self.prover_idx,
             instance_id: self.instance_id,
         }
+    }
+
+    fn get_proof_challenges(&self, global_steps: Vec<usize>, global_challenges: Vec<F>) -> Vec<F> {
+        let mut challenges: Vec<F> = Vec::new();
+
+        let n_challenges_stages = self.stark_info.challenges_map.as_ref().unwrap().len();
+        for ch in 0..n_challenges_stages {
+            challenges.push(global_challenges[ch * 3]);
+            challenges.push(global_challenges[ch * 3 + 1]);
+            challenges.push(global_challenges[ch * 3 + 2]);
+        }
+
+        for s in self.stark_info.stark_struct.steps.clone().into_iter() {
+            let step_index = global_steps.iter().position(|step| *step == s.n_bits as usize).expect("REASON");
+            challenges.push(global_challenges[(n_challenges_stages + step_index) * Self::FIELD_EXTENSION]);
+            challenges.push(global_challenges[(n_challenges_stages + step_index) * Self::FIELD_EXTENSION + 1]);
+            challenges.push(global_challenges[(n_challenges_stages + step_index) * Self::FIELD_EXTENSION + 2]);
+        }
+
+        challenges.push(global_challenges[(n_challenges_stages + global_steps.len()) * Self::FIELD_EXTENSION]);
+        challenges.push(global_challenges[(n_challenges_stages + global_steps.len()) * Self::FIELD_EXTENSION + 1]);
+        challenges.push(global_challenges[(n_challenges_stages + global_steps.len()) * Self::FIELD_EXTENSION + 2]);
+
+        challenges
+
     }
 }
 
@@ -649,11 +676,17 @@ impl<F: Field> StarkProver<F> {
         let current_bits = steps[step_index as usize].n_bits;
         let prev_bits = if step_index == 0 { current_bits } else { steps[(step_index - 1) as usize].n_bits };
 
-        compute_fri_folding_c(step_index as u64, fri_pol, challenge.as_ptr() as *mut c_void, self.stark_info.stark_struct.n_bits_ext, prev_bits, current_bits );
+        compute_fri_folding_c(
+            step_index as u64,
+            fri_pol,
+            challenge.as_ptr() as *mut c_void,
+            self.stark_info.stark_struct.n_bits_ext,
+            prev_bits,
+            current_bits,
+        );
 
         if step_index != n_steps {
             let next_bits = steps[(step_index + 1) as usize].n_bits;
-            println!("HOLA");
             compute_fri_merkelize_c(self.p_stark, p_proof, step_index as u64, fri_pol, current_bits, next_bits);
         }
     }
@@ -698,11 +731,22 @@ impl<F: Field> StarkProver<F> {
         let fri_pol = get_fri_pol_c(self.p_setup, buffer);
 
         compute_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr(), n_queries, (self.num_stages() + 2) as u64);
-        for step in 1..self.stark_info.stark_struct.steps.len() {
-            compute_fri_queries_c(self.p_stark, p_proof, fri_queries.as_mut_ptr(), n_queries, step as u64, steps[step].n_bits);
+        for (step, _) in steps.iter().enumerate().take(self.stark_info.stark_struct.steps.len()).skip(1) {
+            compute_fri_queries_c(
+                self.p_stark,
+                p_proof,
+                fri_queries.as_mut_ptr(),
+                n_queries,
+                step as u64,
+                steps[step].n_bits,
+            );
         }
 
-        set_fri_final_pol_c(p_proof, fri_pol, self.stark_info.stark_struct.steps[self.stark_info.stark_struct.steps.len() - 1].n_bits);
+        set_fri_final_pol_c(
+            p_proof,
+            fri_pol,
+            self.stark_info.stark_struct.steps[self.stark_info.stark_struct.steps.len() - 1].n_bits,
+        );
     }
 }
 
