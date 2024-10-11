@@ -47,7 +47,7 @@ impl<F: PrimeField> Std<F> {
     }
 
     /// Processes the inputs for the range check.
-    pub fn range_check(&self, val: F, min: BigInt, max: BigInt) {
-        self.range_check.assign_values(val, min, max);
+    pub fn range_check(&self, val: F, min: BigInt, max: BigInt, multiplicity: F, predefined: Option<bool>) {
+        self.range_check.assign_values(val, min, max, multiplicity, predefined);
     }
 }
