@@ -68,7 +68,7 @@ namespace BinFileUtils
             throw std::system_error(errno, std::generic_category(), "fstat");
 
         size = sb.st_size;
-        void *addrmm = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
+        void *addrmm = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
         addr = malloc(sb.st_size);
 
         int nThreads = omp_get_max_threads() / 2;

@@ -18,8 +18,13 @@ void TranscriptGL::_updateState()
     Goldilocks::Element inputs[TRANSCRIPT_OUT_SIZE];
     std::memcpy(inputs, pending, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element));
     std::memcpy(&inputs[TRANSCRIPT_PENDING_SIZE], state, TRANSCRIPT_STATE_SIZE * sizeof(Goldilocks::Element));
+#ifdef __AVX2__
     PoseidonGoldilocks::hash_full_result(out, inputs);
-    out_cursor = TRANSCRIPT_OUT_SIZE;
+#elif defined(__AVX512__)
+    PoseidonGoldilocks::hash_full_result_avx512(out, inputs);
+#else
+    PoseidonGoldilocks::hash_full_result_seq(out, inputs);
+#endif    out_cursor = TRANSCRIPT_OUT_SIZE;
     std::memset(pending, 0, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element));
     pending_cursor = 0;
     std::memcpy(state, out, TRANSCRIPT_STATE_SIZE * sizeof(Goldilocks::Element));
