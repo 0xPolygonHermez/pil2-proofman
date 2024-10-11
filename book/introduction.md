@@ -1,9 +1,20 @@
 
 # PIL2 Proofman
 
-PIL2 Proofman is a versatile framework designed to help the development, orchestration and validation of zero-knowledge proofs. Powered by PIL2, a robust and easy-to-audit language adept at expressing polynomial identities, it is essential for describing from basic statements to the integration of multiple coprocessors within custom zkVMs. The PIL2 toolkit provides a the ['PIL2 compiler'](https://github.com/0xPolygonHermez/pilcom), a library of reusable ['PIL2 components'](https://github.com/0xPolygonHermez/pil2-components), and other debugging tools to ensure the correctness of your PIL2 project. Upon compiling a PIL2 project a binary file named PILOUT is generated. The PILOUT files encapsulate arithmetization, public inputsm constraints, constant values and other proof-generation-specific details described by a PIL2 project.
+PIL2 Proofman is a versatile framework designed to help the development, orchestration and
+validation of zero-knowledge proofs. Powered by PIL2, a robust and easy-to-audit language adept
+at expressing polynomial identities, it is essential for describing from basic statements to
+the integration of multiple coprocessors within custom zkVMs. The PIL2 toolkit provides a the
+['PIL2 compiler'](https://github.com/0xPolygonHermez/pilcom), a library of reusable ['PIL2
+components'](https://github.com/0xPolygonHermez/pil2-components), and other debugging tools to
+ensure the correctness of your PIL2 project. Upon compiling a PIL2 project a binary file named
+PILOUT is generated. The PILOUT files encapsulate arithmetization, public inputsm constraints,
+constant values and other proof-generation-specific details described by a PIL2 project.
 
-PIL2 Proofman is the framework to be used when generate the zero-knowledge proofs. PIL2 Proofman requires a PILOUT file, some Rust code snippets to fille the witnesses (for all the subprofs) and a prover. While PIL2 Proofman includes a library of provers, users can also develop and integrate their own. The current provided provers includes STARK and FFLONK.
+PIL2 Proofman is the framework to be used when generate the zero-knowledge proofs. PIL2
+Proofman requires a PILOUT file, some Rust code snippets to fille the witnesses (for all the
+subprofs) and a prover. While PIL2 Proofman includes a library of provers, users can also
+develop and integrate their own. The current provided provers includes STARK and FFLONK.
 
 |[PIL2 toolkit](./pil2/...)|[PIL2 Proofman](./pil2/...)|[Quickstart](./pil2/...)|[Examples](./pil2/...)|[Docs](./pil2/...)|
 
