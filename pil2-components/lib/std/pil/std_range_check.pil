@@ -122,7 +122,7 @@ function multi_range_check(expr sel = 1, expr range_sel = 1, expr colu, int min1
 
     on final airgroup declareRangeAir();
 
-    on final proof createSpecifiedMetadata();
+    on final proof createMetadata();
 
     // Note: This solution improves the naive solution:
     //   · range_check(0, sel*range_sel, colu, min1, max1).
@@ -236,26 +236,30 @@ function range_check(int predefined = 1, expr sel = 1, expr colu, int min, int m
         }
 
         on final airgroup declarePreRangeAir();
+
+        on final proof createPreMetadata();
     } else {
         const int opid = opid_process(predefined, min, max);
 
         lookup_assumes(opid, [colu], sel, PIOP_NAME_RANGE_CHECK);
 
         on final airgroup declareRangeAir();
-    }
 
-    on final proof createMetadata();
+        on final proof createMetadata();
+    }
+}
+
+function createPreMetadata() {
+    if (proof.std.rcpre.u8_used) {
+        @u8air{airgroup_id: proof.std.u8.airgroup_id, air_id: proof.std.u8.air_id};
+    }
+    
+    if (proof.std.rcpre.u16_used) {
+        @u16air{airgroup_id: proof.std.u16.airgroup_id, air_id: proof.std.u16.air_id};
+    }
 }
 
 function createMetadata() {
-    @u8air{airgroup_id: proof.std.u8.airgroup_id, air_id: proof.std.u8.air_id};
-    @u16air{airgroup_id: proof.std.u16.airgroup_id, air_id: proof.std.u16.air_id};
-
-    // This final proof is needed to avoid create specified metadata multiple times
-    on final proof createSpecifiedMetadata();
-}
-
-function createSpecifiedMetadata() {
     @specified_ranges{airgroup_id: proof.std.specified.airgroup_id, air_id: proof.std.specified.air_id};
 }
 

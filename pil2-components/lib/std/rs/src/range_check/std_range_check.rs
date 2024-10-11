@@ -228,7 +228,8 @@ impl<F: PrimeField> StdRangeCheck<F> {
     }
 
     pub fn assign_values(&self, value: F, min: BigInt, max: BigInt, multiplicity: F, predefined: Option<bool>) {
-        let predefined = if let None = predefined { true } else { predefined.unwrap() };
+        // Default predefined value is true
+        let predefined = if predefined.is_none() { true } else { predefined.unwrap() };
 
         // If the range was not computed in the setup phase, error
         let ranges = self.ranges.lock().unwrap();
