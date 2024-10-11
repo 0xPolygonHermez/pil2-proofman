@@ -107,11 +107,23 @@ where
                     if range_selector1 {
                         trace[i].a[0] = F::from_canonical_u16(rng.gen_range(0..=(1 << 7) - 1));
 
-                        self.std_lib.range_check(trace[i].a[0], range1.0.clone(), range1.1.clone());
+                        self.std_lib.range_check(
+                            trace[i].a[0],
+                            range1.0.clone(),
+                            range1.1.clone(),
+                            F::one(),
+                            Some(false),
+                        );
                     } else {
                         trace[i].a[0] = F::from_canonical_u16(rng.gen_range(0..=(1 << 8) - 1));
 
-                        self.std_lib.range_check(trace[i].a[0], range2.0.clone(), range2.1.clone());
+                        self.std_lib.range_check(
+                            trace[i].a[0],
+                            range2.0.clone(),
+                            range2.1.clone(),
+                            F::one(),
+                            Some(false),
+                        );
                     }
                 }
 
@@ -119,11 +131,23 @@ where
                     if range_selector2 {
                         trace[i].a[1] = F::from_canonical_u16(rng.gen_range(0..=(1 << 7) - 1));
 
-                        self.std_lib.range_check(trace[i].a[1], range1.0.clone(), range1.1.clone());
+                        self.std_lib.range_check(
+                            trace[i].a[1],
+                            range1.0.clone(),
+                            range1.1.clone(),
+                            F::one(),
+                            Some(false),
+                        );
                     } else {
                         trace[i].a[1] = F::from_canonical_u16(rng.gen_range(0..=(1 << 6) - 1));
 
-                        self.std_lib.range_check(trace[i].a[1], range3.0.clone(), range3.1.clone());
+                        self.std_lib.range_check(
+                            trace[i].a[1],
+                            range3.0.clone(),
+                            range3.1.clone(),
+                            F::one(),
+                            Some(false),
+                        );
                     }
                 }
 
@@ -131,11 +155,23 @@ where
                     if range_selector3 {
                         trace[i].a[2] = F::from_canonical_u16(rng.gen_range((1 << 5)..=(1 << 8) - 1));
 
-                        self.std_lib.range_check(trace[i].a[2], range4.0.clone(), range4.1.clone());
+                        self.std_lib.range_check(
+                            trace[i].a[2],
+                            range4.0.clone(),
+                            range4.1.clone(),
+                            F::one(),
+                            Some(false),
+                        );
                     } else {
                         trace[i].a[2] = F::from_canonical_u16(rng.gen_range((1 << 8)..=(1 << 9) - 1));
 
-                        self.std_lib.range_check(trace[i].a[2], range5.0.clone(), range5.1.clone());
+                        self.std_lib.range_check(
+                            trace[i].a[2],
+                            range5.0.clone(),
+                            range5.1.clone(),
+                            F::one(),
+                            Some(false),
+                        );
                     }
                 }
             }

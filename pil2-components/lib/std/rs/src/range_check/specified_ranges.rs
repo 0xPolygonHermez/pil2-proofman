@@ -26,8 +26,8 @@ pub struct SpecifiedRanges<F: PrimeField> {
     // Inputs
     num_rows: Mutex<usize>,
     ranges: Mutex<Vec<Range<F>>>,
-    inputs: Mutex<Vec<(Range<F>, F)>>, // range -> value -> multiplicity
-    muls: Mutex<Vec<HintFieldValue<F>>>,
+    inputs: Mutex<Vec<(Range<F>, F, F)>>, // range -> value -> multiplicity
+    mul_columns: Mutex<Vec<HintFieldValue<F>>>,
 }
 
 impl<F: PrimeField> SpecifiedRanges<F> {
@@ -42,7 +42,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             num_rows: Mutex::new(0),
             ranges: Mutex::new(Vec::new()),
             inputs: Mutex::new(Vec::new()),
-            muls: Mutex::new(Vec::new()),
+            mul_columns: Mutex::new(Vec::new()),
         });
 
         wcm.register_component(specified_ranges.clone(), Some(airgroup_id), Some(&[air_id]));
@@ -50,9 +50,9 @@ impl<F: PrimeField> SpecifiedRanges<F> {
         specified_ranges
     }
 
-    pub fn update_inputs(&self, value: F, range: Range<F>) {
+    pub fn update_inputs(&self, value: F, range: Range<F>, multiplicity: F) {
         let mut inputs = self.inputs.lock().unwrap();
-        inputs.push((range, value));
+        inputs.push((range, value, multiplicity));
 
         while inputs.len() >= PROVE_CHUNK_SIZE {
             let num_drained = std::cmp::min(PROVE_CHUNK_SIZE, inputs.len());
@@ -78,32 +78,34 @@ impl<F: PrimeField> SpecifiedRanges<F> {
         let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
         let air_instance = &mut air_instance_rw[air_instance_id];
 
-        let mul = &*self.muls.lock().unwrap();
+        let mul_columns = &*self.mul_columns.lock().unwrap();
 
-        for (index, hint) in hints.iter().enumerate().skip(1) {
-            set_hint_field(self.wcm.get_sctx(), air_instance, *hint, "reference", &mul[index - 1]);
+        for (index, hint) in hints[1..].iter().enumerate() {
+            set_hint_field(self.wcm.get_sctx(), air_instance, *hint, "reference", &mul_columns[index]);
         }
 
         log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "SpecifiedRanges");
     }
 
-    fn update_multiplicity(&self, drained_inputs: Vec<(Range<F>, F)>) {
+    fn update_multiplicity(&self, drained_inputs: Vec<(Range<F>, F, F)>) {
         // TODO! Do it in parallel
         let ranges = self.ranges.lock().unwrap();
 
         let num_rows = self.num_rows.lock().unwrap();
-        let mut muls = self.muls.lock().unwrap();
-        for (range, input) in &drained_inputs {
+        let mut mul_columns = self.mul_columns.lock().unwrap();
+        for (range, input, mul) in &drained_inputs {
             let value = *input - range.0;
 
-            let value = value.as_canonical_biguint().to_usize().expect("Cannot convert to usize");
+            let value =
+                value.as_canonical_biguint().to_usize().expect(format!("Cannot convert {:?} to usize", value).as_str());
 
-            let range_index = ranges.iter().position(|r| r == range).expect("Range not found");
+            let range_index =
+                ranges.iter().position(|r| r == range).expect(format!("Range {:?} not found", range).as_str());
 
             // Note: to avoid non-expected panics, we perform a reduction to the value
             //       In debug mode, this is, in fact, checked before
             let index = value % *num_rows;
-            muls[range_index].add(index, F::one());
+            mul_columns[range_index].add(index, *mul);
         }
     }
 }
@@ -114,9 +116,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         // Scan the pilout for airs that have rc-related hints
         let air_groups = pctx.pilout.air_groups();
         let mut hints_guard = self.hints.lock().unwrap();
-
         let mut ranges_guard = self.ranges.lock().unwrap();
-
         for air_group in air_groups.iter() {
             let airs = air_group.airs();
             for air in airs.iter() {
@@ -127,7 +127,15 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
                 let hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges");
 
                 for (index, hint) in hints.iter().enumerate() {
-                    if index > 0 {
+                    if index >= 1 {
+                        let predefined = get_hint_field_constant::<F>(
+                            &sctx,
+                            airgroup_id,
+                            air_id,
+                            *hint as usize,
+                            "predefined",
+                            HintFieldOptions::default(),
+                        );
                         let min = get_hint_field_constant::<F>(
                             &sctx,
                             airgroup_id,
@@ -160,6 +168,18 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
                             "max_neg",
                             HintFieldOptions::default(),
                         );
+
+                        let HintFieldValue::Field(predefined) = predefined else {
+                            log::error!("Predefined hint must be a field element");
+                            panic!();
+                        };
+                        let predefined = {
+                            if !predefined.is_zero() && !predefined.is_one() {
+                                log::error!("Predefined hint must be either 0 or 1");
+                                panic!();
+                            }
+                            predefined.is_one()
+                        };
                         let HintFieldValue::Field(min) = min else {
                             log::error!("Min hint must be a field element");
                             panic!();
@@ -201,7 +221,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
                             }
                         };
 
-                        ranges_guard.push(Range(min, max, min_neg, max_neg));
+                        ranges_guard.push(Range(min, max, min_neg, max_neg, predefined));
                     }
 
                     hints_guard.push(*hint);
@@ -215,11 +235,9 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
 
         // Add a new air instance. Since Specified Ranges is a table, only this air instance is needed
         let mut air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
-
-        let mut muls_guard = self.muls.lock().unwrap();
-
-        for hint in hints_guard.iter().skip(1) {
-            muls_guard.push(get_hint_field::<F>(
+        let mut mul_columns_guard = self.mul_columns.lock().unwrap();
+        for hint in hints_guard[1..].iter() {
+            mul_columns_guard.push(get_hint_field::<F>(
                 &sctx,
                 &pctx.public_inputs,
                 &pctx.challenges,
@@ -232,6 +250,26 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
 
         // Set the number of rows
         let hint = hints_guard[0];
+
+        // let airgroup_id = get_hint_field::<F>(
+        //     &sctx,
+        //     &pctx.public_inputs,
+        //     &pctx.challenges,
+        //     &mut air_instance,
+        //     hint as usize,
+        //     "airgroup_id",
+        //     HintFieldOptions::dest(),
+        // );
+
+        // let air_id = get_hint_field::<F>(
+        //     &sctx,
+        //     &pctx.public_inputs,
+        //     &pctx.challenges,
+        //     &mut air_instance,
+        //     hint as usize,
+        //     "air_id",
+        //     HintFieldOptions::dest(),
+        // );
 
         let num_rows = get_hint_field::<F>(
             &sctx,

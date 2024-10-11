@@ -24,8 +24,8 @@ pub struct U16Air<F: Copy + Display> {
     airgroup_id: usize,
     air_id: usize,
     // Inputs
-    inputs: Mutex<Vec<F>>, // value -> multiplicity
-    mul: Mutex<HintFieldValue<F>>,
+    inputs: Mutex<Vec<(F, F)>>, // value -> multiplicity
+    mul_column: Mutex<HintFieldValue<F>>,
 }
 
 impl<F: PrimeField> U16Air<F> {
@@ -38,7 +38,7 @@ impl<F: PrimeField> U16Air<F> {
             airgroup_id,
             air_id,
             inputs: Mutex::new(Vec::new()),
-            mul: Mutex::new(HintFieldValue::Field(F::zero())),
+            mul_column: Mutex::new(HintFieldValue::Field(F::zero())),
         });
 
         wcm.register_component(u16air.clone(), Some(airgroup_id), Some(&[air_id]));
@@ -46,9 +46,9 @@ impl<F: PrimeField> U16Air<F> {
         u16air
     }
 
-    pub fn update_inputs(&self, value: F) {
+    pub fn update_inputs(&self, value: F, multiplicity: F) {
         let mut inputs = self.inputs.lock().unwrap();
-        inputs.push(value);
+        inputs.push((value, multiplicity));
 
         while inputs.len() >= PROVE_CHUNK_SIZE {
             let num_drained = std::cmp::min(PROVE_CHUNK_SIZE, inputs.len());
@@ -72,21 +72,21 @@ impl<F: PrimeField> U16Air<F> {
         let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
         let air_instance = &mut air_instance_rw[air_instance_id];
 
-        let mul = &*self.mul.lock().unwrap();
-        set_hint_field(self.wcm.get_sctx(), air_instance, self.hint.load(Ordering::Acquire), "reference", mul);
+        let mul_column = &*self.mul_column.lock().unwrap();
+        set_hint_field(self.wcm.get_sctx(), air_instance, self.hint.load(Ordering::Acquire), "reference", mul_column);
 
         log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "U16Air");
     }
 
-    fn update_multiplicity(&self, drained_inputs: Vec<F>) {
+    fn update_multiplicity(&self, drained_inputs: Vec<(F, F)>) {
         // TODO! Do it in parallel
-        for input in &drained_inputs {
+        for (input, mul) in &drained_inputs {
             let value = input.as_canonical_biguint().to_usize().expect("Cannot convert to usize");
             // Note: to avoid non-expected panics, we perform a reduction to the value
             //       In debug mode, this is, in fact, checked before
             let index = value % NUM_ROWS;
-            let mut mul = self.mul.lock().unwrap();
-            mul.add(index, F::one());
+            let mut mul_column = self.mul_column.lock().unwrap();
+            mul_column.add(index, *mul);
         }
     }
 }
@@ -120,7 +120,27 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
         // Add a new air instance. Since U16Air is a table, only this air instance is needed
         let mut air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
 
-        *self.mul.lock().unwrap() = get_hint_field::<F>(
+        // let airgroup_id = get_hint_field::<F>(
+        //     &sctx,
+        //     &pctx.public_inputs,
+        //     &pctx.challenges,
+        //     &mut air_instance,
+        //     self.hint.load(Ordering::Acquire) as usize,
+        //     "airgroup_id",
+        //     HintFieldOptions::dest(),
+        // );
+
+        // let air_id = get_hint_field::<F>(
+        //     &sctx,
+        //     &pctx.public_inputs,
+        //     &pctx.challenges,
+        //     &mut air_instance,
+        //     self.hint.load(Ordering::Acquire) as usize,
+        //     "air_id",
+        //     HintFieldOptions::dest(),
+        // );
+
+        *self.mul_column.lock().unwrap() = get_hint_field::<F>(
             self.wcm.get_sctx(),
             &pctx.public_inputs,
             &pctx.challenges,
