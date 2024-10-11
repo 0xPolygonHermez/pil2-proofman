@@ -1,4 +1,3 @@
-
 TARGET_BCT := bctree
 TARGET_STARKS_LIB := libstarks.a
 TARGET_SETUP := fflonkSetup
@@ -12,10 +11,10 @@ WITNESS_LIB := ./witness_lib
 
 
 CXX := g++
-AS := nasm
-CXXFLAGS := -std=c++17 -Wall -pthread -Wno-unused-label -rdynamic -I/opt/homebrew/opt/gmp/include  -I/opt/homebrew/Cellar/libomp/19.1.0/include/ -I/opt/homebrew/Cellar/nlohmann-json/3.11.3/include/ #-Wfatal-errors
+#AS := nasm
+CXXFLAGS := -std=c++17 -Wall -pthread -Wno-unused-label -rdynamic -I/opt/homebrew/opt/gmp/include  -I/opt/homebrew/Cellar/libomp/19.1.1/include/ -I/opt/homebrew/Cellar/nlohmann-json/3.11.3/include/ #-Wfatal-errors
 #LDFLAGS := -lprotobuf -lsodium -lgpr -lpthread -lpqxx -lpq -lgmp -lstdc++ -lgmpxx -lsecp256k1 -lcrypto -luuid -fopenmp -liomp5 
-LDFLAGS := -L/opt/homebrew/opt/gmp/lib -lprotobuf -lsodium -lgpr -lpthread -lpqxx -lpq -lgmp -lstdc++ -lgmpxx -lsecp256k1 -lcrypto -luuid -Xpreprocessor -fopenmp  -liomp5 
+LDFLAGS := -L/opt/homebrew/opt/gmp/lib -lprotobuf -lsodium -lgpr -lpthread -lpqxx -lpq -lgmp -lstdc++ -lgmpxx -lsecp256k1 -lcrypto -luuid -Xpreprocessor -fopenmp  -liomp5 -L/opt/homebrew/opt/gmp/lib
 #LDFLAGS := -lprotobuf -lsodium -lgpr -lpthread -lpqxx -lpq -lgmp -lstdc++ -lgmpxx -lsecp256k1 -lcrypto -luuid -Xpreprocessor -fopenmp  -liomp5 
 
 CFLAGS := -Xpreprocessor -fopenmp
@@ -124,3 +123,4 @@ clean:
 -include $(DEPS_BCT)
 
 MKDIR_P ?= mkdir -p
+

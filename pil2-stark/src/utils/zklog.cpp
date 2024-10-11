@@ -6,7 +6,8 @@ zkLog zklog;
 string zkLog::getThreadID(void)
 {
     pthread_t selfThreadID = pthread_self();
-    mpz_class selfThreadIDScalar(selfThreadID);
+    uintptr_t selfThreadIDInt = reinterpret_cast<uintptr_t>(selfThreadID);
+    mpz_class selfThreadIDScalar( selfThreadIDInt);
     string selfThreadIDString = selfThreadIDScalar.get_str(16);
     uint64_t offset = selfThreadIDString.size() > 7 ? selfThreadIDString.size() - 7 : 0;
     return selfThreadIDString.substr(offset, 7);
