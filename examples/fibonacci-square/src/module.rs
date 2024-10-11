@@ -70,12 +70,24 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
             trace[i].x_mod = F::from_canonical_u64(x_mod);
 
             // Check if x_mod is in the range
-            self.std_lib.range_check(F::from_canonical_u64(module - x_mod), range.0.clone(), range.1.clone());
+            self.std_lib.range_check(
+                F::from_canonical_u64(module - x_mod),
+                range.0.clone(),
+                range.1.clone(),
+                F::one(),
+                Some(true),
+            );
         }
 
         // Trivial range check for the remaining rows
         for _ in inputs.len()..num_rows {
-            self.std_lib.range_check(F::from_canonical_u64(module), range.0.clone(), range.1.clone());
+            self.std_lib.range_check(
+                F::from_canonical_u64(module),
+                range.0.clone(),
+                range.1.clone(),
+                F::one(),
+                Some(true),
+            );
         }
 
         let air_instance = AirInstance::new(MODULE_AIRGROUP_ID, MODULE_AIR_IDS[0], Some(0), buffer);

@@ -87,11 +87,11 @@ where
             let range9 = (BigInt::from(-(1 << 8) + 1), BigInt::from(-127));
 
             for i in 0..num_rows {
-                let selected1 = true; //rng.gen_bool(0.5);
+                let selected1 = rng.gen_bool(0.5);
                 trace[i].sel1 = F::from_bool(selected1);
 
                 // selected1 and selected2 have to be disjoint for the range check to pass
-                let selected2 = false; //if selected1 { false } else { rng.gen_bool(0.5) };
+                let selected2 = if selected1 { false } else { rng.gen_bool(0.5) };
                 trace[i].sel2 = F::from_bool(selected2);
 
                 if selected1 {
@@ -103,20 +103,20 @@ where
                     }
                     trace[i].a6 = F::from_canonical_u64(a6_val as u64);
 
-                    self.std_lib.range_check(trace[i].a1, range1.0.clone(), range1.1.clone());
-                    self.std_lib.range_check(trace[i].a5, range6.0.clone(), range6.1.clone());
-                    self.std_lib.range_check(trace[i].a6, range7.0.clone(), range7.1.clone());
+                    self.std_lib.range_check(trace[i].a1, range1.0.clone(), range1.1.clone(), F::one(), Some(true));
+                    self.std_lib.range_check(trace[i].a5, range6.0.clone(), range6.1.clone(), F::one(), Some(true));
+                    self.std_lib.range_check(trace[i].a6, range7.0.clone(), range7.1.clone(), F::one(), Some(true));
                 }
                 if selected2 {
-                    trace[i].a1 = F::from_canonical_u8(rng.gen_range(0..=(1 << 8) - 1));
+                    trace[i].a1 = F::from_canonical_u16(rng.gen_range(0..=(1 << 8) - 1));
                     trace[i].a2 = F::from_canonical_u8(rng.gen_range(50..=(1 << 7) - 1));
                     trace[i].a3 = F::from_canonical_u16(rng.gen_range(127..=(1 << 8)));
                     trace[i].a4 = F::from_canonical_u32(rng.gen_range(1..=(1 << 16) + 1));
 
-                    self.std_lib.range_check(trace[i].a1, range2.0.clone(), range2.1.clone());
-                    self.std_lib.range_check(trace[i].a2, range3.0.clone(), range3.1.clone());
-                    self.std_lib.range_check(trace[i].a3, range4.0.clone(), range4.1.clone());
-                    self.std_lib.range_check(trace[i].a4, range5.0.clone(), range5.1.clone());
+                    self.std_lib.range_check(trace[i].a1, range2.0.clone(), range2.1.clone(), F::one(), Some(true));
+                    self.std_lib.range_check(trace[i].a2, range3.0.clone(), range3.1.clone(), F::one(), Some(true));
+                    self.std_lib.range_check(trace[i].a3, range4.0.clone(), range4.1.clone(), F::one(), Some(true));
+                    self.std_lib.range_check(trace[i].a4, range5.0.clone(), range5.1.clone(), F::one(), Some(true));
                 }
 
                 let mut a7_val: i128 = rng.gen_range(-(2i128.pow(7)) + 1..=-50);
@@ -124,14 +124,14 @@ where
                     a7_val += F::order().to_i128().unwrap();
                 }
                 trace[i].a7 = F::from_canonical_u64(a7_val as u64);
-                self.std_lib.range_check(trace[i].a7, range8.0.clone(), range8.1.clone());
+                self.std_lib.range_check(trace[i].a7, range8.0.clone(), range8.1.clone(), F::one(), Some(true));
 
                 let mut a8_val: i128 = rng.gen_range(-(2i128.pow(8)) + 1..=-127);
                 if a8_val < 0 {
                     a8_val += F::order().to_i128().unwrap();
                 }
                 trace[i].a8 = F::from_canonical_u64(a8_val as u64);
-                self.std_lib.range_check(trace[i].a8, range9.0.clone(), range9.1.clone());
+                self.std_lib.range_check(trace[i].a8, range9.0.clone(), range9.1.clone(), F::one(), Some(true));
             }
 
             let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();

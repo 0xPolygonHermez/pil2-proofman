@@ -194,7 +194,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
             max_neg.is_one()
         };
 
-        let range = Range(min, max, min_neg, max_neg);
+        let range = Range(min, max, min_neg, max_neg, predefined);
 
         // If the range is already defined, skip
         let mut ranges = self.ranges.lock().unwrap();
@@ -221,17 +221,22 @@ impl<F: PrimeField> StdRangeCheck<F> {
             StdRangeCheckType::Valid(RangeCheckAir::SpecifiedRanges)
         };
 
+        let range = StdRangeItem { rc_type: r#type, range };
+
         // Update ranges
-        ranges.push(StdRangeItem { rc_type: r#type, range });
+        ranges.push(range);
     }
 
-    pub fn assign_values(&self, value: F, min: BigInt, max: BigInt) {
+    pub fn assign_values(&self, value: F, min: BigInt, max: BigInt, multiplicity: F, predefined: Option<bool>) {
+        let predefined = if let None = predefined { true } else { predefined.unwrap() };
+
         // If the range was not computed in the setup phase, error
         let ranges = self.ranges.lock().unwrap();
-        let range_item = ranges.iter().find(|r| r.range == (min.clone(), max.clone()));
+        let range_item = ranges.iter().find(|r| r.range == (predefined, min.clone(), max.clone()));
 
         if range_item.is_none() {
-            log::error!("Range not found: [min,max] = [{},{}]", min, max);
+            let name = if predefined { "Predefined" } else { "Specified" };
+            log::error!("{name} range not found: [min,max] = [{},{}]", min, max);
             panic!();
         }
 
@@ -245,21 +250,21 @@ impl<F: PrimeField> StdRangeCheck<F> {
 
         match range_item.rc_type {
             StdRangeCheckType::Valid(RangeCheckAir::U8Air) => {
-                self.u8air.as_ref().unwrap().update_inputs(value);
+                self.u8air.as_ref().unwrap().update_inputs(value, multiplicity);
             }
             StdRangeCheckType::Valid(RangeCheckAir::U16Air) => {
-                self.u16air.as_ref().unwrap().update_inputs(value);
+                self.u16air.as_ref().unwrap().update_inputs(value, multiplicity);
             }
             StdRangeCheckType::U8AirDouble => {
-                self.u8air.as_ref().unwrap().update_inputs(value - range.0);
-                self.u8air.as_ref().unwrap().update_inputs(range.1 - value);
+                self.u8air.as_ref().unwrap().update_inputs(value - range.0, multiplicity);
+                self.u8air.as_ref().unwrap().update_inputs(range.1 - value, multiplicity);
             }
             StdRangeCheckType::U16AirDouble => {
-                self.u16air.as_ref().unwrap().update_inputs(value - range.0);
-                self.u16air.as_ref().unwrap().update_inputs(range.1 - value);
+                self.u16air.as_ref().unwrap().update_inputs(value - range.0, multiplicity);
+                self.u16air.as_ref().unwrap().update_inputs(range.1 - value, multiplicity);
             }
             StdRangeCheckType::Valid(RangeCheckAir::SpecifiedRanges) => {
-                self.specified_ranges.as_ref().unwrap().update_inputs(value, range);
+                self.specified_ranges.as_ref().unwrap().update_inputs(value, range, multiplicity);
             }
         }
     }

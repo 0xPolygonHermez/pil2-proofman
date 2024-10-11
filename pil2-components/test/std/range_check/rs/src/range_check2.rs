@@ -84,9 +84,9 @@ where
                 trace[i].b2 = F::from_canonical_u16(rng.gen_range(0..=(1 << 9) - 1));
                 trace[i].b3 = F::from_canonical_u16(rng.gen_range(0..=(1 << 10) - 1));
 
-                self.std_lib.range_check(trace[i].b1, range1.0.clone(), range1.1.clone());
-                self.std_lib.range_check(trace[i].b2, range2.0.clone(), range2.1.clone());
-                self.std_lib.range_check(trace[i].b3, range3.0.clone(), range3.1.clone());
+                self.std_lib.range_check(trace[i].b1, range1.0.clone(), range1.1.clone(), F::one(), Some(false));
+                self.std_lib.range_check(trace[i].b2, range2.0.clone(), range2.1.clone(), F::one(), Some(false));
+                self.std_lib.range_check(trace[i].b3, range3.0.clone(), range3.1.clone(), F::one(), Some(false));
             }
 
             let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
