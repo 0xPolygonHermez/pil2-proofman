@@ -47,6 +47,15 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
         impl<#generics: Copy> #row_struct_name<#generics> {
             pub const ROW_SIZE: usize = #row_size;
+
+            pub fn as_slice(&self) -> &[#generics] {
+                unsafe {
+                    std::slice::from_raw_parts(
+                        self as *const #row_struct_name<#generics> as *const #generics,
+                        #row_size,
+                    )
+                }
+            }
         }
     };
 
