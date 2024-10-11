@@ -97,10 +97,10 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             let value = *input - range.0;
 
             let value =
-                value.as_canonical_biguint().to_usize().expect(format!("Cannot convert {:?} to usize", value).as_str());
+                value.as_canonical_biguint().to_usize().unwrap_or_else(|| panic!("Cannot convert to usize: {:?}", value));
 
             let range_index =
-                ranges.iter().position(|r| r == range).expect(format!("Range {:?} not found", range).as_str());
+                ranges.iter().position(|r| r == range).unwrap_or_else(|| panic!("Range {:?} not found", range));
 
             // Note: to avoid non-expected panics, we perform a reduction to the value
             //       In debug mode, this is, in fact, checked before
