@@ -28,6 +28,11 @@ pub struct StdSum<F: Copy + Display + Hash> {
     debug_data: Option<DebugData<F>>,
 }
 
+struct DebugData<F: Copy + Display> {
+    bus_values: Mutex<BusValues<F>>,
+    opid_metadata: Mutex<OpIdMetadata<F>>,
+}
+
 struct BusValue<F: Copy> {
     num_proves: F,
     num_assumes: F,
@@ -36,7 +41,8 @@ struct BusValue<F: Copy> {
     row_assumes: Vec<usize>, //       Also, multiplicity in assumes can only be one or zero
 }
 
-type DebugData<F> = Mutex<HashMap<F, HashMap<Vec<HintFieldOutput<F>>, BusValue<F>>>>; // opid -> val -> BusValue
+type BusValues<F> = HashMap<F, HashMap<Vec<HintFieldOutput<F>>, BusValue<F>>>; // opid -> val -> BusValue
+type OpIdMetadata<F> = HashMap<F, (String, Vec<String>)>; // opid -> (piop_name, expr_names)
 
 impl<F: Field> Decider<F> for StdSum<F> {
     fn decide(&self, sctx: Arc<SetupCtx>, pctx: Arc<ProofCtx<F>>) {
@@ -71,7 +77,11 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
         let std_sum = Arc::new(Self {
             mode: mode.clone(),
             sum_airs: Mutex::new(Vec::new()),
-            debug_data: if mode.name == ModeName::Debug { Some(Mutex::new(HashMap::new())) } else { None },
+            debug_data: if mode.name == ModeName::Debug {
+                Some(DebugData { bus_values: Mutex::new(HashMap::new()), opid_metadata: Mutex::new(HashMap::new()) })
+            } else {
+                None
+            },
         });
 
         wcm.register_component(std_sum.clone(), None, None);
@@ -87,17 +97,9 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
         num_rows: usize,
         debug_hints_data: Vec<u64>,
     ) {
+        let debug_data = self.debug_data.as_ref().expect("Debug data missing");
+        let mut opid_metadata = debug_data.opid_metadata.lock().expect("Opid metadata missing");
         for hint in debug_hints_data.iter() {
-            let _name = get_hint_field::<F>(
-                sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
-                air_instance,
-                *hint as usize,
-                "name_piop",
-                HintFieldOptions::default(),
-            );
-
             let sumid = get_hint_field::<F>(
                 sctx,
                 &pctx.public_inputs,
@@ -108,11 +110,54 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 HintFieldOptions::default(),
             );
             if let HintFieldOutput::Field(sumid) = sumid.get(0) {
+                // If the opid is not selected, skip
                 if let Some(opids) = &self.mode.opids {
                     if !opids.contains(&sumid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
                         continue;
                     }
                 }
+
+                // Store the name of the PIOP
+                let name = get_hint_field::<F>(
+                    sctx,
+                    &pctx.public_inputs,
+                    &pctx.challenges,
+                    air_instance,
+                    *hint as usize,
+                    "name_piop",
+                    HintFieldOptions::default(),
+                );
+                match name {
+                    HintFieldValue::String(name) => {
+                        opid_metadata.entry(sumid).or_insert((name, Vec::new()));
+                    }
+                    _ => {
+                        log::error!("Proves hint must be a field element");
+                        panic!("Proves hint must be a field element");
+                    }
+                };
+
+                // Store the names of the expressions
+                let names = get_hint_field_a::<F>(
+                    sctx,
+                    &pctx.public_inputs,
+                    &pctx.challenges,
+                    air_instance,
+                    *hint as usize,
+                    "names",
+                    HintFieldOptions::default(),
+                );
+                let names = names.values;
+                names.iter().for_each(|name| match name {
+                    HintFieldValue::String(name) => {
+                        let metadata = opid_metadata.get_mut(&sumid).expect("Metadata missing");
+                        metadata.1.push(name.clone());
+                    }
+                    _ => {
+                        log::error!("Proves hint must be a field element");
+                        panic!("Proves hint must be a field element");
+                    }
+                });
             } else {
                 panic!("sumid must be a field element");
             };
@@ -157,16 +202,6 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            // let _names = get_hint_field_a::<F>(
-            //     sctx,
-            //     &pctx.public_inputs,
-            //     &pctx.challenges,
-            //     air_instance,
-            //     *hint as usize,
-            //     "names",
-            //     HintFieldOptions::default(),
-            // );
-
             (0..num_rows).into_par_iter().for_each(|j| {
                 let mul = match mul.get(j) {
                     HintFieldOutput::Field(mul) => mul,
@@ -195,9 +230,9 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
         times: F,
     ) {
         let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-        let mut bus = debug_data.lock().expect("Bus values missing");
+        let mut bus_values = debug_data.bus_values.lock().expect("Bus values missing");
 
-        let bus_opid = bus.entry(opid).or_default();
+        let bus_opid = bus_values.entry(opid).or_default();
 
         let bus_val = bus_opid.entry(val).or_insert_with(|| BusValue {
             num_proves: F::zero(),
@@ -344,14 +379,16 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
             let mut there_are_errors = false;
             let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-            let mut bus_vals = debug_data.lock().expect("Bus values missing");
-            for (opid, bus) in bus_vals.iter_mut() {
+            let opid_metadata = debug_data.opid_metadata.lock().expect("Opid metadata missing");
+            let mut bus_values = debug_data.bus_values.lock().expect("Bus values missing");
+            for (opid, bus) in bus_values.iter_mut() {
                 if bus.iter().any(|(_, v)| v.num_proves != v.num_assumes) {
                     if !there_are_errors {
                         there_are_errors = true;
                         log::error!("{}: Some bus values do not match.", Self::MY_NAME);
                     }
-                    println!("\t► Mismatched bus values for opid {}:", opid);
+                    let metadata = opid_metadata.get(opid).expect("Metadata missing");
+                    println!("\t► Mismatched bus values for {} {:?} with opid {}:", metadata.0, metadata.1, opid);
                 } else {
                     continue;
                 }
