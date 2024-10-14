@@ -33,7 +33,7 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<F>> {
                     airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION + 2],
                 ],
             };
-            if air_instance.subproof_values.len() > 0 {
+            if !air_instance.subproof_values.is_empty() {
                 let instance_airgroup_val = ExtensionField {
                     value: [
                         air_instance.subproof_values[idx * FIELD_EXTENSION],
