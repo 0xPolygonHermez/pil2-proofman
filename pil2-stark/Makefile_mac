@@ -19,8 +19,6 @@ LDFLAGS :=  -lpthread -lgmp -lstdc++ -lgmpxx -lomp -Xpreprocessor -fopenmp  -L/o
 #LDFLAGS := -lprotobuf -lsodium -lgpr -lpthread -lpqxx -lpq -lgmp -lstdc++ -lgmpxx -lsecp256k1 -lcrypto -luuid -Xpreprocessor -fopenmp  -liomp5 
 
 
-
-
 CFLAGS := -Xpreprocessor -fopenmp
 ASFLAGS := -felf64
 
@@ -70,7 +68,8 @@ OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
 DEPS_STARKS_LIB := $(OBJS_STARKS_LIB:.o=.d)
 
 #SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name *.cpp -or -name *.c -or -name *.asm -or -name *.cc)
-SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeGL.cpp  ./src/utils/* -name *.cpp -or -name *.c  -or -name *.cc)
+SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeGL.cpp  ./src/rapidsnark/logger.cpp ./src/utils/* -name *.cpp -or -name *.c  -or -name *.cc)
+
 OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
@@ -89,7 +88,6 @@ all: $(BUILD_DIR)/$(TARGET_STARKS_LIB)
 starks_lib: CXXFLAGS_EXT := -D__ZKEVM_LIB__ -fPIC#we decided to use the same flags for both libraries
 starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
 
-bctree: CXXFLAGS_EXT := -D__BC_TREE__
 bctree: $(BUILD_DIR)/$(TARGET_BCT)
 
 fflonk_setup: $(BUILD_DIR)/$(TARGET_SETUP)
