@@ -200,13 +200,13 @@ impl<F: PrimeField> StdRangeCheck<F> {
 
     pub fn get_range(&self, min: BigInt, max: BigInt, predefined: Option<bool>) -> usize {
         // Default predefined value in STD is true
-        let predefined = if predefined.is_none() { true } else { predefined.unwrap() };
+        let predefined = predefined.unwrap_or(true);
 
         let ranges = self.ranges.lock().unwrap();
         if let Some((id, _)) =
             ranges.iter().enumerate().find(|(_, r)| r.range == (predefined, min.clone(), max.clone()))
         {
-            return id;
+            id
         } else {
             // If the range was not computed in the setup phase, error
             let name = if predefined { "Predefined" } else { "Specified" };

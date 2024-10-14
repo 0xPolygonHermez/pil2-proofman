@@ -43,7 +43,7 @@ impl<F: PrimeField> U16Air<F> {
             HintFieldValue::Field(value) => value
                 .as_canonical_biguint()
                 .to_usize()
-                .expect(&format!("Aigroup_id cannot be converted to usize: {}", value)),
+                .unwrap_or_else(|| panic!("Aigroup_id cannot be converted to usize: {}", value)),
             _ => {
                 log::error!("Aigroup_id hint must be a field element");
                 panic!();
@@ -53,7 +53,7 @@ impl<F: PrimeField> U16Air<F> {
             HintFieldValue::Field(value) => value
                 .as_canonical_biguint()
                 .to_usize()
-                .expect(&format!("Air_id cannot be converted to usize: {}", value)),
+                .unwrap_or_else(|| panic!("Air_id cannot be converted to usize: {}", value)),
             _ => {
                 log::error!("Air_id hint must be a field element");
                 panic!();
@@ -122,9 +122,9 @@ impl<F: PrimeField> U16Air<F> {
 impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
     fn start_proof(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         // Obtain info from the mul hints
-        let setup = sctx
-            .get_partial_setup(self.airgroup_id, self.air_id)
-            .expect(&format!("Setup not found for airgroup_id: {}, air_id: {}", self.airgroup_id, self.air_id));
+        let setup = sctx.get_partial_setup(self.airgroup_id, self.air_id).unwrap_or_else(|_| {
+            panic!("Setup not found for airgroup_id: {}, air_id: {}", self.airgroup_id, self.air_id)
+        });
         let u16air_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "u16air");
         if !u16air_hints.is_empty() {
             self.hint.store(u16air_hints[0], Ordering::Release);
