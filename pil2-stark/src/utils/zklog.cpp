@@ -20,6 +20,9 @@ zkLog::zkLog() : jsonLogs(true)
 
 void zkLog::log(const zkLogType type, const string &message, const vector<LogTag> *tags)
 {
+
+
+#ifndef __BC_TREE__
 #ifdef LIB_API_H
     switch (type)
     {
@@ -138,5 +141,6 @@ void zkLog::log(const zkLogType type, const string &message, const vector<LogTag
         }
     }
     unlock();
+#endif
 #endif
 }

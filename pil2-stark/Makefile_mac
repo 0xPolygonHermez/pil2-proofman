@@ -9,13 +9,17 @@ SETUP_DIRS := ./src/rapidsnark
 SETUP_DPNDS_DIR := src/ffiasm
 WITNESS_LIB := ./witness_lib
 
-
 CXX := g++
 #AS := nasm
 CXXFLAGS := -std=c++17 -Wall -pthread -Wno-unused-label -rdynamic -I/opt/homebrew/opt/gmp/include  -I/opt/homebrew/Cellar/libomp/19.1.1/include/ -I/opt/homebrew/Cellar/nlohmann-json/3.11.3/include/ #-Wfatal-errors
 #LDFLAGS := -lprotobuf -lsodium -lgpr -lpthread -lpqxx -lpq -lgmp -lstdc++ -lgmpxx -lsecp256k1 -lcrypto -luuid -fopenmp -liomp5 
-LDFLAGS := -L/opt/homebrew/opt/gmp/lib -lprotobuf -lsodium -lgpr -lpthread -lpqxx -lpq -lgmp -lstdc++ -lgmpxx -lsecp256k1 -lcrypto -luuid -Xpreprocessor -fopenmp  -liomp5 -L/opt/homebrew/opt/gmp/lib
+LDFLAGS :=  -lpthread -lgmp -lstdc++ -lgmpxx -lomp -Xpreprocessor -fopenmp  -L/opt/homebrew/opt/gmp/lib -L/opt/homebrew/opt/gmp/lib -L/opt/homebrew/opt/google-benchmark/lib -L/opt/homebrew/opt/googletest/lib -L/opt/homebrew/Cellar/libomp/19.1.1/lib -lgtest -lgtest_main
+
+#LDFLAGS := -L/opt/homebrew/opt/gmp/lib -lprotobuf -lsodium -lgpr -lpthread -lpqxx -lpq -lgmp -lstdc++ -lgmpxx -lsecp256k1 -lcrypto -luuid -Xpreprocessor -fopenmp  -liomp5 -L/opt/homebrew/opt/gmp/lib
 #LDFLAGS := -lprotobuf -lsodium -lgpr -lpthread -lpqxx -lpq -lgmp -lstdc++ -lgmpxx -lsecp256k1 -lcrypto -luuid -Xpreprocessor -fopenmp  -liomp5 
+
+
+
 
 CFLAGS := -Xpreprocessor -fopenmp
 ASFLAGS := -felf64
@@ -23,9 +27,9 @@ ASFLAGS := -felf64
 # Check if AVX-512 is supported
 AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
 ifneq ($(AVX512_SUPPORTED),)
-    CXXFLAGS += -mavx512f -D__AVX512__
+    CXXFLAGS += -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
     $(info AVX-512 is supported by the CPU)
-	USE_ASSEMBLY := 1
+	CXXFLAGS += -D__USE_ASSEMBLY__
 else
     $(info AVX-512 is not supported by the CPU)
     
@@ -34,10 +38,10 @@ else
     ifneq ($(AVX2_SUPPORTED),)
         CXXFLAGS += -mavx2 -D__AVX2__
         $(info AVX2 is supported by the CPU)
-		USE_ASSEMBLY := 1
+		CXXFLAGS += -D__USE_ASSEMBLY__
     else
         $(info AVX2 is not supported by the CPU)
-		USE_ASSEMBLY := 0  # Neither AVX-512 nor AVX2 is supported
+		CXXFLAGS += -D__EXCLUDE_BN128__
     endif
 endif
 
@@ -65,7 +69,8 @@ SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./sr
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
 DEPS_STARKS_LIB := $(OBJS_STARKS_LIB:.o=.d)
 
-SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name *.cpp -or -name *.c -or -name *.asm -or -name *.cc)
+#SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name *.cpp -or -name *.c -or -name *.asm -or -name *.cc)
+SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeGL.cpp  ./src/utils/* -name *.cpp -or -name *.c  -or -name *.cc)
 OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)
 DEPS_BCT := $(OBJS_BCT:.o=.d)
 
@@ -84,6 +89,7 @@ all: $(BUILD_DIR)/$(TARGET_STARKS_LIB)
 starks_lib: CXXFLAGS_EXT := -D__ZKEVM_LIB__ -fPIC#we decided to use the same flags for both libraries
 starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
 
+bctree: CXXFLAGS_EXT := -D__BC_TREE__
 bctree: $(BUILD_DIR)/$(TARGET_BCT)
 
 fflonk_setup: $(BUILD_DIR)/$(TARGET_SETUP)
