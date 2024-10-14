@@ -33,7 +33,35 @@ pub struct SpecifiedRanges<F: PrimeField> {
 impl<F: PrimeField> SpecifiedRanges<F> {
     const MY_NAME: &'static str = "SpecRang";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>, airgroup_id: usize, air_id: usize) -> Arc<Self> {
+    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
+        let pctx = wcm.get_arc_pctx();
+        let sctx = wcm.get_arc_sctx();
+
+        // Scan global hints to get the airgroup_id and air_id
+        let hint_global = get_hint_ids_by_name(sctx.get_global_bin(), "specified_ranges");
+        let airgroup_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "airgroup_id", false);
+        let air_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "air_id", false);
+        let airgroup_id = match airgroup_id {
+            HintFieldValue::Field(value) => value
+                .as_canonical_biguint()
+                .to_usize()
+                .expect(&format!("Aigroup_id cannot be converted to usize: {}", value)),
+            _ => {
+                log::error!("Aigroup_id hint must be a field element");
+                panic!();
+            }
+        };
+        let air_id = match air_id {
+            HintFieldValue::Field(value) => value
+                .as_canonical_biguint()
+                .to_usize()
+                .expect(&format!("Air_id cannot be converted to usize: {}", value)),
+            _ => {
+                log::error!("Air_id hint must be a field element");
+                panic!();
+            }
+        };
+
         let specified_ranges = Arc::new(Self {
             wcm: wcm.clone(),
             hints: Mutex::new(Vec::new()),
@@ -114,120 +142,113 @@ impl<F: PrimeField> SpecifiedRanges<F> {
 
 impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
     fn start_proof(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        // TODO: We can optimize this
-        // Scan the pilout for airs that have rc-related hints
-        let air_groups = pctx.pilout.air_groups();
+        // Obtain info from the mul hints
+        let setup = sctx
+            .get_partial_setup(self.airgroup_id, self.air_id)
+            .expect(&format!("Setup not found for airgroup_id: {}, air_id: {}", self.airgroup_id, self.air_id));
+        let specified_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges");
         let mut hints_guard = self.hints.lock().unwrap();
         let mut ranges_guard = self.ranges.lock().unwrap();
-        for air_group in air_groups.iter() {
-            let airs = air_group.airs();
-            for air in airs.iter() {
-                let airgroup_id = air.airgroup_id;
-                let air_id = air.air_id;
+        if !specified_hints.is_empty() {
+            for (index, hint) in specified_hints.iter().enumerate() {
+                if index >= 1 {
+                    let predefined = get_hint_field_constant::<F>(
+                        &sctx,
+                        self.airgroup_id,
+                        self.air_id,
+                        *hint as usize,
+                        "predefined",
+                        HintFieldOptions::default(),
+                    );
+                    let min = get_hint_field_constant::<F>(
+                        &sctx,
+                        self.airgroup_id,
+                        self.air_id,
+                        *hint as usize,
+                        "min",
+                        HintFieldOptions::default(),
+                    );
+                    let min_neg = get_hint_field_constant::<F>(
+                        &sctx,
+                        self.airgroup_id,
+                        self.air_id,
+                        *hint as usize,
+                        "min_neg",
+                        HintFieldOptions::default(),
+                    );
+                    let max = get_hint_field_constant::<F>(
+                        &sctx,
+                        self.airgroup_id,
+                        self.air_id,
+                        *hint as usize,
+                        "max",
+                        HintFieldOptions::default(),
+                    );
+                    let max_neg = get_hint_field_constant::<F>(
+                        &sctx,
+                        self.airgroup_id,
+                        self.air_id,
+                        *hint as usize,
+                        "max_neg",
+                        HintFieldOptions::default(),
+                    );
 
-                let setup = sctx.get_partial_setup(airgroup_id, air_id).expect("REASON");
-                let hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges");
-
-                for (index, hint) in hints.iter().enumerate() {
-                    if index >= 1 {
-                        let predefined = get_hint_field_constant::<F>(
-                            &sctx,
-                            airgroup_id,
-                            air_id,
-                            *hint as usize,
-                            "predefined",
-                            HintFieldOptions::default(),
-                        );
-                        let min = get_hint_field_constant::<F>(
-                            &sctx,
-                            airgroup_id,
-                            air_id,
-                            *hint as usize,
-                            "min",
-                            HintFieldOptions::default(),
-                        );
-                        let min_neg = get_hint_field_constant::<F>(
-                            &sctx,
-                            airgroup_id,
-                            air_id,
-                            *hint as usize,
-                            "min_neg",
-                            HintFieldOptions::default(),
-                        );
-                        let max = get_hint_field_constant::<F>(
-                            &sctx,
-                            airgroup_id,
-                            air_id,
-                            *hint as usize,
-                            "max",
-                            HintFieldOptions::default(),
-                        );
-                        let max_neg = get_hint_field_constant::<F>(
-                            &sctx,
-                            airgroup_id,
-                            air_id,
-                            *hint as usize,
-                            "max_neg",
-                            HintFieldOptions::default(),
-                        );
-
-                        let HintFieldValue::Field(predefined) = predefined else {
-                            log::error!("Predefined hint must be a field element");
+                    let HintFieldValue::Field(predefined) = predefined else {
+                        log::error!("Predefined hint must be a field element");
+                        panic!();
+                    };
+                    let predefined = {
+                        if !predefined.is_zero() && !predefined.is_one() {
+                            log::error!("Predefined hint must be either 0 or 1");
                             panic!();
-                        };
-                        let predefined = {
-                            if !predefined.is_zero() && !predefined.is_one() {
+                        }
+                        predefined.is_one()
+                    };
+                    let HintFieldValue::Field(min) = min else {
+                        log::error!("Min hint must be a field element");
+                        panic!();
+                    };
+                    let min_neg = match min_neg {
+                        HintFieldValue::Field(value) => {
+                            if value.is_zero() {
+                                false
+                            } else if value.is_one() {
+                                true
+                            } else {
                                 log::error!("Predefined hint must be either 0 or 1");
-                                panic!();
+                                panic!("Invalid predefined hint value"); // Or return Err if you prefer error handling
                             }
-                            predefined.is_one()
-                        };
-                        let HintFieldValue::Field(min) = min else {
-                            log::error!("Min hint must be a field element");
-                            panic!();
-                        };
-                        let min_neg = match min_neg {
-                            HintFieldValue::Field(value) => {
-                                if value.is_zero() {
-                                    false
-                                } else if value.is_one() {
-                                    true
-                                } else {
-                                    log::error!("Predefined hint must be either 0 or 1");
-                                    panic!("Invalid predefined hint value"); // Or return Err if you prefer error handling
-                                }
+                        }
+                        _ => {
+                            log::error!("Max_neg hint must be a field element");
+                            panic!("Invalid hint type"); // Or return Err if you prefer error handling
+                        }
+                    };
+                    let HintFieldValue::Field(max) = max else {
+                        log::error!("Max hint must be a field element");
+                        panic!();
+                    };
+                    let max_neg = match max_neg {
+                        HintFieldValue::Field(value) => {
+                            if value.is_zero() {
+                                false
+                            } else if value.is_one() {
+                                true
+                            } else {
+                                log::error!("Predefined hint must be either 0 or 1");
+                                panic!("Invalid predefined hint value"); // Or return Err if you prefer error handling
                             }
-                            _ => {
-                                log::error!("Max_neg hint must be a field element");
-                                panic!("Invalid hint type"); // Or return Err if you prefer error handling
-                            }
-                        };
-                        let HintFieldValue::Field(max) = max else {
-                            log::error!("Max hint must be a field element");
-                            panic!();
-                        };
-                        let max_neg = match max_neg {
-                            HintFieldValue::Field(value) => {
-                                if value.is_zero() {
-                                    false
-                                } else if value.is_one() {
-                                    true
-                                } else {
-                                    log::error!("Predefined hint must be either 0 or 1");
-                                    panic!("Invalid predefined hint value"); // Or return Err if you prefer error handling
-                                }
-                            }
-                            _ => {
-                                log::error!("Max_neg hint must be a field element");
-                                panic!("Invalid hint type"); // Or return Err if you prefer error handling
-                            }
-                        };
+                        }
+                        _ => {
+                            log::error!("Max_neg hint must be a field element");
+                            panic!("Invalid hint type"); // Or return Err if you prefer error handling
+                        }
+                    };
 
-                        ranges_guard.push(Range(min, max, min_neg, max_neg, predefined));
-                    }
-
-                    hints_guard.push(*hint);
+                    ranges_guard.push(Range(min, max, min_neg, max_neg, predefined));
                 }
+
+                hints_guard.push(*hint);
             }
         }
 
@@ -252,24 +273,6 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
 
         // Set the number of rows
         let hint = hints_guard[0];
-
-        // let airgroup_id = get_hint_field_gc::<F>(
-        //     pctx.clone(),
-        //     sctx.clone(),
-        //     self.hint.load(Ordering::Acquire),
-        //     "airgroup_id",
-        //     false,
-        // );
-        // println!("U8 airgroup_id: {}", airgroup_id);
-
-        // let air_id = get_hint_field_gc::<F>(
-        //     pctx.clone(),
-        //     sctx.clone(),
-        //     self.hint.load(Ordering::Acquire),
-        //     "air_id",
-        //     false,
-        // );
-        // println!("U8 air_id: {}", air_id);
 
         let num_rows = get_hint_field::<F>(
             &sctx,
