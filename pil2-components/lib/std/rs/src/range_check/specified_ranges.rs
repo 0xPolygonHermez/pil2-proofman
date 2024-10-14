@@ -96,8 +96,10 @@ impl<F: PrimeField> SpecifiedRanges<F> {
         for (range, input, mul) in &drained_inputs {
             let value = *input - range.0;
 
-            let value =
-                value.as_canonical_biguint().to_usize().unwrap_or_else(|| panic!("Cannot convert to usize: {:?}", value));
+            let value = value
+                .as_canonical_biguint()
+                .to_usize()
+                .unwrap_or_else(|| panic!("Cannot convert to usize: {:?}", value));
 
             let range_index =
                 ranges.iter().position(|r| r == range).unwrap_or_else(|| panic!("Range {:?} not found", range));
