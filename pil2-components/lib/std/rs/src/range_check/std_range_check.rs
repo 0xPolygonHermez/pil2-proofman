@@ -17,8 +17,6 @@ use crate::{Decider, Range, SpecifiedRanges, StdMode, ModeName, U16Air, U8Air};
 const BYTE: u8 = 255;
 const TWOBYTES: u16 = 65535;
 
-const STD_RANGE_CHECK_VARIANTS: usize = 3;
-
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 pub enum RangeCheckAir {
     U8Air,
@@ -48,12 +46,6 @@ pub struct StdRangeCheck<F: PrimeField> {
     specified_ranges: Option<Arc<SpecifiedRanges<F>>>,
 }
 
-pub struct RCAirData {
-    pub air_name: RangeCheckAir,
-    pub airgroup_id: usize,
-    pub air_id: usize,
-}
-
 impl<F: PrimeField> Decider<F> for StdRangeCheck<F> {
     fn decide(&self, sctx: Arc<SetupCtx>, pctx: Arc<ProofCtx<F>>) {
         // Scan the pilout for airs that have rc-related hints
@@ -80,39 +72,18 @@ impl<F: PrimeField> Decider<F> for StdRangeCheck<F> {
 impl<F: PrimeField> StdRangeCheck<F> {
     const _MY_NAME: &'static str = "STD Range Check";
 
-    pub fn new(mode: StdMode, wcm: Arc<WitnessManager<F>>, air_data: Option<Vec<RCAirData>>) -> Arc<Self> {
-        let mut u8air = None;
-        let mut u16air = None;
-        let mut specified_ranges = None;
-        // Check the air data and register the range check airs if they exist
-        if let Some(air_data) = air_data.as_ref() {
-            if air_data.len() > STD_RANGE_CHECK_VARIANTS {
-                log::error!(
-                    "The air_data provided has incorrect lenght: expected at most {}, found {}",
-                    STD_RANGE_CHECK_VARIANTS,
-                    air_data.len()
-                );
-                panic!();
-            }
+    pub fn new(mode: StdMode, wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
+        let sctx = wcm.get_arc_sctx();
 
-            for air in air_data {
-                let air_name = &air.air_name;
-                let airgroup_id = air.airgroup_id;
-                let air_id = air.air_id;
+        // Scan global hints to know which airs are associated with the range check
+        let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
+        let u16air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
+        let specified_ranges_hint = get_hint_ids_by_name(sctx.get_global_bin(), "specified_ranges");
 
-                match air_name {
-                    RangeCheckAir::U8Air => {
-                        u8air = Some(U8Air::new(wcm.clone(), airgroup_id, air_id));
-                    }
-                    RangeCheckAir::U16Air => {
-                        u16air = Some(U16Air::new(wcm.clone(), airgroup_id, air_id));
-                    }
-                    RangeCheckAir::SpecifiedRanges => {
-                        specified_ranges = Some(SpecifiedRanges::new(wcm.clone(), airgroup_id, air_id));
-                    }
-                }
-            }
-        }
+        let u8air = if !u8air_hint.is_empty() { Some(U8Air::new(wcm.clone())) } else { None };
+        let u16air = if !u16air_hint.is_empty() { Some(U16Air::new(wcm.clone())) } else { None };
+        let specified_ranges =
+            if !specified_ranges_hint.is_empty() { Some(SpecifiedRanges::new(wcm.clone())) } else { None };
 
         let std_range_check = Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u16air, specified_ranges });
 

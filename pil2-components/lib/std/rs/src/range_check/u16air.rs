@@ -31,7 +31,35 @@ pub struct U16Air<F: Copy + Display> {
 impl<F: PrimeField> U16Air<F> {
     const MY_NAME: &'static str = "U16Air  ";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>, airgroup_id: usize, air_id: usize) -> Arc<Self> {
+    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
+        let pctx = wcm.get_arc_pctx();
+        let sctx = wcm.get_arc_sctx();
+
+        // Scan global hints to get the airgroup_id and air_id
+        let hint_global = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
+        let airgroup_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "airgroup_id", false);
+        let air_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "air_id", false);
+        let airgroup_id = match airgroup_id {
+            HintFieldValue::Field(value) => value
+                .as_canonical_biguint()
+                .to_usize()
+                .expect(&format!("Aigroup_id cannot be converted to usize: {}", value)),
+            _ => {
+                log::error!("Aigroup_id hint must be a field element");
+                panic!();
+            }
+        };
+        let air_id = match air_id {
+            HintFieldValue::Field(value) => value
+                .as_canonical_biguint()
+                .to_usize()
+                .expect(&format!("Air_id cannot be converted to usize: {}", value)),
+            _ => {
+                log::error!("Air_id hint must be a field element");
+                panic!();
+            }
+        };
+
         let u16air = Arc::new(Self {
             wcm: wcm.clone(),
             hint: AtomicU64::new(0),
@@ -93,22 +121,13 @@ impl<F: PrimeField> U16Air<F> {
 
 impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
     fn start_proof(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        // TODO: We can optimize this
-        // Scan the pilout for airs that have rc-related hints
-        let air_groups = pctx.pilout.air_groups();
-        for air_group in air_groups.iter() {
-            let airs = air_group.airs();
-            for air in airs.iter() {
-                let airgroup_id = air.airgroup_id;
-                let air_id = air.air_id;
-                let setup = sctx.get_partial_setup(airgroup_id, air_id).expect("REASON");
-
-                // Obtain info from the mul hints
-                let u16air_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "u16air");
-                if !u16air_hints.is_empty() {
-                    self.hint.store(u16air_hints[0], Ordering::Release);
-                }
-            }
+        // Obtain info from the mul hints
+        let setup = sctx
+            .get_partial_setup(self.airgroup_id, self.air_id)
+            .expect(&format!("Setup not found for airgroup_id: {}, air_id: {}", self.airgroup_id, self.air_id));
+        let u16air_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "u16air");
+        if !u16air_hints.is_empty() {
+            self.hint.store(u16air_hints[0], Ordering::Release);
         }
 
         // self.setup_repository.replace(sctx.setups.clone());
@@ -120,30 +139,12 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
         // Add a new air instance. Since U16Air is a table, only this air instance is needed
         let mut air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
 
-        let airgroup_id = get_hint_field_gc::<F>(
-            pctx.clone(),
-            sctx.clone(),
-            self.hint.load(Ordering::Acquire),
-            "airgroup_id",
-            false,
-        );
-        println!("U16 airgroup_id: {}", airgroup_id);
-
-        let air_id = get_hint_field_gc::<F>(
-            pctx.clone(),
-            sctx.clone(),
-            self.hint.load(Ordering::Acquire),
-            "air_id",
-            false,
-        );
-        println!("U16 air_id: {}", air_id);
-
         *self.mul_column.lock().unwrap() = get_hint_field::<F>(
             self.wcm.get_sctx(),
             &pctx.public_inputs,
             &pctx.challenges,
             &mut air_instance,
-            self.hint.load(Ordering::Acquire) as usize,
+            u16air_hints[0] as usize,
             "reference",
             HintFieldOptions::dest(),
         );

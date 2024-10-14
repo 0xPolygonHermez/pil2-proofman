@@ -10,7 +10,7 @@ use rayon::Scope;
 use proofman::WitnessManager;
 use proofman_common::ProofCtx;
 
-use crate::{RCAirData, StdMode, ModeName, StdProd, StdRangeCheck, StdSum};
+use crate::{StdMode, ModeName, StdProd, StdRangeCheck, StdSum};
 
 pub struct Std<F: PrimeField> {
     range_check: Arc<StdRangeCheck<F>>,
@@ -20,18 +20,15 @@ pub struct Std<F: PrimeField> {
 impl<F: PrimeField> Std<F> {
     const MY_NAME: &'static str = "STD     ";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>, rc_air_data: Option<Vec<RCAirData>>) -> Arc<Self> {
+    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let mode = StdMode::new(ModeName::Standard, None, 10);
 
         log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, mode.name);
 
         // Instantiate the STD components
-        StdProd::new(mode.clone(), wcm.clone());
-        StdSum::new(mode.clone(), wcm.clone());
-
-        // In particular, the range check component needs to be instantiated with the ids
-        // of its (possibly) associated AIRs: U8Air ...
-        let range_check = StdRangeCheck::new(mode, wcm, rc_air_data);
+        let _ = StdProd::new(mode.clone(), wcm.clone());
+        let _ = StdSum::new(mode.clone(), wcm.clone());
+        let range_check = StdRangeCheck::new(mode, wcm);
 
         Arc::new(Self { range_check, range_check_predecessors: AtomicU32::new(0) })
     }
