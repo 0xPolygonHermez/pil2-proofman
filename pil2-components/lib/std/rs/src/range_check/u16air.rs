@@ -6,7 +6,7 @@ use std::{
 use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
-use proofman::{WitnessComponent, WitnessManager};
+use proofman::{get_hint_field_gc, WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
 use proofman_hints::{get_hint_field, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue};
@@ -120,25 +120,23 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
         // Add a new air instance. Since U16Air is a table, only this air instance is needed
         let mut air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
 
-        // let airgroup_id = get_hint_field::<F>(
-        //     &sctx,
-        //     &pctx.public_inputs,
-        //     &pctx.challenges,
-        //     &mut air_instance,
-        //     self.hint.load(Ordering::Acquire) as usize,
-        //     "airgroup_id",
-        //     HintFieldOptions::dest(),
-        // );
+        let airgroup_id = get_hint_field_gc::<F>(
+            pctx.clone(),
+            sctx.clone(),
+            self.hint.load(Ordering::Acquire),
+            "airgroup_id",
+            false,
+        );
+        println!("U16 airgroup_id: {}", airgroup_id);
 
-        // let air_id = get_hint_field::<F>(
-        //     &sctx,
-        //     &pctx.public_inputs,
-        //     &pctx.challenges,
-        //     &mut air_instance,
-        //     self.hint.load(Ordering::Acquire) as usize,
-        //     "air_id",
-        //     HintFieldOptions::dest(),
-        // );
+        let air_id = get_hint_field_gc::<F>(
+            pctx.clone(),
+            sctx.clone(),
+            self.hint.load(Ordering::Acquire),
+            "air_id",
+            false,
+        );
+        println!("U16 air_id: {}", air_id);
 
         *self.mul_column.lock().unwrap() = get_hint_field::<F>(
             self.wcm.get_sctx(),

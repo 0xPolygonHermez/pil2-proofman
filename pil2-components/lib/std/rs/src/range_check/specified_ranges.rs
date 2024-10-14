@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
-use proofman::{WitnessComponent, WitnessManager};
+use proofman::{get_hint_field_gc, WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{
     get_hint_field, get_hint_field_constant, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue,
@@ -251,25 +251,23 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         // Set the number of rows
         let hint = hints_guard[0];
 
-        // let airgroup_id = get_hint_field::<F>(
-        //     &sctx,
-        //     &pctx.public_inputs,
-        //     &pctx.challenges,
-        //     &mut air_instance,
-        //     hint as usize,
+        // let airgroup_id = get_hint_field_gc::<F>(
+        //     pctx.clone(),
+        //     sctx.clone(),
+        //     self.hint.load(Ordering::Acquire),
         //     "airgroup_id",
-        //     HintFieldOptions::dest(),
+        //     false,
         // );
+        // println!("U8 airgroup_id: {}", airgroup_id);
 
-        // let air_id = get_hint_field::<F>(
-        //     &sctx,
-        //     &pctx.public_inputs,
-        //     &pctx.challenges,
-        //     &mut air_instance,
-        //     hint as usize,
+        // let air_id = get_hint_field_gc::<F>(
+        //     pctx.clone(),
+        //     sctx.clone(),
+        //     self.hint.load(Ordering::Acquire),
         //     "air_id",
-        //     HintFieldOptions::dest(),
+        //     false,
         // );
+        // println!("U8 air_id: {}", air_id);
 
         let num_rows = get_hint_field::<F>(
             &sctx,
