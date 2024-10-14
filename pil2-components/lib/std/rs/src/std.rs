@@ -46,8 +46,13 @@ impl<F: PrimeField> Std<F> {
         }
     }
 
+    /// Gets the range for the range check.
+    pub fn get_range(&self, min: BigInt, max: BigInt, predefined: Option<bool>) -> usize {
+        self.range_check.get_range(min, max, predefined)
+    }
+
     /// Processes the inputs for the range check.
-    pub fn range_check(&self, val: F, min: BigInt, max: BigInt, multiplicity: F, predefined: Option<bool>) {
-        self.range_check.assign_values(val, min, max, multiplicity, predefined);
+    pub fn range_check(&self, val: F, multiplicity: F, id: usize) {
+        self.range_check.assign_values(val, multiplicity, id);
     }
 }

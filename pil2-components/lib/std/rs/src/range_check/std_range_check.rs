@@ -121,7 +121,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
         std_range_check
     }
 
-    pub fn register_range(&self, sctx: Arc<SetupCtx>, airgroup_id: usize, air_id: usize, hint: u64) {
+    fn register_range(&self, sctx: Arc<SetupCtx>, airgroup_id: usize, air_id: usize, hint: u64) {
         let predefined = get_hint_field_constant::<F>(
             &sctx,
             airgroup_id,
@@ -227,17 +227,29 @@ impl<F: PrimeField> StdRangeCheck<F> {
         ranges.push(range);
     }
 
-    pub fn assign_values(&self, value: F, min: BigInt, max: BigInt, multiplicity: F, predefined: Option<bool>) {
-        // Default predefined value is true
+    pub fn get_range(&self, min: BigInt, max: BigInt, predefined: Option<bool>) -> usize {
+        // Default predefined value in STD is true
         let predefined = if predefined.is_none() { true } else { predefined.unwrap() };
 
-        // If the range was not computed in the setup phase, error
         let ranges = self.ranges.lock().unwrap();
-        let range_item = ranges.iter().find(|r| r.range == (predefined, min.clone(), max.clone()));
-
-        if range_item.is_none() {
+        if let Some((id, _)) =
+            ranges.iter().enumerate().find(|(_, r)| r.range == (predefined, min.clone(), max.clone()))
+        {
+            return id;
+        } else {
+            // If the range was not computed in the setup phase, error
             let name = if predefined { "Predefined" } else { "Specified" };
             log::error!("{name} range not found: [min,max] = [{},{}]", min, max);
+            panic!();
+        }
+    }
+
+    pub fn assign_values(&self, value: F, multiplicity: F, id: usize) {
+        let ranges = self.ranges.lock().unwrap();
+        let range_item = ranges.get(id);
+
+        if range_item.is_none() {
+            log::error!("Range with id {} not found", id);
             panic!();
         }
 
