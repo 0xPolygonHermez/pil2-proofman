@@ -186,11 +186,11 @@ pub fn const_pols_free_c(p_const_pols: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn expressions_bin_new_c(filename: &str, global: bool) -> *mut c_void {
+pub fn expressions_bin_new_c(filename: &str, global: bool, verifier: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global)
+        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global, verifier)
     }
 }
 
@@ -231,6 +231,39 @@ pub fn get_hint_field_c(
             dest,
             inverse,
             print_expression,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn mul_hint_fields_c(
+    p_setup_ctx: *mut c_void,
+    steps_params: StepsParams,
+    hint_id: u64,
+    hint_field_dest: &str,
+    hint_field_name1: &str,
+    inverse1: bool,
+    hint_field_name2: &str,
+    inverse2: bool,
+) -> u64 {
+    let field_dest = CString::new(hint_field_dest).unwrap();
+    let field_name1 = CString::new(hint_field_name1).unwrap();
+    let field_name2 = CString::new(hint_field_name2).unwrap();
+
+    unsafe {
+        mul_hint_fields(
+            p_setup_ctx,
+            steps_params.buffer,
+            steps_params.public_inputs,
+            steps_params.challenges,
+            steps_params.subproof_values,
+            steps_params.evals,
+            hint_id,
+            field_dest.as_ptr() as *mut std::os::raw::c_char,
+            field_name1.as_ptr() as *mut std::os::raw::c_char,
+            field_name2.as_ptr() as *mut std::os::raw::c_char,
+            inverse1,
+            inverse2,
         )
     }
 }
@@ -817,7 +850,7 @@ pub fn const_pols_with_tree_new_c(_filename: &str, _tree_filename: &str, _p_star
 pub fn const_pols_free_c(_p_const_pols: *mut c_void) {}
 
 #[cfg(feature = "no_lib_link")]
-pub fn expressions_bin_new_c(_filename: &str, _global: bool) -> *mut c_void {
+pub fn expressions_bin_new_c(_filename: &str, _global: bool, _verifier: bool) -> *mut c_void {
     std::ptr::null_mut()
 }
 

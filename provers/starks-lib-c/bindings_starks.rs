@@ -120,10 +120,11 @@ extern "C" {
     pub fn const_pols_free(pConstPols: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19expressions_bin_newPcb"]
+    #[link_name = "\u{1}_Z19expressions_bin_newPcbb"]
     pub fn expressions_bin_new(
         filename: *mut ::std::os::raw::c_char,
         global: bool,
+        verifier: bool,
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
@@ -145,6 +146,23 @@ extern "C" {
         inverse: bool,
         print_expression: bool,
     ) -> *mut ::std::os::raw::c_void;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z15mul_hint_fieldsPvS_S_S_S_S_mPcS0_S0_bb"]
+    pub fn mul_hint_fields(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        buffer: *mut ::std::os::raw::c_void,
+        public_inputs: *mut ::std::os::raw::c_void,
+        challenges: *mut ::std::os::raw::c_void,
+        subproofValues: *mut ::std::os::raw::c_void,
+        evals: *mut ::std::os::raw::c_void,
+        hintId: u64,
+        hintFieldNameDest: *mut ::std::os::raw::c_char,
+        hintFieldName1: *mut ::std::os::raw::c_char,
+        hintFieldName2: *mut ::std::os::raw::c_char,
+        inverse1: bool,
+        inverse2: bool,
+    ) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z14set_hint_fieldPvS_S_S_mPc"]

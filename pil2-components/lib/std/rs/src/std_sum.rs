@@ -14,8 +14,7 @@ use log::debug;
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{
-    format_vec, get_hint_field, get_hint_field_a, get_hint_ids_by_name, set_hint_field, set_hint_field_val,
-    HintFieldOptions, HintFieldOutput, HintFieldValue,
+    format_vec, get_hint_field, get_hint_field_a, get_hint_ids_by_name, mul_hint_fields, set_hint_field, set_hint_field_val, HintFieldOptions, HintFieldOutput, HintFieldValue
 };
 
 use crate::{Decider, StdMode, ModeName};
@@ -254,47 +253,63 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     if self.mode.name == ModeName::Debug {
                         self.debug(&pctx, &sctx, air_instance, num_rows, debug_hints_data.clone());
                     }
-
+                    
                     // Populate the im columns
                     for hint in im_hints {
-                        let mut im = get_hint_field::<F>(
+                        // let mut im = get_hint_field::<F>(
+                        //     &sctx,
+                        //     &pctx.public_inputs,
+                        //     &pctx.challenges,
+                        //     air_instance,
+                        //     *hint as usize,
+                        //     "reference",
+                        //     HintFieldOptions::dest(),
+                        // );
+                        // let num = get_hint_field::<F>(
+                        //     &sctx,
+                        //     &pctx.public_inputs,
+                        //     &pctx.challenges,
+                        //     air_instance,
+                        //     *hint as usize,
+                        //     "numerator",
+                        //     HintFieldOptions::default(),
+                        // );
+                        // let den = get_hint_field::<F>(
+                        //     &sctx,
+                        //     &pctx.public_inputs,
+                        //     &pctx.challenges,
+                        //     air_instance,
+                        //     *hint as usize,
+                        //     "denominator",
+                        //     HintFieldOptions::inverse(),
+                        // );
+                        
+                        // // Apply a map&reduce strategy to compute the division
+                        // // TODO! Explore how to do it in only one step
+                        // // Step 1: Compute the division in parallel
+                        // let res: Vec<HintFieldOutput<F>> =
+                        //     (0..num_rows).into_par_iter().map(|i| num.get(i) * den.get(i)).collect(); // Collect results into a vector
+                        //                                                                               // Step 2: Store the results in 'im'
+                        
+                        // for (i, &value) in res.iter().enumerate() {
+                        //     im.set(i, value);
+                        // }
+                        // set_hint_field(&sctx, air_instance, *hint, "reference", &im);
+
+                        let id = mul_hint_fields::<F>(
                             &sctx,
                             &pctx.public_inputs,
                             &pctx.challenges,
                             air_instance,
                             *hint as usize,
                             "reference",
-                            HintFieldOptions::dest(),
-                        );
-                        let num = get_hint_field::<F>(
-                            &sctx,
-                            &pctx.public_inputs,
-                            &pctx.challenges,
-                            air_instance,
-                            *hint as usize,
                             "numerator",
                             HintFieldOptions::default(),
-                        );
-                        let den = get_hint_field::<F>(
-                            &sctx,
-                            &pctx.public_inputs,
-                            &pctx.challenges,
-                            air_instance,
-                            *hint as usize,
                             "denominator",
-                            HintFieldOptions::inverse(),
+                            HintFieldOptions::inverse()
                         );
-
-                        // Apply a map&reduce strategy to compute the division
-                        // TODO! Explore how to do it in only one step
-                        // Step 1: Compute the division in parallel
-                        let results: Vec<HintFieldOutput<F>> =
-                            (0..num_rows).into_par_iter().map(|i| num.get(i) * den.get(i)).collect(); // Collect results into a vector
-                                                                                                      // Step 2: Store the results in 'im'
-                        for (i, &value) in results.iter().enumerate() {
-                            im.set(i, value);
-                        }
-                        set_hint_field(&sctx, air_instance, *hint, "reference", &im);
+                        
+                        air_instance.set_commit_calculated(id as usize);
                     }
 
                     // We know that at most one product hint exists
@@ -326,7 +341,6 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
                     gsum.set(0, expr.get(0));
                     for i in 1..num_rows {
-                        // TODO: We should perform the following division in batch using div_lib
                         gsum.set(i, gsum.get(i - 1) + expr.get(i));
                     }
 

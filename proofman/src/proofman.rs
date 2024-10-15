@@ -2,7 +2,7 @@ use libloading::{Library, Symbol};
 use log::{info, trace};
 use p3_field::Field;
 use stark::{StarkBufferAllocator, StarkProver};
-use proofman_starks_lib_c::{save_challenges_c, save_publics_c, stark_verify_c};
+use proofman_starks_lib_c::{save_challenges_c, save_publics_c, stark_verify_c, expressions_bin_new_c, stark_info_new_c};
 use std::fs::{self, File};
 use std::error::Error;
 use std::mem::MaybeUninit;
@@ -645,9 +645,15 @@ impl<F: Field + 'static> ProofMan<F> {
             let p_proof = prover.get_proof();
             let prover_info = prover.get_prover_info();
 
-            let air_name = &proof_ctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
+            let setup_path = proof_ctx.global_info.get_air_setup_path(prover_info.airgroup_id, prover_info.air_id, &ProofType::Basic);
+    
+            let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
+            let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
 
-            let setup = sctx.get_setup(prover_info.airgroup_id, prover_info.air_id).expect("REASON");
+            let p_stark_info = stark_info_new_c(stark_info_path.as_str());
+            let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+
+            let air_name = &proof_ctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
 
             let verkey_file = proof_ctx
                 .global_info
@@ -663,7 +669,8 @@ impl<F: Field + 'static> ProofMan<F> {
 
             let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
             let proof_challenges = prover.get_proof_challenges(steps_fri, challenges_guard.clone());
-            let is_valid_proof = stark_verify_c(p_proof, setup.p_setup.p_stark_info, setup.p_setup.p_expressions_bin, verkey.as_ptr() as *mut c_void, public_inputs, proof_challenges.as_ptr() as *mut c_void);
+
+            let is_valid_proof = stark_verify_c(p_proof, p_stark_info, p_expressions_bin, verkey.as_ptr() as *mut c_void, public_inputs, proof_challenges.as_ptr() as *mut c_void);
             if !is_valid_proof {
                 is_valid = false;
                 log::info!(

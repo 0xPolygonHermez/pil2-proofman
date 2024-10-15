@@ -118,4 +118,4 @@ mkdir -p ./pil2-components/test/std/range_check/build/ \
      --witness-lib ./target/debug/librange_check.so \
      --proving-key ./pil2-components/test/std/range_check/build/provingKey \
      --output-dir ./pil2-components/test/std/range_check/build -d \
-&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/range_check/build/provingKey -p ./pil2-components/test/std/range_check/build
+&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/range_check/build2/provingKey -p ./pil2-components/test/std/range_check/build2
