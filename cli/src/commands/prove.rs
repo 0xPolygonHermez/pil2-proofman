@@ -73,7 +73,7 @@ impl ProveCmd {
             )?,
         };
 
-        println!("Proofs generated successfully");
+        log::info!("Proofs generated successfully");
 
         Ok(())
     }
