@@ -22,7 +22,7 @@ mkdir -p ./pil2-components/test/simple/build/ \
      --witness-lib ./target/debug/libsimple.so \
      --proving-key ./pil2-components/test/simple/build/provingKey \
      --output-dir ./pil2-components/test/simple/build -d \
-&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/simple/build/provingKey -p ./pil2-components/test/simple/build
+&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/simple/build/provingKey -p ./pil2-components/test/simple/build/proofs
 
 ------------------------------------
 CONNECTION
@@ -46,7 +46,7 @@ mkdir -p ./pil2-components/test/std/connection/build/ \
      --witness-lib ./target/debug/libconnection.so \
      --proving-key ./pil2-components/test/std/connection/build/provingKey \
      --output-dir ./pil2-components/test/std/connection/build -d \
-&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/connection/build/provingKey -p ./pil2-components/test/std/connection/build
+&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/connection/build/provingKey -p ./pil2-components/test/std/connection/build/proofs
 
 ------------------------------------
 LOOKUP
@@ -70,7 +70,7 @@ mkdir -p ./pil2-components/test/std/lookup/build/ \
      --witness-lib ./target/debug/liblookup.so \
      --proving-key ./pil2-components/test/std/lookup/build/provingKey \
      --output-dir ./pil2-components/test/std/lookup/build -d \
-&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/lookup/build/provingKey -p ./pil2-components/test/std/lookup/build
+&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/lookup/build/provingKey -p ./pil2-components/test/std/lookup/build/proofs
 
 ------------------------------------
 PERMUTATION
@@ -94,7 +94,7 @@ mkdir -p ./pil2-components/test/std/permutation/build/ \
      --witness-lib ./target/debug/libpermutation.so \
      --proving-key ./pil2-components/test/std/permutation/build/provingKey \
      --output-dir ./pil2-components/test/std/permutation/build -d \
-&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/permutation/build/provingKey -p ./pil2-components/test/std/permutation/build
+&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/permutation/build/provingKey -p ./pil2-components/test/std/permutation/build/proofs
 
 ------------------------------------
 RANGE CHECKS
@@ -118,4 +118,4 @@ mkdir -p ./pil2-components/test/std/range_check/build/ \
      --witness-lib ./target/debug/librange_check.so \
      --proving-key ./pil2-components/test/std/range_check/build/provingKey \
      --output-dir ./pil2-components/test/std/range_check/build -d \
-&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/range_check/build2/provingKey -p ./pil2-components/test/std/range_check/build2
+&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/range_check/build/provingKey -p ./pil2-components/test/std/range_check/build/proofs

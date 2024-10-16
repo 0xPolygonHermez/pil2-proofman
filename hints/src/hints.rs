@@ -1,5 +1,5 @@
 use proofman_starks_lib_c::{
-    get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c, print_by_name_c, print_expression_c, print_row_c,
+    get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c, acc_hint_field_c, print_by_name_c, print_expression_c, print_row_c,
     set_hint_field_c, StepsParams,
 };
 
@@ -688,6 +688,40 @@ pub fn mul_hint_fields<F: Clone + Copy + Debug + Display>(
         hint_field_name2,
         options2.inverse,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn acc_hint_field<F: Clone + Copy + Debug + Display>(
+    setup_ctx: &SetupCtx,
+    public_inputs: &PublicInputs,
+    challenges: &Challenges<F>,
+    air_instance: &mut AirInstance<F>,
+    hint_id: usize,
+    hint_field_dest: &str,
+    hint_field_subprooval: &str,
+    hint_field_name: &str,
+) {
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
+
+    let public_inputs_ptr = (*public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
+    let challenges_ptr = (*challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
+
+    let steps_params = StepsParams {
+        buffer: air_instance.get_buffer_ptr() as *mut c_void,
+        public_inputs: public_inputs_ptr,
+        challenges: challenges_ptr,
+        subproof_values: air_instance.subproof_values.as_ptr() as *mut c_void,
+        evals: air_instance.evals.as_ptr() as *mut c_void,
+    };
+
+    acc_hint_field_c(
+        (&setup.p_setup).into(),
+        steps_params,
+        hint_id as u64,
+        hint_field_dest,
+        hint_field_subprooval,
+        hint_field_name,
+    );
 }
 
 pub fn get_hint_field<F: Clone + Copy + Debug + Display>(

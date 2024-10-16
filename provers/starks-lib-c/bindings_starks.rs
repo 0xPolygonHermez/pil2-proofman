@@ -168,6 +168,21 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z14acc_hint_fieldPvS_S_S_S_S_mPcS0_S0_"]
+    pub fn acc_hint_field(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        buffer: *mut ::std::os::raw::c_void,
+        public_inputs: *mut ::std::os::raw::c_void,
+        challenges: *mut ::std::os::raw::c_void,
+        subproofValues: *mut ::std::os::raw::c_void,
+        evals: *mut ::std::os::raw::c_void,
+        hintId: u64,
+        hintFieldNameDest: *mut ::std::os::raw::c_char,
+        hintFieldNameSubproofVal: *mut ::std::os::raw::c_char,
+        hintFieldName: *mut ::std::os::raw::c_char,
+    );
+}
+extern "C" {
     #[link_name = "\u{1}_Z14set_hint_fieldPvS_S_S_mPc"]
     pub fn set_hint_field(
         pSetupCtx: *mut ::std::os::raw::c_void,

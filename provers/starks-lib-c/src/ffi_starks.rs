@@ -269,6 +269,36 @@ pub fn mul_hint_fields_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn acc_hint_field_c(
+    p_setup_ctx: *mut c_void,
+    steps_params: StepsParams,
+    hint_id: u64,
+    hint_field_dest: &str,
+    hint_field_subproovalue: &str,
+    hint_field_name: &str,
+) {
+
+    let field_dest = CString::new(hint_field_dest).unwrap();
+    let field_subproofvalue = CString::new(hint_field_subproovalue).unwrap();
+    let field_name = CString::new(hint_field_name).unwrap();
+
+    unsafe {
+        acc_hint_field(
+            p_setup_ctx,
+            steps_params.buffer,
+            steps_params.public_inputs,
+            steps_params.challenges,
+            steps_params.subproof_values,
+            steps_params.evals,
+            hint_id,
+            field_dest.as_ptr() as *mut std::os::raw::c_char,
+            field_subproofvalue.as_ptr() as *mut std::os::raw::c_char,
+            field_name.as_ptr() as *mut std::os::raw::c_char,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn set_hint_field_c(
     p_setup_ctx: *mut c_void,
     buffer: *mut c_void,
@@ -891,6 +921,18 @@ pub fn mul_hint_fields_c(
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "mul_hint_fields: This is a mock call because there is no linked library");
     0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn acc_hint_field_c(
+    _p_setup_ctx: *mut c_void,
+    _steps_params: StepsParams,
+    _hint_id: u64,
+    _hint_field_dest: &str,
+    _hint_field_subproovalue: &str,
+    _hint_field_name: &str,
+) {
+    trace!("{}: ··· {}", "ffi     ", "acc_hint_fields: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

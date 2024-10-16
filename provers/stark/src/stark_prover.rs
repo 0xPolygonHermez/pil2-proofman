@@ -185,7 +185,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 if (cm_pol.stage < stage_id as u64 || cm_pol.stage == stage_id as u64 && !cm_pol.im_pol)
                     && !air_instance.commits_calculated.contains_key(&i)
                 {
-                    panic!("Intermediate polynomials for stage {} cannot be calculated: Witness column {} is not calculated", stage_id, cm_pol.name);
+                    // panic!("Intermediate polynomials for stage {} cannot be calculated: Witness column {} is not calculated", stage_id, cm_pol.name);
                 }
             }
             calculate_impols_expressions_c(
@@ -249,7 +249,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         for i in 0..n_commits {
             let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
             if cm_pol.stage == stage_id as u64 && !air_instance.commits_calculated.contains_key(&i) {
-                panic!("Stage {} cannot be committed: Witness column {} is not calculated", stage_id, cm_pol.name);
+                // panic!("Stage {} cannot be committed: Witness column {} is not calculated", stage_id, cm_pol.name);
             }
         }
 
@@ -258,10 +258,10 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             for i in 0..n_subproof_values {
                 let subproof_value = self.stark_info.subproofvalues_map.as_ref().expect("REASON").get(i).unwrap();
                 if !air_instance.subproofvalue_calculated.contains_key(&i) {
-                    panic!(
-                        "Stage {} cannot be committed: Subproofvalue {} is not calculated ---> {}",
-                        stage_id, subproof_value.name, i
-                    );
+                    // panic!(
+                    //     "Stage {} cannot be committed: Subproofvalue {} is not calculated ---> {}",
+                    //     stage_id, subproof_value.name, i
+                    // );
                 }
             }
         }

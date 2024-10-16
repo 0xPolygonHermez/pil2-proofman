@@ -523,3 +523,26 @@ uint64_t setHintField(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilock
 
     return hintFieldVal.id;
 }
+
+void accHintField(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *publicInputs, Goldilocks::Element *challenges, Goldilocks::Element *subproofValues, Goldilocks::Element *evals, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameSubproofVal, std::string hintFieldName) {
+    Hint hint = setupCtx.expressionsBin.hints[hintId];
+
+    auto hintFieldDest = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldNameDest](const HintField& hintField) {
+        return hintField.name == hintFieldNameDest;
+    });
+    HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
+    
+    HintFieldValues hintValues = getHintField(setupCtx, buffer, publicInputs, challenges, subproofValues, evals, hintId, hintFieldName, false, false, false);
+
+    Goldilocks::Element *vals = &hintValues.values[0].values[0];
+
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    for(uint64_t i = 1; i < N; ++i) {
+        Goldilocks3::add((Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[(i - 1) * FIELD_EXTENSION]);
+    }
+
+    setHintField(setupCtx, buffer, subproofValues, vals, hintId, hintFieldNameDest);
+    setHintField(setupCtx, buffer, subproofValues, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameSubproofVal);
+
+    delete[] hintValues.values;
+}

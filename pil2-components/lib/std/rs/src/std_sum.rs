@@ -14,11 +14,8 @@ use log::debug;
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{
-    format_vec, get_hint_field, get_hint_field_a, get_hint_ids_by_name, mul_hint_fields, set_hint_field,
-    set_hint_field_val, HintFieldOptions, HintFieldOutput, HintFieldValue,
+    acc_hint_field, format_vec, get_hint_field, get_hint_field_a, get_hint_ids_by_name, mul_hint_fields, set_hint_field, set_hint_field_val, HintFieldOptions, HintFieldOutput, HintFieldValue
 };
-
-use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 use crate::{Decider, StdMode, ModeName};
 
@@ -257,7 +254,6 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                         self.debug(&pctx, &sctx, air_instance, num_rows, debug_hints_data.clone());
                     }
 
-                    timer_start_info!(IM_HINTS);
                     // Populate the im columns
                     for hint in im_hints {
                         // let mut im = get_hint_field::<F>(
@@ -315,9 +311,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
                         air_instance.set_commit_calculated(id as usize);
                     }
-                    timer_stop_and_log_info!(IM_HINTS);
 
-                    timer_start_info!(GSUM);
                     // We know that at most one product hint exists
                     let gsum_hint = if gsum_hints.len() > 1 {
                         panic!("Multiple product hints found for AIR '{}'", air.name().unwrap_or("unknown"));
@@ -344,22 +338,29 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                         "expression",
                         HintFieldOptions::default(),
                     );
-                    timer_stop_and_log_info!(GSUM);
 
-                    timer_start_info!(PROD);
 
                     gsum.set(0, expr.get(0));
                     for i in 1..num_rows {
                         gsum.set(i, gsum.get(i - 1) + expr.get(i));
                     }
-                    timer_stop_and_log_info!(PROD);
-
-                    timer_start_info!(STORE);
 
                     // set the computed gsum column and its associated airgroup_val
                     set_hint_field(&sctx, air_instance, gsum_hint as u64, "reference", &gsum);
                     set_hint_field_val(&sctx, air_instance, gsum_hint as u64, "result", gsum.get(num_rows - 1));
-                    timer_stop_and_log_info!(STORE);
+                    
+                    // acc_hint_field::<F>(
+                    //     &sctx,
+                    //     &pctx.public_inputs,
+                    //     &pctx.challenges,
+                    //     air_instance,
+                    //     gsum_hint,
+                    //     "reference",
+                    //     "result",
+                    //     "expression",
+                    // );
+
+                    println!("{:?}", air_instance.subproof_values);
                 }
             }
         }
