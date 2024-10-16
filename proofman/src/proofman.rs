@@ -331,7 +331,7 @@ impl<F: Field + 'static> ProofMan<F> {
             } else {
                 value = prover.calculate_hash(buffer);
             }
-            
+
             result.push(value);
         }
 

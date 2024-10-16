@@ -602,7 +602,17 @@ pub fn join_zkin_recursive2_c(
     let global_info_file_name = CString::new(global_info_file).unwrap();
     let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
 
-    unsafe { join_zkin_recursive2(global_info_file_ptr, airgroup_id, p_publics, p_challenges, zkin1, zkin2, stark_info_recursive2) }
+    unsafe {
+        join_zkin_recursive2(
+            global_info_file_ptr,
+            airgroup_id,
+            p_publics,
+            p_challenges,
+            zkin1,
+            zkin2,
+            stark_info_recursive2,
+        )
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
