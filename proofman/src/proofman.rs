@@ -164,7 +164,7 @@ impl<F: Field + 'static> ProofMan<F> {
             options.save_proofs,
         )?;
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_PROOFS);
-        log::info!("Compressor proofs generated successfully");
+        log::info!("{}: Compressor proofs generated successfully", Self::MY_NAME);
 
         timer_start_info!(GENERATING_RECURSIVE1_PROOFS);
         let recursive1_proofs = generate_recursion_proof(
@@ -175,7 +175,7 @@ impl<F: Field + 'static> ProofMan<F> {
             options.save_proofs,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE1_PROOFS);
-        log::info!("Recursive1 proofs generated successfully");
+        log::info!("{}: Recursive1 proofs generated successfully", Self::MY_NAME);
 
         timer_start_info!(GENERATING_RECURSIVE2_PROOFS);
         let recursive2_proofs = generate_recursion_proof(
@@ -186,15 +186,16 @@ impl<F: Field + 'static> ProofMan<F> {
             options.save_proofs,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
-        log::info!("Recursive2 proofs generated successfully");
+        log::info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
 
         timer_start_info!(GENERATING_FINAL_PROOFS);
         let _final_proof =
             generate_recursion_proof(&pctx, &recursive2_proofs, &ProofType::Final, output_dir_path.clone(), true)?;
         timer_stop_and_log_info!(GENERATING_FINAL_PROOFS);
-        log::info!("Final proof generated successfully");
+        log::info!("{}: Final proof generated successfully", Self::MY_NAME);
         timer_stop_and_log_info!(GENERATING_AGGREGATION_PROOFS);
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
+        log::info!("{}: Proofs generated successfully", Self::MY_NAME);
         Ok(())
     }
 
