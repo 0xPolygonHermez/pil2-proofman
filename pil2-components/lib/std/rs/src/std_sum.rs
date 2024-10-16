@@ -42,7 +42,7 @@ struct BusValue<F: Copy> {
 }
 
 type BusValues<F> = HashMap<F, HashMap<Vec<HintFieldOutput<F>>, BusValue<F>>>; // opid -> val -> BusValue
-type OpIdMetadata<F> = HashMap<F, (String, Vec<String>)>; // opid -> (piop_name, expr_names)
+type OpIdMetadata<F> = HashMap<F, (String, Vec<String>, Vec<String>)>; // opid -> (piop_name, expr_names_prove, expr_names_assume)
 
 impl<F: Field> Decider<F> for StdSum<F> {
     fn decide(&self, sctx: Arc<SetupCtx>, pctx: Arc<ProofCtx<F>>) {
@@ -100,6 +100,37 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
         let debug_data = self.debug_data.as_ref().expect("Debug data missing");
         let mut opid_metadata = debug_data.opid_metadata.lock().expect("Opid metadata missing");
         for hint in debug_hints_data.iter() {
+            let proves = get_hint_field::<F>(
+                sctx,
+                &pctx.public_inputs,
+                &pctx.challenges,
+                air_instance,
+                *hint as usize,
+                "proves",
+                HintFieldOptions::default(),
+            );
+            let is_positive = match proves {
+                HintFieldValue::Field(proves) => {
+                    assert!(proves.is_zero() || proves.is_one(), "Proves hint must be either 0 or 1");
+                    proves.is_one()
+                }
+                _ => {
+                    log::error!("Proves hint must be a field element");
+                    panic!("Proves hint must be a field element");
+                }
+            };
+
+            // TODO: These should be used to filter properly!!! And to make the multi_range_check work
+            // let _opids = get_hint_field::<F>(
+            //     sctx,
+            //     &pctx.public_inputs,
+            //     &pctx.challenges,
+            //     air_instance,
+            //     *hint as usize,
+            //     "opids",
+            //     HintFieldOptions::default(),
+            // );
+
             let sumid = get_hint_field::<F>(
                 sctx,
                 &pctx.public_inputs,
@@ -129,11 +160,11 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 );
                 match name {
                     HintFieldValue::String(name) => {
-                        opid_metadata.entry(sumid).or_insert((name, Vec::new()));
+                        opid_metadata.entry(sumid).or_insert((name, Vec::new(), Vec::new()));
                     }
                     _ => {
-                        log::error!("Proves hint must be a field element");
-                        panic!("Proves hint must be a field element");
+                        log::error!("Name hint must be a string");
+                        panic!("Name hint must be a string");
                     }
                 };
 
@@ -151,35 +182,19 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 names.iter().for_each(|name| match name {
                     HintFieldValue::String(name) => {
                         let metadata = opid_metadata.get_mut(&sumid).expect("Metadata missing");
-                        metadata.1.push(name.clone());
+                        if is_positive {
+                            metadata.1.push(name.clone());
+                        } else {
+                            metadata.2.push(name.clone());
+                        }
                     }
                     _ => {
-                        log::error!("Proves hint must be a field element");
-                        panic!("Proves hint must be a field element");
+                        log::error!("Names hint must be a string");
+                        panic!("Names hint must be a string");
                     }
                 });
             } else {
                 panic!("sumid must be a field element");
-            };
-
-            let proves = get_hint_field::<F>(
-                sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
-                air_instance,
-                *hint as usize,
-                "proves",
-                HintFieldOptions::default(),
-            );
-            let is_positive = match proves {
-                HintFieldValue::Field(proves) => {
-                    assert!(proves.is_zero() || proves.is_one(), "Proves hint must be either 0 or 1");
-                    proves.is_one()
-                }
-                _ => {
-                    log::error!("Proves hint must be a field element");
-                    panic!("Proves hint must be a field element");
-                }
             };
 
             let mul = get_hint_field::<F>(
@@ -382,13 +397,13 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
             let opid_metadata = debug_data.opid_metadata.lock().expect("Opid metadata missing");
             let mut bus_values = debug_data.bus_values.lock().expect("Bus values missing");
             for (opid, bus) in bus_values.iter_mut() {
+                let metadata = opid_metadata.get(opid).expect("Metadata missing");
                 if bus.iter().any(|(_, v)| v.num_proves != v.num_assumes) {
                     if !there_are_errors {
                         there_are_errors = true;
                         log::error!("{}: Some bus values do not match.", Self::MY_NAME);
                     }
-                    let metadata = opid_metadata.get(opid).expect("Metadata missing");
-                    println!("\t► Mismatched bus values for {} {:?} with opid {}:", metadata.0, metadata.1, opid);
+                    println!("\t► Mismatched bus values for {} #{opid}:", metadata.0);
                 } else {
                     continue;
                 }
@@ -398,7 +413,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                 let len2 = unmatching_values2.len();
 
                 if len2 > 0 {
-                    println!("\t  ⁃ There are {} unmatching values thrown as 'assume':", len2);
+                    println!("\t  ⁃ There are {} unmatching values thrown as 'assume' in the expression {:?}:", len2, metadata.2);
                 }
 
                 for (i, (val, data)) in unmatching_values2.iter_mut().enumerate() {
@@ -450,7 +465,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                 let len1 = unmatching_values1.len();
 
                 if len1 > 0 {
-                    println!("\t  ⁃ There are {} unmatching values thrown as 'prove':", len1);
+                    println!("\t  ⁃ There are {} unmatching values thrown as 'prove' in the expression {:?}:", len1, metadata.1);
                 }
 
                 for (i, (val, data)) in unmatching_values1.iter().enumerate() {

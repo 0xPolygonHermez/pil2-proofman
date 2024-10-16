@@ -4,7 +4,7 @@ use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
-use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom};
+use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng};
 
 use crate::{SimpleLeft0Trace, SIMPLE_AIRGROUP_ID, SIMPLE_LEFT_AIR_IDS};
 
@@ -80,8 +80,8 @@ where
 
             // Assumes
             for i in 0..num_rows {
-                trace[i].a = F::from_canonical_usize(i);
-                trace[i].b = F::from_canonical_usize(i);
+                trace[i].a = rng.gen();
+                trace[i].b = rng.gen();
 
                 trace[i].e = F::from_canonical_u8(200);
                 trace[i].f = F::from_canonical_u8(201);
