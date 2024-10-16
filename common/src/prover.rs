@@ -68,7 +68,7 @@ pub trait Prover<F> {
     fn get_buff_helper_size(&self) -> usize;
     fn get_proof(&self) -> *mut c_void;
     fn get_prover_info(&self) -> ProverInfo;
-    fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>) -> *mut c_void;
+    fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>, output_dir: &str) -> *mut c_void;
 
     fn get_transcript_values(&self, stage: u64, proof_ctx: Arc<ProofCtx<F>>) -> Vec<F>;
     fn get_transcript_values_u64(&self, stage: u64, proof_ctx: Arc<ProofCtx<F>>) -> Vec<u64>;

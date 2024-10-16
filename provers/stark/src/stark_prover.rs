@@ -536,7 +536,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         self.p_proof.unwrap()
     }
 
-    fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>) -> *mut c_void {
+    fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>, output_dir: &str) -> *mut c_void {
         let idx = self.prover_idx;
         #[cfg(feature = "distributed")]
         {
@@ -561,7 +561,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             challenges,
             self.p_stark_info,
             global_info_file,
-            "",
+            output_dir,
         )
     }
 
@@ -596,7 +596,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         challenges.push(global_challenges[(n_challenges_stages + global_steps.len()) * Self::FIELD_EXTENSION + 2]);
 
         challenges
-
     }
 }
 

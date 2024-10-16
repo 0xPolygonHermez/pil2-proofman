@@ -119,11 +119,11 @@ pub fn setup_ctx_free_c(p_setup_ctx: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn stark_info_new_c(filename: &str) -> *mut c_void {
+pub fn stark_info_new_c(filename: &str, verify: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char)
+        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, verify)
     }
 }
 
@@ -802,7 +802,7 @@ pub fn setup_ctx_free_c(_p_setup_ctx: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn stark_info_new_c(_filename: &str) -> *mut c_void {
+pub fn stark_info_new_c(_filename: &str, _verify: bool) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -875,6 +875,22 @@ pub fn get_hint_field_c(
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "get_hint_field: This is a mock call because there is no linked library");
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn mul_hint_fields_c(
+    _p_setup_ctx: *mut c_void,
+    _steps_params: StepsParams,
+    _hint_id: u64,
+    _hint_field_dest: &str,
+    _hint_field_name1: &str,
+    _inverse1: bool,
+    _hint_field_name2: &str,
+    _inverse2: bool,
+) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "mul_hint_fields: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]

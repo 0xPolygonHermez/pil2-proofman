@@ -1,5 +1,6 @@
 use proofman_starks_lib_c::{
-    get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c, print_by_name_c, print_expression_c, print_row_c, set_hint_field_c, StepsParams
+    get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c, print_by_name_c, print_expression_c, print_row_c,
+    set_hint_field_c, StepsParams,
 };
 
 use std::collections::HashMap;
@@ -651,6 +652,7 @@ pub fn get_hint_ids_by_name(p_expressions_bin: *mut c_void, name: &str) -> Vec<u
     slice.to_vec()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn mul_hint_fields<F: Clone + Copy + Debug + Display>(
     setup_ctx: &SetupCtx,
     public_inputs: &PublicInputs,
@@ -686,9 +688,7 @@ pub fn mul_hint_fields<F: Clone + Copy + Debug + Display>(
         hint_field_name2,
         options2.inverse,
     )
-
 }
-
 
 pub fn get_hint_field<F: Clone + Copy + Debug + Display>(
     setup_ctx: &SetupCtx,

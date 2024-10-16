@@ -5,6 +5,7 @@
 #include "hints.hpp"
 #include "global_constraints.hpp"
 #include "gen_recursive_proof.hpp"
+#include "stark_verify.hpp"
 #include "logger.hpp"
 #include <filesystem>
 
@@ -44,18 +45,6 @@ void save_publics(unsigned long numPublicInputs, void *pPublicInputs, char *file
 
 
 
-void save_proof(uint64_t proof_id, void *pStarkInfo, void *pFriProof, char *fileDir)
-{
-    auto friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
-
-    nlohmann::ordered_json jProof = friProof->proof.proof2json();
-
-    // Save proof to file
-    std::filesystem::create_directory(string(fileDir) + "/proofs");
-    json2file(jProof, string(fileDir) + "/proofs/proof_" + to_string(proof_id) + ".json");
-}
-
-
 void *fri_proof_new(void *pSetupCtx)
 {
     SetupCtx setupCtx = *(SetupCtx *)pSetupCtx;
@@ -69,8 +58,8 @@ void fri_proof_get_tree_root(void *pFriProof, void* root, uint64_t tree_index)
 {
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
-    for(uint64_t i = 0; i < friProof->proof.fri.trees[tree_index].nFieldElements; ++i) {
-        rootGL[i] = friProof->proof.fri.trees[tree_index].root[i];
+    for(uint64_t i = 0; i < friProof->proof.fri.treesFRI[tree_index].nFieldElements; ++i) {
+        rootGL[i] = friProof->proof.fri.treesFRI[tree_index].root[i];
     }
 }
 
@@ -103,7 +92,13 @@ void *fri_proof_get_zkinproof(uint64_t proof_id, void *pFriProof, void* pPublics
 
     // Save output to file
     if(!string(fileDir).empty()) {
-        std::filesystem::create_directory(string(fileDir) + "/zkin");
+        if (!std::filesystem::exists(string(fileDir) + "/zkin")) {
+            std::filesystem::create_directory(string(fileDir) + "/zkin");
+        }
+        if (!std::filesystem::exists(string(fileDir) + "/proofs")) {
+            std::filesystem::create_directory(string(fileDir) + "/proofs");
+        }
+        json2file(jProof, string(fileDir) + "/proofs/proof_" + to_string(proof_id) + ".json");
         json2file(zkin, string(fileDir) + "/zkin/proof_" + to_string(proof_id) + "_zkin.json");
     }
 
@@ -143,9 +138,9 @@ void setup_ctx_free(void *pSetupCtx) {
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename)
+void *stark_info_new(char *filename, bool verify)
 {
-    auto starkInfo = new StarkInfo(filename);
+    auto starkInfo = new StarkInfo(filename, verify);
 
     return starkInfo;
 }
@@ -200,9 +195,9 @@ void const_pols_free(void *pConstPols)
 
 // Expressions Bin
 // ========================================================================================
-void *expressions_bin_new(char* filename, bool global)
+void *expressions_bin_new(char* filename, bool global, bool verifier)
 {
-    auto expressionsBin = new ExpressionsBin(filename, global);
+    auto expressionsBin = new ExpressionsBin(filename, global, verifier);
 
     return expressionsBin;
 };
@@ -219,6 +214,12 @@ void *get_hint_field(void *pSetupCtx, void* buffer, void* public_inputs, void* c
     HintFieldValues hintFieldValues = getHintField(*(SetupCtx *)pSetupCtx,  (Goldilocks::Element *)buffer, (Goldilocks::Element *)public_inputs, (Goldilocks::Element *)challenges, (Goldilocks::Element *)subproofValues, (Goldilocks::Element *)evals, hintId, string(hintFieldName), dest, inverse, printExpression);
     return new HintFieldValues(hintFieldValues);
 }
+
+uint64_t mul_hint_fields(void *pSetupCtx, void* buffer, void* public_inputs, void* challenges, void* subproofValues, void* evals, uint64_t hintId, char *hintFieldNameDest, char *hintFieldName1, char *hintFieldName2, bool inverse1, bool inverse2) 
+{
+    return multiplyHintFields(*(SetupCtx *)pSetupCtx,  (Goldilocks::Element *)buffer, (Goldilocks::Element *)public_inputs, (Goldilocks::Element *)challenges, (Goldilocks::Element *)subproofValues, (Goldilocks::Element *)evals, hintId, string(hintFieldNameDest), string(hintFieldName1), string(hintFieldName2), inverse1, inverse2);
+}
+
 
 uint64_t set_hint_field(void *pSetupCtx, void* buffer, void* subproofValues, void *values, uint64_t hintId, char * hintFieldName) 
 {
@@ -304,22 +305,52 @@ void *get_fri_pol(void *pSetupCtx, void *buffer)
     return &pols[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]];
 }
 
-void compute_fri_folding(void *pStarks, void *pProof, uint64_t step, void *buffer, void *pChallenge)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->computeFRIFolding(step, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)buffer, (Goldilocks::Element *)pChallenge);
-}
-
-void compute_fri_queries(void *pStarks, void *pProof, uint64_t *friQueries)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->computeFRIQueries(*(FRIProof<Goldilocks::Element> *)pProof, friQueries);
-}
-
 void calculate_hash(void *pStarks, void *pHhash, void *pBuffer, uint64_t nElements)
 {
     Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
     starks->calculateHash((Goldilocks::Element *)pHhash, (Goldilocks::Element *)pBuffer, nElements);
+}
+
+// MerkleTree
+// =================================================================================
+void *merkle_tree_new(uint64_t height, uint64_t width, uint64_t arity, bool custom) {
+    MerkleTreeGL * mt =  new MerkleTreeGL(arity, custom, height, width, NULL);
+    return mt;
+}
+
+void merkle_tree_free(void *pMerkleTree) {
+    MerkleTreeGL *merkleTree = (MerkleTreeGL *)pMerkleTree;
+    delete merkleTree;
+}
+
+// FRI
+// =================================================================================
+
+void compute_fri_folding(uint64_t step, void *buffer, void *pChallenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
+{
+    FRI<Goldilocks::Element>::fold(step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)pChallenge, nBitsExt, prevBits, currentBits);
+}
+
+void compute_fri_merkelize(void *pStarks, void *pProof, uint64_t step, void *buffer, uint64_t currentBits, uint64_t nextBits)
+{
+    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
+    FRI<Goldilocks::Element>::merkelize(step, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)buffer, starks->treesFRI[step], currentBits, nextBits);
+}
+
+void compute_queries(void *pStarks, void *pProof, uint64_t *friQueries, uint64_t nQueries, uint64_t nTrees)
+{
+    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
+    FRI<Goldilocks::Element>::proveQueries(friQueries, nQueries, *(FRIProof<Goldilocks::Element> *)pProof, starks->treesGL, nTrees);
+}
+
+void compute_fri_queries(void *pStarks, void *pProof, uint64_t *friQueries, uint64_t nQueries, uint64_t step, uint64_t currentBits)
+{
+    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
+    FRI<Goldilocks::Element>::proveFRIQueries(friQueries, nQueries, step, currentBits, *(FRIProof<Goldilocks::Element> *)pProof, starks->treesFRI[step - 1]);
+}
+
+void set_fri_final_pol(void *pProof, void *buffer, uint64_t nBits) {
+    FRI<Goldilocks::Element>::setFinalPol(*(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)buffer, nBits);
 }
 
 // Transcript
@@ -502,4 +533,10 @@ void setLogLevel(uint64_t level) {
     }
 
     Logger::getInstance(LOG_TYPE::CONSOLE)->updateLogLevel((LOG_LEVEL)new_level);
+}
+
+// Stark Verify
+// =================================================================================
+bool stark_verify(void *fProof, void *pStarkInfo, void *pExpressionsBin, void *verkey, void *pPublics, void *pChallenges) {
+    return starkVerify(*(FRIProof<Goldilocks::Element> *)fProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, (Goldilocks::Element *)verkey, (Goldilocks::Element *)pPublics, true, (Goldilocks::Element *)pChallenges);
 }

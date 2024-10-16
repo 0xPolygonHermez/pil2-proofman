@@ -111,10 +111,10 @@ pub fn verify_constraints_proof<F: Field>(
         } else {
             log::info!(
                 "{}:     {}",
-                 MY_NAME,
+                MY_NAME,
                 format!("\u{2713} All constraints for Instance #{} were verified", air_instance_index,)
                     .bright_green()
-                   .bold()
+                    .bold()
             );
         }
 

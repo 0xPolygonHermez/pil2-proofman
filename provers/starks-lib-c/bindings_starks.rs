@@ -73,8 +73,11 @@ extern "C" {
     pub fn setup_ctx_free(pSetupCtx: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPc"]
-    pub fn stark_info_new(filename: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z14stark_info_newPcb"]
+    pub fn stark_info_new(
+        filename: *mut ::std::os::raw::c_char,
+        verify: bool,
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z16get_stark_info_nPv"]

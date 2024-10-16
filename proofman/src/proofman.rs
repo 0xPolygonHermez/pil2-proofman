@@ -141,17 +141,10 @@ impl<F: Field + 'static> ProofMan<F> {
         Self::opening_stages(&mut provers, pctx.clone(), sctx.clone(), ectx.clone(), &mut transcript, n_provers);
 
         //Generate proves_out
-        let proves_out = Self::finalize_proof(
-            &mut provers,
-            pctx.clone(),
-            output_dir_path.to_string_lossy().as_ref(),
-        );
+        let proves_out = Self::finalize_proof(&mut provers, pctx.clone(), output_dir_path.to_string_lossy().as_ref());
 
         timer_stop_and_log_info!(GENERATING_PROOF);
-        
-        if options.verify_proof {
-            Self::verify_proof(&mut provers, pctx.clone(), sctx.clone());
-        }
+
         if !options.aggregation {
             return Ok(());
         }
@@ -160,24 +153,14 @@ impl<F: Field + 'static> ProofMan<F> {
 
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
         timer_start_info!(GENERATING_COMPRESSOR_PROOFS);
-        let comp_proofs = generate_recursion_proof(
-            &pctx,
-            &proves_out,
-            &ProofType::Compressor,
-            output_dir_path.clone(),
-            options.verify_proof,
-        )?;
+        let comp_proofs =
+            generate_recursion_proof(&pctx, &proves_out, &ProofType::Compressor, output_dir_path.clone(), false)?;
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_PROOFS);
         log::info!("{}: Compressor proofs generated successfully", Self::MY_NAME);
 
         timer_start_info!(GENERATING_RECURSIVE1_PROOFS);
-        let recursive1_proofs = generate_recursion_proof(
-            &pctx,
-            &comp_proofs,
-            &ProofType::Recursive1,
-            output_dir_path.clone(),
-            options.verify_proof,
-        )?;
+        let recursive1_proofs =
+            generate_recursion_proof(&pctx, &comp_proofs, &ProofType::Recursive1, output_dir_path.clone(), false)?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE1_PROOFS);
         log::info!("{}: Recursive1 proofs generated successfully", Self::MY_NAME);
 
@@ -187,7 +170,7 @@ impl<F: Field + 'static> ProofMan<F> {
             &recursive1_proofs,
             &ProofType::Recursive2,
             output_dir_path.clone(),
-            options.verify_proof,
+            false,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
         log::info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
@@ -609,7 +592,7 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_start_debug!(FINALIZING_PROOF);
         let mut proves = Vec::new();
         for prover in provers.iter_mut() {
-            proves.push(prover.get_zkin_proof(proof_ctx.clone()));
+            proves.push(prover.get_zkin_proof(proof_ctx.clone(), output_dir));
         }
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
@@ -628,12 +611,8 @@ impl<F: Field + 'static> ProofMan<F> {
         proves
     }
 
-    fn verify_proof(
-        provers: &mut [Box<dyn Prover<F>>],
-        proof_ctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx>,
-    ) -> bool {
-      
+    // This method is not ready to use!
+    fn _verify_proof(provers: &mut [Box<dyn Prover<F>>], proof_ctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> bool {
         timer_start_debug!(VERIFY_PROOF);
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
@@ -645,12 +624,16 @@ impl<F: Field + 'static> ProofMan<F> {
             let p_proof = prover.get_proof();
             let prover_info = prover.get_prover_info();
 
-            let setup_path = proof_ctx.global_info.get_air_setup_path(prover_info.airgroup_id, prover_info.air_id, &ProofType::Basic);
-    
+            let setup_path = proof_ctx.global_info.get_air_setup_path(
+                prover_info.airgroup_id,
+                prover_info.air_id,
+                &ProofType::Basic,
+            );
+
             let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
             let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
 
-            let p_stark_info = stark_info_new_c(stark_info_path.as_str());
+            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true);
             let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
             let air_name = &proof_ctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
@@ -670,7 +653,14 @@ impl<F: Field + 'static> ProofMan<F> {
             let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
             let proof_challenges = prover.get_proof_challenges(steps_fri, challenges_guard.clone());
 
-            let is_valid_proof = stark_verify_c(p_proof, p_stark_info, p_expressions_bin, verkey.as_ptr() as *mut c_void, public_inputs, proof_challenges.as_ptr() as *mut c_void);
+            let is_valid_proof = stark_verify_c(
+                p_proof,
+                p_stark_info,
+                p_expressions_bin,
+                verkey.as_ptr() as *mut c_void,
+                public_inputs,
+                proof_challenges.as_ptr() as *mut c_void,
+            );
             if !is_valid_proof {
                 is_valid = false;
                 log::info!(
@@ -686,7 +676,7 @@ impl<F: Field + 'static> ProofMan<F> {
                     Self::MY_NAME,
                     format!("\u{2713} Proof of {}: Instance #{} was verified", air_name, prover_info.instance_id,)
                         .bright_green()
-                       .bold()
+                        .bold()
                 );
             }
         }
