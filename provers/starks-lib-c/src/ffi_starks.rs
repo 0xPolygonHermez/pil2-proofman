@@ -276,7 +276,7 @@ pub fn acc_hint_field_c(
     hint_field_dest: &str,
     hint_field_subproovalue: &str,
     hint_field_name: &str,
-) {
+) -> *mut c_void {
 
     let field_dest = CString::new(hint_field_dest).unwrap();
     let field_subproofvalue = CString::new(hint_field_subproovalue).unwrap();
@@ -294,7 +294,7 @@ pub fn acc_hint_field_c(
             field_dest.as_ptr() as *mut std::os::raw::c_char,
             field_subproofvalue.as_ptr() as *mut std::os::raw::c_char,
             field_name.as_ptr() as *mut std::os::raw::c_char,
-        );
+        )
     }
 }
 
@@ -931,8 +931,9 @@ pub fn acc_hint_field_c(
     _hint_field_dest: &str,
     _hint_field_subproovalue: &str,
     _hint_field_name: &str,
-) {
+) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "acc_hint_fields: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]

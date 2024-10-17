@@ -180,7 +180,7 @@ extern "C" {
         hintFieldNameDest: *mut ::std::os::raw::c_char,
         hintFieldNameSubproofVal: *mut ::std::os::raw::c_char,
         hintFieldName: *mut ::std::os::raw::c_char,
-    );
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z14set_hint_fieldPvS_S_S_mPc"]

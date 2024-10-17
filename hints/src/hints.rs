@@ -700,7 +700,7 @@ pub fn acc_hint_field<F: Clone + Copy + Debug + Display>(
     hint_field_dest: &str,
     hint_field_subprooval: &str,
     hint_field_name: &str,
-) {
+) -> (u64, u64) {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
 
     let public_inputs_ptr = (*public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
@@ -714,7 +714,7 @@ pub fn acc_hint_field<F: Clone + Copy + Debug + Display>(
         evals: air_instance.evals.as_ptr() as *mut c_void,
     };
 
-    acc_hint_field_c(
+    let raw_ptr = acc_hint_field_c(
         (&setup.p_setup).into(),
         steps_params,
         hint_id as u64,
@@ -722,6 +722,12 @@ pub fn acc_hint_field<F: Clone + Copy + Debug + Display>(
         hint_field_subprooval,
         hint_field_name,
     );
+
+    let hint_ids_result = unsafe { Box::from_raw(raw_ptr as *mut HintIdsResult) };
+
+    let slice = unsafe { std::slice::from_raw_parts(hint_ids_result.hint_ids, hint_ids_result.n_hints as usize) };
+    
+    (slice[0], slice[1])
 }
 
 pub fn get_hint_field<F: Clone + Copy + Debug + Display>(
