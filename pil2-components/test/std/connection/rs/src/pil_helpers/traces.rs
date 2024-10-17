@@ -11,6 +11,6 @@ trace!(Connection21Row, Connection21Trace<F> {
  a: F, b: F, c: F,
 });
 
-trace!(ConnectionNew2Row, ConnectionNew2Trace<F> {
+trace!(ConnectionNew0Row, ConnectionNew0Trace<F> {
  a: [F; 6], b: [F; 6], c: [F; 6], d: [F; 6],
 });

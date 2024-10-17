@@ -6,7 +6,9 @@ pub const PILOUT_HASH: &[u8] = b"Build-hash";
 
 //AIRGROUP CONSTANTS
 
-pub const CONNECTION_AIRGROUP_ID: usize = 0;
+pub const CONNECTION_12_AIRGROUP_ID: usize = 0;
+
+pub const CONNECTION_NEW_AIRGROUP_ID: usize = 1;
 
 //AIR CONSTANTS
 
@@ -14,7 +16,7 @@ pub const CONNECTION_1_AIR_IDS: &[usize] = &[0];
 
 pub const CONNECTION_2_AIR_IDS: &[usize] = &[1];
 
-pub const CONNECTION_NEW_AIR_IDS: &[usize] = &[2];
+pub const CONNECTION_NEW_AIR_IDS: &[usize] = &[0];
 
 pub struct Pilout;
 
@@ -22,10 +24,13 @@ impl Pilout {
     pub fn pilout() -> WitnessPilout {
         let mut pilout = WitnessPilout::new("Build", 2, PILOUT_HASH.to_vec());
 
-        let air_group = pilout.add_air_group(Some("Connection"));
+        let air_group = pilout.add_air_group(Some("Connection12"));
 
         air_group.add_air(Some("Connection1"), 8);
         air_group.add_air(Some("Connection2"), 16);
+
+        let air_group = pilout.add_air_group(Some("ConnectionNew"));
+
         air_group.add_air(Some("ConnectionNew"), 16);
 
         pilout

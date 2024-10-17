@@ -1,12 +1,11 @@
 use std::{
-    hash::Hash,
     collections::HashMap,
-    fmt::{Display, Debug},
+    fmt::Debug,
     sync::{Arc, Mutex},
 };
 
 use num_traits::ToPrimitive;
-use p3_field::{Field, PrimeField};
+use p3_field::PrimeField;
 use rayon::prelude::*;
 
 use log::debug;
@@ -14,37 +13,21 @@ use log::debug;
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{
-    format_vec, get_hint_field, get_hint_field_a, get_hint_ids_by_name, set_hint_field, set_hint_field_val,
-    HintFieldOptions, HintFieldOutput, HintFieldValue,
+    get_hint_field, get_hint_field_a, get_hint_ids_by_name, set_hint_field, set_hint_field_val, HintFieldOptions,
+    HintFieldOutput, HintFieldValue,
 };
 
-use crate::{Decider, StdMode, ModeName};
+use crate::{check_bus_values, BusValue, DebugData, Decider, ModeName, StdMode};
 
 type SumAirsItem = (usize, usize, Vec<u64>, Vec<u64>, Vec<u64>);
 
-pub struct StdSum<F: Copy + Display + Hash> {
+pub struct StdSum<F: PrimeField> {
     mode: StdMode,
     sum_airs: Mutex<Vec<SumAirsItem>>, // (airgroup_id, air_id, gsum_hints, im_hints, debug_hints_data, debug_hints)
     debug_data: Option<DebugData<F>>,
 }
 
-struct DebugData<F: Copy + Display> {
-    bus_values: Mutex<BusValues<F>>,
-    opid_metadata: Mutex<OpIdMetadata<F>>,
-}
-
-struct BusValue<F: Copy> {
-    num_proves: F,
-    num_assumes: F,
-    // meta data
-    row_proves: usize,       // Note: For now, we assume that a value in proves is unique
-    row_assumes: Vec<usize>, //       Also, multiplicity in assumes can only be one or zero
-}
-
-type BusValues<F> = HashMap<F, HashMap<Vec<HintFieldOutput<F>>, BusValue<F>>>; // opid -> val -> BusValue
-type OpIdMetadata<F> = HashMap<F, (String, Vec<String>, Vec<String>)>; // opid -> (piop_name, expr_names_prove, expr_names_assume)
-
-impl<F: Field> Decider<F> for StdSum<F> {
+impl<F: PrimeField> Decider<F> for StdSum<F> {
     fn decide(&self, sctx: Arc<SetupCtx>, pctx: Arc<ProofCtx<F>>) {
         // Scan the pilout for airs that have sum-related hints
         let air_groups = pctx.pilout.air_groups();
@@ -97,9 +80,44 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
         num_rows: usize,
         debug_hints_data: Vec<u64>,
     ) {
+        let air_group = pctx.pilout.get_air_group(air_instance.airgroup_id);
+        let air = pctx.pilout.get_air(air_instance.airgroup_id, air_instance.air_id);
+        let air_group_name = air_group.name().unwrap_or("Unknown air group").to_string();
+        let air_name = air.name().unwrap_or("Unknown air").to_string();
+
         let debug_data = self.debug_data.as_ref().expect("Debug data missing");
         let mut opid_metadata = debug_data.opid_metadata.lock().expect("Opid metadata missing");
         for hint in debug_hints_data.iter() {
+            let opids = get_hint_field_a::<F>(
+                sctx,
+                &pctx.public_inputs,
+                &pctx.challenges,
+                air_instance,
+                *hint as usize,
+                "opids",
+                HintFieldOptions::default(),
+            );
+            let mut selected_opids = opids
+                .values
+                .iter()
+                .map(|opid| match opid {
+                    HintFieldValue::Field(opid) => opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"),
+                    _ => {
+                        log::error!("Opid hint must be a field element");
+                        panic!("Opid hint must be a field element");
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            // If none of the opids is selected, skip
+            let mode_opids = &self.mode.opids;
+            if let Some(mode_opids) = mode_opids {
+                selected_opids.retain(|opid| mode_opids.contains(opid));
+            }
+            if selected_opids.is_empty() {
+                continue;
+            }
+
             let proves = get_hint_field::<F>(
                 sctx,
                 &pctx.public_inputs,
@@ -109,7 +127,7 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 "proves",
                 HintFieldOptions::default(),
             );
-            let is_positive = match proves {
+            let proves = match proves {
                 HintFieldValue::Field(proves) => {
                     assert!(proves.is_zero() || proves.is_one(), "Proves hint must be either 0 or 1");
                     proves.is_one()
@@ -120,34 +138,7 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 }
             };
 
-            // TODO: These should be used to filter properly!!! And to make the multi_range_check work
-            // let _opids = get_hint_field::<F>(
-            //     sctx,
-            //     &pctx.public_inputs,
-            //     &pctx.challenges,
-            //     air_instance,
-            //     *hint as usize,
-            //     "opids",
-            //     HintFieldOptions::default(),
-            // );
-
-            let sumid = get_hint_field::<F>(
-                sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
-                air_instance,
-                *hint as usize,
-                "sumid",
-                HintFieldOptions::default(),
-            );
-            if let HintFieldOutput::Field(sumid) = sumid.get(0) {
-                // If the opid is not selected, skip
-                if let Some(opids) = &self.mode.opids {
-                    if !opids.contains(&sumid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
-                        continue;
-                    }
-                }
-
+            for opid in selected_opids {
                 // Store the name of the PIOP
                 let name = get_hint_field::<F>(
                     sctx,
@@ -160,7 +151,13 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 );
                 match name {
                     HintFieldValue::String(name) => {
-                        opid_metadata.entry(sumid).or_insert((name, Vec::new(), Vec::new()));
+                        opid_metadata.entry(opid).or_default().push((
+                            air_group_name.clone(),
+                            air_name.clone(),
+                            name.clone(),
+                            proves,
+                            Vec::new(),
+                        ));
                     }
                     _ => {
                         log::error!("Name hint must be a string");
@@ -178,24 +175,27 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                     "names",
                     HintFieldOptions::default(),
                 );
-                let names = names.values;
-                names.iter().for_each(|name| match name {
+                names.values.iter().for_each(|name| match name {
                     HintFieldValue::String(name) => {
-                        let metadata = opid_metadata.get_mut(&sumid).expect("Metadata missing");
-                        if is_positive {
-                            metadata.1.push(name.clone());
-                        } else {
-                            metadata.2.push(name.clone());
-                        }
+                        let metadata = opid_metadata.get_mut(&opid).expect("Metadata missing");
+                        metadata.last_mut().expect("Last metadata missing").4.push(name.clone());
                     }
                     _ => {
                         log::error!("Names hint must be a string");
                         panic!("Names hint must be a string");
                     }
                 });
-            } else {
-                panic!("sumid must be a field element");
-            };
+            }
+
+            let sumid = get_hint_field::<F>(
+                sctx,
+                &pctx.public_inputs,
+                &pctx.challenges,
+                air_instance,
+                *hint as usize,
+                "sumid",
+                HintFieldOptions::default(),
+            );
 
             let mul = get_hint_field::<F>(
                 sctx,
@@ -217,7 +217,7 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            (0..num_rows).into_par_iter().for_each(|j| {
+            for j in 0..num_rows {
                 let mul = match mul.get(j) {
                     HintFieldOutput::Field(mul) => mul,
                     _ => panic!("mul must be a field element"),
@@ -225,40 +225,42 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
 
                 if !mul.is_zero() {
                     let sumid = match sumid.get(j) {
-                        HintFieldOutput::Field(sumid) => sumid,
+                        HintFieldOutput::Field(sumid) => {
+                            sumid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")
+                        }
                         _ => panic!("sumid must be a field element"),
                     };
 
-                    self.update_bus_vals(num_rows, sumid, expressions.get(j), j, is_positive, mul);
+                    self.update_bus_vals(num_rows, sumid, expressions.get(j), j, proves, mul);
                 }
-            });
+            }
         }
     }
 
     fn update_bus_vals(
         &self,
         num_rows: usize,
-        opid: F,
+        sumid: u64,
         val: Vec<HintFieldOutput<F>>,
         row: usize,
-        is_positive: bool,
+        proves: bool,
         times: F,
     ) {
         let debug_data = self.debug_data.as_ref().expect("Debug data missing");
         let mut bus_values = debug_data.bus_values.lock().expect("Bus values missing");
 
-        let bus_opid = bus_values.entry(opid).or_default();
+        let bus_sumid = bus_values.entry(sumid).or_default();
 
-        let bus_val = bus_opid.entry(val).or_insert_with(|| BusValue {
+        let bus_val = bus_sumid.entry(val.clone()).or_insert_with(|| BusValue {
             num_proves: F::zero(),
             num_assumes: F::zero(),
-            row_proves: 0,
+            row_proves: Vec::with_capacity(num_rows),
             row_assumes: Vec::with_capacity(num_rows),
         });
 
-        if is_positive {
-            bus_val.num_proves = times;
-            bus_val.row_proves = row;
+        if proves {
+            bus_val.num_proves += times;
+            bus_val.row_proves.push(row);
         } else {
             assert!(times.is_one());
             bus_val.num_assumes += times;
@@ -390,110 +392,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
     fn end_proof(&self) {
         if self.mode.name == ModeName::Debug {
-            let max_values_to_print = self.mode.vals_to_print;
-
-            let mut there_are_errors = false;
-            let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-            let opid_metadata = debug_data.opid_metadata.lock().expect("Opid metadata missing");
-            let mut bus_values = debug_data.bus_values.lock().expect("Bus values missing");
-            for (opid, bus) in bus_values.iter_mut() {
-                let metadata = opid_metadata.get(opid).expect("Metadata missing");
-                if bus.iter().any(|(_, v)| v.num_proves != v.num_assumes) {
-                    if !there_are_errors {
-                        there_are_errors = true;
-                        log::error!("{}: Some bus values do not match.", Self::MY_NAME);
-                    }
-                    println!("\t► Mismatched bus values for {} #{opid}:", metadata.0);
-                } else {
-                    continue;
-                }
-
-                let mut unmatching_values2: Vec<(&Vec<HintFieldOutput<F>>, &mut BusValue<F>)> =
-                    bus.iter_mut().filter(|(_, v)| v.num_proves < v.num_assumes).collect();
-                let len2 = unmatching_values2.len();
-
-                if len2 > 0 {
-                    println!("\t  ⁃ There are {} unmatching values thrown as 'assume' in the expression {:?}:", len2, metadata.2);
-                }
-
-                for (i, (val, data)) in unmatching_values2.iter_mut().enumerate() {
-                    let num_proves = data.num_proves;
-                    let num_assumes = data.num_assumes;
-                    let diff = num_assumes - num_proves;
-                    let diff = diff.as_canonical_biguint().to_usize().expect("Cannot convert to usize");
-                    let row_assumes = &mut data.row_assumes;
-
-                    row_assumes.sort();
-                    let row_assumes = if max_values_to_print < diff {
-                        row_assumes[..max_values_to_print].to_vec()
-                    } else {
-                        row_assumes[..diff].to_vec()
-                    };
-                    let row_assumes = row_assumes.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
-
-                    let diff = num_assumes - num_proves;
-                    let name_str = if row_assumes.len() == 1 {
-                        format!("at row {}.", row_assumes)
-                    } else if max_values_to_print < row_assumes.len() {
-                        format!("at rows {},...", row_assumes)
-                    } else {
-                        format!("at rows {}.", row_assumes)
-                    };
-                    let diff_str = if diff.is_one() { "time" } else { "times" };
-                    println!(
-                        "\t    • Value:\n\t        {}\n\t      Appears {} {} {}\n\t      Num Assumes: {}.\n\t      Num Proves: {}.",
-                        format_vec(val),
-                        diff,
-                        diff_str,
-                        name_str,
-                        num_assumes,
-                        num_proves
-                    );
-
-                    if i == max_values_to_print {
-                        println!("\t      ...");
-                        break;
-                    }
-                }
-
-                if len2 > 0 {
-                    println!();
-                }
-
-                let unmatching_values1: Vec<(&Vec<HintFieldOutput<F>>, &mut BusValue<F>)> =
-                    bus.iter_mut().filter(|(_, v)| v.num_proves > v.num_assumes).collect();
-                let len1 = unmatching_values1.len();
-
-                if len1 > 0 {
-                    println!("\t  ⁃ There are {} unmatching values thrown as 'prove' in the expression {:?}:", len1, metadata.1);
-                }
-
-                for (i, (val, data)) in unmatching_values1.iter().enumerate() {
-                    let num_proves = data.num_proves;
-                    let num_assumes = data.num_assumes;
-                    let row_proves = data.row_proves;
-
-                    let diff = num_proves - num_assumes;
-
-                    let diff_str = if diff.is_one() { "time" } else { "times" };
-                    println!(
-                        "\t    • Value:\n\t        {}\n\t      Appears {} {} at row {}.\n\t      Num Assumes: {}.\n\t      Num Proves: {}.",
-                        format_vec(val),
-                        diff,
-                        diff_str,
-                        row_proves,
-                        num_assumes,
-                        num_proves,
-                    );
-
-                    if i == max_values_to_print {
-                        println!("\t      ...");
-                        break;
-                    }
-                }
-
-                println!();
-            }
+            check_bus_values(Self::MY_NAME, self.mode.vals_to_print, &self.debug_data);
         }
     }
 }
