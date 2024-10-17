@@ -2,8 +2,7 @@
 use mpi::traits::Communicator;
 #[cfg(feature = "distributed")]
 use mpi::collective::CommunicatorCollectives;
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::{RwLock};
+
 /// Represents the context of distributed computing
 #[derive(Default)]
 pub struct DistributionCtx {
@@ -15,6 +14,7 @@ pub struct DistributionCtx {
     pub world: i32,
     pub n_instances: i32,
     pub my_instances: Vec<usize>,
+    pub instances: Vec<(usize, usize)>,
 }
 
 impl DistributionCtx {
@@ -28,6 +28,7 @@ impl DistributionCtx {
             world: -1,
             n_instances: 0,
             my_instances: Vec::new(),
+            instances: Vec::new(),
         };
         ctx.init();
         ctx
@@ -77,10 +78,11 @@ impl DistributionCtx {
     }
 
     #[inline]
-    pub fn add_instance(&mut self, instance_idx: usize, _size: usize) {
+    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, instance_idx: usize, _size: usize) {
         self.n_instances += 1;
         if self.is_my_instance(instance_idx) {
             self.my_instances.push(instance_idx);
         }
+        self.instances.push((airgroup_id, air_id));
     }
 }

@@ -350,7 +350,12 @@ impl<F: Field + 'static> ProofMan<F> {
         verify_constraints: bool,
         n_provers: usize,
     ) {
-        if !ectx.dctx.read().unwrap().is_distributed() {
+        let dctx = ectx.dctx.read().unwrap();
+        let is_distributed = dctx.is_distributed();
+        let n_processes = dctx.n_processes;
+        drop(dctx);
+
+        if !is_distributed {
             if stage != 0 {
                 info!("{}: Calculating challenges", Self::MY_NAME);
             }
@@ -376,7 +381,7 @@ impl<F: Field + 'static> ProofMan<F> {
                 }
             }
         } else {
-            let size = ectx.dctx.read().unwrap().n_processes;
+            let size = n_processes;
             // max number of roots
             let max_roots = (n_provers as i32 + size - 1) / size;
 
@@ -457,8 +462,11 @@ impl<F: Field + 'static> ProofMan<F> {
         n_provers: usize,
     ) {
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
-        let size = ectx.dctx.read().unwrap().n_processes;
-        let rank = ectx.dctx.read().unwrap().rank;
+        let dctx = ectx.dctx.read().unwrap();
+        let size = dctx.n_processes;
+        let rank = dctx.rank;
+        let is_distributed = dctx.is_distributed();
+        drop(dctx);
 
         // Calculate evals
         Self::get_challenges(num_commit_stages + 2, provers, pctx.clone(), transcript);
@@ -468,7 +476,7 @@ impl<F: Field + 'static> ProofMan<F> {
             for air_id in airgroup.iter() {
                 let air_instances_idx: Vec<usize> = pctx.air_instance_repo.find_air_instances(airgroup_id, *air_id);
                 if !air_instances_idx.is_empty() {
-                    if ectx.dctx.read().unwrap().is_distributed() {
+                    if is_distributed {
                         let mut is_first = true;
                         for idx in air_instances_idx {
                             let segment_idx =
@@ -506,11 +514,13 @@ impl<F: Field + 'static> ProofMan<F> {
         Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 3, provers, pctx.clone(), transcript);
         info!("{}: Calculating FRI Polynomials", Self::MY_NAME);
         timer_start_debug!(CALCULATING_FRI_POLINOMIAL);
+
+        let is_distributed = ectx.dctx.read().unwrap().is_distributed();
         for (airgroup_id, airgroup) in sctx.get_setup_airs().iter().enumerate() {
             for air_id in airgroup.iter() {
                 let air_instances_idx: Vec<usize> = pctx.air_instance_repo.find_air_instances(airgroup_id, *air_id);
                 if !air_instances_idx.is_empty() {
-                    if ectx.dctx.read().unwrap().is_distributed() {
+                    if is_distributed {
                         let mut is_first = true;
                         for idx in air_instances_idx {
                             let segment_idx =
