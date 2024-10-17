@@ -2,17 +2,19 @@
 use mpi::traits::Communicator;
 #[cfg(feature = "distributed")]
 use mpi::collective::CommunicatorCollectives;
-
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{RwLock};
 /// Represents the context of distributed computing
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct DistributionCtx {
     pub rank: i32,
     pub n_processes: i32,
     #[cfg(feature = "distributed")]
     pub world: mpi::topology::SimpleCommunicator,
-
     #[cfg(not(feature = "distributed"))]
     pub world: i32,
+    pub n_instances: i32,
+    pub my_instances: Vec<usize>,
 }
 
 impl DistributionCtx {
@@ -22,9 +24,10 @@ impl DistributionCtx {
             n_processes: 1,
             #[cfg(feature = "distributed")]
             world: mpi::topology::SimpleCommunicator::null(),
-
             #[cfg(not(feature = "distributed"))]
             world: -1,
+            n_instances: 0,
+            my_instances: Vec::new(),
         };
         ctx.init();
         ctx
@@ -37,15 +40,20 @@ impl DistributionCtx {
             self.world = universe.world();
             self.rank = self.world.rank();
             self.n_processes = self.world.size();
+            self.n_instances = 0;
+            self.my_instances = Vec::new();
         }
         #[cfg(not(feature = "distributed"))]
         {
             self.rank = 0;
             self.n_processes = 1;
             self.world = -1;
+            self.n_instances = 0;
+            self.my_instances = Vec::new();
         }
     }
 
+    #[inline]
     pub fn barrier(&self) {
         #[cfg(feature = "distributed")]
         {
@@ -53,11 +61,26 @@ impl DistributionCtx {
         }
     }
 
+    #[inline]
     pub fn is_master(&self) -> bool {
         self.rank == 0
     }
 
+    #[inline]
     pub fn is_distributed(&self) -> bool {
         self.n_processes > 1
+    }
+
+    #[inline]
+    pub fn is_my_instance(&self, instance_idx: usize) -> bool {
+        instance_idx % self.n_processes as usize == self.rank as usize
+    }
+
+    #[inline]
+    pub fn add_instance(&mut self, instance_idx: usize, _size: usize) {
+        self.n_instances += 1;
+        if self.is_my_instance(instance_idx) {
+            self.my_instances.push(instance_idx);
+        }
     }
 }
