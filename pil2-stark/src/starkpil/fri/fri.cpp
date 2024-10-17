@@ -207,7 +207,7 @@ void FRI<ElementType>::getTransposed(Goldilocks::Element *aux, Goldilocks::Eleme
 
 
 template <typename ElementType>
-void FRI<ElementType>::verify_fold(Goldilocks::Element* value, uint64_t step, uint64_t nBitsExt, uint64_t currentBits, uint64_t prevBits, Goldilocks::Element *challenge, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> v) {
+void FRI<ElementType>::verify_fold(Goldilocks::Element* value, uint64_t step, uint64_t nBitsExt, uint64_t currentBits, uint64_t prevBits, Goldilocks::Element *challenge, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> &v) {
     Goldilocks::Element shift = Goldilocks::shift();
     
     for (uint64_t j = 0; j < nBitsExt - prevBits; j++) {

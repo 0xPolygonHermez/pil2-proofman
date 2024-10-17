@@ -114,7 +114,7 @@ void MerkleTreeGL::genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint
     genMerkleProof(&proof[nFieldElements], nextIdx, offset + nextN * 2, nextN);
 }
 
-bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> mp, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> v) {
+bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> &v) {
     Goldilocks::Element value[4];
     for(uint64_t i = 0; i < nFieldElements; ++i) {
         value[i] = Goldilocks::zero();
@@ -147,7 +147,7 @@ bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, std::vector<std::
     return true;
 }
 
-void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::vector<std::vector<Goldilocks::Element>> mp, uint64_t idx, uint64_t offset) {
+void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, uint64_t offset) {
     if(offset == mp.size()) return;
 
     uint64_t currIdx = idx & 1;

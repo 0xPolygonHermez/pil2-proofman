@@ -11,7 +11,7 @@ class MerkleTreeGL
 private:
     Goldilocks::Element getElement(uint64_t idx, uint64_t subIdx);
     void genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
-    void calculateRootFromProof(Goldilocks::Element (&value)[4], std::vector<std::vector<Goldilocks::Element>> mp, uint64_t idx, uint64_t offset);
+    void calculateRootFromProof(Goldilocks::Element (&value)[4], std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, uint64_t offset);
 
 public:
     MerkleTreeGL(){};
@@ -46,7 +46,7 @@ public:
 
     void getGroupProof(Goldilocks::Element *proof, uint64_t idx);
     
-    bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> mp, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> v);
+    bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> &v);
 
     void merkelize();
 };
