@@ -280,6 +280,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                         gsum_hints[0] as usize
                     };
 
+                    // This call accumulates "expression" into "reference" expression and stores its last value to "result"
+                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust,
+                    // TODO: GENERALIZE CALLS
                     let (pol_id, subproofvalue_id) = acc_hint_field::<F>(
                         &sctx,
                         &pctx.public_inputs,

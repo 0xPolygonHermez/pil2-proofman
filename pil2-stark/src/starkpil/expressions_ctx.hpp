@@ -36,7 +36,6 @@ struct Dest {
     Goldilocks::Element *dest = nullptr;
     uint64_t offset = 0;
     std::vector<Params> params;
-    bool mul = false;
 
     Dest(Goldilocks::Element *dest_, uint64_t offset_ = false) : dest(dest_), offset(offset_) {}
 

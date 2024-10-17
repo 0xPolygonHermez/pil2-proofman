@@ -177,6 +177,24 @@ extern "C" {
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z19acc_mul_hint_fieldsPvS_S_S_S_S_mPcS0_S0_S0_bb"]
+    pub fn acc_mul_hint_fields(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        buffer: *mut ::std::os::raw::c_void,
+        public_inputs: *mut ::std::os::raw::c_void,
+        challenges: *mut ::std::os::raw::c_void,
+        subproofValues: *mut ::std::os::raw::c_void,
+        evals: *mut ::std::os::raw::c_void,
+        hintId: u64,
+        hintFieldNameDest: *mut ::std::os::raw::c_char,
+        hintFieldNameSubproofVal: *mut ::std::os::raw::c_char,
+        hintFieldName1: *mut ::std::os::raw::c_char,
+        hintFieldName2: *mut ::std::os::raw::c_char,
+        inverse1: bool,
+        inverse2: bool,
+    ) -> *mut ::std::os::raw::c_void;
+}
+extern "C" {
     #[link_name = "\u{1}_Z14set_hint_fieldPvS_S_S_mPc"]
     pub fn set_hint_field(
         pSetupCtx: *mut ::std::os::raw::c_void,

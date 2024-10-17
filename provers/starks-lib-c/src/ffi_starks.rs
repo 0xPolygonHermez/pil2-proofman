@@ -239,6 +239,7 @@ pub fn get_hint_field_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn mul_hint_fields_c(
     p_setup_ctx: *mut c_void,
     steps_params: StepsParams,
@@ -296,6 +297,43 @@ pub fn acc_hint_field_c(
             field_dest.as_ptr() as *mut std::os::raw::c_char,
             field_subproofvalue.as_ptr() as *mut std::os::raw::c_char,
             field_name.as_ptr() as *mut std::os::raw::c_char,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
+pub fn acc_mul_hint_fields_c(
+    p_setup_ctx: *mut c_void,
+    steps_params: StepsParams,
+    hint_id: u64,
+    hint_field_dest: &str,
+    hint_field_subproovalue: &str,
+    hint_field_name1: &str,
+    hint_field_name2: &str,
+    inverse1: bool,
+    inverse2: bool,
+) -> *mut c_void {
+    let field_dest = CString::new(hint_field_dest).unwrap();
+    let field_subproofvalue = CString::new(hint_field_subproovalue).unwrap();
+    let field_name1 = CString::new(hint_field_name1).unwrap();
+    let field_name2: CString = CString::new(hint_field_name2).unwrap();
+
+    unsafe {
+        acc_mul_hint_fields(
+            p_setup_ctx,
+            steps_params.buffer,
+            steps_params.public_inputs,
+            steps_params.challenges,
+            steps_params.subproof_values,
+            steps_params.evals,
+            hint_id,
+            field_dest.as_ptr() as *mut std::os::raw::c_char,
+            field_subproofvalue.as_ptr() as *mut std::os::raw::c_char,
+            field_name1.as_ptr() as *mut std::os::raw::c_char,
+            field_name2.as_ptr() as *mut std::os::raw::c_char,
+            inverse1,
+            inverse2,
         )
     }
 }
@@ -925,6 +963,23 @@ pub fn acc_hint_field_c(
     _hint_field_name: &str,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "acc_hint_fields: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn acc_mul_hint_fields_c(
+    _p_setup_ctx: *mut c_void,
+    _steps_params: StepsParams,
+    _hint_id: u64,
+    _hint_field_dest: &str,
+    _hint_field_subproovalue: &str,
+    _hint_field_name1: &str,
+    _hint_field_name2: &str,
+    _inverse1: bool,
+    _inverse2: bool,
+) -> *mut c_void {
+    trace!("{}: ··· {}", "ffi     ", "acc_mul_hint_fields: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 

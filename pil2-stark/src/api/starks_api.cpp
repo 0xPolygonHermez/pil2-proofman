@@ -223,6 +223,10 @@ void *acc_hint_field(void *pSetupCtx, void* buffer, void* public_inputs, void* c
     return new VecU64Result(accHintField(*(SetupCtx *)pSetupCtx,  (Goldilocks::Element *)buffer, (Goldilocks::Element *)public_inputs, (Goldilocks::Element *)challenges, (Goldilocks::Element *)subproofValues, (Goldilocks::Element *)evals, hintId, string(hintFieldNameDest), string(hintFieldNameSubproofVal), string(hintFieldName)));
 }
 
+void *acc_mul_hint_fields(void *pSetupCtx, void* buffer, void* public_inputs, void* challenges, void* subproofValues, void* evals, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameSubproofVal, char *hintFieldName1, char *hintFieldName2, bool inverse1, bool inverse2) {
+    return new VecU64Result(accMulHintFields(*(SetupCtx *)pSetupCtx,  (Goldilocks::Element *)buffer, (Goldilocks::Element *)public_inputs, (Goldilocks::Element *)challenges, (Goldilocks::Element *)subproofValues, (Goldilocks::Element *)evals, hintId, string(hintFieldNameDest), string(hintFieldNameSubproofVal), string(hintFieldName1), string(hintFieldName2), inverse1, inverse2));
+}
+
 
 uint64_t set_hint_field(void *pSetupCtx, void* buffer, void* subproofValues, void *values, uint64_t hintId, char * hintFieldName) 
 {
