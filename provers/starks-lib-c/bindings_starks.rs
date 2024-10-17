@@ -73,11 +73,8 @@ extern "C" {
     pub fn setup_ctx_free(pSetupCtx: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPcb"]
-    pub fn stark_info_new(
-        filename: *mut ::std::os::raw::c_char,
-        verify: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z14stark_info_newPc"]
+    pub fn stark_info_new(filename: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z16get_stark_info_nPv"]
@@ -123,12 +120,8 @@ extern "C" {
     pub fn const_pols_free(pConstPols: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19expressions_bin_newPcbb"]
-    pub fn expressions_bin_new(
-        filename: *mut ::std::os::raw::c_char,
-        global: bool,
-        verifier: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z19expressions_bin_newPcb"]
+    pub fn expressions_bin_new(filename: *mut ::std::os::raw::c_char, global: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z20expressions_bin_freePv"]
@@ -525,15 +518,4 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z11setLogLevelm"]
     pub fn setLogLevel(level: u64);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z12stark_verifyPvS_S_S_S_S_"]
-    pub fn stark_verify(
-        fProof: *mut ::std::os::raw::c_void,
-        pStarkInfo: *mut ::std::os::raw::c_void,
-        pExpressionsBin: *mut ::std::os::raw::c_void,
-        verkey: *mut ::std::os::raw::c_void,
-        pPublics: *mut ::std::os::raw::c_void,
-        challenges: *mut ::std::os::raw::c_void,
-    ) -> bool;
 }

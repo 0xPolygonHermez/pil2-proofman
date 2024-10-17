@@ -138,13 +138,11 @@ public:
     
     uint64_t mapTotalN;
     
-    bool verify = false;
-
     /* Constructor */
-    StarkInfo(string file, bool verify = false);
+    StarkInfo(string file);
 
     /* Loads data from a json object */
-    void load (json j, bool verify = false);
+    void load (json j);
 
     void setMapOffsets();
 

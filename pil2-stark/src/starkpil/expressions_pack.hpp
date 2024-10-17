@@ -12,7 +12,7 @@ public:
     ExpressionsPack(SetupCtx& setupCtx, uint64_t nrowsPack_ = 4) : ExpressionsCtx(setupCtx), nrowsPack(nrowsPack_) {};
 
     void setBufferTInfo(bool domainExtended, int64_t expId) {
-        uint64_t nOpenings = setupCtx.starkInfo.verify ? 1 : setupCtx.starkInfo.openingPoints.size();
+        uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
         offsetsStages.resize((setupCtx.starkInfo.nStages + 2)*nOpenings + 1);
         nColsStages.resize((setupCtx.starkInfo.nStages + 2)*nOpenings + 1);
         nColsStagesAcc.resize((setupCtx.starkInfo.nStages + 2)*nOpenings + 1);
@@ -39,14 +39,14 @@ public:
     }
 
     inline void loadPolynomials(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> &dests, Goldilocks::Element *bufferT_, uint64_t row, uint64_t domainSize) {
-        uint64_t nOpenings = setupCtx.starkInfo.verify ? 1 : setupCtx.starkInfo.openingPoints.size();
+        uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
         bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
 
         uint64_t extendBits = (setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits);
         int64_t extend = domainExtended ? (1 << extendBits) : 1;
         uint64_t nextStrides[nOpenings];
         for(uint64_t i = 0; i < nOpenings; ++i) {
-            uint64_t opening = setupCtx.starkInfo.verify ? 0 : setupCtx.starkInfo.openingPoints[i] < 0 ? setupCtx.starkInfo.openingPoints[i] + domainSize : setupCtx.starkInfo.openingPoints[i];
+            uint64_t opening = setupCtx.starkInfo.openingPoints[i] < 0 ? setupCtx.starkInfo.openingPoints[i] + domainSize : setupCtx.starkInfo.openingPoints[i];
             nextStrides[i] = opening * extend;
         }
 
@@ -102,23 +102,11 @@ public:
         if(dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.cExpId)) {
             for(uint64_t d = 0; d < setupCtx.starkInfo.boundaries.size(); ++d) {
                 for(uint64_t j = 0; j < nrowsPack; ++j) {
-                    if(setupCtx.starkInfo.verify) {
-                        for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                            bufferT_[((nColsStagesAcc[(setupCtx.starkInfo.nStages + 2)*nOpenings] + d + FIELD_EXTENSION)*nrowsPack + j) + e] = setupCtx.constPols.zi[d*FIELD_EXTENSION + e];
-                        }
-                    } else {
-                        bufferT_[(nColsStagesAcc[(setupCtx.starkInfo.nStages + 2)*nOpenings] + d + 1)*nrowsPack + j] = setupCtx.constPols.zi[row + j + d*domainSize];
-                    }
+                    bufferT_[(nColsStagesAcc[(setupCtx.starkInfo.nStages + 2)*nOpenings] + d + 1)*nrowsPack + j] = setupCtx.constPols.zi[row + j + d*domainSize];
                 }
             }
             for(uint64_t j = 0; j < nrowsPack; ++j) {
-                if(setupCtx.starkInfo.verify) {
-                    for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                        bufferT_[((nColsStagesAcc[(setupCtx.starkInfo.nStages + 2)*nOpenings])*nrowsPack + j)*FIELD_EXTENSION + e] = setupCtx.constPols.x_n[e];
-                    }
-                } else {
-                    bufferT_[(nColsStagesAcc[(setupCtx.starkInfo.nStages + 2)*nOpenings])*nrowsPack + j] = setupCtx.constPols.x_2ns[row + j];
-                }
+                bufferT_[(nColsStagesAcc[(setupCtx.starkInfo.nStages + 2)*nOpenings])*nrowsPack + j] = setupCtx.constPols.x_2ns[row + j];
             }
         } else if(dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.friExpId)) {
             for(uint64_t d = 0; d < setupCtx.starkInfo.openingPoints.size(); ++d) {

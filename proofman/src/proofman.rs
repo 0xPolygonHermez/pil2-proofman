@@ -2,11 +2,10 @@ use libloading::{Library, Symbol};
 use log::{info, trace};
 use p3_field::Field;
 use stark::{StarkBufferAllocator, StarkProver};
-use proofman_starks_lib_c::{save_challenges_c, save_publics_c, stark_verify_c, expressions_bin_new_c, stark_info_new_c};
-use std::fs::{self, File};
+use proofman_starks_lib_c::{save_challenges_c, save_publics_c};
+use std::fs;
 use std::error::Error;
 use std::mem::MaybeUninit;
-use std::io::Read;
 
 use colored::*;
 
@@ -14,7 +13,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use transcript::FFITranscript;
 
-use crate::{verify_global_constraints_proof, WitnessLibInitFn, WitnessLibrary};
+use crate::{WitnessLibInitFn, WitnessLibrary};
 use crate::verify_constraints_proof;
 use crate::generate_recursion_proof;
 
@@ -609,88 +608,6 @@ impl<F: Field + 'static> ProofMan<F> {
 
         timer_stop_and_log_debug!(FINALIZING_PROOF);
         proves
-    }
-
-    // This method is not ready to use!
-    fn _verify_proof(provers: &mut [Box<dyn Prover<F>>], proof_ctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> bool {
-        timer_start_debug!(VERIFY_PROOF);
-        let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
-        let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
-
-        let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
-
-        let mut is_valid = true;
-        for prover in provers.iter_mut() {
-            let p_proof = prover.get_proof();
-            let prover_info = prover.get_prover_info();
-
-            let setup_path = proof_ctx.global_info.get_air_setup_path(
-                prover_info.airgroup_id,
-                prover_info.air_id,
-                &ProofType::Basic,
-            );
-
-            let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-            let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
-
-            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true);
-            let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
-
-            let air_name = &proof_ctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
-
-            let verkey_file = proof_ctx
-                .global_info
-                .get_air_setup_path(prover_info.airgroup_id, prover_info.air_id, &ProofType::Basic)
-                .with_extension("verkey.json");
-            let mut contents = String::new();
-            let mut file = File::open(verkey_file).unwrap();
-
-            let _ =
-                file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
-            let verkey_json: Vec<u64> = serde_json::from_str(&contents).unwrap();
-            let verkey: Vec<F> = verkey_json.into_iter().map(|element| F::from_canonical_u64(element)).collect();
-
-            let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
-            let proof_challenges = prover.get_proof_challenges(steps_fri, challenges_guard.clone());
-
-            let is_valid_proof = stark_verify_c(
-                p_proof,
-                p_stark_info,
-                p_expressions_bin,
-                verkey.as_ptr() as *mut c_void,
-                public_inputs,
-                proof_challenges.as_ptr() as *mut c_void,
-            );
-            if !is_valid_proof {
-                is_valid = false;
-                log::info!(
-                    "{}: ··· {}",
-                    Self::MY_NAME,
-                    format!("\u{2717} Proof of {}: Instance #{} was verified", air_name, prover_info.instance_id,)
-                        .bright_red()
-                        .bold()
-                );
-            } else {
-                log::info!(
-                    "{}:     {}",
-                    Self::MY_NAME,
-                    format!("\u{2713} Proof of {}: Instance #{} was verified", air_name, prover_info.instance_id,)
-                        .bright_green()
-                        .bold()
-                );
-            }
-        }
-
-        let global_constraints_verified = verify_global_constraints_proof(proof_ctx.clone(), sctx.clone());
-
-        if is_valid && global_constraints_verified {
-            log::info!("{}: ··· {}", Self::MY_NAME, "\u{2713} All proofs were verified".bright_green().bold());
-        } else {
-            log::info!("{}: ··· {}", Self::MY_NAME, "\u{2717} Not all proofs were verified.".bright_red().bold());
-        }
-
-        timer_stop_and_log_debug!(VERIFY_PROOF);
-        is_valid
     }
 
     fn print_summary(pctx: Arc<ProofCtx<F>>) {

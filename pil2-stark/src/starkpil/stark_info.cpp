@@ -4,16 +4,15 @@
 #include "zklog.hpp"
 #include "exit_process.hpp"
 
-StarkInfo::StarkInfo(string file, bool verify_)
+StarkInfo::StarkInfo(string file)
 {
     // Load contents from json file
     json starkInfoJson;
     file2json(file, starkInfoJson);
-    load(starkInfoJson, verify_);
-    verify = verify_;
+    load(starkInfoJson);
 }
 
-void StarkInfo::load(json j, bool verify_)
+void StarkInfo::load(json j)
 {   
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
@@ -170,16 +169,7 @@ void StarkInfo::load(json j, bool verify_)
         mapSectionsN[it.key()] = it.value();
     }
 
-    if(verify_) {
-        mapTotalN = 0;
-        mapOffsets[std::make_pair("const", false)] = 0;
-        for(uint64_t stage = 1; stage <= nStages + 1; ++stage) {
-            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
-            mapTotalN += mapSectionsN["cm" + to_string(stage)] * starkStruct.nQueries;
-        }
-    } else {
-        setMapOffsets();
-    }
+    setMapOffsets();
     
 }
 

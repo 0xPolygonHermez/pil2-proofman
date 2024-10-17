@@ -125,13 +125,11 @@ public:
     };
 
     /* Constructor */
-    ExpressionsBin(string file, bool globalBin = false, bool verifierBin = false);
+    ExpressionsBin(string file, bool globalBin = false);
 
     void loadExpressionsBin(BinFileUtils::BinFile *expressionsBin);
 
     void loadGlobalBin(BinFileUtils::BinFile *globalBin);
-
-    void loadVerifierBin(BinFileUtils::BinFile *verifierBin);
 
     VecU64Result getHintIdsByName(std::string name);
 };

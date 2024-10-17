@@ -119,11 +119,11 @@ pub fn setup_ctx_free_c(p_setup_ctx: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn stark_info_new_c(filename: &str, verify: bool) -> *mut c_void {
+pub fn stark_info_new_c(filename: &str) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, verify)
+        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char)
     }
 }
 
@@ -186,11 +186,11 @@ pub fn const_pols_free_c(p_const_pols: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn expressions_bin_new_c(filename: &str, global: bool, verifier: bool) -> *mut c_void {
+pub fn expressions_bin_new_c(filename: &str, global: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global, verifier)
+        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global)
     }
 }
 
@@ -733,18 +733,6 @@ pub fn set_log_level_c(level: u64) {
     }
 }
 
-#[cfg(not(feature = "no_lib_link"))]
-pub fn stark_verify_c(
-    p_proof: *mut c_void,
-    p_stark_info: *mut c_void,
-    p_expressions_bin: *mut c_void,
-    p_verkey: *mut c_void,
-    p_publics: *mut c_void,
-    p_challenges: *mut c_void,
-) -> bool {
-    unsafe { stark_verify(p_proof, p_stark_info, p_expressions_bin, p_verkey, p_publics, p_challenges) }
-}
-
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -834,7 +822,7 @@ pub fn setup_ctx_free_c(_p_setup_ctx: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn stark_info_new_c(_filename: &str, _verify: bool) -> *mut c_void {
+pub fn stark_info_new_c(_filename: &str) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -882,7 +870,7 @@ pub fn const_pols_with_tree_new_c(_filename: &str, _tree_filename: &str, _p_star
 pub fn const_pols_free_c(_p_const_pols: *mut c_void) {}
 
 #[cfg(feature = "no_lib_link")]
-pub fn expressions_bin_new_c(_filename: &str, _global: bool, _verifier: bool) -> *mut c_void {
+pub fn expressions_bin_new_c(_filename: &str, _global: bool) -> *mut c_void {
     std::ptr::null_mut()
 }
 
@@ -1291,17 +1279,4 @@ pub fn join_zkin_final_c(
 #[cfg(feature = "no_lib_link")]
 pub fn set_log_level_c(_level: u64) {
     trace!("{}: ··· {}", "ffi     ", "set_log_level_c: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn stark_verify_c(
-    _p_proof: *mut c_void,
-    _p_stark_info: *mut c_void,
-    _p_expressions_bin: *mut c_void,
-    _verkey: *mut c_void,
-    _p_publics: *mut c_void,
-    _p_challenges: *mut c_void,
-) -> bool {
-    trace!("{}: ··· {}", "ffi     ", "stark_verify_c: This is a mock call because there is no linked library");
-    true
 }

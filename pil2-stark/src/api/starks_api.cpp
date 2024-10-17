@@ -5,7 +5,6 @@
 #include "hints.hpp"
 #include "global_constraints.hpp"
 #include "gen_recursive_proof.hpp"
-#include "stark_verify.hpp"
 #include "logger.hpp"
 #include <filesystem>
 
@@ -138,9 +137,9 @@ void setup_ctx_free(void *pSetupCtx) {
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool verify)
+void *stark_info_new(char *filename)
 {
-    auto starkInfo = new StarkInfo(filename, verify);
+    auto starkInfo = new StarkInfo(filename);
 
     return starkInfo;
 }
@@ -195,9 +194,9 @@ void const_pols_free(void *pConstPols)
 
 // Expressions Bin
 // ========================================================================================
-void *expressions_bin_new(char* filename, bool global, bool verifier)
+void *expressions_bin_new(char* filename, bool global)
 {
-    auto expressionsBin = new ExpressionsBin(filename, global, verifier);
+    auto expressionsBin = new ExpressionsBin(filename, global);
 
     return expressionsBin;
 };
@@ -537,10 +536,4 @@ void setLogLevel(uint64_t level) {
     }
 
     Logger::getInstance(LOG_TYPE::CONSOLE)->updateLogLevel((LOG_LEVEL)new_level);
-}
-
-// Stark Verify
-// =================================================================================
-bool stark_verify(void *fProof, void *pStarkInfo, void *pExpressionsBin, void *verkey, void *pPublics, void *pChallenges) {
-    return starkVerify(*(FRIProof<Goldilocks::Element> *)fProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, (Goldilocks::Element *)verkey, (Goldilocks::Element *)pPublics, true, (Goldilocks::Element *)pChallenges);
 }
