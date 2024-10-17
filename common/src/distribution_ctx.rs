@@ -2,7 +2,8 @@
 use mpi::traits::Communicator;
 #[cfg(feature = "distributed")]
 use mpi::collective::CommunicatorCollectives;
-
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{RwLock};
 /// Represents the context of distributed computing
 #[derive(Default)]
 pub struct DistributionCtx {

@@ -73,7 +73,7 @@ impl<F: Field + 'static> ProofMan<F> {
         Self::initialize_witness(&mut witness_lib, pctx.clone(), ectx.clone(), sctx.clone());
         witness_lib.calculate_witness(1, pctx.clone(), ectx.clone(), sctx.clone());
 
-        if ectx.dctx.get().unwrap().is_master() {
+        if ectx.dctx.read().unwrap().is_master() {
             Self::print_summary(pctx.clone());
         }
 
@@ -350,7 +350,7 @@ impl<F: Field + 'static> ProofMan<F> {
         verify_constraints: bool,
         n_provers: usize,
     ) {
-        if !ectx.dctx.get().unwrap().is_distributed() {
+        if !ectx.dctx.read().unwrap().is_distributed() {
             if stage != 0 {
                 info!("{}: Calculating challenges", Self::MY_NAME);
             }
@@ -376,7 +376,7 @@ impl<F: Field + 'static> ProofMan<F> {
                 }
             }
         } else {
-            let size = ectx.dctx.get().unwrap().n_processes;
+            let size = ectx.dctx.read().unwrap().n_processes;
             // max number of roots
             let max_roots = (n_provers as i32 + size - 1) / size;
 
@@ -457,8 +457,8 @@ impl<F: Field + 'static> ProofMan<F> {
         n_provers: usize,
     ) {
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
-        let size = ectx.dctx.get().unwrap().n_processes;
-        let rank = ectx.dctx.get().unwrap().rank;
+        let size = ectx.dctx.read().unwrap().n_processes;
+        let rank = ectx.dctx.read().unwrap().rank;
 
         // Calculate evals
         Self::get_challenges(num_commit_stages + 2, provers, pctx.clone(), transcript);
@@ -468,7 +468,7 @@ impl<F: Field + 'static> ProofMan<F> {
             for air_id in airgroup.iter() {
                 let air_instances_idx: Vec<usize> = pctx.air_instance_repo.find_air_instances(airgroup_id, *air_id);
                 if !air_instances_idx.is_empty() {
-                    if ectx.dctx.get().unwrap().is_distributed() {
+                    if ectx.dctx.read().unwrap().is_distributed() {
                         let mut is_first = true;
                         for idx in air_instances_idx {
                             let segment_idx =
@@ -510,7 +510,7 @@ impl<F: Field + 'static> ProofMan<F> {
             for air_id in airgroup.iter() {
                 let air_instances_idx: Vec<usize> = pctx.air_instance_repo.find_air_instances(airgroup_id, *air_id);
                 if !air_instances_idx.is_empty() {
-                    if ectx.dctx.get().unwrap().is_distributed() {
+                    if ectx.dctx.read().unwrap().is_distributed() {
                         let mut is_first = true;
                         for idx in air_instances_idx {
                             let segment_idx =
