@@ -209,9 +209,9 @@ void expressions_bin_free(void *pExpressionsBin)
 
 // Hints
 // ========================================================================================
-void *get_hint_field(void *pSetupCtx, void* buffer, void* public_inputs, void* challenges, void* subproofValues, void* evals, uint64_t hintId, char *hintFieldName, bool dest, bool inverse, bool printExpression) 
+void *get_hint_field(void *pSetupCtx, void* buffer, void* public_inputs, void* challenges, void* subproofValues, void* evals, uint64_t hintId, char *hintFieldName, bool dest, bool inverse, bool printExpression, bool initialize_zeros) 
 {
-    HintFieldValues hintFieldValues = getHintField(*(SetupCtx *)pSetupCtx,  (Goldilocks::Element *)buffer, (Goldilocks::Element *)public_inputs, (Goldilocks::Element *)challenges, (Goldilocks::Element *)subproofValues, (Goldilocks::Element *)evals, hintId, string(hintFieldName), dest, inverse, printExpression);
+    HintFieldValues hintFieldValues = getHintField(*(SetupCtx *)pSetupCtx,  (Goldilocks::Element *)buffer, (Goldilocks::Element *)public_inputs, (Goldilocks::Element *)challenges, (Goldilocks::Element *)subproofValues, (Goldilocks::Element *)evals, hintId, string(hintFieldName), dest, inverse, printExpression, initialize_zeros);
     return new HintFieldValues(hintFieldValues);
 }
 

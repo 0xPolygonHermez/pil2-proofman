@@ -14,7 +14,8 @@ use log::debug;
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{
-    acc_hint_field, format_vec, get_hint_field, get_hint_field_a, get_hint_ids_by_name, mul_hint_fields, HintFieldOptions, HintFieldOutput, HintFieldValue
+    acc_hint_field, format_vec, get_hint_field, get_hint_field_a, get_hint_ids_by_name, mul_hint_fields,
+    HintFieldOptions, HintFieldOutput, HintFieldValue,
 };
 
 use crate::{Decider, StdMode, ModeName};
@@ -278,7 +279,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     } else {
                         gsum_hints[0] as usize
                     };
-        
+
                     let (pol_id, subproofvalue_id) = acc_hint_field::<F>(
                         &sctx,
                         &pctx.public_inputs,

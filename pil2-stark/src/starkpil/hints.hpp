@@ -315,7 +315,20 @@ uint64_t multiplyHintFields(SetupCtx& setupCtx, Goldilocks::Element *buffer, Gol
 }
 
 
-HintFieldValues getHintField(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *publicInputs, Goldilocks::Element *challenges, Goldilocks::Element *subproofValues, Goldilocks::Element *evals, uint64_t hintId, std::string hintFieldName, bool dest, bool inverse, bool print_expression) {
+HintFieldValues getHintField(
+    SetupCtx& setupCtx, 
+    Goldilocks::Element *buffer, 
+    Goldilocks::Element *publicInputs, 
+    Goldilocks::Element *challenges, 
+    Goldilocks::Element *subproofValues, 
+    Goldilocks::Element *evals, 
+    uint64_t hintId, 
+    std::string hintFieldName, 
+    bool dest = false, 
+    bool inverse = false, 
+    bool print_expression = false, 
+    bool initialize_zeros = false
+) {
     StepsParams params {
         pols : buffer,
         publicInputs,
@@ -387,6 +400,8 @@ HintFieldValues getHintField(SetupCtx& setupCtx, Goldilocks::Element *buffer, Go
                     zklog.error("Inverse not supported still for polynomials");
                     exitProcess();
                 }
+            } else if(initialize_zeros) {
+                memset((uint8_t *)hintFieldInfo.values, 0, hintFieldInfo.size * sizeof(Goldilocks::Element));
             }
         } else if(hintFieldVal.operand == opType::const_) {
             uint64_t dim = setupCtx.starkInfo.constPolsMap[hintFieldVal.id].dim;
@@ -532,7 +547,7 @@ VecU64Result accHintField(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldi
     });
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
     
-    HintFieldValues hintValues = getHintField(setupCtx, buffer, publicInputs, challenges, subproofValues, evals, hintId, hintFieldName, false, false, false);
+    HintFieldValues hintValues = getHintField(setupCtx, buffer, publicInputs, challenges, subproofValues, evals, hintId, hintFieldName);
 
     Goldilocks::Element *vals = &hintValues.values[0].values[0];
 

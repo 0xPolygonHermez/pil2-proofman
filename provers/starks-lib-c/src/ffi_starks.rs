@@ -208,6 +208,7 @@ pub fn get_hint_ids_by_name_c(p_expressions_bin: *mut c_void, hint_name: &str) -
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_c(
     p_setup_ctx: *mut c_void,
     steps_params: StepsParams,
@@ -216,6 +217,7 @@ pub fn get_hint_field_c(
     dest: bool,
     inverse: bool,
     print_expression: bool,
+    initialize_zeros: bool,
 ) -> *mut c_void {
     let field_name = CString::new(hint_field_name).unwrap();
     unsafe {
@@ -231,6 +233,7 @@ pub fn get_hint_field_c(
             dest,
             inverse,
             print_expression,
+            initialize_zeros,
         )
     }
 }
@@ -277,7 +280,6 @@ pub fn acc_hint_field_c(
     hint_field_subproovalue: &str,
     hint_field_name: &str,
 ) -> *mut c_void {
-
     let field_dest = CString::new(hint_field_dest).unwrap();
     let field_subproofvalue = CString::new(hint_field_subproovalue).unwrap();
     let field_name = CString::new(hint_field_name).unwrap();
@@ -894,6 +896,7 @@ pub fn get_hint_ids_by_name_c(_p_expressions_bin: *mut c_void, _hint_name: &str)
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_c(
     _p_setup_ctx: *mut c_void,
     _steps_params: StepsParams,
@@ -902,6 +905,7 @@ pub fn get_hint_field_c(
     _dest: bool,
     _inverse: bool,
     _print_expression: bool,
+    _initialize_zeros: bool,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "get_hint_field: This is a mock call because there is no linked library");
     std::ptr::null_mut()

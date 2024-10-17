@@ -135,7 +135,7 @@ extern "C" {
     pub fn expressions_bin_free(pExpressionsBin: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14get_hint_fieldPvS_S_S_S_S_mPcbbb"]
+    #[link_name = "\u{1}_Z14get_hint_fieldPvS_S_S_S_S_mPcbbbb"]
     pub fn get_hint_field(
         pSetupCtx: *mut ::std::os::raw::c_void,
         buffer: *mut ::std::os::raw::c_void,
@@ -148,6 +148,7 @@ extern "C" {
         dest: bool,
         inverse: bool,
         print_expression: bool,
+        initialize_zeros: bool,
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {

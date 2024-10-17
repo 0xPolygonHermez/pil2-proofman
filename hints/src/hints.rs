@@ -1,6 +1,6 @@
 use proofman_starks_lib_c::{
-    get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c, acc_hint_field_c, print_by_name_c, print_expression_c, print_row_c,
-    set_hint_field_c, StepsParams,
+    get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c, acc_hint_field_c, print_by_name_c, print_expression_c,
+    print_row_c, set_hint_field_c, StepsParams,
 };
 
 use std::collections::HashMap;
@@ -54,11 +54,16 @@ pub struct HintFieldOptions {
     pub dest: bool,
     pub inverse: bool,
     pub print_expression: bool,
+    pub initialize_zeros: bool,
 }
 
 impl HintFieldOptions {
     pub fn dest() -> Self {
         Self { dest: true, ..Default::default() }
+    }
+
+    pub fn dest_with_zeros() -> Self {
+        Self { dest: true, initialize_zeros: true, ..Default::default() }
     }
 
     pub fn inverse() -> Self {
@@ -726,7 +731,7 @@ pub fn acc_hint_field<F: Clone + Copy + Debug + Display>(
     let hint_ids_result = unsafe { Box::from_raw(raw_ptr as *mut HintIdsResult) };
 
     let slice = unsafe { std::slice::from_raw_parts(hint_ids_result.hint_ids, hint_ids_result.n_hints as usize) };
-    
+
     (slice[0], slice[1])
 }
 
@@ -760,6 +765,7 @@ pub fn get_hint_field<F: Clone + Copy + Debug + Display>(
         options.dest,
         options.inverse,
         options.print_expression,
+        options.initialize_zeros,
     );
 
     unsafe {
@@ -802,6 +808,7 @@ pub fn get_hint_field_a<F: Clone + Copy + Debug + Display>(
         options.dest,
         options.inverse,
         options.print_expression,
+        options.initialize_zeros,
     );
 
     unsafe {
@@ -850,6 +857,7 @@ pub fn get_hint_field_m<F: Clone + Copy + Debug + Display>(
         options.dest,
         options.inverse,
         options.print_expression,
+        options.initialize_zeros,
     );
 
     unsafe {
@@ -899,6 +907,7 @@ pub fn get_hint_field_constant<F: Clone + Copy + Debug + Display>(
         options.dest,
         options.inverse,
         options.print_expression,
+        options.initialize_zeros,
     );
 
     unsafe {
@@ -937,6 +946,7 @@ pub fn get_hint_field_constant_a<F: Clone + Copy + Debug + Display>(
         options.dest,
         options.inverse,
         options.print_expression,
+        options.initialize_zeros,
     );
 
     unsafe {
@@ -981,6 +991,7 @@ pub fn get_hint_field_constant_m<F: Clone + Copy + Debug + Display>(
         options.dest,
         options.inverse,
         options.print_expression,
+        options.initialize_zeros,
     );
 
     unsafe {
