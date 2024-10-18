@@ -49,10 +49,10 @@ pub fn check_bus_values<F: PrimeField>(
 
         let assume_expr: Vec<_> = metadata.iter().filter(|(_, _, _, is_prove, _)| !is_prove).collect();
         if num_errors_assume > 0 {
-            println!("\t  ⁃ There are {} unmatching values thrown as 'assume' in some of:", num_errors_assume);
+            println!("\t  ⁃ There are {} unmatching values thrown as 'assume' in:", num_errors_assume);
             for expr in assume_expr {
                 println!(
-                    "\t     (Air Group, Air, Opid Name, Expression) = ({}, {}, {}, {:?})",
+                    "\t     (Air Group, Air, Argument, Expression) = ({}, {}, {}, {:?})",
                     expr.0, expr.1, expr.2, expr.4
                 );
             }
@@ -107,10 +107,10 @@ pub fn check_bus_values<F: PrimeField>(
 
         let prove_expr: Vec<_> = metadata.iter().filter(|(_, _, _, is_prove, _)| *is_prove).collect();
         if num_errors_prove > 0 {
-            println!("\t  ⁃ There are {} unmatching values thrown as 'prove' in some of:", num_errors_assume);
+            println!("\t  ⁃ There are {} unmatching values thrown as 'prove' in:", num_errors_assume);
             for expr in prove_expr {
                 println!(
-                    "\t     (Air Group, Air, Opid Name, Expression) = ({}, {}, {}, {:?})",
+                    "\t     (Air Group, Air, Argument, Expression) = ({}, {}, {}, {:?})",
                     expr.0, expr.1, expr.2, expr.4
                 );
             }

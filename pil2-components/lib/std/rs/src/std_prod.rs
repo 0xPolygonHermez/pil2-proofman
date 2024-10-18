@@ -73,8 +73,10 @@ impl<F: PrimeField> StdProd<F> {
         num_rows: usize,
         debug_hints_data: Vec<u64>,
     ) {
-        let air_group = pctx.pilout.get_air_group(air_instance.airgroup_id);
-        let air = pctx.pilout.get_air(air_instance.airgroup_id, air_instance.air_id);
+        let airgroup_id = air_instance.airgroup_id;
+        let air_id = air_instance.air_id;
+        let air_group = pctx.pilout.get_air_group(airgroup_id);
+        let air = pctx.pilout.get_air(airgroup_id, air_id);
         let air_group_name = air_group.name().unwrap_or("Unknown air group").to_string();
         let air_name = air.name().unwrap_or("Unknown air").to_string();
 
@@ -201,13 +203,13 @@ impl<F: PrimeField> StdProd<F> {
                 };
 
                 if sel {
-                    self.update_bus_vals(num_rows, opid, expressions.get(j), j, proves);
+                    self.update_bus_vals(opid, expressions.get(j), j, proves);
                 }
             }
         }
     }
 
-    fn update_bus_vals(&self, num_rows: usize, opid: u64, val: Vec<HintFieldOutput<F>>, row: usize, is_num: bool) {
+    fn update_bus_vals(&self, opid: u64, val: Vec<HintFieldOutput<F>>, row: usize, is_num: bool) {
         let debug_data = self.debug_data.as_ref().expect("Debug data missing");
         let mut bus_values = debug_data.bus_values.lock().expect("Bus values missing");
 
@@ -216,8 +218,8 @@ impl<F: PrimeField> StdProd<F> {
         let bus_val = bus_opid.entry(val).or_insert_with(|| BusValue {
             num_proves: F::zero(),
             num_assumes: F::zero(),
-            row_proves: Vec::with_capacity(num_rows),
-            row_assumes: Vec::with_capacity(num_rows),
+            row_proves: Vec::new(),
+            row_assumes: Vec::new(),
         });
 
         if is_num {

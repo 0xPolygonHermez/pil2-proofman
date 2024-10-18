@@ -231,21 +231,13 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                         _ => panic!("sumid must be a field element"),
                     };
 
-                    self.update_bus_vals(num_rows, sumid, expressions.get(j), j, proves, mul);
+                    self.update_bus_vals(sumid, expressions.get(j), j, proves, mul);
                 }
             }
         }
     }
 
-    fn update_bus_vals(
-        &self,
-        num_rows: usize,
-        sumid: u64,
-        val: Vec<HintFieldOutput<F>>,
-        row: usize,
-        proves: bool,
-        times: F,
-    ) {
+    fn update_bus_vals(&self, sumid: u64, val: Vec<HintFieldOutput<F>>, row: usize, proves: bool, times: F) {
         let debug_data = self.debug_data.as_ref().expect("Debug data missing");
         let mut bus_values = debug_data.bus_values.lock().expect("Bus values missing");
 
@@ -254,8 +246,8 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
         let bus_val = bus_sumid.entry(val.clone()).or_insert_with(|| BusValue {
             num_proves: F::zero(),
             num_assumes: F::zero(),
-            row_proves: Vec::with_capacity(num_rows),
-            row_assumes: Vec::with_capacity(num_rows),
+            row_proves: Vec::new(),
+            row_assumes: Vec::new(),
         });
 
         if proves {
