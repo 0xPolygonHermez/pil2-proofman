@@ -23,6 +23,9 @@ use std::os::raw::c_void;
 
 use proofman_util::{timer_start_info, timer_start_debug, timer_stop_and_log_info, timer_stop_and_log_debug};
 
+#[cfg(feature = "distributed")]
+use mpi::collective::CommunicatorCollectives;
+
 pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
 }
@@ -240,7 +243,7 @@ impl<F: Field + 'static> ProofMan<F> {
             #[cfg(feature = "distributed")]
             let segment_idx = air_instance.air_segment_id.unwrap_or(0); // Only for main proof
             #[cfg(feature = "distributed")]
-            if segment_idx as i32 % _ectx.dctx.size != _ectx.dctx.rank {
+            if segment_idx as i32 % _ectx.dctx.read().unwrap().n_processes != _ectx.dctx.read().unwrap().rank {
                 continue;
             }
             let air_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
@@ -397,9 +400,9 @@ impl<F: Field + 'static> ProofMan<F> {
             }
 
             // Use all ghater
-            let all_roots: Vec<u64> = vec![0; 4 * max_roots as usize * size as usize];
+            let mut all_roots: Vec<u64> = vec![0; 4 * max_roots as usize * size as usize];
             #[cfg(feature = "distributed")]
-            world.all_gather_into(&roots, &mut all_roots);
+            ectx.dctx.read().unwrap().world.all_gather_into(&roots, &mut all_roots);
 
             // add challenges to transcript
             let airgroups = pctx.global_info.subproofs.clone();

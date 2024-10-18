@@ -1,9 +1,9 @@
 #[cfg(feature = "distributed")]
-use mpi::environment::Universe;
+use mpi::collective::CommunicatorCollectives;
 #[cfg(feature = "distributed")]
 use mpi::traits::Communicator;
 #[cfg(feature = "distributed")]
-use mpi::collective::CommunicatorCollectives;
+use mpi::environment::Universe;
 
 /// Represents the context of distributed computing
 pub struct DistributionCtx {
@@ -22,13 +22,13 @@ impl DistributionCtx {
     pub fn new() -> Self {
         #[cfg(feature = "distributed")]
         {
-            let (_universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
-            let _world = _universe.world();
+            let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
+            let world = universe.world();
             DistributionCtx {
-                rank: _world.rank(),
-                n_processes: _world.size(),
-                universe: _universe,
-                world: _world,
+                rank: world.rank(),
+                n_processes: world.size(),
+                universe,
+                world,
                 n_instances: 0,
                 my_instances: Vec::new(),
                 instances: Vec::new(),
@@ -84,3 +84,5 @@ impl Default for DistributionCtx {
         DistributionCtx::new()
     }
 }
+unsafe impl Send for DistributionCtx {}
+unsafe impl Sync for DistributionCtx {}
