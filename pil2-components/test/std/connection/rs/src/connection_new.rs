@@ -6,7 +6,7 @@ use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-use crate::{ConnectionNew2Trace, CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS};
+use crate::{ConnectionNew0Trace, CONNECTION_NEW_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS};
 
 pub struct ConnectionNew<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -21,7 +21,7 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let connection_new = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        wcm.register_component(connection_new.clone(), Some(CONNECTION_AIRGROUP_ID), Some(CONNECTION_NEW_AIR_IDS));
+        wcm.register_component(connection_new.clone(), Some(CONNECTION_NEW_AIRGROUP_ID), Some(CONNECTION_NEW_AIR_IDS));
 
         connection_new
     }
@@ -31,12 +31,12 @@ where
         let (buffer_size, _) = ectx
             .buffer_allocator
             .as_ref()
-            .get_buffer_info(&sctx, CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0])
+            .get_buffer_info(&sctx, CONNECTION_NEW_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0])
             .unwrap();
 
         let buffer = vec![F::zero(); buffer_size as usize];
 
-        let air_instance = AirInstance::new(CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0], None, buffer);
+        let air_instance = AirInstance::new(CONNECTION_NEW_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0], None, buffer);
         pctx.air_instance_repo.add_air_instance(air_instance);
     }
 }
@@ -70,14 +70,14 @@ where
             let (_buffer_size, offsets) = ectx
                 .buffer_allocator
                 .as_ref()
-                .get_buffer_info(&sctx, CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0])
+                .get_buffer_info(&sctx, CONNECTION_NEW_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0])
                 .unwrap();
 
             let buffer = &mut air_instance.buffer;
 
-            let num_rows = pctx.pilout.get_air(CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0]).num_rows();
+            let num_rows = pctx.pilout.get_air(CONNECTION_NEW_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0]).num_rows();
             let mut trace =
-                ConnectionNew2Trace::map_buffer(buffer.as_mut_slice(), num_rows, offsets[0] as usize).unwrap();
+                ConnectionNew0Trace::map_buffer(buffer.as_mut_slice(), num_rows, offsets[0] as usize).unwrap();
 
             let mut frame = [0; 6];
             let mut conn_len = [0; 6];

@@ -4,13 +4,13 @@ require "gl_groups_small.pil";
 
 require "std_connection.pil";
 
-const int TEST_OPID = 44;
-
 // TODO: Finish Connection2 and Connection3, compute examples of permutations
 // TODO: Add examples combining both approaches
 
 airtemplate Connection1(const int N = 2**3) {
     if (N != 2**3) error(`Unsupported N = ${N}`);
+
+    const int OPID = 111;
 
     col witness a,b,c;
 
@@ -26,11 +26,13 @@ airtemplate Connection1(const int N = 2**3) {
     // Trivial case: permutation is the identity
 
     // Old Interface
-    connection(TEST_OPID, [a, b, c], [S1, S2, S3]);
+    connection(OPID, [a, b, c], [S1, S2, S3]);
 };
 
 airtemplate Connection2(const int N = 2**4) {
     if (N != 2**4) error(`Unsupported N = ${N}`);
+
+    const int OPID = 222;
 
     col witness a,b,c;
 
@@ -49,11 +51,13 @@ airtemplate Connection2(const int N = 2**4) {
     S1[1] = tmp;
 
     // Old Interface
-    connection(TEST_OPID, [a, b, c], [S1, S2, S3]);
+    connection(OPID, [a, b, c], [S1, S2, S3]);
 };
 
 airtemplate Connection3(const int N = 2**12) {
     if (N != 2**12) error(`Unsupported N = ${N}`);
+
+    const int OPID = 333;
 
     col witness a,b,c;
 
@@ -69,7 +73,7 @@ airtemplate Connection3(const int N = 2**12) {
     // TODO!!!
 
     // Old Interface
-    connection(TEST_OPID, [a, b, c], [S1, S2, S3]);
+    connection(OPID, [a, b, c], [S1, S2, S3]);
 };
 
 airtemplate ConnectionNew(const int N = 2**4) {
@@ -127,23 +131,15 @@ airtemplate ConnectionNew(const int N = 2**4) {
     connection_connect(OPID[5]);
 };
 
-// TODO: Remove this airgroup and uncomment the original idea that follows commented below
-airgroup Connection {
+airgroup Connection12 {
     Connection1();
     Connection2();
-    // Connection3();
-    ConnectionNew();
 }
 
-// airgroup Connection1 {
-//     Connection1();
-// }
-// airgroup Connection2 {
-//     Connection2();
-// }
 // airgroup Connection3 {
 //     Connection3();
 // }
-// airgroup ConnectionNew {
-//     ConnectionNew();
-// }
+
+airgroup ConnectionNew {
+    ConnectionNew();
+}
