@@ -1,17 +1,18 @@
 #[cfg(feature = "distributed")]
+use mpi::environment::Universe;
+#[cfg(feature = "distributed")]
 use mpi::traits::Communicator;
 #[cfg(feature = "distributed")]
 use mpi::collective::CommunicatorCollectives;
 
 /// Represents the context of distributed computing
-#[derive(Default)]
 pub struct DistributionCtx {
     pub rank: i32,
     pub n_processes: i32,
     #[cfg(feature = "distributed")]
+    pub universe: Universe,
+    #[cfg(feature = "distributed")]
     pub world: mpi::topology::SimpleCommunicator,
-    #[cfg(not(feature = "distributed"))]
-    pub world: i32,
     pub n_instances: i32,
     pub my_instances: Vec<usize>,
     pub instances: Vec<(usize, usize)>,
@@ -19,38 +20,29 @@ pub struct DistributionCtx {
 
 impl DistributionCtx {
     pub fn new() -> Self {
-        let mut ctx = DistributionCtx {
-            rank: 0,
-            n_processes: 1,
-            #[cfg(feature = "distributed")]
-            world: mpi::topology::SimpleCommunicator::null(),
-            #[cfg(not(feature = "distributed"))]
-            world: -1,
-            n_instances: 0,
-            my_instances: Vec::new(),
-            instances: Vec::new(),
-        };
-        ctx.init();
-        ctx
-    }
-
-    pub fn init(&mut self) {
         #[cfg(feature = "distributed")]
         {
-            let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
-            self.world = universe.world();
-            self.rank = self.world.rank();
-            self.n_processes = self.world.size();
-            self.n_instances = 0;
-            self.my_instances = Vec::new();
+            let (_universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
+            let _world = _universe.world();
+            DistributionCtx {
+                rank: _world.rank(),
+                n_processes: _world.size(),
+                universe: _universe,
+                world: _world,
+                n_instances: 0,
+                my_instances: Vec::new(),
+                instances: Vec::new(),
+            }
         }
         #[cfg(not(feature = "distributed"))]
         {
-            self.rank = 0;
-            self.n_processes = 1;
-            self.world = -1;
-            self.n_instances = 0;
-            self.my_instances = Vec::new();
+            DistributionCtx {
+                rank: 0,
+                n_processes: 1,
+                n_instances: 0,
+                my_instances: Vec::new(),
+                instances: Vec::new(),
+            }
         }
     }
 
@@ -84,5 +76,11 @@ impl DistributionCtx {
             self.my_instances.push(instance_idx);
         }
         self.instances.push((airgroup_id, air_id));
+    }
+}
+
+impl Default for DistributionCtx {
+    fn default() -> Self {
+        DistributionCtx::new()
     }
 }
