@@ -400,7 +400,7 @@ impl<F: Field + 'static> ProofMan<F> {
             }
 
             // Use all ghater
-            let mut all_roots: Vec<u64> = vec![0; 4 * max_roots as usize * size as usize];
+            let all_roots: Vec<u64> = vec![0; 4 * max_roots as usize * size as usize];
             #[cfg(feature = "distributed")]
             ectx.dctx.read().unwrap().world.all_gather_into(&roots, &mut all_roots);
 
