@@ -36,13 +36,7 @@ impl DistributionCtx {
         }
         #[cfg(not(feature = "distributed"))]
         {
-            DistributionCtx {
-                rank: 0,
-                n_processes: 1,
-                n_instances: 0,
-                my_instances: Vec::new(),
-                instances: Vec::new(),
-            }
+            DistributionCtx { rank: 0, n_processes: 1, n_instances: 0, my_instances: Vec::new(), instances: Vec::new() }
         }
     }
 
