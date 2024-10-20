@@ -98,12 +98,30 @@ impl<F: PrimeField> SpecifiedRanges<F> {
         let sctx = self.wcm.get_arc_sctx();
         let ectx = self.wcm.get_arc_ectx();
 
+        // Perform the last update
+        self.update_multiplicity(drained_inputs);
+
         let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = ectx.dctx.write().unwrap();
 
-        if dctx.add_instance(self.airgroup_id, self.air_id, 1) {
-            // Perform the last update
-            self.update_multiplicity(drained_inputs);
+        let (is_myne, instance_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
 
+        let mut multiplicities = self
+            .mul_columns
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|column| match column {
+                HintFieldValue::Column(values) => {
+                    values.iter().map(|x| x.as_canonical_biguint().to_u64().unwrap()).collect::<Vec<u64>>()
+                }
+                _ => panic!("Multiplicities must be columns"),
+            })
+            .collect::<Vec<Vec<u64>>>(); //rick: definir multiplicities com u32 directe?
+        let owner = dctx.owner(instance_idx);
+
+        dctx.add_reduce_multiplicities(&mut multiplicities, owner);
+
+        if is_myne {
             // Set the multiplicity columns as done
             let hints = self.hints.lock().unwrap();
 
@@ -124,10 +142,17 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
             let air_instance = &mut air_instance_rw[air_instance_id];
 
-            let mul_columns = &*self.mul_columns.lock().unwrap();
+            //let mul_columns = &*self.mul_columns.lock().unwrap();
+
+            let mul_columns_2 = multiplicities
+                .iter()
+                .map(|multiplicities| {
+                    HintFieldValue::Column(multiplicities.iter().map(|x| F::from_canonical_u64(*x)).collect::<Vec<F>>())
+                })
+                .collect::<Vec<HintFieldValue<F>>>();
 
             for (index, hint) in hints[1..].iter().enumerate() {
-                set_hint_field(self.wcm.get_sctx(), air_instance, *hint, "reference", &mul_columns[index]);
+                set_hint_field(self.wcm.get_sctx(), air_instance, *hint, "reference", &mul_columns_2[index]);
             }
 
             log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "SpecifiedRanges");

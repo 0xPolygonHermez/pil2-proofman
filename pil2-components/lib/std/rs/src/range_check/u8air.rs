@@ -91,12 +91,23 @@ impl<F: PrimeField> U8Air<F> {
         let sctx = self.wcm.get_arc_sctx();
         let ectx = self.wcm.get_arc_ectx();
 
+        // Perform the last update
+        self.update_multiplicity(drained_inputs);
+
         let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = ectx.dctx.write().unwrap();
 
-        if dctx.add_instance(self.airgroup_id, self.air_id, 1) {
-            // Perform the last update
-            self.update_multiplicity(drained_inputs);
+        let (is_myne, instance_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
+        let mut multiplicity = match &*self.mul_column.lock().unwrap() {
+            HintFieldValue::Column(values) => {
+                values.iter().map(|x| x.as_canonical_biguint().to_u64().unwrap()).collect::<Vec<u64>>()
+            }
+            _ => panic!("Multiplicities must be a column"),
+        }; //rick: definir multiplicities com u32 directe?
 
+        let owner = dctx.owner(instance_idx);
+        dctx.add_reduce_multiplicity(&mut multiplicity, owner);
+
+        if is_myne {
             let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
             let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
             let air_instance_id = if instance.len() != 0 {
@@ -115,13 +126,16 @@ impl<F: PrimeField> U8Air<F> {
             let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
             let air_instance = &mut air_instance_rw[air_instance_id];
 
-            let mul_column = &*self.mul_column.lock().unwrap();
+            // copy multiplicitis back to mul_column
+            let mul_column_2 =
+                HintFieldValue::Column(multiplicity.iter().map(|x| F::from_canonical_u64(*x)).collect::<Vec<F>>());
+
             set_hint_field(
                 self.wcm.get_sctx(),
                 air_instance,
                 self.hint.load(Ordering::Acquire),
                 "reference",
-                mul_column,
+                &mul_column_2,
             );
 
             log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "U8Air");
