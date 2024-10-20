@@ -90,12 +90,28 @@ impl<F: PrimeField> U16Air<F> {
     pub fn drain_inputs(&self) {
         let mut inputs = self.inputs.lock().unwrap();
         let drained_inputs = inputs.drain(..).collect();
-
+        let pctx = self.wcm.get_arc_pctx();
+        let sctx = self.wcm.get_arc_sctx();
+        let ectx = self.wcm.get_arc_ectx();
+        
         // Perform the last update
         self.update_multiplicity(drained_inputs);
 
         let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
-        let air_instance_id = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id)[0];
+        let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
+        let air_instance_id = if instance.len() != 0 { 
+            //rick: this code will desapear
+            air_instance_repo.find_air_instances(self.airgroup_id, self.air_id)[0]
+            
+        } else{
+            // create instance
+            let (buffer_size, _) =
+            ectx.buffer_allocator.as_ref().get_buffer_info(&sctx, self.airgroup_id, self.air_id).unwrap();
+            let buffer: Vec<F> = create_buffer_fast(buffer_size as usize);
+            let air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
+            pctx.air_instance_repo.add_air_instance(air_instance);
+            pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
+        };
 
         let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
         let air_instance = &mut air_instance_rw[air_instance_id];
@@ -149,7 +165,9 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
             HintFieldOptions::dest_with_zeros(),
         );
 
-        pctx.air_instance_repo.add_air_instance(air_instance);
+        //pctx.air_instance_repo.add_air_instance(air_instance);
+        //rick: simplificar per operar només amb la multipliciata, res més... no cal crear buffer, etc...
+
     }
 
     fn calculate_witness(
