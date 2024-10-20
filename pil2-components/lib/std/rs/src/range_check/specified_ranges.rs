@@ -98,37 +98,40 @@ impl<F: PrimeField> SpecifiedRanges<F> {
         let sctx = self.wcm.get_arc_sctx();
         let ectx = self.wcm.get_arc_ectx();
 
-        // Perform the last update
-        self.update_multiplicity(drained_inputs);
+        let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = ectx.dctx.write().unwrap();
 
-        // Set the multiplicity columns as done
-        let hints = self.hints.lock().unwrap();
+        if dctx.add_instance(self.airgroup_id, self.air_id, 1) {
+            // Perform the last update
+            self.update_multiplicity(drained_inputs);
 
-        let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
-        let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
-        let air_instance_id = if instance.len() != 0 { 
-            //rick: this code will desapear
-            air_instance_repo.find_air_instances(self.airgroup_id, self.air_id)[0]
-            
-        } else{
-            // create instance
-            let (buffer_size, _) =
-            ectx.buffer_allocator.as_ref().get_buffer_info(&sctx, self.airgroup_id, self.air_id).unwrap();
-            let buffer: Vec<F> = create_buffer_fast(buffer_size as usize);
-            let air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
-            pctx.air_instance_repo.add_air_instance(air_instance);
-            pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
-        };
-        let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
-        let air_instance = &mut air_instance_rw[air_instance_id];
+            // Set the multiplicity columns as done
+            let hints = self.hints.lock().unwrap();
 
-        let mul_columns = &*self.mul_columns.lock().unwrap();
+            let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
+            let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
+            let air_instance_id = if instance.len() != 0 {
+                //rick: this code will desapear
+                air_instance_repo.find_air_instances(self.airgroup_id, self.air_id)[0]
+            } else {
+                // create instance
+                let (buffer_size, _) =
+                    ectx.buffer_allocator.as_ref().get_buffer_info(&sctx, self.airgroup_id, self.air_id).unwrap();
+                let buffer: Vec<F> = create_buffer_fast(buffer_size as usize);
+                let air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
+                pctx.air_instance_repo.add_air_instance(air_instance);
+                pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
+            };
+            let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
+            let air_instance = &mut air_instance_rw[air_instance_id];
 
-        for (index, hint) in hints[1..].iter().enumerate() {
-            set_hint_field(self.wcm.get_sctx(), air_instance, *hint, "reference", &mul_columns[index]);
+            let mul_columns = &*self.mul_columns.lock().unwrap();
+
+            for (index, hint) in hints[1..].iter().enumerate() {
+                set_hint_field(self.wcm.get_sctx(), air_instance, *hint, "reference", &mul_columns[index]);
+            }
+
+            log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "SpecifiedRanges");
         }
-
-        log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "SpecifiedRanges");
     }
 
     fn update_multiplicity(&self, drained_inputs: Vec<(Range<F>, F, F)>) {
@@ -309,7 +312,6 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
 
         //pctx.air_instance_repo.add_air_instance(air_instance);
         //rick: simplificar per operar només amb la multipliciata, res més... no cal crear buffer, etc...
-
     }
 
     fn calculate_witness(

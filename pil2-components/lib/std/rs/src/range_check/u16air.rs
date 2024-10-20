@@ -93,33 +93,42 @@ impl<F: PrimeField> U16Air<F> {
         let pctx = self.wcm.get_arc_pctx();
         let sctx = self.wcm.get_arc_sctx();
         let ectx = self.wcm.get_arc_ectx();
-        
-        // Perform the last update
-        self.update_multiplicity(drained_inputs);
 
-        let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
-        let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
-        let air_instance_id = if instance.len() != 0 { 
-            //rick: this code will desapear
-            air_instance_repo.find_air_instances(self.airgroup_id, self.air_id)[0]
-            
-        } else{
-            // create instance
-            let (buffer_size, _) =
-            ectx.buffer_allocator.as_ref().get_buffer_info(&sctx, self.airgroup_id, self.air_id).unwrap();
-            let buffer: Vec<F> = create_buffer_fast(buffer_size as usize);
-            let air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
-            pctx.air_instance_repo.add_air_instance(air_instance);
-            pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
-        };
+        let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = ectx.dctx.write().unwrap();
 
-        let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
-        let air_instance = &mut air_instance_rw[air_instance_id];
+        if dctx.add_instance(self.airgroup_id, self.air_id, 1) {
+            // Perform the last update
+            self.update_multiplicity(drained_inputs);
 
-        let mul_column = &*self.mul_column.lock().unwrap();
-        set_hint_field(self.wcm.get_sctx(), air_instance, self.hint.load(Ordering::Acquire), "reference", mul_column);
+            let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
+            let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
+            let air_instance_id = if instance.len() != 0 {
+                //rick: this code will desapear
+                air_instance_repo.find_air_instances(self.airgroup_id, self.air_id)[0]
+            } else {
+                // create instance
+                let (buffer_size, _) =
+                    ectx.buffer_allocator.as_ref().get_buffer_info(&sctx, self.airgroup_id, self.air_id).unwrap();
+                let buffer: Vec<F> = create_buffer_fast(buffer_size as usize);
+                let air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
+                pctx.air_instance_repo.add_air_instance(air_instance);
+                pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
+            };
 
-        log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "U16Air");
+            let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
+            let air_instance = &mut air_instance_rw[air_instance_id];
+
+            let mul_column = &*self.mul_column.lock().unwrap();
+            set_hint_field(
+                self.wcm.get_sctx(),
+                air_instance,
+                self.hint.load(Ordering::Acquire),
+                "reference",
+                mul_column,
+            );
+
+            log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "U16Air");
+        }
     }
 
     fn update_multiplicity(&self, drained_inputs: Vec<(F, F)>) {
@@ -167,7 +176,6 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
 
         //pctx.air_instance_repo.add_air_instance(air_instance);
         //rick: simplificar per operar només amb la multipliciata, res més... no cal crear buffer, etc...
-
     }
 
     fn calculate_witness(

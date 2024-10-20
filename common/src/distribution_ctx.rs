@@ -13,7 +13,7 @@ pub struct DistributionCtx {
     pub universe: Universe,
     #[cfg(feature = "distributed")]
     pub world: mpi::topology::SimpleCommunicator,
-    pub n_instances: i32,
+    pub n_instances: usize,
     pub my_instances: Vec<usize>,
     pub instances: Vec<(usize, usize)>,
 }
@@ -64,12 +64,15 @@ impl DistributionCtx {
     }
 
     #[inline]
-    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, instance_idx: usize, _size: usize) {
-        self.n_instances += 1;
-        if self.is_my_instance(instance_idx) {
-            self.my_instances.push(instance_idx);
+    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, _size: usize) -> bool {
+        let mut is_mine = false;
+        if self.is_my_instance(self.n_instances) {
+            self.my_instances.push(self.n_instances);
+            is_mine = true;
         }
+        self.n_instances += 1;
         self.instances.push((airgroup_id, air_id));
+        is_mine
     }
 }
 
