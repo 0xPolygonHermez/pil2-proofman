@@ -262,8 +262,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         for hint in hints_guard[1..].iter() {
             mul_columns_guard.push(get_hint_field::<F>(
                 &sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 &mut air_instance,
                 hint.to_usize().unwrap(),
                 "reference",
@@ -276,8 +275,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
 
         let num_rows = get_hint_field::<F>(
             &sctx,
-            &pctx.public_inputs,
-            &pctx.challenges,
+            &pctx,
             &mut air_instance,
             hint as usize,
             "num_rows",

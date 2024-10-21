@@ -90,8 +90,7 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
         for hint in debug_hints_data.iter() {
             let _name = get_hint_field::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "name_piop",
@@ -100,8 +99,7 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
 
             let sumid = get_hint_field::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "sumid",
@@ -119,8 +117,7 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
 
             let proves = get_hint_field::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "proves",
@@ -139,8 +136,7 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
 
             let mul = get_hint_field::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "selector",
@@ -149,8 +145,7 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
 
             let expressions = get_hint_field_a::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "references",
@@ -259,8 +254,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     for hint in im_hints {
                         let id = mul_hint_fields::<F>(
                             &sctx,
-                            &pctx.public_inputs,
-                            &pctx.challenges,
+                            &pctx,
                             air_instance,
                             *hint as usize,
                             "reference",
@@ -285,8 +279,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     // TODO: GENERALIZE CALLS
                     let (pol_id, subproofvalue_id) = acc_hint_field::<F>(
                         &sctx,
-                        &pctx.public_inputs,
-                        &pctx.challenges,
+                        &pctx,
                         air_instance,
                         gsum_hint,
                         "reference",

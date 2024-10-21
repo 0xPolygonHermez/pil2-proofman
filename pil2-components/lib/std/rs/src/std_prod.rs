@@ -84,8 +84,7 @@ impl<F: PrimeField> StdProd<F> {
         for hint in debug_hints_data.iter() {
             let _name = get_hint_field::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "name_piop",
@@ -94,8 +93,7 @@ impl<F: PrimeField> StdProd<F> {
 
             let opid = get_hint_field::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "opid",
@@ -115,8 +113,7 @@ impl<F: PrimeField> StdProd<F> {
 
             let proves = get_hint_field::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "proves",
@@ -135,8 +132,7 @@ impl<F: PrimeField> StdProd<F> {
 
             let selector = get_hint_field::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "selector",
@@ -145,8 +141,7 @@ impl<F: PrimeField> StdProd<F> {
 
             let expressions = get_hint_field_a::<F>(
                 sctx,
-                &pctx.public_inputs,
-                &pctx.challenges,
+                &pctx,
                 air_instance,
                 *hint as usize,
                 "references",
@@ -254,16 +249,15 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                     // TODO: GENERALIZE CALLS
                     let (pol_id, subproofvalue_id) = acc_mul_hint_fields::<F>(
                         &sctx,
-                        &pctx.public_inputs,
-                        &pctx.challenges,
+                        &pctx,
                         air_instance,
                         gprod_hint,
                         "reference",
                         "result",
                         "numerator",
                         "denominator",
-                        false,
-                        true,
+                        HintFieldOptions::default(),
+                        HintFieldOptions::inverse(),
                     );
 
                     air_instance.set_commit_calculated(pol_id as usize);
