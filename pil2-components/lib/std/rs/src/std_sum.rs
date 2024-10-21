@@ -88,14 +88,8 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
         debug_hints_data: Vec<u64>,
     ) {
         for hint in debug_hints_data.iter() {
-            let _name = get_hint_field::<F>(
-                sctx,
-                pctx,
-                air_instance,
-                *hint as usize,
-                "name_piop",
-                HintFieldOptions::default(),
-            );
+            let _name =
+                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "name_piop", HintFieldOptions::default());
 
             let sumid =
                 get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "sumid", HintFieldOptions::default());
