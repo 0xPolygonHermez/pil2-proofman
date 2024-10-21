@@ -273,14 +273,8 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         // Set the number of rows
         let hint = hints_guard[0];
 
-        let num_rows = get_hint_field::<F>(
-            &sctx,
-            &pctx,
-            &mut air_instance,
-            hint as usize,
-            "num_rows",
-            HintFieldOptions::dest(),
-        );
+        let num_rows =
+            get_hint_field::<F>(&sctx, &pctx, &mut air_instance, hint as usize, "num_rows", HintFieldOptions::dest());
 
         let HintFieldValue::Field(num_rows) = num_rows else {
             log::error!("Number of rows must be a field element");

@@ -142,13 +142,10 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
 
-        let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
-        let challenges = (*challenges_guard).as_ptr() as *mut c_void;
-
         let steps_params = StepsParams {
             buffer: air_instance.get_buffer_ptr() as *mut c_void,
-            public_inputs: public_inputs,
-            challenges: challenges,
+            public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
+            challenges: (*challenges_guard).as_ptr() as *mut c_void,
             subproof_values: air_instance.subproof_values.as_ptr() as *mut c_void,
             evals: air_instance.evals.as_ptr() as *mut c_void,
             xdivxsub: std::ptr::null_mut(),
@@ -173,13 +170,10 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
 
-        let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
-        let challenges = (*challenges_guard).as_ptr() as *mut c_void;
-
         let steps_params = StepsParams {
             buffer: air_instance.get_buffer_ptr() as *mut c_void,
-            public_inputs: public_inputs,
-            challenges: challenges,
+            public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
+            challenges: (*challenges_guard).as_ptr() as *mut c_void,
             subproof_values: air_instance.subproof_values.as_ptr() as *mut c_void,
             evals: air_instance.evals.as_ptr() as *mut c_void,
             xdivxsub: std::ptr::null_mut(),

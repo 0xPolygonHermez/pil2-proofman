@@ -90,21 +90,15 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
         for hint in debug_hints_data.iter() {
             let _name = get_hint_field::<F>(
                 sctx,
-                &pctx,
+                pctx,
                 air_instance,
                 *hint as usize,
                 "name_piop",
                 HintFieldOptions::default(),
             );
 
-            let sumid = get_hint_field::<F>(
-                sctx,
-                &pctx,
-                air_instance,
-                *hint as usize,
-                "sumid",
-                HintFieldOptions::default(),
-            );
+            let sumid =
+                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "sumid", HintFieldOptions::default());
             if let HintFieldOutput::Field(sumid) = sumid.get(0) {
                 if let Some(opids) = &self.mode.opids {
                     if !opids.contains(&sumid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
@@ -115,14 +109,8 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 panic!("sumid must be a field element");
             };
 
-            let proves = get_hint_field::<F>(
-                sctx,
-                &pctx,
-                air_instance,
-                *hint as usize,
-                "proves",
-                HintFieldOptions::default(),
-            );
+            let proves =
+                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "proves", HintFieldOptions::default());
             let is_positive = match proves {
                 HintFieldValue::Field(proves) => {
                     assert!(proves.is_zero() || proves.is_one(), "Proves hint must be either 0 or 1");
@@ -134,18 +122,12 @@ impl<F: Copy + Debug + PrimeField> StdSum<F> {
                 }
             };
 
-            let mul = get_hint_field::<F>(
-                sctx,
-                &pctx,
-                air_instance,
-                *hint as usize,
-                "selector",
-                HintFieldOptions::default(),
-            );
+            let mul =
+                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "selector", HintFieldOptions::default());
 
             let expressions = get_hint_field_a::<F>(
                 sctx,
-                &pctx,
+                pctx,
                 air_instance,
                 *hint as usize,
                 "references",
@@ -277,15 +259,8 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     // This call accumulates "expression" into "reference" expression and stores its last value to "result"
                     // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust,
                     // TODO: GENERALIZE CALLS
-                    let (pol_id, subproofvalue_id) = acc_hint_field::<F>(
-                        &sctx,
-                        &pctx,
-                        air_instance,
-                        gsum_hint,
-                        "reference",
-                        "result",
-                        "expression",
-                    );
+                    let (pol_id, subproofvalue_id) =
+                        acc_hint_field::<F>(&sctx, &pctx, air_instance, gsum_hint, "reference", "result", "expression");
 
                     air_instance.set_commit_calculated(pol_id as usize);
                     air_instance.set_subproofvalue_calculated(subproofvalue_id as usize);
