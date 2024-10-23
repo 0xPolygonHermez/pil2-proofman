@@ -329,11 +329,11 @@ jobs:
 
       - name: Verify constraints connection
         run: |
-          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/connection/build/provingKey
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey
 
       - name: Generate proof connection
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/connection/build/provingKey --output-dir ./pil2-components/test/std/connection/build -d
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey --output-dir ./pil2-components/test/std/connection/build -d
 
       - name: Verify proof connection
         run: |
