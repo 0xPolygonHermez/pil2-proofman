@@ -709,7 +709,7 @@ pub fn acc_hint_field<F: Field>(
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_dest: &str,
-    hint_field_subprooval: &str,
+    hint_field_airgroupvalue: &str,
     hint_field_name: &str,
 ) -> (u64, u64) {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id).expect("REASON");
@@ -732,7 +732,7 @@ pub fn acc_hint_field<F: Field>(
         (&steps_params).into(),
         hint_id as u64,
         hint_field_dest,
-        hint_field_subprooval,
+        hint_field_airgroupvalue,
         hint_field_name,
     );
 
@@ -750,7 +750,7 @@ pub fn acc_mul_hint_fields<F: Field>(
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_dest: &str,
-    hint_field_subprooval: &str,
+    hint_field_airgroupvalue: &str,
     hint_field_name1: &str,
     hint_field_name2: &str,
     options1: HintFieldOptions,
@@ -776,7 +776,7 @@ pub fn acc_mul_hint_fields<F: Field>(
         (&steps_params).into(),
         hint_id as u64,
         hint_field_dest,
-        hint_field_subprooval,
+        hint_field_airgroupvalue,
         hint_field_name1,
         hint_field_name2,
         (&options1).into(),
