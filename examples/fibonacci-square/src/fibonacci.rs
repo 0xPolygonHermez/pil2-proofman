@@ -77,7 +77,7 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
         // log::info!("Result Fibonacci buffer: {:?}", result);
 
         let air_instance = AirInstance::new(FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS[0], Some(0), buffer);
-        pctx.air_instance_repo.add_air_instance(air_instance);
+        pctx.air_instance_repo.add_air_instance(air_instance, Some(pctx.air_instance_repo.air_instances.read().unwrap().len()));
 
         Ok(b)
     }

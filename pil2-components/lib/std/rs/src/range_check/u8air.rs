@@ -96,7 +96,7 @@ impl<F: PrimeField> U8Air<F> {
 
         let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = ectx.dctx.write().unwrap();
 
-        let (is_myne, instance_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
+        let (is_myne, global_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
         let mut multiplicity = match &*self.mul_column.lock().unwrap() {
             HintFieldValue::Column(values) => {
                 values.iter().map(|x| x.as_canonical_biguint().to_u64().unwrap()).collect::<Vec<u64>>()
@@ -104,8 +104,8 @@ impl<F: PrimeField> U8Air<F> {
             _ => panic!("Multiplicities must be a column"),
         }; //rick: definir multiplicities com u32 directe?
 
-        let owner = dctx.owner(instance_idx);
-        dctx.add_reduce_multiplicity(&mut multiplicity, owner);
+        let owner = dctx.owner(global_idx);
+        dctx.distribute_multiplicity(&mut multiplicity, owner);
 
         if is_myne {
             let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
@@ -119,7 +119,7 @@ impl<F: PrimeField> U8Air<F> {
                     ectx.buffer_allocator.as_ref().get_buffer_info(&sctx, self.airgroup_id, self.air_id).unwrap();
                 let buffer: Vec<F> = create_buffer_fast(buffer_size as usize);
                 let air_instance = AirInstance::new(self.airgroup_id, self.air_id, None, buffer);
-                pctx.air_instance_repo.add_air_instance(air_instance);
+                pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx));
                 pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
             };
 

@@ -1,3 +1,4 @@
+use core::panic;
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -381,11 +382,21 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn get_transcript_values(&self, stage: u64, proof_ctx: Arc<ProofCtx<F>>) -> Vec<F> {
+        
+        let values = self.get_transcript_values_u64(stage, proof_ctx)
+            .iter()
+            .map(|v| F::from_canonical_u64(*v))
+            .collect();
+        values
+
+    }
+
+    fn get_transcript_values_u64(&self, stage: u64, proof_ctx: Arc<ProofCtx<F>>) -> Vec<u64> {
         let p_stark: *mut std::ffi::c_void = self.p_stark;
 
         let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
 
-        let mut value = vec![F::zero(); self.n_field_elements];
+        let mut value = vec![Goldilocks::zero(); self.n_field_elements];
         if stage <= (Self::num_stages(self) + 1) as u64 {
             let tree_index = if stage == 0 {
                 let stark_info: &StarkInfo = &self.stark_info;
@@ -426,55 +437,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 if step_index < n_steps {
                     let p_proof = self.p_proof.unwrap();
                     fri_proof_get_tree_root_c(p_proof, value.as_mut_ptr() as *mut c_void, step_index as u64);
-                } else {
-                    let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-                    let buffer = air_instance.get_buffer_ptr() as *mut c_void;
-
-                    let n_hash = (1 << (steps[n_steps].n_bits)) * Self::FIELD_EXTENSION as u64;
-                    let fri_pol = get_fri_pol_c(self.p_setup, buffer);
-                    calculate_hash_c(p_stark, value.as_mut_ptr() as *mut c_void, fri_pol, n_hash);
-                }
-            }
-        }
-        value
-    }
-
-    fn get_transcript_values_u64(&self, stage: u64, proof_ctx: Arc<ProofCtx<F>>) -> Vec<u64> {
-        let p_stark: *mut std::ffi::c_void = self.p_stark;
-
-        let mut value: Vec<Goldilocks> = vec![Goldilocks::zero(); self.n_field_elements];
-        if stage <= (Self::num_stages(self) + 1) as u64 {
-            let tree_index = if stage == 0 {
-                let stark_info: &StarkInfo = &self.stark_info;
-                stark_info.n_stages as u64 + 1
-            } else {
-                stage - 1
-            };
-
-            treesGL_get_root_c(p_stark, tree_index, value.as_mut_ptr() as *mut c_void);
-        } else if stage == (Self::num_stages(self) + 2) as u64 {
-            let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-            let evals = air_instance.evals.as_ptr() as *mut c_void;
-            calculate_hash_c(
-                p_stark,
-                value.as_mut_ptr() as *mut c_void,
-                evals,
-                (self.stark_info.ev_map.len() * Self::FIELD_EXTENSION) as u64,
-            );
-        } else if stage > (Self::num_stages(self) + 3) as u64 {
-            let steps = &self.stark_info.stark_struct.steps;
-
-            let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
-            let step_index =
-                self.stark_info.stark_struct.steps.iter().position(|s| {
-                    s.n_bits as usize == steps_fri[(stage as u32 - (Self::num_stages(self) + 4)) as usize]
-                });
-
-            if let Some(step_index) = step_index {
-                let n_steps = steps.len() - 1;
-                if step_index < n_steps {
-                    let p_proof = self.p_proof.unwrap();
-                    fri_proof_get_tree_root_c(p_proof, value.as_mut_ptr() as *mut c_void, (step_index + 1) as u64);
                 } else {
                     let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
                     let buffer = air_instance.get_buffer_ptr() as *mut c_void;
@@ -537,17 +499,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>, output_dir: &str) -> *mut c_void {
-        #[cfg(not(feature = "distributed"))]
-        let idx = self.prover_idx;
-        #[cfg(feature = "distributed")]
-        let idx;
-        #[cfg(feature = "distributed")]
-        {
-            let segment_id: &usize =
-                &proof_ctx.air_instance_repo.air_instances.read().unwrap()[self.prover_idx].air_segment_id.unwrap();
-            idx = *segment_id;
-        }
-
+        
+        let gidx =
+                proof_ctx.air_instance_repo.air_instances.read().unwrap()[self.prover_idx].global_idx.unwrap();
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
         let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
 
@@ -558,7 +512,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
         fri_proof_get_zkinproof_c(
-            idx as u64,
+            gidx as u64,
             self.p_proof.unwrap(),
             public_inputs,
             challenges,

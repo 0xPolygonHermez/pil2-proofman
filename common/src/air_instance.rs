@@ -9,6 +9,7 @@ pub struct AirInstance<F> {
     pub air_segment_id: Option<usize>,
     pub air_instance_id: Option<usize>,
     pub idx: Option<usize>,
+    pub global_idx: Option<usize>,
     pub buffer: Vec<F>,
     pub subproof_values: Vec<F>,
     pub evals: Vec<F>,
@@ -24,6 +25,7 @@ impl<F> AirInstance<F> {
             air_segment_id,
             air_instance_id: None,
             idx: None,
+            global_idx: None,
             buffer,
             subproof_values: Vec::new(),
             evals: Vec::new(),
@@ -58,6 +60,7 @@ impl<F> AirInstance<F> {
 pub struct AirInstanceBuilder<F> {
     airgroup_id: usize,
     air_id: usize,
+    global_idx: Option<usize>,
     air_segment_id: Option<usize>,
     buffer: Vec<F>,
 }
@@ -71,6 +74,11 @@ impl<F> AirInstanceBuilder<F> {
 
     pub fn with_air_id(&mut self, air_id: usize) -> &mut Self {
         self.air_id = air_id;
+        self
+    }
+
+    pub fn with_global_idx(&mut self, global_idx: Option<usize>) -> &mut Self {
+        self.global_idx = global_idx;
         self
     }
 
