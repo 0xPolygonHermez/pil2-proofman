@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-use std::collections::BTreeMap;
 #[cfg(feature = "distributed")]
 use mpi::traits::*;
 #[cfg(feature = "distributed")]
@@ -8,6 +6,14 @@ use mpi::environment::Universe;
 use mpi::collective::CommunicatorCollectives;
 #[cfg(feature = "distributed")]
 use mpi::datatype::PartitionMut;
+#[cfg(feature = "distributed")]
+use mpi::request::{Request, StaticScope};
+#[cfg(feature = "distributed")]
+use mpi::topology::Communicator;
+use std::collections::HashMap;
+use std::collections::BTreeMap;
+use proofman_starks_lib_c::*;
+use std::ffi::c_void;
 
 /// Represents the context of distributed computing
 pub struct DistributionCtx {
@@ -29,6 +35,9 @@ pub struct DistributionCtx {
     pub roots_gatherv_displ: Vec<i32>,
     pub my_groups: Vec<Vec<usize>>,
     pub my_air_groups: Vec<Vec<usize>>,
+    pub airgroup_instances: Vec<Vec<usize>>,
+    pub glob2loc: Vec<Option<usize>>,
+    recursive2_proof_size: Option<usize>,
 }
 
 impl DistributionCtx {
@@ -54,6 +63,9 @@ impl DistributionCtx {
                 roots_gatherv_displ: vec![0; n_processes as usize],
                 my_groups: Vec::new(),
                 my_air_groups: Vec::new(),
+                airgroup_instances: Vec::new(),
+                glob2loc: Vec::new(),
+                recursive2_proof_size: None,
             }
         }
         #[cfg(not(feature = "distributed"))]
@@ -69,6 +81,9 @@ impl DistributionCtx {
                 owners_weight: vec![0; 1],
                 my_groups: Vec::new(),
                 my_air_groups: Vec::new(),
+                airgroup_instances: Vec::new(),
+                glob2loc: Vec::new(),
+                recursive2_proof_size: None,
             }
         }
     }
@@ -113,7 +128,7 @@ impl DistributionCtx {
         (is_mine, self.n_instances - 1)
     }
 
-    pub fn close(&mut self) {
+    pub fn close(&mut self, n_airgroups: usize) {
         let mut group_indices: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
 
         // Calculate the partial sums of owners_count
@@ -152,6 +167,18 @@ impl DistributionCtx {
         // Flatten the HashMap into a single vector for my_air_groups
         for (_, indices) in my_air_groups_indices {
             self.my_air_groups.push(indices);
+        }
+
+        //Calculate instances of each airgroup
+        self.airgroup_instances = vec![Vec::new(); n_airgroups];
+        for (idx, &(group_id, _)) in self.instances.iter().enumerate() {
+            self.airgroup_instances[group_id].push(idx);
+        }
+
+        //Evaluate glob2loc
+        self.glob2loc = vec![None; self.n_instances];
+        for (loc_idx, glob_idx) in self.my_instances.iter().enumerate() {
+            self.glob2loc[*glob_idx] = Some(loc_idx);
         }
     }
 
@@ -258,6 +285,134 @@ impl DistributionCtx {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    pub fn distribute_recursive2_proofs(&mut self, alives: &Vec<usize>, proves: &mut Vec<Vec<Option<*mut c_void>>>) {
+        #[cfg(feature = "distributed")]
+        {
+            // Find a reference size to receive proofs
+            if self.recursive2_proof_size.is_none() {
+                'outer: for group_proves in proves.iter() {
+                    for prove in group_proves.iter() {
+                        if let Some(prove) = prove {
+                            self.recursive2_proof_size = Some(get_serialized_proof_size_c(*prove) as usize);
+                            break 'outer;
+                        }
+                    }
+                }
+                if let Some(size) = self.recursive2_proof_size {
+                    self.recursive2_proof_size = Some(size + size / 2);
+                }
+            } //rick assert the size when receiving
+
+            // Count number of aggregations that will be done
+            let n_agregations: usize = alives.iter().map(|&alive| alive / 2).sum();
+            let aggs_per_process = n_agregations / self.n_processes as usize;
+
+            let mut i_prove = 0;
+            let mut requests_send: Vec<Request<'static, [u8], StaticScope>> = Vec::new();
+            //let mut send_ptrs: Vec<*const u8> = Vec::new();
+            //let mut receive_buffers: HashMap<usize, Vec<u8>> = HashMap::new();
+
+            for (idx, &alive) in alives.iter().enumerate() {
+                let n_aggs_group = alive / 2;
+                if n_aggs_group == 0 {
+                    continue;
+                }
+                let mut proofs = proves[idx].clone();
+                for i in 0..n_aggs_group {
+                    let chunk = i_prove / aggs_per_process;
+                    let owner_rank: usize =
+                        if chunk < self.n_processes as usize { chunk } else { i_prove % self.n_processes as usize };
+                    let left_idx = i * 2;
+                    let right_idx = i * 2 + 1;
+                    if owner_rank == self.rank as usize {
+                        if proofs[left_idx].is_none() {
+                            // Non-blocking irecv with appropriate tag
+                            /*let tag = left_idx as i32;
+                            let mut buffer: Vec<u8> = vec![0; self.recursive2_proof_size.unwrap()];
+                            receive_buffers.insert(left_idx, buffer);
+                            let buffer_ref = receive_buffers.get_mut(&left_idx).unwrap();
+                            let request = self.world.any_process().immediate_receive_into_with_tag(
+                                StaticScope,
+                                &mut buffer_ref[..],
+                                tag,
+                            );
+                            requests.push(request);*/
+                        }
+                        if proofs[right_idx].is_none() {
+                            // Non-blocking irecv with appropriate tag
+                            /*let tag = right_idx as i32;
+                            let mut buffer: Vec<u8> = vec![0; self.recursive2_proof_size.unwrap()];
+                            let request = self.world.any_process().immediate_receive_into_with_tag(
+                                StaticScope,
+                                &mut buffer[..],
+                                tag,
+                            );
+                            requests.push(request);
+                            receive_buffers.insert(right_idx, buffer);*/
+                        }
+                    } else {
+                        // If I have the proofs and I'm not the owner I send to the owner
+                        for &idx in &[left_idx, right_idx] {
+                            if proofs[idx].is_some() {
+                                let (ptr, size) = get_serialized_proof_c(proofs[idx].unwrap());
+                                let buffer = unsafe { std::slice::from_raw_parts(ptr as *const u8, size as usize) };
+                                let request = self.world.process_at_rank(owner_rank as i32).immediate_send_with_tag(
+                                    StaticScope,
+                                    buffer,
+                                    idx as i32,
+                                );
+                                requests_send.push(request);
+                                zkin_proof_free_c(proofs[idx].unwrap());
+                                proofs[idx] = None;
+                                //send_ptrs.push(ptr);
+                            }
+                        }
+                    }
+                    i_prove += 1;
+                }
+            }
+
+            /*// Process the received data
+            for (tag, buffer) in receive_buffers {
+                // Convert buffer to the required type and store it in the vector of proofs
+                let proof = convert_to_zkein(&buffer);
+                let idx = tag / 2;
+                let sub_idx = tag % 2;
+                proves[idx][sub_idx] = Some(proof);
+            }
+
+            // Allocate received proofs
+            for (idx, &alive) in alives.iter().enumerate() {
+                let n_aggs_group = alive / 2;
+                if n_aggs_group == 0 {
+                    continue;
+                }
+                let proofs = &mut proves[idx];
+                for i in 0..n_aggs_group {
+                    let left_idx = i * 2;
+                    let right_idx = i * 2 + 1;
+
+                    if proofs[left_idx].is_none() {
+                        // Allocate memory for the received proof
+                        proofs[left_idx] = Some(allocate_proof_memory());
+                    }
+                    if proofs[right_idx].is_none() {
+                        // Allocate memory for the received proof
+                        proofs[right_idx] = Some(allocate_proof_memory());
+                    }
+                }
+            }*/
+
+            // Reallocate received proofs if necessary
+            // Memory management for proofs
+
+            // Wait for all requests to complete and process the received data
+            for request in requests_send {
+                request.wait();
             }
         }
     }
