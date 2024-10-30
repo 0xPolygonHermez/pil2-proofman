@@ -74,9 +74,13 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let mut dctx = ectx.dctx.write().unwrap();
         dctx.close(pctx.global_info.air_groups.len());
-        if dctx.rank == 0 {
+        let mpi_rank = dctx.rank;
+        drop(dctx);
+        if mpi_rank == 0 {
             Self::print_summary(pctx.clone());
         }
+       
+
 
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
         Self::initialize_provers(sctx.clone(), &mut provers, pctx.clone(), ectx.clone());
@@ -192,7 +196,7 @@ impl<F: Field + 'static> ProofMan<F> {
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
         log::info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
-        if dctx.rank == 0 {
+        if mpi_rank == 0 {
             timer_start_info!(GENERATING_FINAL_PROOFS);
             let _final_proof = generate_recursion_proof(
                 &pctx,
@@ -208,7 +212,6 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_AGGREGATION_PROOFS);
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
         log::info!("{}: Proofs generated successfully", Self::MY_NAME);
-        drop(dctx);
 
         Ok(())
     }

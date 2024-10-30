@@ -132,6 +132,7 @@ pub fn generate_recursion_proof<F: Field>(
             // Pre-process data before starting recursion loop
             for airgroup in 0..n_airgroups {
                 let instances = &dctx.airgroup_instances[airgroup];
+                airgroup_proves.push(Vec::with_capacity(instances.len().max(1)));
                 if !instances.is_empty() {
                     for instance in instances.iter() {
                         let local_instance = dctx.glob2loc[*instance];
@@ -151,7 +152,7 @@ pub fn generate_recursion_proof<F: Field>(
                         airgroup_proves[airgroup].push(None);
                     }
                 }
-                alives.push(airgroup_proves.len());
+                alives.push(airgroup_proves[airgroup].len());
             }
             // agregation loop
             loop {

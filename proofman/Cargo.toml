@@ -24,6 +24,6 @@ serde_json = "1.0.68"
 
 
 [features]
-default = ["distributed"]
+default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
 distributed = ["proofman-common/distributed", "dep:mpi"]
