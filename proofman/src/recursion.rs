@@ -163,10 +163,10 @@ pub fn generate_recursion_proof<F: Field>(
                     let mut alive = alives[airgroup];
                     if alive > 1 {
                         for i in 0..alive / 2 {
-                            if airgroup_proves[airgroup][i].is_none() {
+                            let j = i * 2;
+                            if airgroup_proves[airgroup][j].is_none() {
                                 continue;
                             }
-                            let j = i * 2;
                             if j + 1 < alive {
                                 if airgroup_proves[airgroup][j + 1].is_none() {
                                     panic!("Recursive2 proof is missing");
@@ -257,14 +257,11 @@ pub fn generate_recursion_proof<F: Field>(
                     break;
                 }
             }
-
-            //rick: here comes a gather if necessary!!
-            let mut proves_recursive2: Vec<*mut c_void> = Vec::with_capacity(n_airgroups); //rick: aquest nomes el te el rank 0 s'ha de comm al final
-            for airgroup in 0..n_airgroups {
-                proves_recursive2.push(airgroup_proves[airgroup][0].unwrap());
-            }
-
             if dctx.rank == 0 {
+                let mut proves_recursive2: Vec<*mut c_void> = Vec::with_capacity(n_airgroups);
+                for airgroup in 0..n_airgroups {
+                    proves_recursive2.push(airgroup_proves[airgroup][0].unwrap());
+                }
                 let public_inputs_guard = pctx.public_inputs.inputs.read().unwrap();
                 let challenges_guard = pctx.challenges.challenges.read().unwrap();
                 let proof_values_guard = pctx.proof_values.values.read().unwrap();

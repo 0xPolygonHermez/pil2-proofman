@@ -79,8 +79,6 @@ impl<F: Field + 'static> ProofMan<F> {
         if mpi_rank == 0 {
             Self::print_summary(pctx.clone());
         }
-       
-
 
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
         Self::initialize_provers(sctx.clone(), &mut provers, pctx.clone(), ectx.clone());
