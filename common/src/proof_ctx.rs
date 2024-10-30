@@ -97,40 +97,48 @@ impl<F: Field> ProofCtx<F> {
 
     pub fn set_proof_value(&self, name: &str, value: F) {
         let id = (0..self.global_info.n_proof_values)
-        .find(|&i| {
-            if let Some(proof_value) = self.global_info.proof_values_map.as_ref()
-                .expect("global_info.proof_values_map is not initialized")
-                .get(i)
-            {
-                proof_value.name == name
-            } else {
-                false
-            }
-        }).unwrap_or_else( || panic!("No proof value found with name {}", name));
-        
-        self.proof_values.values.write().unwrap()[3*id] = value;
-        self.proof_values.values.write().unwrap()[3*id + 1] = F::zero();
-        self.proof_values.values.write().unwrap()[3*id + 2] = F::zero();
+            .find(|&i| {
+                if let Some(proof_value) = self
+                    .global_info
+                    .proof_values_map
+                    .as_ref()
+                    .expect("global_info.proof_values_map is not initialized")
+                    .get(i)
+                {
+                    proof_value.name == name
+                } else {
+                    false
+                }
+            })
+            .unwrap_or_else(|| panic!("No proof value found with name {}", name));
+
+        self.proof_values.values.write().unwrap()[3 * id] = value;
+        self.proof_values.values.write().unwrap()[3 * id + 1] = F::zero();
+        self.proof_values.values.write().unwrap()[3 * id + 2] = F::zero();
 
         self.set_proof_value_calculated(id);
     }
 
     pub fn set_proof_value_ext(&self, name: &str, value: Vec<F>) {
         let id = (0..self.global_info.n_proof_values)
-        .find(|&i| {
-            if let Some(proof_value) = self.global_info.proof_values_map.as_ref()
-                .expect("global_info.proof_values_map is not initialized")
-                .get(i)
-            {
-                proof_value.name == name
-            } else {
-                false
-            }
-        }).unwrap_or_else( || panic!("No proof value found with name {}", name));
-        
-        self.proof_values.values.write().unwrap()[3*id] = value[0];
-        self.proof_values.values.write().unwrap()[3*id + 1] = value[1];
-        self.proof_values.values.write().unwrap()[3*id + 2] = value[2];
+            .find(|&i| {
+                if let Some(proof_value) = self
+                    .global_info
+                    .proof_values_map
+                    .as_ref()
+                    .expect("global_info.proof_values_map is not initialized")
+                    .get(i)
+                {
+                    proof_value.name == name
+                } else {
+                    false
+                }
+            })
+            .unwrap_or_else(|| panic!("No proof value found with name {}", name));
+
+        self.proof_values.values.write().unwrap()[3 * id] = value[0];
+        self.proof_values.values.write().unwrap()[3 * id + 1] = value[1];
+        self.proof_values.values.write().unwrap()[3 * id + 2] = value[2];
 
         self.set_proof_value_calculated(id);
     }

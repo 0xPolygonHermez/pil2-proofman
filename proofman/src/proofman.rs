@@ -117,9 +117,11 @@ impl<F: Field + 'static> ProofMan<F> {
         witness_lib.end_proof();
 
         for i in 0..pctx.global_info.n_proof_values {
-            if !pctx.proof_values.values_set.read().unwrap().contains_key(&i)
-            {
-                panic!("Proof cannot be generated: Proof value {} is not set", pctx.global_info.proof_values_map.as_ref().expect("REASON").get(i).unwrap().name);
+            if !pctx.proof_values.values_set.read().unwrap().contains_key(&i) {
+                panic!(
+                    "Proof cannot be generated: Proof value {} is not set",
+                    pctx.global_info.proof_values_map.as_ref().expect("REASON").get(i).unwrap().name
+                );
             }
         }
 
@@ -501,7 +503,7 @@ impl<F: Field + 'static> ProofMan<F> {
         let n_publics = proof_ctx.global_info.n_publics as u64;
         let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
         let challenges = (*challenges_guard).as_ptr() as *mut c_void;
-        
+
         let n_proof_values = proof_ctx.global_info.n_proof_values as u64;
         let proof_values = (*proof_values_guard).as_ptr() as *mut c_void;
 

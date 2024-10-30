@@ -750,7 +750,16 @@ pub fn join_zkin_final_c(
     let global_info_file_name = CString::new(global_info_file).unwrap();
     let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
 
-    unsafe { join_zkin_final(p_publics, p_proof_values, p_challenges, global_info_file_ptr, zkin_recursive2, stark_info_recursive2) }
+    unsafe {
+        join_zkin_final(
+            p_publics,
+            p_proof_values,
+            p_challenges,
+            global_info_file_ptr,
+            zkin_recursive2,
+            stark_info_recursive2,
+        )
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1300,7 +1309,6 @@ pub fn set_hint_field_global_constraints_c(
     );
     100000
 }
-
 
 #[cfg(feature = "no_lib_link")]
 pub fn print_by_name_c(

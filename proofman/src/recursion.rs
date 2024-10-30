@@ -232,7 +232,7 @@ pub fn generate_recursion_proof<F: Field>(
             let public_inputs_guard = pctx.public_inputs.inputs.read().unwrap();
             let challenges_guard = pctx.challenges.challenges.read().unwrap();
             let proof_values_guard = pctx.proof_values.values.read().unwrap();
-            
+
             let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
             let challenges = (*challenges_guard).as_ptr() as *mut c_void;
             let proof_values = (*proof_values_guard).as_ptr() as *mut c_void;

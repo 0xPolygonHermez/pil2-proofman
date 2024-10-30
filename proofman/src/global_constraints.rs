@@ -1,6 +1,8 @@
 use p3_field::Field;
 use proofman_hints::{HintCol, HintFieldInfoValues, HintFieldOutput, HintFieldValue, HintFieldValues, HintFieldValuesVec};
-use proofman_starks_lib_c::{get_hint_field_global_constraints_c, set_hint_field_global_constraints_c, verify_global_constraints_c};
+use proofman_starks_lib_c::{
+    get_hint_field_global_constraints_c, set_hint_field_global_constraints_c, verify_global_constraints_c,
+};
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -252,13 +254,8 @@ pub fn set_hint_field<F: Field>(
 
     let values_ptr = value_array.as_ptr() as *mut c_void;
 
-    let id = set_hint_field_global_constraints_c(
-        sctx.get_global_bin(),
-        proof_values,
-        values_ptr,
-        hint_id,
-        hint_field_name,
-    );
-    
+    let id =
+        set_hint_field_global_constraints_c(sctx.get_global_bin(), proof_values, values_ptr, hint_id, hint_field_name);
+
     pctx.set_proof_value_calculated(id as usize);
 }
