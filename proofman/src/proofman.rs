@@ -210,7 +210,7 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_AGGREGATION_PROOFS);
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
         log::info!("{}: Proofs generated successfully", Self::MY_NAME);
-
+        ectx.dctx.read().unwrap().barrier();
         Ok(())
     }
 

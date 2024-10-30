@@ -7,8 +7,6 @@ use mpi::collective::CommunicatorCollectives;
 #[cfg(feature = "distributed")]
 use mpi::datatype::PartitionMut;
 #[cfg(feature = "distributed")]
-use mpi::request::{Request, StaticScope};
-#[cfg(feature = "distributed")]
 use mpi::topology::Communicator;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
@@ -37,7 +35,6 @@ pub struct DistributionCtx {
     pub my_air_groups: Vec<Vec<usize>>,
     pub airgroup_instances: Vec<Vec<usize>>,
     pub glob2loc: Vec<Option<usize>>,
-    recursive2_proof_size: Option<usize>,
 }
 
 impl DistributionCtx {
@@ -65,7 +62,6 @@ impl DistributionCtx {
                 my_air_groups: Vec::new(),
                 airgroup_instances: Vec::new(),
                 glob2loc: Vec::new(),
-                recursive2_proof_size: None,
             }
         }
         #[cfg(not(feature = "distributed"))]
@@ -83,7 +79,6 @@ impl DistributionCtx {
                 my_air_groups: Vec::new(),
                 airgroup_instances: Vec::new(),
                 glob2loc: Vec::new(),
-                recursive2_proof_size: None,
             }
         }
     }
@@ -292,127 +287,71 @@ impl DistributionCtx {
     pub fn distribute_recursive2_proofs(&mut self, alives: &Vec<usize>, proves: &mut Vec<Vec<Option<*mut c_void>>>) {
         #[cfg(feature = "distributed")]
         {
-            // Find a reference size to receive proofs
-            if self.recursive2_proof_size.is_none() {
-                'outer: for group_proves in proves.iter() {
-                    for prove in group_proves.iter() {
-                        if let Some(prove) = prove {
-                            self.recursive2_proof_size = Some(get_serialized_proof_size_c(*prove) as usize);
-                            break 'outer;
-                        }
-                    }
-                }
-                if let Some(size) = self.recursive2_proof_size {
-                    self.recursive2_proof_size = Some(size + size / 2);
-                }
-            } //rick assert the size when receiving
-
             // Count number of aggregations that will be done
+            let n_groups = alives.len();
             let n_agregations: usize = alives.iter().map(|&alive| alive / 2).sum();
-            let aggs_per_process = n_agregations / self.n_processes as usize;
+            let aggs_per_process = (n_agregations / self.n_processes as usize).max(1);
 
             let mut i_prove = 0;
-            let mut requests_send: Vec<Request<'static, [u8], StaticScope>> = Vec::new();
-            //let mut send_ptrs: Vec<*const u8> = Vec::new();
-            //let mut receive_buffers: HashMap<usize, Vec<u8>> = HashMap::new();
+            // tags codes:
+            // 0,...,ngroups-1: proves that need to be sent to rank0 from another rank for a group with alive == 1
+            // ngroups, ..., ngroups + 2*n_aggregations - 1: proves that need to be sent to the owner of the aggregation task
 
-            for (idx, &alive) in alives.iter().enumerate() {
+            for (group_idx, &alive) in alives.iter().enumerate() {
+                let group_proofs: &mut Vec<Option<*mut c_void>> = &mut proves[group_idx];
                 let n_aggs_group = alive / 2;
+
                 if n_aggs_group == 0 {
-                    continue;
+                    assert!(alive == 1);
+                    if self.rank == 0 {
+                        if group_proofs[0].is_none() {
+                            // Receive proof from the owner process
+                            let tag = group_idx as i32;
+                            let (mut msg, _status) = self.world.any_process().receive_vec_with_tag::<i8>(tag);
+                            group_proofs[0] = Some(deserialize_zkin_proof_c(msg.as_mut_ptr()));
+                        }
+                    } else if group_proofs[0].is_some() {
+                        let (ptr, size) = get_serialized_proof_c(group_proofs[0].unwrap());
+                        let tag = group_idx as i32;
+                        let buffer = unsafe { std::slice::from_raw_parts(ptr as *const i8, size as usize) };
+                        self.world.process_at_rank(0).send_with_tag(buffer, tag);
+                        zkin_proof_free_c(group_proofs[0].unwrap());
+                        group_proofs[0] = None;
+                    }
                 }
-                let mut proofs = proves[idx].clone();
+
                 for i in 0..n_aggs_group {
                     let chunk = i_prove / aggs_per_process;
-                    let owner_rank: usize =
+                    let owner_rank =
                         if chunk < self.n_processes as usize { chunk } else { i_prove % self.n_processes as usize };
                     let left_idx = i * 2;
                     let right_idx = i * 2 + 1;
+
                     if owner_rank == self.rank as usize {
-                        if proofs[left_idx].is_none() {
-                            // Non-blocking irecv with appropriate tag
-                            /*let tag = left_idx as i32;
-                            let mut buffer: Vec<u8> = vec![0; self.recursive2_proof_size.unwrap()];
-                            receive_buffers.insert(left_idx, buffer);
-                            let buffer_ref = receive_buffers.get_mut(&left_idx).unwrap();
-                            let request = self.world.any_process().immediate_receive_into_with_tag(
-                                StaticScope,
-                                &mut buffer_ref[..],
-                                tag,
-                            );
-                            requests.push(request);*/
-                        }
-                        if proofs[right_idx].is_none() {
-                            // Non-blocking irecv with appropriate tag
-                            /*let tag = right_idx as i32;
-                            let mut buffer: Vec<u8> = vec![0; self.recursive2_proof_size.unwrap()];
-                            let request = self.world.any_process().immediate_receive_into_with_tag(
-                                StaticScope,
-                                &mut buffer[..],
-                                tag,
-                            );
-                            requests.push(request);
-                            receive_buffers.insert(right_idx, buffer);*/
+                        for &idx in &[left_idx, right_idx] {
+                            if group_proofs[idx].is_none() {
+                                let tag =
+                                    if idx == left_idx { i_prove * 2 + n_groups } else { i_prove * 2 + n_groups + 1 };
+                                let (mut msg, _status) =
+                                    self.world.any_process().receive_vec_with_tag::<i8>(tag as i32);
+                                group_proofs[idx] = Some(deserialize_zkin_proof_c(msg.as_mut_ptr()));
+                            }
                         }
                     } else {
-                        // If I have the proofs and I'm not the owner I send to the owner
                         for &idx in &[left_idx, right_idx] {
-                            if proofs[idx].is_some() {
-                                let (ptr, size) = get_serialized_proof_c(proofs[idx].unwrap());
-                                let buffer = unsafe { std::slice::from_raw_parts(ptr as *const u8, size as usize) };
-                                let request = self.world.process_at_rank(owner_rank as i32).immediate_send_with_tag(
-                                    StaticScope,
-                                    buffer,
-                                    idx as i32,
-                                );
-                                requests_send.push(request);
-                                zkin_proof_free_c(proofs[idx].unwrap());
-                                proofs[idx] = None;
-                                //send_ptrs.push(ptr);
+                            if group_proofs[idx].is_some() {
+                                let tag =
+                                    if idx == left_idx { i_prove * 2 + n_groups } else { i_prove * 2 + n_groups + 1 };
+                                let (ptr, size) = get_serialized_proof_c(group_proofs[idx].unwrap());
+                                let buffer = unsafe { std::slice::from_raw_parts(ptr as *const i8, size as usize) };
+                                self.world.process_at_rank(owner_rank as i32).send_with_tag(buffer, tag as i32);
+                                zkin_proof_free_c(group_proofs[idx].unwrap());
+                                group_proofs[idx] = None;
                             }
                         }
                     }
                     i_prove += 1;
                 }
-            }
-
-            /*// Process the received data
-            for (tag, buffer) in receive_buffers {
-                // Convert buffer to the required type and store it in the vector of proofs
-                let proof = convert_to_zkein(&buffer);
-                let idx = tag / 2;
-                let sub_idx = tag % 2;
-                proves[idx][sub_idx] = Some(proof);
-            }
-
-            // Allocate received proofs
-            for (idx, &alive) in alives.iter().enumerate() {
-                let n_aggs_group = alive / 2;
-                if n_aggs_group == 0 {
-                    continue;
-                }
-                let proofs = &mut proves[idx];
-                for i in 0..n_aggs_group {
-                    let left_idx = i * 2;
-                    let right_idx = i * 2 + 1;
-
-                    if proofs[left_idx].is_none() {
-                        // Allocate memory for the received proof
-                        proofs[left_idx] = Some(allocate_proof_memory());
-                    }
-                    if proofs[right_idx].is_none() {
-                        // Allocate memory for the received proof
-                        proofs[right_idx] = Some(allocate_proof_memory());
-                    }
-                }
-            }*/
-
-            // Reallocate received proofs if necessary
-            // Memory management for proofs
-
-            // Wait for all requests to complete and process the received data
-            for request in requests_send {
-                request.wait();
             }
         }
     }

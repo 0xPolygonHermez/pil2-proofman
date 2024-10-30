@@ -595,9 +595,16 @@ char *get_serialized_proof(void *zkin, uint64_t* size){
     return zkinCStr;
 }
 
-uint64_t get_serialized_proof_size(void *zkin) {
-    nlohmann::ordered_json* zkinJson = (nlohmann::ordered_json*) zkin;
-    return zkinJson->dump().length() + 1;
+void *deserialize_zkin_proof(char* serialized_proof) {
+    nlohmann::ordered_json* zkinJson = new nlohmann::ordered_json();
+    try {
+        *zkinJson = nlohmann::ordered_json::parse(serialized_proof);
+    } catch (const nlohmann::json::parse_error& e) {
+        std::cerr << "[ERROR] JSON parse error in deserialize_zkin_proof(): " << e.what() << std::endl;
+        delete zkinJson;
+        return nullptr;
+    }
+    return (void *) zkinJson;
 }
 
 void *get_zkin_proof(char* zkin) {

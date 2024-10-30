@@ -581,10 +581,9 @@ extern "C" {
 }
 
 extern "C" {
-    #[link_name = "\u{1}_Z25get_serialized_proof_sizePv"]
-    pub fn get_serialized_proof_size(zkin: *mut ::std::os::raw::c_void) -> u64;
+    #[link_name = "\u{1}_Z22deserialize_zkin_proofPc"]
+    pub fn deserialize_zkin_proof(serialized_proof: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
 }
-
 extern "C" {
     #[link_name = "\u{1}_Z14get_zkin_proofPc"]
     pub fn get_zkin_proof(zkin: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;

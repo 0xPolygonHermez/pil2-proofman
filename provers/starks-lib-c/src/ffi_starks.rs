@@ -804,8 +804,8 @@ pub fn get_serialized_proof_c(zkin: *mut c_void) -> (*mut std::os::raw::c_char, 
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_serialized_proof_size_c(zkin: *mut c_void) -> u64 {
-    unsafe { get_serialized_proof_size(zkin) }
+pub fn deserialize_zkin_proof_c(zkin_cstr: *mut std::os::raw::c_char) -> *mut c_void {
+    unsafe { deserialize_zkin_proof(zkin_cstr) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1451,13 +1451,9 @@ pub fn get_serialized_proof_c(_zkin: *mut c_void, _size: *mut u64) -> *mut std::
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_serialized_proof_size_c(_zkin: *mut c_void) -> u64 {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_serialized_proof_size_c: This is a mock call because there is no linked library"
-    );
-    0
+pub fn deserialize_zkin_proof_c(_zkin_cstr: *mut std::os::raw::c_char) -> *mut c_void {
+    trace!("{}: ··· {}", "ffi     ", "deserialize_zkin_proof_c: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
