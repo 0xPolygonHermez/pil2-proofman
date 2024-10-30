@@ -608,6 +608,7 @@ pub fn verify_global_constraints_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_global_constraints_c(
     p_global_constraints_bin: *mut c_void,
     publics: *mut c_void,
@@ -1281,6 +1282,7 @@ pub fn verify_global_constraints_c(
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_global_constraints_c(
     _p_global_constraints_bin: *mut c_void,
     _publics: *mut c_void,
@@ -1310,7 +1312,7 @@ pub fn set_hint_field_global_constraints_c(
     trace!(
         "{}: ··· {}",
         "ffi     ",
-        "get_hint_field_global_constraints_c: This is a mock call because there is no linked library"
+        "set_hint_field_global_constraints_c: This is a mock call because there is no linked library"
     );
     100000
 }

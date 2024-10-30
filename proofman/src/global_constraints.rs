@@ -206,7 +206,7 @@ pub fn get_hint_field_gc_m<F: Field>(
         .iter_mut() // Iterate mutably over the inner Vecs
         .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
         .collect();
-    
+
     let challenges_guard = pctx.challenges.challenges.read().unwrap();
     let challenges = (*challenges_guard).as_ptr() as *mut c_void;
 
