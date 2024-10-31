@@ -1452,7 +1452,11 @@ pub fn get_serialized_proof_c(_zkin: *mut c_void, _size: *mut u64) -> *mut std::
 
 #[cfg(feature = "no_lib_link")]
 pub fn deserialize_zkin_proof_c(_zkin_cstr: *mut std::os::raw::c_char) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "deserialize_zkin_proof_c: This is a mock call because there is no linked library");
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "deserialize_zkin_proof_c: This is a mock call because there is no linked library"
+    );
     std::ptr::null_mut()
 }
 

@@ -10,6 +10,7 @@ use mpi::datatype::PartitionMut;
 use mpi::topology::Communicator;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
+#[cfg(feature = "distributed")]
 use proofman_starks_lib_c::*;
 use std::ffi::c_void;
 
@@ -283,8 +284,8 @@ impl DistributionCtx {
             }
         }
     }
-
-    pub fn distribute_recursive2_proofs(&mut self, alives: &Vec<usize>, proves: &mut Vec<Vec<Option<*mut c_void>>>) {
+    #[allow(unused_variables)]
+    pub fn distribute_recursive2_proofs(&mut self, alives: &[usize], proofs: &mut [Vec<Option<*mut c_void>>]) {
         #[cfg(feature = "distributed")]
         {
             // Count number of aggregations that will be done
@@ -292,13 +293,13 @@ impl DistributionCtx {
             let n_agregations: usize = alives.iter().map(|&alive| alive / 2).sum();
             let aggs_per_process = (n_agregations / self.n_processes as usize).max(1);
 
-            let mut i_prove = 0;
+            let mut i_proof = 0;
             // tags codes:
-            // 0,...,ngroups-1: proves that need to be sent to rank0 from another rank for a group with alive == 1
-            // ngroups, ..., ngroups + 2*n_aggregations - 1: proves that need to be sent to the owner of the aggregation task
+            // 0,...,ngroups-1: proofs that need to be sent to rank0 from another rank for a group with alive == 1
+            // ngroups, ..., ngroups + 2*n_aggregations - 1: proofs that need to be sent to the owner of the aggregation task
 
             for (group_idx, &alive) in alives.iter().enumerate() {
-                let group_proofs: &mut Vec<Option<*mut c_void>> = &mut proves[group_idx];
+                let group_proofs: &mut Vec<Option<*mut c_void>> = &mut proofs[group_idx];
                 let n_aggs_group = alive / 2;
 
                 if n_aggs_group == 0 {
@@ -321,9 +322,9 @@ impl DistributionCtx {
                 }
 
                 for i in 0..n_aggs_group {
-                    let chunk = i_prove / aggs_per_process;
+                    let chunk = i_proof / aggs_per_process;
                     let owner_rank =
-                        if chunk < self.n_processes as usize { chunk } else { i_prove % self.n_processes as usize };
+                        if chunk < self.n_processes as usize { chunk } else { i_proof % self.n_processes as usize };
                     let left_idx = i * 2;
                     let right_idx = i * 2 + 1;
 
@@ -331,7 +332,7 @@ impl DistributionCtx {
                         for &idx in &[left_idx, right_idx] {
                             if group_proofs[idx].is_none() {
                                 let tag =
-                                    if idx == left_idx { i_prove * 2 + n_groups } else { i_prove * 2 + n_groups + 1 };
+                                    if idx == left_idx { i_proof * 2 + n_groups } else { i_proof * 2 + n_groups + 1 };
                                 let (mut msg, _status) =
                                     self.world.any_process().receive_vec_with_tag::<i8>(tag as i32);
                                 group_proofs[idx] = Some(deserialize_zkin_proof_c(msg.as_mut_ptr()));
@@ -341,7 +342,7 @@ impl DistributionCtx {
                         for &idx in &[left_idx, right_idx] {
                             if group_proofs[idx].is_some() {
                                 let tag =
-                                    if idx == left_idx { i_prove * 2 + n_groups } else { i_prove * 2 + n_groups + 1 };
+                                    if idx == left_idx { i_proof * 2 + n_groups } else { i_proof * 2 + n_groups + 1 };
                                 let (ptr, size) = get_serialized_proof_c(group_proofs[idx].unwrap());
                                 let buffer = unsafe { std::slice::from_raw_parts(ptr as *const i8, size as usize) };
                                 self.world.process_at_rank(owner_rank as i32).send_with_tag(buffer, tag as i32);
@@ -350,7 +351,7 @@ impl DistributionCtx {
                             }
                         }
                     }
-                    i_prove += 1;
+                    i_proof += 1;
                 }
             }
         }
