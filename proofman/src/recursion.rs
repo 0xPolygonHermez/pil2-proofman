@@ -156,6 +156,7 @@ pub fn generate_recursion_proof<F: Field>(
             }
             // agregation loop
             loop {
+                dctx.barrier();
                 dctx.distribute_recursive2_proofs(&alives, &mut airgroup_proofs);
                 let mut pending_agregations = false;
                 for airgroup in 0..n_airgroups {

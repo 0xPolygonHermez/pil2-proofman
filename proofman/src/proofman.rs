@@ -182,7 +182,8 @@ impl<F: Field + 'static> ProofMan<F> {
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE1_PROOFS);
         log::info!("{}: Recursive1 proofs generated successfully", Self::MY_NAME);
-
+        
+        ectx.dctx.read().unwrap().barrier();
         timer_start_info!(GENERATING_RECURSIVE2_PROOFS);
         let recursive2_proofs = generate_recursion_proof(
             &pctx,
@@ -194,6 +195,8 @@ impl<F: Field + 'static> ProofMan<F> {
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
         log::info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
+        
+        ectx.dctx.read().unwrap().barrier();
         if mpi_rank == 0 {
             timer_start_info!(GENERATING_FINAL_PROOFS);
             let _final_proof = generate_recursion_proof(
