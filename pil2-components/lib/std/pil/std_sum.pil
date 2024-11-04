@@ -48,10 +48,6 @@ private function init_proof_containers_sum(int name, int opid[]) {
 }
 
 private function init_containers_sum(int name, int opid[]) {
-    container airgroup.std.gsum {
-        airgroupval aggregate(sum) gsum_result;
-    }
-
     container air.std.gsum {
         int gsum_nargs = 0;
         expr gsum_s[100];
@@ -211,8 +207,14 @@ private function find_repeated_proves() {
 private function piop_gsum_air(const int blowupFactor = 2) {
     use air.std.gsum;
 
+    const int nIm = gsum_nargs/nTerms;
+
     col fixed __L1 = [1,0...]; // TODO: Fix
+
     col witness stage(2) gsum;
+    col witness stage(2) im[nIm];
+
+    airgroupval aggregate(sum) default(0) gsum_result;
 
     /*
                                             muli       seli
@@ -398,7 +400,8 @@ private function piop_gsum_air(const int blowupFactor = 2) {
  * It updates the expression for the grandsum at the proof level
  */
 private function piop_gsum_airgroup() {
-    proof.std.gsum.gsum += airgroup.std.gsum.gsum_result;
+    // The `gsum_result` from each airgroup is added to the overall global sum
+    proof.std.gsum.gsum += gsum_result;
 }
 
 /**

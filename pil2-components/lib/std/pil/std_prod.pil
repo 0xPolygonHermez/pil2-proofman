@@ -42,10 +42,6 @@ private function init_proof_containers_prod(int name, int opid) {
 }
 
 private function init_containers_prod(int name, int opid) {
-    container airgroup.std.gprod {
-        airgroupval aggregate(prod) gprod_result;
-    }
-
     container air.std.gprod {
         int gprod_assumes_count = 0;
         expr gprod_assumes_sel[100];
@@ -196,7 +192,11 @@ private function gprod_update_air_constraint_data(int proves, expr sel, expr col
 private function piop_gprod_air() {
     use air.std.gprod;
 
+    col fixed _L1 = [1,0...]; // TODO: Fix
+
     col witness stage(2) gprod;
+
+    airgroupval aggregate(prod) default(1) gprod_result;
 
     //                                        (st1·(t1+ɣ-1)+1)·(st2·(t2+ɣ-1)+1)
     //  gprod === ('gprod * (1 - L1) + L1) * -----------------------------------
@@ -253,7 +253,8 @@ private function piop_gprod_air() {
  * It updates the expression for the grandprod at the proof level indirectly with the airgroup values
  */
 private function piop_gprod_airgroup() {
-    proof.std.gprod.gprod *= airgroup.std.gprod.gprod_result;
+    // The `gprod_result` from each airgroup is added to the overall global product
+    proof.std.gprod.gprod *= gprod_result;
 }
 
 /**
