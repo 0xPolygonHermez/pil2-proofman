@@ -5,8 +5,8 @@ use std::sync::RwLock;
 
 use proofman_starks_lib_c::{
     get_const_tree_size_c, get_const_size_c, prover_helpers_new_c, expressions_bin_new_c, stark_info_new_c,
-    load_const_tree_c, load_const_pols_c, calculate_const_tree_c,
-    stark_info_free_c, expressions_bin_free_c, prover_helpers_free_c
+    load_const_tree_c, load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c,
+    prover_helpers_free_c,
 };
 
 use crate::GlobalInfo;
@@ -63,17 +63,18 @@ impl<F> Setup<F> {
         let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
         let expressions_bin_path = setup_path.display().to_string() + ".bin";
 
-        let (p_stark_info, p_expressions_bin, p_prover_helpers) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
-            // If the condition is met, use None for each pointer
-            (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut())
-        } else {
-            // Otherwise, initialize the pointers with their respective values
-            let stark_info = stark_info_new_c(stark_info_path.as_str());
-            let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false);
-            let prover_helpers = prover_helpers_new_c(stark_info);
-        
-            (stark_info, expressions_bin, prover_helpers)
-        };
+        let (p_stark_info, p_expressions_bin, p_prover_helpers) =
+            if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
+                // If the condition is met, use None for each pointer
+                (std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut())
+            } else {
+                // Otherwise, initialize the pointers with their respective values
+                let stark_info = stark_info_new_c(stark_info_path.as_str());
+                let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false);
+                let prover_helpers = prover_helpers_new_c(stark_info);
+
+                (stark_info, expressions_bin, prover_helpers)
+            };
 
         Self {
             air_id,
@@ -111,12 +112,7 @@ impl<F> Setup<F> {
         *self.const_pols.const_pols.write().unwrap() = const_pols;
     }
 
-    pub fn load_const_pols_tree(
-        &self,
-        global_info: &GlobalInfo,
-        setup_type: &ProofType,
-        save_file: bool,
-    ) {
+    pub fn load_const_pols_tree(&self, global_info: &GlobalInfo, setup_type: &ProofType, save_file: bool) {
         let setup_path = match setup_type {
             ProofType::Final => global_info.get_final_setup_path(),
             _ => global_info.get_air_setup_path(self.airgroup_id, self.air_id, setup_type),

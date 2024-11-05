@@ -36,7 +36,6 @@ impl<F> SetupsVadcop<F> {
                 sctx_final: None,
             }
         }
-        
     }
 }
 

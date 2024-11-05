@@ -701,7 +701,18 @@ pub fn gen_recursive_proof_c(
     let global_info_file_name = CString::new(global_info_file).unwrap();
     let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
 
-    unsafe { gen_recursive_proof(p_setup_ctx, global_info_file_ptr, airgroup_id, p_address, p_const_pols, p_const_tree, p_public_inputs, proof_file_ptr) }
+    unsafe {
+        gen_recursive_proof(
+            p_setup_ctx,
+            global_info_file_ptr,
+            airgroup_id,
+            p_address,
+            p_const_pols,
+            p_const_tree,
+            p_public_inputs,
+            proof_file_ptr,
+        )
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]

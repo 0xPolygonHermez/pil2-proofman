@@ -309,28 +309,25 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);
     }
 
-    fn initialize_setup(setups: Arc::<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>, aggregation: bool) {
+    fn initialize_setup(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>, aggregation: bool) {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_debug!(INITIALIZE_SETUP);
         timer_start_debug!(INITIALIZE_CONST_POLS);
 
         let mut const_pols_calculated: HashMap<(usize, usize), bool> = HashMap::new();
 
-        for air_instance in
-            pctx.air_instance_repo.air_instances.read().unwrap().iter()
-        {
-            if !const_pols_calculated.contains_key(&(air_instance.airgroup_id, air_instance.air_id)) {
+        for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
+            const_pols_calculated.entry((air_instance.airgroup_id, air_instance.air_id)).or_insert_with(|| {
                 let setup = setups.sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
                 setup.load_const_pols(&pctx.global_info, &ProofType::Basic);
                 setup.load_const_pols_tree(&pctx.global_info, &ProofType::Basic, false);
-                const_pols_calculated.insert((air_instance.airgroup_id, air_instance.air_id), true);
-            }
+                true
+            });
         }
 
         timer_stop_and_log_debug!(INITIALIZE_CONST_POLS);
 
         if aggregation {
-
             timer_start_debug!(INITIALIZE_CONST_POLS_COMPRESSOR);
             let mut const_pols_calculated_compressor: HashMap<(usize, usize), bool> = HashMap::new();
 
@@ -339,10 +336,10 @@ impl<F: Field + 'static> ProofMan<F> {
             let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
             let sctx_final = setups.sctx_final.as_ref().unwrap().clone();
 
-            for air_instance in
-                pctx.air_instance_repo.air_instances.read().unwrap().iter()
-            {
-                if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) && !const_pols_calculated_compressor.contains_key(&(air_instance.airgroup_id, air_instance.air_id)) {
+            for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
+                if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id)
+                    && !const_pols_calculated_compressor.contains_key(&(air_instance.airgroup_id, air_instance.air_id))
+                {
                     let setup = sctx_compressor.get_setup(air_instance.airgroup_id, air_instance.air_id);
                     setup.load_const_pols(&pctx.global_info, &ProofType::Compressor);
                     setup.load_const_pols_tree(&pctx.global_info, &ProofType::Compressor, false);
@@ -353,15 +350,13 @@ impl<F: Field + 'static> ProofMan<F> {
 
             timer_start_debug!(INITIALIZE_CONST_POLS_RECURSIVE1);
             let mut const_pols_calculated_recursive1: HashMap<(usize, usize), bool> = HashMap::new();
-            for air_instance in
-                pctx.air_instance_repo.air_instances.read().unwrap().iter()
-            {
-                if !const_pols_calculated_recursive1.contains_key(&(air_instance.airgroup_id, air_instance.air_id)) {
+            for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
+                const_pols_calculated_recursive1.entry((air_instance.airgroup_id, air_instance.air_id)).or_insert_with(|| {
                     let setup = sctx_recursive1.get_setup(air_instance.airgroup_id, air_instance.air_id);
                     setup.load_const_pols(&pctx.global_info, &ProofType::Recursive1);
                     setup.load_const_pols_tree(&pctx.global_info, &ProofType::Recursive1, false);
-                    const_pols_calculated_recursive1.insert((air_instance.airgroup_id, air_instance.air_id), true);
-                }
+                    true
+                });
             }
             timer_stop_and_log_debug!(INITIALIZE_CONST_POLS_RECURSIVE1);
 
