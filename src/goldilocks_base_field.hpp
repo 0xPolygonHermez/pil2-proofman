@@ -214,6 +214,7 @@ public:
 #ifdef __AVX512__ 
 
     static void load_avx512(__m512i &a_, const Goldilocks::Element *a8);
+    static void load_avx512(__m512i &a, const Goldilocks::Element *a8_a, uint64_t stride);
     static void load_avx512_a(__m512i &a_, const Goldilocks::Element *a8_a);
 
     static void store_avx512(Goldilocks::Element *a8, const __m512i &a_);

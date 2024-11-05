@@ -30,6 +30,17 @@ inline void Goldilocks::load_avx512_a(__m512i &a_, const Goldilocks::Element *a8
     a_ = _mm512_load_si512((__m512i *)(a8_a));
 }
 
+inline void Goldilocks::load_avx512(__m512i &a, const Goldilocks::Element *a8_a, uint64_t stride) 
+{
+    Goldilocks::Element a8_[8];
+
+    for (int i = 0; i < 8; ++i) {
+        a8_[i] = a8_a[i * stride];
+    }
+
+    a = _mm512_load_si512((__m512i *)a8_);
+}
+
 inline void Goldilocks::store_avx512(Goldilocks::Element *a8, const __m512i &a_)
 {
     _mm512_storeu_si512((__m512i *)a8, a_);
