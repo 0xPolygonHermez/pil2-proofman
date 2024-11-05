@@ -92,15 +92,21 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let mut transcript: FFITranscript = provers[0].new_transcript();
 
+        Self::check_stage(0, &mut provers, pctx.clone());
+
         // Commit stages
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
         for stage in 1..=num_commit_stages {
             Self::get_challenges(stage, &mut provers, pctx.clone(), &transcript);
             if stage != 1 {
+                timer_start_debug!(CALCULATING_WITNESS);
+                info!("{}: Calculating witness stage {}", Self::MY_NAME, stage);
                 witness_lib.calculate_witness(stage, pctx.clone(), ectx.clone(), sctx.clone());
+                timer_stop_and_log_debug!(CALCULATING_WITNESS);
             }
 
             Self::calculate_stage(stage, &mut provers, sctx.clone(), pctx.clone());
+            Self::check_stage(stage, &mut provers, pctx.clone());
 
             if !options.verify_constraints {
                 Self::commit_stage(stage, &mut provers, pctx.clone());
@@ -405,6 +411,13 @@ impl<F: Field + 'static> ProofMan<F> {
                 prover.calculate_stage(stage, setup_ctx.clone(), proof_ctx.clone());
             }
             timer_stop_and_log_debug!(CALCULATING_STAGE);
+        }
+    }
+
+    pub fn check_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], proof_ctx: Arc<ProofCtx<F>>) {
+        log::debug!("{}: Checking stage can be calculated", Self::MY_NAME);
+        for prover in provers.iter_mut() {
+            prover.check_stage(stage, proof_ctx.clone());
         }
     }
 

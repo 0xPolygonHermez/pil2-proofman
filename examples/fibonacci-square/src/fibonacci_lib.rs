@@ -58,7 +58,11 @@ impl<F: PrimeField> WitnessLibrary<F> for FibonacciWitness<F> {
         };
 
         let pi: Vec<u8> = public_inputs.into();
+
         *pctx.public_inputs.inputs.write().unwrap() = pi;
+        pctx.set_public_by_name("mod");
+        pctx.set_public_by_name("in1");
+        pctx.set_public_by_name("in2");
 
         wcm.start_proof(pctx, ectx, sctx);
     }

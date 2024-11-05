@@ -4,6 +4,31 @@
 #include "exit_process.hpp"
 
 template <typename ElementType>
+void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
+{   
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
+    std::string section = setupCtx.starkInfo.customCommits[commitId].name + "step";  
+    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
+    
+    Goldilocks::Element *pBuff = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
+    Goldilocks::Element *pBuffExtended = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
+
+    NTT_Goldilocks ntt(N);
+    if(pBuffHelper != nullptr) {
+        ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
+    } else {
+        ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols);
+    }
+    
+    uint64_t pos = setupCtx.starkInfo.nStages + 2 + commitId;
+    treesGL[pos - 1]->setSource(pBuffExtended);
+    treesGL[pos - 1]->merkelize();
+    treesGL[pos - 1]->getRoot(&proof.proof.roots[pos - 1][0]);
+}
+
+template <typename ElementType>
 void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
 {   
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -272,6 +297,12 @@ template <typename ElementType>
 void Starks<ElementType>::ffi_treesGL_get_root(uint64_t index, ElementType *dst)
 {
     treesGL[index]->getRoot(dst);
+}
+
+template <typename ElementType>
+void Starks<ElementType>::ffi_treesGL_set_root(uint64_t index, FRIProof<ElementType> &proof)
+{
+    treesGL[index]->getRoot(&proof.proof.roots[index][0]);
 }
 
 template <typename ElementType>

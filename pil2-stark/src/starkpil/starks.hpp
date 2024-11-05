@@ -34,7 +34,7 @@ public:
 public:
     Starks(SetupCtx& setupCtx_, Goldilocks::Element *pConstPolsExtendedTreeAddress) : setupCtx(setupCtx_)                                    
     {
-        treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + 2];
+        treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
         treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
         for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
         {
@@ -42,6 +42,12 @@ public:
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
             treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, 1 << setupCtx.starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
         }
+        
+
+        // for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
+        //     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[i].name + "0"];
+        //     treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, 1 << setupCtx.starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
+        // }
 
         treesFRI = new MerkleTreeType*[setupCtx.starkInfo.starkStruct.steps.size() - 1];
         for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
@@ -53,7 +59,7 @@ public:
     };
     ~Starks()
     {
-        for (uint i = 0; i < setupCtx.starkInfo.nStages + 2; i++)
+        for (uint i = 0; i < setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2; i++)
         {
             delete treesGL[i];
         }
@@ -64,9 +70,9 @@ public:
             delete treesFRI[i];
         }
         delete[] treesFRI;
-        
     };
     
+    void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper);
     void extendAndMerkelize(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
 
     void commitStage(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
@@ -89,6 +95,7 @@ public:
 
     // Following function are created to be used by the ffi interface
     void ffi_treesGL_get_root(uint64_t index, ElementType *dst);
+    void ffi_treesGL_set_root(uint64_t index, FRIProof<ElementType> &proof);
 
     void evmap(StepsParams& params, Goldilocks::Element *LEv);
 };

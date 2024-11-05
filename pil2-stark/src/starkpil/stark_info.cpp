@@ -60,6 +60,16 @@ void StarkInfo::load(json j)
     friExpId = j["friExpId"];
     cExpId = j["cExpId"];
 
+
+    for(uint64_t i = 0; i < j["customCommits"].size(); i++) {
+        CustomCommits c;
+        c.name = j["customCommits"][i]["name"];
+        for(uint64_t k = 0; k < j["customCommits"][i]["stageWidths"].size(); k++) {
+            c.stageWidths.push_back(j["customCommits"][i]["stageWidths"][k]);
+        }
+        customCommits.push_back(c);
+    }
+
     for(uint64_t i = 0; i < j["openingPoints"].size(); i++) {
         openingPoints.push_back(j["openingPoints"][i]);
     }
@@ -88,6 +98,11 @@ void StarkInfo::load(json j)
     {
         PolMap map;
         map.name = j["publicsMap"][i]["name"];
+        if(j["publicsMap"][i].contains("lengths")) {
+            for (uint64_t l = 0; l < j["publicsMap"][i]["lengths"].size(); l++) {
+                map.lengths.push_back(j["publicsMap"][i]["lengths"][l]);
+            } 
+        }
         publicsMap.push_back(map);
     }
 
@@ -127,6 +142,31 @@ void StarkInfo::load(json j)
         map.polsMapId = j["cmPolsMap"][i]["polsMapId"];
         cmPolsMap.push_back(map);
     }
+
+    for (uint64_t i = 0; i < j["customCommitsMap"].size(); i++) 
+    {
+        vector<PolMap> custPolsMap(j["customCommitsMap"][i].size());
+        for(uint64_t k = 0; k < j["customCommitsMap"][i].size(); ++k) {
+            PolMap map;
+            map.stage = j["customCommitsMap"][i][k]["stage"];
+            map.name = j["customCommitsMap"][i][k]["name"];
+            map.dim = j["customCommitsMap"][i][k]["dim"];
+            map.stagePos = j["customCommitsMap"][i][k]["stagePos"];
+            map.stageId = j["customCommitsMap"][i][k]["stageId"];
+            if(j["customCommitsMap"][i][k].contains("expId")) {
+                map.expId = j["customCommitsMap"][i][k]["expId"];
+            }
+            if(j["customCommitsMap"][i].contains("lengths")) {
+                for (uint64_t l = 0; l < j["customCommitsMap"][i][k]["lengths"].size(); l++) {
+                    map.lengths.push_back(j["customCommitsMap"][i][k]["lengths"][l]);
+                } 
+            }
+            map.polsMapId = j["customCommitsMap"][i][k]["polsMapId"];
+            custPolsMap.push_back(map);
+        }
+        customCommitsMap.push_back(custPolsMap);
+    }
+
 
     for (uint64_t i = 0; i < j["constPolsMap"].size(); i++) 
     {
@@ -183,6 +223,13 @@ void StarkInfo::setMapOffsets() {
     // Set offsets for constants
     mapOffsets[std::make_pair("const", false)] = 0;
     mapOffsets[std::make_pair("const", true)] = 0;
+
+    // Set offsets for custom pols
+    for(uint64_t i = 0; i < customCommits.size(); ++i) {
+        mapOffsets[std::make_pair(customCommits[i].name + "0", false)] = 0;
+        mapOffsets[std::make_pair(customCommits[i].name + "0", true)] = N * mapSectionsN[customCommits[i].name + "0"];
+        mapTotalNcustomCommits[customCommits[i].name] = NExtended * mapSectionsN[customCommits[i].name + "0"];
+    }
 
     mapTotalN = 0;
 

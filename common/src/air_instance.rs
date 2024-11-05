@@ -3,6 +3,7 @@ use std::{collections::HashMap, os::raw::c_void, sync::Arc};
 use p3_field::Field;
 use proofman_starks_lib_c::{
     get_airval_id_by_name_c, get_n_airgroupvals_c, get_n_airvals_c, get_n_evals_c, get_airgroupval_id_by_name_c,
+    get_n_custom_commits_c, get_map_totaln_custom_commits_c,
 };
 
 use crate::SetupCtx;
@@ -18,6 +19,7 @@ pub struct StepsParams {
     pub xdivxsub: *mut c_void,
     pub p_const_pols: *mut c_void,
     pub p_const_tree: *mut c_void,
+    pub custom_commits: *mut *mut c_void,
 }
 
 impl From<&StepsParams> for *mut c_void {
@@ -37,12 +39,14 @@ pub struct AirInstance<F> {
     pub idx: Option<usize>,
     pub global_idx: Option<usize>,
     pub buffer: Vec<F>,
+    pub custom_commits: Vec<Vec<F>>,
     pub airgroup_values: Vec<F>,
     pub airvalues: Vec<F>,
     pub evals: Vec<F>,
     pub commits_calculated: HashMap<usize, bool>,
     pub airgroupvalue_calculated: HashMap<usize, bool>,
     pub airvalue_calculated: HashMap<usize, bool>,
+    pub custom_commits_calculated: Vec<HashMap<usize, bool>>,
 }
 
 impl<F: Field> AirInstance<F> {
@@ -55,6 +59,16 @@ impl<F: Field> AirInstance<F> {
     ) -> Self {
         let ps = setup_ctx.get_setup(airgroup_id, air_id);
 
+        let custom_commits_calculated = vec![HashMap::new(); get_n_custom_commits_c(ps.p_setup.p_stark_info) as usize];
+
+        let mut custom_commits = Vec::new();
+
+        let n_custom_commits = get_n_custom_commits_c(ps.p_setup.p_stark_info);
+        for commit_id in 0..n_custom_commits {
+            let map_total_n = get_map_totaln_custom_commits_c(ps.p_setup.p_stark_info, commit_id);
+            custom_commits.push(vec![F::zero(); map_total_n as usize])
+        }
+
         AirInstance {
             airgroup_id,
             air_id,
@@ -63,17 +77,29 @@ impl<F: Field> AirInstance<F> {
             idx: None,
             global_idx: None,
             buffer,
+            custom_commits,
             airgroup_values: vec![F::zero(); get_n_airgroupvals_c(ps.p_setup.p_stark_info) as usize * 3],
             airvalues: vec![F::zero(); get_n_airvals_c(ps.p_setup.p_stark_info) as usize * 3],
             evals: vec![F::zero(); get_n_evals_c(ps.p_setup.p_stark_info) as usize * 3],
             commits_calculated: HashMap::new(),
             airgroupvalue_calculated: HashMap::new(),
             airvalue_calculated: HashMap::new(),
+            custom_commits_calculated,
         }
     }
 
     pub fn get_buffer_ptr(&self) -> *mut u8 {
         self.buffer.as_ptr() as *mut u8
+    }
+
+    pub fn get_custom_commits_ptr(&self) -> *mut *mut c_void {
+        let mut custom_commits = Vec::new();
+        for c in &self.custom_commits {
+            let ptr = c.as_ptr() as *mut c_void;
+            custom_commits.push(ptr);
+        }
+        
+        custom_commits.as_mut_ptr()
     }
 
     pub fn set_airvalue(&mut self, setup_ctx: &SetupCtx<F>, name: &str, value: F) {
@@ -140,6 +166,10 @@ impl<F: Field> AirInstance<F> {
 
     pub fn set_commit_calculated(&mut self, id: usize) {
         self.commits_calculated.insert(id, true);
+    }
+
+    pub fn set_custom_commit_calculated(&mut self, commit_id: usize, id: usize) {
+        self.custom_commits_calculated[commit_id].insert(id, true);
     }
 
     pub fn set_air_instance_id(&mut self, air_instance_id: usize, idx: usize) {

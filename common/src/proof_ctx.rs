@@ -4,15 +4,23 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
+
 use crate::{AirInstancesRepository, GlobalInfo, VerboseMode, WitnessPilout};
 
 pub struct PublicInputs {
     pub inputs: RwLock<Vec<u8>>,
+    pub inputs_set: RwLock<Vec<bool>>,
 }
 
 impl Default for PublicInputs {
     fn default() -> Self {
-        Self { inputs: RwLock::new(Vec::new()) }
+        Self { inputs: RwLock::new(Vec::new()), inputs_set: RwLock::new(Vec::new()) }
+    }
+}
+
+impl PublicInputs {
+    pub fn new(n_publics: usize) -> Self {
+        Self { inputs: RwLock::new(Vec::new()), inputs_set: RwLock::new(vec![false; n_publics]) }
     }
 }
 
@@ -83,11 +91,12 @@ impl<F: Field> ProofCtx<F> {
             values: RwLock::new(vec![F::zero(); global_info.n_proof_values * 3]),
             values_set: RwLock::new(HashMap::new()),
         };
+        let n_publics = global_info.n_publics;
 
         Self {
             pilout,
             global_info,
-            public_inputs: PublicInputs::default(),
+            public_inputs: PublicInputs::new(n_publics),
             proof_values,
             challenges: Challenges::default(),
             buff_helper: BuffHelper::default(),
@@ -145,5 +154,21 @@ impl<F: Field> ProofCtx<F> {
 
     pub fn set_proof_value_calculated(&self, id: usize) {
         self.proof_values.values_set.write().unwrap().insert(id, true);
+    }
+
+    pub fn set_public_value(&self, value: u64, public_id: u64) {
+        self.public_inputs.inputs.write().unwrap()[(public_id as usize)*8..(public_id as usize + 1)*8].copy_from_slice(&value.to_le_bytes());
+        self.public_inputs.inputs_set.write().unwrap()[public_id as usize] = true;
+    }
+
+    pub fn set_public_by_name(&self, name: &str) {
+        let n_publics: usize = self.global_info.publics_map.as_ref().expect("REASON").len();
+        let mut publics = self.public_inputs.inputs_set.write().unwrap();
+        for i in 0..n_publics {
+            let public = self.global_info.publics_map.as_ref().expect("REASON").get(i).unwrap();
+            if public.name == name {
+                publics[i] = true;
+            }
+        }
     }
 }

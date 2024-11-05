@@ -41,11 +41,6 @@ impl<F> SetupsVadcop<F> {
 
 #[derive(Debug)]
 pub struct SetupRepository<F> {
-    // We store the setup in two stages: a partial setup in the first cell and a full setup in the second cell.
-    // This allows for loading only the partial setup when constant polynomials are not needed, improving performance.
-    // In C++, same SetupCtx structure is used to store either the partial or full setup for each instance.
-    // A full setup can be loaded in one or two steps: partial first, then full (which includes constant polynomial data).
-    // Since the setup is referenced immutably in the repository, we use OnceCell for both the partial and full setups.
     setups: HashMap<(usize, usize), Setup<F>>,
     global_bin: Option<*mut c_void>,
 }
