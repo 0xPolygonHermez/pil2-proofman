@@ -11,21 +11,32 @@ use crate::ProofType;
 
 pub struct SetupsVadcop<F> {
     pub sctx: Arc<SetupCtx<F>>,
-    pub sctx_compressor: Arc<SetupCtx<F>>,
-    pub sctx_recursive1: Arc<SetupCtx<F>>,
-    pub sctx_recursive2: Arc<SetupCtx<F>>,
-    pub sctx_final: Arc<SetupCtx<F>>,
+    pub sctx_compressor: Option<Arc<SetupCtx<F>>>,
+    pub sctx_recursive1: Option<Arc<SetupCtx<F>>>,
+    pub sctx_recursive2: Option<Arc<SetupCtx<F>>>,
+    pub sctx_final: Option<Arc<SetupCtx<F>>>,
 }
 
 impl<F> SetupsVadcop<F> {
-    pub fn new(global_info: &GlobalInfo) -> Self {
-        SetupsVadcop {
-            sctx: Arc::new(SetupCtx::new(global_info, &ProofType::Basic)),
-            sctx_compressor: Arc::new(SetupCtx::new(global_info, &ProofType::Compressor)),
-            sctx_recursive1: Arc::new(SetupCtx::new(global_info, &ProofType::Recursive1)),
-            sctx_recursive2: Arc::new(SetupCtx::new(global_info, &ProofType::Recursive2)),
-            sctx_final: Arc::new(SetupCtx::new(global_info, &ProofType::Final)),
+    pub fn new(global_info: &GlobalInfo, aggregation: bool) -> Self {
+        if aggregation {
+            SetupsVadcop {
+                sctx: Arc::new(SetupCtx::new(global_info, &ProofType::Basic)),
+                sctx_compressor: Some(Arc::new(SetupCtx::new(global_info, &ProofType::Compressor))),
+                sctx_recursive1: Some(Arc::new(SetupCtx::new(global_info, &ProofType::Recursive1))),
+                sctx_recursive2: Some(Arc::new(SetupCtx::new(global_info, &ProofType::Recursive2))),
+                sctx_final: Some(Arc::new(SetupCtx::new(global_info, &ProofType::Final))),
+            }
+        } else {
+            SetupsVadcop {
+                sctx: Arc::new(SetupCtx::new(global_info, &ProofType::Basic)),
+                sctx_compressor: None,
+                sctx_recursive1: None,
+                sctx_recursive2: None,
+                sctx_final: None,
+            }
         }
+        
     }
 }
 

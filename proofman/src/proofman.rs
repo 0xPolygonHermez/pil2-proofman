@@ -67,7 +67,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let pctx = Arc::new(ProofCtx::create_ctx(witness_lib.pilout(), proving_key_path.clone()));
 
-        let setups = Arc::new(SetupsVadcop::new(&pctx.global_info));
+        let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, options.aggregation));
         let sctx: Arc<SetupCtx<F>> = setups.sctx.clone();
 
         Self::initialize_witness(&mut witness_lib, pctx.clone(), ectx.clone(), sctx.clone());
@@ -166,7 +166,7 @@ impl<F: Field + 'static> ProofMan<F> {
         let comp_proofs = generate_recursion_proof(
             &pctx,
             &ectx,
-            setups.sctx_compressor.clone(),
+            setups.sctx_compressor.as_ref().unwrap().clone(),
             &proves_out,
             &ProofType::Compressor,
             output_dir_path.clone(),
@@ -179,7 +179,7 @@ impl<F: Field + 'static> ProofMan<F> {
         let recursive1_proofs = generate_recursion_proof(
             &pctx,
             &ectx,
-            setups.sctx_recursive1.clone(),
+            setups.sctx_recursive1.as_ref().unwrap().clone(),
             &comp_proofs,
             &ProofType::Recursive1,
             output_dir_path.clone(),
@@ -194,7 +194,7 @@ impl<F: Field + 'static> ProofMan<F> {
         let recursive2_proofs = generate_recursion_proof(
             &pctx,
             &ectx,
-            sctx_recursive2,
+            sctx_recursive2.as_ref().unwrap().clone(),
             &recursive1_proofs,
             &ProofType::Recursive2,
             output_dir_path.clone(),
@@ -209,7 +209,7 @@ impl<F: Field + 'static> ProofMan<F> {
             let _final_proof = generate_recursion_proof(
                 &pctx,
                 &ectx,
-                setups.sctx_final.clone(),
+                setups.sctx_final.as_ref().unwrap().clone(),
                 &recursive2_proofs,
                 &ProofType::Final,
                 output_dir_path.clone(),
@@ -334,11 +334,16 @@ impl<F: Field + 'static> ProofMan<F> {
             timer_start_debug!(INITIALIZE_CONST_POLS_COMPRESSOR);
             let mut const_pols_calculated_compressor: HashMap<(usize, usize), bool> = HashMap::new();
 
+            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
+            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
+            let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
+            let sctx_final = setups.sctx_final.as_ref().unwrap().clone();
+
             for air_instance in
                 pctx.air_instance_repo.air_instances.read().unwrap().iter()
             {
                 if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) && !const_pols_calculated_compressor.contains_key(&(air_instance.airgroup_id, air_instance.air_id)) {
-                    let setup = setups.sctx_compressor.get_setup(air_instance.airgroup_id, air_instance.air_id);
+                    let setup = sctx_compressor.get_setup(air_instance.airgroup_id, air_instance.air_id);
                     setup.load_const_pols(&pctx.global_info, &ProofType::Compressor);
                     setup.load_const_pols_tree(&pctx.global_info, &ProofType::Compressor, false);
                     const_pols_calculated_compressor.insert((air_instance.airgroup_id, air_instance.air_id), true);
@@ -352,7 +357,7 @@ impl<F: Field + 'static> ProofMan<F> {
                 pctx.air_instance_repo.air_instances.read().unwrap().iter()
             {
                 if !const_pols_calculated_recursive1.contains_key(&(air_instance.airgroup_id, air_instance.air_id)) {
-                    let setup = setups.sctx_recursive1.get_setup(air_instance.airgroup_id, air_instance.air_id);
+                    let setup = sctx_recursive1.get_setup(air_instance.airgroup_id, air_instance.air_id);
                     setup.load_const_pols(&pctx.global_info, &ProofType::Recursive1);
                     setup.load_const_pols_tree(&pctx.global_info, &ProofType::Recursive1, false);
                     const_pols_calculated_recursive1.insert((air_instance.airgroup_id, air_instance.air_id), true);
@@ -363,14 +368,14 @@ impl<F: Field + 'static> ProofMan<F> {
             timer_start_debug!(INITIALIZE_CONST_POLS_RECURSIVE2);
             let n_airgroups = pctx.global_info.air_groups.len();
             for airgroup in 0..n_airgroups {
-                let setup = setups.sctx_recursive2.get_setup(airgroup, 0);
+                let setup = sctx_recursive2.get_setup(airgroup, 0);
                 setup.load_const_pols(&pctx.global_info, &ProofType::Recursive2);
                 setup.load_const_pols_tree(&pctx.global_info, &ProofType::Recursive2, false);
             }
             timer_stop_and_log_debug!(INITIALIZE_CONST_POLS_RECURSIVE2);
 
             timer_start_debug!(INITIALIZE_CONST_POLS_FINAL);
-            let setup = setups.sctx_final.get_setup(0, 0);
+            let setup = sctx_final.get_setup(0, 0);
             setup.load_const_pols(&pctx.global_info, &ProofType::Final);
             setup.load_const_pols_tree(&pctx.global_info, &ProofType::Final, false);
             timer_stop_and_log_debug!(INITIALIZE_CONST_POLS_FINAL);
