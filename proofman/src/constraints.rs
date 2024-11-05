@@ -11,8 +11,8 @@ use colored::*;
 
 pub fn verify_constraints_proof<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    ectx: Arc<ExecutionCtx>,
-    sctx: Arc<SetupCtx>,
+    ectx: Arc<ExecutionCtx<F>>,
+    sctx: Arc<SetupCtx<F>>,
     provers: Vec<Box<dyn Prover<F>>>,
     mut witness_lib: Box<dyn WitnessLibrary<F>>,
 ) {
@@ -24,7 +24,7 @@ pub fn verify_constraints_proof<F: Field>(
 
     let mut constraints = Vec::new();
     for prover in provers.iter() {
-        let constraints_prover_info = prover.verify_constraints(pctx.clone());
+        let constraints_prover_info = prover.verify_constraints(sctx.clone(), pctx.clone());
         constraints.push(constraints_prover_info);
     }
 
