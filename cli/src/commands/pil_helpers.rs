@@ -124,7 +124,7 @@ impl PilHelpersCmd {
                 let contains_key = constant_airs.iter().position(|(name, _, _, _)| name == &air_name);
 
                 let idx = contains_key.unwrap_or_else(|| {
-                    constant_airs.push((air_name.clone(), airgroup_id,  Vec::new(), "".to_owned()));
+                    constant_airs.push((air_name.clone(), airgroup_id, Vec::new(), "".to_owned()));
                     constant_airs.len() - 1
                 });
 
