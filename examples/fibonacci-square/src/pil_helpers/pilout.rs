@@ -10,10 +10,13 @@ pub const FIBONACCI_SQUARE_AIRGROUP_ID: usize = 0;
 
 //AIR CONSTANTS
 
+pub const FIBONACCI_SQUARE_AIRGROUP_ID: usize = 0;
 pub const FIBONACCI_SQUARE_AIR_IDS: &[usize] = &[0];
 
+pub const MODULE_AIRGROUP_ID: usize = 0;
 pub const MODULE_AIR_IDS: &[usize] = &[1];
 
+pub const U_8_AIR_AIRGROUP_ID: usize = 0;
 pub const U_8_AIR_AIR_IDS: &[usize] = &[2];
 
 pub struct Pilout;
