@@ -4,7 +4,7 @@ use pilout::{pilout::SymbolType, pilout_proxy::PilOutProxy};
 use proofman_common::initialize_logger;
 use serde::Serialize;
 use tinytemplate::TinyTemplate;
-use std::{fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 use colored::Colorize;
 use convert_case::{Case, Casing};
 
@@ -97,6 +97,7 @@ impl PilHelpersCmd {
         let mut constant_airgroups: Vec<(String, usize)> = Vec::new();
         let mut constant_airs: Vec<(String, Vec<usize>, String)> = Vec::new();
 
+        let mut ids_map: HashMap<String, usize> = HashMap::new();
         for (airgroup_id, airgroup) in pilout.air_groups.iter().enumerate() {
             wcctxs.push(AirGroupsCtx {
                 airgroup_id,
@@ -105,12 +106,17 @@ impl PilHelpersCmd {
                 airs: airgroup
                     .airs
                     .iter()
-                    .enumerate()
-                    .map(|(air_id, air)| AirCtx {
-                        id: air_id,
-                        name: air.name.as_ref().unwrap().clone(),
-                        num_rows: air.num_rows.unwrap(),
-                        columns: Vec::new(),
+                    .map(|air| {
+                        let name = air.name.as_ref().unwrap().clone();
+                        let id_rel = ids_map.entry(name).or_insert(0);
+                        *id_rel += 1;
+
+                        AirCtx {
+                            id: *id_rel - 1,
+                            name: air.name.as_ref().unwrap().clone(),
+                            num_rows: air.num_rows.unwrap(),
+                            columns: Vec::new(),
+                        }
                     })
                     .collect(),
             });
