@@ -122,10 +122,10 @@ pub fn generate_recursion_proof<F: Field>(
                         const_tree_ptr,
                         p_publics,
                         &proof_file,
+                        global_info_file,
+                        air_instance.airgroup_id as u64,
                     );
-                    let p_prove_updated =
-                        publics2zkin_c(p_prove, p_publics, global_info_file, air_instance.airgroup_id as u64, false);
-                    proofs_out.push(p_prove_updated);
+                    proofs_out.push(p_prove);
 
                     drop(buffer);
                     drop(publics);
@@ -244,15 +244,10 @@ pub fn generate_recursion_proof<F: Field>(
                                 let const_tree_ptr =
                                     (*setup.const_tree.const_pols.read().unwrap()).as_ptr() as *mut c_void;
 
-                                let zkin = gen_recursive_proof_c(p_setup, p_address, const_pols_ptr, const_tree_ptr, p_publics, &proof_file);
-                                let zkin_updated = publics2zkin_c(
-                                    zkin,
-                                    p_publics,
-                                    global_info_file,
-                                    airgroup as u64,
-                                    false,
-                                );
-                                airgroup_proofs[airgroup][j] = Some(zkin_updated);
+                                let zkin = gen_recursive_proof_c(p_setup, p_address, const_pols_ptr, const_tree_ptr, p_publics, &proof_file, global_info_file,
+                                    airgroup as u64);
+                                
+                                airgroup_proofs[airgroup][j] = Some(zkin);
                             
                                 drop(buffer);
                                 drop(publics);
@@ -330,6 +325,8 @@ pub fn generate_recursion_proof<F: Field>(
                 const_tree_ptr,
                 p_publics,
                 output_dir_path.join("proofs/final_proof.json").to_string_lossy().as_ref(),
+                global_info_file,
+                0,
             );
             log::info!("{}: ··· Proof generated.", MY_NAME);
             drop(buffer);

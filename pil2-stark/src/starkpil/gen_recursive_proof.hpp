@@ -1,7 +1,7 @@
 #include "starks.hpp"
 
 template <typename ElementType>
-void *genRecursiveProof(SetupCtx& setupCtx, Goldilocks::Element *pAddress, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile) {
+void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *pAddress, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile) {
     TimerStart(STARK_PROOF);
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo);
@@ -290,6 +290,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, Goldilocks::Element *pAddress, Goldi
     }
 
     TimerStopAndLog(STARK_PROOF);
+
+    zkin = publics2zkin(zkin, publicInputs, globalInfo, airgroupId);
 
     return (void *) new nlohmann::ordered_json(zkin);
 }

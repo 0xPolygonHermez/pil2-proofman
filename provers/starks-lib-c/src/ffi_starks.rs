@@ -684,6 +684,7 @@ pub fn print_row_c(p_setup_ctx: *mut c_void, buffer: *mut c_void, stage: u64, ro
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_c(
     p_setup_ctx: *mut c_void,
     p_address: *mut c_void,
@@ -691,11 +692,16 @@ pub fn gen_recursive_proof_c(
     p_const_tree: *mut c_void,
     p_public_inputs: *mut c_void,
     proof_file: &str,
+    global_info_file: &str,
+    airgroup_id: u64,
 ) -> *mut c_void {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
 
-    unsafe { gen_recursive_proof(p_setup_ctx, p_address, p_const_pols, p_const_tree, p_public_inputs, proof_file_ptr) }
+    let global_info_file_name = CString::new(global_info_file).unwrap();
+    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe { gen_recursive_proof(p_setup_ctx, global_info_file_ptr, airgroup_id, p_address, p_const_pols, p_const_tree, p_public_inputs, proof_file_ptr) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -704,20 +710,6 @@ pub fn get_zkin_ptr_c(zkin_file: &str) -> *mut c_void {
     let zkin_file_ptr = zkin_file_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe { get_zkin_ptr(zkin_file_ptr) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn publics2zkin_c(
-    p_zkin: *mut c_void,
-    p_publics: *mut c_void,
-    global_info_file: &str,
-    airgroup_id: u64,
-    is_aggregated: bool,
-) -> *mut c_void {
-    let global_info_file_name = CString::new(global_info_file).unwrap();
-    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe { public2zkin(p_zkin, p_publics, global_info_file_ptr, airgroup_id, is_aggregated) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1350,6 +1342,7 @@ pub fn print_row_c(_p_setup_ctx: *mut c_void, _buffer: *mut c_void, _stage: u64,
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_c(
     _p_setup_ctx: *mut c_void,
     _p_address: *mut c_void,
@@ -1357,6 +1350,8 @@ pub fn gen_recursive_proof_c(
     _p_const_tree: *mut c_void,
     _p_public_inputs: *mut c_void,
     _proof_file: &str,
+    _global_info_file: &str,
+    _airgroup_id: u64,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof_c: This is a mock call because there is no linked library");
     std::ptr::null_mut()
@@ -1365,18 +1360,6 @@ pub fn gen_recursive_proof_c(
 #[cfg(feature = "no_lib_link")]
 pub fn get_zkin_ptr_c(_zkin_file: &str) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "get_zkin_ptr_c: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn publics2zkin_c(
-    _p_zkin: *mut c_void,
-    _p_publics: *mut c_void,
-    _global_info_file: &str,
-    _airgroup_id: u64,
-    _is_aggregated: bool,
-) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "publics2zkin_c: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 

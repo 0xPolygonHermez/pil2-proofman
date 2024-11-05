@@ -273,7 +273,7 @@ ordered_json challenges2zkin(json& globalInfo, Goldilocks::Element* challenges) 
     return challengesJson;
 }
 
-ordered_json publics2zkin(ordered_json &zkin_, Goldilocks::Element* publics, json& globalInfo, uint64_t airgroupId, bool isAggregated) {
+ordered_json publics2zkin(ordered_json &zkin_, Goldilocks::Element* publics, json& globalInfo, uint64_t airgroupId) {
     ordered_json zkin = ordered_json::object();
     zkin = zkin_;
 
@@ -320,36 +320,35 @@ ordered_json publics2zkin(ordered_json &zkin_, Goldilocks::Element* publics, jso
         zkin["sv_finalPolHash"][j] = Goldilocks::toString(publics[p++]);
     }
 
-    if(!isAggregated) {
-        if(uint64_t(globalInfo["nPublics"]) > 0) {
-            zkin["publics"] = ordered_json::array();
-            for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
-                zkin["publics"][i] = Goldilocks::toString(publics[p++]);
-            }
-        }
-
-        zkin["challenges"] = ordered_json::array();
-        
-        uint64_t nChallenges = 0;
-        for(uint64_t i = 0; i < globalInfo["numChallenges"].size(); ++i) {
-            nChallenges += uint64_t(globalInfo["numChallenges"][i]);
-        }
-        nChallenges += 4;
-        for(uint64_t i = 0; i < nChallenges; ++i) {
-            zkin["challenges"][i] = ordered_json::array();
-            for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
-                zkin["challenges"][i][k] = Goldilocks::toString(publics[p++]);
-            }
-        }
-
-        zkin["challengesFRISteps"] = ordered_json::array();
-        for(uint64_t i = 0; i < globalInfo["stepsFRI"].size() + 1; ++i) {
-            zkin["challengesFRISteps"][i] = ordered_json::array();
-            for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
-                zkin["challengesFRISteps"][i][k] = Goldilocks::toString(publics[p++]);
-            }
+    if(uint64_t(globalInfo["nPublics"]) > 0) {
+        zkin["publics"] = ordered_json::array();
+        for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
+            zkin["publics"][i] = Goldilocks::toString(publics[p++]);
         }
     }
+
+    zkin["challenges"] = ordered_json::array();
+    
+    uint64_t nChallenges = 0;
+    for(uint64_t i = 0; i < globalInfo["numChallenges"].size(); ++i) {
+        nChallenges += uint64_t(globalInfo["numChallenges"][i]);
+    }
+    nChallenges += 4;
+    for(uint64_t i = 0; i < nChallenges; ++i) {
+        zkin["challenges"][i] = ordered_json::array();
+        for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
+            zkin["challenges"][i][k] = Goldilocks::toString(publics[p++]);
+        }
+    }
+
+    zkin["challengesFRISteps"] = ordered_json::array();
+    for(uint64_t i = 0; i < globalInfo["stepsFRI"].size() + 1; ++i) {
+        zkin["challengesFRISteps"][i] = ordered_json::array();
+        for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
+            zkin["challengesFRISteps"][i][k] = Goldilocks::toString(publics[p++]);
+        }
+    }
+    
 
     return zkin;
 }

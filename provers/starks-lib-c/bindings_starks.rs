@@ -514,9 +514,11 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvS_S_S_S_Pc"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmS_S_S_S_S0_"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
+        globalInfoFile: *mut ::std::os::raw::c_char,
+        airgroupId: u64,
         pAddress: *mut ::std::os::raw::c_void,
         pConstPols: *mut ::std::os::raw::c_void,
         pConstTree: *mut ::std::os::raw::c_void,
@@ -527,16 +529,6 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z12get_zkin_ptrPc"]
     pub fn get_zkin_ptr(zkin_file: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z11public2zkinPvS_Pcmb"]
-    pub fn public2zkin(
-        pZkin: *mut ::std::os::raw::c_void,
-        pPublics: *mut ::std::os::raw::c_void,
-        globalInfoFile: *mut ::std::os::raw::c_char,
-        airgroupId: u64,
-        isAggregated: bool,
-    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z21add_recursive2_verkeyPvPc"]

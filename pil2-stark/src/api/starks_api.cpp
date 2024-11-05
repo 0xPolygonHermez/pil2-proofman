@@ -522,22 +522,17 @@ void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row) {
 
 // Recursive proof
 // ================================================================================= 
-void *gen_recursive_proof(void *pSetupCtx, void* pAddress, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
-    return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file));
+void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* pAddress, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
+    json globalInfo;
+    file2json(globalInfoFile, globalInfo);
+
+    return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file));
 }
 
 void *get_zkin_ptr(char *zkin_file) {
     json zkin;
     file2json(zkin_file, zkin);
 
-    return (void *) new nlohmann::ordered_json(zkin);
-}
-
-void *public2zkin(void *pZkin, void* pPublics, char* globalInfoFile, uint64_t airgroupId, bool isAggregated) {
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
-    ordered_json zkin = publics2zkin(*(nlohmann::ordered_json*) pZkin, (Goldilocks::Element *)pPublics, globalInfo, airgroupId, isAggregated);
     return (void *) new nlohmann::ordered_json(zkin);
 }
 
