@@ -351,12 +351,14 @@ impl<F: Field + 'static> ProofMan<F> {
             timer_start_debug!(INITIALIZE_CONST_POLS_RECURSIVE1);
             let mut const_pols_calculated_recursive1: HashMap<(usize, usize), bool> = HashMap::new();
             for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
-                const_pols_calculated_recursive1.entry((air_instance.airgroup_id, air_instance.air_id)).or_insert_with(|| {
-                    let setup = sctx_recursive1.get_setup(air_instance.airgroup_id, air_instance.air_id);
-                    setup.load_const_pols(&pctx.global_info, &ProofType::Recursive1);
-                    setup.load_const_pols_tree(&pctx.global_info, &ProofType::Recursive1, false);
-                    true
-                });
+                const_pols_calculated_recursive1.entry((air_instance.airgroup_id, air_instance.air_id)).or_insert_with(
+                    || {
+                        let setup = sctx_recursive1.get_setup(air_instance.airgroup_id, air_instance.air_id);
+                        setup.load_const_pols(&pctx.global_info, &ProofType::Recursive1);
+                        setup.load_const_pols_tree(&pctx.global_info, &ProofType::Recursive1, false);
+                        true
+                    },
+                );
             }
             timer_stop_and_log_debug!(INITIALIZE_CONST_POLS_RECURSIVE1);
 

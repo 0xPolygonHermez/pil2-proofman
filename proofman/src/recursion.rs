@@ -59,7 +59,7 @@ pub fn generate_recursion_proof<F: Field>(
                     let p_setup: *mut c_void = (&setup.p_setup).into();
                     let p_stark_info: *mut c_void = setup.p_setup.p_stark_info;
 
-                    let zkin =if *proof_type == ProofType::Recursive1 {
+                    let zkin = if *proof_type == ProofType::Recursive1 {
                         let recursive2_verkey = pctx
                             .global_info
                             .get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, &ProofType::Recursive2)
