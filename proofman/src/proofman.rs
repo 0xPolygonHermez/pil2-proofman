@@ -130,8 +130,7 @@ impl<F: Field + 'static> ProofMan<F> {
         }
 
         if options.verify_constraints {
-            verify_constraints_proof(pctx.clone(), ectx.clone(), sctx.clone(), provers, witness_lib);
-            return Ok(());
+            return verify_constraints_proof(pctx.clone(), ectx.clone(), sctx.clone(), provers, witness_lib);
         }
 
         // Compute Quotient polynomial

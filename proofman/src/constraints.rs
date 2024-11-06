@@ -15,7 +15,7 @@ pub fn verify_constraints_proof<F: Field>(
     sctx: Arc<SetupCtx<F>>,
     provers: Vec<Box<dyn Prover<F>>>,
     mut witness_lib: Box<dyn WitnessLibrary<F>>,
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     const MY_NAME: &str = "CstrVrfy";
 
     log::info!("{}: --> Checking constraints", MY_NAME);
@@ -129,7 +129,13 @@ pub fn verify_constraints_proof<F: Field>(
 
     if valid_constraints && global_constraints_verified {
         log::info!("{}: ··· {}", MY_NAME, "\u{2713} All constraints were verified".bright_green().bold());
+        Ok(())
     } else {
         log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all constraints were verified.".bright_red().bold());
+        Err(Box::new(std::io::Error::new(
+            // <-- Return a boxed error
+            std::io::ErrorKind::Other,
+            format!("{}: Not all constraints were verified.", MY_NAME),
+        )))
     }
 }
