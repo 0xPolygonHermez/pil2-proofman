@@ -157,9 +157,7 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn set_public_value(&self, value: u64, public_id: u64) {
-        println!(" PUB ID {}", public_id);
         self.public_inputs.inputs.write().unwrap()[(public_id as usize)*8..(public_id as usize + 1)*8].copy_from_slice(&value.to_le_bytes());
-        println!(" PUB ID {:?}", self.public_inputs.inputs.read().unwrap());
 
         self.public_inputs.inputs_set.write().unwrap()[public_id as usize] = true;
     }

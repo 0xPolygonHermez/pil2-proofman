@@ -173,7 +173,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             custom_commits: air_instance.get_custom_commits_ptr(),
         };
             
-let raw_ptr = verify_constraints_c((&setup.p_setup).into(), (&steps_params).into());
+        let raw_ptr = verify_constraints_c((&setup.p_setup).into(), (&steps_params).into());
 
         unsafe {
         let constraints_result = Box::from_raw(raw_ptr as *mut ConstraintsResults);

@@ -295,7 +295,6 @@ void Starks<ElementType>::addTranscript(TranscriptType &transcript, ElementType 
 template <typename ElementType>
 void Starks<ElementType>::ffi_treesGL_get_root(uint64_t index, ElementType *dst)
 {
-    cout << "INDX" << index << endl;
     treesGL[index]->getRoot(dst);
 }
 

@@ -105,7 +105,6 @@ ConstraintsResults *verifyConstraints(SetupCtx& setupCtx, StepsParams &params) {
 
     std::vector<Dest> dests;
     for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
-        if(i != 0) continue;
         Dest constraintDest(&pBuffer[i*FIELD_EXTENSION*N]);
         constraintDest.addParams(setupCtx.expressionsBin.constraintsInfoDebug[i]);
         dests.push_back(constraintDest);
@@ -123,7 +122,6 @@ ConstraintsResults *verifyConstraints(SetupCtx& setupCtx, StepsParams &params) {
 
 #pragma omp parallel for
     for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
-        if(i != 0) continue;
         auto constraintInfo = verifyConstraint(setupCtx, dests[i].dest, i);
         constraintsInfo->constraintInfo[i] = constraintInfo;
     }

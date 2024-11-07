@@ -16,32 +16,32 @@ public:
     void setBufferTInfo(bool domainExtended, int64_t expId) {
         uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
-    offsetsStages.resize(ns*nOpenings + 1);
-    nColsStages.resize(ns*nOpenings + 1);
-    nColsStagesAcc.resize(ns*nOpenings + 1);
+        offsetsStages.resize(ns*nOpenings + 1);
+        nColsStages.resize(ns*nOpenings + 1);
+        nColsStagesAcc.resize(ns*nOpenings + 1);
 
-    nCols = setupCtx.starkInfo.nConstants;
+        nCols = setupCtx.starkInfo.nConstants;
 
-    for(uint64_t o = 0; o < nOpenings; ++o) {
-        for(uint64_t stage = 0; stage <= ns; ++stage) {
-            if(stage == 0) {
-                offsetsStages[ns*o] = 0;
-                nColsStages[ns*o] = setupCtx.starkInfo.mapSectionsN["const"];
-                nColsStagesAcc[ns*o] = o == 0 ? 0 : nColsStagesAcc[ns*o + stage - 1] + nColsStages[stage - 1];
-            } else if(stage <= ns) {
-                std::string section = "cm" + to_string(stage);
-                offsetsStages[ns*o + stage] = setupCtx.starkInfo.mapOffsets[std::make_pair(section, domainExtended)];
-                nColsStages[ns*o + stage] = setupCtx.starkInfo.mapSectionsN[section];
-                nColsStagesAcc[ns*o + stage] = nColsStagesAcc[ns*o + stage - 1] + nColsStages[stage - 1];
-            } else {
-                uint64_t index = stage - ns - 1;
-               std::string section = setupCtx.starkInfo.customCommits[index].name + "0";
-                offsetsStages[ns*o + stage] = setupCtx.starkInfo.mapOffsets[std::make_pair(section, domainExtended)];
-                nColsStages[ns*o + stage] = setupCtx.starkInfo.mapSectionsN[section];
-                nColsStagesAcc[ns*o + stage] = nColsStagesAcc[ns*o + stage - 1] + nColsStages[stage - 1];
+        for(uint64_t o = 0; o < nOpenings; ++o) {
+            for(uint64_t stage = 0; stage < ns; ++stage) {
+                if(stage == 0) {
+                    offsetsStages[ns*o] = 0;
+                    nColsStages[ns*o] = setupCtx.starkInfo.mapSectionsN["const"];
+                    nColsStagesAcc[ns*o] = o == 0 ? 0 : nColsStagesAcc[ns*o + stage - 1] + nColsStages[stage - 1];
+                } else if(stage < 2 + setupCtx.starkInfo.nStages) {
+                    std::string section = "cm" + to_string(stage);
+                    offsetsStages[ns*o + stage] = setupCtx.starkInfo.mapOffsets[std::make_pair(section, domainExtended)];
+                    nColsStages[ns*o + stage] = setupCtx.starkInfo.mapSectionsN[section];
+                    nColsStagesAcc[ns*o + stage] = nColsStagesAcc[ns*o + stage - 1] + nColsStages[stage - 1];
+                } else {
+                    uint64_t index = stage - setupCtx.starkInfo.nStages - 2;
+                    std::string section = setupCtx.starkInfo.customCommits[index].name + "0";
+                    offsetsStages[ns*o + stage] = setupCtx.starkInfo.mapOffsets[std::make_pair(section, domainExtended)];
+                    nColsStages[ns*o + stage] = setupCtx.starkInfo.mapSectionsN[section];
+                    nColsStagesAcc[ns*o + stage] = nColsStagesAcc[ns*o + stage - 1] + nColsStages[stage - 1];
+                }
             }
         }
-    }
 
         nColsStagesAcc[ns*nOpenings] = nColsStagesAcc[ns*nOpenings - 1] + nColsStages[ns*nOpenings - 1];
         if(expId == int64_t(setupCtx.starkInfo.cExpId)) {
@@ -135,7 +135,7 @@ public:
             for(uint64_t j = 0; j < setupCtx.starkInfo.customCommits[i].stageWidths[0]; ++j) {
                 if(!customCommitsUsed[i][j]) continue;
                 PolMap polInfo = setupCtx.starkInfo.customCommitsMap[i][j];
-                uint64_t stage = setupCtx.starkInfo.nStages + 3 + i;
+                uint64_t stage = setupCtx.starkInfo.nStages + 2 + i;
                 uint64_t stagePos = polInfo.stagePos;
                 for(uint64_t d = 0; d < polInfo.dim; ++d) {
                     for(uint64_t o = 0; o < nOpenings; ++o) {
