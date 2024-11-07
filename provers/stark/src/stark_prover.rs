@@ -117,6 +117,16 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             air_instance.set_commit_calculated(i);
         }
 
+        for commit_id in 0..self.stark_info.custom_commits.len() 
+        {
+            for idx in 0..self.stark_info.custom_commits_map[commit_id].as_ref().unwrap().len() 
+            {
+                if self.stark_info.custom_commits_map[commit_id].as_ref().unwrap()[idx].stage <= 1 {
+                    air_instance.set_custom_commit_calculated(commit_id, idx);
+                }
+            }
+        }
+
         self.initialized = true;
     }
 
@@ -297,18 +307,8 @@ let raw_ptr = verify_constraints_c((&setup.p_setup).into(), (&steps_params).into
                 }
             }
         }
-
-        if stage_id == 0 {
-            let n_publics: usize = self.stark_info.publics_map.as_ref().expect("REASON").len();
-            let publics_set = proof_ctx.public_inputs.inputs_set.read().unwrap();
-            for i in 0..n_publics {
-                let public = self.stark_info.publics_map.as_ref().expect("REASON").get(i).unwrap();
-                if !publics_set[i] {
-                    panic!("Stage {} cannot be committed: Public {} is not calculated", stage_id, public.name);
-                }
-            }
-        }
     }
+
     fn commit_stage(&mut self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>) -> ProverStatus {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
         
@@ -348,12 +348,11 @@ let raw_ptr = verify_constraints_c((&setup.p_setup).into(), (&steps_params).into
                 
                 if custom_commits_stage {
                     let buffer = air_instance.custom_commits[commit_id].as_ptr() as *mut c_void;
-                extend_and_merkelize_custom_commit_c(p_stark, commit_id as u64, stage_id as u64, buffer, p_proof, buff_helper);
+                    extend_and_merkelize_custom_commit_c(p_stark, commit_id as u64, stage_id as u64, buffer, p_proof, buff_helper);
                 }
 
-                let value = vec![Goldilocks::zero(); self.n_field_elements];
-                fri_proof_get_tree_root_c(p_proof, value.as_ptr() as *mut c_void, (self.stark_info.n_stages + 2 + commit_id as u32) as u64);
-                
+                let mut value = vec![Goldilocks::zero(); self.n_field_elements];
+                treesGL_get_root_c(p_stark, (self.stark_info.n_stages + 2 + commit_id as u32) as u64, value.as_mut_ptr() as *mut c_void);
                 if !self.stark_info.custom_commits[commit_id].public_values.is_empty() {
                     assert!(self.n_field_elements == self.stark_info.custom_commits[commit_id].public_values.len(), "Invalid public values size");
                     for (idx, val) in value.iter().enumerate() {
@@ -907,5 +906,18 @@ impl<F> BufferAllocator<F> for StarkBufferAllocator {
 
         let p_stark_info = ps.p_setup.p_stark_info;
         Ok((get_map_totaln_c(p_stark_info), vec![get_map_offsets_c(p_stark_info, "cm1", false)]))
+    }
+
+    fn get_buffer_info_custom_commit(
+        &self,
+        sctx: &SetupCtx<F>,
+        airgroup_id: usize,
+        air_id: usize,
+        commit_id: usize,
+    ) -> Result<(u64, Vec<u64>), Box<dyn Error>> {
+        let ps = sctx.get_setup(airgroup_id, air_id);
+
+        let p_stark_info = ps.p_setup.p_stark_info;
+        Ok((get_map_totaln_custom_commits_c(p_stark_info, commit_id as u64), vec![0]))
     }
 }

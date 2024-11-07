@@ -90,9 +90,11 @@ impl<F: Field + 'static> ProofMan<F> {
             return Err("No instances found".into());
         }
 
-        let mut transcript: FFITranscript = provers[0].new_transcript();
+    let mut transcript: FFITranscript = provers[0].new_transcript();
 
-        Self::check_stage(0, &mut provers, pctx.clone());
+        for prover in provers.iter_mut() {
+            prover.commit_stage(0, pctx.clone());
+        }
 
         // Commit stages
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
@@ -110,6 +112,14 @@ impl<F: Field + 'static> ProofMan<F> {
 
             if !options.verify_constraints {
                 Self::commit_stage(stage, &mut provers, pctx.clone());
+            }
+
+            let publics_set = pctx.public_inputs.inputs_set.read().unwrap();
+            for i in 0..pctx.global_info.n_publics {
+                let public = pctx.global_info.publics_map.as_ref().expect("REASON").get(i).unwrap();
+                if !publics_set[i] {
+                    panic!("Not all publics are set: Public {} is not calculated", public.name);
+                }
             }
 
             if !options.verify_constraints || stage < num_commit_stages {

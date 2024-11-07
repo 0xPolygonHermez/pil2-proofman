@@ -38,16 +38,21 @@ public:
         treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
         for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
         {
+            cout << i << endl;
             std::string section = "cm" + to_string(i + 1);
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
             treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, 1 << setupCtx.starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
         }
+        cout << setupCtx.starkInfo.nStages + 1 << endl;
+
         
 
-        // for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
-        //     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[i].name + "0"];
-        //     treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, 1 << setupCtx.starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
-        // }
+        for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
+            uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[i].name + "0"];
+             cout << setupCtx.starkInfo.nStages + 2 + i << endl;
+             cout << "NCOLS" << nCols << endl;
+            treesGL[setupCtx.starkInfo.nStages + 2 + i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, 1 << setupCtx.starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
+        }
 
         treesFRI = new MerkleTreeType*[setupCtx.starkInfo.starkStruct.steps.size() - 1];
         for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {

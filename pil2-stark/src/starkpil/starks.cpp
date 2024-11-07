@@ -9,9 +9,8 @@ void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
-    std::string section = setupCtx.starkInfo.customCommits[commitId].name + "step";  
+    std::string section = setupCtx.starkInfo.customCommits[commitId].name + to_string(step);
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-    
     Goldilocks::Element *pBuff = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
     Goldilocks::Element *pBuffExtended = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
 
@@ -23,9 +22,9 @@ void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint
     }
     
     uint64_t pos = setupCtx.starkInfo.nStages + 2 + commitId;
-    treesGL[pos - 1]->setSource(pBuffExtended);
-    treesGL[pos - 1]->merkelize();
-    treesGL[pos - 1]->getRoot(&proof.proof.roots[pos - 1][0]);
+    treesGL[pos]->setSource(pBuffExtended);
+    treesGL[pos]->merkelize();
+    treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
 }
 
 template <typename ElementType>
@@ -296,6 +295,7 @@ void Starks<ElementType>::addTranscript(TranscriptType &transcript, ElementType 
 template <typename ElementType>
 void Starks<ElementType>::ffi_treesGL_get_root(uint64_t index, ElementType *dst)
 {
+    cout << "INDX" << index << endl;
     treesGL[index]->getRoot(dst);
 }
 
