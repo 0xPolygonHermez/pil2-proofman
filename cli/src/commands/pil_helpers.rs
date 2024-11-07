@@ -148,10 +148,15 @@ impl PilHelpersCmd {
         for (airgroup_id, airgroup) in pilout.air_groups.iter().enumerate() {
             for (air_id, _) in airgroup.airs.iter().enumerate() {
                 let air = wcctxs[airgroup_id].airs.get_mut(air_id).unwrap();
-                air.custom_columns = pilout
-                .air_groups[airgroup_id].airs[air_id].custom_commits
-                .iter().map(|commit| CustomCommitsCtx { name: commit.name.clone().unwrap().to_case(Case::Pascal), custom_columns: Vec::new() }).collect();
-                
+                air.custom_columns = pilout.air_groups[airgroup_id].airs[air_id]
+                    .custom_commits
+                    .iter()
+                    .map(|commit| CustomCommitsCtx {
+                        name: commit.name.clone().unwrap().to_case(Case::Pascal),
+                        custom_columns: Vec::new(),
+                    })
+                    .collect();
+
                 // Search symbols where airgroup_id == airgroup_id && air_id == air_id && type == WitnessCol
                 pilout
                     .symbols
@@ -162,7 +167,8 @@ impl PilHelpersCmd {
                             && symbol.air_id.is_some()
                             && symbol.air_id.unwrap() == air_id as u32
                             && symbol.stage.is_some()
-                            && ((symbol.r#type == SymbolType::WitnessCol as i32 && symbol.stage.unwrap() == 1) || (symbol.r#type == SymbolType::CustomCol as i32 && symbol.stage.unwrap() == 0))
+                            && ((symbol.r#type == SymbolType::WitnessCol as i32 && symbol.stage.unwrap() == 1)
+                                || (symbol.r#type == SymbolType::CustomCol as i32 && symbol.stage.unwrap() == 0))
                     })
                     .for_each(|symbol| {
                         let air = wcctxs[airgroup_id].airs.get_mut(air_id).unwrap();
@@ -177,15 +183,14 @@ impl PilHelpersCmd {
                                 .rev()
                                 .fold("F".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
                         };
-                        if symbol.r#type == SymbolType::WitnessCol as i32  {
+                        if symbol.r#type == SymbolType::WitnessCol as i32 {
                             air.columns.push(ColumnCtx { name: name.to_owned(), r#type });
                         } else {
-                            air.custom_columns[symbol.commit_id.unwrap() as usize].custom_columns.push(ColumnCtx { name: name.to_owned(), r#type });
+                            air.custom_columns[symbol.commit_id.unwrap() as usize]
+                                .custom_columns
+                                .push(ColumnCtx { name: name.to_owned(), r#type });
                         }
-                        
                     });
-                    
-                
             }
         }
 

@@ -136,7 +136,6 @@ pub fn get_map_totaln_custom_commits_c(p_stark_info: *mut c_void, commit_id: u64
     unsafe { get_map_total_n_custom_commits(p_stark_info, commit_id) }
 }
 
-
 #[cfg(not(feature = "no_lib_link"))]
 pub fn get_n_airvals_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_n_airvals(p_stark_info) }
@@ -160,7 +159,7 @@ pub fn get_n_custom_commits_c(p_stark_info: *mut c_void) -> u64 {
 #[cfg(not(feature = "no_lib_link"))]
 pub fn get_custom_commit_id_c(p_stark_info: *mut c_void, name: &str) -> u64 {
     let name = CString::new(name).unwrap();
-   
+
     unsafe { get_custom_commit_id(p_stark_info, name.as_ptr() as *mut std::os::raw::c_char) }
 }
 
@@ -964,7 +963,11 @@ pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_map_totaln_custom_commits_c(_p_stark_info: *mut c_void, _commit_id: u64) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_map_totaln_custom_commits: This is a mock call because there is no linked library");
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_map_totaln_custom_commits: This is a mock call because there is no linked library"
+    );
     100000000
 }
 
@@ -1493,11 +1496,7 @@ pub fn get_serialized_proof_c(_zkin: *mut c_void, _size: *mut u64) -> *mut std::
 
 #[cfg(feature = "no_lib_link")]
 pub fn deserialize_zkin_proof_c(_zkin_cstr: *mut std::os::raw::c_char) -> *mut c_void {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "deserialize_zkin_proof: This is a mock call because there is no linked library"
-    );
+    trace!("{}: ··· {}", "ffi     ", "deserialize_zkin_proof: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 

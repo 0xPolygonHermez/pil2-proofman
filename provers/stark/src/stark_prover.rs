@@ -117,11 +117,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             air_instance.set_commit_calculated(i);
         }
 
-        for commit_id in 0..self.stark_info.custom_commits.len() 
-        {
+        for commit_id in 0..self.stark_info.custom_commits.len() {
             if !air_instance.custom_commits[commit_id].is_empty() {
-                for idx in 0..self.stark_info.custom_commits_map[commit_id].as_ref().unwrap().len() 
-                {
+                for idx in 0..self.stark_info.custom_commits_map[commit_id].as_ref().unwrap().len() {
                     if self.stark_info.custom_commits_map[commit_id].as_ref().unwrap()[idx].stage <= 1 {
                         air_instance.set_custom_commit_calculated(commit_id, idx);
                     }
@@ -172,12 +170,12 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             p_const_tree: const_tree_ptr,
             custom_commits: air_instance.get_custom_commits_ptr(),
         };
-            
+
         let raw_ptr = verify_constraints_c((&setup.p_setup).into(), (&steps_params).into());
 
         unsafe {
-        let constraints_result = Box::from_raw(raw_ptr as *mut ConstraintsResults);
-        std::slice::from_raw_parts(constraints_result.constraints_info, constraints_result.n_constraints as usize)
+            let constraints_result = Box::from_raw(raw_ptr as *mut ConstraintsResults);
+            std::slice::from_raw_parts(constraints_result.constraints_info, constraints_result.n_constraints as usize)
         }
         .to_vec()
     }
@@ -313,7 +311,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
     fn commit_stage(&mut self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>) -> ProverStatus {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-        
+
         let p_stark = self.p_stark;
         let p_proof = self.p_proof;
 
@@ -340,26 +338,41 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         } else {
             let n_custom_commits = self.stark_info.custom_commits.len();
             for commit_id in 0..n_custom_commits {
-                let custom_commits_stage = self
-                .stark_info
-                .custom_commits_map[commit_id]
-                .as_ref()
-                .expect("REASON")
-                .iter()
-                .any(|custom_commit| custom_commit.stage == stage_id as u64);
-                
+                let custom_commits_stage = self.stark_info.custom_commits_map[commit_id]
+                    .as_ref()
+                    .expect("REASON")
+                    .iter()
+                    .any(|custom_commit| custom_commit.stage == stage_id as u64);
+
                 if custom_commits_stage {
                     let buffer = air_instance.custom_commits[commit_id].as_ptr() as *mut c_void;
-                    extend_and_merkelize_custom_commit_c(p_stark, commit_id as u64, stage_id as u64, buffer, p_proof, buff_helper);
+                    extend_and_merkelize_custom_commit_c(
+                        p_stark,
+                        commit_id as u64,
+                        stage_id as u64,
+                        buffer,
+                        p_proof,
+                        buff_helper,
+                    );
                 }
 
                 let mut value = vec![Goldilocks::zero(); self.n_field_elements];
-                treesGL_get_root_c(p_stark, (self.stark_info.n_stages + 2 + commit_id as u32) as u64, value.as_mut_ptr() as *mut c_void);
+                treesGL_get_root_c(
+                    p_stark,
+                    (self.stark_info.n_stages + 2 + commit_id as u32) as u64,
+                    value.as_mut_ptr() as *mut c_void,
+                );
                 if !self.stark_info.custom_commits[commit_id].public_values.is_empty() {
-                    assert!(self.n_field_elements == self.stark_info.custom_commits[commit_id].public_values.len(), "Invalid public values size");
+                    assert!(
+                        self.n_field_elements == self.stark_info.custom_commits[commit_id].public_values.len(),
+                        "Invalid public values size"
+                    );
                     for (idx, val) in value.iter().enumerate() {
-                        proof_ctx.set_public_value(val.as_canonical_u64(), self.stark_info.custom_commits[commit_id].public_values[idx].idx);
-                    }       
+                        proof_ctx.set_public_value(
+                            val.as_canonical_u64(),
+                            self.stark_info.custom_commits[commit_id].public_values[idx].idx,
+                        );
+                    }
                 }
             }
         }

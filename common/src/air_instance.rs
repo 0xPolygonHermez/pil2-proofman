@@ -93,6 +93,7 @@ impl<F: Field> AirInstance<F> {
 
     pub fn get_custom_commits_ptr(&self) -> *mut *mut c_void {
         let mut custom_commits = Vec::new();
+        println!("{:?}", self.custom_commits);
         for c in &self.custom_commits {
             let ptr = c.as_ptr() as *mut c_void;
             custom_commits.push(ptr);

@@ -20,7 +20,10 @@ impl Default for PublicInputs {
 
 impl PublicInputs {
     pub fn new(n_publics: usize) -> Self {
-        Self { inputs: RwLock::new(Vec::with_capacity(n_publics * std::mem::size_of::<u64>())), inputs_set: RwLock::new(vec![false; n_publics]) }
+        Self {
+            inputs: RwLock::new(Vec::with_capacity(n_publics * std::mem::size_of::<u64>())),
+            inputs_set: RwLock::new(vec![false; n_publics]),
+        }
     }
 }
 
@@ -157,7 +160,8 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn set_public_value(&self, value: u64, public_id: u64) {
-        self.public_inputs.inputs.write().unwrap()[(public_id as usize)*8..(public_id as usize + 1)*8].copy_from_slice(&value.to_le_bytes());
+        self.public_inputs.inputs.write().unwrap()[(public_id as usize)*8..(public_id as usize + 1)*8]
+            .copy_from_slice(&value.to_le_bytes());
 
         self.public_inputs.inputs_set.write().unwrap()[public_id as usize] = true;
     }

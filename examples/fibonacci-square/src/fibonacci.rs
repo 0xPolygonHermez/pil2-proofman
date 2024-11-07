@@ -5,7 +5,10 @@ use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::PrimeField;
 
-use crate::{FibonacciSquareTrace, FibonacciSquareRomTrace, FibonacciSquarePublics, Module, FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS};
+use crate::{
+    FibonacciSquareTrace, FibonacciSquareRomTrace, FibonacciSquarePublics, Module, FIBONACCI_SQUARE_AIRGROUP_ID,
+    FIBONACCI_SQUARE_AIR_IDS,
+};
 
 pub struct FibonacciSquare<F: PrimeField> {
     module: Arc<Module<F>>,
@@ -76,10 +79,11 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
 
         let mut buffer_rom = vec![F::zero(); buffer_size_rom as usize];
 
-        let mut trace_custom_commits = FibonacciSquareRomTrace::map_buffer(&mut buffer_rom, num_rows, offsets_rom[0] as usize)?;
+        let mut trace_custom_commits =
+            FibonacciSquareRomTrace::map_buffer(&mut buffer_rom, num_rows, offsets_rom[0] as usize)?;
         for i in 0..num_rows {
-            trace_custom_commits[i].line = F::from_canonical_u64(1);
-            trace_custom_commits[i].flags = F::from_canonical_u64(1);
+            trace_custom_commits[i].line = F::from_canonical_u64(2);
+            trace_custom_commits[i].flags = F::from_canonical_u64(3);
         }
 
         pctx.public_inputs.inputs.write().unwrap()[24..32].copy_from_slice(&b.to_le_bytes());

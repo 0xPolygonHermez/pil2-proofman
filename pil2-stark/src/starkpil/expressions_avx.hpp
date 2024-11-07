@@ -141,6 +141,7 @@ public:
                     for(uint64_t o = 0; o < nOpenings; ++o) {
                         for(uint64_t j = 0; j < nrowsPack; ++j) {
                             uint64_t l = (row + j + nextStrides[o]) % domainSize;
+                            if(row == 0) cout << "HOLA XAVI AQUEST ES EL VALOR PEL CUSTOM COMMIT " << i << " I POLINOMIAL " << polInfo.name << ": " << Goldilocks::toString(params.customCommits[i][offsetsStages[stage] + l * nColsStages[stage] + stagePos + d]) << endl;
                             bufferT[nrowsPack*o + j] = params.customCommits[i][offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                         }
                         Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*o + stage] + (stagePos + d)], &bufferT[nrowsPack*o]);
@@ -333,7 +334,7 @@ public:
             evals[i][2] = _mm256_set1_epi64x(params.evals[i * FIELD_EXTENSION + 2].fe);
         }
 
-    #pragma omp parallel for
+    // #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
             __m256i bufferT_[nOpenings*nCols];
 

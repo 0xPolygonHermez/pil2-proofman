@@ -162,7 +162,7 @@ void StarkInfo::load(json j)
                 } 
             }
             map.polsMapId = j["customCommitsMap"][i][k]["polsMapId"];
-            custPolsMap.push_back(map);
+            custPolsMap[k] = map;
         }
         customCommitsMap.push_back(custPolsMap);
     }

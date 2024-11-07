@@ -6,7 +6,7 @@ use std::sync::RwLock;
 use proofman_starks_lib_c::{
     get_const_tree_size_c, get_const_size_c, prover_helpers_new_c, expressions_bin_new_c, stark_info_new_c,
     load_const_tree_c, load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c,
-    prover_helpers_free_c
+    prover_helpers_free_c,
 };
 
 use crate::GlobalInfo;
