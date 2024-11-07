@@ -90,8 +90,9 @@ impl<F: Field + 'static> ProofMan<F> {
             return Err("No instances found".into());
         }
 
-    let mut transcript: FFITranscript = provers[0].new_transcript();
+        let mut transcript: FFITranscript = provers[0].new_transcript();
 
+        Self::check_stage(0, &mut provers, pctx.clone());
         for prover in provers.iter_mut() {
             prover.commit_stage(0, pctx.clone());
         }

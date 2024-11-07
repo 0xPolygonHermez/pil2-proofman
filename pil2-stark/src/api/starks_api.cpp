@@ -160,6 +160,22 @@ uint64_t get_map_total_n(void *pStarkInfo)
     return ((StarkInfo *)pStarkInfo)->mapTotalN;
 }
 
+uint64_t get_custom_commit_id(void *pStarkInfo, char* name) {
+    auto starkInfo = *(StarkInfo *)pStarkInfo;
+
+    auto commitId = std::find_if(starkInfo.customCommits.begin(), starkInfo.customCommits.end(), [name](const CustomCommits& customCommit) {
+        return customCommit.name == string(name);
+    });
+
+    if(commitId == starkInfo.customCommits.end()) {
+        zklog.error("Custom commit " + string(name) + " not found in custom commits.");
+        exitProcess();
+        exit(-1);
+    }
+
+    return std::distance(starkInfo.customCommits.begin(), commitId);
+};
+
 uint64_t get_map_total_n_custom_commits(void *pStarkInfo, uint64_t commit_id) {
     auto starkInfo = *(StarkInfo *)pStarkInfo;
     return starkInfo.mapTotalNcustomCommits[starkInfo.customCommits[commit_id].name];

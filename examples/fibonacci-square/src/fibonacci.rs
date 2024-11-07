@@ -67,11 +67,11 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
             trace[i].b = F::from_canonical_u64(b);
         }
 
-        let (buffer_size_rom, offsets_rom) = ectx.buffer_allocator.as_ref().get_buffer_info_custom_commit(
+        let (buffer_size_rom, offsets_rom, commit_id) = ectx.buffer_allocator.as_ref().get_buffer_info_custom_commit(
             &sctx,
             FIBONACCI_SQUARE_AIRGROUP_ID,
             FIBONACCI_SQUARE_AIR_IDS[0],
-            0,
+            "rom",
         )?;
 
         let mut buffer_rom = vec![F::zero(); buffer_size_rom as usize];
@@ -100,6 +100,7 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
         air_instance.set_airvalue(&sctx, "FibonacciSquare.fibo1", F::from_canonical_u64(1));
         air_instance.set_airvalue(&sctx, "FibonacciSquare.fibo2", F::from_canonical_u64(2));
         air_instance.set_airvalue_ext(&sctx, "FibonacciSquare.fibo3", vec![F::from_canonical_u64(5); 3]);
+        air_instance.set_custom_commit_id_buffer(buffer_rom, commit_id);
 
         let (is_myne, gid) =
             ectx.dctx.write().unwrap().add_instance(FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS[0], 1);

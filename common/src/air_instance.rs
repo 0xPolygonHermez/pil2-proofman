@@ -3,7 +3,7 @@ use std::{collections::HashMap, os::raw::c_void, sync::Arc};
 use p3_field::Field;
 use proofman_starks_lib_c::{
     get_airval_id_by_name_c, get_n_airgroupvals_c, get_n_airvals_c, get_n_evals_c, get_airgroupval_id_by_name_c,
-    get_n_custom_commits_c, get_map_totaln_custom_commits_c,
+    get_n_custom_commits_c,
 };
 
 use crate::SetupCtx;
@@ -64,9 +64,8 @@ impl<F: Field> AirInstance<F> {
         let mut custom_commits = Vec::new();
 
         let n_custom_commits = get_n_custom_commits_c(ps.p_setup.p_stark_info);
-        for commit_id in 0..n_custom_commits {
-            let map_total_n = get_map_totaln_custom_commits_c(ps.p_setup.p_stark_info, commit_id);
-            custom_commits.push(vec![F::zero(); map_total_n as usize])
+        for _ in 0..n_custom_commits {
+            custom_commits.push(Vec::new());
         }
 
         AirInstance {
@@ -100,6 +99,10 @@ impl<F: Field> AirInstance<F> {
         }
         
         custom_commits.as_mut_ptr()
+    }
+
+    pub fn set_custom_commit_id_buffer(&mut self, buffer: Vec<F>, commit_id: u64) {
+        self.custom_commits[commit_id as usize] = buffer;
     }
 
     pub fn set_airvalue(&mut self, setup_ctx: &SetupCtx<F>, name: &str, value: F) {

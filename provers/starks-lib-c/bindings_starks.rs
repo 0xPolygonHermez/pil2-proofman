@@ -92,6 +92,13 @@ extern "C" {
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z20get_custom_commit_idPvPc"]
+    pub fn get_custom_commit_id(
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        name: *mut ::std::os::raw::c_char,
+    ) -> u64;
+}
+extern "C" {
     #[link_name = "\u{1}_Z30get_map_total_n_custom_commitsPvm"]
     pub fn get_map_total_n_custom_commits(
         pStarkInfo: *mut ::std::os::raw::c_void,

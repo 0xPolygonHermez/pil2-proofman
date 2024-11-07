@@ -28,6 +28,7 @@
     uint64_t get_stark_info_n(void *pStarkInfo);
     uint64_t get_stark_info_n_publics(void *pStarkInfo);
     uint64_t get_map_total_n(void *pStarkInfo);
+    uint64_t get_custom_commit_id(void *pStarkInfo, char* name);
     uint64_t get_map_total_n_custom_commits(void *pStarkInfo, uint64_t commit_id);
     uint64_t get_map_offsets(void *pStarkInfo, char *stage, bool flag);
     uint64_t get_n_airvals(void *pStarkInfo);

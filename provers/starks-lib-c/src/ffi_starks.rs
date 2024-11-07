@@ -158,6 +158,13 @@ pub fn get_n_custom_commits_c(p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_custom_commit_id_c(p_stark_info: *mut c_void, name: &str) -> u64 {
+    let name = CString::new(name).unwrap();
+   
+    unsafe { get_custom_commit_id(p_stark_info, name.as_ptr() as *mut std::os::raw::c_char) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn get_airgroupval_id_by_name_c(p_stark_info: *mut c_void, name: &str) -> i64 {
     let airgroupval_name = CString::new(name).unwrap();
     unsafe { get_airgroupvalue_id_by_name(p_stark_info, airgroupval_name.as_ptr() as *mut std::os::raw::c_char) }
@@ -982,6 +989,12 @@ pub fn get_n_evals_c(_p_stark_info: *mut c_void) -> u64 {
 #[cfg(feature = "no_lib_link")]
 pub fn get_n_custom_commits_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_n_custom_commits: This is a mock call because there is no linked library");
+    100000000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_custom_commit_id_c(_p_stark_info: *mut c_void, _name: &str) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_custom_commit_id: This is a mock call because there is no linked library");
     100000000
 }
 

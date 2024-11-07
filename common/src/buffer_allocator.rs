@@ -16,6 +16,6 @@ pub trait BufferAllocator<F>: Send + Sync {
         sctx: &SetupCtx<F>,
         airgroup_id: usize,
         air_id: usize,
-        commit_id: usize,
-    ) -> Result<(u64, Vec<u64>), Box<dyn Error>>;
+        custom_commit_name: &str,
+    ) -> Result<(u64, Vec<u64>, u64), Box<dyn Error>>;
 }

@@ -17,7 +17,7 @@ impl FibonacciSquarePublics {
 impl From<&[u8]> for FibonacciSquarePublics {
     fn from(input_bytes: &[u8]) -> Self {
         const U64_SIZE: usize = std::mem::size_of::<u64>();
-        assert_eq!(input_bytes.len(), U64_SIZE * 4, "Input bytes length must be 4 * size_of::<u64>()");
+        assert_eq!(input_bytes.len(), U64_SIZE * 8, "Input bytes length must be 4 * size_of::<u64>()");
 
         FibonacciSquarePublics {
             module: u64::from_le_bytes(input_bytes[0..U64_SIZE].try_into().unwrap()),
@@ -30,11 +30,13 @@ impl From<&[u8]> for FibonacciSquarePublics {
 
 impl From<FibonacciSquarePublics> for Vec<u8> {
     fn from(val: FibonacciSquarePublics) -> Self {
-        let mut bytes = Vec::with_capacity(4 * std::mem::size_of::<u64>());
+        let mut bytes = Vec::with_capacity(8 * std::mem::size_of::<u64>());
         bytes.extend_from_slice(&val.module.to_le_bytes());
         bytes.extend_from_slice(&val.a.to_le_bytes());
         bytes.extend_from_slice(&val.b.to_le_bytes());
         bytes.extend_from_slice(&val.out.unwrap_or(0).to_le_bytes());
+
+        bytes.resize(bytes.capacity(), 0);
         bytes
     }
 }

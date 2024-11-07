@@ -119,10 +119,12 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
         for commit_id in 0..self.stark_info.custom_commits.len() 
         {
-            for idx in 0..self.stark_info.custom_commits_map[commit_id].as_ref().unwrap().len() 
-            {
-                if self.stark_info.custom_commits_map[commit_id].as_ref().unwrap()[idx].stage <= 1 {
-                    air_instance.set_custom_commit_calculated(commit_id, idx);
+            if !air_instance.custom_commits[commit_id].is_empty() {
+                for idx in 0..self.stark_info.custom_commits_map[commit_id].as_ref().unwrap().len() 
+                {
+                    if self.stark_info.custom_commits_map[commit_id].as_ref().unwrap()[idx].stage <= 1 {
+                        air_instance.set_custom_commit_calculated(commit_id, idx);
+                    }
                 }
             }
         }
@@ -913,11 +915,12 @@ impl<F> BufferAllocator<F> for StarkBufferAllocator {
         sctx: &SetupCtx<F>,
         airgroup_id: usize,
         air_id: usize,
-        commit_id: usize,
-    ) -> Result<(u64, Vec<u64>), Box<dyn Error>> {
+        name: &str,
+    ) -> Result<(u64, Vec<u64>, u64), Box<dyn Error>> {
         let ps = sctx.get_setup(airgroup_id, air_id);
 
         let p_stark_info = ps.p_setup.p_stark_info;
-        Ok((get_map_totaln_custom_commits_c(p_stark_info, commit_id as u64), vec![0]))
+        let commit_id = get_custom_commit_id_c(p_stark_info, name);
+        Ok((get_map_totaln_custom_commits_c(p_stark_info, commit_id), vec![0], commit_id))
     }
 }
