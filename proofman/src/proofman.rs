@@ -120,11 +120,13 @@ impl<F: Field + 'static> ProofMan<F> {
                 let public = pctx.global_info.publics_map.as_ref().expect("REASON").get(i).unwrap();
                 if !publics_set[i] {
                     if !public.lengths.is_empty() {
-                        panic!("Not all publics are set: Public {}[{}] is not calculated", public.name, public.lengths[0]);
+                        panic!(
+                            "Not all publics are set: Public {}[{}] is not calculated",
+                            public.name, public.lengths[0]
+                        );
                     } else {
                         panic!("Not all publics are set: Public {} is not calculated", public.name);
                     }
-                    
                 }
             }
 

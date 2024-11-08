@@ -167,23 +167,24 @@ impl<F: Field> ProofCtx<F> {
     pub fn set_public_value_by_name(&self, value: u64, public_name: &str, lengths: Option<Vec<u64>>) {
         let n_publics: usize = self.global_info.publics_map.as_ref().expect("REASON").len();
         let public_id = (0..n_publics)
-        .find(|&i| {
-            let public = self.global_info.publics_map.as_ref().expect("REASON").get(i).unwrap();
-            
-            // Check if name matches
-            let name_matches = public.name == public_name;
-            
-            // If lengths is provided, check that it matches public.lengths
-            let lengths_match = if let Some(ref provided_lengths) = lengths {
-                Some(&public.lengths) == Some(provided_lengths)
-            } else {
-                true // If lengths is None, skip the lengths check
-            };
-            
-            name_matches && lengths_match
-        })
-        .unwrap_or_else(|| panic!("Name {} with specified lengths {:?} not found in publics_map", public_name, lengths));
+            .find(|&i| {
+                let public = self.global_info.publics_map.as_ref().expect("REASON").get(i).unwrap();
 
+                // Check if name matches
+                let name_matches = public.name == public_name;
+
+                // If lengths is provided, check that it matches public.lengths
+                let lengths_match = if let Some(ref provided_lengths) = lengths {
+                    Some(&public.lengths) == Some(provided_lengths)
+                } else {
+                    true // If lengths is None, skip the lengths check
+                };
+
+                name_matches && lengths_match
+            })
+            .unwrap_or_else(|| {
+                panic!("Name {} with specified lengths {:?} not found in publics_map", public_name, lengths)
+            });
 
         self.set_public_value(value, public_id as u64);
     }
