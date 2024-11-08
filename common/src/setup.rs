@@ -8,7 +8,6 @@ use proofman_starks_lib_c::{
     load_const_tree_c, load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c,
     prover_helpers_free_c,
 };
-use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 
 use crate::GlobalInfo;
 use crate::ProofType;
@@ -71,9 +70,7 @@ impl<F> Setup<F> {
             } else {
                 // Otherwise, initialize the pointers with their respective values
                 let stark_info = stark_info_new_c(stark_info_path.as_str());
-                timer_start_debug!(EXPRESSIONS);
                 let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false);
-                timer_stop_and_log_debug!(EXPRESSIONS);
                 let prover_helpers = prover_helpers_new_c(stark_info);
 
                 (stark_info, expressions_bin, prover_helpers)
