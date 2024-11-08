@@ -3,7 +3,7 @@ use std::{collections::HashMap, os::raw::c_void, sync::Arc};
 use p3_field::Field;
 use proofman_starks_lib_c::{
     get_airval_id_by_name_c, get_n_airgroupvals_c, get_n_airvals_c, get_n_evals_c, get_airgroupval_id_by_name_c,
-    get_n_custom_commits_c, get_custom_commit_map_ids_c
+    get_n_custom_commits_c, get_custom_commit_map_ids_c, get_map_totaln_custom_commits_c
 };
 
 use crate::SetupCtx;
@@ -112,8 +112,18 @@ impl<F: Field> AirInstance<F> {
         ptrs
     }
 
-    pub fn set_custom_commit_id_buffer(&mut self, setup_ctx: &SetupCtx<F>, buffer: Vec<F>, commit_id: u64, cached_file: String) {
-        self.custom_commits[commit_id as usize] = CustomCommitsInfo::new(buffer, cached_file);
+    pub fn set_custom_commit_cached_file(&mut self, setup_ctx: &SetupCtx<F>, commit_id: u64, cached_file: &str) {
+
+        let ps = setup_ctx.get_setup(self.airgroup_id, self.air_id);
+
+        let buffer_size = get_map_totaln_custom_commits_c(ps.p_setup.p_stark_info, commit_id);
+        let buffer = vec![F::zero(); buffer_size as usize];
+
+        self.custom_commits[commit_id as usize] = CustomCommitsInfo::new(buffer, cached_file.to_string());
+    }
+
+    pub fn set_custom_commit_id_buffer(&mut self, setup_ctx: &SetupCtx<F>, buffer: Vec<F>, commit_id: u64) {
+        self.custom_commits[commit_id as usize] = CustomCommitsInfo::new(buffer, "".to_string());
 
         let ps = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
@@ -121,7 +131,6 @@ impl<F: Field> AirInstance<F> {
         for idx in ids { 
             self.set_custom_commit_calculated(commit_id as usize, idx as usize);
         }
-
     }
 
     pub fn set_airvalue(&mut self, setup_ctx: &SetupCtx<F>, name: &str, value: F) {
