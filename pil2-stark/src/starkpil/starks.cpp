@@ -221,9 +221,10 @@ void Starks<ElementType>::evmap(StepsParams& params, Goldilocks::Element *LEv)
     for (uint64_t i = 0; i < size_eval; i++)
     {
         EvMap ev = setupCtx.starkInfo.evMap[i];
-        bool committed = ev.type == EvMap::eType::cm ? true : false;
-        Goldilocks::Element *pols = committed ? params.pols : &params.pConstPolsExtendedTreeAddress[2];
-        setupCtx.starkInfo.getPolynomial(ordPols[i], pols, committed, ev.id, true);
+        string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom" : "fixed";
+        Goldilocks::Element *pols = type == "cm" ? params.pols : type == "custom" ? params.customCommits[ev.commitId] : &params.pConstPolsExtendedTreeAddress[2];
+        PolMap polInfo = type == "cm" ? setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id] : setupCtx.starkInfo.constPolsMap[ev.id];
+        setupCtx.starkInfo.getPolynomial(ordPols[i], pols, type, polInfo, true);
     }
 
 #pragma omp parallel

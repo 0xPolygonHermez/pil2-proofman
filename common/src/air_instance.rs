@@ -19,7 +19,7 @@ pub struct StepsParams {
     pub xdivxsub: *mut c_void,
     pub p_const_pols: *mut c_void,
     pub p_const_tree: *mut c_void,
-    pub custom_commits: *mut *mut c_void,
+    pub custom_commits: [*mut c_void; 10],
 }
 
 impl From<&StepsParams> for *mut c_void {
@@ -91,15 +91,12 @@ impl<F: Field> AirInstance<F> {
         self.buffer.as_ptr() as *mut u8
     }
 
-    pub fn get_custom_commits_ptr(&self) -> *mut *mut c_void {
-        let mut custom_commits = Vec::new();
-        println!("{:?}", self.custom_commits);
-        for c in &self.custom_commits {
-            let ptr = c.as_ptr() as *mut c_void;
-            custom_commits.push(ptr);
+    pub fn get_custom_commits_ptr(&self) -> [*mut c_void; 10] {
+        let mut ptrs = [std::ptr::null_mut(); 10];
+        for (i, custom_commit) in self.custom_commits.iter().enumerate() {
+            ptrs[i] = custom_commit.as_ptr() as *mut c_void;
         }
-        
-        custom_commits.as_mut_ptr()
+        ptrs
     }
 
     pub fn set_custom_commit_id_buffer(&mut self, buffer: Vec<F>, commit_id: u64) {

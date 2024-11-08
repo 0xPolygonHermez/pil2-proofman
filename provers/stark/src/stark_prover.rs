@@ -206,36 +206,37 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             custom_commits: air_instance.get_custom_commits_ptr(),
         };
 
-        if stage_id as usize <= proof_ctx.global_info.n_challenges.len()
-            && self
+        if stage_id as usize <= proof_ctx.global_info.n_challenges.len() {
+            if self
                 .stark_info
                 .cm_pols_map
                 .as_ref()
                 .expect("REASON")
                 .iter()
                 .any(|cm_pol| cm_pol.stage == stage_id as u64 && cm_pol.im_pol)
-        {
-            let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
-            debug!(
-                "{}: ··· Computing intermediate polynomials of instance {} of {}",
-                Self::MY_NAME,
-                self.instance_id,
-                air_name
-            );
-            for i in 0..n_commits {
-                let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
-                if (cm_pol.stage < stage_id as u64 || cm_pol.stage == stage_id as u64 && !cm_pol.im_pol)
-                    && !air_instance.commits_calculated.contains_key(&i)
-                {
-                    panic!("Intermediate polynomials for stage {} cannot be calculated: Witness column {} is not calculated", stage_id, cm_pol.name);
+            {
+                let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
+                debug!(
+                    "{}: ··· Computing intermediate polynomials of instance {} of {}",
+                    Self::MY_NAME,
+                    self.instance_id,
+                    air_name
+                );
+                for i in 0..n_commits {
+                    let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
+                    if (cm_pol.stage < stage_id as u64 || cm_pol.stage == stage_id as u64 && !cm_pol.im_pol)
+                        && !air_instance.commits_calculated.contains_key(&i)
+                    {
+                        panic!("Intermediate polynomials for stage {} cannot be calculated: Witness column {} is not calculated", stage_id, cm_pol.name);
+                    }
                 }
-            }
 
-            calculate_impols_expressions_c(self.p_stark, stage_id as u64, (&steps_params).into());
-            for i in 0..n_commits {
-                let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
-                if cm_pol.stage == stage_id as u64 && cm_pol.im_pol {
-                    air_instance.set_commit_calculated(i);
+                calculate_impols_expressions_c(self.p_stark, stage_id as u64, (&steps_params).into());
+                for i in 0..n_commits {
+                    let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
+                    if cm_pol.stage == stage_id as u64 && cm_pol.im_pol {
+                        air_instance.set_commit_calculated(i);
+                    }
                 }
             }
 
@@ -345,12 +346,11 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     .any(|custom_commit| custom_commit.stage == stage_id as u64);
 
                 if custom_commits_stage {
-                    let buffer = air_instance.custom_commits[commit_id].as_ptr() as *mut c_void;
                     extend_and_merkelize_custom_commit_c(
                         p_stark,
                         commit_id as u64,
                         stage_id as u64,
-                        buffer,
+                        air_instance.custom_commits[commit_id].as_ptr() as *mut c_void,
                         p_proof,
                         buff_helper,
                     );

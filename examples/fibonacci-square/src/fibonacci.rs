@@ -5,10 +5,7 @@ use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::PrimeField;
 
-use crate::{
-    FibonacciSquareTrace, FibonacciSquareRomTrace, FibonacciSquarePublics, Module, FIBONACCI_SQUARE_AIRGROUP_ID,
-    FIBONACCI_SQUARE_AIR_IDS,
-};
+use crate::{FibonacciSquareTrace, FibonacciSquareRomTrace, Module, FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS};
 
 pub struct FibonacciSquare<F: PrimeField> {
     module: Arc<Module<F>>,
@@ -44,8 +41,9 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
     ) -> Result<u64, Box<dyn std::error::Error>> {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        let public_inputs: FibonacciSquarePublics = pctx.public_inputs.inputs.read().unwrap().as_slice().into();
-        let (module, mut a, mut b, _out) = public_inputs.inner();
+        let module = pctx.get_public_value("mod");
+        let mut a = pctx.get_public_value("in1");
+        let mut b = pctx.get_public_value("in2");
 
         let (buffer_size, offsets) = ectx.buffer_allocator.as_ref().get_buffer_info(
             &sctx,
@@ -82,12 +80,11 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
         let mut trace_custom_commits =
             FibonacciSquareRomTrace::map_buffer(&mut buffer_rom, num_rows, offsets_rom[0] as usize)?;
         for i in 0..num_rows {
-            trace_custom_commits[i].line = F::from_canonical_u64(2);
-            trace_custom_commits[i].flags = F::from_canonical_u64(3);
+            trace_custom_commits[i].line = F::from_canonical_u64(3 + i as u64);
+            trace_custom_commits[i].flags = F::from_canonical_u64(2 + i as u64);
         }
 
-        pctx.public_inputs.inputs.write().unwrap()[24..32].copy_from_slice(&b.to_le_bytes());
-        pctx.set_public_by_name("out");
+        pctx.set_public_value_by_name(b, "out");
 
         pctx.set_proof_value("value1", F::from_canonical_u64(5));
         pctx.set_proof_value("value2", F::from_canonical_u64(125));

@@ -15,8 +15,6 @@ trace!(U8AirRow, U8AirTrace<F> {
  mul: F,
 });
 
-
-
 trace!(FibonacciSquareRomRow, FibonacciSquareRomTrace<F> {
  line: F, flags: F,
 });

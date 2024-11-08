@@ -39,7 +39,7 @@ airtemplate FibonacciSquare(const int N = 2**8) {
 
     2*fibo1 - fibo2 === 0;
 
-    line - flags === 0;
+    line - (flags + 1) === 0;
 
     permutation_assumes(MODULE_ID, [a*a + b*b, b'], 1 - L1');
 }

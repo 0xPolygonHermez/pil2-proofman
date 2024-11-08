@@ -53,7 +53,6 @@ struct AirCtx {
     custom_columns: Vec<CustomCommitsCtx>,
 }
 
-
 #[derive(Debug, Serialize)]
 struct CustomCommitsCtx {
     name: String,

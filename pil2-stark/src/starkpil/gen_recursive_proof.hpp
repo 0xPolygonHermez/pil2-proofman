@@ -119,7 +119,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
 
     Polinomial gprodTransposedPol;
-    setupCtx.starkInfo.getPolynomial(gprodTransposedPol, pAddress, true, gprodField->values[0].id, false);
+    setupCtx.starkInfo.getPolynomial(gprodTransposedPol, pAddress, "cm", setupCtx.starkInfo.cmPolsMap[gprodField->values[0].id], false);
 #pragma omp parallel for
     for(uint64_t j = 0; j < N; ++j) {
         std::memcpy(gprodTransposedPol[j], &gprod[j*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));

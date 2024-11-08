@@ -986,7 +986,7 @@ pub fn get_hint_field_constant<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
-        custom_commits: std::ptr::null_mut(),
+        custom_commits: [std::ptr::null_mut(); 10],
     };
 
     let raw_ptr = get_hint_field_c(
@@ -1027,7 +1027,7 @@ pub fn get_hint_field_constant_a<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
-        custom_commits: std::ptr::null_mut(),
+        custom_commits: [std::ptr::null_mut(); 10],
     };
 
     let raw_ptr = get_hint_field_c(
@@ -1074,7 +1074,7 @@ pub fn get_hint_field_constant_m<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
-        custom_commits: std::ptr::null_mut(),
+        custom_commits: [std::ptr::null_mut(); 10],
     };
 
     let raw_ptr = get_hint_field_c(
@@ -1126,7 +1126,7 @@ pub fn set_hint_field<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
-        custom_commits: std::ptr::null_mut(),
+        custom_commits: [std::ptr::null_mut(); 10],
     };
 
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
@@ -1159,7 +1159,7 @@ pub fn set_hint_field_val<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
-        custom_commits: std::ptr::null_mut(),
+        custom_commits: [std::ptr::null_mut(); 10],
     };
 
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);

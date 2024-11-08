@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
 
+use log::info;
 use proofman_starks_lib_c::expressions_bin_new_c;
 use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
 
@@ -19,17 +20,44 @@ pub struct SetupsVadcop<F> {
 
 impl<F> SetupsVadcop<F> {
     pub fn new(global_info: &GlobalInfo, aggregation: bool) -> Self {
+        info!("Initializing setups");
+        timer_start_debug!(INITIALIZING_SETUP);
+        let sctx: SetupCtx<F> = SetupCtx::new(global_info, &ProofType::Basic);
+        timer_stop_and_log_debug!(INITIALIZING_SETUP);
         if aggregation {
+            timer_start_debug!(INITIALIZING_SETUP_AGGREGATION);
+            info!("Initializing setups aggregation");
+
+            timer_start_debug!(INITIALIZING_SETUP_COMPRESSOR);
+            info!(" ··· Initializing setups compressor");
+            let sctx_compressor: SetupCtx<F> = SetupCtx::new(global_info, &ProofType::Compressor);
+            timer_stop_and_log_debug!(INITIALIZING_SETUP_COMPRESSOR);
+
+            timer_start_debug!(INITIALIZING_SETUP_RECURSIVE1);
+            info!(" ··· Initializing setups recursive1");
+            let sctx_recursive1: SetupCtx<F> = SetupCtx::new(global_info, &ProofType::Recursive1);
+            timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVE1);
+
+            timer_start_debug!(INITIALIZING_SETUP_RECURSIVE2);
+            info!(" ··· Initializing setups recursive2");
+            let sctx_recursive2: SetupCtx<F> = SetupCtx::new(global_info, &ProofType::Recursive2);
+            timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVE2);
+
+            timer_start_debug!(INITIALIZING_SETUP_FINAL);
+            info!(" ··· Initializing setups final");
+            let sctx_final: SetupCtx<F> = SetupCtx::new(global_info, &ProofType::Final);
+            timer_stop_and_log_debug!(INITIALIZING_SETUP_FINAL);
+            timer_stop_and_log_debug!(INITIALIZING_SETUP_AGGREGATION);
             SetupsVadcop {
-                sctx: Arc::new(SetupCtx::new(global_info, &ProofType::Basic)),
-                sctx_compressor: Some(Arc::new(SetupCtx::new(global_info, &ProofType::Compressor))),
-                sctx_recursive1: Some(Arc::new(SetupCtx::new(global_info, &ProofType::Recursive1))),
-                sctx_recursive2: Some(Arc::new(SetupCtx::new(global_info, &ProofType::Recursive2))),
-                sctx_final: Some(Arc::new(SetupCtx::new(global_info, &ProofType::Final))),
+                sctx: Arc::new(sctx),
+                sctx_compressor: Some(Arc::new(sctx_compressor)),
+                sctx_recursive1: Some(Arc::new(sctx_recursive1)),
+                sctx_recursive2: Some(Arc::new(sctx_recursive2)),
+                sctx_final: Some(Arc::new(sctx_final)),
             }
         } else {
             SetupsVadcop {
-                sctx: Arc::new(SetupCtx::new(global_info, &ProofType::Basic)),
+                sctx: Arc::new(sctx),
                 sctx_compressor: None,
                 sctx_recursive1: None,
                 sctx_recursive2: None,

@@ -153,6 +153,7 @@ void StarkInfo::load(json j)
             map.dim = j["customCommitsMap"][i][k]["dim"];
             map.stagePos = j["customCommitsMap"][i][k]["stagePos"];
             map.stageId = j["customCommitsMap"][i][k]["stageId"];
+            map.commitId = i;
             if(j["customCommitsMap"][i][k].contains("expId")) {
                 map.expId = j["customCommitsMap"][i][k]["expId"];
             }
@@ -190,6 +191,9 @@ void StarkInfo::load(json j)
     {
         EvMap map;
         map.setType(j["evMap"][i]["type"]);
+        if(j["evMap"][i]["type"] == "custom") {
+            map.commitId = j["evMap"][i]["commitId"];
+        }
         map.id = j["evMap"][i]["id"];
         map.prime = j["evMap"][i]["prime"];
         if(j["evMap"][i].contains("openingPos")) {
@@ -228,7 +232,7 @@ void StarkInfo::setMapOffsets() {
     for(uint64_t i = 0; i < customCommits.size(); ++i) {
         mapOffsets[std::make_pair(customCommits[i].name + "0", false)] = 0;
         mapOffsets[std::make_pair(customCommits[i].name + "0", true)] = N * mapSectionsN[customCommits[i].name + "0"];
-        mapTotalNcustomCommits[customCommits[i].name] = NExtended * mapSectionsN[customCommits[i].name + "0"];
+        mapTotalNcustomCommits[customCommits[i].name] = (N + NExtended) * mapSectionsN[customCommits[i].name + "0"];
     }
 
     mapTotalN = 0;
@@ -276,15 +280,14 @@ void StarkInfo::setMapOffsets() {
     if(offsetPolsEvals > mapTotalN) mapTotalN = offsetPolsEvals;
 }
 
-void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, bool committed, uint64_t idPol, bool domainExtended) {
-    PolMap polInfo = committed ? cmPolsMap[idPol] : constPolsMap[idPol];
+void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended) {
     uint64_t deg = domainExtended ? 1 << starkStruct.nBitsExt : 1 << starkStruct.nBits;
     uint64_t dim = polInfo.dim;
-    std::string stage = committed ? "cm" + to_string(polInfo.stage) : "const";
+    std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? customCommits[polInfo.commitId].name + "0" : "const";
     uint64_t nCols = mapSectionsN[stage];
     uint64_t offset = mapOffsets[std::make_pair(stage, domainExtended)];
     offset += polInfo.stagePos;
-    pol = Polinomial(&pAddress[offset], deg, dim, nCols, std::to_string(idPol));
+    pol = Polinomial(&pAddress[offset], deg, dim, nCols);
 }
 
 

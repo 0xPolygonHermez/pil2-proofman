@@ -280,19 +280,6 @@ public:
             }
         }
 
-        for(uint64_t i = 0; i < nCustomCommits; i++) {
-            ordered_json json_root = ordered_json::array();
-            if(nFieldElements == 1) {
-                j["root_" + customCommits[i] + "_0"] = toString(roots[nStages + i][0]);
-            } else {
-                for (uint k = 0; k < nFieldElements; k++)
-                {
-                    json_root.push_back(toString(roots[i + nStages][k]));
-                }
-                j["root_" + customCommits[i] + "_0"] = json_root;
-            }
-        }
-
         ordered_json json_evals = ordered_json::array();
         for (uint i = 0; i < evals.size(); i++)
         {

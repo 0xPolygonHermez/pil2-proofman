@@ -78,6 +78,7 @@ public:
     bool imPol;
     uint64_t stagePos;
     uint64_t stageId;
+    uint64_t commitId;
     uint64_t expId;
     uint64_t polsMapId;
 };
@@ -95,6 +96,7 @@ public:
     eType type;
     uint64_t id;
     int64_t prime;
+    uint64_t commitId;
     uint64_t openingPos;
 
     void setType (string s)
@@ -163,7 +165,7 @@ public:
     void setMapOffsets();
 
     /* Returns a polynomial specified by its ID */
-    void getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, bool committed, uint64_t idPol, bool domainExtended);
+    void getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended);
 };
 
 #endif
