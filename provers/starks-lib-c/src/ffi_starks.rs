@@ -1198,7 +1198,7 @@ pub fn set_hint_field_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn starks_new_c(_p_config: *mut c_void, _p_const_tree: *mut c_void) -> *mut c_void {
+pub fn starks_new_c(_p_setup: *mut c_void, _p_const_tree: *mut c_void) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starks_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }

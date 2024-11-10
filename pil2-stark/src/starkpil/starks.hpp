@@ -35,7 +35,7 @@ public:
     Starks(SetupCtx& setupCtx_, Goldilocks::Element *pConstPolsExtendedTreeAddress) : setupCtx(setupCtx_)                                    
     {
         treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
-        treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
+        if (pConstPolsExtendedTreeAddress != nullptr) treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
         for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
         {
             std::string section = "cm" + to_string(i + 1);
