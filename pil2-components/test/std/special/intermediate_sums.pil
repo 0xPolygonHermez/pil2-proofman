@@ -2,7 +2,7 @@ require "std_tools.pil";
 
 /*
 
-Table of generated numbers (*):
+Table of generated numbers, which assume a maximum expression degree of 3:
 
  #BusCalls | SumExp | #Cols1 |   #Cols2      | #Cols3 |  Total | #Constraints |
 ───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
@@ -27,115 +27,189 @@ Table of generated numbers (*):
     8      | Manual |   24   | 9 (0 im)/27   |   2/6  |  35/57 |      9       |
 ───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
 
-(*) Numbers assume a blowup factor of 1
+Constraint to optimize:
+                                NUMi
+            GL === GR + ∑ᵢ ----------
+                                DENi + ɣ
+    · The S is of degree 2 to be as close as possible to the actual expression.
+    · The ɣ is added to make the denominator an extension-field expression.
 */
 
-airtemplate Intermediates(int N = 2**8, int busCalls = 6) {
-    col witness f[busCalls];
-    col witness t[busCalls];
-    col witness mul[busCalls];
-
+airtemplate ImDummy(const int N = 2**8, const degNum = 1, const int degDen = 1, const int M = 6) {
+    col witness stage(2) GL;
     col fixed L1 = [1,0...];
-    col witness stage(2) gsum;
+    expr GR = 'GL * L1;     // Just to be realistic
+    assert(degree(GR) == 2);
+
+    col witness num[M];
+    expr NUM[M];
+    for (int i = 0; i < M; i++) {
+        NUM[i] = num[i];
+        // Enlarge the degree of the numerator
+        for (int j = 0; j < degNum; j++) {
+            col witness _num;
+            NUM[i] *= _num;
+        }
+        assert(degree(NUM[i]) == degNum);
+    }
+
+    col witness den[M];
+    expr DEN[M];
+    for (int i = 0; i < M; i++) {
+        DEN[i] = den[i];
+        // Enlarge the degree of the denominator
+        for (int j = 0; j < degDen; j++) {
+            col witness _den;
+            DEN[i] *= _den;
+        }
+        assert(degree(DEN[i]) == degDen);
+    }
+
     /*
-                                        muli         1
-    gsum === 'gsum * (1 - L1) + ∑ᵢ ( -------- - -------- )
-                                       ti + ɣ     fi + ɣ
+      Transform the rational constraint to a polynomial one:
+            (GL - GR) · ∏i (DENi + ɣ) === ∑ᵢ NUMi · ∏j≠i (DENj + ɣ)     
     */
-
     expr LHS = 1;
-    expr RHS1 = 0;
-    for (int i = 0; i < busCalls; i++) {
-        LHS = LHS * (t[i] + std_gamma);
+    expr RHS = 0;
+    for (int i = 0; i < M; i++) {
+        LHS *= (DEN[i] + std_gamma);
 
-        expr tPartial = mul[i];
-        for (int j = 0; j < busCalls; j++) {
+        expr _RHS = NUM[i];
+        for (int j = 0; j < M; j++) {
             if (j == i) continue;
-            tPartial = tPartial * (t[j] + std_gamma);
+            _RHS *= (DEN[j] + std_gamma);
         }
-        RHS1 = RHS1 + tPartial;
+        RHS += _RHS;
     }
 
-    expr RHS2a = LHS;
-    expr RHS2b = 0;
-    for (int i = 0; i < busCalls; i = i + 1) {
-        LHS = LHS * (f[i] + std_gamma);
-        RHS1 = RHS1 * (f[i] + std_gamma);
-
-        expr tPartial = 1;
-        for (int j = 0; j < busCalls; j = j + 1) {
-            if (j == i) continue;
-            tPartial = tPartial * (f[j] + std_gamma);
-        }
-        RHS2b = RHS2b + tPartial;
-    }
-
-    expr RHS2 = RHS2a * RHS2b;
-    expr RHS = RHS1 - RHS2;
-
-    (gsum - 'gsum * (1 - L1)) * LHS === RHS;
+    (GL - GR) * LHS === RHS;
 }
 
 
-airtemplate IntermediatesIm(int N = 2**8, int busCalls = 6, int nTerms = 2) {
-    assert(busCalls%nTerms == 0);
-
-    const int nIm = busCalls/nTerms;
-
-    col witness f[busCalls];
-    col witness t[busCalls];
-    col witness mul[busCalls];
-
-    col witness stage(2) im[2*nIm];
-
+airtemplate ImStd(const int N = 2**8, const degNum = 1, const int degDen = 1, const int M = 6, const int clusterSize = 2) {
+    col witness stage(2) GL;
     col fixed L1 = [1,0...];
-    col witness stage(2) gsum;
+    expr GR = 'GL * L1;
 
-    expr posIms = 0;
-    expr negIms = 0;
-    for (int i = 0; i < nIm; i++) {
-
-        //            mul[3*i]           mul[3*i+1]          mul[3*i+2]
-        // im[i] = --------------- + ----------------- + -----------------
-        //            t[3*i] + ɣ        t[3*i+1] + ɣ        t[3*i+2] + ɣ
-
-        //                   1                  1                   1
-        // im[nIm+i] = --------------- + ----------------- + -----------------
-        //               f[3*i] + ɣ        f[3*i+1] + ɣ        f[3*i+2] + ɣ
-        expr tProds = 1;
-        expr fProds = 1;
-        expr tSums = 0;
-        expr fSums = 0;
-        for (int j = 0; j < nTerms; j++) {
-            tProds = tProds * (t[nTerms * i + j] + std_gamma);
-            fProds = fProds * (f[nTerms * i + j] + std_gamma);
-
-            expr tPartial = mul[nTerms * i + j];
-            expr fPartial = 1;
-            for (int k = 0; k < nTerms; k++) {
-                if (k == j) continue;
-                tPartial = tPartial * (t[nTerms * i + k] + std_gamma);
-                fPartial = fPartial * (f[nTerms * i + k] + std_gamma);
-            }
-            tSums += tPartial;
-            fSums += fPartial;
+    col witness num[M];
+    expr NUM[M];
+    for (int i = 0; i < M; i++) {
+        NUM[i] = num[i];
+        // Enlarge the degree of the numerator
+        for (int j = 0; j < degNum; j++) {
+            col witness _num;
+            NUM[i] *= _num;
         }
-        // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
-        //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
-        im[i] * tProds === tSums;
-        im[nIm+i] * fProds === fSums;
-
-        posIms += im[i];
-        negIms += im[nIm+i];
+        assert(degree(NUM[i]) == degNum);
     }
-    gsum === 'gsum * (1 - L1) + posIms - negIms;
+
+    col witness den[M];
+    expr DEN[M];
+    for (int i = 0; i < M; i++) {
+        DEN[i] = den[i];
+        // Enlarge the degree of the denominator
+        for (int j = 0; j < degDen; j++) {
+            col witness _den;
+            DEN[i] *= _den;
+        }
+        assert(degree(DEN[i]) == degDen);
+    }
+
+    /*
+      Transform the rational constraint to a polynomial one by substituting
+      all the rational terms by terms of degree 1:
+            GL === GR + ∑ᵢ imi 
+    */
+    const int max_degree = 1; // TBD: Discriminator
+    int low_degree_term[M];
+    int high_degree_term[M];
+    int low_degree_len = 0;
+    int high_degree_len = 0;
+    for (int i = 0; i < M; i++) {
+        if (degree(NUM[i]) > max_degree || degree(DEN[i]) > max_degree) {
+            high_degree_term[high_degree_len] = i;
+            high_degree_len++;
+        } else {
+            low_degree_term[low_degree_len] = i;
+            low_degree_len++;
+        }
+    }
+
+    if (low_degree_len > 0) {
+        const int nIm = low_degree_len/clusterSize;
+
+        col witness stage(2) im[nIm];
+
+        expr sumIms = 0;
+        for (int i = 0; i < nIm; i++) {
+            /*
+                        NUM[3*i]          NUM[3*i+1]          NUM[3*i+2]
+            im[i] = --------------- + ----------------- + -----------------
+                        DEN[3*i] + ɣ      DEN[3*i+1] + ɣ      DEN[3*i+2] + ɣ
+            */
+            expr LHS = 1;
+            expr RHS = 0;
+            for (int j = 0; j < clusterSize; j++) {
+                LHS *= (DEN[low_degree_term[clusterSize * i + j]] + std_gamma);
+
+                expr _partial = NUM[low_degree_term[clusterSize * i + j]];
+                for (int k = 0; k < clusterSize; k++) {
+                    if (k == j) continue;
+                    _partial *= (DEN[low_degree_term[clusterSize * i + k]] + std_gamma);
+                }
+                RHS += _partial;
+            }
+
+            im[i] * LHS === RHS;
+
+            sumIms += im[i];
+        }
+
+        const int nRemTerms = low_degree_len % clusterSize;
+        if (nRemTerms != 0) {
+            col witness stage(2) im_extra;
+
+            expr LHS = 1;
+            expr RHS = 0;
+            for (int j = 0; j < nRemTerms; j++) {
+                LHS *= (DEN[low_degree_term[clusterSize * nIm + j]] + std_gamma);
+
+                expr _partial = NUM[low_degree_term[clusterSize * nIm + j]];
+                for (int k = 0; k < nRemTerms; k++) {
+                    if (k == j) continue;
+                    _partial *= (DEN[low_degree_term[clusterSize * nIm + k]] + std_gamma);
+                }
+                RHS += _partial;
+            }
+
+            im_extra * LHS === RHS;
+
+            sumIms += im_extra;
+        }
+    }
+
+    if (high_degree_len > 0) {
+        /*
+                       NUM[i]   
+           im[i] = ---------------
+                     DEN[i] + ɣ  
+        */
+        col witness stage(2) im_high_degree[high_degree_len];
+
+        for (int i = 0; i < high_degree_len; i++) {
+            im_high_degree[i] * (DEN[high_degree_term[i]] + std_gamma) === NUM[high_degree_term[i]];
+            sumIms += im_high_degree[i];
+        }
+    }
+
+    GL === GR + sumIms;
 }
 
 airgroup Intermediates {
     init_challenges();
 
-    // Intermediates(busCalls: 2);
-    // IntermediatesIm(busCalls: 2);
+    ImDummy(busCalls: 2);
+    ImStd(busCalls: 2);
 
     // Intermediates(busCalls: 4);
     // IntermediatesIm(busCalls: 4);
@@ -143,6 +217,6 @@ airgroup Intermediates {
     // Intermediates(busCalls: 6);
     // IntermediatesIm(busCalls: 6);
 
-    Intermediates(busCalls: 8);
+    // Intermediates(busCalls: 8);
     // IntermediatesIm(busCalls: 8);
 }
