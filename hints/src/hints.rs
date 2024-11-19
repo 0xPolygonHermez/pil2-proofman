@@ -1,5 +1,6 @@
 use proofman_starks_lib_c::{
-    acc_hint_field_c, acc_mul_hint_fields_c, get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c, print_by_name_c, print_expression_c, print_row_c, set_hint_field_c, VecU64Result
+    acc_hint_field_c, acc_mul_hint_fields_c, get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c,
+    print_by_name_c, print_expression_c, print_row_c, set_hint_field_c, VecU64Result,
 };
 
 use std::collections::HashMap;

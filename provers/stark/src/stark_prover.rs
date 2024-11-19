@@ -336,7 +336,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     .any(|custom_commit| custom_commit.stage == stage_id as u64);
 
                 if custom_commits_stage {
-                    if air_instance.custom_commits[commit_id].cached_file.to_str() == Some("")  {
+                    if air_instance.custom_commits[commit_id].cached_file.to_str() == Some("") {
                         extend_and_merkelize_custom_commit_c(
                             p_stark,
                             commit_id as u64,

@@ -495,7 +495,15 @@ pub fn extend_and_merkelize_custom_commit_c(
 ) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
-        extend_and_merkelize_custom_commit(p_starks, commit_id, step, buffer, p_proof, p_buff_helper,buffer_file_name.as_ptr() as *mut std::os::raw::c_char);
+        extend_and_merkelize_custom_commit(
+            p_starks,
+            commit_id,
+            step,
+            buffer,
+            p_proof,
+            p_buff_helper,
+            buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
+        );
     }
 }
 
@@ -510,7 +518,14 @@ pub fn load_custom_commit_c(
 ) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
-        load_custom_commit(p_starks, commit_id, step, buffer, p_proof ,buffer_file_name.as_ptr() as *mut std::os::raw::c_char);
+        load_custom_commit(
+            p_starks,
+            commit_id,
+            step,
+            buffer,
+            p_proof,
+            buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
+        );
     }
 }
 
@@ -1057,7 +1072,11 @@ pub fn get_airval_id_by_name_c(_p_stark_info: *mut c_void, _name: &str) -> i64 {
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_custom_commit_map_ids_c(_p_stark_info: *mut c_void, _commit_id: u64, _stage: u64) -> Vec<u64> {
-    trace!("{}: ··· {}", "ffi     ", "get_custom_commit_map_ids: This is a mock call because there is no linked library");
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_custom_commit_map_ids: This is a mock call because there is no linked library"
+    );
     Vec::new()
 }
 
@@ -1274,11 +1293,7 @@ pub fn load_custom_commit_c(
     _p_proof: *mut c_void,
     _tree_file: &str,
 ) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "load_custom_commit: This is a mock call because there is no linked library"
-    );
+    trace!("{}: ··· {}", "ffi     ", "load_custom_commit: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

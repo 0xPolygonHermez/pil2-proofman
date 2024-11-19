@@ -737,7 +737,6 @@ impl<F: Field + 'static> ProofMan<F> {
             }
         }
 
-        
         // Check each path in cached_buffers_paths exists
         if let Some(cached_buffers) = cached_buffers_paths {
             for (key, path) in cached_buffers {

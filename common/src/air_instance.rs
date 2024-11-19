@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use p3_field::Field;
 use proofman_starks_lib_c::{
     get_airval_id_by_name_c, get_n_airgroupvals_c, get_n_airvals_c, get_n_evals_c, get_airgroupval_id_by_name_c,
-    get_n_custom_commits_c, get_custom_commit_map_ids_c, get_map_totaln_custom_commits_c
+    get_n_custom_commits_c, get_custom_commit_map_ids_c, get_map_totaln_custom_commits_c,
 };
 
 use crate::SetupCtx;
@@ -27,7 +27,6 @@ impl From<&StepsParams> for *mut c_void {
         params as *const StepsParams as *mut c_void
     }
 }
-
 
 #[derive(Default)]
 pub struct CustomCommitsInfo<F> {
@@ -113,7 +112,6 @@ impl<F: Field> AirInstance<F> {
     }
 
     pub fn set_custom_commit_cached_file(&mut self, setup_ctx: &SetupCtx<F>, commit_id: u64, cached_file: PathBuf) {
-
         let ps = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
         let buffer_size = get_map_totaln_custom_commits_c(ps.p_setup.p_stark_info, commit_id);
@@ -122,7 +120,7 @@ impl<F: Field> AirInstance<F> {
         self.custom_commits[commit_id as usize] = CustomCommitsInfo::new(buffer, cached_file);
 
         let ids = get_custom_commit_map_ids_c(ps.p_setup.p_stark_info, commit_id, 0);
-        for idx in ids { 
+        for idx in ids {
             self.set_custom_commit_calculated(commit_id as usize, idx as usize);
         }
     }
@@ -133,7 +131,7 @@ impl<F: Field> AirInstance<F> {
         let ps = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
         let ids = get_custom_commit_map_ids_c(ps.p_setup.p_stark_info, commit_id, 0);
-        for idx in ids { 
+        for idx in ids {
             self.set_custom_commit_calculated(commit_id as usize, idx as usize);
         }
     }
