@@ -3,7 +3,7 @@
 
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
-#include "poseidon_goldilocks.hpp"
+#include "poseidon2_goldilocks.hpp"
 #include "zklog.hpp"
 
 #define TRANSCRIPT_STATE_SIZE 4
