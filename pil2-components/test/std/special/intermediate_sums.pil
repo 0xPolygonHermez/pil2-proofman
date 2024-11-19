@@ -1,39 +1,40 @@
 require "std_tools.pil";
 
 /*
-
-Table of generated numbers, which assume a maximum expression degree of 3:
-
- #BusCalls | SumExp | #Cols1 |   #Cols2      | #Cols3 |  Total | #Constraints |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    1      |  Dummy |   3    | 4 (3 im)/12   |   2/6  |  12/24 |      4       |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    1      |  Std   |   3    | 3 (0 im)/9    |   1/3  |  8/16  |      4       |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    2      |  Dummy |   6    | 4 (3 im)/12   |   2/6  |  12/24 |      4       |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    2      |  Std   |   6    | 3 (0 im)/9    |   2/6  |  11/21 |      3       |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    4      |  Dummy |   12   | 13 (12 im)/39 |   2/6  |  27/57 |      13      |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    4      |  Std   |   12   | 5 (0 im)/15   |   2/6  |  19/33 |      5       |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    6      |  Dummy |   18   | 31 (30 im)/93 |   2/6  | 51/117 |      31      |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    6      |  Std   |   18   | 7 (0 im)/21   |   2/6  |  27/45 |      7       |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    8      |  Dummy |   24   | 57 (56 im)/171|   2/6  | 83/201 |      57      |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-    8      |  Std   |   24   | 9 (0 im)/27   |   2/6  |  35/57 |      9       |
-───────────┼────────┼────────┼───────────────┼────────┼────────┼──────────────┼
-
 Constraint to optimize:
                                NUMi
             GL === GR + ∑ᵢ ----------
                              DENi + ɣ
     · GR is an expression of degree 2 to be as close as possible to the actual expression.
     · ɣ is a challenge added to make the denominator an extension-field expression.
+
+Table of generated numbers, which assume a blowup factor of 2:
+
+| M  | degNum | degDen |  Type  | maxConstDeg | #Cols1 | #Cols2 | #ColsQ |  Total | #Const | #Evals |
+┼────┼────────|────────|────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        |  Dummy |      2      |   2    |   6    |   3    |   11   |   2    |   7    |
+|  1 |   1    |   1    |────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        | Custom |      2      |   2    |   6    |   3    |   11   |   2    |   7    |
+┼────┼────────|────────|────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        |  Dummy |      2      |   4    |   9    |   3    |   16   |   3    |   10   |
+|  2 |   1    |   1    |────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        | Custom |      2      |   4    |   9    |   3    |   16   |   3    |   10   |
+┼────┼────────|────────|────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        |  Dummy |      3      |   8    |   21   |   6    |   35   |   7    |   19   |
+|  4 |   1    |   1    |────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        | Custom |      3      |   8    |   9    |   6    |   23   |   3    |   15   |
+┼────┼────────|────────|────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        |  Dummy |      3      |   12   |   48   |   6    |   66   |   16   |   32   |
+|  6 |   1    |   1    |────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        | Custom |      3      |   12   |   12   |   6    |   30   |   4    |   20   |
+┼────┼────────|────────|────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        |  Dummy |      3      |   16   |   87   |   6    |   109  |   29   |   49   |
+|  8 |   1    |   1    |────────┼─────────────┼────────┼────────┼────────┼────────┼────────┼────────┼
+|    |        |        | Custom |      3      |   16   |   15   |   6    |   37   |   5    |   25   |
+┼────┼────────|────────|────────┼─────────────┼────────┼--------┼--------┼--------┼--------┼--------┼
 */
+
+const int blowupFactor = 2; // Ratio between the size of the evaluation domain and the trace evaluation domain
 
 airtemplate ImDummy(const int N = 2**8, const int degNum = 1, const int degDen = 1, const int M = 6) {
     col witness stage(2) GL;
@@ -85,8 +86,7 @@ airtemplate ImDummy(const int N = 2**8, const int degNum = 1, const int degDen =
     (GL - GR) * LHS === RHS;
 }
 
-
-airtemplate ImStd(const int N = 2**8, const int degNum = 1, const int degDen = 1, const int M = 6, const int clusterSize = 2) {
+airtemplate ImCustom(const int N = 2**8, const int degNum = 1, const int degDen = 1, const int M = 6) {
     col witness stage(2) GL;
     col fixed L1 = [1,0...];
     expr GR = 'GL * L1;
@@ -138,7 +138,7 @@ airtemplate ImStd(const int N = 2**8, const int degNum = 1, const int degDen = 1
     if (low_degree_len > 0) {
         // Group terms in clusters so that the degree of the constraint
         // is lower than the maximum allowed
-        const int nIm = low_degree_len/clusterSize;
+        const int nIm = low_degree_len/blowupFactor;
 
         col witness stage(2) im[nIm];
 
@@ -150,13 +150,13 @@ airtemplate ImStd(const int N = 2**8, const int degNum = 1, const int degDen = 1
             */
             expr LHS = 1;
             expr RHS = 0;
-            for (int j = 0; j < clusterSize; j++) {
-                LHS *= (DEN[low_degree_term[clusterSize * i + j]] + std_gamma);
+            for (int j = 0; j < blowupFactor; j++) {
+                LHS *= (DEN[low_degree_term[blowupFactor * i + j]] + std_gamma);
 
-                expr _partial = NUM[low_degree_term[clusterSize * i + j]];
-                for (int k = 0; k < clusterSize; k++) {
+                expr _partial = NUM[low_degree_term[blowupFactor * i + j]];
+                for (int k = 0; k < blowupFactor; k++) {
                     if (k == j) continue;
-                    _partial *= (DEN[low_degree_term[clusterSize * i + k]] + std_gamma);
+                    _partial *= (DEN[low_degree_term[blowupFactor * i + k]] + std_gamma);
                 }
                 RHS += _partial;
             }
@@ -166,7 +166,7 @@ airtemplate ImStd(const int N = 2**8, const int degNum = 1, const int degDen = 1
             sumIms += im[i];
         }
 
-        const int nRemTerms = low_degree_len % clusterSize;
+        const int nRemTerms = low_degree_len % blowupFactor;
         if (nRemTerms != 0) {
             // If there are remaining terms, add an extra cluster
             col witness stage(2) im_extra;
@@ -174,12 +174,12 @@ airtemplate ImStd(const int N = 2**8, const int degNum = 1, const int degDen = 1
             expr LHS = 1;
             expr RHS = 0;
             for (int j = 0; j < nRemTerms; j++) {
-                LHS *= (DEN[low_degree_term[clusterSize * nIm + j]] + std_gamma);
+                LHS *= (DEN[low_degree_term[blowupFactor * nIm + j]] + std_gamma);
 
-                expr _partial = NUM[low_degree_term[clusterSize * nIm + j]];
+                expr _partial = NUM[low_degree_term[blowupFactor * nIm + j]];
                 for (int k = 0; k < nRemTerms; k++) {
                     if (k == j) continue;
-                    _partial *= (DEN[low_degree_term[clusterSize * nIm + k]] + std_gamma);
+                    _partial *= (DEN[low_degree_term[blowupFactor * nIm + k]] + std_gamma);
                 }
                 RHS += _partial;
             }
@@ -212,17 +212,17 @@ airgroup Intermediates {
     init_challenges();
 
     ImDummy(degNum: 1, degDen: 1, M: 1) alias ImDummy_1;
-    ImStd(degNum: 1, degDen: 1, M: 1) alias ImStd_1;
+    ImCustom(degNum: 1, degDen: 1, M: 1) alias ImCustom_1;
 
     ImDummy(degNum: 1, degDen: 1, M: 2) alias ImDummy_2;
-    ImStd(degNum: 1, degDen: 1, M: 2) alias ImStd_2;
+    ImCustom(degNum: 1, degDen: 1, M: 2) alias ImCustom_2;
 
     ImDummy(degNum: 1, degDen: 1, M: 4) alias ImDummy_4;
-    ImStd(degNum: 1, degDen: 1, M: 4) alias ImStd_4;
+    ImCustom(degNum: 1, degDen: 1, M: 4) alias ImCustom_4;
 
     ImDummy(degNum: 1, degDen: 1, M: 6) alias ImDummy_6;
-    ImStd(degNum: 1, degDen: 1, M: 6) alias ImStd_6;
+    ImCustom(degNum: 1, degDen: 1, M: 6) alias ImCustom_6;
 
     ImDummy(degNum: 1, degDen: 1, M: 8) alias ImDummy_8;
-    ImStd(degNum: 1, degDen: 1, M: 8) alias ImStd_8;
+    ImCustom(degNum: 1, degDen: 1, M: 8) alias ImCustom_8;
 }
