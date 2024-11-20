@@ -71,6 +71,10 @@ impl HintFieldOptions {
         Self { inverse: true, ..Default::default() }
     }
 
+    pub fn inverse_and_print_expression() -> Self {
+        Self { inverse: true, print_expression: true, ..Default::default() }
+    }
+
     pub fn print_expression() -> Self {
         Self { print_expression: true, ..Default::default() }
     }

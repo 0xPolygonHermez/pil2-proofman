@@ -235,9 +235,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                             *hint as usize,
                             "reference",
                             "numerator",
-                            HintFieldOptions::default(),
+                            HintFieldOptions::print_expression(),
                             "denominator",
-                            HintFieldOptions::inverse(),
+                            HintFieldOptions::inverse_and_print_expression(),
                         );
 
                         air_instance.set_commit_calculated(id as usize);
