@@ -8,12 +8,12 @@
 
 struct Params {
     ParserParams parserParams;
+    uint64_t dim;
     uint64_t stage;
     uint64_t stagePos;
-    uint64_t rowOffsetIndex;
     uint64_t polsMapId;
+    uint64_t rowOffsetIndex;
     bool inverse = false;
-    uint64_t dim;
     opType op;
     uint64_t value;
     
@@ -22,12 +22,7 @@ struct Params {
         op = opType::tmp;
     }
 
-    Params(PolMap& polMap, uint64_t rowOffsetIndex, bool inverse_ = false, bool committed = true) : inverse(inverse_) {
-        dim = polMap.dim;
-        stage = polMap.stage;
-        stagePos = polMap.stagePos;
-        polsMapId = polMap.polsMapId;
-        rowOffsetIndex = rowOffsetIndex;
+    Params(PolMap& polMap, uint64_t rowOffsetIndex_, bool inverse_ = false, bool committed = true) : dim(polMap.dim), stage(polMap.stage), stagePos(polMap.stagePos), polsMapId(polMap.polsMapId), rowOffsetIndex(rowOffsetIndex_), inverse(inverse_) {
         op = committed ? opType::cm : opType::const_;
     }
 
