@@ -12,7 +12,7 @@ use proofman_common::{ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 use rayon::Scope;
 
-use crate::{Decider, Range, SpecifiedRanges, StdMode, ModeName, U16Air, U8Air};
+use crate::{Decider, Range, SpecifiedRanges, StdMode, ModeName, U16Air, U8Air, U8AirExtended};
 
 const BYTE: u8 = 255;
 const TWOBYTES: u16 = 65535;
@@ -20,6 +20,7 @@ const TWOBYTES: u16 = 65535;
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 pub enum RangeCheckAir {
     U8Air,
+    U8AirExtended,
     U16Air,
     SpecifiedRanges,
 }
@@ -27,7 +28,6 @@ pub enum RangeCheckAir {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum StdRangeCheckType {
     Valid(RangeCheckAir),
-    U8AirDouble,
     U16AirDouble,
 }
 
@@ -42,6 +42,7 @@ pub struct StdRangeCheck<F: PrimeField> {
     mode: StdMode,
     ranges: Mutex<Vec<StdRangeItem<F>>>,
     u8air: Option<Arc<U8Air<F>>>,
+    u8air_extended: Option<Arc<U8AirExtended<F>>>,
     u16air: Option<Arc<U16Air<F>>>,
     specified_ranges: Option<Arc<SpecifiedRanges<F>>>,
 }
@@ -77,15 +78,18 @@ impl<F: PrimeField> StdRangeCheck<F> {
 
         // Scan global hints to know which airs are associated with the range check
         let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
+        let u8air_extended_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8airext");
         let u16air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
         let specified_ranges_hint = get_hint_ids_by_name(sctx.get_global_bin(), "specified_ranges");
 
         let u8air = if !u8air_hint.is_empty() { Some(U8Air::new(wcm.clone())) } else { None };
+        let u8air_extended = if !u8air_extended_hint.is_empty() { Some(U8AirExtended::new(wcm.clone())) } else { None };
         let u16air = if !u16air_hint.is_empty() { Some(U16Air::new(wcm.clone())) } else { None };
         let specified_ranges =
             if !specified_ranges_hint.is_empty() { Some(SpecifiedRanges::new(wcm.clone())) } else { None };
 
-        let std_range_check = Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u16air, specified_ranges });
+        let std_range_check =
+            Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u8air_extended, u16air, specified_ranges });
 
         wcm.register_component(std_range_check.clone(), None, None);
 
@@ -184,7 +188,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
                 Range(min, max, ..) if min == zero && max == twobytes => {
                     StdRangeCheckType::Valid(RangeCheckAir::U16Air)
                 }
-                Range(_, max, ..) if max <= byte => StdRangeCheckType::U8AirDouble,
+                Range(_, max, ..) if max <= byte => StdRangeCheckType::Valid(RangeCheckAir::U8AirExtended),
                 Range(_, max, ..) if max <= twobytes => StdRangeCheckType::U16AirDouble,
                 _ => panic!("Invalid predefined range"),
             }
@@ -239,9 +243,8 @@ impl<F: PrimeField> StdRangeCheck<F> {
             StdRangeCheckType::Valid(RangeCheckAir::U16Air) => {
                 self.u16air.as_ref().unwrap().update_inputs(value, multiplicity);
             }
-            StdRangeCheckType::U8AirDouble => {
-                self.u8air.as_ref().unwrap().update_inputs(value - range.0, multiplicity);
-                self.u8air.as_ref().unwrap().update_inputs(range.1 - value, multiplicity);
+            StdRangeCheckType::Valid(RangeCheckAir::U8AirExtended) => {
+                self.u8air_extended.as_ref().unwrap().update_inputs(value - range.0, range.1 - value, multiplicity);
             }
             StdRangeCheckType::U16AirDouble => {
                 self.u16air.as_ref().unwrap().update_inputs(value - range.0, multiplicity);
@@ -256,6 +259,9 @@ impl<F: PrimeField> StdRangeCheck<F> {
     pub fn drain_inputs(&self, _pctx: Arc<ProofCtx<F>>, _scope: Option<&Scope>) {
         if let Some(u8air) = self.u8air.as_ref() {
             u8air.drain_inputs();
+        }
+        if let Some(u8air_extended) = self.u8air_extended.as_ref() {
+            u8air_extended.drain_inputs();
         }
         if let Some(u16air) = self.u16air.as_ref() {
             u16air.drain_inputs();

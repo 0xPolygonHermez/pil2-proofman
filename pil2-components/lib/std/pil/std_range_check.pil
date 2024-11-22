@@ -5,11 +5,12 @@ require "std_lookup.pil";
 // Moreover, having a fewer ranges makes the preprocessing faster and the prvoing less memory consuming
 
 const int MAX_RANGE_LEN = (PRIME - 1) / 2;
-const int BYTE = 2**8-1;
+const int P2_8 = 2**8;
+const int BYTE = P2_8-1;
 const int TWOBYTES = 2**16-1;
 
-const int OPIDS[2] = [100, 101];
-int last_assigned_opid = OPIDS[length(OPIDS) - 1];
+const int DEFAULT_OPIDS[3] = [100, 101, 102];
+int last_assigned_opid = DEFAULT_OPIDS[length(DEFAULT_OPIDS) - 1];
 
 private function next_available_opid(): int {
     last_assigned_opid++;
@@ -19,9 +20,9 @@ private function next_available_opid(): int {
 private function get_opid(const int min, const int max, const int predefined): int {
     if (predefined && min >= 0) {
         if (max <= BYTE) {
-            return OPIDS[0];
+            return (min > 0 || max < BYTE) ? DEFAULT_OPIDS[2] : DEFAULT_OPIDS[0];
         } else if (max <= TWOBYTES) {
-            return OPIDS[1];
+            return DEFAULT_OPIDS[1];
         }
     }
 
@@ -42,7 +43,27 @@ airtemplate U8Air(const int N = 2**8) {
     @u8air{reference: mul};
 
     col fixed U8 = [0..BYTE];
-    lookup_proves(OPIDS[0], [U8], mul, PIOP_NAME_RANGE_CHECK);
+    lookup_proves(DEFAULT_OPIDS[0], [U8], mul, PIOP_NAME_RANGE_CHECK);
+}
+
+airtemplate U8AirExtended(const int N = 2**16) {
+    // The same as U8Air, but with the cartisian product of U8 with itself to allow for lookups from two to two
+
+    if (N != 2**16) {
+        error(`The number of rows N should be 2**16 to use the predefined range U8xU8, got N=${N} instead`);
+    }
+
+    // save the airgroup id and air id of the table for latter use
+    proof.std.u8ext.airgroup_id = AIRGROUP_ID;
+    proof.std.u8ext.air_id = AIR_ID;
+
+    col witness mul;
+
+    @u8airext{reference: mul};
+
+    col fixed U8_A = [0..BYTE]...;
+    col fixed U8_B = [0:P2_8..BYTE:P2_8];
+    lookup_proves(DEFAULT_OPIDS[2], [U8_A, U8_B], mul, PIOP_NAME_RANGE_CHECK);
 }
 
 airtemplate U16Air(const int N = 2**16) {
@@ -59,7 +80,7 @@ airtemplate U16Air(const int N = 2**16) {
     @u16air{reference: mul};
 
     col fixed U16 = [0..TWOBYTES];
-    lookup_proves(OPIDS[1], [U16], mul, PIOP_NAME_RANGE_CHECK);
+    lookup_proves(DEFAULT_OPIDS[1], [U16], mul, PIOP_NAME_RANGE_CHECK);
 }
 
 airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_count, const int predefineds[], const int mins[], const int maxs[]) {
@@ -116,22 +137,25 @@ function range_check(expr colu, int min, int max, expr sel = 1, int predefined =
         if (min == 0 && (max == BYTE || max == TWOBYTES)) {
             const int is_u8 = max == BYTE ? 1 : 0;
 
+            // TODO: We should decide whether to use the U8 or the U8xU8 table, using the latter by default to optimize the number of lookups
+            // lookup_assumes(opid, [colu1, colu2], sel, PIOP_NAME_RANGE_CHECK);
+
             airgroup.std.rc.u8_used = airgroup.std.rc.u8_used || is_u8;
             airgroup.std.rc.u16_used = airgroup.std.rc.u16_used || 1-is_u8;
             lookup_assumes(opid, [colu], sel, PIOP_NAME_RANGE_CHECK);
         } else {
-            // Here, we need to reuse to some of the default ranges depending
-            // on the values of min and max
             if (max <= BYTE) {
-                // reuse U8
-                airgroup.std.rc.u8_used = 1;
+                // Here, the range is of the form [a,b], with a >= 0 and b <= BYTE, except for the range [0,BYTE]
 
-                // first prove that colu - min is in U8
-                lookup_assumes(opid, [colu - min], sel, PIOP_NAME_RANGE_CHECK);
+                // To avoid two lookups, we use the U8xU8 air
+                airgroup.std.rc.u8ext_used = 1;
 
-                // then prove that max - colu is in U8
-                lookup_assumes(opid, [max - colu], sel, PIOP_NAME_RANGE_CHECK);
+                // colu is in [a,b] iff colu-min is in [0,BYTE] and max-colu is in [0,BYTE]
+                // iff [colu-min,max-colu] is in [0,BYTE]x[0,BYTE]
+                lookup_assumes(opid, [colu - min, max - colu], sel, PIOP_NAME_RANGE_CHECK);
             } else if (max <= TWOBYTES) {
+                // Here, the range is of the form [a,b], with a >= 0 and BYTE < b <= TWOBYTES, except for the range [0,TWOBYTES]
+
                 // reuse U16
                 airgroup.std.rc.u16_used = 1;
 
@@ -291,13 +315,15 @@ private function range_validator(const int min, const int max) {
 
 private function opid_process(const int min, const int max, const int predefined): int {
     container proof.std.rc alias rcproof {
-        // Number of times U8, U16 and specified ranges air are used
+        // Number of times defined range airs are used
         int num_u8_airgroup = 0;
+        int num_u8ext_airgroup = 0;
         int num_u16_airgroup = 0;
         int num_spec_airgroup = 0;
 
-        // Last airgroup id that uses U8, U16 and specified ranges air
+        // Last airgroup id that defined range airs used
         int max_u8_airgroup_id = 0;
+        int max_u8ext_airgroup_id = 0;
         int max_u16_airgroup_id = 0;
         int max_spec_airgroup_id = 0;
 
@@ -315,6 +341,7 @@ private function opid_process(const int min, const int max, const int predefined
     container airgroup.std.rc {
         // To mark if the U8 and U16 airs are used within the airgroup
         int u8_used = 0;
+        int u8ext_used = 0;
         int u16_used = 0;
     }
 
@@ -329,7 +356,7 @@ private function opid_process(const int min, const int max, const int predefined
     const int opid = get_opid(min, max, predefined);
 
     // Exit if the range does not belong to the specified ranges air
-    if (opid <= OPIDS[1]) {
+    if (opid <= DEFAULT_OPIDS[length(DEFAULT_OPIDS) - 1]) {
         return opid;
     }
 
@@ -341,7 +368,7 @@ private function opid_process(const int min, const int max, const int predefined
     rcproof.opids_count++;
 
     // if the opid is not predefined and the range is bigger than the current specified_N, we update it
-    if (opid > OPIDS[1] && max - min > rcproof.specified_N) {
+    if (opid > DEFAULT_OPIDS[length(DEFAULT_OPIDS) - 1] && max - min > rcproof.specified_N) {
         rcproof.specified_N = max - min;
     }
 
@@ -356,6 +383,13 @@ private function define_proves(const int absorb) {
         if (airgroup.std.rc.u8_used) {
             if (max_u8_airgroup_id < AIRGROUP_ID) {
                 max_u8_airgroup_id = AIRGROUP_ID;
+            }
+        }
+
+        // If the U8Ext was used, update the max airgroup id
+        if (airgroup.std.rc.u8ext_used) {
+            if (max_u8ext_airgroup_id < AIRGROUP_ID) {
+                max_u8ext_airgroup_id = AIRGROUP_ID;
             }
         }
 
@@ -387,13 +421,22 @@ private function declarePreRangeAir() {
         num_u8_airgroup++;
     }
 
+    // If the U8Ext was used in the airgroup, update the number of U8Ext airgroups
+    if (airgroup.std.rc.u8ext_used) {
+        num_u8ext_airgroup++;
+    }
+
     // If the U16 was used in the airgroup, update the number of U16 airgroups
     if (airgroup.std.rc.u16_used) {
         num_u16_airgroup++;
     }
 
-    // The U8 and U16 airs are only needed once, so we wait for the last airgroup that uses them
-    if (AIRGROUP_ID != max_u8_airgroup_id && AIRGROUP_ID != max_u16_airgroup_id) {
+    // The U8, U8ext and U16 airs are only needed once, so we wait for the last airgroup that uses them
+    if (
+        AIRGROUP_ID != max_u8_airgroup_id    && 
+        AIRGROUP_ID != max_u8ext_airgroup_id && 
+        AIRGROUP_ID != max_u16_airgroup_id
+    ) {
         return;
     }
 
@@ -411,6 +454,24 @@ private function declarePreRangeAir() {
             // If the U8Air is needed more than once, we instantiate it in its own airgroup
             airgroup U8Air {
                 U8Air();
+            }
+        }
+    }
+
+    if (AIRGROUP_ID == max_u8ext_airgroup_id && num_u8ext_airgroup > 0) {
+        // container used to store the airgroup id and air id of the table
+        container proof.std.u8ext {
+            int airgroup_id = 0;
+            int air_id = 0;
+        }
+
+        if (num_u8ext_airgroup == 1){
+            // If the U8AirExtended is needed only once, we instantiate it in the (single) callable airgroup
+            U8AirExtended();
+        } else {
+            // If the U8AirExtended is needed more than once, we instantiate it in its own airgroup
+            airgroup U8AirExtended {
+                U8AirExtended();
             }
         }
     }
@@ -465,6 +526,10 @@ private function declareRangeAir() {
 private function createPreMetadata() {
     if (proof.std.rc.num_u8_airgroup > 0) {
         @u8air{airgroup_id: proof.std.u8.airgroup_id, air_id: proof.std.u8.air_id};
+    }
+
+    if (proof.std.rc.num_u8ext_airgroup > 0) {
+        @u8airext{airgroup_id: proof.std.u8ext.airgroup_id, air_id: proof.std.u8ext.air_id};
     }
 
     if (proof.std.rc.num_u16_airgroup > 0) {
