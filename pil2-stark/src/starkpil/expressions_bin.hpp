@@ -4,6 +4,8 @@
 #include <string>
 #include <map>
 #include "binfile_utils.hpp"
+#include "binfile_writer.hpp"
+#include "expressions_info.hpp"
 #include "polinomial.hpp"
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_base_field_avx.hpp"
@@ -17,12 +19,15 @@
 #include <immintrin.h>
 #include <cassert>
 
-const int BINARY_EXPRESSIONS_SECTION = 2;
-const int BINARY_CONSTRAINTS_SECTION = 3;
-const int BINARY_HINTS_SECTION = 4;
+const int EXPRESSIONS_SECTION = 1;
+const int CONSTRAINTS_SECTION = 2;
+const int HINTS_SECTION = 3;
+const int N_SECTIONS = 3;
 
-const int GLOBAL_CONSTRAINTS_SECTION = 2;
-const int GLOBAL_HINTS_SECTION = 3;
+const int GLOBAL_CONSTRAINTS_SECTION = 1;
+const int GLOBAL_HINTS_SECTION = 2;
+const int N_GLOBAL_SECTIONS = 2;
+
 
 struct HintFieldValue {
     opType operand;
@@ -102,6 +107,8 @@ struct ParserArgs
 class ExpressionsBin
 {
 public:
+    bool write = false;
+
     std::map<uint64_t, ParserParams> expressionsInfo;
 
     std::vector<ParserParams> constraintsInfoDebug;
@@ -113,35 +120,52 @@ public:
     ParserArgs expressionsBinArgsExpressions;
 
     ~ExpressionsBin() {
-        if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;
-        if (expressionsBinArgsExpressions.args) delete[] expressionsBinArgsExpressions.args;
-        if (expressionsBinArgsExpressions.numbers) delete[] expressionsBinArgsExpressions.numbers;
-        if (expressionsBinArgsExpressions.constPolsIds) delete[] expressionsBinArgsExpressions.constPolsIds;
-        if (expressionsBinArgsExpressions.cmPolsIds) delete[] expressionsBinArgsExpressions.cmPolsIds;
-        if (expressionsBinArgsExpressions.challengesIds) delete[] expressionsBinArgsExpressions.challengesIds;
-        if (expressionsBinArgsExpressions.publicsIds) delete[] expressionsBinArgsExpressions.publicsIds;
-        if (expressionsBinArgsExpressions.airgroupValuesIds) delete[] expressionsBinArgsExpressions.airgroupValuesIds;
-        if (expressionsBinArgsExpressions.airValuesIds) delete[] expressionsBinArgsExpressions.airValuesIds;
-        if (expressionsBinArgsExpressions.customCommitsPolsIds) delete[] expressionsBinArgsExpressions.customCommitsPolsIds;
+        if (!write) {
+            if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;
+            if (expressionsBinArgsExpressions.args) delete[] expressionsBinArgsExpressions.args;
+            if (expressionsBinArgsExpressions.numbers) delete[] expressionsBinArgsExpressions.numbers;
+            if (expressionsBinArgsExpressions.constPolsIds) delete[] expressionsBinArgsExpressions.constPolsIds;
+            if (expressionsBinArgsExpressions.cmPolsIds) delete[] expressionsBinArgsExpressions.cmPolsIds;
+            if (expressionsBinArgsExpressions.challengesIds) delete[] expressionsBinArgsExpressions.challengesIds;
+            if (expressionsBinArgsExpressions.publicsIds) delete[] expressionsBinArgsExpressions.publicsIds;
+            if (expressionsBinArgsExpressions.airgroupValuesIds) delete[] expressionsBinArgsExpressions.airgroupValuesIds;
+            if (expressionsBinArgsExpressions.airValuesIds) delete[] expressionsBinArgsExpressions.airValuesIds;
+            if (expressionsBinArgsExpressions.customCommitsPolsIds) delete[] expressionsBinArgsExpressions.customCommitsPolsIds;
 
-        if (expressionsBinArgsConstraints.ops) delete[] expressionsBinArgsConstraints.ops;
-        if (expressionsBinArgsConstraints.args) delete[] expressionsBinArgsConstraints.args;
-        if (expressionsBinArgsConstraints.numbers) delete[] expressionsBinArgsConstraints.numbers;
-        if (expressionsBinArgsConstraints.constPolsIds) delete[] expressionsBinArgsConstraints.constPolsIds;
-        if (expressionsBinArgsConstraints.cmPolsIds) delete[] expressionsBinArgsConstraints.cmPolsIds;
-        if (expressionsBinArgsConstraints.challengesIds) delete[] expressionsBinArgsConstraints.challengesIds;
-        if (expressionsBinArgsConstraints.publicsIds) delete[] expressionsBinArgsConstraints.publicsIds;
-        if (expressionsBinArgsConstraints.airgroupValuesIds) delete[] expressionsBinArgsConstraints.airgroupValuesIds;
-        if (expressionsBinArgsConstraints.airValuesIds) delete[] expressionsBinArgsConstraints.airValuesIds;
-        if (expressionsBinArgsConstraints.customCommitsPolsIds) delete[] expressionsBinArgsConstraints.customCommitsPolsIds;
+            if (expressionsBinArgsConstraints.ops) delete[] expressionsBinArgsConstraints.ops;
+            if (expressionsBinArgsConstraints.args) delete[] expressionsBinArgsConstraints.args;
+            if (expressionsBinArgsConstraints.numbers) delete[] expressionsBinArgsConstraints.numbers;
+            if (expressionsBinArgsConstraints.constPolsIds) delete[] expressionsBinArgsConstraints.constPolsIds;
+            if (expressionsBinArgsConstraints.cmPolsIds) delete[] expressionsBinArgsConstraints.cmPolsIds;
+            if (expressionsBinArgsConstraints.challengesIds) delete[] expressionsBinArgsConstraints.challengesIds;
+            if (expressionsBinArgsConstraints.publicsIds) delete[] expressionsBinArgsConstraints.publicsIds;
+            if (expressionsBinArgsConstraints.airgroupValuesIds) delete[] expressionsBinArgsConstraints.airgroupValuesIds;
+            if (expressionsBinArgsConstraints.airValuesIds) delete[] expressionsBinArgsConstraints.airValuesIds;
+            if (expressionsBinArgsConstraints.customCommitsPolsIds) delete[] expressionsBinArgsConstraints.customCommitsPolsIds;
+        }        
     };
 
     /* Constructor */
     ExpressionsBin(string file, bool globalBin = false);
 
-    void loadExpressionsBin(BinFileUtils::BinFile *expressionsBin);
+    ExpressionsBin(string starkInfoFile, string expressionsInfoFile, string expressionsBinFile, bool globalBin = false);
+
+void loadExpressionsBin(BinFileUtils::BinFile *expressionsBin);
 
     void loadGlobalBin(BinFileUtils::BinFile *globalBin);
+
+    void writeGlobalExpressionsBin(string binFile, ExpressionsInfo& expsInfo);
+
+    void writeExpressionsBin(string binFile, ExpressionsInfo& expsInfo);
+
+    void writeExpressionsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> expressionsInfo, std::vector<uint64_t> numbersExps);
+    
+    void writeGlobalConstraintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> constraintsInfo, std::vector<uint64_t> numbersConstraints);
+    void writeGlobalHintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<HintInfo> hintsInfo);
+
+    void writeConstraintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<ExpInfoBin> constraintsInfo, std::vector<uint64_t> numbersConstraints);
+
+    void writeHintsSection(BinFileUtils::BinFileWriter &binFile, int section, std::vector<HintInfo> hintsInfo);
 
     VecU64Result getHintIdsByName(std::string name);
 };

@@ -313,7 +313,66 @@ opType string2opType(const string s)
         return airvalue;
     if(s == "custom") 
         return custom;
+    if(s == "x")
+        return x;
+    if(s == "Zi")
+        return Zi;
+    if(s == "eval")
+        return eval;
+    if(s == "xDivXSubXi") 
+        return xDivXSubXi;
+    if(s == "q") 
+        return q;
+    if(s == "f") 
+        return f;
+    if(s == "proofvalue")
+        return proofvalue;
     zklog.error("string2opType() found invalid string=" + s);
+    exitProcess();
+    exit(-1);
+}
+
+
+string opType2string(const opType op) 
+{
+    if(op == opType::const_) 
+        return "const";
+    if(op == opType::cm)
+        return "cm";
+    if(op == opType::tmp)
+        return "tmp";
+    if(op == opType::public_)
+        return "public";
+    if(op == opType::airgroupvalue)
+        return "airgroupvalue";
+    if(op == opType::challenge)
+        return "challenge";
+    if(op == opType::number)
+        return "number";
+    if(op == opType::string_) 
+        return "string";
+    if(op == opType::airvalue) 
+        return "airvalue";
+    if(op == opType::custom) 
+        return "custom";
+     if(op == opType::x)
+        return "x";
+    if(op == opType::Zi)
+        return "Zi";
+    if(op == opType::eval)
+        return "eval";
+    if(op == opType::xDivXSubXi) 
+        return "xDivXSubXi";
+    if(op == opType::q)
+        return "q";
+    if(op == opType::f)
+        return "f";
+    if(op == opType::eval)
+        return "eval";
+    if(op == opType::proofvalue)
+        return "proofvalue";
+
+    zklog.error("string2opType() found invalid operation");
     exitProcess();
     exit(-1);
 }
