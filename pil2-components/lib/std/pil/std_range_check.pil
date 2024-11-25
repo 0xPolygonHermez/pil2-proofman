@@ -5,9 +5,9 @@ require "std_lookup.pil";
 // Moreover, having a fewer ranges makes the preprocessing faster and the prvoing less memory consuming
 
 const int MAX_RANGE_LEN = (PRIME - 1) / 2;
-const int P2_8 = 2**8;
-const int BYTE = P2_8-1;
-const int TWOBYTES = 2**16-1;
+const int STD_P2_8 = 2**8;
+const int STD_BYTE = STD_P2_8-1;
+const int STD_TWO_BYTES = 2**16-1;
 
 const int DEFAULT_OPIDS[3] = [100, 101, 102];
 int last_assigned_opid = DEFAULT_OPIDS[length(DEFAULT_OPIDS) - 1];
@@ -19,9 +19,9 @@ private function next_available_opid(): int {
 
 private function get_opid(const int min, const int max, const int predefined): int {
     if (predefined && min >= 0) {
-        if (max <= BYTE) {
-            return (min > 0 || max < BYTE) ? DEFAULT_OPIDS[2] : DEFAULT_OPIDS[0];
-        } else if (max <= TWOBYTES) {
+        if (max <= STD_BYTE) {
+            return (min > 0 || max < STD_BYTE) ? DEFAULT_OPIDS[2] : DEFAULT_OPIDS[0];
+        } else if (max <= STD_TWO_BYTES) {
             return DEFAULT_OPIDS[1];
         }
     }
@@ -42,7 +42,7 @@ airtemplate U8Air(const int N = 2**8) {
 
     @u8air{reference: mul};
 
-    col fixed U8 = [0..BYTE];
+    col fixed U8 = [0..STD_BYTE];
     lookup_proves(DEFAULT_OPIDS[0], [U8], mul, PIOP_NAME_RANGE_CHECK);
 }
 
@@ -61,8 +61,8 @@ airtemplate U8AirExtended(const int N = 2**16) {
 
     @u8airext{reference: mul};
 
-    col fixed U8_A = [0..BYTE]...;
-    col fixed U8_B = [0:P2_8..BYTE:P2_8];
+    col fixed U8_A = [0..STD_BYTE]...;
+    col fixed U8_B = [0:STD_P2_8..STD_BYTE:STD_P2_8];
     lookup_proves(DEFAULT_OPIDS[2], [U8_A, U8_B], mul, PIOP_NAME_RANGE_CHECK);
 }
 
@@ -79,7 +79,7 @@ airtemplate U16Air(const int N = 2**16) {
 
     @u16air{reference: mul};
 
-    col fixed U16 = [0..TWOBYTES];
+    col fixed U16 = [0..STD_TWO_BYTES];
     lookup_proves(DEFAULT_OPIDS[1], [U16], mul, PIOP_NAME_RANGE_CHECK);
 }
 
@@ -123,38 +123,49 @@ function range_check(expr colu, int min, int max, expr sel = 1, int predefined =
 
     if (min < 0) {
         println(`The provided min=${min} is negative. Falling back to specified range...`);
-    } else if (max > TWOBYTES) {
-        println(`The provided max=${max} is greater than the maximum predefined ${TWOBYTES}. Falling back to specified range...`);
+    } else if (max > STD_TWO_BYTES) {
+        println(`The provided max=${max} is greater than the maximum predefined ${STD_TWO_BYTES}. Falling back to specified range...`);
     }
 
     const int opid = opid_process(min, max, predefined);
 
     // Check if the range can be absorbed into the predefined ranges
-    const int absorb = predefined && min >= 0 && max <= TWOBYTES;
+    const int absorb = predefined && min >= 0 && max <= STD_TWO_BYTES;
 
     // Define the assume
     if (absorb) {
-        if (min == 0 && (max == BYTE || max == TWOBYTES)) {
-            const int is_u8 = max == BYTE ? 1 : 0;
+        if (min == 0) {
+            if (max == STD_BYTE) {
+                // Here, we should decide whether to use the U8 or the U8xU8 table, using the latter by default to optimize the number of lookups
+                container air.std.rc.u8ext alias rc_u8ext {
+                    int rc_u8ext_ncols = 0;
+                    expr rc_u8ext_cols[100];
+                    expr rc_u8ext_sels[100];
+                }
 
-            // TODO: We should decide whether to use the U8 or the U8xU8 table, using the latter by default to optimize the number of lookups
-            // lookup_assumes(opid, [colu1, colu2], sel, PIOP_NAME_RANGE_CHECK);
+                rc_u8ext.rc_u8ext_cols[rc_u8ext.rc_u8ext_ncols] = colu;
+                rc_u8ext.rc_u8ext_sels[rc_u8ext.rc_u8ext_ncols] = sel;
+                rc_u8ext.rc_u8ext_ncols++;
 
-            airgroup.std.rc.u8_used = airgroup.std.rc.u8_used || is_u8;
-            airgroup.std.rc.u16_used = airgroup.std.rc.u16_used || 1-is_u8;
-            lookup_assumes(opid, [colu], sel, PIOP_NAME_RANGE_CHECK);
+                on final air define_assumes_u8ext();
+                return;
+            } else if (max == STD_TWO_BYTES) {
+                airgroup.std.rc.u16_used = 1;
+
+                lookup_assumes(opid, [colu], sel, PIOP_NAME_RANGE_CHECK);
+            }
         } else {
-            if (max <= BYTE) {
-                // Here, the range is of the form [a,b], with a >= 0 and b <= BYTE, except for the range [0,BYTE]
+            if (max <= STD_BYTE) {
+                // Here, the range is of the form [a,b], with a >= 0 and b <= STD_BYTE, except for the range [0,STD_BYTE]
 
                 // To avoid two lookups, we use the U8xU8 air
                 airgroup.std.rc.u8ext_used = 1;
 
-                // colu is in [a,b] iff colu-min is in [0,BYTE] and max-colu is in [0,BYTE]
-                // iff [colu-min,max-colu] is in [0,BYTE]x[0,BYTE]
+                // colu is in [a,b] iff colu-min is in [0,STD_BYTE] and max-colu is in [0,STD_BYTE]
+                // iff [colu-min,max-colu] is in [0,STD_BYTE]x[0,STD_BYTE]
                 lookup_assumes(opid, [colu - min, max - colu], sel, PIOP_NAME_RANGE_CHECK);
-            } else if (max <= TWOBYTES) {
-                // Here, the range is of the form [a,b], with a >= 0 and BYTE < b <= TWOBYTES, except for the range [0,TWOBYTES]
+            } else if (max <= STD_TWO_BYTES) {
+                // Here, the range is of the form [a,b], with a >= 0 and STD_BYTE < b <= STD_TWO_BYTES, except for the range [0,STD_TWO_BYTES]
 
                 // reuse U16
                 airgroup.std.rc.u16_used = 1;
@@ -375,6 +386,31 @@ private function opid_process(const int min, const int max, const int predefined
     return opid;
 }
 
+private function define_assumes_u8ext() {
+    use air.std.rc.u8ext;
+
+    if (rc_u8ext_ncols == 1) {
+        // If there is only one column, we use the U8 air
+        airgroup.std.rc.u8_used = 1;
+
+        lookup_assumes(DEFAULT_OPIDS[0], [rc_u8ext_cols[0]], rc_u8ext_sels[0], PIOP_NAME_RANGE_CHECK);
+    } else if (rc_u8ext_ncols > 1) {
+        // If there are more than one column, we use the U8xU8 air
+        airgroup.std.rc.u8ext_used = 1;
+
+        for (int i = 0; i < rc_u8ext_ncols; i += 2) {
+            lookup_assumes(DEFAULT_OPIDS[2], [rc_u8ext_cols[i], rc_u8ext_cols[i+1]], rc_u8ext_sels[i]*rc_u8ext_sels[i+1], PIOP_NAME_RANGE_CHECK);
+        }
+
+        const int rem_cols = rc_u8ext_ncols % 2;
+        if (rem_cols == 1) {
+            lookup_assumes(DEFAULT_OPIDS[2], [rc_u8ext_cols[rc_u8ext_ncols-1], 0], rc_u8ext_sels[rc_u8ext_ncols-1], PIOP_NAME_RANGE_CHECK);
+        }
+    }
+
+    define_proves(absorb: 1);
+}
+
 private function define_proves(const int absorb) {
     use proof.std.rc;
 
@@ -459,7 +495,6 @@ private function declarePreRangeAir() {
     }
 
     if (AIRGROUP_ID == max_u8ext_airgroup_id && num_u8ext_airgroup > 0) {
-        // container used to store the airgroup id and air id of the table
         container proof.std.u8ext {
             int airgroup_id = 0;
             int air_id = 0;
