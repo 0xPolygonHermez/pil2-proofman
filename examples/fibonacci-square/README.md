@@ -9,7 +9,7 @@ This guide provides step-by-step instructions for setting up the necessary repos
 Next, clone the `pil2-compiler` repository and install its dependencies:
 
 ```bash
-git clone https://github.com/0xPolygonHermez/pil2-compiler.git
+git clone -b feature/custom-cols https://github.com/0xPolygonHermez/pil2-compiler.git
 cd pil2-compiler
 npm install
 cd ..
@@ -20,12 +20,8 @@ cd ..
 Clone the `pil2-proofman-js` repository, switch to the `develop` branch, and install the dependencies:
 
 ```bash
-git clone https://github.com/0xPolygonHermez/pil2-proofman-js
+git clone -b migrate_setup https://github.com/0xPolygonHermez/pil2-proofman-js
 cd pil2-proofman-js
-git checkout develop
-
-# TODO: Verify if the Stark Recurser raises any issues during this process
-
 npm install
 cd ..
 ```
@@ -35,7 +31,7 @@ sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohm
 
 ### Compile the PIl2 Stark C++ Library (run only once):
 ```bash
-(cd ../pil2-proofman/pil2-stark && git submodule init && git submodule update && make clean && make -j starks_lib && make -j bctree)
+(cd ../pil2-proofman/pil2-stark && git submodule init && git submodule update && make clean && make -j starks_lib && make -j bctree && make -j binfile)
 ```
 
 ### 1.5 Install `pil2-proofman`
@@ -43,7 +39,7 @@ sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohm
 Finally, clone the `pil2-proofman` repository:
 
 ```bash
-git clone https://github.com/0xPolygonHermez/pil2-proofman.git
+git clone -b migrate_setup https://github.com/0xPolygonHermez/pil2-proofman.git
 cd pil2-proofman
 ```
 
@@ -69,7 +65,13 @@ After compiling the PIL files, generate the setup:
 ```bash
 node ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build
+     -b ./examples/fibonacci-square/build -t ./pil2-stark/build/bctree -f ./pil2-stark/build/binfile 
+```
+
+```bash
+node ../pil2-proofman-js/src/main_setup.js \
+     -a ./examples/fibonacci-square/pil/build.pilout \
+     -b ./examples/fibonacci-square/build -t ./pil2-stark/build/bctree -f ./pil2-stark/build/binfile -r
 ```
 
 ### 2.3 Generate PIL Helpers
