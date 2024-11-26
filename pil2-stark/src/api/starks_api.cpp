@@ -8,6 +8,7 @@
 #include "logger.hpp"
 #include <filesystem>
 #include "setup_ctx.hpp"
+#include "exec_file.hpp"
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
@@ -663,6 +664,10 @@ void zkin_proof_free(void *pZkinProof) {
 
 void serialized_proof_free(char *zkinCStr) {
     delete[] zkinCStr;
+}
+
+void get_committed_pols(void *pWitness, char* execFile, void *pAddress, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t offsetCm1, uint64_t nCommitedPols) {
+    getCommitedPols((Goldilocks::Element *)pWitness, string(execFile), (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, offsetCm1, nCommitedPols);
 }
 
 void setLogLevel(uint64_t level) {
