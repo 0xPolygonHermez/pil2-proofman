@@ -50,6 +50,9 @@ public:
     bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> &v);
 
     void merkelize();
+    Goldilocks::Element* get_nodes_ptr() {
+        return nodes;
+    }
 
     void writeFile(std::string file);
 };

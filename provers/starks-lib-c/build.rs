@@ -7,11 +7,22 @@ fn main() {
     }
     // Check if the "NO_LIB_LINK" feature is enabled
     if env::var("CARGO_FEATURE_NO_LIB_LINK").is_err() {
-        let library_short_name = "starks";
-        let library_folder: String = "../../pil2-stark/lib".to_string();
+
+        let library_short_name = "starksgpu";
+        let library_folder: String = "../../pil2-stark/lib-gpu".to_string();
         let library_path = format!("{}/lib{}.a", library_folder, library_short_name);
 
         println!("Library folder: {}  and library path: {}", library_folder, library_path);
+        println!("cargo:rustc-link-search=native={}", library_folder);
+        println!("cargo:rustc-link-lib=static={}", library_short_name);
+
+        // Add the CUDA library path
+        let cuda_path = "/usr/local/cuda/lib64"; // Adjust this path if necessary
+        println!("cargo:rustc-link-search=native={}", cuda_path);
+        println!("cargo:rustc-link-lib=dylib=cudart"); // Link the CUDA runtime library
+
+        // Specify the CUDA architecture
+        println!("cargo:rustc-env=CUDA_ARCH=sm_75"); // Adjust the architecture as needed
 
         // Trigger a rebuild if the library path changes
         let current_dir = env::current_dir().unwrap();

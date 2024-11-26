@@ -69,17 +69,30 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     
     Goldilocks::Element *pBuff = step == 1 ? trace : &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
     Goldilocks::Element *pBuffExtended = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
-
     NTT_Goldilocks ntt(N);
+    treesGL[step - 1]->setSource(pBuffExtended);
+
+#ifdef __USE_CUDA__
+    // Aqui falta definir l'id de la device
+    if (nCols > 0)
+    {
+        ntt.LDE_MerkleTree_GPU(treesGL[step - 1]->get_nodes_ptr(), pBuff, N, NExtended, nCols, pBuffExtended);
+    }
+    else
+    {
+        treesGL[step - 1]->merkelize();
+    }
+#else
     if(pBuffHelper != nullptr) {
         ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
     } else {
         ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols);
     }
     
-    treesGL[step - 1]->setSource(pBuffExtended);
     treesGL[step - 1]->merkelize();
+#endif
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
+
 }
 
 template <typename ElementType>
@@ -106,25 +119,29 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.nStages + 1)];
     Goldilocks::Element *cmQ = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
 
+    Goldilocks::Element *pBuff = &buffer[setupCtx.starkInfo.mapOffsets[make_pair("q", true)]];
+
+    uint64_t qDeg = setupCtx.starkInfo.qDeg;
+    uint64_t qDim = setupCtx.starkInfo.qDim;
+
 
     NTT_Goldilocks nttExtended(NExtended);
 
     if(pBuffHelper != nullptr) {
-        nttExtended.INTT(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], &buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], NExtended, setupCtx.starkInfo.qDim, pBuffHelper);
+        nttExtended.INTT(pBuff, pBuff, NExtended, qDim, pBuffHelper);
     } else {
-        nttExtended.INTT(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], &buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], NExtended, setupCtx.starkInfo.qDim);
+        nttExtended.INTT(pBuff, pBuff, NExtended, qDim);
     }
-
-    for (uint64_t p = 0; p < setupCtx.starkInfo.qDeg; p++)
+    for (uint64_t p = 0; p < qDeg; p++)
     {   
         #pragma omp parallel for
         for(uint64_t i = 0; i < N; i++)
         { 
-            Goldilocks3::mul((Goldilocks3::Element &)cmQ[(i * setupCtx.starkInfo.qDeg + p) * FIELD_EXTENSION], (Goldilocks3::Element &)buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)] + (p * N + i) * FIELD_EXTENSION], setupCtx.proverHelpers.S[p]);
+            Goldilocks3::mul((Goldilocks3::Element &)cmQ[(i * qDeg + p) * FIELD_EXTENSION], (Goldilocks3::Element &)buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)] + (p * N + i) * FIELD_EXTENSION], setupCtx.proverHelpers.S[p]);
         }
     }
 
-    memset(&cmQ[N * setupCtx.starkInfo.qDeg * setupCtx.starkInfo.qDim], 0, (NExtended - N) * setupCtx.starkInfo.qDeg * setupCtx.starkInfo.qDim * sizeof(Goldilocks::Element));
+    memset(&cmQ[N * qDeg * qDim], 0, (NExtended - N) * qDeg * qDim * sizeof(Goldilocks::Element));
 
     if(pBuffHelper != nullptr) {
         nttExtended.NTT(cmQ, cmQ, NExtended, nCols, pBuffHelper);

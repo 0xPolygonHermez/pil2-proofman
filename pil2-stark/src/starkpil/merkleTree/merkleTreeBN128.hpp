@@ -50,6 +50,10 @@ public:
     void getGroupProof(RawFr::Element *proof, uint64_t idx);
     
     void merkelize();
+    Goldilocks::Element* get_nodes_ptr() {
+        assert(false); //This function cannot be used, is just for compatibility
+        return source;
+    }
 
     void writeFile(std::string constTreeFile);
 };
