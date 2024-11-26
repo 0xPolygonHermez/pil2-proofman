@@ -27,7 +27,9 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
     uint64_t nCustomCommitsPolsIdsExpressions = expressionsBin->readU32LE();
 
     expressionsBinArgsExpressions.ops = new uint8_t[nOpsExpressions];
+    expressionsBinArgsExpressions.nOpsTotal = nOpsExpressions;
     expressionsBinArgsExpressions.args = new uint16_t[nArgsExpressions];
+    expressionsBinArgsExpressions.nArgsTotal = nArgsExpressions;
     expressionsBinArgsExpressions.numbers = new uint64_t[nNumbersExpressions];
     expressionsBinArgsExpressions.constPolsIds = new uint16_t[nConstPolsIdsExpressions];
     expressionsBinArgsExpressions.cmPolsIds = new uint16_t[nCmPolsIdsExpressions];
@@ -144,7 +146,9 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
     uint64_t nCustomCommitsPolsIdsDebug = expressionsBin->readU32LE();
 
     expressionsBinArgsConstraints.ops = new uint8_t[nOpsDebug];
+    expressionsBinArgsConstraints.nOpsTotal = nOpsDebug;
     expressionsBinArgsConstraints.args = new uint16_t[nArgsDebug];
+    expressionsBinArgsConstraints.nArgsTotal = nArgsDebug;
     expressionsBinArgsConstraints.numbers = new uint64_t[nNumbersDebug];
     expressionsBinArgsConstraints.constPolsIds = new uint16_t[nConstPolsIdsDebug];
     expressionsBinArgsConstraints.cmPolsIds = new uint16_t[nCmPolsIdsDebug];

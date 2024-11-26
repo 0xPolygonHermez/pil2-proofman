@@ -581,7 +581,17 @@ extern "C" {
     pub fn print_row(pSetupCtx: *mut ::std::os::raw::c_void, buffer: *mut ::std::os::raw::c_void, stage: u64, row: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_S0_b"]
+    #[link_name = "\u{1}_Z16print_expressionPvS_mmm"]
+    pub fn print_expression(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        pol: *mut ::std::os::raw::c_void,
+        dim: u64,
+        first_value: u64,
+        last_value: u64,
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_S0_bS_"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
@@ -595,6 +605,7 @@ extern "C" {
         pPublicInputs: *mut ::std::os::raw::c_void,
         proof_file: *mut ::std::os::raw::c_char,
         vadcop: bool,
+        d_buffers: *mut ::std::os::raw::c_void,
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
@@ -735,4 +746,6 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z19set_omp_num_threadsm"]
     pub fn set_omp_num_threads(num_threads: u64);
+    #[link_name = "\u{1}_Z25gen_device_commit_buffersPv"]
+    pub fn gen_device_commit_buffers(maxSizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 }

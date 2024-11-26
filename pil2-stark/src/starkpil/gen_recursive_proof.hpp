@@ -1,3 +1,6 @@
+#ifndef GEN_RECURSIVE_PROOF_HPP
+#define GEN_RECURSIVE_PROOF_HPP
+
 #include "starks.hpp"
 
 template <typename ElementType>
@@ -247,3 +250,5 @@ TimerStopAndLog(STARK_PROOF);
     
     return (void *) new nlohmann::json(zkin);
 }
+
+#endif

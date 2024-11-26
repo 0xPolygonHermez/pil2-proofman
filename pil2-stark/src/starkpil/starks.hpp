@@ -19,12 +19,14 @@
 #include "expressions_avx512.hpp"
 #include "expressions_pack.hpp"
 
+class gl64_t;
+struct DeviceCommitBuffers;
 
 template <typename ElementType>
 class Starks
 {
 public:
-    SetupCtx& setupCtx;    
+    SetupCtx &setupCtx;
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     using MerkleTreeType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, MerkleTreeGL, MerkleTreeBN128>;
 
@@ -32,11 +34,12 @@ public:
     MerkleTreeType **treesFRI;
 
 public:
-    Starks(SetupCtx& setupCtx_, Goldilocks::Element *pConstPolsExtendedTreeAddress) : setupCtx(setupCtx_)                           
+    Starks(SetupCtx &setupCtx_, Goldilocks::Element *pConstPolsExtendedTreeAddress) : setupCtx(setupCtx_)
     {
         bool allocateNodes = setupCtx.starkInfo.starkStruct.verificationHashType == "GL" ? false : true;
-        treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
-        if (pConstPolsExtendedTreeAddress != nullptr) treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
+        treesGL = new MerkleTreeType *[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
+        if (pConstPolsExtendedTreeAddress != nullptr)
+            treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
         for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
         {
             std::string section = "cm" + to_string(i + 1);
@@ -44,15 +47,15 @@ public:
             treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, 1 << setupCtx.starkInfo.starkStruct.nBitsExt, nCols, false, allocateNodes);
         }
 
-        
-
-        for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
+        for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++)
+        {
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[i].name + "0"];
             treesGL[setupCtx.starkInfo.nStages + 2 + i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, 1 << setupCtx.starkInfo.starkStruct.nBitsExt, nCols, false, allocateNodes);
         }
 
-        treesFRI = new MerkleTreeType*[setupCtx.starkInfo.starkStruct.steps.size() - 1];
-        for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
+        treesFRI = new MerkleTreeType *[setupCtx.starkInfo.starkStruct.steps.size() - 1];
+        for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step)
+        {
             uint64_t nGroups = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
             uint64_t groupSize = (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) / nGroups;
 
@@ -73,33 +76,36 @@ public:
         }
         delete[] treesFRI;
     };
-    
+
     void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper);
     void loadCustomCommit(uint64_t commitId, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, string bufferFile);
-    void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper = nullptr);
+    void extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers);
 
-    void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
-    void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
-    
-    void calculateImPolsExpressions(uint64_t step, StepsParams& params);
-    void calculateQuotientPolynomial(StepsParams& params);
-    void calculateFRIPolynomial(StepsParams& params);
+    void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper = nullptr);
+    void commitStage_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers);
+    void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper = nullptr);
+    void computeQ_inplace(uint64_t step, gl64_t *d_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers);
+
+    void calculateImPolsExpressions(uint64_t step, StepsParams &params);
+    void calculateQuotientPolynomial(StepsParams &params);
+    void calculateFRIPolynomial(StepsParams &params);
 
     void computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv);
     void computeEvals(StepsParams &params, Goldilocks::Element *LEv, FRIProof<ElementType> &proof);
 
     void calculateXDivXSub(Goldilocks::Element *xiChallenge, Goldilocks::Element *xDivXSub);
 
-    void calculateHash(ElementType* hash, Goldilocks::Element* buffer, uint64_t nElements);
+    void calculateHash(ElementType *hash, Goldilocks::Element *buffer, uint64_t nElements);
 
-    void addTranscriptGL(TranscriptType &transcript, Goldilocks::Element* buffer, uint64_t nElements);
-    void addTranscript(TranscriptType &transcript, ElementType* buffer, uint64_t nElements);
-    void getChallenge(TranscriptType &transcript, Goldilocks::Element& challenge);
+    void addTranscriptGL(TranscriptType &transcript, Goldilocks::Element *buffer, uint64_t nElements);
+    void addTranscript(TranscriptType &transcript, ElementType *buffer, uint64_t nElements);
+    void getChallenge(TranscriptType &transcript, Goldilocks::Element &challenge);
 
     // Following function are created to be used by the ffi interface
     void ffi_treesGL_get_root(uint64_t index, ElementType *dst);
 
-    void evmap(StepsParams& params, Goldilocks::Element *LEv);
+    void evmap(StepsParams &params, Goldilocks::Element *LEv);
 };
 
 template class Starks<Goldilocks::Element>;
