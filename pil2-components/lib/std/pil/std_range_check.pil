@@ -398,12 +398,11 @@ private function define_assumes_u8ext() {
         // If there are more than one column, we use the U8xU8 air
         airgroup.std.rc.u8ext_used = 1;
 
-        for (int i = 0; i < rc_u8ext_ncols; i += 2) {
-            lookup_assumes(DEFAULT_OPIDS[2], [rc_u8ext_cols[i], rc_u8ext_cols[i+1]], rc_u8ext_sels[i]*rc_u8ext_sels[i+1], PIOP_NAME_RANGE_CHECK);
+        for (int i = 0; i < rc_u8ext_ncols/2; i++) {
+            lookup_assumes(DEFAULT_OPIDS[2], [rc_u8ext_cols[2*i], rc_u8ext_cols[2*i+1]], rc_u8ext_sels[2*i]*rc_u8ext_sels[2*i+1], PIOP_NAME_RANGE_CHECK);
         }
 
-        const int rem_cols = rc_u8ext_ncols % 2;
-        if (rem_cols == 1) {
+        if (rc_u8ext_ncols % 2 == 1) {
             lookup_assumes(DEFAULT_OPIDS[2], [rc_u8ext_cols[rc_u8ext_ncols-1], 0], rc_u8ext_sels[rc_u8ext_ncols-1], PIOP_NAME_RANGE_CHECK);
         }
     }

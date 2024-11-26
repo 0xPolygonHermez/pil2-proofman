@@ -34,7 +34,10 @@ airtemplate RangeCheckStd(const int N = 2**4, const int M = 8) {
     }
 };
 
-airgroup RangeCheck {
+airgroup RangeCheckOld {
     RangeCheckOld();
+}
+
+airgroup RangeCheckStd {
     RangeCheckStd();
 }
