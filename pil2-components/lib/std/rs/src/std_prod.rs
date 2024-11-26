@@ -213,9 +213,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                         self.debug(&pctx, &sctx, air_instance, num_rows, debug_hints_data.clone());
                     }
 
-                    // We know that at most one product hint exists
+                    // We know that at most one gprod hint exists
                     let gprod_hint = if gprod_hints.len() > 1 {
-                        panic!("Multiple product hints found for AIR '{}'", air.name().unwrap_or("unknown"));
+                        panic!("Multiple gprod hints found for AIR '{}'", air.name().unwrap_or("unknown"));
                     } else {
                         gprod_hints[0] as usize
                     };
