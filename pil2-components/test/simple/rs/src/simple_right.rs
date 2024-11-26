@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use num_bigint::BigInt;
+use pil_std_lib::Std;
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
@@ -8,8 +10,8 @@ use rand::{distributions::Standard, prelude::Distribution};
 
 use crate::{SimpleRightTrace, SIMPLE_AIRGROUP_ID, SIMPLE_RIGHT_AIR_IDS};
 
-pub struct SimpleRight<F> {
-    _phantom: std::marker::PhantomData<F>,
+pub struct SimpleRight<F: PrimeField> {
+    std_lib: Arc<Std<F>>,
 }
 
 impl<F: PrimeField + Copy> SimpleRight<F>
@@ -18,10 +20,13 @@ where
 {
     const MY_NAME: &'static str = "SimRight";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let simple_right = Arc::new(Self { _phantom: std::marker::PhantomData });
+    pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
+        let simple_right = Arc::new(Self { std_lib });
 
         wcm.register_component(simple_right.clone(), Some(SIMPLE_AIRGROUP_ID), Some(SIMPLE_RIGHT_AIR_IDS));
+
+        // Register dependency relations
+        simple_right.std_lib.register_predecessor();
 
         simple_right
     }
@@ -79,6 +84,8 @@ where
             // I cannot, programatically, link the permutation trace with its air_id
             let mut trace = SimpleRightTrace::map_buffer(buffer.as_mut_slice(), num_rows, offsets[0] as usize).unwrap();
 
+            let range = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), None);
+
             // Proves
             for i in 0..num_rows {
                 trace[i].a = F::from_canonical_u8(200);
@@ -88,6 +95,10 @@ where
                 trace[i].d = F::from_canonical_usize(num_rows - i - 1);
 
                 trace[i].mul = F::from_canonical_usize(1);
+
+                self.std_lib.range_check(trace[i].b, F::one(), range);
+                self.std_lib.range_check(trace[i].c, F::one(), range);
+                self.std_lib.range_check(trace[i].d, F::one(), range);
             }
         }
     }

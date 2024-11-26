@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use num_bigint::BigInt;
+use pil_std_lib::Std;
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
@@ -8,8 +10,8 @@ use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom};
 
 use crate::{SimpleLeftTrace, SIMPLE_AIRGROUP_ID, SIMPLE_LEFT_AIR_IDS};
 
-pub struct SimpleLeft<F> {
-    _phantom: std::marker::PhantomData<F>,
+pub struct SimpleLeft<F: PrimeField> {
+    std_lib: Arc<Std<F>>,
 }
 
 impl<F: PrimeField + Copy> SimpleLeft<F>
@@ -18,10 +20,13 @@ where
 {
     const MY_NAME: &'static str = "SimLeft ";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let simple_left = Arc::new(Self { _phantom: std::marker::PhantomData });
+    pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
+        let simple_left = Arc::new(Self { std_lib });
 
         wcm.register_component(simple_left.clone(), Some(SIMPLE_AIRGROUP_ID), Some(SIMPLE_LEFT_AIR_IDS));
+
+        // Register dependency relations
+        simple_left.std_lib.register_predecessor();
 
         simple_left
     }
@@ -82,6 +87,8 @@ where
             // I cannot, programatically, link the permutation trace with its air_id
             let mut trace = SimpleLeftTrace::map_buffer(buffer.as_mut_slice(), num_rows, offsets[0] as usize).unwrap();
 
+            let range = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), None);
+
             // Assumes
             for i in 0..num_rows {
                 trace[i].a = F::from_canonical_usize(i);
@@ -92,6 +99,9 @@ where
 
                 trace[i].g = F::from_canonical_usize(i);
                 trace[i].h = F::from_canonical_usize(num_rows - i - 1);
+
+                self.std_lib.range_check(trace[i].g, F::one(), range);
+                self.std_lib.range_check(trace[i].h, F::one(), range);
             }
 
             let mut indices: Vec<usize> = (0..num_rows).collect();

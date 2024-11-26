@@ -14,9 +14,6 @@ use rayon::Scope;
 
 use crate::{Decider, Range, SpecifiedRanges, StdMode, ModeName, U16Air, U8Air, U8AirExtended};
 
-const BYTE: u8 = 255;
-const TWOBYTES: u16 = 65535;
-
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 pub enum RangeCheckAir {
     U8Air,
@@ -87,7 +84,6 @@ impl<F: PrimeField> StdRangeCheck<F> {
         let u16air = if !u16air_hint.is_empty() { Some(U16Air::new(wcm.clone())) } else { None };
         let specified_ranges =
             if !specified_ranges_hint.is_empty() { Some(SpecifiedRanges::new(wcm.clone())) } else { None };
-
         let std_range_check =
             Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u8air_extended, u16air, specified_ranges });
 
@@ -125,6 +121,14 @@ impl<F: PrimeField> StdRangeCheck<F> {
             "max_neg",
             HintFieldOptions::default(),
         );
+        let r#type = get_hint_field_constant::<F>(
+            &sctx,
+            airgroup_id,
+            air_id,
+            hint as usize,
+            "type",
+            HintFieldOptions::default(),
+        );
 
         let HintFieldValue::Field(predefined) = predefined else {
             log::error!("Predefined hint must be a field element");
@@ -144,6 +148,10 @@ impl<F: PrimeField> StdRangeCheck<F> {
         };
         let HintFieldValue::Field(max_neg) = max_neg else {
             log::error!("Max_neg hint must be a field element");
+            panic!();
+        };
+        let HintFieldValue::String(r#type) = r#type else {
+            log::error!("Type hint must be a field element");
             panic!();
         };
 
@@ -177,23 +185,13 @@ impl<F: PrimeField> StdRangeCheck<F> {
             return;
         }
 
-        // Otherwise, register the range
-        let zero = F::zero();
-        let byte = F::from_canonical_u8(BYTE);
-        let twobytes = F::from_canonical_u16(TWOBYTES);
-        // Associate to each unique range a range check type
-        let r#type = if predefined && range.contained_in(&(0.into(), TWOBYTES.into())) {
-            match range {
-                Range(min, max, ..) if min == zero && max == byte => StdRangeCheckType::Valid(RangeCheckAir::U8Air),
-                Range(min, max, ..) if min == zero && max == twobytes => {
-                    StdRangeCheckType::Valid(RangeCheckAir::U16Air)
-                }
-                Range(_, max, ..) if max <= byte => StdRangeCheckType::Valid(RangeCheckAir::U8AirExtended),
-                Range(_, max, ..) if max <= twobytes => StdRangeCheckType::U16AirDouble,
-                _ => panic!("Invalid predefined range"),
-            }
-        } else {
-            StdRangeCheckType::Valid(RangeCheckAir::SpecifiedRanges)
+        let r#type = match r#type.as_str() {
+            "U8" => StdRangeCheckType::Valid(RangeCheckAir::U8Air),
+            "U8Ext" => StdRangeCheckType::Valid(RangeCheckAir::U8AirExtended),
+            "U16" => StdRangeCheckType::Valid(RangeCheckAir::U16Air),
+            "U16Double" => StdRangeCheckType::U16AirDouble,
+            "Specified" => StdRangeCheckType::Valid(RangeCheckAir::SpecifiedRanges),
+            _ => panic!("Invalid range check type"),
         };
 
         let range = StdRangeItem { rc_type: r#type, range };

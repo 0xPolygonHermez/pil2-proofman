@@ -119,8 +119,6 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
 function range_check(expr colu, int min, int max, expr sel = 1, int predefined = 1) {
     range_validator(min, max);
 
-    @range_def{predefined: predefined, min: min, max: max, min_neg: min < 0, max_neg: max < 0};
-
     if (min < 0) {
         println(`The provided min=${min} is negative. Falling back to specified range...`);
     } else if (max > STD_TWO_BYTES) {
@@ -150,12 +148,16 @@ function range_check(expr colu, int min, int max, expr sel = 1, int predefined =
                 on final air define_assumes_u8ext();
                 return;
             } else if (max == STD_TWO_BYTES) {
+                @range_def{predefined: predefined, min: min, max: max, min_neg: min < 0, max_neg: max < 0, type: "U16"};
+
                 airgroup.std.rc.u16_used = 1;
 
                 lookup_assumes(opid, [colu], sel, PIOP_NAME_RANGE_CHECK);
             }
         } else {
             if (max <= STD_BYTE) {
+                @range_def{predefined: predefined, min: min, max: max, min_neg: min < 0, max_neg: max < 0, type: "U8Ext"};
+
                 // Here, the range is of the form [a,b], with a >= 0 and b <= STD_BYTE, except for the range [0,STD_BYTE]
 
                 // To avoid two lookups, we use the U8xU8 air
@@ -165,6 +167,8 @@ function range_check(expr colu, int min, int max, expr sel = 1, int predefined =
                 // iff [colu-min,max-colu] is in [0,STD_BYTE]x[0,STD_BYTE]
                 lookup_assumes(opid, [colu - min, max - colu], sel, PIOP_NAME_RANGE_CHECK);
             } else if (max <= STD_TWO_BYTES) {
+                @range_def{predefined: predefined, min: min, max: max, min_neg: min < 0, max_neg: max < 0, type: "U16Double"};
+
                 // Here, the range is of the form [a,b], with a >= 0 and STD_BYTE < b <= STD_TWO_BYTES, except for the range [0,STD_TWO_BYTES]
 
                 // reuse U16
@@ -178,6 +182,8 @@ function range_check(expr colu, int min, int max, expr sel = 1, int predefined =
             }
         }
     } else {
+        @range_def{predefined: predefined, min: min, max: max, min_neg: min < 0, max_neg: max < 0, type: "Specified"};
+
         lookup_assumes(opid, [colu], sel, PIOP_NAME_RANGE_CHECK);
     }
 
@@ -218,8 +224,8 @@ function multi_range_check(expr colu, int min1, int max1, int min2, int max2, ex
     range_validator(min1, max1);
     range_validator(min2, max2);
 
-    @range_def{predefined: predefined, min: min1, max: max1, min_neg: min1 < 0 , max_neg: max1 < 0};
-    @range_def{predefined: predefined, min: min2, max: max2, min_neg: min2 < 0 , max_neg: max2 < 0};
+    @range_def{predefined: predefined, min: min1, max: max1, min_neg: min1 < 0 , max_neg: max1 < 0, type: "Specified"};
+    @range_def{predefined: predefined, min: min2, max: max2, min_neg: min2 < 0 , max_neg: max2 < 0, type: "Specified"};
 
     const int opid1 = opid_process(min1, max1, predefined);
     const int opid2 = opid_process(min2, max2, predefined);
@@ -255,7 +261,7 @@ function range_check_id(const int min, const int max, const int predefined = 0):
 
     range_validator(min, max);
 
-    @range_def{predefined: predefined, min: min, max: max, min_neg: min < 0, max_neg: max < 0};
+    @range_def{predefined: predefined, min: min, max: max, min_neg: min < 0, max_neg: max < 0, type: "Specified"};
 
     container air.std.rcid alias rcid {
         int opids_count_id = 0;
@@ -389,6 +395,8 @@ private function opid_process(const int min, const int max, const int predefined
 private function define_assumes_u8ext() {
     use air.std.rc.u8ext;
 
+    @range_def{predefined: 1, min: 0, max: STD_BYTE, min_neg: 0, max_neg: 0, type: rc_u8ext_ncols == 1 ? "U8" : "U8Ext"};
+
     if (rc_u8ext_ncols == 1) {
         // If there is only one column, we use the U8 air
         airgroup.std.rc.u8_used = 1;
@@ -402,6 +410,7 @@ private function define_assumes_u8ext() {
             lookup_assumes(DEFAULT_OPIDS[2], [rc_u8ext_cols[2*i], rc_u8ext_cols[2*i+1]], rc_u8ext_sels[2*i]*rc_u8ext_sels[2*i+1], PIOP_NAME_RANGE_CHECK);
         }
 
+        // Reuse the U8xU8 air for the last column if the number of columns is odd
         if (rc_u8ext_ncols % 2 == 1) {
             lookup_assumes(DEFAULT_OPIDS[2], [rc_u8ext_cols[rc_u8ext_ncols-1], 0], rc_u8ext_sels[rc_u8ext_ncols-1], PIOP_NAME_RANGE_CHECK);
         }

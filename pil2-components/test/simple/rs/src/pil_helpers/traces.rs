@@ -10,3 +10,9 @@ trace!(SimpleLeftRow, SimpleLeftTrace<F> {
 trace!(SimpleRightRow, SimpleRightTrace<F> {
  a: F, b: F, c: F, d: F, mul: F,
 });
+
+trace!(U8AirExtendedRow, U8AirExtendedTrace<F> {
+ mul: F,
+});
+
+
