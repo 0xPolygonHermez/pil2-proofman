@@ -26,7 +26,9 @@ pub const RANGE_CHECK_MIX_AIRGROUP_ID: usize = 8;
 
 pub const U_8_AIR_AIRGROUP_ID: usize = 9;
 
-pub const SPECIFIED_RANGES_AIRGROUP_ID: usize = 10;
+pub const U_8_AIR_EXTENDED_AIRGROUP_ID: usize = 10;
+
+pub const SPECIFIED_RANGES_AIRGROUP_ID: usize = 11;
 
 //AIR CONSTANTS
 
@@ -51,6 +53,8 @@ pub const RANGE_CHECK_DYNAMIC_2_AIR_IDS: &[usize] = &[0];
 pub const RANGE_CHECK_MIX_AIR_IDS: &[usize] = &[0];
 
 pub const U_8_AIR_AIR_IDS: &[usize] = &[0];
+
+pub const U_8_AIR_EXTENDED_AIR_IDS: &[usize] = &[0];
 
 pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[0];
 
@@ -100,6 +104,10 @@ impl Pilout {
         let air_group = pilout.add_air_group(Some("U8Air"));
 
         air_group.add_air(Some("U8Air"), 256);
+
+        let air_group = pilout.add_air_group(Some("U8AirExtended"));
+
+        air_group.add_air(Some("U8AirExtended"), 65536);
 
         let air_group = pilout.add_air_group(Some("SpecifiedRanges"));
 

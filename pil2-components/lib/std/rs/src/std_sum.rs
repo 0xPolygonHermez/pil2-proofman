@@ -248,9 +248,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                         air_instance.set_commit_calculated(id as usize);
                     }
 
-                    // We know that at most one product hint exists
+                    // We know that at most one gsum hint exists
                     let gsum_hint = if gsum_hints.len() > 1 {
-                        panic!("Multiple product hints found for AIR '{}'", air.name().unwrap_or("unknown"));
+                        panic!("Multiple gsum hints found for AIR '{}'", air.name().unwrap_or("unknown"));
                     } else {
                         gsum_hints[0] as usize
                     };

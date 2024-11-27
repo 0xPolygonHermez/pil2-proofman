@@ -1,0 +1,51 @@
+require "std_range_check.pil";
+require "std_lookup.pil";
+
+airtemplate _U8Air(const int N = 2**8) {
+    if (N != 2**8) {
+        error(`The number of rows N should be 2**8 to use the predefined range U8, got N=${N} instead`);
+    }
+
+    col witness mul;
+
+    col fixed U8 = [0..STD_BYTE];
+    lookup_proves(DEFAULT_OPIDS[0], [U8], mul, PIOP_NAME_RANGE_CHECK);
+}
+
+airtemplate RangeCheckOld(const int N = 2**4, const int M = 8) {
+
+    col witness a[M];
+    col witness sel[M];
+
+    for (int i = 0; i < M; i++) {
+        lookup_assumes(DEFAULT_OPIDS[0], [a[i]], sel[i], PIOP_NAME_RANGE_CHECK);
+    }
+
+    on final airgroup _U8Air();
+};
+
+airtemplate RangeCheckStd(const int N = 2**4, const int M = 8) {
+
+    col witness a[M];
+    col witness sel[M];
+
+    for (int i = 0; i < M; i++) {
+        range_check(a[i], 0, 2**8-1, sel[i]);
+    }
+};
+
+airgroup RangeCheckOld {
+    RangeCheckOld(M:1) alias RCO_1;
+    RangeCheckOld(M:2) alias RCO_2;
+    RangeCheckOld(M:4) alias RCO_4;
+    RangeCheckOld(M:8) alias RCO_8;
+    RangeCheckOld(M:16) alias RCO_16;
+}
+
+airgroup RangeCheckStd {
+    RangeCheckStd(M:1) alias RCS_1;
+    RangeCheckStd(M:2) alias RCS_2;
+    RangeCheckStd(M:4) alias RCS_4;
+    RangeCheckStd(M:8) alias RCS_8;
+    RangeCheckStd(M:16) alias RCS_16;
+}

@@ -38,8 +38,8 @@ where
         let wcm = Arc::new(WitnessManager::new(pctx, ectx, sctx));
 
         let std_lib = Std::new(wcm.clone());
-        let simple_left = SimpleLeft::new(wcm.clone());
-        let simple_right = SimpleRight::new(wcm.clone());
+        let simple_left = SimpleLeft::new(wcm.clone(), std_lib.clone());
+        let simple_right = SimpleRight::new(wcm.clone(), std_lib.clone());
 
         self.wcm = Some(wcm);
         self.std_lib = Some(std_lib);

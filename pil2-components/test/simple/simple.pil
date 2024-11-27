@@ -1,5 +1,6 @@
 require "std_permutation.pil";
 require "std_lookup.pil";
+require "std_range_check.pil";
 
 airtemplate SimpleLeft(const int N = 2**2) {
 
@@ -12,6 +13,9 @@ airtemplate SimpleLeft(const int N = 2**2) {
     permutation_assumes(2, [e, f]);
 
     lookup(3, [g, h], sel: -1);
+
+    range_check(g, 0, 2**8-1);
+    range_check(h, 0, 2**8-1);
 };
 
 airtemplate SimpleRight(const int N = 2**2) {
@@ -22,6 +26,10 @@ airtemplate SimpleRight(const int N = 2**2) {
     permutation(2, [a, b], sel: 1);
 
     lookup_proves(3, [c, d], mul);
+
+    range_check(b, 0, 2**8-1);
+    range_check(c, 0, 2**8-1);
+    range_check(d, 0, 2**8-1);
 };
 
 airgroup Simple {

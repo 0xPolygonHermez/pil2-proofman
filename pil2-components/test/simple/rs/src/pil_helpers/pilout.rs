@@ -14,6 +14,8 @@ pub const SIMPLE_LEFT_AIR_IDS: &[usize] = &[0];
 
 pub const SIMPLE_RIGHT_AIR_IDS: &[usize] = &[1];
 
+pub const U_8_AIR_EXTENDED_AIR_IDS: &[usize] = &[2];
+
 pub struct Pilout;
 
 impl Pilout {
@@ -24,6 +26,7 @@ impl Pilout {
 
         air_group.add_air(Some("SimpleLeft"), 4);
         air_group.add_air(Some("SimpleRight"), 4);
+        air_group.add_air(Some("U8AirExtended"), 65536);
 
         pilout
     }

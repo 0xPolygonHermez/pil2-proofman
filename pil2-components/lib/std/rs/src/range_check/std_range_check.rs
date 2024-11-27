@@ -9,17 +9,15 @@ use p3_field::PrimeField;
 
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{ExecutionCtx, ProofCtx, SetupCtx};
-use proofman_hints::{get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
+use proofman_hints::{get_hint_field, get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 use rayon::Scope;
 
-use crate::{Decider, Range, SpecifiedRanges, StdMode, ModeName, U16Air, U8Air};
-
-const BYTE: u8 = 255;
-const TWOBYTES: u16 = 65535;
+use crate::{Decider, Range, SpecifiedRanges, StdMode, ModeName, U16Air, U8Air, U8AirExtended};
 
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 pub enum RangeCheckAir {
     U8Air,
+    U8AirExtended,
     U16Air,
     SpecifiedRanges,
 }
@@ -27,7 +25,7 @@ pub enum RangeCheckAir {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum StdRangeCheckType {
     Valid(RangeCheckAir),
-    U8AirDouble,
+    U8AirExtDouble,
     U16AirDouble,
 }
 
@@ -42,6 +40,7 @@ pub struct StdRangeCheck<F: PrimeField> {
     mode: StdMode,
     ranges: Mutex<Vec<StdRangeItem<F>>>,
     u8air: Option<Arc<U8Air<F>>>,
+    u8air_extended: Option<Arc<U8AirExtended<F>>>,
     u16air: Option<Arc<U16Air<F>>>,
     specified_ranges: Option<Arc<SpecifiedRanges<F>>>,
 }
@@ -64,6 +63,13 @@ impl<F: PrimeField> Decider<F> for StdRangeCheck<F> {
                     // Register the range
                     self.register_range(sctx.clone(), airgroup_id, air_id, hint);
                 }
+
+                // Obtain info from the u8airext hints
+                let u8airext_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "u8airext_cols");
+                for hint in u8airext_hints {
+                    // Group the expressions in pairs as dictated by the hint
+                    // self.register_range(sctx.clone(), airgroup_id, air_id, hint);
+                }
             });
         });
     }
@@ -77,15 +83,18 @@ impl<F: PrimeField> StdRangeCheck<F> {
 
         // Scan global hints to know which airs are associated with the range check
         let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
+        let u8air_extended_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8airext");
         let u16air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
         let specified_ranges_hint = get_hint_ids_by_name(sctx.get_global_bin(), "specified_ranges");
 
         let u8air = if !u8air_hint.is_empty() { Some(U8Air::new(wcm.clone())) } else { None };
+        let u8air_extended = if !u8air_extended_hint.is_empty() { Some(U8AirExtended::new(wcm.clone())) } else { None };
         let u16air = if !u16air_hint.is_empty() { Some(U16Air::new(wcm.clone())) } else { None };
         let specified_ranges =
             if !specified_ranges_hint.is_empty() { Some(SpecifiedRanges::new(wcm.clone())) } else { None };
 
-        let std_range_check = Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u16air, specified_ranges });
+        let std_range_check =
+            Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u8air_extended, u16air, specified_ranges });
 
         wcm.register_component(std_range_check.clone(), None, None);
 
@@ -121,6 +130,14 @@ impl<F: PrimeField> StdRangeCheck<F> {
             "max_neg",
             HintFieldOptions::default(),
         );
+        let r#type = get_hint_field_constant::<F>(
+            &sctx,
+            airgroup_id,
+            air_id,
+            hint as usize,
+            "type",
+            HintFieldOptions::default(),
+        );
 
         let HintFieldValue::Field(predefined) = predefined else {
             log::error!("Predefined hint must be a field element");
@@ -140,6 +157,10 @@ impl<F: PrimeField> StdRangeCheck<F> {
         };
         let HintFieldValue::Field(max_neg) = max_neg else {
             log::error!("Max_neg hint must be a field element");
+            panic!();
+        };
+        let HintFieldValue::String(r#type) = r#type else {
+            log::error!("Type hint must be a field element");
             panic!();
         };
 
@@ -173,23 +194,14 @@ impl<F: PrimeField> StdRangeCheck<F> {
             return;
         }
 
-        // Otherwise, register the range
-        let zero = F::zero();
-        let byte = F::from_canonical_u8(BYTE);
-        let twobytes = F::from_canonical_u16(TWOBYTES);
-        // Associate to each unique range a range check type
-        let r#type = if predefined && range.contained_in(&(0.into(), TWOBYTES.into())) {
-            match range {
-                Range(min, max, ..) if min == zero && max == byte => StdRangeCheckType::Valid(RangeCheckAir::U8Air),
-                Range(min, max, ..) if min == zero && max == twobytes => {
-                    StdRangeCheckType::Valid(RangeCheckAir::U16Air)
-                }
-                Range(_, max, ..) if max <= byte => StdRangeCheckType::U8AirDouble,
-                Range(_, max, ..) if max <= twobytes => StdRangeCheckType::U16AirDouble,
-                _ => panic!("Invalid predefined range"),
-            }
-        } else {
-            StdRangeCheckType::Valid(RangeCheckAir::SpecifiedRanges)
+        let r#type = match r#type.as_str() {
+            "U8" => StdRangeCheckType::Valid(RangeCheckAir::U8Air),
+            "U8Ext" => StdRangeCheckType::Valid(RangeCheckAir::U8AirExtended),
+            "U8ExtDouble" => StdRangeCheckType::U8AirExtDouble,
+            "U16" => StdRangeCheckType::Valid(RangeCheckAir::U16Air),
+            "U16Double" => StdRangeCheckType::U16AirDouble,
+            "Specified" => StdRangeCheckType::Valid(RangeCheckAir::SpecifiedRanges),
+            _ => panic!("Invalid range check type"),
         };
 
         let range = StdRangeItem { rc_type: r#type, range };
@@ -197,6 +209,18 @@ impl<F: PrimeField> StdRangeCheck<F> {
         // Update ranges
         ranges.push(range);
     }
+
+    // fn group_expr(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, airgroup_id: usize, air_id: usize, hint: u64) {
+    //     let first_column = get_hint_field::<F>(
+    //         &sctx,
+    //         &pctx,
+    //         airgroup_id,
+    //         air_id,
+    //         hint as usize,
+    //         "first_column",
+    //         HintFieldOptions::print_expression(),
+    //     );
+    // }
 
     pub fn get_range(&self, min: BigInt, max: BigInt, predefined: Option<bool>) -> usize {
         // Default predefined value in STD is true
@@ -239,9 +263,12 @@ impl<F: PrimeField> StdRangeCheck<F> {
             StdRangeCheckType::Valid(RangeCheckAir::U16Air) => {
                 self.u16air.as_ref().unwrap().update_inputs(value, multiplicity);
             }
-            StdRangeCheckType::U8AirDouble => {
-                self.u8air.as_ref().unwrap().update_inputs(value - range.0, multiplicity);
-                self.u8air.as_ref().unwrap().update_inputs(range.1 - value, multiplicity);
+            StdRangeCheckType::Valid(RangeCheckAir::U8AirExtended) => {
+                self.u8air_extended.as_ref().unwrap().update_inputs(value, multiplicity);
+            }
+            StdRangeCheckType::U8AirExtDouble => {
+                self.u8air_extended.as_ref().unwrap().update_inputs(value - range.0, multiplicity);
+                self.u8air_extended.as_ref().unwrap().update_inputs(range.1 - value, multiplicity);
             }
             StdRangeCheckType::U16AirDouble => {
                 self.u16air.as_ref().unwrap().update_inputs(value - range.0, multiplicity);
@@ -256,6 +283,9 @@ impl<F: PrimeField> StdRangeCheck<F> {
     pub fn drain_inputs(&self, _pctx: Arc<ProofCtx<F>>, _scope: Option<&Scope>) {
         if let Some(u8air) = self.u8air.as_ref() {
             u8air.drain_inputs();
+        }
+        if let Some(u8air_extended) = self.u8air_extended.as_ref() {
+            u8air_extended.drain_inputs();
         }
         if let Some(u16air) = self.u16air.as_ref() {
             u16air.drain_inputs();

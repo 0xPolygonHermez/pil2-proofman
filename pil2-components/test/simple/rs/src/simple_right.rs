@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use num_bigint::BigInt;
+use pil_std_lib::Std;
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
@@ -8,8 +10,8 @@ use rand::{distributions::Standard, prelude::Distribution};
 
 use crate::{SimpleRightTrace, SIMPLE_AIRGROUP_ID, SIMPLE_RIGHT_AIR_IDS};
 
-pub struct SimpleRight<F> {
-    _phantom: std::marker::PhantomData<F>,
+pub struct SimpleRight<F: PrimeField> {
+    std_lib: Arc<Std<F>>,
 }
 
 impl<F: PrimeField + Copy> SimpleRight<F>
@@ -18,10 +20,13 @@ where
 {
     const MY_NAME: &'static str = "SimRight";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let simple_right = Arc::new(Self { _phantom: std::marker::PhantomData });
+    pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
+        let simple_right = Arc::new(Self { std_lib });
 
         wcm.register_component(simple_right.clone(), Some(SIMPLE_AIRGROUP_ID), Some(SIMPLE_RIGHT_AIR_IDS));
+
+        // Register dependency relations
+        simple_right.std_lib.register_predecessor();
 
         simple_right
     }
@@ -52,33 +57,23 @@ where
         ectx: Arc<ExecutionCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
     ) {
-        let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
-        let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
-
-        let airgroup_id = air_instance.airgroup_id;
-        let air_id = air_instance.air_id;
-        let air = pctx.pilout.get_air(airgroup_id, air_id);
-
-        log::debug!(
-            "{}: ··· Computing witness computation for AIR '{}' at stage {}",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-            stage
-        );
+        log::debug!("{}: ··· Witness computation for AIR '{}' at stage {}", Self::MY_NAME, "SimpleRight", stage);
 
         if stage == 1 {
-            let (_, offsets) = ectx
+            let (buffer_size, offsets) = ectx
                 .buffer_allocator
                 .as_ref()
                 .get_buffer_info(&sctx, SIMPLE_AIRGROUP_ID, SIMPLE_RIGHT_AIR_IDS[0])
                 .unwrap();
 
-            let buffer = &mut air_instance.buffer;
-            let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
+            let mut buffer = vec![F::zero(); buffer_size as usize];
+
+            let num_rows = pctx.pilout.get_air(SIMPLE_AIRGROUP_ID, SIMPLE_RIGHT_AIR_IDS[0]).num_rows();
 
             // I cannot, programatically, link the permutation trace with its air_id
-            let mut trace =
-                SimpleRightTrace::map_buffer(buffer.as_mut_slice(), num_rows, offsets[0] as usize).unwrap();
+            let mut trace = SimpleRightTrace::map_buffer(buffer.as_mut_slice(), num_rows, offsets[0] as usize).unwrap();
+
+            let range = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), None);
 
             // Proves
             for i in 0..num_rows {
@@ -89,7 +84,21 @@ where
                 trace[i].d = F::from_canonical_usize(num_rows - i - 1);
 
                 trace[i].mul = F::from_canonical_usize(1);
+
+                self.std_lib.range_check(trace[i].b, F::one(), range);
+                self.std_lib.range_check(trace[i].c, F::one(), range);
+                self.std_lib.range_check(trace[i].d, F::one(), range);
+                println!("b[{i}]: {:?}", trace[i].b);
+                println!("c[{i}]: {:?}", trace[i].c);
+                println!("d[{i}]: {:?}", trace[i].d);
             }
+            println!();
+
+            let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
+            let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
+            air_instance.buffer = buffer;
         }
+
+        self.std_lib.unregister_predecessor(pctx, None);
     }
 }
