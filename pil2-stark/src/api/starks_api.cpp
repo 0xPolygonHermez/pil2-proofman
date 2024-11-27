@@ -207,29 +207,40 @@ void prover_helpers_free(void *pProverHelpers) {
 // ========================================================================================
 void load_const_tree(void *pConstTree, char *treeFilename, uint64_t constTreeSize) {
     ConstTree constTree;
-    constTree.loadConstTree((Goldilocks::Element *)pConstTree, treeFilename, constTreeSize * sizeof(Goldilocks::Element));
+    constTree.loadConstTree(pConstTree, treeFilename, constTreeSize);
 };
 
 void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize) {
     ConstTree constTree;
-    constTree.loadConstPols((Goldilocks::Element *)pConstPols, constFilename, constSize * sizeof(Goldilocks::Element));
+    constTree.loadConstPols(pConstPols, constFilename, constSize);
 };
 
 uint64_t get_const_tree_size(void *pStarkInfo) {
     ConstTree constTree;
-    return constTree.getConstTreeSizeGL(*(StarkInfo *)pStarkInfo);
+    auto starkInfo = *(StarkInfo *)pStarkInfo;
+    if(starkInfo.starkStruct.verificationHashType == "GL") {
+        return constTree.getConstTreeSizeBytesGL(starkInfo);
+    } else {
+        return constTree.getConstTreeSizeBytesBN128(starkInfo);
+    }
+    
 };
 
 uint64_t get_const_size(void *pStarkInfo) {
     auto starkInfo = *(StarkInfo *)pStarkInfo;
     uint64_t N = 1 << starkInfo.starkStruct.nBits;
-    return N * starkInfo.nConstants;
+    return N * starkInfo.nConstants * sizeof(Goldilocks::Element);
 }
 
 
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress, char *treeFilename) {
     ConstTree constTree;
-    constTree.calculateConstTree(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, (Goldilocks::Element *)pConstTreeAddress, treeFilename);
+    auto starkInfo = *(StarkInfo *)pStarkInfo;
+    if(starkInfo.starkStruct.verificationHashType == "GL") {
+        constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress, treeFilename);
+    } else {
+        constTree.calculateConstTreeBN128(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress, treeFilename);
+    }
 };
 
 // Expressions Bin
@@ -519,11 +530,16 @@ void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row) {
 
 // Recursive proof
 // ================================================================================= 
-void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* pAddress, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
+void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* pAddress, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file));
+    auto setup = *(SetupCtx *)pSetupCtx;
+    if(setup.starkInfo.starkStruct.verificationHashType == "GL") {
+        return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
+    } else {
+        return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), false);
+    }
 }
 
 void *get_zkin_ptr(char *zkin_file) {

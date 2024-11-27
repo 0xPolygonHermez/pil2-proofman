@@ -15,14 +15,14 @@ pub struct WitnessManager<F> {
     airs: RwLock<HashMap<(AirGroupId, AirId), usize>>, // First usize is the air_id, second usize is the index of the component in the components vector
 
     pctx: Arc<ProofCtx<F>>,
-    ectx: Arc<ExecutionCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    ectx: Arc<ExecutionCtx>,
+    sctx: Arc<SetupCtx>,
 }
 
 impl<F> WitnessManager<F> {
     const MY_NAME: &'static str = "WCMnager";
 
-    pub fn new(pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Self {
+    pub fn new(pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) -> Self {
         WitnessManager { components: RwLock::new(Vec::new()), airs: RwLock::new(HashMap::new()), pctx, ectx, sctx }
     }
 
@@ -55,7 +55,7 @@ impl<F> WitnessManager<F> {
         self.airs.write().unwrap().insert((airgroup_id, air_id), component_idx);
     }
 
-    pub fn start_proof(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx<F>>, sctx: Arc<SetupCtx<F>>) {
+    pub fn start_proof(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         for component in self.components.read().unwrap().iter() {
             component.start_proof(pctx.clone(), ectx.clone(), sctx.clone());
         }
@@ -71,8 +71,8 @@ impl<F> WitnessManager<F> {
         &self,
         stage: u32,
         pctx: Arc<ProofCtx<F>>,
-        ectx: Arc<ExecutionCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
+        ectx: Arc<ExecutionCtx>,
+        sctx: Arc<SetupCtx>,
     ) {
         log::info!(
             "{}: Calculating witness for stage {} / {}",
@@ -122,11 +122,11 @@ impl<F> WitnessManager<F> {
         self.pctx.clone()
     }
 
-    pub fn get_ectx(&self) -> Arc<ExecutionCtx<F>> {
+    pub fn get_ectx(&self) -> Arc<ExecutionCtx> {
         self.ectx.clone()
     }
 
-    pub fn get_sctx(&self) -> Arc<SetupCtx<F>> {
+    pub fn get_sctx(&self) -> Arc<SetupCtx> {
         self.sctx.clone()
     }
 }

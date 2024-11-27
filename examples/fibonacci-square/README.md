@@ -123,7 +123,7 @@ cargo run --bin proofman-cli prove \
 node ../pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey/ -p examples/fibonacci-square/build/proofs
 ```
 
-### 2.6 Generate Final Proof
+### 2.6 Generate VadcopFinal Proof
 
 This will only work if setup is generated with -r
 Finally, generate the final proof using the following command:

@@ -26,10 +26,10 @@ pub fn parse_cached_buffers(s: &str) -> Result<HashMap<String, PathBuf>, String>
     Ok(map)
 }
 
-pub fn get_custom_commit_trace<F>(
+pub fn get_custom_commit_trace(
     commit_id: u64,
     step: u64,
-    setup: &Setup<F>,
+    setup: &Setup,
     buffer: Vec<Goldilocks>,
     buffer_str: &str,
 ) {

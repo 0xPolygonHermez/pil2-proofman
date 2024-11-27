@@ -715,6 +715,7 @@ pub fn gen_recursive_proof_c(
     proof_file: &str,
     global_info_file: &str,
     airgroup_id: u64,
+    vadcop: bool,
 ) -> *mut c_void {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -732,6 +733,7 @@ pub fn gen_recursive_proof_c(
             p_const_tree,
             p_public_inputs,
             proof_file_ptr,
+            vadcop,
         )
     }
 }
@@ -1404,6 +1406,7 @@ pub fn gen_recursive_proof_c(
     _proof_file: &str,
     _global_info_file: &str,
     _airgroup_id: u64,
+    _vadcop: bool,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
     std::ptr::null_mut()
