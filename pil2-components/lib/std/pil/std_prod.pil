@@ -145,17 +145,17 @@ private function update_piop_prod(int name, int proves, int opid, expr sel, expr
         }
 
         // define constraints at the air level
-        on final air piop_gprod_air();
+        on final(-1) air piop_gprod_air();
 
         // update values at the airgroup level
-        on final airgroup piop_gprod_airgroup();
+        on final(-1) airgroup piop_gprod_airgroup();
 
         // at the end, check consistency of all the opids
-        on final proof check_opids_were_completed_prod();
+        on final(-1) proof check_opids_were_completed_prod();
     }
 
     // update constraints at the proof level
-    on final proof piop_gprod_proof();
+    on final(-1) proof piop_gprod_proof();
 }
 
 /**

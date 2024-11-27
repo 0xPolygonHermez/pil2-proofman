@@ -60,29 +60,18 @@ where
     ) {
         let mut rng = rand::thread_rng();
 
-        let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
-        let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
-
-        let airgroup_id = air_instance.airgroup_id;
-        let air_id = air_instance.air_id;
-        let air = pctx.pilout.get_air(airgroup_id, air_id);
-
-        log::debug!(
-            "{}: ··· Computing witness computation for AIR '{}' at stage {}",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-            stage
-        );
+        log::debug!("{}: ··· Witness computation for AIR '{}' at stage {}", Self::MY_NAME, "SimpleLeft", stage);
 
         if stage == 1 {
-            let (_, offsets) = ectx
+            let (buffer_size, offsets) = ectx
                 .buffer_allocator
                 .as_ref()
                 .get_buffer_info(&sctx, SIMPLE_AIRGROUP_ID, SIMPLE_LEFT_AIR_IDS[0])
                 .unwrap();
 
-            let buffer = &mut air_instance.buffer;
-            let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
+            let mut buffer = vec![F::zero(); buffer_size as usize];
+
+            let num_rows = pctx.pilout.get_air(SIMPLE_AIRGROUP_ID, SIMPLE_LEFT_AIR_IDS[0]).num_rows();
 
             // I cannot, programatically, link the permutation trace with its air_id
             let mut trace = SimpleLeftTrace::map_buffer(buffer.as_mut_slice(), num_rows, offsets[0] as usize).unwrap();
@@ -99,10 +88,13 @@ where
 
                 trace[i].g = F::from_canonical_usize(i);
                 trace[i].h = F::from_canonical_usize(num_rows - i - 1);
+                println!("g[{i}]: {:?}", trace[i].g);
+                println!("h[{i}]: {:?}", trace[i].h);
 
                 self.std_lib.range_check(trace[i].g, F::one(), range);
                 self.std_lib.range_check(trace[i].h, F::one(), range);
             }
+            println!();
 
             let mut indices: Vec<usize> = (0..num_rows).collect();
             indices.shuffle(&mut rng);
@@ -113,6 +105,12 @@ where
                 trace[i].c = trace[indices[i]].a;
                 trace[i].d = trace[indices[i]].b;
             }
+
+            let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
+            let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
+            air_instance.buffer = buffer;
         }
+
+        self.std_lib.unregister_predecessor(pctx, None);
     }
 }

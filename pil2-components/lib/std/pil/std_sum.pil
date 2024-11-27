@@ -147,17 +147,17 @@ private function update_piop_sum(int name, int proves, int opid[], expr sumid, e
         // on final air find_repeated_proves();
 
         // define constraints at the air level
-        on final air piop_gsum_air();
+        on final(-1) air piop_gsum_air();
 
         // update the contributions at the airgroup level
-        on final airgroup piop_gsum_airgroup();
+        on final(-1) airgroup piop_gsum_airgroup();
 
         // at the end, check consistency of all the opids
-        on final proof check_opids_were_completed_sum();
+        on final(-1) proof check_opids_were_completed_sum();
     }
 
     // adds the global constraint
-    on final proof piop_gsum_proof();
+    on final(-1) proof piop_gsum_proof();
 }
 
 /**

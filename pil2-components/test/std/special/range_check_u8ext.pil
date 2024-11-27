@@ -35,9 +35,17 @@ airtemplate RangeCheckStd(const int N = 2**4, const int M = 8) {
 };
 
 airgroup RangeCheckOld {
-    RangeCheckOld();
+    RangeCheckOld(M:1) alias RCO_1;
+    RangeCheckOld(M:2) alias RCO_2;
+    RangeCheckOld(M:4) alias RCO_4;
+    RangeCheckOld(M:8) alias RCO_8;
+    RangeCheckOld(M:16) alias RCO_16;
 }
 
 airgroup RangeCheckStd {
-    RangeCheckStd();
+    RangeCheckStd(M:1) alias RCS_1;
+    RangeCheckStd(M:2) alias RCS_2;
+    RangeCheckStd(M:4) alias RCS_4;
+    RangeCheckStd(M:8) alias RCS_8;
+    RangeCheckStd(M:16) alias RCS_16;
 }

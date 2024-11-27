@@ -9,7 +9,7 @@ use p3_field::PrimeField;
 
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{ExecutionCtx, ProofCtx, SetupCtx};
-use proofman_hints::{get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
+use proofman_hints::{get_hint_field, get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 use rayon::Scope;
 
 use crate::{Decider, Range, SpecifiedRanges, StdMode, ModeName, U16Air, U8Air, U8AirExtended};
@@ -25,6 +25,7 @@ pub enum RangeCheckAir {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum StdRangeCheckType {
     Valid(RangeCheckAir),
+    U8AirExtDouble,
     U16AirDouble,
 }
 
@@ -62,6 +63,13 @@ impl<F: PrimeField> Decider<F> for StdRangeCheck<F> {
                     // Register the range
                     self.register_range(sctx.clone(), airgroup_id, air_id, hint);
                 }
+
+                // Obtain info from the u8airext hints
+                let u8airext_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "u8airext_cols");
+                for hint in u8airext_hints {
+                    // Group the expressions in pairs as dictated by the hint
+                    // self.register_range(sctx.clone(), airgroup_id, air_id, hint);
+                }
             });
         });
     }
@@ -84,6 +92,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
         let u16air = if !u16air_hint.is_empty() { Some(U16Air::new(wcm.clone())) } else { None };
         let specified_ranges =
             if !specified_ranges_hint.is_empty() { Some(SpecifiedRanges::new(wcm.clone())) } else { None };
+
         let std_range_check =
             Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u8air_extended, u16air, specified_ranges });
 
@@ -188,6 +197,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
         let r#type = match r#type.as_str() {
             "U8" => StdRangeCheckType::Valid(RangeCheckAir::U8Air),
             "U8Ext" => StdRangeCheckType::Valid(RangeCheckAir::U8AirExtended),
+            "U8ExtDouble" => StdRangeCheckType::U8AirExtDouble,
             "U16" => StdRangeCheckType::Valid(RangeCheckAir::U16Air),
             "U16Double" => StdRangeCheckType::U16AirDouble,
             "Specified" => StdRangeCheckType::Valid(RangeCheckAir::SpecifiedRanges),
@@ -199,6 +209,18 @@ impl<F: PrimeField> StdRangeCheck<F> {
         // Update ranges
         ranges.push(range);
     }
+
+    // fn group_expr(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, airgroup_id: usize, air_id: usize, hint: u64) {
+    //     let first_column = get_hint_field::<F>(
+    //         &sctx,
+    //         &pctx,
+    //         airgroup_id,
+    //         air_id,
+    //         hint as usize,
+    //         "first_column",
+    //         HintFieldOptions::print_expression(),
+    //     );
+    // }
 
     pub fn get_range(&self, min: BigInt, max: BigInt, predefined: Option<bool>) -> usize {
         // Default predefined value in STD is true
@@ -242,7 +264,11 @@ impl<F: PrimeField> StdRangeCheck<F> {
                 self.u16air.as_ref().unwrap().update_inputs(value, multiplicity);
             }
             StdRangeCheckType::Valid(RangeCheckAir::U8AirExtended) => {
-                self.u8air_extended.as_ref().unwrap().update_inputs(value - range.0, range.1 - value, multiplicity);
+                self.u8air_extended.as_ref().unwrap().update_inputs(value, multiplicity);
+            }
+            StdRangeCheckType::U8AirExtDouble => {
+                self.u8air_extended.as_ref().unwrap().update_inputs(value - range.0, multiplicity);
+                self.u8air_extended.as_ref().unwrap().update_inputs(range.1 - value, multiplicity);
             }
             StdRangeCheckType::U16AirDouble => {
                 self.u16air.as_ref().unwrap().update_inputs(value - range.0, multiplicity);

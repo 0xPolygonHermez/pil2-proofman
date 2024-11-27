@@ -21,6 +21,7 @@ pub struct U8AirExtended<F: Field> {
 
     // Inputs
     inputs: Mutex<Vec<((F, F), F)>>, // (value, value) -> multiplicity
+    value_first: Mutex<Option<F>>, // value to hold the first value temporarily
     mul_column: Mutex<HintFieldValue<F>>,
 }
 
@@ -62,6 +63,7 @@ impl<F: PrimeField> U8AirExtended<F> {
             airgroup_id,
             air_id,
             inputs: Mutex::new(Vec::new()),
+            value_first: Mutex::new(None),
             mul_column: Mutex::new(HintFieldValue::Field(F::zero())),
         });
 
@@ -70,9 +72,15 @@ impl<F: PrimeField> U8AirExtended<F> {
         u8air_extended
     }
 
-    pub fn update_inputs(&self, value_first: F, value_second: F, multiplicity: F) {
+    pub fn update_inputs(&self, value: F, multiplicity: F) {
+        let mut value_first = self.value_first.lock().unwrap();
         let mut inputs = self.inputs.lock().unwrap();
-        inputs.push(((value_first, value_second), multiplicity));
+
+        if let Some(value_first) = value_first.take() {
+            inputs.push(((value_first, value), multiplicity));
+        } else {
+            *value_first = Some(value);
+        }
 
         while inputs.len() >= PROVE_CHUNK_SIZE {
             let num_drained = std::cmp::min(PROVE_CHUNK_SIZE, inputs.len());
@@ -142,11 +150,13 @@ impl<F: PrimeField> U8AirExtended<F> {
 
     fn update_multiplicity(&self, drained_inputs: Vec<((F, F), F)>) {
         for ((input_first, input_second), mul) in &drained_inputs {
+            println!("(input_first, input_second): ({:?},{:?}), mul: {:?}", input_first,input_second, mul);
             let value_first = input_first.as_canonical_biguint().to_usize().expect("Cannot convert to usize") % BYTE;
             let value_second = input_second.as_canonical_biguint().to_usize().expect("Cannot convert to usize") % BYTE;
             // Note: to avoid non-expected panics, we perform a reduction to the value
             //       In debug mode, this is, in fact, checked before
             let index = value_second * BYTE + value_first;
+            println!("index: {:?}", index);
             let mut mul_column = self.mul_column.lock().unwrap();
             mul_column.add(index, *mul);
         }

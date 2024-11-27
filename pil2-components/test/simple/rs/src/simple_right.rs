@@ -57,29 +57,18 @@ where
         ectx: Arc<ExecutionCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
     ) {
-        let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
-        let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
-
-        let airgroup_id = air_instance.airgroup_id;
-        let air_id = air_instance.air_id;
-        let air = pctx.pilout.get_air(airgroup_id, air_id);
-
-        log::debug!(
-            "{}: ··· Computing witness computation for AIR '{}' at stage {}",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-            stage
-        );
+        log::debug!("{}: ··· Witness computation for AIR '{}' at stage {}", Self::MY_NAME, "SimpleRight", stage);
 
         if stage == 1 {
-            let (_, offsets) = ectx
+            let (buffer_size, offsets) = ectx
                 .buffer_allocator
                 .as_ref()
                 .get_buffer_info(&sctx, SIMPLE_AIRGROUP_ID, SIMPLE_RIGHT_AIR_IDS[0])
                 .unwrap();
 
-            let buffer = &mut air_instance.buffer;
-            let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
+            let mut buffer = vec![F::zero(); buffer_size as usize];
+
+            let num_rows = pctx.pilout.get_air(SIMPLE_AIRGROUP_ID, SIMPLE_RIGHT_AIR_IDS[0]).num_rows();
 
             // I cannot, programatically, link the permutation trace with its air_id
             let mut trace = SimpleRightTrace::map_buffer(buffer.as_mut_slice(), num_rows, offsets[0] as usize).unwrap();
@@ -99,7 +88,17 @@ where
                 self.std_lib.range_check(trace[i].b, F::one(), range);
                 self.std_lib.range_check(trace[i].c, F::one(), range);
                 self.std_lib.range_check(trace[i].d, F::one(), range);
+                println!("b[{i}]: {:?}", trace[i].b);
+                println!("c[{i}]: {:?}", trace[i].c);
+                println!("d[{i}]: {:?}", trace[i].d);
             }
+            println!();
+
+            let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
+            let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
+            air_instance.buffer = buffer;
         }
+
+        self.std_lib.unregister_predecessor(pctx, None);
     }
 }

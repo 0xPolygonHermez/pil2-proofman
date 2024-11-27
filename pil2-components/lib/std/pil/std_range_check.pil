@@ -156,7 +156,7 @@ function range_check(expr colu, int min, int max, expr sel = 1, int predefined =
             }
         } else {
             if (max <= STD_BYTE) {
-                @range_def{predefined: predefined, min: min, max: max, min_neg: min < 0, max_neg: max < 0, type: "U8Ext"};
+                @range_def{predefined: predefined, min: min, max: max, min_neg: min < 0, max_neg: max < 0, type: "U8ExtDouble"};
 
                 // Here, the range is of the form [a,b], with a >= 0 and b <= STD_BYTE, except for the range [0,STD_BYTE]
 
@@ -407,11 +407,17 @@ private function define_assumes_u8ext() {
         airgroup.std.rc.u8ext_used = 1;
 
         for (int i = 0; i < rc_u8ext_ncols/2; i++) {
+            // Hint how the columns are grouped
+            @u8airext_cols{first_column: rc_u8ext_cols[2*i], second_column: rc_u8ext_cols[2*i+1]};
+
             lookup_assumes(DEFAULT_OPIDS[2], [rc_u8ext_cols[2*i], rc_u8ext_cols[2*i+1]], rc_u8ext_sels[2*i]*rc_u8ext_sels[2*i+1], PIOP_NAME_RANGE_CHECK);
         }
 
         // Reuse the U8xU8 air for the last column if the number of columns is odd
         if (rc_u8ext_ncols % 2 == 1) {
+            // Hint how the columns are grouped
+            @u8airext_cols{first_column: rc_u8ext_cols[rc_u8ext_ncols-1], second_column: 0};
+
             lookup_assumes(DEFAULT_OPIDS[2], [rc_u8ext_cols[rc_u8ext_ncols-1], 0], rc_u8ext_sels[rc_u8ext_ncols-1], PIOP_NAME_RANGE_CHECK);
         }
     }
