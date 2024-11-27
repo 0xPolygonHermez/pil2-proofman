@@ -22,7 +22,7 @@ CXXFLAGS := -std=c++17 -Wall -pthread -flarge-source-files -Wno-unused-label -rd
 NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH)
 
 LDFLAGS_GPU := -lcudart -lsodium -lpthread -lgmp -lstdc++
-LDFLAGS := -fopenmp $(LDFLAGS_GPU)
+LDFLAGS := -fopenmp -lsodium -lpthread -lgmp -lstdc++
 CFLAGS := -fopenmp
 ASFLAGS := -felf64
 
@@ -92,6 +92,7 @@ starks_lib: CXXFLAGS_EXT := -D__ZKEVM_LIB__ -fPIC#we decided to use the same fla
 starks_lib: $(LIB_DIR)/$(TARGET_STARKS_LIB)
 
 starks_lib_gpu: CXXFLAGS_EXT := -D__ZKEVM_LIB__ -fPIC#we decided to use the same flags for both libraries
+starks_lib_gpu: LDFLAGS := $(LDFLAGS_GPU)
 starks_lib_gpu: $(LIB_DIR_GPU)/$(TARGET_STARKS_LIB_GPU)
 
 bctree: $(BUILD_DIR)/$(TARGET_BCT)
@@ -151,6 +152,7 @@ $(BUILD_DIR_GPU)/%.cu.o: %.cu
 
 clean:
 	$(RM) -r $(BUILD_DIR) $(BUILD_DIR_GPU)
+	$(RM) -r $(LIB_DIR) $(LIB_DIR_GPU)
 
 -include $(DEPS_SETUP)
 -include $(DEPS_BCT)

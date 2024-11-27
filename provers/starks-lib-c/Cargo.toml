@@ -11,3 +11,4 @@ log.workspace = true
 [features]
 default = []
 no_lib_link = []
+gpu = []
