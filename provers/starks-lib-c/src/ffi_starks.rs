@@ -858,6 +858,22 @@ pub fn get_committed_pols_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn gen_final_snark_proof_c(
+    pWitnessFinal: *mut ::std::os::raw::c_void,
+    zkeyFile: &str,
+    outputDir: &str,
+) {
+    let zkey_file_name = CString::new(zkeyFile).unwrap();
+    let zkey_file_ptr = zkey_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let output_dir_name = CString::new(outputDir).unwrap();
+    let output_dir_ptr = output_dir_name.as_ptr() as *mut std::os::raw::c_char;
+    unsafe {
+        gen_final_snark_proof(pWitnessFinal, zkey_file_ptr, output_dir_ptr);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn set_log_level_c(level: u64) {
     unsafe {
         setLogLevel(level);
@@ -1493,6 +1509,15 @@ pub fn get_committed_pols_c(
     _nCols: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "get_committed_pols: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn gen_final_snark_proof_c(
+    _pWitnessFinal: *mut ::std::os::raw::c_void,
+    _zkeyFile: *mut ::std::os::raw::c_char,
+    _outputDir: *mut ::std::os::raw::c_char,
+) {
+    trace!("{}: ··· {}", "ffi     ", "gen_final_snark_proof: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

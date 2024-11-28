@@ -9,6 +9,7 @@
 #include <filesystem>
 #include "setup_ctx.hpp"
 #include "exec_file.hpp"
+#include "final_snark_proof.hpp"
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
@@ -626,6 +627,10 @@ void serialized_proof_free(char *zkinCStr) {
 
 void get_committed_pols(void *pWitness, char* execFile, void *pAddress, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t offsetCm1, uint64_t nCommitedPols) {
     getCommitedPols((Goldilocks::Element *)pWitness, string(execFile), (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, offsetCm1, nCommitedPols);
+}
+
+void gen_final_snark_proof(void *pWitnessFinal, char* zkeyFile, char* outputDir) {
+    genFinalSnarkProof(pWitnessFinal, string(zkeyFile), string(outputDir));
 }
 
 void setLogLevel(uint64_t level) {

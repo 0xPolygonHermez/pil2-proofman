@@ -135,6 +135,10 @@
     void serialized_proof_free(char *zkinCStr);
     void get_committed_pols(void *pWitness, char* execFile, void *pAddress, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t offsetCm1, uint64_t nCols);
 
+    // Final proof
+    // =================================================================================
+    void gen_final_snark_proof(void *pWitnessFinal, char* zkeyFile, char* outputDir);
+
     // Util calls
     // =================================================================================
     void setLogLevel(uint64_t level);

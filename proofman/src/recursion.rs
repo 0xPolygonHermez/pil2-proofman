@@ -509,7 +509,9 @@ fn generate_witness<F: Field>(
 
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
 
-        get_witness(zkin, dat_filename_ptr, witness_ptr, 128);
+        let nmutex = 128;
+
+        get_witness(zkin, dat_filename_ptr, witness_ptr, nmutex);
 
         get_committed_pols_c(
             witness_ptr,

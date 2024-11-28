@@ -606,6 +606,14 @@ extern "C" {
     );
 }
 extern "C" {
+    #[link_name = "\u{1}_Z21gen_final_snark_proofPvPcS0_"]
+    pub fn gen_final_snark_proof(
+        pWitnessFinal: *mut ::std::os::raw::c_void,
+        zkeyFile: *mut ::std::os::raw::c_char,
+        outputDir: *mut ::std::os::raw::c_char,
+    );
+}
+extern "C" {
     #[link_name = "\u{1}_Z11setLogLevelm"]
     pub fn setLogLevel(level: u64);
 }
