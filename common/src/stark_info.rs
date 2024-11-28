@@ -111,20 +111,15 @@ pub struct CustomCommits {
 }
 
 #[allow(dead_code)]
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Default, Deserialize, Debug, Clone)]
 enum EvMapEType {
     #[serde(rename = "cm")]
+    #[default]
     Cm,
     #[serde(rename = "const")]
     Const,
     #[serde(rename = "custom")]
     Custom,
-}
-
-impl Default for EvMapEType {
-    fn default() -> Self {
-        EvMapEType::Cm // Choose the default variant here
-    }
 }
 
 fn deserialize_bool_from_int<'de, D>(deserializer: D) -> Result<bool, D::Error>

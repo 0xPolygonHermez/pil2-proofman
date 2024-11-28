@@ -69,7 +69,7 @@ impl<F: Field> AirInstance<F> {
         let ps = setup_ctx.get_setup(airgroup_id, air_id);
 
         let n_custom_commits = ps.stark_info.custom_commits.len();
-        let custom_commits_calculated = vec![HashMap::new(); n_custom_commits as usize];
+        let custom_commits_calculated = vec![HashMap::new(); n_custom_commits];
 
         let mut custom_commits = Vec::new();
 
@@ -154,8 +154,8 @@ impl<F: Field> AirInstance<F> {
             })
             .unwrap_or_else(|| panic!("Name {} with specified lengths {:?} not found in airvalues", name, lengths));
 
-        self.airvalues[airvalue_id as usize * 3] = value;
-        self.set_airvalue_calculated(airvalue_id as usize);
+        self.airvalues[airvalue_id * 3] = value;
+        self.set_airvalue_calculated(airvalue_id);
     }
 
     pub fn set_airvalue_ext(&mut self, setup_ctx: &SetupCtx<F>, name: &str, lengths: Option<Vec<u64>>, value: Vec<F>) {
@@ -184,11 +184,11 @@ impl<F: Field> AirInstance<F> {
 
         let mut value_iter = value.into_iter();
 
-        self.airvalues[airvalue_id as usize * 3] = value_iter.next().unwrap();
-        self.airvalues[airvalue_id as usize * 3 + 1] = value_iter.next().unwrap();
-        self.airvalues[airvalue_id as usize * 3 + 2] = value_iter.next().unwrap();
+        self.airvalues[airvalue_id * 3] = value_iter.next().unwrap();
+        self.airvalues[airvalue_id * 3 + 1] = value_iter.next().unwrap();
+        self.airvalues[airvalue_id * 3 + 2] = value_iter.next().unwrap();
 
-        self.set_airvalue_calculated(airvalue_id as usize);
+        self.set_airvalue_calculated(airvalue_id);
     }
 
     pub fn set_airgroupvalue(&mut self, setup_ctx: &SetupCtx<F>, name: &str, lengths: Option<Vec<u64>>, value: F) {
@@ -215,8 +215,8 @@ impl<F: Field> AirInstance<F> {
                 panic!("Name {} with specified lengths {:?} not found in airgroupvalues", name, lengths)
             });
 
-        self.airgroup_values[airgroupvalue_id as usize * 3] = value;
-        self.set_airgroupvalue_calculated(airgroupvalue_id as usize);
+        self.airgroup_values[airgroupvalue_id * 3] = value;
+        self.set_airgroupvalue_calculated(airgroupvalue_id);
     }
 
     pub fn set_airgroupvalue_ext(
@@ -253,11 +253,11 @@ impl<F: Field> AirInstance<F> {
 
         let mut value_iter = value.into_iter();
 
-        self.airgroup_values[airgroupvalue_id as usize * 3] = value_iter.next().unwrap();
-        self.airgroup_values[airgroupvalue_id as usize * 3 + 1] = value_iter.next().unwrap();
-        self.airgroup_values[airgroupvalue_id as usize * 3 + 2] = value_iter.next().unwrap();
+        self.airgroup_values[airgroupvalue_id * 3] = value_iter.next().unwrap();
+        self.airgroup_values[airgroupvalue_id * 3 + 1] = value_iter.next().unwrap();
+        self.airgroup_values[airgroupvalue_id * 3 + 2] = value_iter.next().unwrap();
 
-        self.set_airgroupvalue_calculated(airgroupvalue_id as usize);
+        self.set_airgroupvalue_calculated(airgroupvalue_id);
     }
 
     pub fn set_commit_calculated(&mut self, id: usize) {
