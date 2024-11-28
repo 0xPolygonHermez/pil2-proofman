@@ -74,11 +74,11 @@ pub fn print_debug_info<F: PrimeField>(name: &str, max_values_to_print: usize, d
     }
 
     fn print_diffs<F: PrimeField>(
-        val: &Vec<HintFieldOutput<F>>,
+        val: &[HintFieldOutput<F>],
         max_values_to_print: usize,
         num_vals_left: F,
         num_vals_right: F,
-        rows: &mut Vec<usize>,
+        rows: &mut [usize],
         reverse_print: bool,
     ) {
         let diff = num_vals_left - num_vals_right;
