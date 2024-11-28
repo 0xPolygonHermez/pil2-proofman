@@ -77,7 +77,7 @@ impl<F: Field> StarkProver<F> {
         let p_stark_info = setup.p_setup.p_stark_info;
 
         let p_proof = fri_proof_new_c((&setup.p_setup).into());
-            
+
         Self {
             initialized: true,
             prover_idx,
@@ -238,8 +238,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             );
             calculate_quotient_polynomial_c(self.p_stark, (&steps_params).into());
             for i in 0..n_commits {
-                let cm_pol =
-                    self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
+                let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
                 if cm_pol.stage == (proof_ctx.global_info.n_challenges.len() + 1) as u64 {
                     air_instance.set_commit_calculated(i);
                 }
@@ -927,11 +926,7 @@ impl<F> BufferAllocator<F> for StarkBufferAllocator {
     ) -> Result<(u64, Vec<u64>, u64), Box<dyn Error>> {
         let ps = sctx.get_setup(airgroup_id, air_id);
 
-        let commit_id = match ps.stark_info
-        .custom_commits
-        .iter()
-        .position(|custom_commit| custom_commit.name == name)
-        {
+        let commit_id = match ps.stark_info.custom_commits.iter().position(|custom_commit| custom_commit.name == name) {
             Some(commit_id) => commit_id as u64,
             None => {
                 eprintln!("Custom commit '{}' not found in custom commits.", name);
