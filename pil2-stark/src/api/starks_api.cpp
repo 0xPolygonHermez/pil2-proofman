@@ -267,10 +267,6 @@ void *acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, c
     return new VecU64Result(accMulHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add));
 }
 
-void *acc_mul_add_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, char *hintFieldName3, void* hintOptions1, void *hintOptions2, void *hintOptions3, bool add) {
-    return new VecU64Result(accMulAddHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2), string(hintFieldName3),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, *(HintFieldOptions *)hintOptions3, add));
-}
-
 
 uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hintId, char * hintFieldName) 
 {

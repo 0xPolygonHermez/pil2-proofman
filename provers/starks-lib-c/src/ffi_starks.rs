@@ -354,46 +354,6 @@ pub fn acc_mul_hint_fields_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-#[allow(clippy::too_many_arguments)]
-pub fn acc_mul_add_hint_fields_c(
-    p_setup_ctx: *mut c_void,
-    p_steps_params: *mut c_void,
-    hint_id: u64,
-    hint_field_dest: &str,
-    hint_field_airgroupvalue: &str,
-    hint_field_name1: &str,
-    hint_field_name2: &str,
-    hint_field_name3: &str,
-    hint_options1: *mut c_void,
-    hint_options2: *mut c_void,
-    hint_options3: *mut c_void,
-    add: bool,
-) -> *mut c_void {
-    let field_dest = CString::new(hint_field_dest).unwrap();
-    let field_airgroupvalue = CString::new(hint_field_airgroupvalue).unwrap();
-    let field_name1 = CString::new(hint_field_name1).unwrap();
-    let field_name2: CString = CString::new(hint_field_name2).unwrap();
-    let field_name3: CString = CString::new(hint_field_name3).unwrap();
-
-    unsafe {
-        acc_mul_add_hint_fields(
-            p_setup_ctx,
-            p_steps_params,
-            hint_id,
-            field_dest.as_ptr() as *mut std::os::raw::c_char,
-            field_airgroupvalue.as_ptr() as *mut std::os::raw::c_char,
-            field_name1.as_ptr() as *mut std::os::raw::c_char,
-            field_name2.as_ptr() as *mut std::os::raw::c_char,
-            field_name3.as_ptr() as *mut std::os::raw::c_char,
-            hint_options1,
-            hint_options2,
-            hint_options3,
-            add,
-        )
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn set_hint_field_c(
     p_setup_ctx: *mut c_void,
     p_params: *mut c_void,
@@ -1139,26 +1099,6 @@ pub fn acc_mul_hint_fields_c(
     _add: bool,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "acc_mul_hint_fields: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-#[allow(clippy::too_many_arguments)]
-pub fn acc_mul_add_hint_fields_c(
-    _p_setup_ctx: *mut c_void,
-    _p_steps_params: *mut c_void,
-    _hint_id: u64,
-    _hint_field_dest: &str,
-    _hint_field_airgroupvalue: &str,
-    _hint_field_name1: &str,
-    _hint_field_name2: &str,
-    _hint_field_name3: &str,
-    _hint_options1: *mut c_void,
-    _hint_options2: *mut c_void,
-    _hint_options3: *mut c_void,
-    _add: bool,
-) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "acc_mul_add_hint_fields: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 

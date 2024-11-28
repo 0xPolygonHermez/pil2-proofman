@@ -216,23 +216,7 @@ extern "C" {
         add: bool,
     ) -> *mut ::std::os::raw::c_void;
 }
-extern "C" {
-    #[link_name = "\u{1}_Z23acc_mul_add_hint_fieldsPvS_mPcS0_S0_S0_S0_S_S_S_b"]
-    pub fn acc_mul_add_hint_fields(
-        pSetupCtx: *mut ::std::os::raw::c_void,
-        stepsParams: *mut ::std::os::raw::c_void,
-        hintId: u64,
-        hintFieldNameDest: *mut ::std::os::raw::c_char,
-        hintFieldNameAirgroupVal: *mut ::std::os::raw::c_char,
-        hintFieldName1: *mut ::std::os::raw::c_char,
-        hintFieldName2: *mut ::std::os::raw::c_char,
-        hintFieldName3: *mut ::std::os::raw::c_char,
-        hintOptions1: *mut ::std::os::raw::c_void,
-        hintOptions2: *mut ::std::os::raw::c_void,
-        hintOptions3: *mut ::std::os::raw::c_void,
-        add: bool,
-    ) -> *mut ::std::os::raw::c_void;
-}
+
 extern "C" {
     #[link_name = "\u{1}_Z14set_hint_fieldPvS_S_mPc"]
     pub fn set_hint_field(

@@ -166,5 +166,5 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs\
-&& node ../pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey/ -p examples/fibonacci-square/build/proofs \
+&& node ../pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey/ -p examples/fibonacci-square/build/proofs
 ```
