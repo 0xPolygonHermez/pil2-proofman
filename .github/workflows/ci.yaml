@@ -142,6 +142,13 @@ jobs:
         run: |
           python -m pip install z3-solver
 
+      - name: Build and install Circom
+        run: |
+          git clone https://github.com/iden3/circom.git
+          cd circom
+          cargo build --release
+          cargo install --path .
+
       - name: Check out pil2-proofman-js
         uses: actions/checkout@v4
         with:
