@@ -212,7 +212,6 @@ jobs:
       - name: Verify proof Fibonacci Square
         run: |
           node pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey -p examples/fibonacci-square/build/proofs -f
-
     name: Test STD
     runs-on: ubuntu-latest
     steps:
