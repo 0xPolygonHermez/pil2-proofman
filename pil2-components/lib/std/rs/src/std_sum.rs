@@ -113,7 +113,7 @@ impl<F: PrimeField> StdSum<F> {
             //     HintFieldOptions::default(),
             // );
 
-            (0..num_rows).into_iter().for_each(|j| {
+            (0..num_rows).for_each(|j| {
                 let mut mul = match mul.get(j) {
                     HintFieldOutput::Field(mul) => mul,
                     _ => panic!("mul must be a field element"),
@@ -147,14 +147,7 @@ impl<F: PrimeField> StdSum<F> {
         }
     }
 
-    fn update_bus_vals(
-        &self,
-        opid: F,
-        val: Vec<HintFieldOutput<F>>,
-        row: usize,
-        is_positive: bool,
-        times: F,
-    ) {
+    fn update_bus_vals(&self, opid: F, val: Vec<HintFieldOutput<F>>, row: usize, is_positive: bool, times: F) {
         let debug_data = self.debug_data.as_ref().expect("Debug data missing");
         let mut bus = debug_data.lock().expect("Bus values missing");
 

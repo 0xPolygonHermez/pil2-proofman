@@ -121,7 +121,7 @@ impl<F: PrimeField> StdProd<F> {
             //     HintFieldOptions::default(),
             // );
 
-            (0..num_rows).into_iter().for_each(|j| {
+            (0..num_rows).for_each(|j| {
                 let sel = if let HintFieldOutput::Field(selector) = selector.get(j) {
                     if !selector.is_zero() && !selector.is_one() {
                         log::error!("Selector must be either 0 or 1");
