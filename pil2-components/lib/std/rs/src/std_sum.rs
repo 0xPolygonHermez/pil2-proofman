@@ -153,9 +153,7 @@ impl<F: PrimeField> StdSum<F> {
 
         let bus_opid = bus.entry(opid).or_default();
 
-        // TODO: Convert extension element to base field in case its possible before creating the bus_val
-
-        let bus_val = bus_opid.entry(val).or_insert_with(|| BusValue {
+        let bus_val = bus_opid.entry(val.clone()).or_insert_with(|| BusValue {
             num_proves: F::zero(),
             num_assumes: F::zero(),
             row_proves: Vec::new(),
