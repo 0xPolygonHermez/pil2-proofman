@@ -2,9 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, format_ident, ToTokens};
 use syn::{
-    parse2,
     parse::{Parse, ParseStream},
-    Ident, Generics, FieldsNamed, Result, Field, Token,
+    parse2, Field, FieldsNamed, Generics, Ident, Result, Token,
 };
 
 #[proc_macro]
@@ -229,6 +228,74 @@ fn calculate_field_size_literal(field_type: &syn::Type) -> Result<usize> {
         }
         // For simple types, the size is 1
         _ => Ok(1),
+    }
+}
+
+#[proc_macro]
+pub fn values(input: TokenStream) -> TokenStream {
+    match values_impl(input.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
+    let parsed_input: ParsedValuesInput = parse2(input)?;
+
+    let struct_name = parsed_input.struct_name;
+    let generic_param = parsed_input.generic_param;
+
+    // Generate the struct and implementation
+    let result = quote! {
+        pub struct #struct_name<#generic_param> {
+            pub buffer: Vec<#generic_param>,
+            pub x: usize,
+        }
+
+        impl<#generic_param: Clone> #struct_name<#generic_param> {
+            pub fn new(x: usize) -> Self {
+                #struct_name {
+                    buffer: Vec::new(),
+                    x,
+                }
+            }
+
+            pub fn set_value(&mut self, value: #generic_param) {
+                self.buffer.resize(self.x, value);
+            }
+
+            pub fn set_values(&mut self, values: Vec<#generic_param>) {
+                assert_eq!(
+                    values.len(),
+                    self.x,
+                    "Number of values must match the size parameter `x`."
+                );
+                self.buffer = values;
+            }
+
+            pub fn get_buffer(&self) -> &[#generic_param] {
+                &self.buffer
+            }
+        }
+    };
+
+    Ok(result)
+}
+
+struct ParsedValuesInput {
+    pub struct_name: Ident,
+    pub generic_param: Ident,
+}
+
+impl Parse for ParsedValuesInput {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let struct_name: Ident = input.parse()?;
+        input.parse::<Token![<]>()?;
+        let generic_param: Ident = input.parse()?;
+        input.parse::<Token![>]>()?;
+        input.parse::<Token![;]>()?; // Expect a semicolon to terminate the macro input
+
+        Ok(ParsedValuesInput { struct_name, generic_param })
     }
 }
 
@@ -548,4 +615,68 @@ fn test_empty_array() {
     let ty: syn::Type = syn::parse_quote! { [F; 0] };
     let size = calculate_field_size_literal(&ty).unwrap();
     assert_eq!(size, 0);
+}
+
+#[test]
+fn test_parsed_values_basic() {
+    let input = quote! {
+        U8AirAirValuesVals<F>;
+    };
+
+    let parsed: ParsedValuesInput = syn::parse2(input).unwrap();
+
+    assert_eq!(parsed.struct_name, "U8AirAirValuesVals");
+    assert_eq!(parsed.generic_param, "F");
+}
+
+#[test]
+fn test_parsed_values_complex_name() {
+    let input = quote! {
+        FibonacciSquareValues<F>;
+    };
+
+    let parsed: ParsedValuesInput = syn::parse2(input).unwrap();
+
+    assert_eq!(parsed.struct_name, "FibonacciSquareValues");
+    assert_eq!(parsed.generic_param, "F");
+}
+
+#[test]
+#[should_panic(expected = "expected `;`")]
+fn test_parsed_values_missing_semicolon() {
+    let input = quote! {
+        U8AirAirValuesVals<F>
+    };
+
+    let _parsed: ParsedValuesInput = syn::parse2(input).unwrap();
+}
+
+#[test]
+#[should_panic(expected = "expected `<`")]
+fn test_parsed_values_missing_generic_param() {
+    let input = quote! {
+        U8AirAirValuesVals;
+    };
+
+    let _parsed: ParsedValuesInput = syn::parse2(input).unwrap();
+}
+
+#[test]
+#[should_panic(expected = "expected `;`")]
+fn test_parsed_values_invalid_syntax() {
+    let input = quote! {
+        U8AirAirValuesVals < F > extra;
+    };
+
+    let _parsed: ParsedValuesInput = syn::parse2(input).unwrap();
+}
+
+#[test]
+#[should_panic(expected = "expected `>`")]
+fn test_parsed_values_multiple_generics() {
+    let input = quote! {
+        U8AirAirValuesVals<F, G>;
+    };
+
+    let _parsed: ParsedValuesInput = syn::parse2(input).unwrap();
 }
