@@ -9,10 +9,6 @@ const int DEFAULT_DIRECT_BUS_TYPE = PIOP_BUS_SUM;
 function direct_global_update(const int opid, const expr cols[], const expr sel = 1, const int proves = 1, const int bus_type = PIOP_BUS_DEFAULT, const int name = PIOP_NAME_DEFAULT) {
     direct_initial_checks(cols, sel);
 
-    if (AIR_ID != -1) {
-        error("A direct global update has to be performed outside every air");
-    }
-
     direct_to_bus(opid, cols, sel, proves, bus_type, name, PIOP_DIRECT_TYPE_GLOBAL);
 }
 
