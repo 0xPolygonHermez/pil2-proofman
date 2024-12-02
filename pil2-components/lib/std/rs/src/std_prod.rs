@@ -137,7 +137,18 @@ impl<F: PrimeField> StdProd<F> {
                     let debug_data = self.debug_data.as_ref().expect("Debug data missing");
                     let airgroup_id = air_instance.airgroup_id;
                     let air_id = air_instance.air_id;
-                    update_debug_data(debug_data, opid, expressions.get(j), airgroup_id, air_id, 0, j, proves, F::one());
+                    let instance_id = air_instance.air_instance_id.unwrap_or_default();
+                    update_debug_data(
+                        debug_data,
+                        opid,
+                        expressions.get(j),
+                        airgroup_id,
+                        air_id,
+                        instance_id,
+                        j,
+                        proves,
+                        F::one(),
+                    );
                 }
             });
         }

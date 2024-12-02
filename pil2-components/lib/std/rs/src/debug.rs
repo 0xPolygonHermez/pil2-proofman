@@ -1,6 +1,5 @@
 use std::{collections::HashMap, sync::Mutex};
 
-use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 use proofman_hints::{format_vec, HintFieldOutput};
 
@@ -139,8 +138,7 @@ pub fn print_debug_info<F: PrimeField>(name: &str, max_values_to_print: usize, d
         let num = if proves { num_proves } else { num_assumes };
         let num_str = if num.is_one() { "time" } else { "times" };
 
-        println!(
-            "\t    ==================================================");
+        println!("\t    ==================================================");
         println!(
             "\t    • Value:\n\t        {}\n\t      Appears {} {} across the following:",
             format_vec(val),
@@ -154,11 +152,7 @@ pub fn print_debug_info<F: PrimeField>(name: &str, max_values_to_print: usize, d
             for (air_id, instance_map) in air_id_map.iter_mut() {
                 for (instance_id, meta_data) in instance_map.iter_mut() {
                     let rows = {
-                        let rows = if proves {
-                            &meta_data.row_proves
-                        } else {
-                            &meta_data.row_assumes
-                        };
+                        let rows = if proves { &meta_data.row_proves } else { &meta_data.row_assumes };
                         if rows.is_empty() {
                             continue;
                         }
@@ -170,21 +164,13 @@ pub fn print_debug_info<F: PrimeField>(name: &str, max_values_to_print: usize, d
         }
 
         // Sort rows by airgroup_id, air_id, and instance_id
-        organized_rows.sort_by(|a, b| {
-            a.0.cmp(&b.0)
-                .then(a.1.cmp(&b.1))
-                .then(a.2.cmp(&b.2))
-        });
+        organized_rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
 
         // Print grouped rows
         for (airgroup_id, air_id, instance_id, mut rows) in organized_rows {
             rows.sort();
-            let rows_display = rows
-                .iter()
-                .map(|x| x.to_string())
-                .take(max_values_to_print)
-                .collect::<Vec<_>>()
-                .join(",");
+            let rows_display =
+                rows.iter().map(|x| x.to_string()).take(max_values_to_print).collect::<Vec<_>>().join(",");
 
             let truncated = rows.len() > max_values_to_print;
             println!(
@@ -198,13 +184,8 @@ pub fn print_debug_info<F: PrimeField>(name: &str, max_values_to_print: usize, d
             );
         }
 
-        println!(
-            "\t    --------------------------------------------------");
-        let diff = if proves {
-            num_proves - num_assumes
-        } else {
-            num_assumes - num_proves
-        };
+        println!("\t    --------------------------------------------------");
+        let diff = if proves { num_proves - num_assumes } else { num_assumes - num_proves };
         println!(
             "\t    Total Num Assumes: {}.\n\t    Total Num Proves: {}.\n\t    Total Unmatched: {}.",
             num_assumes, num_proves, diff

@@ -143,7 +143,18 @@ impl<F: PrimeField> StdSum<F> {
                     let debug_data = self.debug_data.as_ref().expect("Debug data missing");
                     let airgroup_id = air_instance.airgroup_id;
                     let air_id = air_instance.air_id;
-                    update_debug_data(debug_data, sumid, expressions.get(j), airgroup_id, air_id, 0, j, proves, mul);
+                    let instance_id = air_instance.air_instance_id.unwrap_or_default();
+                    update_debug_data(
+                        debug_data,
+                        sumid,
+                        expressions.get(j),
+                        airgroup_id,
+                        air_id,
+                        instance_id,
+                        j,
+                        proves,
+                        mul,
+                    );
                 }
             });
         }
