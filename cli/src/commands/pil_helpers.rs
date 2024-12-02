@@ -51,6 +51,12 @@ struct AirCtx {
     num_rows: u32,
     columns: Vec<ColumnCtx>,
     custom_columns: Vec<CustomCommitsCtx>,
+    air_values: Vec<AirValuesCtx>,
+}
+
+#[derive(Debug, Serialize)]
+struct AirValuesCtx {
+    air_values: Vec<ColumnCtx>,
 }
 
 #[derive(Debug, Serialize)]
@@ -118,6 +124,7 @@ impl PilHelpersCmd {
                         num_rows: air.num_rows.unwrap(),
                         columns: Vec::new(),
                         custom_columns: Vec::new(),
+                        air_values: Vec::new(),
                     })
                     .collect(),
             });
@@ -167,6 +174,7 @@ impl PilHelpersCmd {
                             && symbol.air_id.unwrap() == air_id as u32
                             && symbol.stage.is_some()
                             && ((symbol.r#type == SymbolType::WitnessCol as i32 && symbol.stage.unwrap() == 1)
+                                || (symbol.r#type == SymbolType::AirValue as i32)
                                 || (symbol.r#type == SymbolType::CustomCol as i32 && symbol.stage.unwrap() == 0))
                     })
                     .for_each(|symbol| {
@@ -184,6 +192,11 @@ impl PilHelpersCmd {
                         };
                         if symbol.r#type == SymbolType::WitnessCol as i32 {
                             air.columns.push(ColumnCtx { name: name.to_owned(), r#type });
+                        } else if symbol.r#type == SymbolType::AirValue as i32 {
+                            if air.air_values.is_empty() {
+                                air.air_values.push(AirValuesCtx { air_values: Vec::new() });
+                            }
+                            air.air_values[0].air_values.push(ColumnCtx { name: name.to_owned(), r#type });
                         } else {
                             air.custom_columns[symbol.commit_id.unwrap() as usize]
                                 .custom_columns
