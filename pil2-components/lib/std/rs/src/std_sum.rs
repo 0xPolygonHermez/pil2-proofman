@@ -13,13 +13,13 @@ use proofman_hints::{
     HintFieldOutput,
 };
 
-use crate::{print_debug_info, BusValue, DebugData, Decider};
+use crate::{print_debug_info, update_debug_data, DebugData, Decider};
 
-type SumAirsItem = (usize, usize, Vec<u64>, Vec<u64>, Vec<u64>);
+type SumAirsItem = (usize, usize, Vec<u64>, Vec<u64>, Vec<u64>); // (airgroup_id, air_id, gsum_hints, im_hints, debug_hints_data, debug_hints)
 
 pub struct StdSum<F: PrimeField> {
     mode: StdMode,
-    sum_airs: Mutex<Vec<SumAirsItem>>, // (airgroup_id, air_id, gsum_hints, im_hints, debug_hints_data, debug_hints)
+    sum_airs: Mutex<Vec<SumAirsItem>>,
     debug_data: Option<DebugData<F>>,
 }
 
@@ -125,7 +125,7 @@ impl<F: PrimeField> StdSum<F> {
                         _ => panic!("sumid must be a field element"),
                     };
 
-                    let is_positive = match proves.get(j) {
+                    let proves = match proves.get(j) {
                         HintFieldOutput::Field(proves) => match proves {
                             p if p.is_zero() || p == -F::one() => {
                                 // If it's an assume, then negate its value
@@ -139,34 +139,13 @@ impl<F: PrimeField> StdSum<F> {
                         },
                         _ => panic!("Proves hint must be a field element"),
                     };
-                    // println!("expressions[{j}]: {:?}, mul[{j}]: {}, is_positive[{j}]: {}", expressions.get(j), mul, is_positive);
 
-                    self.update_bus_vals(sumid, expressions.get(j), j, is_positive, mul);
+                    let debug_data = self.debug_data.as_ref().expect("Debug data missing");
+                    let airgroup_id = air_instance.airgroup_id;
+                    let air_id = air_instance.air_id;
+                    update_debug_data(debug_data, sumid, expressions.get(j), airgroup_id, air_id, 0, j, proves, mul);
                 }
             });
-        }
-    }
-
-    fn update_bus_vals(&self, opid: F, val: Vec<HintFieldOutput<F>>, row: usize, is_positive: bool, times: F) {
-        let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-        let mut bus = debug_data.lock().expect("Bus values missing");
-
-        let bus_opid = bus.entry(opid).or_default();
-
-        let bus_val = bus_opid.entry(val.clone()).or_insert_with(|| BusValue {
-            num_proves: F::zero(),
-            num_assumes: F::zero(),
-            row_proves: Vec::new(),
-            row_assumes: Vec::new(),
-        });
-
-        if is_positive {
-            bus_val.num_proves += times;
-            bus_val.row_proves.push(row);
-        } else {
-            assert!(times.is_one(), "The selector value is invalid: expected 1, but received {:?}.", times);
-            bus_val.num_assumes += times;
-            bus_val.row_assumes.push(row);
         }
     }
 }

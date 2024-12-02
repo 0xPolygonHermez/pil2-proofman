@@ -13,13 +13,13 @@ use proofman_hints::{
     HintFieldValue,
 };
 
-use crate::{print_debug_info, BusValue, DebugData, Decider};
+use crate::{print_debug_info, update_debug_data, DebugData, Decider};
 
-type ProdAirsItem = (usize, usize, Vec<u64>, Vec<u64>);
+type ProdAirsItem = (usize, usize, Vec<u64>, Vec<u64>); // (airgroup_id, air_id, gprod_hints, debug_hints_data, debug_hints)
 
 pub struct StdProd<F: PrimeField> {
     mode: StdMode,
-    prod_airs: Mutex<Vec<ProdAirsItem>>, // (airgroup_id, air_id, gprod_hints, debug_hints_data, debug_hints)
+    prod_airs: Mutex<Vec<ProdAirsItem>>,
     debug_data: Option<DebugData<F>>,
 }
 
@@ -134,31 +134,12 @@ impl<F: PrimeField> StdProd<F> {
                 };
 
                 if sel {
-                    self.update_bus_vals(opid, expressions.get(j), j, proves);
+                    let debug_data = self.debug_data.as_ref().expect("Debug data missing");
+                    let airgroup_id = air_instance.airgroup_id;
+                    let air_id = air_instance.air_id;
+                    update_debug_data(debug_data, opid, expressions.get(j), airgroup_id, air_id, 0, j, proves, F::one());
                 }
             });
-        }
-    }
-
-    fn update_bus_vals(&self, opid: F, val: Vec<HintFieldOutput<F>>, row: usize, is_num: bool) {
-        let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-        let mut bus = debug_data.lock().expect("Bus values missing");
-
-        let bus_opid = bus.entry(opid).or_default();
-
-        let bus_val = bus_opid.entry(val).or_insert_with(|| BusValue {
-            num_proves: F::zero(),
-            num_assumes: F::zero(),
-            row_proves: Vec::new(),
-            row_assumes: Vec::new(),
-        });
-
-        if is_num {
-            bus_val.num_proves += F::one();
-            bus_val.row_proves.push(row);
-        } else {
-            bus_val.num_assumes += F::one();
-            bus_val.row_assumes.push(row);
         }
     }
 }
