@@ -88,7 +88,13 @@ impl<F: Field + 'static> ProofMan<F> {
             Self::print_summary(pctx.clone());
         }
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone(), ectx.clone(), options.aggregation, options.final_snark);
+        Self::initialize_fixed_pols(
+            setups.clone(),
+            pctx.clone(),
+            ectx.clone(),
+            options.aggregation,
+            options.final_snark,
+        );
 
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
         Self::initialize_provers(sctx.clone(), &mut provers, pctx.clone(), ectx.clone());
