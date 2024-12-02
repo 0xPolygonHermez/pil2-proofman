@@ -68,12 +68,8 @@ pub trait Prover<F: Field> {
     fn commit_stage(&mut self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>) -> ProverStatus;
     fn calculate_xdivxsub(&mut self, proof_ctx: Arc<ProofCtx<F>>);
     fn calculate_lev(&mut self, proof_ctx: Arc<ProofCtx<F>>);
-    fn opening_stage(
-        &mut self,
-        opening_id: u32,
-        setup_ctx: Arc<SetupCtx>,
-        proof_ctx: Arc<ProofCtx<F>>,
-    ) -> ProverStatus;
+    fn opening_stage(&mut self, opening_id: u32, setup_ctx: Arc<SetupCtx>, proof_ctx: Arc<ProofCtx<F>>)
+        -> ProverStatus;
 
     fn get_buff_helper_size(&self) -> usize;
     fn get_proof(&self) -> *mut c_void;

@@ -52,13 +52,7 @@ impl<F: Field> StarkProver<F> {
     const HASH_SIZE: usize = 4;
     const FIELD_EXTENSION: usize = 3;
 
-    pub fn new(
-        sctx: Arc<SetupCtx>,
-        airgroup_id: usize,
-        air_id: usize,
-        instance_id: usize,
-        prover_idx: usize,
-    ) -> Self {
+    pub fn new(sctx: Arc<SetupCtx>, airgroup_id: usize, air_id: usize, instance_id: usize, prover_idx: usize) -> Self {
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;

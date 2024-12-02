@@ -36,27 +36,25 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
-    for (prover_idx, air_instance) in
-        pctx.air_instance_repo.air_instances.write().unwrap().iter_mut().enumerate()
-    {
+    for (prover_idx, air_instance) in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut().enumerate() {
         let air_instance_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
 
         let mut zkin;
-        
+
         if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) {
             timer_start_trace!(GENERATING_COMPRESSOR_PROOF);
 
-            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
+            let setup =
+                setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
             let p_setup: *mut c_void = (&setup.p_setup).into();
 
-            let setup_path = pctx.global_info.get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, &ProofType::Compressor);
+            let setup_path = pctx.global_info.get_air_setup_path(
+                air_instance.airgroup_id,
+                air_instance.air_id,
+                &ProofType::Compressor,
+            );
 
-            let (buffer, publics) = generate_witness::<F>(
-                &setup_path,
-                setup,
-                proofs[prover_idx],
-                18,
-            )?;
+            let (buffer, publics) = generate_witness::<F>(&setup_path, setup, proofs[prover_idx], 18)?;
 
             let p_publics = publics.as_ptr() as *mut c_void;
             let p_address = buffer.as_ptr() as *mut c_void;
@@ -71,8 +69,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
                 )
             );
 
-            let output_file_path = output_dir_path
-                .join(format!("proofs/compressor_{}_{}.json", air_instance_name, prover_idx));
+            let output_file_path =
+                output_dir_path.join(format!("proofs/compressor_{}_{}.json", air_instance_name, prover_idx));
 
             let proof_file = match save_proof {
                 true => output_file_path.to_string_lossy().into_owned(),
@@ -108,22 +106,18 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
         let p_setup: *mut c_void = (&setup.p_setup).into();
 
         let recursive2_verkey = pctx
-                .global_info
-                .get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, &ProofType::Recursive2)
-                .display()
-                .to_string()
-                + ".verkey.json";
-        
+            .global_info
+            .get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, &ProofType::Recursive2)
+            .display()
+            .to_string()
+            + ".verkey.json";
+
         zkin = add_recursive2_verkey_c(zkin, recursive2_verkey.as_str());
 
-        let setup_path = pctx.global_info.get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, &ProofType::Recursive1);
+        let setup_path =
+            pctx.global_info.get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, &ProofType::Recursive1);
 
-        let (buffer, publics) = generate_witness::<F>(
-            &setup_path,
-            setup,
-            zkin,
-            18,
-        )?;
+        let (buffer, publics) = generate_witness::<F>(&setup_path, setup, zkin, 18)?;
 
         let p_publics = publics.as_ptr() as *mut c_void;
         let p_address = buffer.as_ptr() as *mut c_void;
@@ -138,8 +132,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
             )
         );
 
-        let output_file_path = output_dir_path
-            .join(format!("proofs/recursive1_{}_{}.json", air_instance_name, prover_idx));
+        let output_file_path =
+            output_dir_path.join(format!("proofs/recursive1_{}_{}.json", air_instance_name, prover_idx));
 
         let proof_file = match save_proof {
             true => output_file_path.to_string_lossy().into_owned(),
@@ -167,7 +161,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
         log::info!("{}: ··· Recursive1 Proof generated.", MY_NAME);
         timer_stop_and_log_trace!(GENERATE_RECURSIVE1_PROOF);
     }
-
 
     Ok(proofs_out)
 }
@@ -267,12 +260,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 
                         let setup_path = pctx.global_info.get_air_setup_path(airgroup, 0, &ProofType::Recursive2);
 
-                        let (buffer, publics) = generate_witness::<F>(
-                            &setup_path,
-                            setup,
-                            zkin_recursive2_updated,
-                            18,
-                        )?;
+                        let (buffer, publics) = generate_witness::<F>(&setup_path, setup, zkin_recursive2_updated, 18)?;
                         let p_publics = publics.as_ptr() as *mut c_void;
                         let p_address = buffer.as_ptr() as *mut c_void;
 
@@ -412,7 +400,6 @@ pub fn generate_vadcop_final_proof<F: Field>(
     Ok(p_prove)
 }
 
-
 pub fn generate_recursivef_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setup: Arc<Setup>,
@@ -446,17 +433,68 @@ pub fn generate_recursivef_proof<F: Field>(
         output_dir_path.join("proofs/recursivef.json").to_string_lossy().as_ref(),
         global_info_file,
         0,
-        false
+        false,
     );
-    log::info!("{}: ··· Proof generated.", MY_NAME);
+    log::info!("{}: ··· RecursiveF Proof generated.", MY_NAME);
     drop(buffer);
     timer_stop_and_log_trace!(GENERATE_RECURSIVEF_PROOF);
 
     Ok(p_prove)
 }
 
+pub fn generate_fflonk_snark_proof<F: Field>(
+    pctx: &ProofCtx<F>,
+    proof: *mut c_void,
+    output_dir_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const MY_NAME: &str = "FinProof";
+
+    let setup_path = pctx.global_info.get_setup_path("final");
+
+    let rust_lib_filename = setup_path.display().to_string() + ".so";
+    let rust_lib_path = Path::new(rust_lib_filename.as_str());
+
+    if !rust_lib_path.exists() {
+        return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
+    }
+    let library: Library = unsafe { Library::new(rust_lib_path)? };
+
+    let dat_filename = setup_path.display().to_string() + ".dat";
+    let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
+    let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        timer_start_trace!(CALCULATE_FINAL_WITNESS);
+
+        let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
+        let size_witness = get_size_witness();
+
+        let witness: Vec<MaybeUninit<u8>> = Vec::with_capacity((size_witness * 32) as usize);
+        let witness_ptr = witness.as_ptr() as *mut c_void;
+
+        let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
+
+        let nmutex = 128;
+        get_witness(proof, dat_filename_ptr, witness_ptr, nmutex);
+
+        timer_stop_and_log_trace!(CALCULATE_FINAL_WITNESS);
+
+        timer_start_trace!(CALCULATE_FINAL_PROOF);
+        let zkey_filename = setup_path.display().to_string() + ".zkey";
+        log::info!("{}: ··· Generating final snark proof", MY_NAME);
+        gen_final_snark_proof_c(
+            witness_ptr,
+            zkey_filename.as_str(),
+            output_dir_path.join("proofs").to_string_lossy().as_ref(),
+        );
+        timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
+        log::info!("{}: ··· Final Snark Proof generated.", MY_NAME);
+    }
+
+    Ok(())
+}
 fn generate_witness<F: Field>(
-    setup_path: &PathBuf,
+    setup_path: &Path,
     setup: &Setup,
     zkin: *mut c_void,
     n_cols: usize,

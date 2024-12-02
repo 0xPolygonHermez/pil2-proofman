@@ -17,11 +17,10 @@ pub struct SetupsVadcop {
     pub sctx_recursive2: Option<Arc<SetupCtx>>,
     pub setup_vadcop_final: Option<Arc<Setup>>,
     pub setup_recursivef: Option<Arc<Setup>>,
-
 }
 
 impl SetupsVadcop {
-    pub fn new(global_info: &GlobalInfo, aggregation: bool) -> Self {
+    pub fn new(global_info: &GlobalInfo, aggregation: bool, final_snark: bool) -> Self {
         info!("Initializing setups");
         timer_start_debug!(INITIALIZING_SETUP);
         let sctx: SetupCtx = SetupCtx::new(global_info, &ProofType::Basic);
@@ -51,13 +50,15 @@ impl SetupsVadcop {
             timer_stop_and_log_debug!(INITIALIZING_SETUP_VADCOP_FINAL);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_AGGREGATION);
 
-            timer_start_debug!(INITIALIZING_SETUP_RECURSION);
-            timer_start_debug!(INITIALIZING_SETUP_RECURSIVEF);
-            info!(" ··· Initializing setups recursivef");
-            let setup_recursivef: Setup = Setup::new(global_info, 0, 0, &ProofType::RecursiveF);
-            timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVEF);
-            timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSION);
-
+            let mut setup_recursivef = None;
+            if final_snark {
+                timer_start_debug!(INITIALIZING_SETUP_RECURSION);
+                timer_start_debug!(INITIALIZING_SETUP_RECURSIVEF);
+                info!(" ··· Initializing setups recursivef");
+                setup_recursivef = Some(Arc::new(Setup::new(global_info, 0, 0, &ProofType::RecursiveF)));
+                timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVEF);
+                timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSION);
+            }
 
             SetupsVadcop {
                 sctx: Arc::new(sctx),
@@ -65,7 +66,7 @@ impl SetupsVadcop {
                 sctx_recursive1: Some(Arc::new(sctx_recursive1)),
                 sctx_recursive2: Some(Arc::new(sctx_recursive2)),
                 setup_vadcop_final: Some(Arc::new(setup_vadcop_final)),
-                setup_recursivef: Some(Arc::new(setup_recursivef)),
+                setup_recursivef,
             }
         } else {
             SetupsVadcop {

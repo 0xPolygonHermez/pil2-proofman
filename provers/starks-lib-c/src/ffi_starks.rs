@@ -858,11 +858,7 @@ pub fn get_committed_pols_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_final_snark_proof_c(
-    pWitnessFinal: *mut ::std::os::raw::c_void,
-    zkeyFile: &str,
-    outputDir: &str,
-) {
+pub fn gen_final_snark_proof_c(pWitnessFinal: *mut ::std::os::raw::c_void, zkeyFile: &str, outputDir: &str) {
     let zkey_file_name = CString::new(zkeyFile).unwrap();
     let zkey_file_ptr = zkey_file_name.as_ptr() as *mut std::os::raw::c_char;
 
@@ -1512,11 +1508,7 @@ pub fn get_committed_pols_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_final_snark_proof_c(
-    _pWitnessFinal: *mut ::std::os::raw::c_void,
-    _zkeyFile: *mut ::std::os::raw::c_char,
-    _outputDir: *mut ::std::os::raw::c_char,
-) {
+pub fn gen_final_snark_proof_c(_pWitnessFinal: *mut ::std::os::raw::c_void, _zkeyFile: &str, _outputDir: &str) {
     trace!("{}: ··· {}", "ffi     ", "gen_final_snark_proof: This is a mock call because there is no linked library");
 }
 

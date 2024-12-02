@@ -22,25 +22,18 @@ void genFinalSnarkProof(void *pWitnessFinal, std::string zkeyFile, std::string o
     std::unique_ptr<BinFileUtils::BinFile> zkey = BinFileUtils::openExisting(zkeyFile, "zkey", 1);
     int protocolId = Zkey::getProtocolIdFromZkey(zkey.get());
     if(protocolId != Zkey::FFLONK_PROTOCOL_ID) {
-        zklog.error("Prover::genBatchProof() zkey protocolId has to be Fflonk");
+        zklog.error("Zkey protocolId has to be Fflonk");
         exitProcess();
     }
     
-    prover->setZkey(zkey.get());
-
-    BinFileUtils::BinFile *pZkey = zkey.release();
-    assert(zkey.get() == nullptr);
-    assert(zkey == nullptr);
-    delete pZkey;
-
     TimerStopAndLog(PROVER_INIT_FFLONK);
 
-    TimerStart(RAPID_SNARK);
     try
     {
-        auto [jsonProof, publicSignalsJson] = prover->prove(witnessFinal);        
+        TimerStart(FFLONK_PROOF);
+        auto [jsonProof, publicSignalsJson] = prover->prove(zkey.get(), witnessFinal);        
         json2file(jsonProof, outputDir + "/final_snark_proof.json");
-        TimerStopAndLog(RAPID_SNARK);
+        TimerStopAndLog(FFLONK_PROOF);
     }
     catch (std::exception &e)
     {

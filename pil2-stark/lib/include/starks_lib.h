@@ -137,7 +137,7 @@
 
     // Final proof
     // =================================================================================
-    void gen_final_snark_proof(void *pWitnessFinal, std::string zkeyFile, std::string outputDir);
+    void gen_final_snark_proof(void *pWitnessFinal, char* zkeyFile, char* outputDir);
 
     // Util calls
     // =================================================================================

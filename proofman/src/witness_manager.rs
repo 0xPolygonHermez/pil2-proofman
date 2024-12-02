@@ -67,13 +67,7 @@ impl<F> WitnessManager<F> {
         }
     }
 
-    pub fn calculate_witness(
-        &self,
-        stage: u32,
-        pctx: Arc<ProofCtx<F>>,
-        ectx: Arc<ExecutionCtx>,
-        sctx: Arc<SetupCtx>,
-    ) {
+    pub fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         log::info!(
             "{}: Calculating witness for stage {} / {}",
             Self::MY_NAME,

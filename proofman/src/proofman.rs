@@ -16,7 +16,10 @@ use transcript::FFITranscript;
 
 use crate::{WitnessLibInitFn, WitnessLibrary};
 use crate::verify_constraints_proof;
-use crate::{generate_vadcop_recursive1_proof, generate_vadcop_final_proof, generate_vadcop_recursive2_proof, generate_recursivef_proof};
+use crate::{
+    generate_vadcop_recursive1_proof, generate_vadcop_final_proof, generate_vadcop_recursive2_proof,
+    generate_recursivef_proof, generate_fflonk_snark_proof,
+};
 
 use proofman_common::{ExecutionCtx, ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop};
 
@@ -71,7 +74,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let pctx = Arc::new(ProofCtx::create_ctx(witness_lib.pilout(), proving_key_path.clone()));
 
-        let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, options.aggregation));
+        let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, options.aggregation, options.final_snark));
         let sctx: Arc<SetupCtx> = setups.sctx.clone();
 
         Self::initialize_witness(&mut witness_lib, pctx.clone(), ectx.clone(), sctx.clone());
@@ -85,7 +88,7 @@ impl<F: Field + 'static> ProofMan<F> {
             Self::print_summary(pctx.clone());
         }
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone(), ectx.clone(), options.aggregation);
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone(), ectx.clone(), options.aggregation, options.final_snark);
 
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
         Self::initialize_provers(sctx.clone(), &mut provers, pctx.clone(), ectx.clone());
@@ -190,13 +193,8 @@ impl<F: Field + 'static> ProofMan<F> {
 
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
-        let recursive1_proofs = generate_vadcop_recursive1_proof(
-            &pctx,
-            setups.clone(),
-            &proves_out,
-            output_dir_path.clone(),
-            false,
-        )?;
+        let recursive1_proofs =
+            generate_vadcop_recursive1_proof(&pctx, setups.clone(), &proves_out, output_dir_path.clone(), false)?;
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         log::info!("{}: Compressor and recursive1 proofs generated successfully", Self::MY_NAME);
 
@@ -226,17 +224,23 @@ impl<F: Field + 'static> ProofMan<F> {
             timer_stop_and_log_info!(GENERATING_VADCOP_FINAL_PROOF);
             log::info!("{}: VadcopFinal proof generated successfully", Self::MY_NAME);
 
-            timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-            let _recursivef_proof = generate_recursivef_proof(
-                &pctx,
-                setups.setup_recursivef.as_ref().unwrap().clone(),
-                final_proof,
-                output_dir_path.clone(),
-            )?;
-            timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
-            log::info!("{}: RecursiveF proof generated successfully", Self::MY_NAME);
+            timer_stop_and_log_info!(GENERATING_AGGREGATION_PROOFS);
+
+            if options.final_snark {
+                timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
+                let recursivef_proof = generate_recursivef_proof(
+                    &pctx,
+                    setups.setup_recursivef.as_ref().unwrap().clone(),
+                    final_proof,
+                    output_dir_path.clone(),
+                )?;
+                timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
+
+                timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
+                let _ = generate_fflonk_snark_proof(&pctx, recursivef_proof, output_dir_path.clone());
+                timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
+            }
         }
-        timer_stop_and_log_info!(GENERATING_AGGREGATION_PROOFS);
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
         log::info!("{}: Proofs generated successfully", Self::MY_NAME);
         ectx.dctx.read().unwrap().barrier();
@@ -331,6 +335,7 @@ impl<F: Field + 'static> ProofMan<F> {
         pctx: Arc<ProofCtx<F>>,
         _ectx: Arc<ExecutionCtx>,
         aggregation: bool,
+        final_snark: bool,
     ) {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_debug!(INITIALIZE_SETUP);
@@ -357,7 +362,6 @@ impl<F: Field + 'static> ProofMan<F> {
             let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
             let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
             let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
-            let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
 
             timer_start_debug!(INITIALIZE_CONST_POLS_COMPRESSOR);
             info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
@@ -406,11 +410,14 @@ impl<F: Field + 'static> ProofMan<F> {
             setup_vadcop_final.load_const_pols_tree(&pctx.global_info, &ProofType::VadcopFinal, false);
             timer_stop_and_log_debug!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
 
-            timer_start_debug!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
-            info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
-            setup_recursivef.load_const_pols(&pctx.global_info, &ProofType::RecursiveF);
-            setup_recursivef.load_const_pols_tree(&pctx.global_info, &ProofType::RecursiveF, false);
-            timer_stop_and_log_debug!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+            if final_snark {
+                let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
+                timer_start_debug!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+                info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
+                setup_recursivef.load_const_pols(&pctx.global_info, &ProofType::RecursiveF);
+                setup_recursivef.load_const_pols_tree(&pctx.global_info, &ProofType::RecursiveF, false);
+                timer_stop_and_log_debug!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+            }
         }
         timer_stop_and_log_debug!(INITIALIZE_SETUP);
     }
