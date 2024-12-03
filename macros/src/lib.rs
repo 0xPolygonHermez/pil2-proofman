@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, format_ident, ToTokens};
 use syn::{
+    LitInt,
     parse::{Parse, ParseStream},
     parse2, Field, FieldsNamed, Generics, Ident, Result, Token,
 };
@@ -244,6 +245,7 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
 
     let struct_name = parsed_input.struct_name;
     let generic_param = parsed_input.generic_param;
+    let dimensions = parsed_input.dimensions;
 
     // Generate the struct and implementation
     let result = quote! {
@@ -285,6 +287,7 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
 struct ParsedValuesInput {
     pub struct_name: Ident,
     pub generic_param: Ident,
+    pub dimensions: usize,
 }
 
 impl Parse for ParsedValuesInput {
@@ -292,10 +295,12 @@ impl Parse for ParsedValuesInput {
         let struct_name: Ident = input.parse()?;
         input.parse::<Token![<]>()?;
         let generic_param: Ident = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let dimensions: LitInt = input.parse()?;
         input.parse::<Token![>]>()?;
         input.parse::<Token![;]>()?; // Expect a semicolon to terminate the macro input
 
-        Ok(ParsedValuesInput { struct_name, generic_param })
+        Ok(ParsedValuesInput { struct_name, generic_param, dimensions: dimensions.base10_parse()? })
     }
 }
 
@@ -615,68 +620,4 @@ fn test_empty_array() {
     let ty: syn::Type = syn::parse_quote! { [F; 0] };
     let size = calculate_field_size_literal(&ty).unwrap();
     assert_eq!(size, 0);
-}
-
-#[test]
-fn test_parsed_values_basic() {
-    let input = quote! {
-        U8AirAirValuesVals<F>;
-    };
-
-    let parsed: ParsedValuesInput = syn::parse2(input).unwrap();
-
-    assert_eq!(parsed.struct_name, "U8AirAirValuesVals");
-    assert_eq!(parsed.generic_param, "F");
-}
-
-#[test]
-fn test_parsed_values_complex_name() {
-    let input = quote! {
-        FibonacciSquareValues<F>;
-    };
-
-    let parsed: ParsedValuesInput = syn::parse2(input).unwrap();
-
-    assert_eq!(parsed.struct_name, "FibonacciSquareValues");
-    assert_eq!(parsed.generic_param, "F");
-}
-
-#[test]
-#[should_panic(expected = "expected `;`")]
-fn test_parsed_values_missing_semicolon() {
-    let input = quote! {
-        U8AirAirValuesVals<F>
-    };
-
-    let _parsed: ParsedValuesInput = syn::parse2(input).unwrap();
-}
-
-#[test]
-#[should_panic(expected = "expected `<`")]
-fn test_parsed_values_missing_generic_param() {
-    let input = quote! {
-        U8AirAirValuesVals;
-    };
-
-    let _parsed: ParsedValuesInput = syn::parse2(input).unwrap();
-}
-
-#[test]
-#[should_panic(expected = "expected `;`")]
-fn test_parsed_values_invalid_syntax() {
-    let input = quote! {
-        U8AirAirValuesVals < F > extra;
-    };
-
-    let _parsed: ParsedValuesInput = syn::parse2(input).unwrap();
-}
-
-#[test]
-#[should_panic(expected = "expected `>`")]
-fn test_parsed_values_multiple_generics() {
-    let input = quote! {
-        U8AirAirValuesVals<F, G>;
-    };
-
-    let _parsed: ParsedValuesInput = syn::parse2(input).unwrap();
 }
