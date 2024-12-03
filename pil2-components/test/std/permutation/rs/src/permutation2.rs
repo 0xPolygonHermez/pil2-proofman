@@ -26,8 +26,13 @@ impl<F: PrimeField + Copy> Permutation2<F> {
         let num_rows = pctx.global_info.airs[PERMUTATION_AIRGROUP_ID][PERMUTATION_2_6_AIR_IDS[0]].num_rows;
         let trace = Permutation2_6Trace::new(num_rows);
 
-        let air_instance =
-            AirInstance::new(sctx.clone(), PERMUTATION_AIRGROUP_ID, PERMUTATION_2_6_AIR_IDS[0], None, trace.buffer.unwrap());
+        let air_instance = AirInstance::new(
+            sctx.clone(),
+            PERMUTATION_AIRGROUP_ID,
+            PERMUTATION_2_6_AIR_IDS[0],
+            None,
+            trace.buffer.unwrap(),
+        );
         let (is_myne, gid) =
             ectx.dctx.write().unwrap().add_instance(PERMUTATION_AIRGROUP_ID, PERMUTATION_2_6_AIR_IDS[0], 1);
         if is_myne {
@@ -63,8 +68,7 @@ impl<F: PrimeField + Copy> WitnessComponent<F> for Permutation2<F> {
             let buffer = &mut air_instance.trace;
 
             let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
-            let mut trace =
-                Permutation2_6Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
+            let mut trace = Permutation2_6Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
 
             // Note: Here it is assumed that num_rows of permutation2 is equal to
             //       the sum of num_rows of each variant of permutation1.

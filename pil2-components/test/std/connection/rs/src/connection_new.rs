@@ -30,8 +30,13 @@ where
         let num_rows = pctx.global_info.airs[CONNECTION_AIRGROUP_ID][CONNECTION_NEW_AIR_IDS[0]].num_rows;
         let trace = ConnectionNewTrace::new(num_rows);
 
-        let air_instance =
-            AirInstance::new(sctx.clone(), CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0], None, trace.buffer.unwrap());
+        let air_instance = AirInstance::new(
+            sctx.clone(),
+            CONNECTION_AIRGROUP_ID,
+            CONNECTION_NEW_AIR_IDS[0],
+            None,
+            trace.buffer.unwrap(),
+        );
         let (is_myne, gid) =
             ectx.dctx.write().unwrap().add_instance(CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0], 1);
         if is_myne {
@@ -69,8 +74,7 @@ where
             let buffer = &mut air_instance.trace;
 
             let num_rows = pctx.pilout.get_air(CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0]).num_rows();
-            let mut trace =
-                ConnectionNewTrace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
+            let mut trace = ConnectionNewTrace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
 
             let mut frame = [0; 6];
             let mut conn_len = [0; 6];

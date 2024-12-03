@@ -27,7 +27,8 @@ impl<F: PrimeField + Copy> Lookup3<F> {
         let num_rows = pctx.global_info.airs[LOOKUP_AIRGROUP_ID][LOOKUP_3_AIR_IDS[0]].num_rows;
         let trace = Lookup3Trace::new(num_rows);
 
-        let air_instance = AirInstance::new(sctx.clone(), LOOKUP_AIRGROUP_ID, LOOKUP_3_AIR_IDS[0], None, trace.buffer.unwrap());
+        let air_instance =
+            AirInstance::new(sctx.clone(), LOOKUP_AIRGROUP_ID, LOOKUP_3_AIR_IDS[0], None, trace.buffer.unwrap());
 
         let (is_myne, gid) = ectx.dctx.write().unwrap().add_instance(LOOKUP_AIRGROUP_ID, LOOKUP_3_AIR_IDS[0], 1);
         if is_myne {

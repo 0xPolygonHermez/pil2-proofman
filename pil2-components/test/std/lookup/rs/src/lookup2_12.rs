@@ -30,7 +30,8 @@ where
         let num_rows = pctx.global_info.airs[LOOKUP_AIRGROUP_ID][LOOKUP_2_12_AIR_IDS[0]].num_rows;
         let trace = Lookup2_12Trace::new(num_rows);
 
-        let air_instance = AirInstance::new(sctx.clone(), LOOKUP_AIRGROUP_ID, LOOKUP_2_12_AIR_IDS[0], None, trace.buffer.unwrap());
+        let air_instance =
+            AirInstance::new(sctx.clone(), LOOKUP_AIRGROUP_ID, LOOKUP_2_12_AIR_IDS[0], None, trace.buffer.unwrap());
 
         let (is_myne, gid) = ectx.dctx.write().unwrap().add_instance(LOOKUP_AIRGROUP_ID, LOOKUP_2_12_AIR_IDS[0], 1);
         if is_myne {

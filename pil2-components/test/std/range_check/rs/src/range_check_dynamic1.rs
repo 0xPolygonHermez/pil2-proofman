@@ -36,7 +36,8 @@ where
     }
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        let num_rows = pctx.global_info.airs[RANGE_CHECK_DYNAMIC_1_AIRGROUP_ID][RANGE_CHECK_DYNAMIC_1_AIR_IDS[0]].num_rows;
+        let num_rows =
+            pctx.global_info.airs[RANGE_CHECK_DYNAMIC_1_AIRGROUP_ID][RANGE_CHECK_DYNAMIC_1_AIR_IDS[0]].num_rows;
         let trace = RangeCheckDynamic1Trace::new(num_rows);
 
         let air_instance = AirInstance::new(
@@ -81,8 +82,7 @@ where
 
             let num_rows =
                 pctx.pilout.get_air(RANGE_CHECK_DYNAMIC_1_AIRGROUP_ID, RANGE_CHECK_DYNAMIC_1_AIR_IDS[0]).num_rows();
-            let mut trace =
-                RangeCheckDynamic1Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
+            let mut trace = RangeCheckDynamic1Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
 
             let range7 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 7) - 1), Some(false));
             let range8 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), Some(false));

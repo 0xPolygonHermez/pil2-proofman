@@ -74,12 +74,11 @@ where
             let proof_ctx = pctx.clone();
             let air_instances_vec = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap();
             let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
-            
+
             let buffer = &mut air_instance.trace;
             let num_rows =
                 pctx.pilout.get_air(MULTI_RANGE_CHECK_1_AIRGROUP_ID, MULTI_RANGE_CHECK_1_AIR_IDS[0]).num_rows();
-            let mut trace =
-                MultiRangeCheck1Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
+            let mut trace = MultiRangeCheck1Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
 
             let range1 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 7) - 1), Some(false));
             let range2 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), Some(false));

@@ -30,8 +30,13 @@ where
         let num_rows = pctx.global_info.airs[CONNECTION_AIRGROUP_ID][CONNECTION_2_AIR_IDS[0]].num_rows;
         let trace = Connection2Trace::new(num_rows);
 
-        let air_instance =
-            AirInstance::new(sctx.clone(), CONNECTION_AIRGROUP_ID, CONNECTION_2_AIR_IDS[0], None, trace.buffer.unwrap());
+        let air_instance = AirInstance::new(
+            sctx.clone(),
+            CONNECTION_AIRGROUP_ID,
+            CONNECTION_2_AIR_IDS[0],
+            None,
+            trace.buffer.unwrap(),
+        );
         let (is_myne, gid) =
             ectx.dctx.write().unwrap().add_instance(CONNECTION_AIRGROUP_ID, CONNECTION_2_AIR_IDS[0], 1);
         if is_myne {

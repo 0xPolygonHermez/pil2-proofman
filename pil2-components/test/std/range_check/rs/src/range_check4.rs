@@ -36,8 +36,13 @@ where
         let num_rows = pctx.global_info.airs[RANGE_CHECK_4_AIRGROUP_ID][RANGE_CHECK_4_AIR_IDS[0]].num_rows;
         let trace = RangeCheck4Trace::new(num_rows);
 
-        let air_instance =
-            AirInstance::new(sctx.clone(), RANGE_CHECK_4_AIRGROUP_ID, RANGE_CHECK_4_AIR_IDS[0], None, trace.buffer.unwrap());
+        let air_instance = AirInstance::new(
+            sctx.clone(),
+            RANGE_CHECK_4_AIRGROUP_ID,
+            RANGE_CHECK_4_AIR_IDS[0],
+            None,
+            trace.buffer.unwrap(),
+        );
         let (is_myne, gid) =
             ectx.dctx.write().unwrap().add_instance(RANGE_CHECK_4_AIRGROUP_ID, RANGE_CHECK_4_AIR_IDS[0], 1);
         if is_myne {

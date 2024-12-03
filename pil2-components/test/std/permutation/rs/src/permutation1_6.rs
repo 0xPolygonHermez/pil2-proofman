@@ -30,8 +30,13 @@ where
         let num_rows = pctx.global_info.airs[PERMUTATION_AIRGROUP_ID][PERMUTATION_1_6_AIR_IDS[0]].num_rows;
         let trace = Permutation1_6Trace::new(num_rows);
 
-        let air_instance =
-            AirInstance::new(sctx.clone(), PERMUTATION_AIRGROUP_ID, PERMUTATION_1_6_AIR_IDS[0], None, trace.buffer.unwrap());
+        let air_instance = AirInstance::new(
+            sctx.clone(),
+            PERMUTATION_AIRGROUP_ID,
+            PERMUTATION_1_6_AIR_IDS[0],
+            None,
+            trace.buffer.unwrap(),
+        );
         let (is_myne, gid) =
             ectx.dctx.write().unwrap().add_instance(PERMUTATION_AIRGROUP_ID, PERMUTATION_1_6_AIR_IDS[0], 1);
         if is_myne {
@@ -40,8 +45,13 @@ where
 
         let trace2 = Permutation1_6Trace::new(num_rows);
 
-        let air_instance =
-            AirInstance::new(sctx.clone(), PERMUTATION_AIRGROUP_ID, PERMUTATION_1_6_AIR_IDS[0], None, trace2.buffer.unwrap());
+        let air_instance = AirInstance::new(
+            sctx.clone(),
+            PERMUTATION_AIRGROUP_ID,
+            PERMUTATION_1_6_AIR_IDS[0],
+            None,
+            trace2.buffer.unwrap(),
+        );
         let (is_myne, gid) =
             ectx.dctx.write().unwrap().add_instance(PERMUTATION_AIRGROUP_ID, PERMUTATION_1_6_AIR_IDS[0], 1);
         if is_myne {
@@ -67,19 +77,14 @@ where
         let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
         let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
 
-        log::debug!(
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-            stage
-        );
+        log::debug!(Self::MY_NAME, air.name().unwrap_or("unknown"), stage);
 
         if stage == 1 {
             let buffer = &mut air_instance.trace;
             let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
 
             // I cannot, programatically, link the permutation trace with its air_id
-            let mut trace =
-                Permutation1_6Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
+            let mut trace = Permutation1_6Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
 
             // TODO: Add the ability to send inputs to permutation2
             //       and consequently add random selectors
