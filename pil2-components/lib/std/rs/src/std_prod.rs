@@ -165,8 +165,7 @@ impl<F: PrimeField> StdProd<F> {
                 }
             }
 
-            (0..num_rows).for_each(|j| {});
-
+            #[allow(clippy::too_many_arguments)]
             fn update_bus<F: PrimeField>(
                 airgroup_id: usize,
                 air_id: usize,

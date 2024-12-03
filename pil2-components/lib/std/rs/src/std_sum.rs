@@ -13,7 +13,7 @@ use proofman_hints::{
     get_hint_ids_by_name, mul_hint_fields, HintFieldOptions, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
 };
 
-use crate::{debug, print_debug_info, update_debug_data, DebugData, Decider};
+use crate::{print_debug_info, update_debug_data, DebugData, Decider};
 
 type SumAirsItem = (usize, usize, Vec<u64>, Vec<u64>, Vec<u64>); // (airgroup_id, air_id, gsum_hints, im_hints, debug_hints_data, debug_hints)
 
@@ -158,6 +158,7 @@ impl<F: PrimeField> StdSum<F> {
             }
         }
 
+        #[allow(clippy::too_many_arguments)]
         fn update_bus<F: PrimeField>(
             airgroup_id: usize,
             air_id: usize,

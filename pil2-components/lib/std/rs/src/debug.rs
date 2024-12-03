@@ -24,6 +24,7 @@ struct MetaData {
     row_assumes: Vec<usize>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_debug_data<F: PrimeField>(
     debug_data: &DebugData<F>,
     opid: F,
