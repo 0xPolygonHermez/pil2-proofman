@@ -180,7 +180,7 @@ pub fn print_debug_info<F: PrimeField>(name: &str, max_values_to_print: usize, d
                 instance_id,
                 rows.len(),
                 rows_display,
-                if truncated { ", ..." } else { "" },
+                if truncated { ",..." } else { "" },
             );
         }
 

@@ -9,11 +9,11 @@ use p3_field::PrimeField;
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx, StdMode, ModeName};
 use proofman_hints::{
-    acc_mul_hint_fields, get_hint_field, get_hint_field_a, get_hint_ids_by_name, mul_hint_fields, HintFieldOptions,
-    HintFieldOutput,
+    acc_mul_hint_fields, get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a,
+    get_hint_ids_by_name, mul_hint_fields, HintFieldOptions, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
 };
 
-use crate::{print_debug_info, update_debug_data, DebugData, Decider};
+use crate::{debug, print_debug_info, update_debug_data, DebugData, Decider};
 
 type SumAirsItem = (usize, usize, Vec<u64>, Vec<u64>, Vec<u64>); // (airgroup_id, air_id, gsum_hints, im_hints, debug_hints_data, debug_hints)
 
@@ -72,20 +72,40 @@ impl<F: PrimeField> StdSum<F> {
         num_rows: usize,
         debug_hints_data: Vec<u64>,
     ) {
-        for hint in debug_hints_data.iter() {
-            // let _name =
-            //     get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "name_piop", HintFieldOptions::default());
+        let debug_data = self.debug_data.as_ref().expect("Debug data missing");
+        let airgroup_id = air_instance.airgroup_id;
+        let air_id = air_instance.air_id;
+        let instance_id = air_instance.air_instance_id.unwrap_or_default();
 
-            let sumid =
-                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "sumid", HintFieldOptions::default());
-            if let HintFieldOutput::Field(sumid) = sumid.get(0) {
+        for hint in debug_hints_data.iter() {
+            let _name_piop = get_hint_field_constant::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                *hint as usize,
+                "name_piop",
+                HintFieldOptions::default(),
+            );
+
+            let _name_expr = get_hint_field_constant_a::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                *hint as usize,
+                "name_expr",
+                HintFieldOptions::default(),
+            );
+
+            let opid =
+                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "opid", HintFieldOptions::default());
+            if let HintFieldOutput::Field(opid) = opid.get(0) {
                 if let Some(opids) = &self.mode.opids {
-                    if !opids.contains(&sumid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
+                    if !opids.contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
                         continue;
                     }
                 }
             } else {
-                panic!("sumid must be a field element");
+                panic!("opid must be a field element");
             };
 
             let proves =
@@ -99,64 +119,94 @@ impl<F: PrimeField> StdSum<F> {
                 pctx,
                 air_instance,
                 *hint as usize,
-                "references",
+                "expressions",
                 HintFieldOptions::default(),
             );
 
-            // let _names = get_hint_field_a::<F>(
-            //     sctx,
-            //     &pctx.public_inputs,
-            //     &pctx.challenges,
-            //     air_instance,
-            //     *hint as usize,
-            //     "names",
-            //     HintFieldOptions::default(),
-            // );
+            let HintFieldValue::Field(deg_expr) = get_hint_field_constant::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                *hint as usize,
+                "deg_expr",
+                HintFieldOptions::default(),
+            ) else {
+                log::error!("deg_expr hint must be a field element");
+                panic!();
+            };
 
-            (0..num_rows).for_each(|j| {
-                let mut mul = match mul.get(j) {
-                    HintFieldOutput::Field(mul) => mul,
-                    _ => panic!("mul must be a field element"),
+            let HintFieldValue::Field(deg_mul) = get_hint_field_constant::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                *hint as usize,
+                "deg_sel",
+                HintFieldOptions::default(),
+            ) else {
+                log::error!("deg_mul hint must be a field element");
+                panic!();
+            };
+
+            // If both the expresion and the mul are of degree zero, then simply update the bus once
+            if deg_expr.is_zero() && deg_mul.is_zero() {
+                update_bus(airgroup_id, air_id, instance_id, &opid, &proves, &mul, &expressions, 0, debug_data);
+            } else {
+                // Otherwise, update the bus for each row
+                for j in 0..num_rows {
+                    update_bus(airgroup_id, air_id, instance_id, &opid, &proves, &mul, &expressions, j, debug_data);
+                }
+            }
+        }
+
+        fn update_bus<F: PrimeField>(
+            airgroup_id: usize,
+            air_id: usize,
+            instance_id: usize,
+            opid: &HintFieldValue<F>,
+            proves: &HintFieldValue<F>,
+            mul: &HintFieldValue<F>,
+            expressions: &HintFieldValuesVec<F>,
+            row: usize,
+            debug_data: &DebugData<F>,
+        ) {
+            let mut mul = match mul.get(row) {
+                HintFieldOutput::Field(mul) => mul,
+                _ => panic!("mul must be a field element"),
+            };
+
+            if !mul.is_zero() {
+                let opid = match opid.get(row) {
+                    HintFieldOutput::Field(opid) => opid,
+                    _ => panic!("opid must be a field element"),
                 };
 
-                if !mul.is_zero() {
-                    let sumid = match sumid.get(j) {
-                        HintFieldOutput::Field(sumid) => sumid,
-                        _ => panic!("sumid must be a field element"),
-                    };
-
-                    let proves = match proves.get(j) {
-                        HintFieldOutput::Field(proves) => match proves {
-                            p if p.is_zero() || p == -F::one() => {
-                                // If it's an assume, then negate its value
-                                if p == -F::one() {
-                                    mul = -mul;
-                                }
-                                false
+                let proves = match proves.get(row) {
+                    HintFieldOutput::Field(proves) => match proves {
+                        p if p.is_zero() || p == -F::one() => {
+                            // If it's an assume, then negate its value
+                            if p == -F::one() {
+                                mul = -mul;
                             }
-                            p if p.is_one() => true,
-                            _ => panic!("Proves hint must be either 0, 1, or -1"),
-                        },
-                        _ => panic!("Proves hint must be a field element"),
-                    };
+                            false
+                        }
+                        p if p.is_one() => true,
+                        _ => panic!("Proves hint must be either 0, 1, or -1"),
+                    },
+                    _ => panic!("Proves hint must be a field element"),
+                };
 
-                    let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-                    let airgroup_id = air_instance.airgroup_id;
-                    let air_id = air_instance.air_id;
-                    let instance_id = air_instance.air_instance_id.unwrap_or_default();
-                    update_debug_data(
-                        debug_data,
-                        sumid,
-                        expressions.get(j),
-                        airgroup_id,
-                        air_id,
-                        instance_id,
-                        j,
-                        proves,
-                        mul,
-                    );
-                }
-            });
+                update_debug_data(
+                    debug_data,
+                    opid,
+                    expressions.get(row),
+                    airgroup_id,
+                    air_id,
+                    instance_id,
+                    row,
+                    proves,
+                    mul,
+                );
+            }
         }
     }
 }

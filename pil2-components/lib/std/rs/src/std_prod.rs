@@ -9,8 +9,8 @@ use p3_field::PrimeField;
 use proofman::{WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ModeName, ProofCtx, SetupCtx, StdMode};
 use proofman_hints::{
-    acc_mul_hint_fields, get_hint_field, get_hint_field_a, get_hint_ids_by_name, HintFieldOptions, HintFieldOutput,
-    HintFieldValue,
+    acc_mul_hint_fields, get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a,
+    get_hint_ids_by_name, HintFieldOptions, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
 };
 
 use crate::{print_debug_info, update_debug_data, DebugData, Decider};
@@ -68,9 +68,29 @@ impl<F: PrimeField> StdProd<F> {
         num_rows: usize,
         debug_hints_data: Vec<u64>,
     ) {
+        let debug_data = self.debug_data.as_ref().expect("Debug data missing");
+        let airgroup_id = air_instance.airgroup_id;
+        let air_id = air_instance.air_id;
+        let instance_id = air_instance.air_instance_id.unwrap_or_default();
+
         for hint in debug_hints_data.iter() {
-            let _name =
-                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "name_piop", HintFieldOptions::default());
+            let _name_piop = get_hint_field_constant::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                *hint as usize,
+                "name_piop",
+                HintFieldOptions::default(),
+            );
+
+            let _name_expr = get_hint_field_constant_a::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                *hint as usize,
+                "name_expr",
+                HintFieldOptions::default(),
+            );
 
             let opid =
                 get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "opid", HintFieldOptions::default());
@@ -107,22 +127,58 @@ impl<F: PrimeField> StdProd<F> {
                 pctx,
                 air_instance,
                 *hint as usize,
-                "references",
+                "expressions",
                 HintFieldOptions::default(),
             );
 
-            // let _names = get_hint_field::<F>(
-            //     sctx,
-            //     &pctx.public_inputs,
-            //     &pctx.challenges,
-            //     air_instance,
-            //     *hint as usize,
-            //     "names",
-            //     HintFieldOptions::default(),
-            // );
+            let HintFieldValue::Field(deg_expr) = get_hint_field_constant::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                *hint as usize,
+                "deg_expr",
+                HintFieldOptions::default(),
+            ) else {
+                log::error!("deg_expr hint must be a field element");
+                panic!();
+            };
 
-            (0..num_rows).for_each(|j| {
-                let sel = if let HintFieldOutput::Field(selector) = selector.get(j) {
+            let HintFieldValue::Field(deg_mul) = get_hint_field_constant::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                *hint as usize,
+                "deg_sel",
+                HintFieldOptions::default(),
+            ) else {
+                log::error!("deg_mul hint must be a field element");
+                panic!();
+            };
+
+            // If both the expresion and the mul are of degree zero, then simply update the bus once
+            if deg_expr.is_zero() && deg_mul.is_zero() {
+                update_bus(airgroup_id, air_id, instance_id, opid, proves, &selector, &expressions, 0, debug_data);
+            } else {
+                // Otherwise, update the bus for each row
+                for j in 0..num_rows {
+                    update_bus(airgroup_id, air_id, instance_id, opid, proves, &selector, &expressions, j, debug_data);
+                }
+            }
+
+            (0..num_rows).for_each(|j| {});
+
+            fn update_bus<F: PrimeField>(
+                airgroup_id: usize,
+                air_id: usize,
+                instance_id: usize,
+                opid: F,
+                proves: bool,
+                selector: &HintFieldValue<F>,
+                expressions: &HintFieldValuesVec<F>,
+                row: usize,
+                debug_data: &DebugData<F>,
+            ) {
+                let sel = if let HintFieldOutput::Field(selector) = selector.get(row) {
                     if !selector.is_zero() && !selector.is_one() {
                         log::error!("Selector must be either 0 or 1");
                         panic!();
@@ -134,23 +190,19 @@ impl<F: PrimeField> StdProd<F> {
                 };
 
                 if sel {
-                    let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-                    let airgroup_id = air_instance.airgroup_id;
-                    let air_id = air_instance.air_id;
-                    let instance_id = air_instance.air_instance_id.unwrap_or_default();
                     update_debug_data(
                         debug_data,
                         opid,
-                        expressions.get(j),
+                        expressions.get(row),
                         airgroup_id,
                         air_id,
                         instance_id,
-                        j,
+                        row,
                         proves,
                         F::one(),
                     );
                 }
-            });
+            }
         }
     }
 }
