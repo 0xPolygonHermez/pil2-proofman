@@ -77,11 +77,20 @@ where
         let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
         let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
 
-        log::debug!(Self::MY_NAME, air.name().unwrap_or("unknown"), stage);
+        let airgroup_id = air_instance.airgroup_id;
+        let air_id = air_instance.air_id;
+        let air = pctx.pilout.get_air(airgroup_id, air_id);
+
+        log::debug!(
+            "{}: ··· Witness computation for AIR '{}' at stage {}",
+            Self::MY_NAME,
+            air.name().unwrap_or("unknown"),
+            stage
+        );
 
         if stage == 1 {
             let buffer = &mut air_instance.trace;
-            let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
+            let num_rows = pctx.pilout.get_air(air_instance.airgroup_id, air_instance.air_id).num_rows();
 
             // I cannot, programatically, link the permutation trace with its air_id
             let mut trace = Permutation1_6Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();

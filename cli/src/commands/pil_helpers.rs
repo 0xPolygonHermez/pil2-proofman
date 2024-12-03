@@ -35,7 +35,7 @@ struct ProofCtx {
     constant_airgroups: Vec<(String, usize)>,
     constant_airs: Vec<(String, usize, Vec<usize>, String)>,
     proof_values: Vec<ValuesCtx>,
-    publics: Vec<ValuesCtx>
+    publics: Vec<ValuesCtx>,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,7 +44,6 @@ struct AirGroupsCtx {
     name: String,
     snake_name: String,
     airs: Vec<AirCtx>,
-    
 }
 
 #[derive(Debug, Serialize)]
@@ -155,39 +154,35 @@ impl PilHelpersCmd {
             }
         }
 
-        let mut publics:Vec<ValuesCtx> = Vec::new();
-        let mut proof_values:Vec<ValuesCtx>  = Vec::new();
+        let mut publics: Vec<ValuesCtx> = Vec::new();
+        let mut proof_values: Vec<ValuesCtx> = Vec::new();
 
         pilout
-        .symbols
-        .iter()
-        .filter(|symbol| {
+            .symbols
+            .iter()
+            .filter(|symbol| {
                 (symbol.r#type == SymbolType::PublicValue as i32) || (symbol.r#type == SymbolType::ProofValue as i32)
-        })
-        .for_each(|symbol| {
-            let name = symbol.name.split_once('.').map(|x| x.1).unwrap_or(&symbol.name);
-            let r#type = if symbol.lengths.is_empty() {
-                "F".to_string() // Case when lengths.len() == 0
-            } else {
-                // Start with "F" and apply each length in reverse order
-                symbol
-                    .lengths
-                    .iter()
-                    .rev()
-                    .fold("F".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
-            };
-            if symbol.r#type == SymbolType::ProofValue as i32 {
-                if proof_values.is_empty() {
-                    proof_values.push(ValuesCtx { values: Vec::new() });
+            })
+            .for_each(|symbol| {
+                let name = symbol.name.split_once('.').map(|x| x.1).unwrap_or(&symbol.name);
+                let r#type = if symbol.lengths.is_empty() {
+                    "F".to_string() // Case when lengths.len() == 0
+                } else {
+                    // Start with "F" and apply each length in reverse order
+                    symbol.lengths.iter().rev().fold("F".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
+                };
+                if symbol.r#type == SymbolType::ProofValue as i32 {
+                    if proof_values.is_empty() {
+                        proof_values.push(ValuesCtx { values: Vec::new() });
+                    }
+                    proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
+                } else {
+                    if publics.is_empty() {
+                        publics.push(ValuesCtx { values: Vec::new() });
+                    }
+                    publics[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
                 }
-                proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
-            } else {
-                if publics.is_empty() {
-                    publics.push(ValuesCtx { values: Vec::new() });
-                }
-                publics[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
-            }
-        });
+            });
 
         // Build columns data for traces
         for (airgroup_id, airgroup) in pilout.air_groups.iter().enumerate() {
@@ -210,10 +205,11 @@ impl PilHelpersCmd {
                         println!("{:?}", symbol);
                         symbol.air_group_id.is_some()
                             && symbol.air_group_id.unwrap() == airgroup_id as u32
-                            && ((symbol.air_id.is_some() && symbol.air_id.unwrap() == air_id as u32) || symbol.r#type == SymbolType::AirGroupValue as i32)
+                            && ((symbol.air_id.is_some() && symbol.air_id.unwrap() == air_id as u32)
+                                || symbol.r#type == SymbolType::AirGroupValue as i32)
                             && symbol.stage.is_some()
                             && ((symbol.r#type == SymbolType::WitnessCol as i32 && symbol.stage.unwrap() == 1)
-                                || (symbol.r#type == SymbolType::AirValue as i32) 
+                                || (symbol.r#type == SymbolType::AirValue as i32)
                                 || (symbol.r#type == SymbolType::AirGroupValue as i32)
                                 || (symbol.r#type == SymbolType::CustomCol as i32 && symbol.stage.unwrap() == 0))
                     })
