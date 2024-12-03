@@ -3,30 +3,48 @@
 
 #include "starks.hpp"
 #include "proof2zkinStark.hpp"
+#include "cuda_utils.cuh"
+#include "gl64_t.cuh"
+
+
+gl64_t * genDeviceTrace(Goldilocks::Element *pAddress, SetupCtx& setupCtx){
+
+    uint64_t total_n = setupCtx.starkInfo.mapTotalN;
+    gl64_t *d_pAddress;
+    CHECKCUDAERR(cudaMalloc(&d_pAddress, total_n * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemset(d_pAddress, 0, total_n * sizeof(Goldilocks::Element)));
+    //get_map_offsets_c(p_stark_info, "cm1", false);
+    uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t n = setupCtx.starkInfo.starkStruct.steps[0].nBits;
+    uint64_t N = 1 << n;
+    uint64_t n_cols = setupCtx.starkInfo.mapSectionsN["cm1"];
+    CHECKCUDAERR(cudaMemcpy(d_pAddress+offset, pAddress+offset, (N*n_cols) * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    return d_pAddress;
+}
+
+void freeDeviceTrace(gl64_t *d_pAddress){
+    CHECKCUDAERR(cudaFree(d_pAddress));
+}
 
 template <typename ElementType>
-void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *pAddress, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile) {
+void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *pAddress, gl64_t *d_pAddress, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile) { // sprint: afegir l'adreça de la gpu
 
     TimerStart(STARK_PROOF);
-
+    //sprint: copiar  witness i setejar la resta a zero
     
 
     TimerStart(SOLAPE1);
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo);
+    //sprint: alocatar aixo a la gpu
 
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     
     Starks<ElementType> starks(setupCtx, pConstTree);
     //rick: aqui ja puc llençar el commit 1 no?
 
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
-#else
+
     ExpressionsPack expressionsCtx(setupCtx);
-#endif
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
 
@@ -34,8 +52,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     Goldilocks::Element* evals = new Goldilocks::Element[setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION];
     Goldilocks::Element* challenges = new Goldilocks::Element[setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION];
-    Goldilocks::Element* airgroupValues = new Goldilocks::Element[setupCtx.starkInfo.airgroupValuesMap.size() * FIELD_EXTENSION];
-    
+    Goldilocks::Element* airgroupValues = nullptr;    
 
     StepsParams params = {
         pols : pAddress,
@@ -77,8 +94,9 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     TimerStopAndLog(SOLAPE1);
 
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage(1, pAddress, proof);
+    starks.commitStage_inplace(1, pAddress, d_pAddress, proof); // srpint: correr sobre el buffer
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
+    //sprint: baixar tot el que necessito per aplicar expressions
     //rick: aqui em sincronitzo amb el llençament del commit 1
     TimerStart(SOLAPE2);
 
@@ -99,22 +117,14 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     Goldilocks::Element *den = new Goldilocks::Element[N*FIELD_EXTENSION];
     Goldilocks::Element *gprod = new Goldilocks::Element[N*FIELD_EXTENSION];
 
-    Hint gprod_hint = setupCtx.expressionsBin.hints[0]; //aquesta busqueda en realitat ens la podriem estalviar....
-    auto denField = std::find_if(gprod_hint.fields.begin(), gprod_hint.fields.end(), [](const HintField& hintField) {
-        return hintField.name == "denominator";
-    });
-    auto numField = std::find_if(gprod_hint.fields.begin(), gprod_hint.fields.end(), [](const HintField& hintField) {
-        return hintField.name == "numerator";
-    });
-    auto gprodField = std::find_if(gprod_hint.fields.begin(), gprod_hint.fields.end(), [](const HintField& hintField) {
-        return hintField.name == "reference";
-    });
-
+    uint64_t gprodFieldId = setupCtx.expressionsBin.hints[0].fields[0].values[0].id;
+    uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
+    uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
 
     Dest numStruct(num);
-    numStruct.addParams(setupCtx.expressionsBin.expressionsInfo[numField->values[0].id]);
+    numStruct.addParams(setupCtx.expressionsBin.expressionsInfo[numFieldId]);
     Dest denStruct(den);
-    denStruct.addParams(setupCtx.expressionsBin.expressionsInfo[denField->values[0].id], true);
+    denStruct.addParams(setupCtx.expressionsBin.expressionsInfo[denFieldId], true);
     std::vector<Dest> dests = {numStruct, denStruct};
     //rick: fins aqui
 
@@ -132,7 +142,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     //rick: aqui que fas, copiea a la traça?
     Polinomial gprodTransposedPol;
-    setupCtx.starkInfo.getPolynomial(gprodTransposedPol, pAddress, "cm", setupCtx.starkInfo.cmPolsMap[gprodField->values[0].id], false);
+    setupCtx.starkInfo.getPolynomial(gprodTransposedPol, pAddress, "cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
 #pragma omp parallel for
     for(uint64_t j = 0; j < N; ++j) {
         std::memcpy(gprodTransposedPol[j], &gprod[j*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));

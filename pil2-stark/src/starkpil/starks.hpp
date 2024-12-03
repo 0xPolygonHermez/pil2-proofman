@@ -19,6 +19,7 @@
 #include "expressions_avx512.hpp"
 #include "expressions_pack.hpp"
 
+class gl64_t;
 
 template <typename ElementType>
 class Starks
@@ -76,8 +77,11 @@ public:
     void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper, string bufferFile);
     void loadCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, string bufferFile);
     void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void extendAndMerkelize_inplace(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, gl64_t* d_buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+
 
     void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void commitStage_inplace(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, gl64_t *d_buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
     void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params);

@@ -5,9 +5,6 @@
 #include "hints.hpp"
 #include "global_constraints.hpp"
 #include "gen_recursive_proof.hpp"
-#ifdef __USE_CUDA__
-#include "gen_recursive_proof.cuh"
-#endif
 #include "logger.hpp"
 #include <filesystem>
 #include "setup_ctx.hpp"
@@ -18,6 +15,10 @@
 using json = nlohmann::json;
 
 using namespace CPlusPlusLogging;
+
+
+
+
 
 void save_challenges(void *pChallenges, char* globalInfoFile, char *fileDir) {
 
@@ -534,24 +535,21 @@ void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row) {
 
 // Recursive proof
 // ================================================================================= 
+#ifndef __USE_CUDA__
 void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* pAddress, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
     void * proof = NULL;
     auto setup = *(SetupCtx *)pSetupCtx;
-    #ifdef __USE_CUDA__
-        proof = genRecursiveProof_gpu<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
-    #else
         if(setup.starkInfo.starkStruct.verificationHashType == "GL") {
         proof = genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)pAddress,        (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
     } else {
         proof = genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), false);
     }
-    #endif
-
 
     return proof;
 }
+#endif
 
 void *get_zkin_ptr(char *zkin_file) {
     json zkin;

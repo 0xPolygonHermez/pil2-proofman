@@ -3,6 +3,7 @@
 #include "zklog.hpp"
 #include "exit_process.hpp"
 
+
 template <typename ElementType>
 void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper, string bufferFile)
 {   
@@ -96,10 +97,76 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
 }
 
 template <typename ElementType>
+void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, gl64_t *d_buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
+{   
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
+    std::string section = "cm" + to_string(step);  
+    uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)];
+    
+    Goldilocks::Element *pBuff = step == 1 ? trace : &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
+    Goldilocks::Element *pBuffExtended = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
+    NTT_Goldilocks ntt(N);
+    treesGL[step - 1]->setSource(pBuffExtended);
+
+#ifdef __USE_CUDA__
+    // Aqui falta definir l'id de la device
+    if (nCols > 0)
+    {
+        //uint64_t *d_dest_tree = nullptr;
+        //Goldilocks::Element *dest_tree = new Goldilocks::Element[treesGL[step - 1]->getNumNodes(NExtended)];
+        //ntt.LDE_MerkleTree_GPU_inplace(d_dest_tree,d_buffer,setupCtx.starkInfo.mapOffsets[make_pair(section, true)],d_buffer, setupCtx.starkInfo.mapOffsets[make_pair(section, false)], N, NExtended, nCols);
+        ntt.LDE_MerkleTree_GPU_inplace(treesGL[step - 1]->get_nodes_ptr(),treesGL[step - 1]->getNumNodes(NExtended),d_buffer,setupCtx.starkInfo.mapOffsets[make_pair(section, true)],d_buffer, setupCtx.starkInfo.mapOffsets[make_pair(section, false)], N, NExtended, nCols);
+        
+        ntt.offloadNTT(pBuffExtended, d_buffer, setupCtx.starkInfo.mapOffsets[make_pair(section, true)], NExtended * nCols);
+        //ntt.offloadTree(dest_tree, d_dest_tree, treesGL[step - 1]->getNumNodes(NExtended));
+        
+        
+        
+        //ntt.offloadTree(treesGL[step - 1]->get_nodes_ptr(), d_dest_tree, treesGL[step - 1]->getNumNodes(NExtended));
+        // rick: falta borrar el tree!!!!!
+    }
+    else
+    {
+        treesGL[step - 1]->merkelize();
+    }
+#else
+    if(pBuffHelper != nullptr) {
+        ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
+    } else {
+        ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols);
+    }
+    
+    treesGL[step - 1]->merkelize();
+#endif
+    treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
+
+}
+
+template <typename ElementType>
 void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper)
 {  
 
     if (step <= setupCtx.starkInfo.nStages)
+    {
+        extendAndMerkelize(step, trace, buffer, proof, pBuffHelper);
+    }
+    else
+    {
+        computeQ(step, buffer, proof, pBuffHelper);
+    }
+}
+
+template <typename ElementType>
+void Starks<ElementType>::commitStage_inplace(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer,  gl64_t* d_buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper)
+{  
+
+    if (step == 1)
+    {
+        extendAndMerkelize_inplace(step, trace, buffer, d_buffer, proof, pBuffHelper);
+    }
+    else if (step <= setupCtx.starkInfo.nStages)
     {
         extendAndMerkelize(step, trace, buffer, proof, pBuffHelper);
     }
