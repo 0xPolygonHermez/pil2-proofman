@@ -3,7 +3,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, format_ident, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
-    parse2, Field, FieldsNamed, Generics, Ident, LitInt, LitStr, Result, Token,
+    parse2, Field, FieldsNamed, Generics, Ident, LitInt, Result, Token,
 };
 
 #[proc_macro]
@@ -265,41 +265,46 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
     let dimensions = parsed_input.dimensions;
     let fields = parsed_input.fields;
 
-    // Generate the struct and implementation
-    let result = quote! {
+    // Calculate ROW_SIZE based on the field types
+    let row_size = fields
+        .named
+        .iter()
+        .map(|field| calculate_field_size_literal(&field.ty))
+        .collect::<Result<Vec<usize>>>()?
+        .into_iter()
+        .sum::<usize>()
+        * dimensions;
+
+    // Generate row struct
+    let field_definitions = fields.named.iter().map(|field| {
+        let Field { ident, ty, .. } = field;
+        quote! { pub #ident: #ty, }
+    });
+
+    let row_struct = quote! {
+        #[repr(C)]
+        #[derive(Debug, Clone, Copy, Default)]
         pub struct #struct_name<#generic_param> {
-            pub buffer: Vec<#generic_param>,
-            pub x: usize,
+            #(#field_definitions)*
         }
 
-        impl<#generic_param: Clone> #struct_name<#generic_param> {
-            pub fn new(x: usize) -> Self {
-                #struct_name {
-                    buffer: Vec::new(),
-                    x,
+        impl<#generic_param: Copy> #struct_name<#generic_param> {
+            pub const ROW_SIZE: usize = #row_size;
+
+            pub fn as_slice(&self) -> &[#generic_param] {
+                unsafe {
+                    std::slice::from_raw_parts(
+                        self as *const #struct_name<#generic_param> as *const #generic_param,
+                        #row_size,
+                    )
                 }
-            }
-
-            pub fn set_value(&mut self, value: #generic_param) {
-                self.buffer.resize(self.x, value);
-            }
-
-            pub fn set_values(&mut self, values: Vec<#generic_param>) {
-                assert_eq!(
-                    values.len(),
-                    self.x,
-                    "Number of values must match the size parameter `x`."
-                );
-                self.buffer = values;
-            }
-
-            pub fn get_buffer(&self) -> &[#generic_param] {
-                &self.buffer
             }
         }
     };
 
-    Ok(result)
+    Ok(quote! {
+        #row_struct
+    })
 }
 
 struct ParsedValuesInput {
