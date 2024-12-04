@@ -246,6 +246,7 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
     let struct_name = parsed_input.struct_name;
     let generic_param = parsed_input.generic_param;
     let dimensions = parsed_input.dimensions;
+    let fields = parsed_input.fields;
 
     // Generate the struct and implementation
     let result = quote! {
@@ -288,6 +289,7 @@ struct ParsedValuesInput {
     pub struct_name: Ident,
     pub generic_param: Ident,
     pub dimensions: usize,
+    pub fields: FieldsNamed,
 }
 
 impl Parse for ParsedValuesInput {
@@ -299,8 +301,8 @@ impl Parse for ParsedValuesInput {
         let dimensions: LitInt = input.parse()?;
         input.parse::<Token![>]>()?;
         input.parse::<Token![;]>()?; // Expect a semicolon to terminate the macro input
-
-        Ok(ParsedValuesInput { struct_name, generic_param, dimensions: dimensions.base10_parse()? })
+        let fields: FieldsNamed = input.parse()?;
+        Ok(ParsedValuesInput { struct_name, generic_param, dimensions: dimensions.base10_parse()?, fields })
     }
 }
 
