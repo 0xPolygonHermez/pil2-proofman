@@ -66,7 +66,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             pub buffer: Option<Vec<#generics>>,
             pub slice_trace: &'a mut [#row_struct_name<#generics>],
             pub num_rows: usize,
-            pub commit_id: Option<&'a str>,
+            pub commit_id: Option<usize>,
         }
 
         impl<'a, #generics: Default + Clone + Copy> #trace_struct_name<'a, #generics> {
@@ -198,7 +198,7 @@ struct ParsedTraceInput {
     generics: Generics,
     fields: FieldsNamed,
     num_rows: LitInt,
-    commit_id: Option<LitStr>,
+    commit_id: Option<LitInt>,
 }
 
 impl Parse for ParsedTraceInput {
@@ -222,7 +222,7 @@ impl Parse for ParsedTraceInput {
 
         input.parse::<Token![,]>()?;
         let num_rows = input.parse::<LitInt>()?;
-        let commit_id: Option<LitStr> = if lookahead.peek(Token![,]) {
+        let commit_id: Option<LitInt> = if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             Some(input.parse()?)
         } else {
@@ -358,7 +358,7 @@ fn test_parse_values_03() {
 #[test]
 fn test_trace_macro_generates_default_row_struct() {
     let input = quote! {
-        Simple<F> { a: F, b: F }, 2
+        Simple<F> { a: F, b: F }, 2, 788
     };
 
     let _generated = trace_impl(input).unwrap();
@@ -376,12 +376,13 @@ fn test_trace_macro_with_explicit_row_struct_name() {
 #[test]
 fn test_parsing_01() {
     let input = quote! {
-        TraceRow, MyTrace<F> { a: F, b: F }, 34
+        TraceRow, MyTrace<F> { a: F, b: F }, 34, 38
     };
     let parsed: ParsedTraceInput = parse2(input).unwrap();
     assert_eq!(parsed.row_struct_name, "TraceRow");
     assert_eq!(parsed.struct_name, "MyTrace");
     assert_eq!(parsed.num_rows.base10_parse::<usize>().unwrap(), 34);
+    assert_eq!(parsed.commit_id.unwrap().base10_parse::<usize>().unwrap(), 38);
 }
 
 #[test]
