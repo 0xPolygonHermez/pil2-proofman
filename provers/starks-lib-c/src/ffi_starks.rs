@@ -128,11 +128,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_map_totaln_custom_commits_c(p_stark_info: *mut c_void, commit_id: u64) -> u64 {
-    unsafe { get_map_total_n_custom_commits(p_stark_info, commit_id) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn get_custom_commit_map_ids_c(p_stark_info: *mut c_void, commit_id: u64, stage: u64) -> Vec<u64> {
     unsafe {
         let raw_ptr = get_custom_commit_map_ids(p_stark_info, commit_id, stage);
@@ -145,12 +140,6 @@ pub fn get_custom_commit_map_ids_c(p_stark_info: *mut c_void, commit_id: u64, st
 
         slice.to_vec()
     }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_map_offsets_c(pStarkInfo: *mut c_void, stage: &str, flag: bool) -> u64 {
-    let stage = CString::new(stage).unwrap();
-    unsafe { get_map_offsets(pStarkInfo, stage.as_ptr() as *mut std::os::raw::c_char, flag) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -439,11 +428,13 @@ pub fn calculate_impols_expressions_c(p_starks: *mut c_void, step: u64, p_steps_
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn extend_and_merkelize_custom_commit_c(
     p_starks: *mut c_void,
     commit_id: u64,
     step: u64,
     buffer: *mut c_void,
+    buffer_ext: *mut c_void,
     p_proof: *mut c_void,
     p_buff_helper: *mut c_void,
     buffer_file: &str,
@@ -455,6 +446,7 @@ pub fn extend_and_merkelize_custom_commit_c(
             commit_id,
             step,
             buffer,
+            buffer_ext,
             p_proof,
             p_buff_helper,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
@@ -468,6 +460,7 @@ pub fn load_custom_commit_c(
     commit_id: u64,
     step: u64,
     buffer: *mut c_void,
+    buffer_ext: *mut c_void,
     p_proof: *mut c_void,
     buffer_file: &str,
 ) {
@@ -478,6 +471,7 @@ pub fn load_custom_commit_c(
             commit_id,
             step,
             buffer,
+            buffer_ext,
             p_proof,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
         );
@@ -489,13 +483,13 @@ pub fn commit_stage_c(
     p_starks: *mut c_void,
     element_type: u32,
     step: u64,
-    trace: *mut c_void,
+    witness: *mut c_void,
     buffer: *mut c_void,
     p_proof: *mut c_void,
     p_buff_helper: *mut c_void,
 ) {
     unsafe {
-        commit_stage(p_starks, element_type, step, trace, buffer, p_proof, p_buff_helper);
+        commit_stage(p_starks, element_type, step, witness, buffer, p_proof, p_buff_helper);
     }
 }
 
@@ -634,7 +628,7 @@ pub fn verify_global_constraints_c(
     challenges: *mut c_void,
     proof_values: *mut c_void,
     airgroupvalues: *mut *mut c_void,
-) -> bool {
+) -> *mut c_void {
     unsafe { verify_global_constraints(p_global_constraints_bin, publics, challenges, proof_values, airgroupvalues) }
 }
 
@@ -682,19 +676,6 @@ pub fn set_hint_field_global_constraints_c(
             hint_id,
             field_name.as_ptr() as *mut std::os::raw::c_char,
         )
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn print_expression_c(
-    p_setup_ctx: *mut c_void,
-    pol: *mut c_void,
-    dim: u64,
-    first_print_value: u64,
-    last_print_value: u64,
-) {
-    unsafe {
-        print_expression(p_setup_ctx, pol, dim, first_print_value, last_print_value);
     }
 }
 
@@ -843,30 +824,29 @@ pub fn serialized_proof_free_c(zkin_cstr: *mut std::os::raw::c_char) {
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
-    pWitness: *mut ::std::os::raw::c_void,
+    circomWitness: *mut ::std::os::raw::c_void,
     execFile: *mut ::std::os::raw::c_char,
-    pAddress: *mut ::std::os::raw::c_void,
+    witness: *mut ::std::os::raw::c_void,
     pPublics: *mut ::std::os::raw::c_void,
     sizeWitness: u64,
     N: u64,
     nPublics: u64,
-    offsetCm1: u64,
     nCols: u64,
 ) {
     unsafe {
-        get_committed_pols(pWitness, execFile, pAddress, pPublics, sizeWitness, N, nPublics, offsetCm1, nCols);
+        get_committed_pols(circomWitness, execFile, witness, pPublics, sizeWitness, N, nPublics, nCols);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_final_snark_proof_c(pWitnessFinal: *mut ::std::os::raw::c_void, zkeyFile: &str, outputDir: &str) {
+pub fn gen_final_snark_proof_c(circomWitnessFinal: *mut ::std::os::raw::c_void, zkeyFile: &str, outputDir: &str) {
     let zkey_file_name = CString::new(zkeyFile).unwrap();
     let zkey_file_ptr = zkey_file_name.as_ptr() as *mut std::os::raw::c_char;
 
     let output_dir_name = CString::new(outputDir).unwrap();
     let output_dir_ptr = output_dir_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
-        gen_final_snark_proof(pWitnessFinal, zkey_file_ptr, output_dir_ptr);
+        gen_final_snark_proof(circomWitnessFinal, zkey_file_ptr, output_dir_ptr);
     }
 }
 
@@ -966,16 +946,6 @@ pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_map_totaln_custom_commits_c(_p_stark_info: *mut c_void, _commit_id: u64) -> u64 {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_map_totaln_custom_commits: This is a mock call because there is no linked library"
-    );
-    100000000
-}
-
-#[cfg(feature = "no_lib_link")]
 pub fn get_custom_commit_id_c(_p_stark_info: *mut c_void, _name: &str) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_custom_commit_id: This is a mock call because there is no linked library");
     100000000
@@ -989,12 +959,6 @@ pub fn get_custom_commit_map_ids_c(_p_stark_info: *mut c_void, _commit_id: u64, 
         "get_custom_commit_map_ids: This is a mock call because there is no linked library"
     );
     Vec::new()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn get_map_offsets_c(_p_stark_info: *mut c_void, _stage: &str, _flag: bool) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_map_offsets: This is a mock call because there is no linked library");
-    0
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1181,11 +1145,13 @@ pub fn calculate_impols_expressions_c(_p_starks: *mut c_void, _step: u64, _p_ste
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn extend_and_merkelize_custom_commit_c(
     _p_starks: *mut c_void,
     _commit_id: u64,
     _step: u64,
     _buffer: *mut c_void,
+    _buffer_ext: *mut c_void,
     _p_proof: *mut c_void,
     _p_buff_helper: *mut c_void,
     _tree_file: &str,
@@ -1203,6 +1169,7 @@ pub fn load_custom_commit_c(
     _commit_id: u64,
     _step: u64,
     _buffer: *mut c_void,
+    _buffer_ext: *mut c_void,
     _p_proof: *mut c_void,
     _tree_file: &str,
 ) {
@@ -1214,7 +1181,7 @@ pub fn commit_stage_c(
     _p_starks: *mut c_void,
     _element_type: u32,
     _step: u64,
-    _trace: *mut c_void,
+    _witness: *mut c_void,
     _buffer: *mut c_void,
     _p_proof: *mut c_void,
     _p_buff_helper: *mut c_void,
@@ -1348,13 +1315,13 @@ pub fn verify_global_constraints_c(
     _challenges: *mut c_void,
     _proof_values: *mut c_void,
     _airgroupvalues: *mut *mut c_void,
-) -> bool {
+) -> *mut c_void {
     trace!(
         "{}: ··· {}",
         "ffi     ",
         "verify_global_constraints: This is a mock call because there is no linked library"
     );
-    true
+    std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1391,17 +1358,6 @@ pub fn set_hint_field_global_constraints_c(
         "set_hint_field_global_constraints: This is a mock call because there is no linked library"
     );
     100000
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn print_expression_c(
-    _p_setup_ctx: *mut c_void,
-    _pol: *mut c_void,
-    _dim: u64,
-    _first_print_value: u64,
-    _last_print_value: u64,
-) {
-    trace!("{}: ··· {}", "ffi     ", "print_expression: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1496,21 +1452,20 @@ pub fn serialized_proof_free_c(_zkin_cstr: *mut std::os::raw::c_char) {
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
-    _pWitness: *mut ::std::os::raw::c_void,
+    _circomWitness: *mut ::std::os::raw::c_void,
     _execFile: *mut ::std::os::raw::c_char,
-    _pAddress: *mut ::std::os::raw::c_void,
+    _witness: *mut ::std::os::raw::c_void,
     _pPublics: *mut ::std::os::raw::c_void,
     _sizeWitness: u64,
     _N: u64,
     _nPublics: u64,
-    _offsetCm1: u64,
     _nCols: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "get_committed_pols: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_final_snark_proof_c(_pWitnessFinal: *mut ::std::os::raw::c_void, _zkeyFile: &str, _outputDir: &str) {
+pub fn gen_final_snark_proof_c(_circomWitnessFinal: *mut ::std::os::raw::c_void, _zkeyFile: &str, _outputDir: &str) {
     trace!("{}: ··· {}", "ffi     ", "gen_final_snark_proof: This is a mock call because there is no linked library");
 }
 

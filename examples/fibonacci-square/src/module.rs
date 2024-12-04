@@ -47,7 +47,7 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
         let module = pctx.get_public_value("mod");
 
         let num_rows = pctx.global_info.airs[FIBONACCI_SQUARE_AIRGROUP_ID][MODULE_AIR_IDS[0]].num_rows;
-        let mut trace = ModuleTrace::new(num_rows);
+        let mut trace = ModuleTrace::new_zeroes(num_rows);
 
         //range_check(colu: mod - x_mod, min: 1, max: 2**8-1);
         let range = self.std_lib.get_range(BigInt::from(1), BigInt::from((1 << 8) - 1), None);

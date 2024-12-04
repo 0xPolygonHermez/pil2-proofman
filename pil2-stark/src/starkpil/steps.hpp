@@ -5,8 +5,8 @@
 
 struct StepsParams
 {
+    Goldilocks::Element *witness;
     Goldilocks::Element *trace;
-    Goldilocks::Element *pols;
     Goldilocks::Element *publicInputs;
     Goldilocks::Element *challenges;
     Goldilocks::Element *airgroupValues;
@@ -15,7 +15,8 @@ struct StepsParams
     Goldilocks::Element *xDivXSub;
     Goldilocks::Element *pConstPolsAddress;
     Goldilocks::Element *pConstPolsExtendedTreeAddress;
-    Goldilocks::Element *customCommits[10];
+    Goldilocks::Element *pCustomCommits[10];
+    Goldilocks::Element *pCustomCommitsExtended[10];
 };
 
 #endif

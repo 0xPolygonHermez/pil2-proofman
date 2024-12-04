@@ -161,11 +161,6 @@ uint64_t get_map_total_n(void *pStarkInfo)
     return ((StarkInfo *)pStarkInfo)->mapTotalN;
 }
 
-uint64_t get_map_total_n_custom_commits(void *pStarkInfo, uint64_t commit_id) {
-    auto starkInfo = *(StarkInfo *)pStarkInfo;
-    return starkInfo.mapTotalNcustomCommits[starkInfo.customCommits[commit_id].name];
-}
-
 void *get_custom_commit_map_ids(void *pStarkInfo, uint64_t commit_id, uint64_t stage) {
     auto starkInfo = *(StarkInfo *)pStarkInfo;
     VecU64Result customCommitIds;
@@ -178,12 +173,6 @@ void *get_custom_commit_map_ids(void *pStarkInfo, uint64_t commit_id, uint64_t s
         }
     }
     return new VecU64Result(customCommitIds);
-}
-
-uint64_t get_map_offsets(void *pStarkInfo, char *stage, bool flag)
-{
-    auto starkInfo = (StarkInfo *)pStarkInfo;
-    return starkInfo->mapOffsets[std::make_pair(stage, flag)];
 }
 
 void stark_info_free(void *pStarkInfo)
@@ -333,25 +322,25 @@ void calculate_impols_expressions(void *pStarks, uint64_t step, void* stepsParam
     starks->calculateImPolsExpressions(step, *(StepsParams *)stepsParams);
 }
 
-void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *pProof, void *pBuffHelper, char *bufferFile)
+void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void* bufferExt, void *pProof, void *pBuffHelper, char *bufferFile)
 {
     Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->extendAndMerkelizeCustomCommit(commitId, step, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper, string(bufferFile));
+    starks->extendAndMerkelizeCustomCommit(commitId, step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)bufferExt, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper, string(bufferFile));
 }
 
-void load_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *pProof, char *bufferFile)
+void load_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, char *bufferFile)
 {
     Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->loadCustomCommit(commitId, step, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, string(bufferFile));
+    starks->loadCustomCommit(commitId, step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)bufferExt, *(FRIProof<Goldilocks::Element> *)pProof, string(bufferFile));
 }
 
-void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trace, void *buffer, void *pProof, void *pBuffHelper) {
+void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *witness, void *buffer, void *pProof, void *pBuffHelper) {
     // type == 1 => Goldilocks
     // type == 2 => BN128
     switch (elementType)
     {
     case 1:
-        ((Starks<Goldilocks::Element> *)pStarks)->commitStage(step, (Goldilocks::Element *)trace, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper);
+        ((Starks<Goldilocks::Element> *)pStarks)->commitStage(step, (Goldilocks::Element *)witness, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper);
         break;
     default:
         cerr << "Invalid elementType: " << elementType << endl;
@@ -503,8 +492,9 @@ void *verify_constraints(void *pSetupCtx, void* stepsParams)
 
 // Global Constraints
 // =================================================================================
-bool verify_global_constraints(void* p_globalinfo_bin, void *publics, void *challenges, void *proofValues, void **airgroupValues) {
-    return verifyGlobalConstraints(*(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues);
+void *verify_global_constraints(void* p_globalinfo_bin, void *publics, void *challenges, void *proofValues, void **airgroupValues) {
+    GlobalConstraintsResults *constraintsInfo = verifyGlobalConstraints(*(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues);
+    return constraintsInfo;
 }
 
 void *get_hint_field_global_constraints(void* p_globalinfo_bin, void *publics, void *challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression) 
@@ -521,25 +511,21 @@ uint64_t set_hint_field_global_constraints(void* p_globalinfo_bin, void *proofVa
 // Debug functions
 // =================================================================================  
 
-void print_expression(void *pSetupCtx, void* pol, uint64_t dim, uint64_t first_value, uint64_t last_value) {
-    printExpression((Goldilocks::Element *)pol, dim, first_value, last_value);
-}
-
 void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row) {
     printRow(*(SetupCtx *)pSetupCtx, (Goldilocks::Element *)buffer, stage, row);
 }
 
 // Recursive proof
 // ================================================================================= 
-void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* pAddress, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop) {
+void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
     auto setup = *(SetupCtx *)pSetupCtx;
     if(setup.starkInfo.starkStruct.verificationHashType == "GL") {
-        return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
+        return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)witness, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
     } else {
-        return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), false);
+        return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)witness, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), false);
     }
 }
 
@@ -625,12 +611,12 @@ void serialized_proof_free(char *zkinCStr) {
     delete[] zkinCStr;
 }
 
-void get_committed_pols(void *pWitness, char* execFile, void *pAddress, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t offsetCm1, uint64_t nCommitedPols) {
-    getCommitedPols((Goldilocks::Element *)pWitness, string(execFile), (Goldilocks::Element *)pAddress, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, offsetCm1, nCommitedPols);
+void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
+    getCommitedPols((Goldilocks::Element *)circomWitness, string(execFile), (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
 }
 
-void gen_final_snark_proof(void *pWitnessFinal, char* zkeyFile, char* outputDir) {
-    genFinalSnarkProof(pWitnessFinal, string(zkeyFile), string(outputDir));
+void gen_final_snark_proof(void *circomWitnessFinal, char* zkeyFile, char* outputDir) {
+    genFinalSnarkProof(circomWitnessFinal, string(zkeyFile), string(outputDir));
 }
 
 void setLogLevel(uint64_t level) {

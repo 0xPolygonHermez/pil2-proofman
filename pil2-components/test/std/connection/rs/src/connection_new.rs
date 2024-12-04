@@ -28,7 +28,7 @@ where
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let num_rows = pctx.global_info.airs[CONNECTION_AIRGROUP_ID][CONNECTION_NEW_AIR_IDS[0]].num_rows;
-        let trace = ConnectionNewTrace::new(num_rows);
+        let trace = ConnectionNewTrace::new_zeroes(num_rows);
 
         let air_instance = AirInstance::new(
             sctx.clone(),
@@ -71,7 +71,7 @@ where
         );
 
         if stage == 1 {
-            let buffer = &mut air_instance.trace;
+            let buffer = &mut air_instance.witness;
 
             let num_rows = pctx.pilout.get_air(CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS[0]).num_rows();
             let mut trace = ConnectionNewTrace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();

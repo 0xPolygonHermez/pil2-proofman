@@ -232,8 +232,7 @@ void StarkInfo::setMapOffsets() {
     // Set offsets for custom commits
     for(uint64_t i = 0; i < customCommits.size(); ++i) {
         mapOffsets[std::make_pair(customCommits[i].name + "0", false)] = 0;
-        mapOffsets[std::make_pair(customCommits[i].name + "0", true)] = N * mapSectionsN[customCommits[i].name + "0"];
-        mapTotalNcustomCommits[customCommits[i].name] = (N + NExtended) * mapSectionsN[customCommits[i].name + "0"];
+        mapOffsets[std::make_pair(customCommits[i].name + "0", true)] = 0;
     }
 
     mapTotalN = 0;

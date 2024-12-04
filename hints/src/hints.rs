@@ -1,6 +1,6 @@
 use proofman_starks_lib_c::{
-    acc_hint_field_c, acc_mul_hint_fields_c, get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c,
-    print_expression_c, print_row_c, set_hint_field_c, VecU64Result,
+    acc_hint_field_c, acc_mul_hint_fields_c, get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c, print_row_c,
+    set_hint_field_c, VecU64Result,
 };
 
 use std::collections::HashMap;
@@ -34,6 +34,8 @@ pub struct HintFieldInfo<F: Field> {
     string_value: *mut u8,
     pub matrix_size: u64,
     pub pos: *mut u64,
+    expression_line: *mut u8,
+    expression_line_size: u64,
 }
 
 #[repr(C)]
@@ -687,8 +689,8 @@ pub fn mul_hint_fields<F: Field + Field>(
     let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
     let steps_params = StepsParams {
+        witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        pols: air_instance.get_buffer_ptr() as *mut c_void,
         public_inputs: public_inputs_ptr,
         challenges: challenges_ptr,
         airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
@@ -698,6 +700,7 @@ pub fn mul_hint_fields<F: Field + Field>(
         p_const_pols: const_pols_ptr,
         p_const_tree: const_tree_ptr,
         custom_commits: air_instance.get_custom_commits_ptr(),
+        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
 
     mul_hint_fields_c(
@@ -732,8 +735,8 @@ pub fn acc_hint_field<F: Field>(
     let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
     let steps_params = StepsParams {
+        witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        pols: air_instance.get_buffer_ptr() as *mut c_void,
         public_inputs: public_inputs_ptr,
         challenges: challenges_ptr,
         airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
@@ -743,6 +746,7 @@ pub fn acc_hint_field<F: Field>(
         p_const_pols: const_pols_ptr,
         p_const_tree: const_tree_ptr,
         custom_commits: air_instance.get_custom_commits_ptr(),
+        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
 
     let raw_ptr = acc_hint_field_c(
@@ -785,8 +789,8 @@ pub fn acc_mul_hint_fields<F: Field>(
     let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
     let steps_params = StepsParams {
+        witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        pols: air_instance.get_buffer_ptr() as *mut c_void,
         public_inputs: public_inputs_ptr,
         challenges: challenges_ptr,
         airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
@@ -796,6 +800,7 @@ pub fn acc_mul_hint_fields<F: Field>(
         p_const_pols: const_pols_ptr,
         p_const_tree: const_tree_ptr,
         custom_commits: air_instance.get_custom_commits_ptr(),
+        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
 
     let raw_ptr = acc_mul_hint_fields_c(
@@ -835,8 +840,8 @@ pub fn get_hint_field<F: Field>(
     let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
     let steps_params = StepsParams {
+        witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        pols: air_instance.get_buffer_ptr() as *mut c_void,
         public_inputs: public_inputs_ptr,
         challenges: challenges_ptr,
         airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
@@ -846,6 +851,7 @@ pub fn get_hint_field<F: Field>(
         p_const_pols: const_pols_ptr,
         p_const_tree: const_tree_ptr,
         custom_commits: air_instance.get_custom_commits_ptr(),
+        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
 
     let raw_ptr = get_hint_field_c(
@@ -861,6 +867,11 @@ pub fn get_hint_field<F: Field>(
         let value = &*(hint_field_values.hint_field_values.add(0));
         if value.matrix_size != 0 {
             panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
+        }
+        if options.print_expression {
+            let str_slice = std::slice::from_raw_parts(value.expression_line, value.expression_line_size as usize);
+            let str_line = std::str::from_utf8(str_slice).unwrap();
+            log::info!("HintsInf: {}", str_line);
         }
         HintCol::from_hint_field(value)
     }
@@ -883,8 +894,8 @@ pub fn get_hint_field_a<F: Field>(
     let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
     let steps_params = StepsParams {
+        witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        pols: air_instance.get_buffer_ptr() as *mut c_void,
         public_inputs: public_inputs_ptr,
         challenges: challenges_ptr,
         airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
@@ -894,6 +905,7 @@ pub fn get_hint_field_a<F: Field>(
         p_const_pols: const_pols_ptr,
         p_const_tree: const_tree_ptr,
         custom_commits: air_instance.get_custom_commits_ptr(),
+        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
 
     let raw_ptr = get_hint_field_c(
@@ -911,6 +923,11 @@ pub fn get_hint_field_a<F: Field>(
             let h = &*(hint_field.hint_field_values.add(v as usize));
             if v == 0 && h.matrix_size != 1 {
                 panic!("get_hint_field_m can only be called with an array of expressions!");
+            }
+            if options.print_expression {
+                let str_slice = std::slice::from_raw_parts(h.expression_line, h.expression_line_size as usize);
+                let str_line = std::str::from_utf8(str_slice).unwrap();
+                log::info!("HintsInf: {}", str_line);
             }
             let hint_value = HintCol::from_hint_field(h);
             hint_field_values.push(hint_value);
@@ -937,8 +954,8 @@ pub fn get_hint_field_m<F: Field>(
     let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
     let steps_params = StepsParams {
+        witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        pols: air_instance.get_buffer_ptr() as *mut c_void,
         public_inputs: public_inputs_ptr,
         challenges: challenges_ptr,
         airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
@@ -948,6 +965,7 @@ pub fn get_hint_field_m<F: Field>(
         p_const_pols: const_pols_ptr,
         p_const_tree: const_tree_ptr,
         custom_commits: air_instance.get_custom_commits_ptr(),
+        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
 
     let raw_ptr = get_hint_field_c(
@@ -971,6 +989,11 @@ pub fn get_hint_field_m<F: Field>(
             let mut pos = Vec::new();
             for p in 0..h.matrix_size {
                 pos.push(h.pos.wrapping_add(p as usize) as u64);
+            }
+            if options.print_expression {
+                let str_slice = std::slice::from_raw_parts(h.expression_line, h.expression_line_size as usize);
+                let str_line = std::str::from_utf8(str_slice).unwrap();
+                log::info!("HintsInf: {}", str_line);
             }
             hint_field_values.insert(pos, hint_value);
         }
@@ -1004,6 +1027,11 @@ pub fn get_hint_field_constant<F: Field>(
     unsafe {
         let hint_field_values = &*(raw_ptr as *mut HintFieldInfoValues<F>);
         let value = &*(hint_field_values.hint_field_values.add(0));
+        if options.print_expression {
+            let str_slice = std::slice::from_raw_parts(value.expression_line, value.expression_line_size as usize);
+            let str_line = std::str::from_utf8(str_slice).unwrap();
+            log::info!("HintsInf: {}", str_line);
+        }
         if value.matrix_size != 0 {
             panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
         }
@@ -1040,6 +1068,11 @@ pub fn get_hint_field_constant_a<F: Field>(
             let h = &*(hint_field.hint_field_values.add(v as usize));
             if v == 0 && h.matrix_size != 1 {
                 panic!("get_hint_field_m can only be called with an array of expressions!");
+            }
+            if options.print_expression {
+                let str_slice = std::slice::from_raw_parts(h.expression_line, h.expression_line_size as usize);
+                let str_line = std::str::from_utf8(str_slice).unwrap();
+                log::info!("HintsInf: {}", str_line);
             }
             let hint_value = HintCol::from_hint_field(h);
             hint_field_values.push(hint_value);
@@ -1083,6 +1116,11 @@ pub fn get_hint_field_constant_m<F: Field>(
                     hint_field_name
                 );
             }
+            if options.print_expression {
+                let str_slice = std::slice::from_raw_parts(h.expression_line, h.expression_line_size as usize);
+                let str_line = std::str::from_utf8(str_slice).unwrap();
+                log::info!("HintsInf: {}", str_line);
+            }
             let hint_value = HintCol::from_hint_field(h);
             let mut pos = Vec::new();
             for p in 0..h.matrix_size {
@@ -1103,8 +1141,8 @@ pub fn set_hint_field<F: Field>(
     values: &HintFieldValue<F>,
 ) {
     let steps_params = StepsParams {
+        witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        pols: air_instance.get_buffer_ptr() as *mut c_void,
         public_inputs: std::ptr::null_mut(),
         challenges: std::ptr::null_mut(),
         airgroup_values: std::ptr::null_mut(),
@@ -1114,6 +1152,7 @@ pub fn set_hint_field<F: Field>(
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
         custom_commits: [std::ptr::null_mut(); 10],
+        custom_commits_extended: [std::ptr::null_mut(); 10],
     };
 
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
@@ -1137,8 +1176,8 @@ pub fn set_hint_field_val<F: Field>(
     value: HintFieldOutput<F>,
 ) {
     let steps_params = StepsParams {
+        witness: std::ptr::null_mut(),
         trace: std::ptr::null_mut(),
-        pols: std::ptr::null_mut(),
         public_inputs: std::ptr::null_mut(),
         challenges: std::ptr::null_mut(),
         airgroup_values: air_instance.airgroup_values.as_mut_ptr() as *mut c_void,
@@ -1148,6 +1187,7 @@ pub fn set_hint_field_val<F: Field>(
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
         custom_commits: [std::ptr::null_mut(); 10],
+        custom_commits_extended: [std::ptr::null_mut(); 10],
     };
 
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
@@ -1172,50 +1212,12 @@ pub fn set_hint_field_val<F: Field>(
     air_instance.set_airgroupvalue_calculated(id as usize);
 }
 
-pub fn print_expression<F: Field>(
-    setup_ctx: &SetupCtx,
-    air_instance: &mut AirInstance<F>,
-    expr: &HintFieldValue<F>,
-    first_print_value: u64,
-    last_print_value: u64,
-) {
-    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
-
-    match expr {
-        HintFieldValue::Column(vec) => {
-            print_expression_c(
-                (&setup.p_setup).into(),
-                vec.as_ptr() as *mut c_void,
-                1,
-                first_print_value,
-                last_print_value,
-            );
-        }
-        HintFieldValue::ColumnExtended(vec) => {
-            print_expression_c(
-                (&setup.p_setup).into(),
-                vec.as_ptr() as *mut c_void,
-                3,
-                first_print_value,
-                last_print_value,
-            );
-        }
-        HintFieldValue::Field(val) => {
-            println!("Field value: {:?}", val);
-        }
-        HintFieldValue::FieldExtended(val) => {
-            println!("FieldExtended values: {:?}", val);
-        }
-        HintFieldValue::String(_str) => panic!(),
-    }
-}
-
 pub fn print_row<F: Field>(setup_ctx: &SetupCtx, air_instance: &AirInstance<F>, stage: u64, row: u64) {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let buffer = match stage == 1 {
-        true => air_instance.get_trace_ptr() as *mut c_void,
-        false => air_instance.get_buffer_ptr() as *mut c_void,
+        true => air_instance.get_witness_ptr() as *mut c_void,
+        false => air_instance.get_trace_ptr() as *mut c_void,
     };
 
     print_row_c((&setup.p_setup).into(), buffer, stage, row);

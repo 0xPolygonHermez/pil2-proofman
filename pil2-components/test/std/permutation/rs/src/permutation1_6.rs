@@ -89,7 +89,7 @@ where
         );
 
         if stage == 1 {
-            let buffer = &mut air_instance.trace;
+            let buffer = &mut air_instance.witness;
             let num_rows = pctx.pilout.get_air(air_instance.airgroup_id, air_instance.air_id).num_rows();
 
             // I cannot, programatically, link the permutation trace with its air_id

@@ -1,5 +1,4 @@
 use std::os::raw::c_void;
-use std::os::raw::c_char;
 use std::sync::Arc;
 
 use p3_field::Field;
@@ -45,7 +44,8 @@ pub struct ConstraintInfo {
     pub id: u64,
     pub stage: u64,
     pub im_pol: bool,
-    pub line: *const c_char,
+    pub line: *mut u8,
+    pub line_size: u64,
     pub n_rows: u64,
     pub rows: [ConstraintRowInfo; 10usize],
 }
@@ -55,6 +55,24 @@ pub struct ConstraintInfo {
 pub struct ConstraintsResults {
     pub n_constraints: u64,
     pub constraints_info: *mut ConstraintInfo,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct GlobalConstraintInfo {
+    pub id: u64,
+    pub dim: u64,
+    pub valid: bool,
+    pub value: [u64; 3usize],
+    pub line: *mut u8,
+    pub line_size: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct GlobalConstraintsResults {
+    pub n_constraints: u64,
+    pub constraints_info: *mut GlobalConstraintInfo,
 }
 
 pub trait Prover<F: Field> {

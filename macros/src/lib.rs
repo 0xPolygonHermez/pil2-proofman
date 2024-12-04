@@ -81,6 +81,32 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     buff_uninit.set_len(num_rows);
                 }
                 let buffer: Vec<#row_struct_name<#generics>> = unsafe { std::mem::transmute(buff_uninit) };
+                let slice_trace = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        buffer.as_ptr() as *mut #row_struct_name<#generics>,
+                        num_rows,
+                    )
+                };
+
+                #trace_struct_name {
+                    buffer: Some(buffer),
+                    slice_trace,
+                    num_rows,
+                }
+            }
+
+            pub fn new_zeroes(num_rows: usize) -> Self {
+                assert!(num_rows >= 2);
+                assert!(num_rows & (num_rows - 1) == 0);
+
+                let buffer = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
+                let slice_trace = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        buffer.as_ptr() as *mut #row_struct_name<#generics>,
+                        num_rows,
+                    )
+                };
+>>>>>>> adba4fd1 (Renaming, improving logs, cleaning)
 
                 #trace_struct_name {
                     buffer,

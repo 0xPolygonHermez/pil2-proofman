@@ -65,7 +65,7 @@ impl<F: PrimeField + Copy> WitnessComponent<F> for Permutation2<F> {
         );
 
         if stage == 1 {
-            let buffer = &mut air_instance.trace;
+            let buffer = &mut air_instance.witness;
 
             let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
             let mut trace = Permutation2_6Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();

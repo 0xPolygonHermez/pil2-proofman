@@ -1,5 +1,5 @@
-use std::{path::PathBuf, sync::Arc};
-use crate::{BufferAllocator, DistributionCtx, StdMode, VerboseMode};
+use std::path::PathBuf;
+use crate::{DistributionCtx, StdMode, VerboseMode};
 use std::sync::RwLock;
 use std::collections::HashMap;
 #[allow(dead_code)]
@@ -9,7 +9,6 @@ pub struct ExecutionCtx {
     pub cached_buffers_path: Option<HashMap<String, PathBuf>>,
     /// If true, the plugin must generate the public outputs
     pub public_output: bool,
-    pub buffer_allocator: Arc<dyn BufferAllocator>,
     pub verbose_mode: VerboseMode,
     pub dctx: RwLock<DistributionCtx>,
     pub std_mode: StdMode,
@@ -25,7 +24,6 @@ pub struct ExecutionCtxBuilder {
     rom_path: Option<PathBuf>,
     cached_buffers_path: Option<HashMap<String, PathBuf>>,
     public_output: bool,
-    buffer_allocator: Option<Arc<dyn BufferAllocator>>,
     verbose_mode: VerboseMode,
     std_mode: StdMode,
 }
@@ -42,7 +40,6 @@ impl ExecutionCtxBuilder {
             rom_path: None,
             cached_buffers_path: None,
             public_output: true,
-            buffer_allocator: None,
             verbose_mode: VerboseMode::Info,
             std_mode: StdMode::default(),
         }
@@ -58,11 +55,6 @@ impl ExecutionCtxBuilder {
         self
     }
 
-    pub fn with_buffer_allocator(mut self, buffer_allocator: Arc<dyn BufferAllocator>) -> Self {
-        self.buffer_allocator = Some(buffer_allocator);
-        self
-    }
-
     pub fn with_verbose_mode(mut self, verbose_mode: VerboseMode) -> Self {
         self.verbose_mode = verbose_mode;
         self
@@ -74,15 +66,10 @@ impl ExecutionCtxBuilder {
     }
 
     pub fn build(self) -> ExecutionCtx {
-        if self.buffer_allocator.is_none() {
-            panic!("Buffer allocator is required");
-        }
-
         ExecutionCtx {
             rom_path: self.rom_path,
             cached_buffers_path: self.cached_buffers_path,
             public_output: self.public_output,
-            buffer_allocator: self.buffer_allocator.unwrap(),
             verbose_mode: self.verbose_mode,
             dctx: RwLock::new(DistributionCtx::new()),
             std_mode: self.std_mode,

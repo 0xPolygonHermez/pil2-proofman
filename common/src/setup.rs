@@ -1,4 +1,3 @@
-use std::mem::MaybeUninit;
 use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -8,6 +7,7 @@ use proofman_starks_lib_c::{
     load_const_tree_c, load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c,
     prover_helpers_free_c,
 };
+use proofman_util::create_buffer_fast;
 
 use crate::GlobalInfo;
 use crate::ProofType;
@@ -32,7 +32,7 @@ impl From<&SetupC> for *mut c_void {
 
 #[derive(Debug)]
 pub struct Pols {
-    pub values: RwLock<Vec<MaybeUninit<u8>>>,
+    pub values: RwLock<Vec<u8>>,
 }
 
 impl Default for Pols {
@@ -113,7 +113,7 @@ impl Setup {
         let p_stark_info = self.p_setup.p_stark_info;
 
         let const_size = get_const_size_c(p_stark_info) as usize;
-        let const_pols: Vec<MaybeUninit<u8>> = Vec::with_capacity(const_size);
+        let const_pols: Vec<u8> = create_buffer_fast(const_size);
 
         let p_const_pols_address = const_pols.as_ptr() as *mut c_void;
         load_const_pols_c(p_const_pols_address, const_pols_path.as_str(), const_size as u64);
@@ -136,7 +136,7 @@ impl Setup {
 
         let const_tree_size = get_const_tree_size_c(p_stark_info) as usize;
 
-        let const_tree: Vec<MaybeUninit<u8>> = Vec::with_capacity(const_tree_size);
+        let const_tree: Vec<u8> = create_buffer_fast(const_tree_size);
 
         let p_const_tree_address = const_tree.as_ptr() as *mut c_void;
         if PathBuf::from(&const_pols_tree_path).exists() {

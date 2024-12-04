@@ -38,7 +38,7 @@ where
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let num_rows =
             pctx.global_info.airs[RANGE_CHECK_DYNAMIC_1_AIRGROUP_ID][RANGE_CHECK_DYNAMIC_1_AIR_IDS[0]].num_rows;
-        let trace = RangeCheckDynamic1Trace::new(num_rows);
+        let trace = RangeCheckDynamic1Trace::new_zeroes(num_rows);
 
         let air_instance = AirInstance::new(
             sctx.clone(),
@@ -78,7 +78,7 @@ where
             let proof_ctx = pctx.clone();
             let air_instances_vec = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap();
             let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
-            let buffer = &mut air_instance.trace;
+            let buffer = &mut air_instance.witness;
 
             let num_rows =
                 pctx.pilout.get_air(RANGE_CHECK_DYNAMIC_1_AIRGROUP_ID, RANGE_CHECK_DYNAMIC_1_AIR_IDS[0]).num_rows();

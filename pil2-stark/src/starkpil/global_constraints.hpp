@@ -1,10 +1,23 @@
 #ifndef GLOBAL_CONSTRAINTS_HPP
 #define GLOBAL_CONSTRAINTS_HPP
-#include "timer.hpp"
 #include "goldilocks_base_field.hpp"
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
+
+struct GlobalConstraintInfo {
+    uint64_t id;
+    uint64_t dim;
+    bool valid;
+    uint64_t value[3];
+    uint8_t* line;
+    uint64_t line_size;
+};
+
+struct GlobalConstraintsResults {
+    uint64_t nConstraints;
+    GlobalConstraintInfo* constraintInfo;
+};
 
 void calculateGlobalExpression(Goldilocks::Element* dest, Goldilocks::Element* publics, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, ParserArgs &parserArgs, ParserParams &parserParams) {
 
@@ -209,55 +222,52 @@ void calculateGlobalExpression(Goldilocks::Element* dest, Goldilocks::Element* p
 }
 
 
-bool verifyGlobalConstraint(Goldilocks::Element* publics, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, ParserArgs &parserArgs, ParserParams &parserParams) {
+GlobalConstraintInfo verifyGlobalConstraint(uint64_t constraintId, Goldilocks::Element* publics, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, ParserArgs &parserArgs, ParserParams &parserParams) {
+
+    GlobalConstraintInfo constraintInfo;
+    constraintInfo.id = constraintId;
+    constraintInfo.valid = true;
+    constraintInfo.line = new uint8_t[parserParams.line.size()];
+    constraintInfo.line_size = parserParams.line.size();
+    std::memcpy(constraintInfo.line, parserParams.line.data(), parserParams.line.size());
 
     Goldilocks::Element dest[parserParams.destDim];
 
     calculateGlobalExpression(dest, publics, challenges, proofValues, airgroupValues, parserArgs, parserParams);
 
-    bool isValidConstraint = true;
     if(parserParams.destDim == 1) {
-        if(!Goldilocks::isZero(dest[0])) {
-            cout << "Global constraint check failed with value: " << Goldilocks::toString(dest[0]) << endl;
-            isValidConstraint = false;
-        }
+        constraintInfo.dim = parserParams.destDim;
+        constraintInfo.value[0] = Goldilocks::toU64(dest[0]);
+        constraintInfo.value[1] = 0;
+        constraintInfo.value[2] = 0;
+        if(constraintInfo.value[0] != 0) constraintInfo.valid = false;
     } else {
-        for(uint64_t i = 0; i < FIELD_EXTENSION; ++i) {
-            if(!Goldilocks::isZero(dest[i])) {
-                cout << "Global constraint check failed with value: [" << Goldilocks::toString(dest[0]) << ", " << Goldilocks::toString(dest[1]) << ", " << Goldilocks::toString(dest[2]) << "]" << endl;
-                isValidConstraint = false;
-                break;
-            }
-        }
+        constraintInfo.dim = parserParams.destDim;
+        constraintInfo.value[0] = Goldilocks::toU64(dest[0]);
+        constraintInfo.value[1] = Goldilocks::toU64(dest[1]);
+        constraintInfo.value[2] = Goldilocks::toU64(dest[2]);
+        if(constraintInfo.value[0] != 0 || constraintInfo.value[1] != 0 || constraintInfo.value[2] != 0) constraintInfo.valid = false;
     }
 
-    if(isValidConstraint) {
-        TimerLog(VALID_CONSTRAINT);
-        return true;
-    } else {
-        TimerLog(INVALID_CONSTRAINT);
-        return false;
-    }
+    return constraintInfo;
 }
 
   
-bool verifyGlobalConstraints(ExpressionsBin &globalConstraintsBin, Goldilocks::Element* publicInputs, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues)
+GlobalConstraintsResults * verifyGlobalConstraints(ExpressionsBin &globalConstraintsBin, Goldilocks::Element* publicInputs, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues)
 {
 
     std::vector<ParserParams> globalConstraintsInfo = globalConstraintsBin.constraintsInfoDebug;
 
-    bool validGlobalConstraints = true;
+    GlobalConstraintsResults *constraintsInfo = new GlobalConstraintsResults();
+    constraintsInfo->nConstraints = globalConstraintsInfo.size();
+    constraintsInfo->constraintInfo = new GlobalConstraintInfo[constraintsInfo->nConstraints];
+
     for(uint64_t i = 0; i < globalConstraintsInfo.size(); ++i) {
-        TimerLog(CHECKING_CONSTRAINT);
-        cout << "--------------------------------------------------------" << endl;
-        cout << globalConstraintsInfo[i].line << endl;
-        cout << "--------------------------------------------------------" << endl;
-        if(!verifyGlobalConstraint(publicInputs, challenges, proofValues, airgroupValues, globalConstraintsBin.expressionsBinArgsConstraints, globalConstraintsInfo[i])) {
-            validGlobalConstraints = false;
-        };
+        auto constraintInfo = verifyGlobalConstraint(i, publicInputs, challenges, proofValues, airgroupValues, globalConstraintsBin.expressionsBinArgsConstraints, globalConstraintsInfo[i]);
+        constraintsInfo->constraintInfo[i] = constraintInfo;
     }
 
-    return validGlobalConstraints;
+    return constraintsInfo;
 }
 
 

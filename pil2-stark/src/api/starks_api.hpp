@@ -26,8 +26,6 @@
     // ========================================================================================
     void *stark_info_new(char* filename);
     uint64_t get_map_total_n(void *pStarkInfo);
-    uint64_t get_map_total_n_custom_commits(void *pStarkInfo, uint64_t commit_id);
-    uint64_t get_map_offsets(void *pStarkInfo, char *stage, bool flag);
     void *get_custom_commit_map_ids(void *pStarkInfo, uint64_t commit_id, uint64_t stage);
     void stark_info_free(void *pStarkInfo);
 
@@ -72,10 +70,10 @@
     void calculate_quotient_polynomial(void *pStarks, void* stepsParams);
     void calculate_impols_expressions(void *pStarks, uint64_t step, void* stepsParams);
 
-    void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *pProof, void *pBuffHelper, char *treeFile);
-    void load_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *pProof, char *treeFile);
+    void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, void *pBuffHelper, char *treeFile);
+    void load_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, char *treeFile);
 
-    void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trace, void *buffer, void *pProof, void *pBuffHelper);
+    void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *witness, void *buffer, void *pProof, void *pBuffHelper);
     
     void compute_lev(void *pStarks, void *xiChallenge, void* LEv);
     void compute_evals(void *pStarks, void *params, void *LEv, void *pProof);
@@ -112,18 +110,17 @@
 
     // Global constraints
     // =================================================================================
-    bool verify_global_constraints(void *globalBin, void *publics, void* challenges, void *proofValues, void **airgroupValues);
+    void *verify_global_constraints(void *globalBin, void *publics, void* challenges, void *proofValues, void **airgroupValues);
     void *get_hint_field_global_constraints(void *globalBin, void *publics, void* challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression);
     uint64_t set_hint_field_global_constraints(void* p_globalinfo_bin, void *proofValues, void *values, uint64_t hintId, char *hintFieldName);
     
     // Debug functions
     // =================================================================================
     void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row);
-    void print_expression(void *pSetupCtx, void* pol, uint64_t dim, uint64_t first_value, uint64_t last_value);
 
     // Recursive proof
     // =================================================================================
-    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* pAddress, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
+    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
     void *get_zkin_ptr(char *zkin_file);
     void *add_recursive2_verkey(void *pZkin, char* recursive2VerKeyFilename);
     void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPublics, void* pChallenges, void *zkin1, void *zkin2, void *starkInfoRecursive2);
@@ -133,11 +130,11 @@
     void *get_zkin_proof(char* zkin);
     void zkin_proof_free(void *pZkinProof);
     void serialized_proof_free(char *zkinCStr);
-    void get_committed_pols(void *pWitness, char* execFile, void *pAddress, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t offsetCm1, uint64_t nCols);
+    void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
 
     // Final proof
     // =================================================================================
-    void gen_final_snark_proof(void *pWitnessFinal, char* zkeyFile, char* outputDir);
+    void gen_final_snark_proof(void *circomWitnessFinal, char* zkeyFile, char* outputDir);
 
     // Util calls
     // =================================================================================

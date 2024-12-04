@@ -1,19 +1,17 @@
 use core::panic;
-use std::error::Error;
 use std::fs::File;
 use std::io::Read;
-use std::path::PathBuf;
 
 use std::any::type_name;
 use std::sync::Arc;
 
 use proofman_common::{
-    BufferAllocator, ConstraintInfo, ConstraintsResults, ProofCtx, ProofType, Prover, ProverInfo, ProverStatus,
-    StepsParams, SetupCtx, StarkInfo,
+    ConstraintInfo, ConstraintsResults, ProofCtx, ProofType, Prover, ProverInfo, ProverStatus, StepsParams, SetupCtx,
+    StarkInfo,
 };
 use log::{debug, trace};
 use transcript::FFITranscript;
-use proofman_util::{timer_start_trace, timer_stop_and_log_trace};
+use proofman_util::{create_buffer_fast, timer_start_trace, timer_stop_and_log_trace};
 use proofman_starks_lib_c::*;
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
@@ -94,8 +92,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn build(&mut self, proof_ctx: Arc<ProofCtx<F>>) {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
 
-        let buffer = Vec::with_capacity(get_map_totaln_c(self.p_stark_info) as usize);
-        air_instance.set_buffer(buffer);
+        let trace = create_buffer_fast(get_map_totaln_c(self.p_stark_info) as usize);
+        air_instance.set_trace(trace);
 
         //initialize the common challenges if have not been initialized by another prover
         let challenges =
@@ -136,11 +134,10 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
 
         let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-        let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
         let steps_params = StepsParams {
+            witness: air_instance.get_witness_ptr() as *mut c_void,
             trace: air_instance.get_trace_ptr() as *mut c_void,
-            pols: air_instance.get_buffer_ptr() as *mut c_void,
             public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
             challenges: (*challenges_guard).as_ptr() as *mut c_void,
             airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
@@ -148,8 +145,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             evals: air_instance.evals.as_ptr() as *mut c_void,
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: const_pols_ptr,
-            p_const_tree: const_tree_ptr,
+            p_const_tree: std::ptr::null_mut(),
             custom_commits: air_instance.get_custom_commits_ptr(),
+            custom_commits_extended: [std::ptr::null_mut(); 10],
         };
 
         let raw_ptr = verify_constraints_c((&setup.p_setup).into(), (&steps_params).into());
@@ -175,8 +173,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
         let steps_params = StepsParams {
+            witness: air_instance.get_witness_ptr() as *mut c_void,
             trace: air_instance.get_trace_ptr() as *mut c_void,
-            pols: air_instance.get_buffer_ptr() as *mut c_void,
             public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
             challenges: (*challenges_guard).as_ptr() as *mut c_void,
             airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
@@ -186,6 +184,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             p_const_pols: const_pols_ptr,
             p_const_tree: const_tree_ptr,
             custom_commits: air_instance.get_custom_commits_ptr(),
+            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
         };
 
         if stage_id as usize <= proof_ctx.global_info.n_challenges.len() {
@@ -312,15 +311,16 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
             timer_start_trace!(STARK_COMMIT_STAGE_, stage_id);
 
-            let trace = match stage_id == 1 {
-                true => air_instance.get_trace_ptr() as *mut c_void,
+            let witness = match stage_id == 1 {
+                true => air_instance.get_witness_ptr() as *mut c_void,
                 false => std::ptr::null_mut(),
             };
 
-            let buffer = air_instance.get_buffer_ptr() as *mut c_void;
+            let trace = air_instance.get_trace_ptr() as *mut c_void;
             let element_type = if type_name::<F>() == type_name::<Goldilocks>() { 1 } else { 0 };
 
-            commit_stage_c(p_stark, element_type, stage_id as u64, trace, buffer, p_proof, buff_helper);
+            commit_stage_c(p_stark, element_type, stage_id as u64, witness, trace, p_proof, buff_helper);
+
             timer_stop_and_log_trace!(STARK_COMMIT_STAGE_, stage_id);
         } else {
             let n_custom_commits = self.stark_info.custom_commits.len();
@@ -338,6 +338,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                             commit_id as u64,
                             stage_id as u64,
                             air_instance.custom_commits[commit_id].buffer.as_ptr() as *mut c_void,
+                            air_instance.custom_commits_extended[commit_id].buffer.as_ptr() as *mut c_void,
                             p_proof,
                             buff_helper,
                             "",
@@ -348,6 +349,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                             commit_id as u64,
                             stage_id as u64,
                             air_instance.custom_commits[commit_id].buffer.as_ptr() as *mut c_void,
+                            air_instance.custom_commits_extended[commit_id].buffer.as_ptr() as *mut c_void,
                             p_proof,
                             air_instance.custom_commits[commit_id].cached_file.to_str().unwrap(),
                         );
@@ -549,7 +551,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
                 let mut root = vec![F::zero(); self.n_field_elements];
                 treesGL_get_root_c(p_stark, stage - 1, root.as_mut_ptr() as *mut c_void);
-
                 trace!(
                     "{}: ··· MerkleTree root for stage {} of instance {} of {} is: {:?}",
                     Self::MY_NAME,
@@ -611,7 +612,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     fri_proof_get_tree_root_c(p_proof, value.as_mut_ptr() as *mut c_void, step_index as u64);
                 } else {
                     let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-                    let buffer = air_instance.get_buffer_ptr() as *mut c_void;
+                    let buffer = air_instance.get_trace_ptr() as *mut c_void;
 
                     let n_hash = (1 << (steps[n_steps].n_bits)) * Self::FIELD_EXTENSION as u64;
                     let fri_pol = get_fri_pol_c(self.p_stark_info, buffer);
@@ -743,8 +744,8 @@ impl<F: Field> StarkProver<F> {
         let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
         let steps_params = StepsParams {
-            trace: std::ptr::null_mut(),
-            pols: air_instance.get_buffer_ptr() as *mut c_void,
+            witness: std::ptr::null_mut(),
+            trace: air_instance.get_trace_ptr() as *mut c_void,
             public_inputs: std::ptr::null_mut(),
             challenges: std::ptr::null_mut(),
             airgroup_values: std::ptr::null_mut(),
@@ -754,6 +755,7 @@ impl<F: Field> StarkProver<F> {
             p_const_pols: std::ptr::null_mut(),
             p_const_tree: const_tree_ptr,
             custom_commits: air_instance.get_custom_commits_ptr(),
+            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
         };
 
         compute_evals_c(p_stark, (&steps_params).into(), buff_helper, p_proof);
@@ -776,8 +778,8 @@ impl<F: Field> StarkProver<F> {
         let p_stark = self.p_stark;
 
         let steps_params = StepsParams {
-            trace: std::ptr::null_mut(),
-            pols: air_instance.get_buffer_ptr() as *mut c_void,
+            witness: std::ptr::null_mut(),
+            trace: air_instance.get_trace_ptr() as *mut c_void,
             public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
             challenges: (*challenges_guard).as_ptr() as *mut c_void,
             airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
@@ -787,6 +789,7 @@ impl<F: Field> StarkProver<F> {
             p_const_pols: const_pols_ptr,
             p_const_tree: const_tree_ptr,
             custom_commits: air_instance.get_custom_commits_ptr(),
+            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
         };
 
         calculate_fri_polynomial_c(p_stark, (&steps_params).into());
@@ -811,7 +814,7 @@ impl<F: Field> StarkProver<F> {
         }
 
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-        let buffer = air_instance.get_buffer_ptr() as *mut c_void;
+        let buffer = air_instance.get_trace_ptr() as *mut c_void;
 
         let fri_pol = get_fri_pol_c(self.p_stark_info, buffer);
 
@@ -871,7 +874,7 @@ impl<F: Field> StarkProver<F> {
         );
 
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-        let buffer = air_instance.get_buffer_ptr() as *mut c_void;
+        let buffer = air_instance.get_trace_ptr() as *mut c_void;
 
         let fri_pol = get_fri_pol_c(self.p_stark_info, buffer);
 
@@ -893,36 +896,5 @@ impl<F: Field> StarkProver<F> {
             fri_pol,
             self.stark_info.stark_struct.steps[self.stark_info.stark_struct.steps.len() - 1].n_bits,
         );
-    }
-}
-
-pub struct StarkBufferAllocator {
-    pub proving_key_path: PathBuf,
-}
-
-impl StarkBufferAllocator {
-    pub fn new(proving_key_path: PathBuf) -> Self {
-        Self { proving_key_path }
-    }
-}
-
-impl BufferAllocator for StarkBufferAllocator {
-    fn get_buffer_info_custom_commit(
-        &self,
-        sctx: &SetupCtx,
-        airgroup_id: usize,
-        air_id: usize,
-        name: &str,
-    ) -> Result<(u64, Vec<u64>, u64), Box<dyn Error>> {
-        let ps = sctx.get_setup(airgroup_id, air_id);
-
-        let commit_id = match ps.stark_info.custom_commits.iter().position(|custom_commit| custom_commit.name == name) {
-            Some(commit_id) => commit_id as u64,
-            None => {
-                eprintln!("Custom commit '{}' not found in custom commits.", name);
-                std::process::exit(1);
-            }
-        };
-        Ok((get_map_totaln_custom_commits_c(ps.p_setup.p_stark_info, commit_id), vec![0], commit_id))
     }
 }

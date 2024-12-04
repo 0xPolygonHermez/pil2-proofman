@@ -6,9 +6,7 @@ use proofman_starks_lib_c::{
 
 use std::{collections::HashMap, sync::Arc};
 
-use proofman_common::{ExtensionField, ProofCtx, SetupCtx};
-
-use colored::*;
+use proofman_common::{GlobalConstraintInfo, GlobalConstraintsResults, ExtensionField, ProofCtx, SetupCtx};
 
 use std::os::raw::c_void;
 
@@ -58,7 +56,10 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<F>> {
     airgroupvalues
 }
 
-pub fn verify_global_constraints_proof<F: Field>(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> bool {
+pub fn verify_global_constraints_proof<F: Field>(
+    pctx: Arc<ProofCtx<F>>,
+    sctx: Arc<SetupCtx>,
+) -> Vec<GlobalConstraintInfo> {
     const MY_NAME: &str = "GlCstVfy";
 
     log::info!("{}: --> Checking global constraints", MY_NAME);
@@ -79,7 +80,7 @@ pub fn verify_global_constraints_proof<F: Field>(pctx: Arc<ProofCtx<F>>, sctx: A
         .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
         .collect();
 
-    let global_constraints_verified = verify_global_constraints_c(
+    let raw_ptr = verify_global_constraints_c(
         sctx.get_global_bin(),
         public_inputs,
         challenges,
@@ -87,19 +88,11 @@ pub fn verify_global_constraints_proof<F: Field>(pctx: Arc<ProofCtx<F>>, sctx: A
         airgroup_values_ptrs.as_mut_ptr() as *mut *mut c_void,
     );
 
-    log::info!("{}: <-- Checking global constraints", MY_NAME);
-
-    if global_constraints_verified {
-        log::info!(
-            "{}: ··· {}",
-            MY_NAME,
-            "\u{2713} All global constraints were successfully verified".bright_green().bold()
-        );
-    } else {
-        log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all global constraints were verified".bright_red().bold());
+    unsafe {
+        let constraints_result = Box::from_raw(raw_ptr as *mut GlobalConstraintsResults);
+        std::slice::from_raw_parts(constraints_result.constraints_info, constraints_result.n_constraints as usize)
     }
-
-    global_constraints_verified
+    .to_vec()
 }
 
 pub fn get_hint_field_gc<F: Field>(

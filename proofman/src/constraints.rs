@@ -1,5 +1,5 @@
 use p3_field::Field;
-use std::{cmp, ffi::CStr};
+use std::cmp;
 
 use std::sync::Arc;
 
@@ -41,7 +41,8 @@ pub fn verify_constraints_proof<F: Field>(
             air_name,
         );
         for constraint in &constraints[air_instance_index] {
-            let line_str = unsafe { CStr::from_ptr(constraint.line) };
+            let str_slice = unsafe { std::slice::from_raw_parts(constraint.line, constraint.line_size as usize) };
+            let line_str = std::str::from_utf8(str_slice).unwrap();
             let valid = if constraint.n_rows > 0 {
                 format!("has {} invalid rows", constraint.n_rows).bright_red()
             } else {
@@ -49,29 +50,29 @@ pub fn verify_constraints_proof<F: Field>(
             };
             if constraint.im_pol {
                 log::trace!(
-                    "{}: ···    Intermediate polynomial (stage {}) {} -> {:?}",
+                    "{}: ···    Intermediate polynomial (stage {}) {} -> {}",
                     MY_NAME,
                     constraint.stage,
                     valid,
-                    line_str.to_str().unwrap()
+                    line_str
                 );
             } else if constraint.n_rows == 0 {
                 log::debug!(
-                    "{}:     · Constraint #{} (stage {}) {} -> {:?}",
+                    "{}:     · Constraint #{} (stage {}) {} -> {}",
                     MY_NAME,
                     constraint.id,
                     constraint.stage,
                     valid,
-                    line_str.to_str().unwrap()
+                    line_str
                 );
             } else {
                 log::info!(
-                    "{}:     · Constraint #{} (stage {}) {} -> {:?}",
+                    "{}:     · Constraint #{} (stage {}) {} -> {}",
                     MY_NAME,
                     constraint.id,
                     constraint.stage,
                     valid,
-                    line_str.to_str().unwrap()
+                    line_str
                 );
             }
             if constraint.n_rows > 0 {
@@ -123,11 +124,45 @@ pub fn verify_constraints_proof<F: Field>(
         }
     }
 
-    log::info!("{}: <-- Checking constraints", MY_NAME);
+    let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone());
+    let mut valid_global_constraints = true;
+    for constraint in &global_constraints {
+        let str_slice = unsafe { std::slice::from_raw_parts(constraint.line, constraint.line_size as usize) };
+        let line_str = std::str::from_utf8(str_slice).unwrap();
 
-    let global_constraints_verified = verify_global_constraints_proof(pctx.clone(), sctx.clone());
+        let valid = if !constraint.valid { "is invalid".bright_red() } else { "is valid".bright_green() };
+        if constraint.valid {
+            log::debug!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
+        } else {
+            log::info!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
+        }
+        if !constraint.valid {
+            valid_global_constraints = false;
+            if constraint.dim == 1 {
+                log::info!("{}: ···        \u{2717} Failed with value: {}", MY_NAME, constraint.value[0]);
+            } else {
+                log::info!(
+                    "{}: ···        \u{2717} Failed with value: [{}, {}, {}]",
+                    MY_NAME,
+                    constraint.value[0],
+                    constraint.value[1],
+                    constraint.value[2]
+                );
+            }
+        }
+    }
 
-    if valid_constraints && global_constraints_verified {
+    if valid_global_constraints {
+        log::info!(
+            "{}: ··· {}",
+            MY_NAME,
+            "\u{2713} All global constraints were successfully verified".bright_green().bold()
+        );
+    } else {
+        log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all global constraints were verified".bright_red().bold());
+    }
+
+    if valid_constraints && valid_global_constraints {
         log::info!("{}: ··· {}", MY_NAME, "\u{2713} All constraints were verified".bright_green().bold());
         Ok(())
     } else {

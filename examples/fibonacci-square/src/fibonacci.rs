@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{get_custom_commit_id, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::PrimeField;
@@ -46,7 +46,7 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
         let mut b = pctx.get_public_value("in2");
 
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
-        let mut trace = FibonacciSquareTrace::new(num_rows);
+        let mut trace = FibonacciSquareTrace::new_zeroes(num_rows);
 
         trace[0].a = F::from_canonical_u64(a);
         trace[0].b = F::from_canonical_u64(b);
@@ -60,33 +60,18 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
             trace[i].b = F::from_canonical_u64(b);
         }
 
-        let (buffer_size_rom, offsets_rom, commit_id) = ectx.buffer_allocator.as_ref().get_buffer_info_custom_commit(
-            &sctx,
-            FIBONACCI_SQUARE_AIRGROUP_ID,
-            FIBONACCI_SQUARE_AIR_IDS[0],
-            "rom",
-        )?;
+        let mut trace_rom = FibonacciSquareRomTrace::new_zeroes(num_rows);
+        let commit_id = get_custom_commit_id(&sctx, FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS[0], "rom");
 
-        let mut buffer_rom = vec![F::zero(); buffer_size_rom as usize];
-
-        let mut trace_custom_commits =
-            FibonacciSquareRomTrace::map_buffer(&mut buffer_rom, num_rows, offsets_rom[0] as usize)?;
         for i in 0..num_rows {
-            trace_custom_commits[i].line = F::from_canonical_u64(3 + i as u64);
-            trace_custom_commits[i].flags = F::from_canonical_u64(2 + i as u64);
+            trace_rom[i].line = F::from_canonical_u64(3 + i as u64);
+            trace_rom[i].flags = F::from_canonical_u64(2 + i as u64);
         }
 
         pctx.set_public_value_by_name(b, "out", None);
 
         pctx.set_proof_value("value1", F::from_canonical_u64(5));
         pctx.set_proof_value("value2", F::from_canonical_u64(125));
-
-        // Not needed, for debugging!
-        // let mut result = F::zero();
-        // for (i, _) in buffer.iter().enumerate() {
-        //     result += buffer[i] * F::from_canonical_u64(i as u64);
-        // }
-        // log::info!("Result Fibonacci buffer: {:?}", result);
 
         let mut air_instance = AirInstance::new(
             sctx.clone(),
@@ -98,10 +83,9 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
         air_instance.set_airvalue("FibonacciSquare.fibo1", Some(vec![0]), F::from_canonical_u64(1));
         air_instance.set_airvalue("FibonacciSquare.fibo1", Some(vec![1]), F::from_canonical_u64(2));
         air_instance.set_airvalue_ext("FibonacciSquare.fibo3", None, vec![F::from_canonical_u64(5); 3]);
-        match ectx.cached_buffers_path.as_ref().and_then(|cached_buffers| cached_buffers.get("rom").cloned()) {
-            Some(buffer_path) => air_instance.set_custom_commit_cached_file(&sctx, commit_id, buffer_path),
-            None => air_instance.set_custom_commit_id_buffer(&sctx, buffer_rom, commit_id),
-        }
+
+        air_instance.set_custom_commit_id_buffer(&sctx, trace_rom.buffer.unwrap(), commit_id);
+
         let (is_myne, gid) =
             ectx.dctx.write().unwrap().add_instance(FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS[0], 1);
         if is_myne {

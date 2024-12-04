@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::{mem::MaybeUninit, sync::RwLock};
+use std::sync::RwLock;
 use std::path::PathBuf;
 
 use p3_field::Field;
@@ -48,7 +48,7 @@ impl<F> Default for Challenges<F> {
 }
 
 pub struct BuffHelper<F> {
-    pub buff_helper: RwLock<Vec<MaybeUninit<F>>>,
+    pub buff_helper: RwLock<Vec<F>>,
 }
 
 impl<F> Default for BuffHelper<F> {

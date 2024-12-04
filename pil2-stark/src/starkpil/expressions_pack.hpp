@@ -120,9 +120,9 @@ public:
                     for(uint64_t j = 0; j < nrowsPack; ++j) {
                         uint64_t l = (row + j + nextStrides[o]) % domainSize;
                         if(stage == 1 && !domainExtended) {
-                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.trace[l * nColsStages[stage] + stagePos + d];
+                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.witness[l * nColsStages[stage] + stagePos + d];
                         } else {
-                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.pols[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                         }
                     }
                 }
@@ -130,6 +130,7 @@ public:
         }
 
         for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); ++i) {
+            Goldilocks::Element *customCommits = domainExtended ? params.pCustomCommitsExtended[i] : params.pCustomCommits[i];
             for(uint64_t j = 0; j < setupCtx.starkInfo.customCommits[i].stageWidths[0]; ++j) {
                 if(!customCommitsUsed[i][j]) continue;
                 PolMap polInfo = setupCtx.starkInfo.customCommitsMap[i][j];
@@ -139,7 +140,7 @@ public:
                     for(uint64_t o = 0; o < nOpenings; ++o) {
                         for(uint64_t j = 0; j < nrowsPack; ++j) {
                             uint64_t l = (row + j + nextStrides[o]) % domainSize;
-                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.customCommits[i][offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = customCommits[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                         }
                     }
                 }

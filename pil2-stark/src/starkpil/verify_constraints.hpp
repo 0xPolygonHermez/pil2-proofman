@@ -10,7 +10,8 @@ struct ConstraintInfo {
     uint64_t id;
     uint64_t stage;
     bool imPol;
-    const char* line;
+    uint8_t* line;
+    uint64_t line_size;
     uint64_t nrows;
     ConstraintRowInfo rows[10];
 };
@@ -56,7 +57,9 @@ ConstraintInfo verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, u
     constraintInfo.id = constraintId;
     constraintInfo.stage = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].stage;
     constraintInfo.imPol = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].imPol;
-    constraintInfo.line = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].line.c_str();
+    constraintInfo.line = new uint8_t[setupCtx.expressionsBin.constraintsInfoDebug[constraintId].line.size()];
+    constraintInfo.line_size = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].line.size();
+    std::memcpy(constraintInfo.line, setupCtx.expressionsBin.constraintsInfoDebug[constraintId].line.data(), setupCtx.expressionsBin.constraintsInfoDebug[constraintId].line.size());
     constraintInfo.nrows = 0;
 
     uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);

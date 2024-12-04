@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::os::raw::c_void;
 use std::path::PathBuf;
 
-use crate::Setup;
+use crate::{Setup, SetupCtx};
 
 pub fn parse_cached_buffers(s: &str) -> Result<HashMap<String, PathBuf>, String> {
     let json_data: Value = serde_json::from_str(s).map_err(|e| format!("Invalid JSON: {}", e))?;
@@ -26,12 +26,32 @@ pub fn parse_cached_buffers(s: &str) -> Result<HashMap<String, PathBuf>, String>
     Ok(map)
 }
 
-pub fn get_custom_commit_trace(commit_id: u64, step: u64, setup: &Setup, buffer: Vec<Goldilocks>, buffer_str: &str) {
+pub fn get_custom_commit_id(sctx: &SetupCtx, airgroup_id: usize, air_id: usize, name: &str) -> u64 {
+    let ps = sctx.get_setup(airgroup_id, air_id);
+    let commit_id = match ps.stark_info.custom_commits.iter().position(|custom_commit| custom_commit.name == name) {
+        Some(commit_id) => commit_id as u64,
+        None => {
+            eprintln!("Custom commit '{}' not found in custom commits.", name);
+            std::process::exit(1);
+        }
+    };
+    commit_id
+}
+
+pub fn get_custom_commit_trace(
+    commit_id: u64,
+    step: u64,
+    setup: &Setup,
+    buffer: Vec<Goldilocks>,
+    buffer_ext: Vec<Goldilocks>,
+    buffer_str: &str,
+) {
     extend_and_merkelize_custom_commit_c(
         starks_new_c((&setup.p_setup).into(), std::ptr::null_mut()),
         commit_id,
         step,
         buffer.as_ptr() as *mut c_void,
+        buffer_ext.as_ptr() as *mut c_void,
         fri_proof_new_c((&setup.p_setup).into()),
         std::ptr::null_mut(),
         buffer_str,

@@ -260,7 +260,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: feature/setup
+          ref: 0.0.16
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies

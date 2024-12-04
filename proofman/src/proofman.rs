@@ -1,12 +1,11 @@
 use libloading::{Library, Symbol};
 use log::{info, trace};
 use p3_field::Field;
-use stark::{StarkBufferAllocator, StarkProver};
+use stark::StarkProver;
 use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
 use core::panic;
 use std::fs;
 use std::error::Error;
-use std::mem::MaybeUninit;
 
 use colored::*;
 
@@ -25,7 +24,9 @@ use proofman_common::{ExecutionCtx, ProofCtx, ProofOptions, ProofType, Prover, S
 
 use std::os::raw::c_void;
 
-use proofman_util::{timer_start_debug, timer_start_info, timer_stop_and_log_debug, timer_stop_and_log_info};
+use proofman_util::{
+    create_buffer_fast, timer_start_debug, timer_start_info, timer_stop_and_log_debug, timer_stop_and_log_info,
+};
 
 pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -56,11 +57,9 @@ impl<F: Field + 'static> ProofMan<F> {
             &output_dir_path,
             options.verify_constraints,
         )?;
-        let buffer_allocator: Arc<StarkBufferAllocator> = Arc::new(StarkBufferAllocator::new(proving_key_path.clone()));
         let ectx = ExecutionCtx::builder()
             .with_rom_path(rom_path.clone())
             .with_cached_buffers_path(cached_buffers_paths.clone())
-            .with_buffer_allocator(buffer_allocator)
             .with_verbose_mode(options.verbose_mode)
             .with_std_mode(options.std_mode)
             .build();
@@ -330,7 +329,7 @@ impl<F: Field + 'static> ProofMan<F> {
             }
         }
 
-        let buff_helper: Vec<MaybeUninit<F>> = Vec::with_capacity(buff_helper_size);
+        let buff_helper: Vec<F> = create_buffer_fast(buff_helper_size);
 
         *pctx.buff_helper.buff_helper.write().unwrap() = buff_helper;
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);

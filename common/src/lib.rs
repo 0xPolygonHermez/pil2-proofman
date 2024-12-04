@@ -1,6 +1,5 @@
 mod air_instance;
 mod air_instances_repository;
-mod buffer_allocator;
 mod verbose_mode;
 mod execution_ctx;
 mod distribution_ctx;
@@ -18,7 +17,6 @@ pub mod stark_info;
 
 pub use air_instance::*;
 pub use air_instances_repository::*;
-pub use buffer_allocator::*;
 use proofman_starks_lib_c::set_log_level_c;
 pub use verbose_mode::*;
 pub use execution_ctx::*;

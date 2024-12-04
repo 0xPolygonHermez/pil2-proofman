@@ -154,8 +154,6 @@ public:
     std::map<std::pair<std::string, bool>, uint64_t> mapOffsets;
     
     uint64_t mapTotalN;
-
-    std::map<std::string, uint64_t> mapTotalNcustomCommits;
     
     /* Constructor */
     StarkInfo(string file);

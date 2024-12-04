@@ -66,7 +66,7 @@ where
         );
 
         if stage == 1 {
-            let buffer = &mut air_instance.trace;
+            let buffer = &mut air_instance.witness;
 
             let num_rows = pctx.pilout.get_air(LOOKUP_AIRGROUP_ID, LOOKUP_0_AIR_IDS[0]).num_rows();
             let mut trace = Lookup0Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();

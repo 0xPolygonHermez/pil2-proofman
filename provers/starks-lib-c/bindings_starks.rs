@@ -43,10 +43,7 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z23fri_proof_set_airvaluesPvS_"]
-    pub fn fri_proof_set_airvalues(
-        pFriProof: *mut ::std::os::raw::c_void,
-        airValues: *mut ::std::os::raw::c_void,
-    );
+    pub fn fri_proof_set_airvalues(pFriProof: *mut ::std::os::raw::c_void, airValues: *mut ::std::os::raw::c_void);
 }
 extern "C" {
     #[link_name = "\u{1}_Z23fri_proof_get_zkinproofmPvS_S_S_PcS0_"]
@@ -84,21 +81,6 @@ extern "C" {
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z30get_map_total_n_custom_commitsPvm"]
-    pub fn get_map_total_n_custom_commits(
-        pStarkInfo: *mut ::std::os::raw::c_void,
-        commit_id: u64,
-    ) -> u64;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z15get_map_offsetsPvPcb"]
-    pub fn get_map_offsets(
-        pStarkInfo: *mut ::std::os::raw::c_void,
-        stage: *mut ::std::os::raw::c_char,
-        flag: bool,
-    ) -> u64;
-}
-extern "C" {
     #[link_name = "\u{1}_Z25get_custom_commit_map_idsPvmm"]
     pub fn get_custom_commit_map_ids(
         pStarkInfo: *mut ::std::os::raw::c_void,
@@ -112,9 +94,7 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z18prover_helpers_newPv"]
-    pub fn prover_helpers_new(
-        pStarkInfo: *mut ::std::os::raw::c_void,
-    ) -> *mut ::std::os::raw::c_void;
+    pub fn prover_helpers_new(pStarkInfo: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z19prover_helpers_freePv"]
@@ -155,10 +135,7 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z19expressions_bin_newPcb"]
-    pub fn expressions_bin_new(
-        filename: *mut ::std::os::raw::c_char,
-        global: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    pub fn expressions_bin_new(filename: *mut ::std::os::raw::c_char, global: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z20expressions_bin_freePv"]
@@ -237,19 +214,11 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z16treesGL_get_rootPvmS_"]
-    pub fn treesGL_get_root(
-        pStarks: *mut ::std::os::raw::c_void,
-        index: u64,
-        root: *mut ::std::os::raw::c_void,
-    );
+    pub fn treesGL_get_root(pStarks: *mut ::std::os::raw::c_void, index: u64, root: *mut ::std::os::raw::c_void);
 }
 extern "C" {
     #[link_name = "\u{1}_Z16treesGL_set_rootPvmS_"]
-    pub fn treesGL_set_root(
-        pStarks: *mut ::std::os::raw::c_void,
-        index: u64,
-        pProof: *mut ::std::os::raw::c_void,
-    );
+    pub fn treesGL_set_root(pStarks: *mut ::std::os::raw::c_void, index: u64, pProof: *mut ::std::os::raw::c_void);
 }
 extern "C" {
     #[link_name = "\u{1}_Z18calculate_xdivxsubPvS_S_"]
@@ -268,10 +237,7 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z24calculate_fri_polynomialPvS_"]
-    pub fn calculate_fri_polynomial(
-        pStarks: *mut ::std::os::raw::c_void,
-        stepsParams: *mut ::std::os::raw::c_void,
-    );
+    pub fn calculate_fri_polynomial(pStarks: *mut ::std::os::raw::c_void, stepsParams: *mut ::std::os::raw::c_void);
 }
 extern "C" {
     #[link_name = "\u{1}_Z29calculate_quotient_polynomialPvS_"]
@@ -289,24 +255,26 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z34extend_and_merkelize_custom_commitPvmmS_S_S_Pc"]
+    #[link_name = "\u{1}_Z34extend_and_merkelize_custom_commitPvmmS_S_S_S_Pc"]
     pub fn extend_and_merkelize_custom_commit(
         pStarks: *mut ::std::os::raw::c_void,
         commitId: u64,
         step: u64,
         buffer: *mut ::std::os::raw::c_void,
+        bufferExt: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
         pBuffHelper: *mut ::std::os::raw::c_void,
         treeFile: *mut ::std::os::raw::c_char,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z18load_custom_commitPvmmS_S_Pc"]
+    #[link_name = "\u{1}_Z18load_custom_commitPvmmS_S_S_Pc"]
     pub fn load_custom_commit(
         pStarks: *mut ::std::os::raw::c_void,
         commitId: u64,
         step: u64,
         buffer: *mut ::std::os::raw::c_void,
+        bufferExt: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
         treeFile: *mut ::std::os::raw::c_char,
     );
@@ -317,7 +285,7 @@ extern "C" {
         pStarks: *mut ::std::os::raw::c_void,
         elementType: u32,
         step: u64,
-        trace: *mut ::std::os::raw::c_void,
+        witness: *mut ::std::os::raw::c_void,
         buffer: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
         pBuffHelper: *mut ::std::os::raw::c_void,
@@ -351,12 +319,7 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z15merkle_tree_newmmmb"]
-    pub fn merkle_tree_new(
-        height: u64,
-        width: u64,
-        arity: u64,
-        custom: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    pub fn merkle_tree_new(height: u64, width: u64, arity: u64, custom: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z16merkle_tree_freePv"]
@@ -407,27 +370,15 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z17set_fri_final_polPvS_m"]
-    pub fn set_fri_final_pol(
-        pProof: *mut ::std::os::raw::c_void,
-        buffer: *mut ::std::os::raw::c_void,
-        nBits: u64,
-    );
+    pub fn set_fri_final_pol(pProof: *mut ::std::os::raw::c_void, buffer: *mut ::std::os::raw::c_void, nBits: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_newjmb"]
-    pub fn transcript_new(
-        elementType: u32,
-        arity: u64,
-        custom: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    pub fn transcript_new(elementType: u32, arity: u64, custom: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_addPvS_m"]
-    pub fn transcript_add(
-        pTranscript: *mut ::std::os::raw::c_void,
-        pInput: *mut ::std::os::raw::c_void,
-        size: u64,
-    );
+    pub fn transcript_add(pTranscript: *mut ::std::os::raw::c_void, pInput: *mut ::std::os::raw::c_void, size: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z25transcript_add_polinomialPvS_"]
@@ -450,12 +401,7 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z16get_permutationsPvPmmm"]
-    pub fn get_permutations(
-        pTranscript: *mut ::std::os::raw::c_void,
-        res: *mut u64,
-        n: u64,
-        nBits: u64,
-    );
+    pub fn get_permutations(pTranscript: *mut ::std::os::raw::c_void, res: *mut u64, n: u64, nBits: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z18verify_constraintsPvS_"]
@@ -472,7 +418,7 @@ extern "C" {
         challenges: *mut ::std::os::raw::c_void,
         proofValues: *mut ::std::os::raw::c_void,
         airgroupValues: *mut *mut ::std::os::raw::c_void,
-    ) -> bool;
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z33get_hint_field_global_constraintsPvS_S_S_PS_mPcb"]
@@ -499,22 +445,7 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z9print_rowPvS_mm"]
-    pub fn print_row(
-        pSetupCtx: *mut ::std::os::raw::c_void,
-        buffer: *mut ::std::os::raw::c_void,
-        stage: u64,
-        row: u64,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z16print_expressionPvS_mmm"]
-    pub fn print_expression(
-        pSetupCtx: *mut ::std::os::raw::c_void,
-        pol: *mut ::std::os::raw::c_void,
-        dim: u64,
-        first_value: u64,
-        last_value: u64,
-    );
+    pub fn print_row(pSetupCtx: *mut ::std::os::raw::c_void, buffer: *mut ::std::os::raw::c_void, stage: u64, row: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmS_S_S_S_S0_b"]
@@ -522,7 +453,7 @@ extern "C" {
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
         airgroupId: u64,
-        pAddress: *mut ::std::os::raw::c_void,
+        witness: *mut ::std::os::raw::c_void,
         pConstPols: *mut ::std::os::raw::c_void,
         pConstTree: *mut ::std::os::raw::c_void,
         pPublicInputs: *mut ::std::os::raw::c_void,
@@ -566,16 +497,11 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z20get_serialized_proofPvPm"]
-    pub fn get_serialized_proof(
-        zkin: *mut ::std::os::raw::c_void,
-        size: *mut u64,
-    ) -> *mut ::std::os::raw::c_char;
+    pub fn get_serialized_proof(zkin: *mut ::std::os::raw::c_void, size: *mut u64) -> *mut ::std::os::raw::c_char;
 }
 extern "C" {
     #[link_name = "\u{1}_Z22deserialize_zkin_proofPc"]
-    pub fn deserialize_zkin_proof(
-        serialized_proof: *mut ::std::os::raw::c_char,
-    ) -> *mut ::std::os::raw::c_void;
+    pub fn deserialize_zkin_proof(serialized_proof: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z14get_zkin_proofPc"]
@@ -590,23 +516,22 @@ extern "C" {
     pub fn serialized_proof_free(zkinCStr: *mut ::std::os::raw::c_char);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z18get_committed_polsPvPcS_S_mmmmm"]
+    #[link_name = "\u{1}_Z18get_committed_polsPvPcS_S_mmmm"]
     pub fn get_committed_pols(
-        pWitness: *mut ::std::os::raw::c_void,
+        circomWitness: *mut ::std::os::raw::c_void,
         execFile: *mut ::std::os::raw::c_char,
-        pAddress: *mut ::std::os::raw::c_void,
+        witness: *mut ::std::os::raw::c_void,
         pPublics: *mut ::std::os::raw::c_void,
         sizeWitness: u64,
         N: u64,
         nPublics: u64,
-        offsetCm1: u64,
         nCols: u64,
     );
 }
 extern "C" {
     #[link_name = "\u{1}_Z21gen_final_snark_proofPvPcS0_"]
     pub fn gen_final_snark_proof(
-        pWitnessFinal: *mut ::std::os::raw::c_void,
+        circomWitnessFinal: *mut ::std::os::raw::c_void,
         zkeyFile: *mut ::std::os::raw::c_char,
         outputDir: *mut ::std::os::raw::c_char,
     );

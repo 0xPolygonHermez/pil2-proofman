@@ -1,16 +1,15 @@
-use std::mem::MaybeUninit;
-use std::ptr;
 use std::{collections::HashMap, os::raw::c_void, sync::Arc};
 use std::path::PathBuf;
 use p3_field::Field;
-use proofman_starks_lib_c::{get_custom_commit_map_ids_c, get_map_totaln_custom_commits_c};
+use proofman_starks_lib_c::get_custom_commit_map_ids_c;
+use proofman_util::create_buffer_fast;
 
 use crate::{SetupCtx, StarkInfo};
 
 #[repr(C)]
 pub struct StepsParams {
+    pub witness: *mut c_void,
     pub trace: *mut c_void,
-    pub pols: *mut c_void,
     pub public_inputs: *mut c_void,
     pub challenges: *mut c_void,
     pub airgroup_values: *mut c_void,
@@ -20,6 +19,7 @@ pub struct StepsParams {
     pub p_const_pols: *mut c_void,
     pub p_const_tree: *mut c_void,
     pub custom_commits: [*mut c_void; 10],
+    pub custom_commits_extended: [*mut c_void; 10],
 }
 
 impl From<&StepsParams> for *mut c_void {
@@ -68,9 +68,10 @@ pub struct AirInstance<F> {
     pub air_instance_id: Option<usize>,
     pub idx: Option<usize>,
     pub global_idx: Option<usize>,
-    pub trace: Vec<F>,
-    pub buffer: Option<Vec<MaybeUninit<F>>>,
+    pub witness: Vec<F>,
+    pub trace: Option<Vec<F>>,
     pub custom_commits: Vec<CustomCommitsInfo<F>>,
+    pub custom_commits_extended: Vec<CustomCommitsInfo<F>>,
     pub airgroup_values: Vec<F>,
     pub airvalues: Vec<F>,
     pub evals: Vec<F>,
@@ -87,7 +88,7 @@ impl<F: Field> AirInstance<F> {
         airgroup_id: usize,
         air_id: usize,
         air_segment_id: Option<usize>,
-        trace: Vec<F>,
+        witness: Vec<F>,
     ) -> Self {
         let ps = setup_ctx.get_setup(airgroup_id, air_id);
 
@@ -95,9 +96,20 @@ impl<F: Field> AirInstance<F> {
         let custom_commits_calculated = vec![HashMap::new(); n_custom_commits];
 
         let mut custom_commits = Vec::new();
+        let mut custom_commits_extended = Vec::new();
 
-        for _ in 0..n_custom_commits {
-            custom_commits.push(CustomCommitsInfo::default());
+        for i in 0..n_custom_commits {
+            let n_cols =
+                *ps.stark_info.map_sections_n.get(&(ps.stark_info.custom_commits[i].name.clone() + "0")).unwrap()
+                    as usize;
+            custom_commits.push(CustomCommitsInfo::new(
+                create_buffer_fast((1 << ps.stark_info.stark_struct.n_bits) * n_cols),
+                PathBuf::new(),
+            ));
+            custom_commits_extended.push(CustomCommitsInfo::new(
+                create_buffer_fast((1 << ps.stark_info.stark_struct.n_bits_ext) * n_cols),
+                PathBuf::new(),
+            ));
         }
 
         AirInstance {
@@ -107,9 +119,10 @@ impl<F: Field> AirInstance<F> {
             air_instance_id: None,
             idx: None,
             global_idx: None,
-            trace,
-            buffer: None,
+            witness,
+            trace: None,
             custom_commits,
+            custom_commits_extended,
             airgroup_values: vec![F::zero(); ps.stark_info.airgroupvalues_map.as_ref().unwrap().len() * 3],
             airvalues: vec![F::zero(); ps.stark_info.airvalues_map.as_ref().unwrap().len() * 3],
             evals: vec![F::zero(); ps.stark_info.ev_map.len() * 3],
@@ -121,18 +134,18 @@ impl<F: Field> AirInstance<F> {
         }
     }
 
+    pub fn get_witness_ptr(&self) -> *mut u8 {
+        self.witness.as_ptr() as *mut u8
+    }
+
+    pub fn set_trace(&mut self, trace: Vec<F>) {
+        self.trace = Some(trace);
+    }
+
     pub fn get_trace_ptr(&self) -> *mut u8 {
-        self.trace.as_ptr() as *mut u8
-    }
-
-    pub fn set_buffer(&mut self, buffer: Vec<MaybeUninit<F>>) {
-        self.buffer = Some(buffer);
-    }
-
-    pub fn get_buffer_ptr(&self) -> *mut u8 {
-        match &self.buffer {
-            Some(buffer) => buffer.as_ptr() as *mut u8,
-            None => std::ptr::null_mut(), // Return null if `buffer` is `None`
+        match &self.trace {
+            Some(trace) => trace.as_ptr() as *mut u8,
+            None => std::ptr::null_mut(), // Return null if `trace` is `None`
         }
     }
 
@@ -144,13 +157,18 @@ impl<F: Field> AirInstance<F> {
         ptrs
     }
 
+    pub fn get_custom_commits_extended_ptr(&self) -> [*mut c_void; 10] {
+        let mut ptrs = [std::ptr::null_mut(); 10];
+        for (i, custom_commit) in self.custom_commits_extended.iter().enumerate() {
+            ptrs[i] = custom_commit.buffer.as_ptr() as *mut c_void;
+        }
+        ptrs
+    }
+
     pub fn set_custom_commit_cached_file(&mut self, setup_ctx: &SetupCtx, commit_id: u64, cached_file: PathBuf) {
         let ps = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
-        let buffer_size = get_map_totaln_custom_commits_c(ps.p_setup.p_stark_info, commit_id);
-        let buffer = vec![F::zero(); buffer_size as usize];
-
-        self.custom_commits[commit_id as usize] = CustomCommitsInfo::new(buffer, cached_file);
+        self.custom_commits[commit_id as usize].cached_file = cached_file;
 
         let ids = get_custom_commit_map_ids_c(ps.p_setup.p_stark_info, commit_id, 0);
         for idx in ids {
@@ -159,7 +177,7 @@ impl<F: Field> AirInstance<F> {
     }
 
     pub fn set_custom_commit_id_buffer(&mut self, setup_ctx: &SetupCtx, buffer: Vec<F>, commit_id: u64) {
-        self.custom_commits[commit_id as usize] = CustomCommitsInfo::new(buffer, PathBuf::new());
+        self.custom_commits[commit_id as usize].buffer = buffer;
 
         let ps = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
