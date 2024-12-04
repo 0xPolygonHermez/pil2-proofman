@@ -28,7 +28,25 @@ where
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let num_rows = pctx.global_info.airs[SIMPLE_AIRGROUP_ID][SIMPLE_RIGHT_AIR_IDS[0]].num_rows;
-        let trace = SimpleRightTrace::new(num_rows);
+        let air = pctx.pilout.get_air(SIMPLE_AIRGROUP_ID, SIMPLE_RIGHT_AIR_IDS[0]);
+        let mut trace = SimpleRightTrace::new(num_rows);
+
+        log::debug!(
+            "{}: ··· Computing witness computation for AIR '{}' at stage 1",
+            Self::MY_NAME,
+            air.name().unwrap_or("unknown"),
+        );
+
+        // Proves
+        for i in 0..num_rows {
+            trace[i].a = F::from_canonical_u8(200);
+            trace[i].b = F::from_canonical_u8(201);
+
+            trace[i].c = F::from_canonical_usize(i);
+            trace[i].d = F::from_canonical_usize(num_rows - i - 1);
+
+            trace[i].mul = F::from_canonical_usize(1);
+        }
 
         let air_instance =
             AirInstance::new(sctx.clone(), SIMPLE_AIRGROUP_ID, SIMPLE_RIGHT_AIR_IDS[0], None, trace.buffer.unwrap());
@@ -45,43 +63,11 @@ where
 {
     fn calculate_witness(
         &self,
-        stage: u32,
-        air_instance_id: Option<usize>,
-        pctx: Arc<ProofCtx<F>>,
+        _stage: u32,
+        _air_instance_id: Option<usize>,
+        _pctx: Arc<ProofCtx<F>>,
         _ectx: Arc<ExecutionCtx>,
         _sctx: Arc<SetupCtx>,
     ) {
-        let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
-        let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
-
-        let airgroup_id = air_instance.airgroup_id;
-        let air_id = air_instance.air_id;
-        let air = pctx.pilout.get_air(airgroup_id, air_id);
-
-        log::debug!(
-            "{}: ··· Computing witness computation for AIR '{}' at stage {}",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-            stage
-        );
-
-        if stage == 1 {
-            let buffer = &mut air_instance.witness;
-            let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
-
-            // I cannot, programatically, link the permutation trace with its air_id
-            let mut trace = SimpleRightTrace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
-
-            // Proves
-            for i in 0..num_rows {
-                trace[i].a = F::from_canonical_u8(200);
-                trace[i].b = F::from_canonical_u8(201);
-
-                trace[i].c = F::from_canonical_usize(i);
-                trace[i].d = F::from_canonical_usize(num_rows - i - 1);
-
-                trace[i].mul = F::from_canonical_usize(1);
-            }
-        }
     }
 }

@@ -27,8 +27,39 @@ where
     }
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        let mut rng = rand::thread_rng();
+
         let num_rows = pctx.global_info.airs[SIMPLE_AIRGROUP_ID][SIMPLE_LEFT_AIR_IDS[0]].num_rows;
-        let trace = SimpleLeftTrace::new(num_rows);
+        let air = pctx.pilout.get_air(SIMPLE_AIRGROUP_ID, SIMPLE_LEFT_AIR_IDS[0]);
+        let mut trace = SimpleLeftTrace::new(num_rows);
+
+        log::debug!(
+            "{}: ··· Computing witness computation for AIR '{}' at stage 1",
+            Self::MY_NAME,
+            air.name().unwrap_or("unknown"),
+        );
+
+        // Assumes
+        for i in 0..num_rows {
+            trace[i].a = F::from_canonical_usize(i);
+            trace[i].b = F::from_canonical_usize(i);
+
+            trace[i].e = F::from_canonical_u8(200);
+            trace[i].f = F::from_canonical_u8(201);
+
+            trace[i].g = F::from_canonical_usize(i);
+            trace[i].h = F::from_canonical_usize(num_rows - i - 1);
+        }
+
+        let mut indices: Vec<usize> = (0..num_rows).collect();
+        indices.shuffle(&mut rng);
+
+        // Proves
+        for i in 0..num_rows {
+            // We take a random permutation of the indices to show that the permutation check is passing
+            trace[i].c = trace[indices[i]].a;
+            trace[i].d = trace[indices[i]].b;
+        }
 
         let air_instance =
             AirInstance::new(sctx.clone(), SIMPLE_AIRGROUP_ID, SIMPLE_LEFT_AIR_IDS[0], None, trace.buffer.unwrap());
@@ -46,56 +77,11 @@ where
 {
     fn calculate_witness(
         &self,
-        stage: u32,
-        air_instance_id: Option<usize>,
-        pctx: Arc<ProofCtx<F>>,
+        _stage: u32,
+        _air_instance_id: Option<usize>,
+        _pctx: Arc<ProofCtx<F>>,
         _ectx: Arc<ExecutionCtx>,
         _sctx: Arc<SetupCtx>,
     ) {
-        let mut rng = rand::thread_rng();
-
-        let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
-        let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
-
-        let airgroup_id = air_instance.airgroup_id;
-        let air_id = air_instance.air_id;
-        let air = pctx.pilout.get_air(airgroup_id, air_id);
-
-        log::debug!(
-            "{}: ··· Computing witness computation for AIR '{}' at stage {}",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-            stage
-        );
-
-        if stage == 1 {
-            let buffer = &mut air_instance.witness;
-            let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
-
-            // I cannot, programatically, link the permutation trace with its air_id
-            let mut trace = SimpleLeftTrace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
-
-            // Assumes
-            for i in 0..num_rows {
-                trace[i].a = F::from_canonical_usize(i);
-                trace[i].b = F::from_canonical_usize(i);
-
-                trace[i].e = F::from_canonical_u8(200);
-                trace[i].f = F::from_canonical_u8(201);
-
-                trace[i].g = F::from_canonical_usize(i);
-                trace[i].h = F::from_canonical_usize(num_rows - i - 1);
-            }
-
-            let mut indices: Vec<usize> = (0..num_rows).collect();
-            indices.shuffle(&mut rng);
-
-            // Proves
-            for i in 0..num_rows {
-                // We take a random permutation of the indices to show that the permutation check is passing
-                trace[i].c = trace[indices[i]].a;
-                trace[i].d = trace[indices[i]].b;
-            }
-        }
     }
 }

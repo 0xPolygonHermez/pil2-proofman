@@ -32,8 +32,30 @@ where
     }
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        let mut rng = rand::thread_rng();
         let num_rows = pctx.global_info.airs[RANGE_CHECK_2_AIRGROUP_ID][RANGE_CHECK_2_AIR_IDS[0]].num_rows;
-        let trace = RangeCheck2Trace::new_zeroes(num_rows);
+        let air = pctx.pilout.get_air(RANGE_CHECK_2_AIRGROUP_ID, RANGE_CHECK_2_AIR_IDS[0]);
+
+        log::debug!(
+            "{}: ··· Witness computation for AIR '{}' at stage 1",
+            Self::MY_NAME,
+            air.name().unwrap_or("unknown"),
+        );
+        let mut trace = RangeCheck2Trace::new_zeroes(num_rows);
+
+        let range1 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), Some(false));
+        let range2 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 9) - 1), Some(false));
+        let range3 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 10) - 1), Some(false));
+
+        for i in 0..num_rows {
+            trace[i].b1 = F::from_canonical_u16(rng.gen_range(0..=(1 << 8) - 1));
+            trace[i].b2 = F::from_canonical_u16(rng.gen_range(0..=(1 << 9) - 1));
+            trace[i].b3 = F::from_canonical_u16(rng.gen_range(0..=(1 << 10) - 1));
+
+            self.std_lib.range_check(trace[i].b1, F::one(), range1);
+            self.std_lib.range_check(trace[i].b2, F::one(), range2);
+            self.std_lib.range_check(trace[i].b3, F::one(), range3);
+        }
 
         let air_instance = AirInstance::new(
             sctx.clone(),
@@ -56,39 +78,12 @@ where
 {
     fn calculate_witness(
         &self,
-        stage: u32,
-        air_instance_id: Option<usize>,
+        _stage: u32,
+        _air_instance_id: Option<usize>,
         pctx: Arc<ProofCtx<F>>,
         _ectx: Arc<ExecutionCtx>,
         _sctx: Arc<SetupCtx>,
     ) {
-        let mut rng = rand::thread_rng();
-
-        log::debug!("{}: ··· Witness computation for AIR '{}' at stage {}", Self::MY_NAME, "RangeCheck2", stage);
-
-        if stage == 1 {
-            let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
-            let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
-            let buffer = &mut air_instance.witness;
-            let num_rows = pctx.pilout.get_air(RANGE_CHECK_2_AIRGROUP_ID, RANGE_CHECK_2_AIR_IDS[0]).num_rows();
-
-            let mut trace = RangeCheck2Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
-
-            let range1 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), Some(false));
-            let range2 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 9) - 1), Some(false));
-            let range3 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 10) - 1), Some(false));
-
-            for i in 0..num_rows {
-                trace[i].b1 = F::from_canonical_u16(rng.gen_range(0..=(1 << 8) - 1));
-                trace[i].b2 = F::from_canonical_u16(rng.gen_range(0..=(1 << 9) - 1));
-                trace[i].b3 = F::from_canonical_u16(rng.gen_range(0..=(1 << 10) - 1));
-
-                self.std_lib.range_check(trace[i].b1, F::one(), range1);
-                self.std_lib.range_check(trace[i].b2, F::one(), range2);
-                self.std_lib.range_check(trace[i].b3, F::one(), range3);
-            }
-        }
-
         self.std_lib.unregister_predecessor(pctx, None);
     }
 }

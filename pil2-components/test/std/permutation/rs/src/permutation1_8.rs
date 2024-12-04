@@ -27,8 +27,53 @@ where
     }
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        let mut rng = rand::thread_rng();
         let num_rows = pctx.global_info.airs[PERMUTATION_AIRGROUP_ID][PERMUTATION_1_8_AIR_IDS[0]].num_rows;
-        let trace = Permutation1_8Trace::new(num_rows);
+        let air = pctx.pilout.get_air(PERMUTATION_AIRGROUP_ID, PERMUTATION_1_8_AIR_IDS[0]);
+
+        log::debug!(
+            "{}: ··· Witness computation for AIR '{}' at stage 1",
+            Self::MY_NAME,
+            air.name().unwrap_or("unknown"),
+        );
+        let mut trace = Permutation1_8Trace::new(num_rows);
+
+        // TODO: Add the ability to send inputs to permutation2
+        //       and consequently add random selectors
+
+        // Assumes
+        for i in 0..num_rows {
+            trace[i].a1 = rng.gen();
+            trace[i].b1 = rng.gen();
+
+            trace[i].a2 = F::from_canonical_u8(200);
+            trace[i].b2 = F::from_canonical_u8(201);
+
+            trace[i].a3 = rng.gen();
+            trace[i].b3 = rng.gen();
+
+            trace[i].a4 = F::from_canonical_u8(100);
+            trace[i].b4 = F::from_canonical_u8(101);
+
+            trace[i].sel1 = F::one();
+            trace[i].sel3 = F::one(); // F::from_canonical_u8(rng.gen_range(0..=1));
+        }
+
+        // TODO: Add the permutation of indexes
+
+        // Proves
+        for i in 0..num_rows {
+            let index = num_rows - i - 1;
+            // let mut index = rng.gen_range(0..num_rows);
+            trace[i].c1 = trace[index].a1;
+            trace[i].d1 = trace[index].b1;
+
+            // index = rng.gen_range(0..num_rows);
+            trace[i].c2 = trace[index].a3;
+            trace[i].d2 = trace[index].b3;
+
+            trace[i].sel2 = trace[i].sel1;
+        }
 
         let air_instance = AirInstance::new(
             sctx.clone(),
@@ -51,71 +96,11 @@ where
 {
     fn calculate_witness(
         &self,
-        stage: u32,
-        air_instance_id: Option<usize>,
-        pctx: Arc<ProofCtx<F>>,
+        _stage: u32,
+        _air_instance_id: Option<usize>,
+        _pctx: Arc<ProofCtx<F>>,
         _ectx: Arc<ExecutionCtx>,
         _sctx: Arc<SetupCtx>,
     ) {
-        let mut rng = rand::thread_rng();
-
-        let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
-        let air_instance = &mut air_instances_vec[air_instance_id.unwrap()];
-
-        let airgroup_id = air_instance.airgroup_id;
-        let air_id = air_instance.air_id;
-        let air = pctx.pilout.get_air(airgroup_id, air_id);
-
-        log::debug!(
-            "{}: ··· Witness computation for AIR '{}' at stage {}",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-            stage
-        );
-
-        if stage == 1 {
-            let buffer = &mut air_instance.witness;
-            let num_rows = pctx.pilout.get_air(airgroup_id, air_id).num_rows();
-
-            // I cannot, programatically, link the permutation trace with its air_id
-            let mut trace = Permutation1_8Trace::map_buffer(buffer.as_mut_slice(), num_rows, 0).unwrap();
-
-            // TODO: Add the ability to send inputs to permutation2
-            //       and consequently add random selectors
-
-            // Assumes
-            for i in 0..num_rows {
-                trace[i].a1 = rng.gen();
-                trace[i].b1 = rng.gen();
-
-                trace[i].a2 = F::from_canonical_u8(200);
-                trace[i].b2 = F::from_canonical_u8(201);
-
-                trace[i].a3 = rng.gen();
-                trace[i].b3 = rng.gen();
-
-                trace[i].a4 = F::from_canonical_u8(100);
-                trace[i].b4 = F::from_canonical_u8(101);
-
-                trace[i].sel1 = F::one();
-                trace[i].sel3 = F::one(); // F::from_canonical_u8(rng.gen_range(0..=1));
-            }
-
-            // TODO: Add the permutation of indexes
-
-            // Proves
-            for i in 0..num_rows {
-                let index = num_rows - i - 1;
-                // let mut index = rng.gen_range(0..num_rows);
-                trace[i].c1 = trace[index].a1;
-                trace[i].d1 = trace[index].b1;
-
-                // index = rng.gen_range(0..num_rows);
-                trace[i].c2 = trace[index].a3;
-                trace[i].d2 = trace[index].b3;
-
-                trace[i].sel2 = trace[i].sel1;
-            }
-        }
     }
 }
