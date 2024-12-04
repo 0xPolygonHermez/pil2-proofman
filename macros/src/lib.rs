@@ -317,6 +317,28 @@ fn test_parse_values_01() {
 }
 
 #[test]
+fn test_parse_values_02() {
+    let input = quote! {
+        Something<G, 2> { a: G }
+    };
+    let parsed: ParsedValuesInput = parse2(input).unwrap();
+    assert_eq!(parsed.struct_name, "Something");
+    assert_eq!(parsed.generic_param, "G");
+    assert_eq!(parsed.dimensions, 2);
+}
+
+#[test]
+fn test_parse_values_03() {
+    let input = quote! {
+        Something<G, 189_432> { a: G, b: [G; 4] }
+    };
+    let parsed: ParsedValuesInput = parse2(input).unwrap();
+    assert_eq!(parsed.struct_name, "Something");
+    assert_eq!(parsed.generic_param, "G");
+    assert_eq!(parsed.dimensions, 189_432);
+}
+
+#[test]
 fn test_trace_macro_generates_default_row_struct() {
     let input = quote! {
         Simple<F> { a: F, b: F }
