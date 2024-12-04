@@ -7,30 +7,28 @@
 #include "gl64_t.cuh"
 
 
-gl64_t * genDeviceTrace(Goldilocks::Element *pAddress, SetupCtx& setupCtx){
+gl64_t * genDeviceWitness(Goldilocks::Element *witness, SetupCtx& setupCtx){
 
-    uint64_t total_n = setupCtx.starkInfo.mapTotalN;
-    gl64_t *d_pAddress;
-    CHECKCUDAERR(cudaMalloc(&d_pAddress, total_n * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMemset(d_pAddress, 0, total_n * sizeof(Goldilocks::Element)));
-    //get_map_offsets_c(p_stark_info, "cm1", false);
-    uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t n = setupCtx.starkInfo.starkStruct.steps[0].nBits;
-    uint64_t N = 1 << n;
-    uint64_t n_cols = setupCtx.starkInfo.mapSectionsN["cm1"];
-    CHECKCUDAERR(cudaMemcpy(d_pAddress+offset, pAddress+offset, (N*n_cols) * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    return d_pAddress;
+    gl64_t *d_witness;
+    uint64_t size = (1 << setupCtx.starkInfo.starkStruct.nBits) * (setupCtx.starkInfo.mapSectionsN["cm1"])* sizeof(Goldilocks::Element);
+    CHECKCUDAERR(cudaMalloc(&d_witness, size));
+    CHECKCUDAERR(cudaMemcpy((void *)d_witness, (void *)witness, size, cudaMemcpyHostToDevice));
+    return d_witness;
 }
 
-void freeDeviceTrace(gl64_t *d_pAddress){
-    CHECKCUDAERR(cudaFree(d_pAddress));
+void freeDeviceWitness(gl64_t *d_witness){
+    CHECKCUDAERR(cudaFree(d_witness));
 }
 
 template <typename ElementType>
-void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *pAddress, gl64_t *d_pAddress, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile) { // sprint: afegir l'adreça de la gpu
+void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, gl64_t *d_witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile) { 
 
     TimerStart(STARK_PROOF);
-    //sprint: copiar  witness i setejar la resta a zero
+
+    Goldilocks::Element *pAddress = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
+    gl64_t *d_pAddress;
+    CHECKCUDAERR(cudaMalloc(&d_pAddress, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemset(d_pAddress, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
     
 
     TimerStart(SOLAPE1);
@@ -55,10 +53,11 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     Goldilocks::Element* airgroupValues = nullptr;    
 
     StepsParams params = {
+        trace: witness,
         pols : pAddress,
         publicInputs : publicInputs,
         challenges : challenges,
-        airgroupValues : airgroupValues,
+        airgroupValues : nullptr,
         evals : evals,
         xDivXSub : nullptr,
         pConstPolsAddress: pConstPols,
@@ -94,7 +93,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     TimerStopAndLog(SOLAPE1);
 
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage_inplace(1, pAddress, d_pAddress, proof); // srpint: correr sobre el buffer
+    starks.commitStage_inplace(1, d_witness, pAddress, d_pAddress, proof); // srpint: correr sobre el buffer
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
     //sprint: baixar tot el que necessito per aplicar expressions
     //rick: aqui em sincronitzo amb el llençament del commit 1
@@ -160,7 +159,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
 
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage(2, pAddress, proof);
+    starks.commitStage(2, nullptr, params.pols, proof);
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], nFieldElements);
 
@@ -178,7 +177,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     expressionsCtx.calculateExpression(params, &params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
-    starks.commitStage(setupCtx.starkInfo.nStages + 1, pAddress, proof);
+    starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.pols, proof);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], nFieldElements);
     TimerStopAndLog(STARK_STEP_Q);
@@ -292,6 +291,8 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     zkin = publics2zkin(zkin, publicInputs, globalInfo, airgroupId);
 
+    delete pAddress;
+    CHECKCUDAERR(cudaFree(d_pAddress));
     return (void *) new nlohmann::json(zkin);
 }
 #endif
