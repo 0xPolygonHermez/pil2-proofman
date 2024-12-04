@@ -2,9 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, format_ident, ToTokens};
 use syn::{
-    LitInt,
     parse::{Parse, ParseStream},
-    parse2, Field, FieldsNamed, Generics, Ident, Result, Token,
+    parse2, Field, FieldsNamed, Generics, Ident, LitInt, LitStr, Result, Token,
 };
 
 #[proc_macro]
@@ -22,6 +21,8 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
     let trace_struct_name = parsed_input.struct_name;
     let generics = parsed_input.generics.params;
     let fields = parsed_input.fields;
+    let num_rows = parsed_input.num_rows;
+    let commit_id = parsed_input.commit_id;
 
     // Calculate ROW_SIZE based on the field types
     let row_size = fields
@@ -64,11 +65,15 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
         pub struct #trace_struct_name<'a, #generics> {
             pub buffer: Option<Vec<#generics>>,
             pub slice_trace: &'a mut [#row_struct_name<#generics>],
-            num_rows: usize,
+            pub num_rows: usize,
+            pub commit_id: Option<&'a str>,
         }
 
         impl<'a, #generics: Default + Clone + Copy> #trace_struct_name<'a, #generics> {
-            pub fn new(num_rows: usize) -> Self {
+            const NUM_ROWS: usize = #num_rows;
+
+            pub fn new() -> Self {
+                let num_rows = Self::NUM_ROWS;
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
@@ -84,6 +89,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     buffer: Some(buffer),
                     slice_trace,
                     num_rows,
+                    commit_id: #commit_id
                 }
             }
 
@@ -191,6 +197,8 @@ struct ParsedTraceInput {
     struct_name: Ident,
     generics: Generics,
     fields: FieldsNamed,
+    num_rows: LitInt,
+    commit_id: Option<LitStr>,
 }
 
 impl Parse for ParsedTraceInput {
@@ -212,7 +220,16 @@ impl Parse for ParsedTraceInput {
         let generics: Generics = input.parse()?;
         let fields: FieldsNamed = input.parse()?;
 
-        Ok(ParsedTraceInput { row_struct_name, struct_name, generics, fields })
+        input.parse::<Token![,]>()?;
+        let num_rows = input.parse::<LitInt>()?;
+        let commit_id: Option<LitStr> = if lookahead.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+            Some(input.parse()?)
+        } else {
+            None
+        };
+
+        Ok(ParsedTraceInput { row_struct_name, struct_name, generics, fields, num_rows, commit_id })
     }
 }
 
@@ -341,275 +358,47 @@ fn test_parse_values_03() {
 #[test]
 fn test_trace_macro_generates_default_row_struct() {
     let input = quote! {
-        Simple<F> { a: F, b: F }
+        Simple<F> { a: F, b: F }, 2
     };
 
-    let _expected = quote! {
-        #[repr(C)]
-        #[derive(Debug, Clone, Copy, Default)]
-        pub struct SimpleRow<F> {
-            pub a: F,
-            pub b: F,
-        }
-        impl<F: Copy> SimpleRow<F> {
-            pub const ROW_SIZE: usize = 2usize;
-        }
-        pub struct Simple<'a, F> {
-            pub buffer: Option<Vec<F>>,
-            pub slice_trace: &'a mut [SimpleRow<F>],
-            num_rows: usize,
-        }
-        impl<'a, F: Default + Clone + Copy> Simple<'a, F> {
-            pub fn new(num_rows: usize) -> Self {
-                assert!(num_rows >= 2);
-                assert!(num_rows & (num_rows - 1) == 0);
-                let buffer = vec![F::default(); num_rows * SimpleRow::<F>::ROW_SIZE];
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        buffer.as_ptr() as *mut SimpleRow<F>,
-                        num_rows,
-                    )
-                };
-                Simple {
-                    buffer: Some(buffer),
-                    slice_trace,
-                    num_rows,
-                }
-            }
-            pub fn map_buffer(
-                external_buffer: &'a mut [F],
-                num_rows: usize,
-                offset: usize,
-            ) -> Result<Self, Box<dyn std::error::Error>> {
-                assert!(num_rows >= 2);
-                assert!(num_rows & (num_rows - 1) == 0);
-                let start = offset;
-                let end = start + num_rows * SimpleRow::<F>::ROW_SIZE;
-                if end > external_buffer.len() {
-                    return Err("Buffer is too small to fit the trace".into());
-                }
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        external_buffer[start..end].as_ptr() as *mut SimpleRow<F>,
-                        num_rows,
-                    )
-                };
-                Ok(Simple {
-                    buffer: None,
-                    slice_trace,
-                    num_rows,
-                })
-            }
-            pub fn from_row_vec(
-                external_buffer: Vec<SimpleRow<F>>,
-            ) -> Result<Self, Box<dyn std::error::Error>> {
-                let num_rows = external_buffer.len().next_power_of_two();
-                assert!(num_rows >= 2);
-                assert!(num_rows & (num_rows - 1) == 0);
-                let slice_trace = unsafe {
-                    let ptr = external_buffer.as_ptr() as *mut SimpleRow<F>;
-                    std::slice::from_raw_parts_mut(
-                        ptr,
-                        num_rows,
-                    )
-                };
-                let buffer_f = unsafe {
-                    Vec::from_raw_parts(
-                        external_buffer.as_ptr() as *mut F,
-                        num_rows * SimpleRow::<F>::ROW_SIZE,
-                        num_rows * SimpleRow::<F>::ROW_SIZE,
-                    )
-                };
-                std::mem::forget(external_buffer);
-                Ok(Simple {
-                    buffer: Some(buffer_f),
-                    slice_trace,
-                    num_rows,
-                })
-            }
-            pub fn num_rows(&self) -> usize {
-                self.num_rows
-            }
-        }
-        impl<'a, F> std::ops::Index<usize> for Simple<'a, F> {
-            type Output = SimpleRow<F>;
-            fn index(&self, index: usize) -> &Self::Output {
-                &self.slice_trace[index]
-            }
-        }
-        impl<'a, F> std::ops::IndexMut<usize> for Simple<'a, F> {
-            fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.slice_trace[index]
-            }
-        }
-        impl<'a, F: Send> common::trace::Trace for Simple<'a, F> {
-            fn num_rows(&self) -> usize {
-                self.num_rows
-            }
-            fn get_buffer_ptr(&mut self) -> *mut u8 {
-                let buffer = self.buffer.as_mut().expect("Buffer is not available");
-                buffer.as_mut_ptr() as *mut u8
-            }
-        }
-
-
-    };
     let _generated = trace_impl(input).unwrap();
-    // assert_eq!(generated.to_string(), expected.into_token_stream().to_string());
 }
 
 #[test]
 fn test_trace_macro_with_explicit_row_struct_name() {
     let input = quote! {
-        SimpleRow, Simple<F> { a: F, b: F }
-    };
-
-    let _expected = quote! {
-        #[repr(C)]
-        #[derive(Debug, Clone, Copy, Default)]
-        pub struct SimpleRow<F> {
-            pub a: F,
-            pub b: F,
-        }
-
-        impl<F: Copy> SimpleRow<F> {
-            pub const ROW_SIZE: usize = 2usize;
-        }
-
-        pub struct Simple<'a, F> {
-            pub buffer: Option<Vec<F>>,
-            pub slice_trace: &'a mut [SimpleRow<F>],
-            num_rows: usize,
-        }
-
-        impl<'a, F: Default + Clone + Copy> Simple<'a, F> {
-            pub fn new(num_rows: usize) -> Self {
-                assert!(num_rows >= 2);
-                assert!(num_rows & (num_rows - 1) == 0);
-                let buffer = vec![F::default(); num_rows * SimpleRow::<F>::ROW_SIZE];
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        buffer.as_ptr() as *mut SimpleRow<F>,
-                        num_rows,
-                    )
-                };
-                Simple {
-                    buffer: Some(buffer),
-                    slice_trace,
-                    num_rows,
-                }
-            }
-
-            pub fn map_buffer(
-                external_buffer: &'a mut [F],
-                num_rows: usize,
-                offset: usize,
-            ) -> Result<Self, Box<dyn std::error::Error>> {
-                assert!(num_rows >= 2);
-                assert!(num_rows & (num_rows - 1) == 0);
-                let start = offset;
-                let end = start + num_rows * SimpleRow::<F>::ROW_SIZE;
-                if end > external_buffer.len() {
-                    return Err("Buffer is too small to fit the trace".into());
-                }
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        external_buffer[start..end].as_ptr() as *mut SimpleRow<F>,
-                        num_rows,
-                    )
-                };
-                Ok(Simple {
-                    buffer: None,
-                    slice_trace,
-                    num_rows,
-                })
-            }
-
-            pub fn from_row_vec(
-                external_buffer: Vec<SimpleRow<F>>,
-            ) -> Result<Self, Box<dyn std::error::Error>> {
-                let num_rows = external_buffer.len().next_power_of_two();
-                assert!(num_rows >= 2);
-                assert!(num_rows & (num_rows - 1) == 0);
-                let slice_trace = unsafe {
-                    let ptr = external_buffer.as_ptr() as *mut SimpleRow<F>;
-                    std::slice::from_raw_parts_mut(
-                        ptr,
-                        num_rows,
-                    )
-                };
-                let buffer_f = unsafe {
-                    Vec::from_raw_parts(
-                        external_buffer.as_ptr() as *mut F,
-                        num_rows * SimpleRow::<F>::ROW_SIZE, num_rows * SimpleRow::<F>::ROW_SIZE,
-                    )
-                };
-                std::mem::forget(external_buffer);
-                Ok(Simple {
-                    buffer: Some(buffer_f),
-                    slice_trace, num_rows,
-                })
-            }
-
-            pub fn num_rows(&self) -> usize {
-                self.num_rows
-            }
-        }
-
-        impl<'a, F> std::ops::Index<usize> for Simple<'a, F> {
-            type Output = SimpleRow<F>;
-
-            fn index(&self, index: usize) -> &Self::Output {
-                &self.slice_trace[index]
-            }
-        }
-
-        impl<'a, F> std::ops::IndexMut<usize> for Simple<'a, F> {
-            fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.slice_trace[index]
-            }
-        }
-
-        impl<'a, F: Send> common::trace::Trace for Simple<'a, F> {
-            fn num_rows(&self) -> usize {
-                self.num_rows
-            }
-
-            fn get_buffer_ptr(&mut self) -> *mut u8 {
-                let buffer = self.buffer.as_mut().expect("Buffer is not available");
-                buffer.as_mut_ptr() as *mut u8
-            }
-        }
+        SimpleRow, Simple<F> { a: F, b: F }, 4
     };
 
     let _generated = trace_impl(input).unwrap();
-    // assert_eq!(generated.to_string(), expected.into_token_stream().to_string());
 }
 
 #[test]
 fn test_parsing_01() {
     let input = quote! {
-        TraceRow, MyTrace<F> { a: F, b: F }
+        TraceRow, MyTrace<F> { a: F, b: F }, 34
     };
     let parsed: ParsedTraceInput = parse2(input).unwrap();
     assert_eq!(parsed.row_struct_name, "TraceRow");
     assert_eq!(parsed.struct_name, "MyTrace");
+    assert_eq!(parsed.num_rows.base10_parse::<usize>().unwrap(), 34);
 }
 
 #[test]
 fn test_parsing_02() {
     let input = quote! {
-        SimpleRow, Simple<F> { a: F }
+        SimpleRow, Simple<F> { a: F }, 127_456
     };
     let parsed: ParsedTraceInput = parse2(input).unwrap();
     assert_eq!(parsed.row_struct_name, "SimpleRow");
     assert_eq!(parsed.struct_name, "Simple");
+    assert_eq!(parsed.num_rows.base10_parse::<usize>().unwrap(), 127_456);
 }
 
 #[test]
 fn test_parsing_03() {
     let input = quote! {
-        Simple<F> { a: F }
+        Simple<F> { a: F }, 2
     };
     let parsed: ParsedTraceInput = parse2(input).unwrap();
     assert_eq!(parsed.row_struct_name, "SimpleRow");
