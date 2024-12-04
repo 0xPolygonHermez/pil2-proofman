@@ -300,10 +300,20 @@ impl Parse for ParsedValuesInput {
         input.parse::<Token![,]>()?;
         let dimensions: LitInt = input.parse()?;
         input.parse::<Token![>]>()?;
-        input.parse::<Token![;]>()?; // Expect a semicolon to terminate the macro input
         let fields: FieldsNamed = input.parse()?;
         Ok(ParsedValuesInput { struct_name, generic_param, dimensions: dimensions.base10_parse()?, fields })
     }
+}
+
+#[test]
+fn test_parse_values_01() {
+    let input = quote! {
+        Values<F, 3> { a: F, b: F }
+    };
+    let parsed: ParsedValuesInput = parse2(input).unwrap();
+    assert_eq!(parsed.struct_name, "Values");
+    assert_eq!(parsed.generic_param, "F");
+    assert_eq!(parsed.dimensions, 3);
 }
 
 #[test]
