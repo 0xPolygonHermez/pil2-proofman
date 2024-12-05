@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::RwLock;
 use std::path::PathBuf;
 
@@ -11,11 +10,6 @@ pub struct PublicInputs {
     pub inputs_set: RwLock<Vec<bool>>,
 }
 
-impl Default for PublicInputs {
-    fn default() -> Self {
-        Self { inputs: RwLock::new(Vec::new()), inputs_set: RwLock::new(Vec::new()) }
-    }
-}
 
 impl PublicInputs {
     pub fn new(n_publics: usize) -> Self {
@@ -28,12 +22,12 @@ impl PublicInputs {
 
 pub struct ProofValues<F> {
     pub values: RwLock<Vec<F>>,
-    pub values_set: RwLock<HashMap<usize, bool>>,
+    pub values_set: RwLock<Vec<bool>>,
 }
 
-impl<F> Default for ProofValues<F> {
-    fn default() -> Self {
-        Self { values: RwLock::new(Vec::new()), values_set: RwLock::new(HashMap::new()) }
+impl<F: Field> ProofValues<F> {
+    fn new(n_proof_values: usize) -> Self {
+        Self { values: RwLock::new(vec![F::zero(); n_proof_values * 3]), values_set: RwLock::new(vec![false; n_proof_values]) }
     }
 }
 
@@ -95,10 +89,7 @@ impl<F: Field> ProofCtx<F> {
 
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
 
-        let proof_values = ProofValues {
-            values: RwLock::new(vec![F::zero(); global_info.n_proof_values * 3]),
-            values_set: RwLock::new(HashMap::new()),
-        };
+        let proof_values = ProofValues::new(global_info.n_proof_values);
         let n_publics = global_info.n_publics;
         Self {
             global_info,

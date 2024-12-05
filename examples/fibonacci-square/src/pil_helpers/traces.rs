@@ -50,7 +50,3 @@ trace!(U8AirTrace<F> {
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
 }, 0, 0, 1024, 0 );
-
-values!(FibonacciSquareAirValues<F, 3> {
- fibo1: [F; 2], fibo3: F,
-});

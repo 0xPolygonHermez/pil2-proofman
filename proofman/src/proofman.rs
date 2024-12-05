@@ -157,7 +157,7 @@ impl<F: Field + 'static> ProofMan<F> {
         witness_lib.end_proof();
 
         for i in 0..pctx.global_info.n_proof_values {
-            if !pctx.proof_values.values_set.read().unwrap().contains_key(&i) {
+            if !pctx.proof_values.values_set.read().unwrap()[i] {
                 panic!(
                     "Proof cannot be generated: Proof value {} is not set",
                     pctx.global_info.proof_values_map.as_ref().expect("REASON").get(i).unwrap().name

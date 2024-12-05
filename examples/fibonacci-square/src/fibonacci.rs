@@ -5,7 +5,7 @@ use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::PrimeField;
 
-use crate::{FibonacciSquareRomTrace, FibonacciSquareAirValues, FibonacciSquareTrace, Module, FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS};
+use crate::{FibonacciSquareRomTrace, FibonacciSquareTrace, Module, FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS};
 
 pub struct FibonacciSquare<F: PrimeField> {
     module: Arc<Module<F>>,

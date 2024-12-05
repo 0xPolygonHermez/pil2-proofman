@@ -1,4 +1,4 @@
-use std::{collections::HashMap, os::raw::c_void, sync::Arc};
+use std::{os::raw::c_void, sync::Arc};
 use std::path::PathBuf;
 use p3_field::Field;
 use proofman_starks_lib_c::get_custom_commit_map_ids_c;
@@ -61,7 +61,7 @@ impl<F> CustomCommitsInfo<F> {
 #[derive(Default, Clone)]
 pub struct ValuesInfo<F> {
     pub buffer: Vec<F>,
-    pub calculated: HashMap<usize, bool>,
+    pub calculated: Vec<bool>,
 }
 
 /// Air instance context for managing air instances (traces)
@@ -75,17 +75,23 @@ pub struct AirInstance<F> {
     pub air_instance_id: Option<usize>,
     pub idx: Option<usize>,
     pub global_idx: Option<usize>,
+    
     pub witness: Vec<F>,
     pub trace: Option<Vec<F>>,
+    pub commits_calculated: Vec<bool>,
+
     pub custom_commits: Vec<CustomCommitsInfo<F>>,
     pub custom_commits_extended: Vec<CustomCommitsInfo<F>>,
+    pub custom_commits_calculated: Vec<Vec<bool>>,
+
     pub airgroup_values: Vec<F>,
+    pub airgroupvalue_calculated: Vec<bool>,
+
     pub airvalues: Vec<F>,
+    pub airvalue_calculated: Vec<bool>,
+
     pub evals: Vec<F>,
-    pub commits_calculated: HashMap<usize, bool>,
-    pub airgroupvalue_calculated: HashMap<usize, bool>,
-    pub airvalue_calculated: HashMap<usize, bool>,
-    pub custom_commits_calculated: Vec<HashMap<usize, bool>>,
+    
     pub stark_info: StarkInfo,
 }
 
@@ -112,15 +118,15 @@ impl<F: Field> AirInstance<F> {
             global_idx: None,
             witness,
             trace: None,
+            commits_calculated: vec![false; ps.stark_info.cm_pols_map.as_ref().unwrap().len()],
             custom_commits,
             custom_commits_extended,
             custom_commits_calculated,
             airgroup_values: vec![F::zero(); ps.stark_info.airgroupvalues_map.as_ref().unwrap().len() * 3],
+            airgroupvalue_calculated: vec![false; ps.stark_info.airgroupvalues_map.as_ref().unwrap().len()],
             airvalues: vec![F::zero(); ps.stark_info.airvalues_map.as_ref().unwrap().len() * 3],
-            airvalue_calculated: HashMap::new(),
+            airvalue_calculated: vec![false; ps.stark_info.airgroupvalues_map.as_ref().unwrap().len()],
             evals: vec![F::zero(); ps.stark_info.ev_map.len() * 3],
-            commits_calculated: HashMap::new(),
-            airgroupvalue_calculated: HashMap::new(),
             stark_info: ps.stark_info.clone(),
         }
     }
@@ -162,9 +168,9 @@ impl<F: Field> AirInstance<F> {
         }
     }
 
-    pub fn init_custom_commits(setup: &Setup, witness_custom: Option<Vec<Vec<F>>>) -> (Vec<CustomCommitsInfo<F>>, Vec<CustomCommitsInfo<F>>, Vec<HashMap<usize, bool>>) {
+    pub fn init_custom_commits(setup: &Setup, witness_custom: Option<Vec<Vec<F>>>) -> (Vec<CustomCommitsInfo<F>>, Vec<CustomCommitsInfo<F>>, Vec<Vec<bool>>) {
         let n_custom_commits = setup.stark_info.custom_commits.len();
-        let mut custom_commits_calculated = vec![HashMap::new(); n_custom_commits];
+        let mut custom_commits_calculated = Vec::new();
 
         let mut custom_commits = Vec::new();
         let mut custom_commits_extended = Vec::new();
@@ -173,6 +179,7 @@ impl<F: Field> AirInstance<F> {
             let n_cols =
                 *setup.stark_info.map_sections_n.get(&(setup.stark_info.custom_commits[commit_id].name.clone() + "0")).unwrap()
                     as usize;
+            custom_commits_calculated.push(vec![false; n_cols]);
             if let Some(witness_custom_value) = witness_custom.as_ref() {
                 custom_commits.push(CustomCommitsInfo::new(
                     witness_custom_value[commit_id].clone(),
@@ -184,7 +191,7 @@ impl<F: Field> AirInstance<F> {
 
             let ids = get_custom_commit_map_ids_c(setup.p_setup.p_stark_info, commit_id as u64, 0);
             for idx in ids {
-                custom_commits_calculated[commit_id].insert(idx as usize, true);
+                custom_commits_calculated[commit_id][idx as usize] = true;
             }
 
             custom_commits_extended.push(CustomCommitsInfo::new(
@@ -198,6 +205,18 @@ impl<F: Field> AirInstance<F> {
 
     pub fn get_witness_ptr(&self) -> *mut u8 {
         self.witness.as_ptr() as *mut u8
+    }
+
+    pub fn get_evals_ptr(&self) -> *mut u8 {
+        self.evals.as_ptr() as *mut u8
+    }
+
+    pub fn get_airgroup_values_ptr(&self) -> *mut u8 {
+        self.airgroup_values.as_ptr() as *mut u8
+    }
+
+    pub fn get_airvalues_ptr(&self) -> *mut u8 {
+        self.airvalues.as_ptr() as *mut u8
     }
 
     pub fn set_trace(&mut self, trace: Vec<F>) {
@@ -225,6 +244,22 @@ impl<F: Field> AirInstance<F> {
             ptrs[i] = custom_commit.buffer.as_ptr() as *mut c_void;
         }
         ptrs
+    }
+
+    pub fn is_commit_initialized(&self, index: usize) -> bool {
+        self.commits_calculated[index]
+    }
+
+    pub fn is_airgroup_value_initialized(&self, index: usize) -> bool {
+        self.airgroupvalue_calculated[index]
+    }
+
+    pub fn is_airvalue_initialized(&self, index: usize) -> bool {
+        self.airvalue_calculated[index]
+    }
+
+    pub fn is_custom_commit_initialized(&self, commit_id: usize, index: usize) -> bool {
+        self.custom_commits_calculated[commit_id][index]
     }
 
     pub fn set_custom_commit_cached_file(&mut self, setup_ctx: &SetupCtx, commit_id: u64, cached_file: PathBuf) {
@@ -364,11 +399,11 @@ impl<F: Field> AirInstance<F> {
     }
 
     pub fn set_commit_calculated(&mut self, id: usize) {
-        self.commits_calculated.insert(id, true);
+        self.commits_calculated[id] = true;
     }
 
     pub fn set_custom_commit_calculated(&mut self, commit_id: usize, id: usize) {
-        self.custom_commits_calculated[commit_id].insert(id, true);
+        self.custom_commits_calculated[commit_id][id] = true;
     }
 
     pub fn set_air_instance_id(&mut self, air_instance_id: usize, idx: usize) {
@@ -377,10 +412,10 @@ impl<F: Field> AirInstance<F> {
     }
 
     pub fn set_airgroupvalue_calculated(&mut self, id: usize) {
-        self.airgroupvalue_calculated.insert(id, true);
+        self.airgroupvalue_calculated[id] = true;
     }
 
     pub fn set_airvalue_calculated(&mut self, id: usize) {
-        self.airvalue_calculated.insert(id, true);
+        self.airvalue_calculated[id] = true;
     }
 }

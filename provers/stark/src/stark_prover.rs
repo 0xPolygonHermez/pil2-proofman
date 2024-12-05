@@ -140,9 +140,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             trace: air_instance.get_trace_ptr() as *mut c_void,
             public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
             challenges: (*challenges_guard).as_ptr() as *mut c_void,
-            airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
-            airvalues: air_instance.airvalues.as_ptr() as *mut c_void,
-            evals: air_instance.evals.as_ptr() as *mut c_void,
+            airgroup_values: air_instance.get_airgroup_values_ptr() as *mut c_void,
+            airvalues: air_instance.get_airvalues_ptr() as *mut c_void,
+            evals: air_instance.get_evals_ptr() as *mut c_void,
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: const_pols_ptr,
             p_const_tree: std::ptr::null_mut(),
@@ -177,9 +177,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             trace: air_instance.get_trace_ptr() as *mut c_void,
             public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
             challenges: (*challenges_guard).as_ptr() as *mut c_void,
-            airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
-            airvalues: air_instance.airvalues.as_ptr() as *mut c_void,
-            evals: air_instance.evals.as_ptr() as *mut c_void,
+            airgroup_values: air_instance.get_airgroup_values_ptr() as *mut c_void,
+            airvalues: air_instance.get_airvalues_ptr() as *mut c_void,
+            evals: air_instance.get_evals_ptr() as *mut c_void,
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: const_pols_ptr,
             p_const_tree: const_tree_ptr,
@@ -206,7 +206,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 for i in 0..n_commits {
                     let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
                     if (cm_pol.stage < stage_id as u64 || cm_pol.stage == stage_id as u64 && !cm_pol.im_pol)
-                        && !air_instance.commits_calculated.contains_key(&i)
+                        && !air_instance.is_commit_initialized(i)
                     {
                         panic!("Intermediate polynomials for stage {} cannot be calculated: Witness column {} is not calculated", stage_id, cm_pol.name);
                     }
@@ -250,7 +250,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let n_commits = self.stark_info.cm_pols_map.as_ref().expect("REASON").len();
         for i in 0..n_commits {
             let cm_pol = self.stark_info.cm_pols_map.as_ref().expect("REASON").get(i).unwrap();
-            if cm_pol.stage == stage_id as u64 && !air_instance.commits_calculated.contains_key(&i) {
+            if cm_pol.stage == stage_id as u64 && !air_instance.is_commit_initialized(i) {
                 panic!("Stage {} cannot be committed: Witness column {} is not calculated", stage_id, cm_pol.name);
             }
         }
@@ -258,7 +258,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let n_airgroupvalues = self.stark_info.airgroupvalues_map.as_ref().expect("REASON").len();
         for i in 0..n_airgroupvalues {
             let airgroup_value = self.stark_info.airgroupvalues_map.as_ref().expect("REASON").get(i).unwrap();
-            if airgroup_value.stage == stage_id as u64 && !air_instance.airgroupvalue_calculated.contains_key(&i) {
+            if airgroup_value.stage == stage_id as u64 && !air_instance.is_airgroup_value_initialized(i) {
                 panic!(
                     "Stage {} cannot be committed: Airgroupvalue {} is not calculated",
                     stage_id, airgroup_value.name
@@ -270,7 +270,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         for i in 0..n_airvalues {
             let air_value = self.stark_info.airvalues_map.as_ref().expect("REASON").get(i).unwrap();
 
-            if air_value.stage == stage_id as u64 && !air_instance.airvalue_calculated.contains_key(&i) {
+            if air_value.stage == stage_id as u64 && !air_instance.is_airvalue_initialized(i) {
                 panic!("Stage {} cannot be committed: Airvalue {} is not calculated", stage_id, air_value.name);
             }
         }
@@ -280,7 +280,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             let n_custom_commits = self.stark_info.custom_commits_map[i].as_ref().expect("REASON").len();
             for j in 0..n_custom_commits {
                 let custom_pol = self.stark_info.custom_commits_map[i].as_ref().expect("REASON").get(j).unwrap();
-                if stage_id as u64 == custom_pol.stage && !air_instance.custom_commits_calculated[i].contains_key(&j) {
+                if stage_id as u64 == custom_pol.stage && !air_instance.is_custom_commit_initialized(i, j) {
                     panic!(
                         "Stage {} cannot be committed: Custom commit of {} that is {} is not calculated",
                         stage_id, self.stark_info.custom_commits[i].name, custom_pol.name
@@ -589,7 +589,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             }
         } else if stage == (Self::num_stages(self) + 2) as u64 {
             let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-            let evals = air_instance.evals.as_ptr() as *mut c_void;
+            let evals = air_instance.get_evals_ptr() as *mut c_void;
             calculate_hash_c(
                 p_stark,
                 value.as_mut_ptr() as *mut c_void,
@@ -750,7 +750,7 @@ impl<F: Field> StarkProver<F> {
             challenges: std::ptr::null_mut(),
             airgroup_values: std::ptr::null_mut(),
             airvalues: std::ptr::null_mut(),
-            evals: air_instance.evals.as_mut_ptr() as *mut c_void,
+            evals: air_instance.get_evals_ptr() as *mut c_void,
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: std::ptr::null_mut(),
             p_const_tree: const_tree_ptr,
@@ -782,9 +782,9 @@ impl<F: Field> StarkProver<F> {
             trace: air_instance.get_trace_ptr() as *mut c_void,
             public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
             challenges: (*challenges_guard).as_ptr() as *mut c_void,
-            airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
-            airvalues: air_instance.airvalues.as_ptr() as *mut c_void,
-            evals: air_instance.evals.as_ptr() as *mut c_void,
+            airgroup_values: air_instance.get_airgroup_values_ptr() as *mut c_void,
+            airvalues: air_instance.get_airvalues_ptr() as *mut c_void,
+            evals: air_instance.get_evals_ptr() as *mut c_void,
             xdivxsub: (*buff_helper_guard).as_ptr() as *mut c_void,
             p_const_pols: const_pols_ptr,
             p_const_tree: const_tree_ptr,
