@@ -2,13 +2,13 @@ use std::{error::Error, path::PathBuf, sync::Arc};
 
 use pil_std_lib::Std;
 use proofman::{WitnessLibrary, WitnessManager};
-use proofman_common::{initialize_logger, ExecutionCtx, ProofCtx, SetupCtx, VerboseMode, WitnessPilout};
+use proofman_common::{initialize_logger, ExecutionCtx, ProofCtx, SetupCtx, VerboseMode};
 
 use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
 use rand::{distributions::Standard, prelude::Distribution};
 
-use crate::{Connection1, Connection2, ConnectionNew, Pilout};
+use crate::{Connection1, Connection2, ConnectionNew};
 
 pub struct ConnectionWitness<F: PrimeField> {
     pub wcm: Option<Arc<WitnessManager<F>>>,
@@ -74,10 +74,6 @@ where
 
     fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         self.wcm.as_ref().unwrap().calculate_witness(stage, pctx, ectx, sctx);
-    }
-
-    fn pilout(&self) -> WitnessPilout {
-        Pilout::pilout()
     }
 }
 

@@ -24,22 +24,18 @@ pub struct StdProd<F: PrimeField> {
 }
 
 impl<F: PrimeField> Decider<F> for StdProd<F> {
-    fn decide(&self, sctx: Arc<SetupCtx>, pctx: Arc<ProofCtx<F>>) {
+    fn decide(&self, sctx: Arc<SetupCtx>) {
         // Scan the pilout for airs that have prod-related hints
-        for airgroup in pctx.pilout.air_groups() {
-            for air in airgroup.airs() {
-                let airgroup_id = air.airgroup_id;
-                let air_id = air.air_id;
 
-                let setup = sctx.get_setup(airgroup_id, air_id);
-                let p_expressions_bin = setup.p_setup.p_expressions_bin;
+        for (airgroup_id, air_id) in sctx.get_setups_list() {
+            let setup = sctx.get_setup(airgroup_id, air_id);
+            let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
-                let gprod_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_col");
-                let debug_hints_data = get_hint_ids_by_name(p_expressions_bin, "gprod_member_data");
-                if !gprod_hints.is_empty() {
-                    // Save the air for latter witness computation
-                    self.prod_airs.lock().unwrap().push((airgroup_id, air_id, gprod_hints, debug_hints_data));
-                }
+            let gprod_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_col");
+            let debug_hints_data = get_hint_ids_by_name(p_expressions_bin, "gprod_member_data");
+            if !gprod_hints.is_empty() {
+                // Save the air for latter witness computation
+                self.prod_airs.lock().unwrap().push((airgroup_id, air_id, gprod_hints, debug_hints_data));
             }
         }
     }
@@ -249,8 +245,8 @@ impl<F: PrimeField> StdProd<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
-    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.decide(sctx, pctx);
+    fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        self.decide(sctx);
     }
 
     fn calculate_witness(
@@ -274,12 +270,11 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                     // Get the air associated with the air_instance
                     let airgroup_id = air_instance.airgroup_id;
                     let air_id = air_instance.air_id;
-                    let air = pctx.pilout.get_air(airgroup_id, air_id);
-                    let air_name = air.name().unwrap_or("unknown");
+                    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
                     log::debug!("{}: ··· Computing witness for AIR '{}' at stage {}", Self::MY_NAME, air_name, stage);
 
-                    let num_rows = air.num_rows();
+                    let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
                     if self.mode.name == ModeName::Debug {
                         self.debug(&pctx, &sctx, air_instance, num_rows, debug_hints_data.clone());
@@ -287,7 +282,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
 
                     // We know that at most one product hint exists
                     let gprod_hint = if gprod_hints.len() > 1 {
-                        panic!("Multiple product hints found for AIR '{}'", air.name().unwrap_or("unknown"));
+                        panic!("Multiple product hints found for AIR '{}'", air_name);
                     } else {
                         gprod_hints[0] as usize
                     };

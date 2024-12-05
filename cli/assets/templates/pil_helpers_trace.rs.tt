@@ -2,12 +2,35 @@
 // Manual modifications are not recommended and may be overwritten.
 use proofman_common as common;
 pub use proofman_macros::trace;
+pub use proofman_macros::values;
+
+pub const PILOUT_HASH: &[u8] = b"{ project_name }-hash";
+
+//AIRGROUP CONSTANTS
+{{ for constant in constant_airgroups }}
+pub const { constant.0 }_AIRGROUP_ID: usize = { constant.1 };
+{{ endfor }}
+//AIR CONSTANTS
+{{ for constant in constant_airs }}
+pub const { constant.0 }_AIR_IDS: &[usize] = &[{ constant.3 }];
+{{ endfor }}
+
+{{ for public_values in publics  }}
+values!({ project_name }PublicValues<F, 1> \{
+{{ for column in public_values.values }} { column.name }: { column.type },{{ endfor }}
+});
+{{ endfor }}
+{{ for proof_vals in proof_values  }}
+values!({ project_name }ProofValues<F, 3> \{
+{{ for column in proof_vals.values }} { column.name }: { column.type },{{ endfor }}
+});
+{{ endfor }}
 {{ for air_group in air_groups }}{{ for air in air_group.airs }}
-trace!({ air.name }Row, { air.name }Trace<F> \{
+trace!({ air.name }Trace<F> \{
 {{ for column in air.columns }} { column.name }: { column.type },{{ endfor }}
-});
+},  { air_group.airgroup_id }, { air.id }, { air.num_rows } );
 {{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for custom_commit in air.custom_columns  }}
-trace!({ air.name }{custom_commit.name}Row, { air.name }{custom_commit.name}Trace<F> \{
+trace!({ air.name }{custom_commit.name}Trace<F> \{
 {{ for column in custom_commit.custom_columns }} { column.name }: { column.type },{{ endfor }}
-});
+}, { air_group.airgroup_id }, { air.id }, { air.num_rows } );
 {{ endfor }}{{ endfor }}{{ endfor }}

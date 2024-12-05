@@ -29,17 +29,10 @@ where
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
 
-        // For simplicity, add a single instance of each air
-        let num_rows = pctx.global_info.airs[CONNECTION_AIRGROUP_ID][CONNECTION_1_AIR_IDS[0]].num_rows;
-        let air = pctx.pilout.get_air(CONNECTION_AIRGROUP_ID, CONNECTION_1_AIR_IDS[0]);
+        let mut trace = Connection1Trace::new_zeroes();
+        let num_rows = trace.num_rows();
 
-        let mut trace = Connection1Trace::new_zeroes(num_rows);
-
-        log::debug!(
-            "{}: ··· Witness computation for AIR '{}' at stage 1",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-        );
+        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         for i in 0..num_rows {
             trace[i].a = rng.gen();
@@ -47,18 +40,7 @@ where
             trace[i].c = rng.gen();
         }
 
-        let air_instance = AirInstance::new(
-            sctx.clone(),
-            CONNECTION_AIRGROUP_ID,
-            CONNECTION_1_AIR_IDS[0],
-            None,
-            trace.buffer.unwrap(),
-        );
-        let (is_myne, gid) =
-            ectx.dctx.write().unwrap().add_instance(CONNECTION_AIRGROUP_ID, CONNECTION_1_AIR_IDS[0], 1);
-        if is_myne {
-            pctx.air_instance_repo.add_air_instance(air_instance, Some(gid));
-        }
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace);
     }
 }
 

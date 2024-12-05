@@ -28,16 +28,10 @@ where
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
-        let num_rows = pctx.global_info.airs[PERMUTATION_AIRGROUP_ID][PERMUTATION_1_7_AIR_IDS[0]].num_rows;
-        let air = pctx.pilout.get_air(PERMUTATION_AIRGROUP_ID, PERMUTATION_1_7_AIR_IDS[0]);
+        let mut trace = Permutation1_7Trace::new();
+        let num_rows = trace.num_rows();
 
-        log::debug!(
-            "{}: ··· Witness computation for AIR '{}' at stage 1",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-        );
-
-        let mut trace = Permutation1_7Trace::new(num_rows);
+        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         // TODO: Add the ability to send inputs to permutation2
         //       and consequently add random selectors
@@ -76,18 +70,7 @@ where
             trace[i].sel2 = trace[i].sel1;
         }
 
-        let air_instance = AirInstance::new(
-            sctx.clone(),
-            PERMUTATION_AIRGROUP_ID,
-            PERMUTATION_1_7_AIR_IDS[0],
-            None,
-            trace.buffer.unwrap(),
-        );
-        let (is_myne, gid) =
-            ectx.dctx.write().unwrap().add_instance(PERMUTATION_AIRGROUP_ID, PERMUTATION_1_7_AIR_IDS[0], 1);
-        if is_myne {
-            pctx.air_instance_repo.add_air_instance(air_instance, Some(gid));
-        }
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace);
     }
 }
 

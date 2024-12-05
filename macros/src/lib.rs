@@ -21,6 +21,8 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
     let trace_struct_name = parsed_input.struct_name;
     let generics = parsed_input.generics.params;
     let fields = parsed_input.fields;
+    let airgroup_id = parsed_input.airgroup_id;
+    let air_id = parsed_input.air_id;
     let num_rows = parsed_input.num_rows;
     // let commit_id = parsed_input.commit_id;
 
@@ -65,11 +67,15 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
         pub struct #trace_struct_name<#generics> {
             pub buffer: Vec<#row_struct_name<#generics>>,
             pub num_rows: usize,
+            pub airgroup_id: usize,
+            pub air_id: usize,
             // pub commit_id: Option<usize>,
         }
 
         impl<#generics: Default + Clone + Copy> #trace_struct_name<#generics> {
             const NUM_ROWS: usize = #num_rows;
+            const AIRGROUP_ID: usize = #airgroup_id;
+            const AIR_ID: usize = #air_id;
 
             pub fn new() -> Self {
                 let num_rows = Self::NUM_ROWS;
@@ -81,37 +87,12 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     buff_uninit.set_len(num_rows);
                 }
                 let buffer: Vec<#row_struct_name<#generics>> = unsafe { std::mem::transmute(buff_uninit) };
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        buffer.as_ptr() as *mut #row_struct_name<#generics>,
-                        num_rows,
-                    )
-                };
-
-                #trace_struct_name {
-                    buffer: Some(buffer),
-                    slice_trace,
-                    num_rows,
-                }
-            }
-
-            pub fn new_zeroes(num_rows: usize) -> Self {
-                assert!(num_rows >= 2);
-                assert!(num_rows & (num_rows - 1) == 0);
-
-                let buffer = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        buffer.as_ptr() as *mut #row_struct_name<#generics>,
-                        num_rows,
-                    )
-                };
->>>>>>> adba4fd1 (Renaming, improving logs, cleaning)
 
                 #trace_struct_name {
                     buffer,
                     num_rows,
-                    // commit_id: #commit_id
+                    airgroup_id: Self::AIRGROUP_ID,
+                    air_id: Self::AIR_ID,
                 }
             }
 
@@ -121,16 +102,31 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows & (num_rows - 1) == 0);
 
                 let buffer = vec![#row_struct_name::<#generics>::default(); num_rows];
-        
+
                 #trace_struct_name {
                     buffer,
                     num_rows,
-                    // commit_id: #commit_id
+                    airgroup_id: Self::AIRGROUP_ID,
+                    air_id: Self::AIR_ID,
                 }
             }
 
             pub fn num_rows(&self) -> usize {
                 self.num_rows
+            }
+
+            pub fn airgroup_id(&self) -> usize {
+                self.airgroup_id
+            }
+
+            pub fn air_id(&self) -> usize {
+                self.air_id
+            }
+
+            pub fn detach_buffer(&mut self) -> Vec<#generics> {
+                let buffer = std::mem::take(&mut self.buffer);
+                let buffer: Vec<#generics> = unsafe { std::mem::transmute(buffer) };
+                buffer
             }
         }
 
@@ -148,9 +144,23 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
         }
 
-        impl<#generics: Send> common::trace::Trace for #trace_struct_name<#generics> {
+        impl<#generics: Send + p3_field::Field> common::trace::Trace<#generics> for #trace_struct_name<#generics> {
             fn num_rows(&self) -> usize {
                 self.num_rows
+            }
+
+            fn airgroup_id(&self) -> usize {
+                self.airgroup_id
+            }
+
+            fn air_id(&self) -> usize {
+                self.air_id
+            }
+
+            fn detach_buffer(&mut self) -> Vec<#generics> {
+                let buffer = std::mem::take(&mut self.buffer);
+                let buffer: Vec<#generics> = unsafe { std::mem::transmute(buffer) };
+                buffer
             }
 
             fn get_buffer_ptr(&mut self) -> *mut u8 {
@@ -171,6 +181,8 @@ struct ParsedTraceInput {
     struct_name: Ident,
     generics: Generics,
     fields: FieldsNamed,
+    airgroup_id: LitInt,
+    air_id: LitInt,
     num_rows: LitInt,
     // commit_id: Option<LitInt>,
 }
@@ -195,7 +207,14 @@ impl Parse for ParsedTraceInput {
         let fields: FieldsNamed = input.parse()?;
 
         input.parse::<Token![,]>()?;
+        let airgroup_id = input.parse::<LitInt>()?;
+
+        input.parse::<Token![,]>()?;
+        let air_id = input.parse::<LitInt>()?;
+
+        input.parse::<Token![,]>()?;
         let num_rows = input.parse::<LitInt>()?;
+
         // let commit_id: Option<LitInt> = if input.peek(Token![,]) {
         //     input.parse::<Token![,]>()?;
         //     Some(input.parse()?)
@@ -203,7 +222,15 @@ impl Parse for ParsedTraceInput {
         //     None
         // };
 
-        Ok(ParsedTraceInput { row_struct_name, struct_name, generics, fields, num_rows /*, commit_id */ })
+        Ok(ParsedTraceInput {
+            row_struct_name,
+            struct_name,
+            generics,
+            fields,
+            airgroup_id,
+            air_id,
+            num_rows, /*, commit_id */
+        })
     }
 }
 
@@ -264,7 +291,7 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
 
         impl<#generic_param: Copy> #struct_name<#generic_param> {
             pub const ROW_SIZE: usize = #row_size;
-
+            
             pub fn as_slice(&self) -> &[#generic_param] {
                 unsafe {
                     std::slice::from_raw_parts(

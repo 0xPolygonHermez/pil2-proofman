@@ -2,15 +2,30 @@
 // Manual modifications are not recommended and may be overwritten.
 use proofman_common as common;
 pub use proofman_macros::trace;
+pub use proofman_macros::values;
 
-trace!(Connection1Row, Connection1Trace<F> {
+pub const PILOUT_HASH: &[u8] = b"Build-hash";
+
+//AIRGROUP CONSTANTS
+
+pub const CONNECTION_AIRGROUP_ID: usize = 0;
+
+//AIR CONSTANTS
+
+pub const CONNECTION_1_AIR_IDS: &[usize] = &[0];
+
+pub const CONNECTION_2_AIR_IDS: &[usize] = &[1];
+
+pub const CONNECTION_NEW_AIR_IDS: &[usize] = &[2];
+
+trace!(Connection1Trace<F> {
  a: F, b: F, c: F,
-});
+},  0, 0, 8 );
 
-trace!(Connection2Row, Connection2Trace<F> {
+trace!(Connection2Trace<F> {
  a: F, b: F, c: F,
-});
+},  0, 1, 16 );
 
-trace!(ConnectionNewRow, ConnectionNewTrace<F> {
+trace!(ConnectionNewTrace<F> {
  a: [F; 6], b: [F; 6], c: [F; 6], d: [F; 6],
-});
+},  0, 2, 16 );

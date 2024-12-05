@@ -127,7 +127,7 @@ impl Executor<Goldilocks> for FibonacciExecutor {
         let num_rows = proof_ctx.pilout.air_groups[airgroup_id].airs[air_id].num_rows.unwrap() as usize;
 
         trace!(Fibonacci { a: Goldilocks, b: Goldilocks });
-        let mut fib = Fibonacci::new(num_rows);
+        let mut fib = Fibonacci::new();
 
         fib.a[0] = Goldilocks::one();
         fib.b[0] = Goldilocks::one();

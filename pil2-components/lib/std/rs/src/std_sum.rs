@@ -24,28 +24,21 @@ pub struct StdSum<F: PrimeField> {
 }
 
 impl<F: PrimeField> Decider<F> for StdSum<F> {
-    fn decide(&self, sctx: Arc<SetupCtx>, pctx: Arc<ProofCtx<F>>) {
+    fn decide(&self, sctx: Arc<SetupCtx>) {
         // Scan the pilout for airs that have sum-related hints
-        let air_groups = pctx.pilout.air_groups();
         let mut sum_airs_guard = self.sum_airs.lock().unwrap();
-        air_groups.iter().for_each(|air_group| {
-            let airs = air_group.airs();
-            airs.iter().for_each(|air| {
-                let airgroup_id = air.airgroup_id;
-                let air_id = air.air_id;
+        for (airgroup_id, air_id) in sctx.get_setups_list() {
+            let setup = sctx.get_setup(airgroup_id, air_id);
+            let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
-                let setup = sctx.get_setup(airgroup_id, air_id);
-                let p_expressions_bin = setup.p_setup.p_expressions_bin;
-
-                let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
-                let gsum_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_col");
-                let debug_hints_data = get_hint_ids_by_name(p_expressions_bin, "gsum_member_data");
-                if !gsum_hints.is_empty() {
-                    // Save the air for latter witness computation
-                    sum_airs_guard.push((airgroup_id, air_id, im_hints, gsum_hints, debug_hints_data));
-                }
-            });
-        });
+            let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
+            let gsum_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_col");
+            let debug_hints_data = get_hint_ids_by_name(p_expressions_bin, "gsum_member_data");
+            if !gsum_hints.is_empty() {
+                // Save the air for latter witness computation
+                sum_airs_guard.push((airgroup_id, air_id, im_hints, gsum_hints, debug_hints_data));
+            }
+        }
     }
 }
 
@@ -249,8 +242,8 @@ impl<F: PrimeField> StdSum<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
-    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.decide(sctx, pctx);
+    fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        self.decide(sctx);
     }
 
     fn calculate_witness(
@@ -275,12 +268,11 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     // Get the air associated with the air_instance
                     let airgroup_id = air_instance.airgroup_id;
                     let air_id = air_instance.air_id;
-                    let air = pctx.pilout.get_air(airgroup_id, air_id);
-                    let air_name = air.name().unwrap_or("unknown");
+                    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
                     log::debug!("{}: ··· Computing witness for AIR '{}' at stage {}", Self::MY_NAME, air_name, stage);
 
-                    let num_rows = air.num_rows();
+                    let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
                     if self.mode.name == ModeName::Debug {
                         self.debug(&pctx, &sctx, air_instance, num_rows, debug_hints_data.clone());
@@ -305,7 +297,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
                     // We know that at most one product hint exists
                     let gsum_hint = if gsum_hints.len() > 1 {
-                        panic!("Multiple product hints found for AIR '{}'", air.name().unwrap_or("unknown"));
+                        panic!("Multiple product hints found for AIR '{}'", air_name);
                     } else {
                         gsum_hints[0] as usize
                     };

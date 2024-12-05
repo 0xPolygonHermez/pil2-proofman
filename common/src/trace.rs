@@ -1,5 +1,10 @@
-pub trait Trace: Send {
+use p3_field::Field;
+
+pub trait Trace<F: Field>: Send {
     fn num_rows(&self) -> usize;
+    fn airgroup_id(&self) -> usize;
+    fn air_id(&self) -> usize;
+    fn detach_buffer(&mut self) -> Vec<F>;
     fn get_buffer_ptr(&mut self) -> *mut u8;
 }
 

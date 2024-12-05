@@ -23,16 +23,10 @@ impl<F: PrimeField + Copy> Permutation2<F> {
     }
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        let num_rows = pctx.global_info.airs[PERMUTATION_AIRGROUP_ID][PERMUTATION_2_6_AIR_IDS[0]].num_rows;
-        let air = pctx.pilout.get_air(PERMUTATION_AIRGROUP_ID, PERMUTATION_2_6_AIR_IDS[0]);
+        let mut trace = Permutation2_6Trace::new();
+        let num_rows = trace.num_rows();
 
-        log::debug!(
-            "{}: ··· Witness computation for AIR '{}' at stage 1",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-        );
-
-        let mut trace = Permutation2_6Trace::new(num_rows);
+        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         // Note: Here it is assumed that num_rows of permutation2 is equal to
         //       the sum of num_rows of each variant of permutation1.
@@ -48,18 +42,7 @@ impl<F: PrimeField + Copy> Permutation2<F> {
             trace[i].sel = F::from_bool(true);
         }
 
-        let air_instance = AirInstance::new(
-            sctx.clone(),
-            PERMUTATION_AIRGROUP_ID,
-            PERMUTATION_2_6_AIR_IDS[0],
-            None,
-            trace.buffer.unwrap(),
-        );
-        let (is_myne, gid) =
-            ectx.dctx.write().unwrap().add_instance(PERMUTATION_AIRGROUP_ID, PERMUTATION_2_6_AIR_IDS[0], 1);
-        if is_myne {
-            pctx.air_instance_repo.add_air_instance(air_instance, Some(gid));
-        }
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace);
     }
 }
 

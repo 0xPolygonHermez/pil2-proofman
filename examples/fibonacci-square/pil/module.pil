@@ -2,18 +2,18 @@ require "std_range_check.pil";
 
 const int MODULE_ID = 1;
 
-public mod;
+public module;
 
 airtemplate Module(const int N = 2**8) {
 
     col fixed LN = [0...,1];
     col witness x, q, x_mod;
 
-    x === q * mod + x_mod;
+    x === q * module + x_mod;
 
-    // Ensure that 0 <= x_mod < mod < PRIME <--> 0 < mod - x_mod <--> mod - x_mod <= mod
-    range_check(mod - x_mod, 1, 2**8-1);
-    // NOTE: The 2**8-1 is used for simplicity. Moreover, for the shake of security, mod should be limited to 2**8-1 by the verifier
+    // Ensure that 0 <= x_mod < module < PRIME <--> 0 < module - x_mod <--> module - x_mod <= module
+    range_check(module - x_mod, 1, 2**8-1);
+    // NOTE: The 2**8-1 is used for simplicity. Moreover, for the shake of security, module should be limited to 2**8-1 by the verifier
 
     permutation_proves(MODULE_ID, [x, x_mod], 1 - LN);
 }

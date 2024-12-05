@@ -37,16 +37,11 @@ where
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
-        let num_rows = pctx.global_info.airs[MULTI_RANGE_CHECK_1_AIRGROUP_ID][MULTI_RANGE_CHECK_1_AIR_IDS[0]].num_rows;
-        let air = pctx.pilout.get_air(MULTI_RANGE_CHECK_1_AIRGROUP_ID, MULTI_RANGE_CHECK_1_AIR_IDS[0]);
 
-        log::debug!(
-            "{}: ··· Witness computation for AIR '{}' at stage 1",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-        );
+        let mut trace = MultiRangeCheck1Trace::new_zeroes();
+        let num_rows = trace.num_rows();
 
-        let mut trace = MultiRangeCheck1Trace::new_zeroes(num_rows);
+        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         let range1 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 7) - 1), Some(false));
         let range2 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), Some(false));
@@ -107,18 +102,7 @@ where
             }
         }
 
-        let air_instance = AirInstance::new(
-            sctx.clone(),
-            MULTI_RANGE_CHECK_1_AIRGROUP_ID,
-            MULTI_RANGE_CHECK_1_AIR_IDS[0],
-            None,
-            trace.buffer.unwrap(),
-        );
-        let (is_myne, gid) =
-            ectx.dctx.write().unwrap().add_instance(MULTI_RANGE_CHECK_1_AIRGROUP_ID, MULTI_RANGE_CHECK_1_AIR_IDS[0], 1);
-        if is_myne {
-            pctx.air_instance_repo.add_air_instance(air_instance, Some(gid));
-        }
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace);
     }
 }
 

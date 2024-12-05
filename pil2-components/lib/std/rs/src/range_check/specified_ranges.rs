@@ -103,7 +103,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
 
         let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = ectx.dctx.write().unwrap();
 
-        let (is_myne, global_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
+        let (is_mine, global_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
 
         let mut multiplicities = self
             .mul_columns
@@ -121,7 +121,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
 
         dctx.distribute_multiplicities(&mut multiplicities, owner);
 
-        if is_myne {
+        if is_mine {
             // Set the multiplicity columns as done
             let hints = self.hints.lock().unwrap();
 
@@ -133,7 +133,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
                 let num_rows = pctx.global_info.airs[self.airgroup_id][self.air_id].num_rows;
                 let buffer_size = multiplicities.len() * num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
-                let air_instance = AirInstance::new(sctx.clone(), self.airgroup_id, self.air_id, None, buffer);
+                let air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer);
                 pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx));
                 pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
             };
@@ -295,7 +295,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         let buffer = create_buffer_fast(buffer_size as usize);
 
         // Add a new air instance. Since Specified Ranges is a table, only this air instance is needed
-        let mut air_instance = AirInstance::new(sctx.clone(), self.airgroup_id, self.air_id, None, buffer);
+        let mut air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer);
         let mut mul_columns_guard = self.mul_columns.lock().unwrap();
         for hint in hints_guard[1..].iter() {
             mul_columns_guard.push(get_hint_field::<F>(

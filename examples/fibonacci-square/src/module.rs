@@ -44,10 +44,9 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
     fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        let module = pctx.get_public_value("mod");
+        let module = pctx.get_public_value("module");
 
-        let num_rows = pctx.global_info.airs[FIBONACCI_SQUARE_AIRGROUP_ID][MODULE_AIR_IDS[0]].num_rows;
-        let mut trace = ModuleTrace::new_zeroes(num_rows);
+        let mut trace = ModuleTrace::new_zeroes();
 
         //range_check(colu: mod - x_mod, min: 1, max: 2**8-1);
         let range = self.std_lib.get_range(BigInt::from(1), BigInt::from((1 << 8) - 1), None);
@@ -68,23 +67,11 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
         }
 
         // Trivial range check for the remaining rows
-        for _ in inputs.len()..num_rows {
+        for _ in inputs.len()..trace.num_rows() {
             self.std_lib.range_check(F::from_canonical_u64(module), F::one(), range);
         }
 
-        let air_instance = AirInstance::new(
-            sctx.clone(),
-            FIBONACCI_SQUARE_AIRGROUP_ID,
-            MODULE_AIR_IDS[0],
-            Some(0),
-            trace.buffer.unwrap(),
-        );
-
-        let (is_myne, gid) =
-            ectx.dctx.write().unwrap().add_instance(FIBONACCI_SQUARE_AIRGROUP_ID, MODULE_AIR_IDS[0], 1);
-        if is_myne {
-            pctx.air_instance_repo.add_air_instance(air_instance, Some(gid));
-        }
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), Some(0), &mut trace);
 
         self.std_lib.unregister_predecessor(pctx, None);
     }

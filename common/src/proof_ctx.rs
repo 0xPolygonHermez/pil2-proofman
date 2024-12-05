@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{AirInstancesRepository, GlobalInfo, StdMode, VerboseMode, WitnessPilout};
+use crate::{AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
 
 pub struct PublicInputs {
     pub inputs: RwLock<Vec<u8>>,
@@ -79,7 +79,6 @@ impl ProofOptions {
 
 #[allow(dead_code)]
 pub struct ProofCtx<F> {
-    pub pilout: WitnessPilout,
     pub public_inputs: PublicInputs,
     pub proof_values: ProofValues<F>,
     pub challenges: Challenges<F>,
@@ -91,7 +90,7 @@ pub struct ProofCtx<F> {
 impl<F: Field> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
-    pub fn create_ctx(pilout: WitnessPilout, proving_key_path: PathBuf) -> Self {
+    pub fn create_ctx(proving_key_path: PathBuf) -> Self {
         log::info!("{}: Creating proof context", Self::MY_NAME);
 
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
@@ -102,7 +101,6 @@ impl<F: Field> ProofCtx<F> {
         };
         let n_publics = global_info.n_publics;
         Self {
-            pilout,
             global_info,
             public_inputs: PublicInputs::new(n_publics),
             proof_values,

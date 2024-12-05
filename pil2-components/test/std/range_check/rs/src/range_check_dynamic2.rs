@@ -38,17 +38,11 @@ where
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
-        let num_rows =
-            pctx.global_info.airs[RANGE_CHECK_DYNAMIC_2_AIRGROUP_ID][RANGE_CHECK_DYNAMIC_2_AIR_IDS[0]].num_rows;
-        let air = pctx.pilout.get_air(RANGE_CHECK_DYNAMIC_2_AIRGROUP_ID, RANGE_CHECK_DYNAMIC_2_AIR_IDS[0]);
 
-        log::debug!(
-            "{}: ··· Witness computation for AIR '{}' at stage 1",
-            Self::MY_NAME,
-            air.name().unwrap_or("unknown"),
-        );
+        let mut trace = RangeCheckDynamic2Trace::new_zeroes();
+        let num_rows = trace.num_rows();
 
-        let mut trace = RangeCheckDynamic2Trace::new_zeroes(num_rows);
+        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         let range1 = self.std_lib.get_range(BigInt::from(5225), BigInt::from(29023), Some(false));
         let range2 = self.std_lib.get_range(BigInt::from(-8719), BigInt::from(-7269), Some(false));
@@ -99,21 +93,7 @@ where
             }
         }
 
-        let air_instance = AirInstance::new(
-            sctx.clone(),
-            RANGE_CHECK_DYNAMIC_2_AIRGROUP_ID,
-            RANGE_CHECK_DYNAMIC_2_AIR_IDS[0],
-            None,
-            trace.buffer.unwrap(),
-        );
-        let (is_myne, gid) = ectx.dctx.write().unwrap().add_instance(
-            RANGE_CHECK_DYNAMIC_2_AIRGROUP_ID,
-            RANGE_CHECK_DYNAMIC_2_AIR_IDS[0],
-            1,
-        );
-        if is_myne {
-            pctx.air_instance_repo.add_air_instance(air_instance, Some(gid));
-        }
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace);
     }
 }
 

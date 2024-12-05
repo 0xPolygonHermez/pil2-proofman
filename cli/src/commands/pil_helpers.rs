@@ -65,6 +65,7 @@ struct ValuesCtx {
 #[derive(Debug, Serialize)]
 struct CustomCommitsCtx {
     name: String,
+    commit_id: usize,
     custom_columns: Vec<ColumnCtx>,
 }
 #[derive(Debug, Serialize)]
@@ -191,8 +192,10 @@ impl PilHelpersCmd {
                 air.custom_columns = pilout.air_groups[airgroup_id].airs[air_id]
                     .custom_commits
                     .iter()
-                    .map(|commit| CustomCommitsCtx {
+                    .enumerate()
+                    .map(|(index, commit)| CustomCommitsCtx {
                         name: commit.name.clone().unwrap().to_case(Case::Pascal),
+                        commit_id: index,
                         custom_columns: Vec::new(),
                     })
                     .collect();
@@ -261,16 +264,12 @@ impl PilHelpersCmd {
 
         let mut tt = TinyTemplate::new();
         tt.add_template("mod.rs", MOD_RS)?;
-        tt.add_template("pilout.rs", include_str!("../../assets/templates/pil_helpers_pilout.rs.tt"))?;
         tt.add_template("traces.rs", include_str!("../../assets/templates/pil_helpers_trace.rs.tt"))?;
 
         // Write the files
         // --------------------------------------------
         // Write mod.rs
         fs::write(pil_helpers_path.join("mod.rs"), MOD_RS)?;
-
-        // Write pilout.rs
-        fs::write(pil_helpers_path.join("pilout.rs"), tt.render("pilout.rs", &context)?)?;
 
         // Write traces.rs
         fs::write(pil_helpers_path.join("traces.rs"), tt.render("traces.rs", &context)?)?;

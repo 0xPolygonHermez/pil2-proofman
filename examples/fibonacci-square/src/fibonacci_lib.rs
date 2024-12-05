@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::{fs::File, sync::Arc};
 
-use proofman_common::{initialize_logger, ExecutionCtx, ProofCtx, SetupCtx, VerboseMode, WitnessPilout};
+use proofman_common::{initialize_logger, ExecutionCtx, ProofCtx, SetupCtx, VerboseMode};
 use proofman::{WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
 use p3_field::PrimeField;
@@ -11,7 +11,7 @@ use std::error::Error;
 use std::path::PathBuf;
 use crate::FibonacciSquarePublics;
 
-use crate::{FibonacciSquare, Pilout, Module};
+use crate::{FibonacciSquare, Module};
 
 pub struct FibonacciWitness<F: PrimeField> {
     public_inputs_path: Option<PathBuf>,
@@ -57,7 +57,7 @@ impl<F: PrimeField> WitnessLibrary<F> for FibonacciWitness<F> {
             FibonacciSquarePublics::default()
         };
 
-        pctx.set_public_value_by_name(public_inputs.module, "mod", None);
+        pctx.set_public_value_by_name(public_inputs.module, "module", None);
         pctx.set_public_value_by_name(public_inputs.a, "in1", None);
         pctx.set_public_value_by_name(public_inputs.b, "in2", None);
 
@@ -75,10 +75,6 @@ impl<F: PrimeField> WitnessLibrary<F> for FibonacciWitness<F> {
 
     fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         self.wcm.as_ref().unwrap().calculate_witness(stage, pctx, ectx, sctx);
-    }
-
-    fn pilout(&self) -> WitnessPilout {
-        Pilout::pilout()
     }
 }
 

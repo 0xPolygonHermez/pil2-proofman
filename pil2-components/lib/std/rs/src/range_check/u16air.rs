@@ -96,7 +96,7 @@ impl<F: PrimeField> U16Air<F> {
 
         let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = ectx.dctx.write().unwrap();
 
-        let (is_myne, global_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
+        let (is_mine, global_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
         let mut multiplicity = match &*self.mul_column.lock().unwrap() {
             HintFieldValue::Column(values) => {
                 values.iter().map(|x| x.as_canonical_biguint().to_u64().unwrap()).collect::<Vec<u64>>()
@@ -107,7 +107,7 @@ impl<F: PrimeField> U16Air<F> {
         let owner = dctx.owner(global_idx);
         dctx.distribute_multiplicity(&mut multiplicity, owner);
 
-        if is_myne {
+        if is_mine {
             let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
             let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
             let air_instance_id = if !instance.is_empty() {
@@ -117,7 +117,7 @@ impl<F: PrimeField> U16Air<F> {
                 let num_rows = pctx.global_info.airs[self.airgroup_id][self.air_id].num_rows;
                 let buffer_size = num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
-                let air_instance = AirInstance::new(sctx.clone(), self.airgroup_id, self.air_id, None, buffer);
+                let air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer);
                 pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx));
                 pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
             };
@@ -170,7 +170,7 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
         let buffer = create_buffer_fast(buffer_size);
 
         // Add a new air instance. Since U16Air is a table, only this air instance is needed
-        let mut air_instance = AirInstance::new(sctx.clone(), self.airgroup_id, self.air_id, None, buffer);
+        let mut air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer);
 
         *self.mul_column.lock().unwrap() = get_hint_field::<F>(
             &self.wcm.get_sctx(),

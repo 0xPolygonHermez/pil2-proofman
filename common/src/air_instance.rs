@@ -4,7 +4,7 @@ use p3_field::Field;
 use proofman_starks_lib_c::get_custom_commit_map_ids_c;
 use proofman_util::create_buffer_fast;
 
-use crate::{SetupCtx, StarkInfo};
+use crate::{trace::Trace, ProofCtx, ExecutionCtx, SetupCtx, StarkInfo};
 
 #[repr(C)]
 pub struct StepsParams {
@@ -31,8 +31,8 @@ impl From<&StepsParams> for *mut c_void {
 impl Default for StepsParams {
     fn default() -> Self {
         StepsParams {
+            witness: ptr::null_mut(),
             trace: ptr::null_mut(),
-            pols: ptr::null_mut(),
             public_inputs: ptr::null_mut(),
             challenges: ptr::null_mut(),
             airgroup_values: ptr::null_mut(),
@@ -61,6 +61,7 @@ impl<F> CustomCommitsInfo<F> {
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 #[repr(C)]
+#[derive(Clone)]
 pub struct AirInstance<F> {
     pub airgroup_id: usize,
     pub air_id: usize,
@@ -85,9 +86,9 @@ pub struct AirInstance<F> {
 impl<F: Field> AirInstance<F> {
     pub fn new(
         setup_ctx: Arc<SetupCtx>,
+        air_segment_id: Option<usize>,
         airgroup_id: usize,
         air_id: usize,
-        air_segment_id: Option<usize>,
         witness: Vec<F>,
     ) -> Self {
         let ps = setup_ctx.get_setup(airgroup_id, air_id);
@@ -132,6 +133,28 @@ impl<F: Field> AirInstance<F> {
             custom_commits_calculated,
             stark_info: ps.stark_info.clone(),
         }
+    }
+
+    pub fn from_trace(
+        proof_ctx: Arc<ProofCtx<F>>,
+        execution_ctx: Arc<ExecutionCtx>,
+        setup_ctx: Arc<SetupCtx>,
+        air_segment_id: Option<usize>,
+        trace: &mut dyn Trace<F>,
+    ) -> Self {
+        let airgroup_id = trace.airgroup_id();
+        let air_id = trace.air_id();
+        let witness = trace.detach_buffer();
+
+        let air_instance = AirInstance::new(setup_ctx, air_segment_id, airgroup_id, air_id, witness);
+
+        let (is_mine, gid) =
+            execution_ctx.dctx.write().unwrap().add_instance(air_instance.airgroup_id, air_instance.air_id, 1);
+        if is_mine {
+            proof_ctx.air_instance_repo.add_air_instance(air_instance.clone(), Some(gid));
+        }
+
+        air_instance
     }
 
     pub fn get_witness_ptr(&self) -> *mut u8 {

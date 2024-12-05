@@ -153,6 +153,10 @@ impl SetupCtx {
         }
     }
 
+    pub fn get_setups_list(&self) -> Vec<(usize, usize)> {
+        self.setup_repository.setups.keys().cloned().collect()
+    }
+
     pub fn get_global_bin(&self) -> *mut c_void {
         self.setup_repository.global_bin.unwrap()
     }

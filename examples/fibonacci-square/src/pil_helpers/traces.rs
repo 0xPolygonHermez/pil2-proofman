@@ -2,19 +2,42 @@
 // Manual modifications are not recommended and may be overwritten.
 use proofman_common as common;
 pub use proofman_macros::trace;
+pub use proofman_macros::values;
+
+pub const PILOUT_HASH: &[u8] = b"Build-hash";
+
+//AIRGROUP CONSTANTS
+
+pub const FIBONACCI_SQUARE_AIRGROUP_ID: usize = 0;
+
+//AIR CONSTANTS
+
+pub const FIBONACCI_SQUARE_AIR_IDS: &[usize] = &[0];
+
+pub const MODULE_AIR_IDS: &[usize] = &[1];
+
+pub const U_8_AIR_AIR_IDS: &[usize] = &[2];
+
+values!(BuildPublicValues<F, 1> {
+ module: F, in1: F, in2: F, out: F, rom_root: [F; 4],
+});
+
+values!(BuildProofValues<F, 3> {
+ value1: F, value2: F,
+});
 
 trace!(FibonacciSquareTrace<F> {
  a: F, b: F,
-}, 1024);
+},  0, 0, 1024 );
 
 trace!(ModuleTrace<F> {
  x: F, q: F, x_mod: F,
-}, 1024);
+},  0, 1, 1024 );
 
 trace!(U8AirTrace<F> {
  mul: F,
-}, 256);
+},  0, 2, 256 );
 
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
-}, 1024);
+}, 0, 0, 1024 );

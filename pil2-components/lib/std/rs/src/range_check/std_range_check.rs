@@ -47,25 +47,18 @@ pub struct StdRangeCheck<F: PrimeField> {
 }
 
 impl<F: PrimeField> Decider<F> for StdRangeCheck<F> {
-    fn decide(&self, sctx: Arc<SetupCtx>, pctx: Arc<ProofCtx<F>>) {
+    fn decide(&self, sctx: Arc<SetupCtx>) {
         // Scan the pilout for airs that have rc-related hints
-        let air_groups = pctx.pilout.air_groups();
+        for (airgroup_id, air_id) in sctx.get_setups_list() {
+            let setup = sctx.get_setup(airgroup_id, air_id);
 
-        air_groups.iter().for_each(|air_group| {
-            let airs = air_group.airs();
-            airs.iter().for_each(|air| {
-                let airgroup_id = air.airgroup_id;
-                let air_id = air.air_id;
-                let setup = sctx.get_setup(airgroup_id, air_id);
-
-                // Obtain info from the range hints
-                let rc_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "range_def");
-                for hint in rc_hints {
-                    // Register the range
-                    self.register_range(sctx.clone(), airgroup_id, air_id, hint);
-                }
-            });
-        });
+            // Obtain info from the range hints
+            let rc_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "range_def");
+            for hint in rc_hints {
+                // Register the range
+                self.register_range(sctx.clone(), airgroup_id, air_id, hint);
+            }
+        }
     }
 }
 
@@ -267,8 +260,8 @@ impl<F: PrimeField> StdRangeCheck<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for StdRangeCheck<F> {
-    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.decide(sctx, pctx);
+    fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        self.decide(sctx);
     }
 
     fn calculate_witness(
