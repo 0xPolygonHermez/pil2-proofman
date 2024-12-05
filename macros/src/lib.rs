@@ -222,11 +222,12 @@ impl Parse for ParsedTraceInput {
 
         input.parse::<Token![,]>()?;
         let num_rows = input.parse::<LitInt>()?;
-        let commit_id: Option<LitInt> = if input.peek(Token![,]) {
+        let commit_id: TokenStream2 = if input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
-            Some(input.parse()?)
+            let commit_id = input.parse::<LitInt>()?;
+            quote!(Some(#commit_id))
         } else {
-            None
+            quote!(None)
         };
 
         Ok(ParsedTraceInput { row_struct_name, struct_name, generics, fields, num_rows, commit_id })
