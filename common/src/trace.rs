@@ -1,14 +1,22 @@
 use p3_field::Field;
+use std::collections::HashMap;
 
 pub trait Trace<F: Field>: Send {
     fn num_rows(&self) -> usize;
     fn airgroup_id(&self) -> usize;
     fn air_id(&self) -> usize;
-    fn detach_buffer(&mut self) -> Vec<F>;
-    fn get_buffer_ptr(&mut self) -> *mut u8;
+    fn get_buffer(&mut self) -> Vec<F>;
+}
+
+pub trait Values<F: Field>: Send {
+    fn num_values(&self) -> usize;
+    fn get_buffer(&mut self) -> Vec<F>;
+    fn get_values_calculated(&mut self) -> HashMap<usize, bool>;
 }
 
 pub use proofman_macros::trace;
+
+pub use proofman_macros::values;
 
 #[cfg(test)]
 use crate as common;

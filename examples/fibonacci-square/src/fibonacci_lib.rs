@@ -1,7 +1,6 @@
-use std::io::Read;
-use std::{fs::File, sync::Arc};
+use std::sync::Arc;
 
-use proofman_common::{initialize_logger, ExecutionCtx, ProofCtx, SetupCtx, VerboseMode};
+use proofman_common::{initialize_logger, load_from_json, ExecutionCtx, ProofCtx, SetupCtx, VerboseMode};
 use proofman::{WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
 use p3_field::PrimeField;
@@ -9,9 +8,8 @@ use p3_goldilocks::Goldilocks;
 
 use std::error::Error;
 use std::path::PathBuf;
-use crate::FibonacciSquarePublics;
 
-use crate::{FibonacciSquare, Module};
+use crate::{BuildPublics, FibonacciSquare, Module};
 
 pub struct FibonacciWitness<F: PrimeField> {
     public_inputs_path: Option<PathBuf>,
@@ -40,26 +38,11 @@ impl<F: PrimeField> WitnessLibrary<F> for FibonacciWitness<F> {
         self.module = Some(module);
         self.std_lib = Some(std_lib);
 
-        let public_inputs: FibonacciSquarePublics = if let Some(path) = &self.public_inputs_path {
-            let mut file = File::open(path).unwrap();
-
-            if !file.metadata().unwrap().is_file() {
-                panic!("Public inputs file not found");
-            }
-
-            let mut contents = String::new();
-
-            let _ =
-                file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
-
-            serde_json::from_str(&contents).unwrap()
-        } else {
-            FibonacciSquarePublics::default()
-        };
+        let public_inputs: BuildPublics = load_from_json(&self.public_inputs_path);
 
         pctx.set_public_value_by_name(public_inputs.module, "module", None);
-        pctx.set_public_value_by_name(public_inputs.a, "in1", None);
-        pctx.set_public_value_by_name(public_inputs.b, "in2", None);
+        pctx.set_public_value_by_name(public_inputs.in1, "in1", None);
+        pctx.set_public_value_by_name(public_inputs.in2, "in2", None);
 
         wcm.start_proof(pctx, ectx, sctx);
     }

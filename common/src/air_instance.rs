@@ -4,7 +4,7 @@ use p3_field::Field;
 use proofman_starks_lib_c::get_custom_commit_map_ids_c;
 use proofman_util::create_buffer_fast;
 
-use crate::{trace::Trace, ProofCtx, ExecutionCtx, SetupCtx, StarkInfo};
+use crate::{trace::Trace, trace::Values, ProofCtx, ExecutionCtx, SetupCtx, Setup, StarkInfo};
 
 #[repr(C)]
 pub struct StepsParams {
@@ -58,6 +58,12 @@ impl<F> CustomCommitsInfo<F> {
     }
 }
 
+#[derive(Default, Clone)]
+pub struct ValuesInfo<F> {
+    pub buffer: Vec<F>,
+    pub calculated: HashMap<usize, bool>,
+}
+
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 #[repr(C)]
@@ -90,28 +96,12 @@ impl<F: Field> AirInstance<F> {
         airgroup_id: usize,
         air_id: usize,
         witness: Vec<F>,
+        witness_custom: Option<Vec<Vec<F>>>,
+        air_values: Option<Vec<ValuesInfo<F>>>,
     ) -> Self {
         let ps = setup_ctx.get_setup(airgroup_id, air_id);
 
-        let n_custom_commits = ps.stark_info.custom_commits.len();
-        let custom_commits_calculated = vec![HashMap::new(); n_custom_commits];
-
-        let mut custom_commits = Vec::new();
-        let mut custom_commits_extended = Vec::new();
-
-        for i in 0..n_custom_commits {
-            let n_cols =
-                *ps.stark_info.map_sections_n.get(&(ps.stark_info.custom_commits[i].name.clone() + "0")).unwrap()
-                    as usize;
-            custom_commits.push(CustomCommitsInfo::new(
-                create_buffer_fast((1 << ps.stark_info.stark_struct.n_bits) * n_cols),
-                PathBuf::new(),
-            ));
-            custom_commits_extended.push(CustomCommitsInfo::new(
-                create_buffer_fast((1 << ps.stark_info.stark_struct.n_bits_ext) * n_cols),
-                PathBuf::new(),
-            ));
-        }
+        let (custom_commits, custom_commits_extended, custom_commits_calculated) = Self::init_custom_commits(ps, witness_custom);
 
         AirInstance {
             airgroup_id,
@@ -124,13 +114,13 @@ impl<F: Field> AirInstance<F> {
             trace: None,
             custom_commits,
             custom_commits_extended,
+            custom_commits_calculated,
             airgroup_values: vec![F::zero(); ps.stark_info.airgroupvalues_map.as_ref().unwrap().len() * 3],
             airvalues: vec![F::zero(); ps.stark_info.airvalues_map.as_ref().unwrap().len() * 3],
+            airvalue_calculated: HashMap::new(),
             evals: vec![F::zero(); ps.stark_info.ev_map.len() * 3],
             commits_calculated: HashMap::new(),
             airgroupvalue_calculated: HashMap::new(),
-            airvalue_calculated: HashMap::new(),
-            custom_commits_calculated,
             stark_info: ps.stark_info.clone(),
         }
     }
@@ -141,20 +131,69 @@ impl<F: Field> AirInstance<F> {
         setup_ctx: Arc<SetupCtx>,
         air_segment_id: Option<usize>,
         trace: &mut dyn Trace<F>,
-    ) -> Self {
+        traces_custom: Option<&mut Vec<&mut dyn Trace<F>>>,
+        air_values: Option<&mut dyn Values<F>>,
+    ) {
         let airgroup_id = trace.airgroup_id();
         let air_id = trace.air_id();
-        let witness = trace.detach_buffer();
+        let witness = trace.get_buffer();
 
-        let air_instance = AirInstance::new(setup_ctx, air_segment_id, airgroup_id, air_id, witness);
+        let custom_witnesses = if let Some(custom_traces) = traces_custom {
+            let mut custom_witnesses = Vec::new();
+            for custom_trace in custom_traces.iter_mut() {
+                custom_witnesses.push(custom_trace.get_buffer());
+            }
+            Some(custom_witnesses)
+        } else {
+            None
+        };
+        
+        // let air_values_info = if let Some(air_values) = air_vals {
+
+        // };
+
+        let air_instance = AirInstance::new(setup_ctx, air_segment_id, airgroup_id, air_id, witness, custom_witnesses, None);
 
         let (is_mine, gid) =
             execution_ctx.dctx.write().unwrap().add_instance(air_instance.airgroup_id, air_instance.air_id, 1);
+
         if is_mine {
-            proof_ctx.air_instance_repo.add_air_instance(air_instance.clone(), Some(gid));
+            proof_ctx.air_instance_repo.add_air_instance(air_instance, Some(gid));
+        }
+    }
+
+    pub fn init_custom_commits(setup: &Setup, witness_custom: Option<Vec<Vec<F>>>) -> (Vec<CustomCommitsInfo<F>>, Vec<CustomCommitsInfo<F>>, Vec<HashMap<usize, bool>>) {
+        let n_custom_commits = setup.stark_info.custom_commits.len();
+        let mut custom_commits_calculated = vec![HashMap::new(); n_custom_commits];
+
+        let mut custom_commits = Vec::new();
+        let mut custom_commits_extended = Vec::new();
+
+        for commit_id in 0..n_custom_commits {
+            let n_cols =
+                *setup.stark_info.map_sections_n.get(&(setup.stark_info.custom_commits[commit_id].name.clone() + "0")).unwrap()
+                    as usize;
+            if let Some(witness_custom_value) = witness_custom.as_ref() {
+                custom_commits.push(CustomCommitsInfo::new(
+                    witness_custom_value[commit_id].clone(),
+                    PathBuf::new(),
+                )); 
+            } else {
+                println!("No custom trace data found.");
+            }
+
+            let ids = get_custom_commit_map_ids_c(setup.p_setup.p_stark_info, commit_id as u64, 0);
+            for idx in ids {
+                custom_commits_calculated[commit_id].insert(idx as usize, true);
+            }
+
+            custom_commits_extended.push(CustomCommitsInfo::new(
+                create_buffer_fast((1 << setup.stark_info.stark_struct.n_bits_ext) * n_cols),
+                PathBuf::new(),
+            ));
         }
 
-        air_instance
+        (custom_commits, custom_commits_extended, custom_commits_calculated)
     }
 
     pub fn get_witness_ptr(&self) -> *mut u8 {

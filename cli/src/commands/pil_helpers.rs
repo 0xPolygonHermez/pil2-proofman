@@ -60,6 +60,7 @@ struct AirCtx {
 #[derive(Debug, Serialize)]
 struct ValuesCtx {
     values: Vec<ColumnCtx>,
+    values_u64: Vec<ColumnCtx>,
 }
 
 #[derive(Debug, Serialize)]
@@ -174,14 +175,25 @@ impl PilHelpersCmd {
                 };
                 if symbol.r#type == SymbolType::ProofValue as i32 {
                     if proof_values.is_empty() {
-                        proof_values.push(ValuesCtx { values: Vec::new() });
+                        proof_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
                     }
                     proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
                 } else {
                     if publics.is_empty() {
-                        publics.push(ValuesCtx { values: Vec::new() });
+                        publics.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
                     }
                     publics[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
+                    let r#type_64 = if symbol.lengths.is_empty() {
+                        "u64".to_string() // Case when lengths.len() == 0
+                    } else {
+                        // Start with "u64" and apply each length in reverse order
+                        symbol
+                            .lengths
+                            .iter()
+                            .rev()
+                            .fold("u64".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
+                    };
+                    publics[0].values_u64.push(ColumnCtx { name: name.to_owned(), r#type: r#type_64 });
                 }
             });
 
@@ -232,12 +244,12 @@ impl PilHelpersCmd {
                             air.columns.push(ColumnCtx { name: name.to_owned(), r#type });
                         } else if symbol.r#type == SymbolType::AirValue as i32 {
                             if air.air_values.is_empty() {
-                                air.air_values.push(ValuesCtx { values: Vec::new() });
+                                air.air_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
                             }
                             air.air_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
                         } else if symbol.r#type == SymbolType::AirGroupValue as i32 {
                             if air.airgroup_values.is_empty() {
-                                air.airgroup_values.push(ValuesCtx { values: Vec::new() });
+                                air.airgroup_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
                             }
                             air.airgroup_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
                         } else {

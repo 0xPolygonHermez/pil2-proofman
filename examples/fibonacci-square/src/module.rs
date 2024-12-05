@@ -71,7 +71,7 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
             self.std_lib.range_check(F::from_canonical_u64(module), F::one(), range);
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), Some(0), &mut trace);
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), Some(0), &mut trace, None, None);
 
         self.std_lib.unregister_predecessor(pctx, None);
     }

@@ -98,7 +98,7 @@ where
             self.std_lib.range_check(trace[i].a8, F::one(), range9);
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace);
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace, None, None);
     }
 }
 

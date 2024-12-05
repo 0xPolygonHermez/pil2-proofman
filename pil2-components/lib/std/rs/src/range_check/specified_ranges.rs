@@ -133,7 +133,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
                 let num_rows = pctx.global_info.airs[self.airgroup_id][self.air_id].num_rows;
                 let buffer_size = multiplicities.len() * num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
-                let air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer);
+                let air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
                 pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx));
                 pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
             };
@@ -295,7 +295,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         let buffer = create_buffer_fast(buffer_size as usize);
 
         // Add a new air instance. Since Specified Ranges is a table, only this air instance is needed
-        let mut air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer);
+        let mut air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
         let mut mul_columns_guard = self.mul_columns.lock().unwrap();
         for hint in hints_guard[1..].iter() {
             mul_columns_guard.push(get_hint_field::<F>(

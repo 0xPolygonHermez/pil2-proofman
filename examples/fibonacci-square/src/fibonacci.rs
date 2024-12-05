@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use proofman_common::{get_custom_commit_id, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::PrimeField;
 
-use crate::{FibonacciSquareTrace, FibonacciSquareRomTrace, Module, FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS};
+use crate::{FibonacciSquareRomTrace, FibonacciSquareAirValues, FibonacciSquareTrace, Module, FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS};
 
 pub struct FibonacciSquare<F: PrimeField> {
     module: Arc<Module<F>>,
@@ -55,9 +55,8 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
         }
 
         let mut trace_rom = FibonacciSquareRomTrace::new_zeroes();
-        let commit_id = get_custom_commit_id(&sctx, FIBONACCI_SQUARE_AIRGROUP_ID, FIBONACCI_SQUARE_AIR_IDS[0], "rom");
 
-        for i in 0..trace.num_rows() {
+        for i in 0..trace_rom.num_rows() {
             trace_rom[i].line = F::from_canonical_u64(3 + i as u64);
             trace_rom[i].flags = F::from_canonical_u64(2 + i as u64);
         }
@@ -67,13 +66,11 @@ impl<F: PrimeField + Copy> FibonacciSquare<F> {
         pctx.set_proof_value("value1", F::from_canonical_u64(5));
         pctx.set_proof_value("value2", F::from_canonical_u64(125));
 
-        let mut air_instance = AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), Some(0), &mut trace);
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), Some(0), &mut trace, Some(&mut vec![&mut trace_rom]), None);
 
-        air_instance.set_airvalue("FibonacciSquare.fibo1", Some(vec![0]), F::from_canonical_u64(1));
-        air_instance.set_airvalue("FibonacciSquare.fibo1", Some(vec![1]), F::from_canonical_u64(2));
-        air_instance.set_airvalue_ext("FibonacciSquare.fibo3", None, vec![F::from_canonical_u64(5); 3]);
-
-        air_instance.set_custom_commit_id_buffer(&sctx, trace_rom.detach_buffer(), commit_id);
+        // air_instance.set_airvalue("FibonacciSquare.fibo1", Some(vec![0]), F::from_canonical_u64(1));
+        // air_instance.set_airvalue("FibonacciSquare.fibo1", Some(vec![1]), F::from_canonical_u64(2));
+        // air_instance.set_airvalue_ext("FibonacciSquare.fibo3", None, vec![F::from_canonical_u64(5); 3]);
 
         Ok(b)
     }

@@ -18,14 +18,15 @@ pub const CONNECTION_2_AIR_IDS: &[usize] = &[1];
 
 pub const CONNECTION_NEW_AIR_IDS: &[usize] = &[2];
 
+  
 trace!(Connection1Trace<F> {
  a: F, b: F, c: F,
-},  0, 0, 8 );
+},  0, 0, 8, 0 );
 
 trace!(Connection2Trace<F> {
  a: F, b: F, c: F,
-},  0, 1, 16 );
+},  0, 1, 16, 0 );
 
 trace!(ConnectionNewTrace<F> {
  a: [F; 6], b: [F; 6], c: [F; 6], d: [F; 6],
-},  0, 2, 16 );
+},  0, 2, 16, 0 );

@@ -52,7 +52,7 @@ where
             self.std_lib.range_check(trace[i].b3, F::one(), range3);
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace);
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace, None, None);
     }
 }
 

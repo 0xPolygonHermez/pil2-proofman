@@ -50,7 +50,7 @@ where
             self.std_lib.range_check(trace[i].c2, F::one(), range2);
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace);
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace, None, None);
     }
 }
 

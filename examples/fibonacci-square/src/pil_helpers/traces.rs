@@ -18,26 +18,39 @@ pub const MODULE_AIR_IDS: &[usize] = &[1];
 
 pub const U_8_AIR_AIR_IDS: &[usize] = &[2];
 
+
+//PUBLICS
+use serde::Deserialize;
+use serde::Serialize;
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct BuildPublics {
+     #[serde(default)] pub module: u64, #[serde(default)] pub in1: u64, #[serde(default)] pub in2: u64, #[serde(default)] pub out: u64, #[serde(default)] pub rom_root: [u64; 4],
+}
+
 values!(BuildPublicValues<F, 1> {
  module: F, in1: F, in2: F, out: F, rom_root: [F; 4],
 });
-
+ 
 values!(BuildProofValues<F, 3> {
  value1: F, value2: F,
 });
-
+ 
 trace!(FibonacciSquareTrace<F> {
  a: F, b: F,
-},  0, 0, 1024 );
+},  0, 0, 1024, 0 );
 
 trace!(ModuleTrace<F> {
  x: F, q: F, x_mod: F,
-},  0, 1, 1024 );
+},  0, 1, 1024, 0 );
 
 trace!(U8AirTrace<F> {
  mul: F,
-},  0, 2, 256 );
+},  0, 2, 256, 0 );
 
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
-}, 0, 0, 1024 );
+}, 0, 0, 1024, 0 );
+
+values!(FibonacciSquareAirValues<F, 3> {
+ fibo1: [F; 2], fibo3: F,
+});

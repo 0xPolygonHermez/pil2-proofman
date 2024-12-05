@@ -24,7 +24,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
     let airgroup_id = parsed_input.airgroup_id;
     let air_id = parsed_input.air_id;
     let num_rows = parsed_input.num_rows;
-    // let commit_id = parsed_input.commit_id;
+    let commit_id = parsed_input.commit_id;
 
     // Calculate ROW_SIZE based on the field types
     let row_size = fields
@@ -64,15 +64,17 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
     // Generate trace struct
     let trace_struct = quote! {
-        pub struct #trace_struct_name<#generics> {
-            pub buffer: Vec<#row_struct_name<#generics>>,
+        pub struct #trace_struct_name<'a, #generics> {
+            pub buffer: Vec<#generics>,
+            pub slice_trace: &'a mut [#row_struct_name<#generics>],
             pub num_rows: usize,
             pub airgroup_id: usize,
             pub air_id: usize,
             // pub commit_id: Option<usize>,
+            pub commit_id: usize,
         }
 
-        impl<#generics: Default + Clone + Copy> #trace_struct_name<#generics> {
+        impl<'a, #generics: Default + Clone + Copy> #trace_struct_name<'a, #generics> {
             const NUM_ROWS: usize = #num_rows;
             const AIRGROUP_ID: usize = #airgroup_id;
             const AIR_ID: usize = #air_id;
@@ -82,17 +84,27 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let mut buff_uninit: Vec<std::mem::MaybeUninit<#row_struct_name<#generics>>> = Vec::with_capacity(num_rows);
+                let mut buff_uninit: Vec<std::mem::MaybeUninit<#generics>> = Vec::with_capacity(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
+                
                 unsafe {
-                    buff_uninit.set_len(num_rows);
+                    buff_uninit.set_len(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
                 }
-                let buffer: Vec<#row_struct_name<#generics>> = unsafe { std::mem::transmute(buff_uninit) };
+                let buffer: Vec<#generics> = unsafe { std::mem::transmute(buff_uninit) };
+                
+                let slice_trace = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        buffer.as_ptr() as *mut #row_struct_name<#generics>,
+                        num_rows,
+                    )
+                };
 
                 #trace_struct_name {
                     buffer,
+                    slice_trace,
                     num_rows,
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
+                    commit_id: #commit_id,
                 }
             }
 
@@ -101,13 +113,21 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer = vec![#row_struct_name::<#generics>::default(); num_rows];
-
+                let buffer = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
+                let slice_trace = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        buffer.as_ptr() as *mut #row_struct_name<#generics>,
+                        num_rows,
+                    )
+                };
+                
                 #trace_struct_name {
                     buffer,
+                    slice_trace,
                     num_rows,
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
+                    commit_id: #commit_id,
                 }
             }
 
@@ -123,28 +143,27 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 self.air_id
             }
 
-            pub fn detach_buffer(&mut self) -> Vec<#generics> {
+            pub fn get_buffer(&mut self) -> Vec<#generics> {
                 let buffer = std::mem::take(&mut self.buffer);
-                let buffer: Vec<#generics> = unsafe { std::mem::transmute(buffer) };
                 buffer
             }
         }
 
-        impl<#generics> std::ops::Index<usize> for #trace_struct_name<#generics> {
+        impl<'a, #generics> std::ops::Index<usize> for #trace_struct_name<'a, #generics> {
             type Output = #row_struct_name<#generics>;
 
             fn index(&self, index: usize) -> &Self::Output {
-                &self.buffer[index]
+                &self.slice_trace[index]
             }
         }
 
-        impl<#generics> std::ops::IndexMut<usize> for #trace_struct_name<#generics> {
+        impl<'a, #generics> std::ops::IndexMut<usize> for #trace_struct_name<'a, #generics> {
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.buffer[index]
+                &mut self.slice_trace[index]
             }
         }
 
-        impl<#generics: Send + p3_field::Field> common::trace::Trace<#generics> for #trace_struct_name<#generics> {
+        impl<'a, #generics: Send + p3_field::Field> common::trace::Trace<#generics> for #trace_struct_name<'a, #generics> {
             fn num_rows(&self) -> usize {
                 self.num_rows
             }
@@ -157,15 +176,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 self.air_id
             }
 
-            fn detach_buffer(&mut self) -> Vec<#generics> {
+            fn get_buffer(&mut self) -> Vec<#generics> {
                 let buffer = std::mem::take(&mut self.buffer);
-                let buffer: Vec<#generics> = unsafe { std::mem::transmute(buffer) };
                 buffer
-            }
-
-            fn get_buffer_ptr(&mut self) -> *mut u8 {
-                self.buffer.as_mut_ptr() as *mut u8
-            }
+            }   
         }
     };
 
@@ -184,7 +198,8 @@ struct ParsedTraceInput {
     airgroup_id: LitInt,
     air_id: LitInt,
     num_rows: LitInt,
-    // commit_id: Option<LitInt>,
+    //commit_id: Option<LitInt>,
+    commit_id: LitInt,
 }
 
 impl Parse for ParsedTraceInput {
@@ -215,9 +230,12 @@ impl Parse for ParsedTraceInput {
         input.parse::<Token![,]>()?;
         let num_rows = input.parse::<LitInt>()?;
 
-        // let commit_id: Option<LitInt> = if input.peek(Token![,]) {
+        input.parse::<Token![,]>()?;
+        let commit_id = input.parse::<LitInt>()?;
+
+        // let commit_id = if input.peek(Token![,]) {
         //     input.parse::<Token![,]>()?;
-        //     Some(input.parse()?)
+        //     Some(input.parse::<LitInt>()?)
         // } else {
         //     None
         // };
@@ -229,7 +247,8 @@ impl Parse for ParsedTraceInput {
             fields,
             airgroup_id,
             air_id,
-            num_rows, /*, commit_id */
+            num_rows, 
+            commit_id
         })
     }
 }
@@ -284,14 +303,13 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
 
     let row_struct = quote! {
         #[repr(C)]
-        #[derive(Debug, Clone, Copy, Default)]
+        #[derive(Debug, Clone, Default)]
         pub struct #struct_name<#generic_param> {
             #(#field_definitions)*
-        }
-
+        }        
         impl<#generic_param: Copy> #struct_name<#generic_param> {
             pub const ROW_SIZE: usize = #row_size;
-            
+
             pub fn as_slice(&self) -> &[#generic_param] {
                 unsafe {
                     std::slice::from_raw_parts(
@@ -388,7 +406,7 @@ fn test_parsing_01() {
     assert_eq!(parsed.row_struct_name, "TraceRow");
     assert_eq!(parsed.struct_name, "MyTrace");
     assert_eq!(parsed.num_rows.base10_parse::<usize>().unwrap(), 34);
-    //assert_eq!(parsed.commit_id.unwrap().base10_parse::<usize>().unwrap(), 38);
+    assert_eq!(parsed.commit_id.unwrap().base10_parse::<usize>().unwrap(), 38);
 }
 
 #[test]

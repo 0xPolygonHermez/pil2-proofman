@@ -63,7 +63,7 @@ where
             trace[i].sel2 = F::from_bool(true);
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace);
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace, None, None);
     }
 }
 

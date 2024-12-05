@@ -16,10 +16,11 @@ pub const SIMPLE_LEFT_AIR_IDS: &[usize] = &[0];
 
 pub const SIMPLE_RIGHT_AIR_IDS: &[usize] = &[1];
 
+  
 trace!(SimpleLeftTrace<F> {
  a: F, b: F, c: F, d: F, e: F, f: F, g: F, h: F,
-},  0, 0, 4 );
+},  0, 0, 4, 0 );
 
 trace!(SimpleRightTrace<F> {
  a: F, b: F, c: F, d: F, mul: F,
-},  0, 1, 4 );
+},  0, 1, 4, 0 );

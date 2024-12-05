@@ -24,26 +24,27 @@ pub const LOOKUP_2_15_AIR_IDS: &[usize] = &[4];
 
 pub const LOOKUP_3_AIR_IDS: &[usize] = &[5];
 
+  
 trace!(Lookup0Trace<F> {
  f: [F; 4], t: [F; 4], sel: [F; 2], mul: [F; 2],
-},  0, 0, 1024 );
+},  0, 0, 1024, 0 );
 
 trace!(Lookup1Trace<F> {
  f: [F; 2], t: F, sel: [F; 2], mul: F,
-},  0, 1, 1024 );
+},  0, 1, 1024, 0 );
 
 trace!(Lookup2_12Trace<F> {
  a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, mul: F,
-},  0, 2, 4096 );
+},  0, 2, 4096, 0 );
 
 trace!(Lookup2_13Trace<F> {
  a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, mul: F,
-},  0, 3, 8192 );
+},  0, 3, 8192, 0 );
 
 trace!(Lookup2_15Trace<F> {
  a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, mul: F,
-},  0, 4, 32768 );
+},  0, 4, 32768, 0 );
 
 trace!(Lookup3Trace<F> {
  c1: F, d1: F, c2: F, d2: F, mul1: F, mul2: F,
-},  0, 5, 16384 );
+},  0, 5, 16384, 0 );

@@ -161,7 +161,7 @@ impl<F: Field> ProofCtx<F> {
     pub fn set_proof_value_calculated(&self, id: usize) {
         self.proof_values.values_set.write().unwrap().insert(id, true);
     }
-
+    
     pub fn set_public_value(&self, value: u64, public_id: u64) {
         self.public_inputs.inputs.write().unwrap()[(public_id as usize) * 8..(public_id as usize + 1) * 8]
             .copy_from_slice(&value.to_le_bytes());

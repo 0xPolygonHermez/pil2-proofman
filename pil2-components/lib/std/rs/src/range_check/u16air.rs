@@ -117,7 +117,7 @@ impl<F: PrimeField> U16Air<F> {
                 let num_rows = pctx.global_info.airs[self.airgroup_id][self.air_id].num_rows;
                 let buffer_size = num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
-                let air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer);
+                let air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
                 pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx));
                 pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
             };
@@ -170,7 +170,7 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
         let buffer = create_buffer_fast(buffer_size);
 
         // Add a new air instance. Since U16Air is a table, only this air instance is needed
-        let mut air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer);
+        let mut air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
 
         *self.mul_column.lock().unwrap() = get_hint_field::<F>(
             &self.wcm.get_sctx(),
