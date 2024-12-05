@@ -96,19 +96,19 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
 }
 
 template <typename ElementType>
-void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, Goldilocks::Element *trace, gl64_t *d_trace, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
+void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, uint64_t** d_tree)
 {   
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-
     std::string section = "cm" + to_string(step);  
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)];
+    uint64_t offset = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
     
     //Goldilocks::Element *pBuff = (step == 1 && trace != nullptr) ? trace : &tace[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
     // Goldilocks::Element *pBuff = step == 1  ? trace : &tace[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
-    Goldilocks::Element *pBuffExtended = &trace[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
+    //Goldilocks::Element *pBuffExtended = &trace[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
     NTT_Goldilocks ntt(N);
-    treesGL[step - 1]->setSource(pBuffExtended);
+    //treesGL[step - 1]->setSource(pBuffExtended);
 
 #ifdef __USE_CUDA__
     // Aqui falta definir l'id de la device
@@ -117,21 +117,16 @@ void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_wi
         //uint64_t *d_dest_tree = nullptr;
         //Goldilocks::Element *dest_tree = new Goldilocks::Element[treesGL[step - 1]->getNumNodes(NExtended)];
         //ntt.LDE_MerkleTree_GPU_inplace(d_dest_tree,d_buffer,setupCtx.starkInfo.mapOffsets[make_pair(section, true)],d_buffer, setupCtx.starkInfo.mapOffsets[make_pair(section, false)], N, NExtended, nCols);
-        ntt.LDE_MerkleTree_GPU_inplace(treesGL[step - 1]->get_nodes_ptr(),treesGL[step - 1]->getNumNodes(NExtended),d_trace,setupCtx.starkInfo.mapOffsets[make_pair(section, true)],d_witness, 0, N, NExtended, nCols);
+        ntt.LDE_MerkleTree_GPU_inplace(d_tree,d_trace,offset,d_witness, 0, N, NExtended, nCols);
+        //ntt.offloadNTT(pBuffExtended, d_trace, setupCtx.starkInfo.mapOffsets[make_pair(section, true)], NExtended * nCols);
         
-        ntt.offloadNTT(pBuffExtended, d_trace, setupCtx.starkInfo.mapOffsets[make_pair(section, true)], NExtended * nCols);
-        //ntt.offloadTree(dest_tree, d_dest_tree, treesGL[step - 1]->getNumNodes(NExtended));
-        
-        
-        
-        //ntt.offloadTree(treesGL[step - 1]->get_nodes_ptr(), d_dest_tree, treesGL[step - 1]->getNumNodes(NExtended));
-        // rick: falta borrar el tree!!!!!
     }
-    else
+#endif
+    /*else
     {
         treesGL[step - 1]->merkelize();
-    }
-#else
+    }*/
+//#else
     /*if(pBuffHelper != nullptr) {
         ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols, pBuffHelper);
     } else {
@@ -139,8 +134,8 @@ void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_wi
     }
     
     treesGL[step - 1]->merkelize();*/
-#endif
-    treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
+//#endif
+    //treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
 
 }
 
@@ -159,21 +154,22 @@ void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace,
 }
 
 template <typename ElementType>
-void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_witness, Goldilocks::Element *trace,  gl64_t* d_trace, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper)
+void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_witness, gl64_t* d_trace, uint64_t** d_tree)
 {  
-
     if (step == 1)
     {
-        extendAndMerkelize_inplace(step, d_witness, trace, d_trace, proof, pBuffHelper);
+        extendAndMerkelize_inplace(step, d_witness, d_trace, d_tree);
+    } else {
+        assert(0);
     }
-    else if (step <= setupCtx.starkInfo.nStages)
+    /*else if (step <= setupCtx.starkInfo.nStages)
     {
         extendAndMerkelize(step, nullptr, trace, proof, pBuffHelper);
     }
     else
     {
         computeQ(step, trace, proof, pBuffHelper);
-    }
+    }*/
 }
 
 template <typename ElementType>

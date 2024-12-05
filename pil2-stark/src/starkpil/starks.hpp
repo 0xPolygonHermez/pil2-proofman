@@ -76,12 +76,12 @@ public:
     
     void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper, string bufferFile);
     void loadCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, string bufferFile);
-    void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
-    void extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, Goldilocks::Element *trace, gl64_t* d_trace, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+   void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, uint64_t** d_tree);
 
 
     void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
-    void commitStage_inplace(uint64_t step, gl64_t * d_witness, Goldilocks::Element *trace, gl64_t *d_trace, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void commitStage_inplace(uint64_t step, gl64_t * d_witness, gl64_t *d_trace, uint64_t** d_tree);
     void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params);
