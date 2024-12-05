@@ -21,6 +21,49 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 type GenWitnessResult<F> = Result<(Vec<MaybeUninit<F>>, Vec<MaybeUninit<F>>), Box<dyn std::error::Error>>;
 
+pub fn discover_max_sizes<F: Field>(
+    pctx: &ProofCtx<F>,
+    setups: Arc<SetupsVadcop>,
+) -> (u64, u64, u64)
+{
+    let mut max_n_bits_ext = 0;
+    let mut max_total_n = 0;
+
+    for  air_instance in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut() {
+        if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) {
+            let setup =
+                setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
+            if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
+                max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
+            }
+            let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
+            if total_n > max_total_n {
+                max_total_n = total_n;
+            }
+
+        }
+        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
+        if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
+            max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
+        }
+        let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
+            if total_n > max_total_n {
+                max_total_n = total_n;
+            }
+        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
+        if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
+            max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
+        }
+        let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
+        if total_n > max_total_n {
+            max_total_n = total_n;
+        }
+    }
+    let max_n_ext = 1 << max_n_bits_ext;
+
+    return (max_n_ext, 18, max_total_n);
+}
+
 pub fn generate_vadcop_recursive1_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setups: Arc<SetupsVadcop>,
@@ -185,6 +228,19 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
     let mut null_zkin: Option<*mut c_void> = None;
 
     let mut zkin_final = std::ptr::null_mut();
+
+    //allocate cuda memory for proofs
+    /*
+        - c function that regurns a structure pointer
+        - required buffers:
+            1) d_witness
+            2) d_trace
+            3) gpu_a[gpu_id], aux_size * sizeof(uint64_t))
+            4) gpu_forward_twiddle_factors[gpu_id], ext_size * sizeof(uint64_t)));
+            5) gpu_inverse_twiddle_factors[gpu_id], ext_size * sizeof(uint64_t)));
+            6) (&gpu_r_[gpu_id], ext_size * sizeof(uint64_t)));
+
+    */
 
     // Pre-process data before starting recursion loop
     for airgroup in 0..n_airgroups {
