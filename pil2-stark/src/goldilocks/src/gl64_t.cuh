@@ -675,6 +675,16 @@ public:
 
 };
 
+struct DeviceCommitBuffers {
+    gl64_t *d_witness;
+    gl64_t *d_trace;
+    gl64_t *d_forwardTwiddleFactors;
+    gl64_t *d_inverseTwiddleFactors;
+    gl64_t *d_r;
+    gl64_t *d_ntt;
+    uint64_t *d_tree;
+};
+
 # undef inline
 # undef asm
 #endif

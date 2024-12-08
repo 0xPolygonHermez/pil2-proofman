@@ -30,6 +30,7 @@ pub fn discover_max_sizes<F: Field>(
     let mut max_total_n = 0;
 
     for  air_instance in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut() {
+        //compressor
         if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) {
             let setup =
                 setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
@@ -42,6 +43,7 @@ pub fn discover_max_sizes<F: Field>(
             }
 
         }
+        //recursive1
         let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
         if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
             max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
@@ -50,6 +52,7 @@ pub fn discover_max_sizes<F: Field>(
             if total_n > max_total_n {
                 max_total_n = total_n;
             }
+        //recursive2
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
         if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
             max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
@@ -59,8 +62,30 @@ pub fn discover_max_sizes<F: Field>(
             max_total_n = total_n;
         }
     }
-    let max_n_ext = 1 << max_n_bits_ext;
+    //vadcop final
+    let setup = setups.setup_vadcop_final.as_ref().unwrap();
+    if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
+        max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
+    }
+    let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
+    if total_n > max_total_n {
+        max_total_n = total_n;
+    }
 
+    //recursivef
+    if setups.setup_recursivef.as_ref().is_some() {
+        let setup = setups.setup_recursivef.as_ref().unwrap();
+        if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
+            max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
+        }
+        let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
+        if total_n > max_total_n {
+            max_total_n = total_n;
+        }
+    }
+
+    //evaluate max_n_ext
+    let max_n_ext = 1 << max_n_bits_ext;
     return (max_n_ext, 18, max_total_n);
 }
 
@@ -69,6 +94,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     setups: Arc<SetupsVadcop>,
     proofs: &[*mut c_void],
     output_dir_path: PathBuf,
+    d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<Vec<*mut c_void>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
@@ -133,6 +159,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
                 global_info_file,
                 air_instance.airgroup_id as u64,
                 true,
+                d_buffers,
             );
 
             drop(buffer);
@@ -196,6 +223,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
             global_info_file,
             air_instance.airgroup_id as u64,
             true,
+            d_buffers,
         );
         proofs_out.push(p_prove);
 
@@ -214,6 +242,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
     sctx: Arc<SetupCtx>,
     proofs: &[*mut c_void],
     output_dir_path: PathBuf,
+    d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
@@ -354,6 +383,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                             global_info_file,
                             airgroup as u64,
                             true,
+                            d_buffers,
                         );
 
                         airgroup_proofs[airgroup][j] = Some(zkin);
@@ -419,6 +449,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
     setup: Arc<Setup>,
     proof: *mut c_void,
     output_dir_path: PathBuf,
+    d_buffers: *mut c_void,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -448,6 +479,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
         global_info_file,
         0,
         false,
+        d_buffers,
     );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
     drop(buffer);
@@ -461,6 +493,7 @@ pub fn generate_recursivef_proof<F: Field>(
     setup: Arc<Setup>,
     proof: *mut c_void,
     output_dir_path: PathBuf,
+    d_buffers: *mut c_void,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "RecProof";
 
@@ -490,6 +523,7 @@ pub fn generate_recursivef_proof<F: Field>(
         global_info_file,
         0,
         false,
+        d_buffers,
     );
     log::info!("{}: ··· RecursiveF Proof generated.", MY_NAME);
     drop(buffer);
@@ -549,6 +583,7 @@ pub fn generate_fflonk_snark_proof<F: Field>(
 
     Ok(())
 }
+
 fn generate_witness<F: Field>(
     setup_path: &Path,
     setup: &Setup,

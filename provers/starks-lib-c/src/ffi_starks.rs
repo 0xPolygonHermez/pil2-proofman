@@ -717,6 +717,7 @@ pub fn gen_recursive_proof_c(
     global_info_file: &str,
     airgroup_id: u64,
     vadcop: bool,
+    d_buffers: *mut c_void,
 ) -> *mut c_void {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -735,6 +736,7 @@ pub fn gen_recursive_proof_c(
             p_public_inputs,
             proof_file_ptr,
             vadcop,
+            d_buffers,
         )
     }
 }
@@ -874,6 +876,13 @@ pub fn gen_final_snark_proof_c(pWitnessFinal: *mut ::std::os::raw::c_void, zkeyF
 pub fn set_log_level_c(level: u64) {
     unsafe {
         setLogLevel(level);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn gen_device_commit_buffers_c(maxNExtended: u64, maxWitCols: u64, maxTraceSize: u64) -> *mut c_void {
+    unsafe {
+        genDeviceCommitBuffers(maxNExtended, maxWitCols, maxTraceSize)
     }
 }
 
@@ -1421,6 +1430,7 @@ pub fn gen_recursive_proof_c(
     _global_info_file: &str,
     _airgroup_id: u64,
     _vadcop: bool,
+    _d_buffers: *mut c_void,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
     std::ptr::null_mut()
@@ -1517,4 +1527,10 @@ pub fn gen_final_snark_proof_c(_pWitnessFinal: *mut ::std::os::raw::c_void, _zke
 #[cfg(feature = "no_lib_link")]
 pub fn set_log_level_c(_level: u64) {
     trace!("{}: ··· {}", "ffi     ", "set_log_level: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn gen_device_commit_buffers_c(maxNExtended: u64, maxWitCols: u64, maxTraceSize: u64) -> *mut c_void {
+    trace!("{}: ··· {}", "ffi     ", "genDeviceCommitBuffers: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
 }

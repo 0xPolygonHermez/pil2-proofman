@@ -7,15 +7,6 @@
 #include "gl64_t.cuh"
 
 
-gl64_t * genDeviceWitness(Goldilocks::Element *witness, SetupCtx& setupCtx){
-
-    gl64_t *d_witness;
-    uint64_t size = (1 << setupCtx.starkInfo.starkStruct.nBits) * (setupCtx.starkInfo.mapSectionsN["cm1"])* sizeof(Goldilocks::Element);
-    CHECKCUDAERR(cudaMalloc(&d_witness, size));
-    CHECKCUDAERR(cudaMemcpy(d_witness, witness, size, cudaMemcpyHostToDevice));
-    return d_witness;
-}
-
 void offloadCommit(uint64_t step, MerkleTreeGL** treesGL, Goldilocks::Element *trace, gl64_t *d_trace, uint64_t* d_tree, FRIProof<Goldilocks::Element> &proof, SetupCtx& setupCtx){
 
     uint64_t ncols = setupCtx.starkInfo.mapSectionsN["cm1"];
@@ -39,7 +30,7 @@ void freeDeviceWitness(gl64_t *d_witness){
 }
 
 template <typename ElementType>
-void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, gl64_t *d_witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile) { 
+void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, gl64_t *d_witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, DeviceCommitBuffers* d_buffers) { 
 
     TimerStart(STARK_PROOF);
 
@@ -112,7 +103,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     //Allocate d_tree
     uint64_t** d_tree = new uint64_t*[1];
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage_inplace(1, d_witness, d_trace, d_tree);
+    starks.commitStage_inplace(1, d_witness, d_trace, d_tree, d_buffers);
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
 
     offloadCommit(1, starks.treesGL, trace, d_trace, *d_tree, proof, setupCtx);

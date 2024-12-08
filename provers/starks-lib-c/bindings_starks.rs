@@ -517,7 +517,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmS_S_S_S_S0_b"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmS_S_S_S_S0_bS_"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
@@ -528,6 +528,7 @@ extern "C" {
         pPublicInputs: *mut ::std::os::raw::c_void,
         proof_file: *mut ::std::os::raw::c_char,
         vadcop: bool,
+        d_buffers: *mut ::std::os::raw::c_void,
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
@@ -614,4 +615,9 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z11setLogLevelm"]
     pub fn setLogLevel(level: u64);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z22genDeviceCommitBuffersmmm"]
+    pub fn genDeviceCommitBuffers(maxNExtended: u64, maxWitCols: u64, maxTraceSize: u64)
+        -> *mut ::std::os::raw::c_void;
 }

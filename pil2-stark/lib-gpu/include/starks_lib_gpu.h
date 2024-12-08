@@ -123,7 +123,7 @@
 
     // Recursive proof
     // =================================================================================
-    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* pAddress, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
+    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* pAddress, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop, void *d_buffers);
     void *get_zkin_ptr(char *zkin_file);
     void *add_recursive2_verkey(void *pZkin, char* recursive2VerKeyFilename);
     void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPublics, void* pChallenges, void *zkin1, void *zkin2, void *starkInfoRecursive2);
@@ -142,5 +142,9 @@
     // Util calls
     // =================================================================================
     void setLogLevel(uint64_t level);
+
+    // GPU calls
+    // =================================================================================
+    void* genDeviceCommitBuffers(uint64_t maxNExtended, uint64_t maxWitCols, uint64_t maxTraceSize);
 
 #endif

@@ -2,7 +2,7 @@ use libloading::{Library, Symbol};
 use log::{info, trace};
 use p3_field::Field;
 use stark::{StarkBufferAllocator, StarkProver};
-use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
+use proofman_starks_lib_c::{gen_device_commit_buffers_c, save_challenges_c, save_proof_values_c, save_publics_c};
 use core::panic;
 use std::fs;
 use std::error::Error;
@@ -18,7 +18,7 @@ use crate::{WitnessLibInitFn, WitnessLibrary};
 use crate::verify_constraints_proof;
 use crate::{
     generate_vadcop_recursive1_proof, generate_vadcop_final_proof, generate_vadcop_recursive2_proof,
-    generate_recursivef_proof, generate_fflonk_snark_proof,
+    generate_recursivef_proof, generate_fflonk_snark_proof, discover_max_sizes
 };
 
 use proofman_common::{ExecutionCtx, ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop};
@@ -198,9 +198,11 @@ impl<F: Field + 'static> ProofMan<F> {
         log::info!("{}: ··· Generating aggregated proofs", Self::MY_NAME);
 
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
+        let (max_n_ext, max_witness_cols, max_trace_size) = discover_max_sizes(&pctx, setups.clone());
+        let d_buffers = gen_device_commit_buffers_c(max_n_ext, max_witness_cols, max_trace_size);
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         let recursive1_proofs =
-            generate_vadcop_recursive1_proof(&pctx, setups.clone(), &proves_out, output_dir_path.clone(), false)?;
+            generate_vadcop_recursive1_proof(&pctx, setups.clone(), &proves_out, output_dir_path.clone(), d_buffers, false)?;
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         log::info!("{}: Compressor and recursive1 proofs generated successfully", Self::MY_NAME);
 
@@ -213,6 +215,7 @@ impl<F: Field + 'static> ProofMan<F> {
             sctx_recursive2.as_ref().unwrap().clone(),
             &recursive1_proofs,
             output_dir_path.clone(),
+            d_buffers,
             false,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
@@ -226,6 +229,7 @@ impl<F: Field + 'static> ProofMan<F> {
                 setups.setup_vadcop_final.as_ref().unwrap().clone(),
                 recursive2_proof,
                 output_dir_path.clone(),
+                d_buffers,
             )?;
             timer_stop_and_log_info!(GENERATING_VADCOP_FINAL_PROOF);
             log::info!("{}: VadcopFinal proof generated successfully", Self::MY_NAME);
@@ -239,6 +243,7 @@ impl<F: Field + 'static> ProofMan<F> {
                     setups.setup_recursivef.as_ref().unwrap().clone(),
                     final_proof,
                     output_dir_path.clone(),
+                    d_buffers,
                 )?;
                 timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
