@@ -149,4 +149,14 @@ impl Setup {
         };
         *self.const_tree.values.write().unwrap() = const_tree;
     }
+
+    pub fn get_const_ptr(&self) -> *mut u8 {
+        let guard = &self.const_pols.values.read().unwrap();
+        guard.as_ptr() as *mut u8
+    }
+
+    pub fn get_const_tree_ptr(&self) -> *mut u8 {
+        let guard = &self.const_tree.values.read().unwrap();
+        guard.as_ptr() as *mut u8
+    }
 }

@@ -6,7 +6,7 @@ use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom};
 
-use crate::{SimpleLeftTrace, SIMPLE_AIRGROUP_ID, SIMPLE_LEFT_AIR_IDS};
+use crate::SimpleLeftTrace;
 
 pub struct SimpleLeft<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -21,7 +21,10 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let simple_left = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        wcm.register_component(simple_left.clone(), Some(SIMPLE_AIRGROUP_ID), Some(SIMPLE_LEFT_AIR_IDS));
+        let airgroup_id = SimpleLeftTrace::<F>::get_airgroup_id();
+        let air_id = SimpleLeftTrace::<F>::get_air_id();
+
+        wcm.register_component(simple_left.clone(), airgroup_id, air_id);
 
         simple_left
     }

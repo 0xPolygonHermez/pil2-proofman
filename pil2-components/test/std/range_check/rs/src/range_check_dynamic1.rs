@@ -8,7 +8,7 @@ use num_bigint::BigInt;
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-use crate::{RangeCheckDynamic1Trace, RANGE_CHECK_DYNAMIC_1_AIRGROUP_ID, RANGE_CHECK_DYNAMIC_1_AIR_IDS};
+use crate::RangeCheckDynamic1Trace;
 
 pub struct RangeCheckDynamic1<F: PrimeField> {
     std_lib: Arc<Std<F>>,
@@ -23,11 +23,10 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let range_check_dynamic1 = Arc::new(Self { std_lib });
 
-        wcm.register_component(
-            range_check_dynamic1.clone(),
-            Some(RANGE_CHECK_DYNAMIC_1_AIRGROUP_ID),
-            Some(RANGE_CHECK_DYNAMIC_1_AIR_IDS),
-        );
+        let airgroup_id = RangeCheckDynamic1Trace::<F>::get_airgroup_id();
+        let air_id = RangeCheckDynamic1Trace::<F>::get_air_id();
+
+        wcm.register_component(range_check_dynamic1.clone(), airgroup_id, air_id);
 
         // Register dependency relations
         range_check_dynamic1.std_lib.register_predecessor();

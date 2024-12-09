@@ -173,11 +173,21 @@ impl PilHelpersCmd {
                     // Start with "F" and apply each length in reverse order
                     symbol.lengths.iter().rev().fold("F".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
                 };
+                let ext_type = if symbol.lengths.is_empty() {
+                    "FieldExtension<F>".to_string() // Case when lengths.len() == 0
+                } else {
+                    // Start with "F" and apply each length in reverse order
+                    symbol
+                        .lengths
+                        .iter()
+                        .rev()
+                        .fold("FieldExtension<F>".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
+                };
                 if symbol.r#type == SymbolType::ProofValue as i32 {
                     if proof_values.is_empty() {
                         proof_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
                     }
-                    proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
+                    proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
                 } else {
                     if publics.is_empty() {
                         publics.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
@@ -240,18 +250,27 @@ impl PilHelpersCmd {
                                 .rev()
                                 .fold("F".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
                         };
+                        let ext_type =
+                            if symbol.lengths.is_empty() {
+                                "FieldExtension<F>".to_string() // Case when lengths.len() == 0
+                            } else {
+                                // Start with "F" and apply each length in reverse order
+                                symbol.lengths.iter().rev().fold("FieldExtension<F>".to_string(), |acc, &length| {
+                                    format!("[{}; {}]", acc, length)
+                                })
+                            };
                         if symbol.r#type == SymbolType::WitnessCol as i32 {
                             air.columns.push(ColumnCtx { name: name.to_owned(), r#type });
                         } else if symbol.r#type == SymbolType::AirValue as i32 {
                             if air.air_values.is_empty() {
                                 air.air_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
                             }
-                            air.air_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
+                            air.air_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
                         } else if symbol.r#type == SymbolType::AirGroupValue as i32 {
                             if air.airgroup_values.is_empty() {
                                 air.airgroup_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
                             }
-                            air.airgroup_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
+                            air.airgroup_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
                         } else {
                             air.custom_columns[symbol.commit_id.unwrap() as usize]
                                 .custom_columns
@@ -284,7 +303,10 @@ impl PilHelpersCmd {
         fs::write(pil_helpers_path.join("mod.rs"), MOD_RS)?;
 
         // Write traces.rs
-        fs::write(pil_helpers_path.join("traces.rs"), tt.render("traces.rs", &context)?)?;
+        fs::write(
+            pil_helpers_path.join("traces.rs"),
+            tt.render("traces.rs", &context)?.replace("&lt;", "<").replace("&gt;", ">"),
+        )?;
 
         Ok(())
     }

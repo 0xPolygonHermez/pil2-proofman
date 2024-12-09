@@ -682,23 +682,17 @@ pub fn mul_hint_fields<F: Field + Field>(
 ) -> u64 {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
-    let public_inputs_ptr = (*proof_ctx.public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
-    let challenges_ptr = (*proof_ctx.challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
-
-    let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-    let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
-
     let steps_params = StepsParams {
         witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        public_inputs: public_inputs_ptr,
-        challenges: challenges_ptr,
+        public_inputs: proof_ctx.get_publics_ptr() as *mut c_void,
+        challenges: proof_ctx.get_challenges_ptr() as *mut c_void,
         airgroup_values: air_instance.get_airgroup_values_ptr() as *mut c_void,
         airvalues: air_instance.get_airvalues_ptr() as *mut c_void,
         evals: air_instance.get_evals_ptr() as *mut c_void,
         xdivxsub: std::ptr::null_mut(),
-        p_const_pols: const_pols_ptr,
-        p_const_tree: const_tree_ptr,
+        p_const_pols: setup.get_const_ptr() as *mut c_void,
+        p_const_tree: setup.get_const_tree_ptr() as *mut c_void,
         custom_commits: air_instance.get_custom_commits_ptr(),
         custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
@@ -728,23 +722,17 @@ pub fn acc_hint_field<F: Field>(
 ) -> (u64, u64) {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
-    let public_inputs_ptr = (*proof_ctx.public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
-    let challenges_ptr = (*proof_ctx.challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
-
-    let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-    let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
-
     let steps_params = StepsParams {
         witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        public_inputs: public_inputs_ptr,
-        challenges: challenges_ptr,
+        public_inputs: proof_ctx.get_publics_ptr() as *mut c_void,
+        challenges: proof_ctx.get_challenges_ptr() as *mut c_void,
         airgroup_values: air_instance.get_airgroup_values_ptr() as *mut c_void,
         airvalues: air_instance.get_airvalues_ptr() as *mut c_void,
         evals: air_instance.get_evals_ptr() as *mut c_void,
         xdivxsub: std::ptr::null_mut(),
-        p_const_pols: const_pols_ptr,
-        p_const_tree: const_tree_ptr,
+        p_const_pols: setup.get_const_ptr() as *mut c_void,
+        p_const_tree: setup.get_const_tree_ptr() as *mut c_void,
         custom_commits: air_instance.get_custom_commits_ptr(),
         custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
@@ -782,23 +770,17 @@ pub fn acc_mul_hint_fields<F: Field>(
 ) -> (u64, u64) {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
-    let public_inputs_ptr = (*proof_ctx.public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
-    let challenges_ptr = (*proof_ctx.challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
-
-    let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-    let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
-
     let steps_params = StepsParams {
         witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        public_inputs: public_inputs_ptr,
-        challenges: challenges_ptr,
+        public_inputs: proof_ctx.get_publics_ptr() as *mut c_void,
+        challenges: proof_ctx.get_challenges_ptr() as *mut c_void,
         airgroup_values: air_instance.get_airgroup_values_ptr() as *mut c_void,
         airvalues: air_instance.get_airvalues_ptr() as *mut c_void,
         evals: air_instance.get_evals_ptr() as *mut c_void,
         xdivxsub: std::ptr::null_mut(),
-        p_const_pols: const_pols_ptr,
-        p_const_tree: const_tree_ptr,
+        p_const_pols: setup.get_const_ptr() as *mut c_void,
+        p_const_tree: setup.get_const_tree_ptr() as *mut c_void,
         custom_commits: air_instance.get_custom_commits_ptr(),
         custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
@@ -833,23 +815,17 @@ pub fn get_hint_field<F: Field>(
 ) -> HintFieldValue<F> {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
-    let public_inputs_ptr = (*proof_ctx.public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
-    let challenges_ptr = (*proof_ctx.challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
-
-    let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-    let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
-
     let steps_params = StepsParams {
         witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        public_inputs: public_inputs_ptr,
-        challenges: challenges_ptr,
+        public_inputs: proof_ctx.get_publics_ptr() as *mut c_void,
+        challenges: proof_ctx.get_challenges_ptr() as *mut c_void,
         airgroup_values: air_instance.get_airgroup_values_ptr() as *mut c_void,
         airvalues: air_instance.get_airvalues_ptr() as *mut c_void,
         evals: air_instance.get_evals_ptr() as *mut c_void,
         xdivxsub: std::ptr::null_mut(),
-        p_const_pols: const_pols_ptr,
-        p_const_tree: const_tree_ptr,
+        p_const_pols: setup.get_const_ptr() as *mut c_void,
+        p_const_tree: setup.get_const_tree_ptr() as *mut c_void,
         custom_commits: air_instance.get_custom_commits_ptr(),
         custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
@@ -887,23 +863,17 @@ pub fn get_hint_field_a<F: Field>(
 ) -> HintFieldValuesVec<F> {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
-    let public_inputs_ptr = (*proof_ctx.public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
-    let challenges_ptr = (*proof_ctx.challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
-
-    let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-    let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
-
     let steps_params = StepsParams {
         witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        public_inputs: public_inputs_ptr,
-        challenges: challenges_ptr,
+        public_inputs: proof_ctx.get_publics_ptr() as *mut c_void,
+        challenges: proof_ctx.get_challenges_ptr() as *mut c_void,
         airgroup_values: air_instance.get_airgroup_values_ptr() as *mut c_void,
         airvalues: air_instance.get_airvalues_ptr() as *mut c_void,
         evals: air_instance.get_evals_ptr() as *mut c_void,
         xdivxsub: std::ptr::null_mut(),
-        p_const_pols: const_pols_ptr,
-        p_const_tree: const_tree_ptr,
+        p_const_pols: setup.get_const_ptr() as *mut c_void,
+        p_const_tree: setup.get_const_tree_ptr() as *mut c_void,
         custom_commits: air_instance.get_custom_commits_ptr(),
         custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
@@ -947,23 +917,17 @@ pub fn get_hint_field_m<F: Field>(
 ) -> HintFieldValues<F> {
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
-    let public_inputs_ptr = (*proof_ctx.public_inputs.inputs.read().unwrap()).as_ptr() as *mut c_void;
-    let challenges_ptr = (*proof_ctx.challenges.challenges.read().unwrap()).as_ptr() as *mut c_void;
-
-    let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-    let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
-
     let steps_params = StepsParams {
         witness: air_instance.get_witness_ptr() as *mut c_void,
         trace: air_instance.get_trace_ptr() as *mut c_void,
-        public_inputs: public_inputs_ptr,
-        challenges: challenges_ptr,
+        public_inputs: proof_ctx.get_publics_ptr() as *mut c_void,
+        challenges: proof_ctx.get_challenges_ptr() as *mut c_void,
         airgroup_values: air_instance.get_airgroup_values_ptr() as *mut c_void,
         airvalues: air_instance.get_airvalues_ptr() as *mut c_void,
         evals: air_instance.get_evals_ptr() as *mut c_void,
         xdivxsub: std::ptr::null_mut(),
-        p_const_pols: const_pols_ptr,
-        p_const_tree: const_tree_ptr,
+        p_const_pols: setup.get_const_ptr() as *mut c_void,
+        p_const_tree: setup.get_const_tree_ptr() as *mut c_void,
         custom_commits: air_instance.get_custom_commits_ptr(),
         custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
     };
@@ -1163,9 +1127,7 @@ pub fn set_hint_field<F: Field>(
         _ => panic!("Only column and column extended are accepted"),
     };
 
-    let id = set_hint_field_c((&setup.p_setup).into(), (&steps_params).into(), values_ptr, hint_id, hint_field_name);
-
-    air_instance.set_commit_calculated(id as usize);
+    set_hint_field_c((&setup.p_setup).into(), (&steps_params).into(), values_ptr, hint_id, hint_field_name);
 }
 
 pub fn set_hint_field_val<F: Field>(
@@ -1207,9 +1169,7 @@ pub fn set_hint_field_val<F: Field>(
 
     let values_ptr = value_array.as_ptr() as *mut c_void;
 
-    let id = set_hint_field_c((&setup.p_setup).into(), (&steps_params).into(), values_ptr, hint_id, hint_field_name);
-
-    air_instance.set_airgroupvalue_calculated(id as usize);
+    set_hint_field_c((&setup.p_setup).into(), (&steps_params).into(), values_ptr, hint_id, hint_field_name);
 }
 
 pub fn print_row<F: Field>(setup_ctx: &SetupCtx, air_instance: &AirInstance<F>, stage: u64, row: u64) {

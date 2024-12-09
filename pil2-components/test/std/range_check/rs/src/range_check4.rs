@@ -9,7 +9,7 @@ use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-use crate::{RangeCheck4Trace, RANGE_CHECK_4_AIRGROUP_ID, RANGE_CHECK_4_AIR_IDS};
+use crate::RangeCheck4Trace;
 
 pub struct RangeCheck4<F: PrimeField> {
     std_lib: Arc<Std<F>>,
@@ -24,7 +24,10 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let range_check4 = Arc::new(Self { std_lib });
 
-        wcm.register_component(range_check4.clone(), Some(RANGE_CHECK_4_AIRGROUP_ID), Some(RANGE_CHECK_4_AIR_IDS));
+        let airgroup_id = RangeCheck4Trace::<F>::get_airgroup_id();
+        let air_id = RangeCheck4Trace::<F>::get_air_id();
+
+        wcm.register_component(range_check4.clone(), airgroup_id, air_id);
 
         // Register dependency relations
         range_check4.std_lib.register_predecessor();

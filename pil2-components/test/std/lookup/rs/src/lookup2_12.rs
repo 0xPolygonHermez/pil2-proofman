@@ -6,7 +6,7 @@ use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-use crate::{Lookup2_12Trace, LOOKUP_2_12_AIR_IDS, LOOKUP_AIRGROUP_ID};
+use crate::Lookup2_12Trace;
 
 pub struct Lookup2_12<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -21,7 +21,10 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let lookup2_12 = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        wcm.register_component(lookup2_12.clone(), Some(LOOKUP_AIRGROUP_ID), Some(LOOKUP_2_12_AIR_IDS));
+        let airgroup_id = Lookup2_12Trace::<F>::get_airgroup_id();
+        let air_id = Lookup2_12Trace::<F>::get_air_id();
+
+        wcm.register_component(lookup2_12.clone(), airgroup_id, air_id);
 
         lookup2_12
     }

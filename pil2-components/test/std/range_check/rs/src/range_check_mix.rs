@@ -9,7 +9,7 @@ use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-use crate::{RangeCheckMixTrace, RANGE_CHECK_MIX_AIRGROUP_ID, RANGE_CHECK_MIX_AIR_IDS};
+use crate::RangeCheckMixTrace;
 
 pub struct RangeCheckMix<F: PrimeField> {
     std_lib: Arc<Std<F>>,
@@ -24,11 +24,10 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let range_check_mix = Arc::new(Self { std_lib });
 
-        wcm.register_component(
-            range_check_mix.clone(),
-            Some(RANGE_CHECK_MIX_AIRGROUP_ID),
-            Some(RANGE_CHECK_MIX_AIR_IDS),
-        );
+        let airgroup_id = RangeCheckMixTrace::<F>::get_airgroup_id();
+        let air_id = RangeCheckMixTrace::<F>::get_air_id();
+
+        wcm.register_component(range_check_mix.clone(), airgroup_id, air_id);
 
         // Register dependency relations
         range_check_mix.std_lib.register_predecessor();

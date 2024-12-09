@@ -1,7 +1,6 @@
 use std::{os::raw::c_void, sync::Arc};
 use std::path::PathBuf;
 use p3_field::Field;
-use proofman_starks_lib_c::get_custom_commit_map_ids_c;
 use proofman_util::create_buffer_fast;
 
 use crate::{trace::Trace, trace::Values, ProofCtx, ExecutionCtx, SetupCtx, Setup, StarkInfo};
@@ -58,12 +57,6 @@ impl<F> CustomCommitsInfo<F> {
     }
 }
 
-#[derive(Default, Clone)]
-pub struct ValuesInfo<F> {
-    pub buffer: Vec<F>,
-    pub calculated: Vec<bool>,
-}
-
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 #[repr(C)]
@@ -75,23 +68,13 @@ pub struct AirInstance<F> {
     pub air_instance_id: Option<usize>,
     pub idx: Option<usize>,
     pub global_idx: Option<usize>,
-    
     pub witness: Vec<F>,
     pub trace: Option<Vec<F>>,
-    pub commits_calculated: Vec<bool>,
-
     pub custom_commits: Vec<CustomCommitsInfo<F>>,
     pub custom_commits_extended: Vec<CustomCommitsInfo<F>>,
-    pub custom_commits_calculated: Vec<Vec<bool>>,
-
     pub airgroup_values: Vec<F>,
-    pub airgroupvalue_calculated: Vec<bool>,
-
     pub airvalues: Vec<F>,
-    pub airvalue_calculated: Vec<bool>,
-
     pub evals: Vec<F>,
-    
     pub stark_info: StarkInfo,
 }
 
@@ -103,11 +86,17 @@ impl<F: Field> AirInstance<F> {
         air_id: usize,
         witness: Vec<F>,
         witness_custom: Option<Vec<Vec<F>>>,
-        air_values: Option<Vec<ValuesInfo<F>>>,
+        air_values: Option<Vec<F>>,
     ) -> Self {
         let ps = setup_ctx.get_setup(airgroup_id, air_id);
 
-        let (custom_commits, custom_commits_extended, custom_commits_calculated) = Self::init_custom_commits(ps, witness_custom);
+        let (custom_commits, custom_commits_extended) = Self::init_custom_commits(ps, witness_custom);
+
+        let airvalues = if let Some(air_values) = air_values {
+            air_values
+        } else {
+            vec![F::zero(); ps.stark_info.airvalues_map.as_ref().unwrap().len() * 3]
+        };
 
         AirInstance {
             airgroup_id,
@@ -118,14 +107,10 @@ impl<F: Field> AirInstance<F> {
             global_idx: None,
             witness,
             trace: None,
-            commits_calculated: vec![false; ps.stark_info.cm_pols_map.as_ref().unwrap().len()],
             custom_commits,
             custom_commits_extended,
-            custom_commits_calculated,
             airgroup_values: vec![F::zero(); ps.stark_info.airgroupvalues_map.as_ref().unwrap().len() * 3],
-            airgroupvalue_calculated: vec![false; ps.stark_info.airgroupvalues_map.as_ref().unwrap().len()],
-            airvalues: vec![F::zero(); ps.stark_info.airvalues_map.as_ref().unwrap().len() * 3],
-            airvalue_calculated: vec![false; ps.stark_info.airgroupvalues_map.as_ref().unwrap().len()],
+            airvalues,
             evals: vec![F::zero(); ps.stark_info.ev_map.len() * 3],
             stark_info: ps.stark_info.clone(),
         }
@@ -153,12 +138,18 @@ impl<F: Field> AirInstance<F> {
         } else {
             None
         };
-        
-        // let air_values_info = if let Some(air_values) = air_vals {
 
-        // };
+        let air_values_info = if let Some(air_values) = air_values { Some(air_values.get_buffer()) } else { None };
 
-        let air_instance = AirInstance::new(setup_ctx, air_segment_id, airgroup_id, air_id, witness, custom_witnesses, None);
+        let air_instance = AirInstance::new(
+            setup_ctx,
+            air_segment_id,
+            airgroup_id,
+            air_id,
+            witness,
+            custom_witnesses,
+            air_values_info,
+        );
 
         let (is_mine, gid) =
             execution_ctx.dctx.write().unwrap().add_instance(air_instance.airgroup_id, air_instance.air_id, 1);
@@ -168,30 +159,25 @@ impl<F: Field> AirInstance<F> {
         }
     }
 
-    pub fn init_custom_commits(setup: &Setup, witness_custom: Option<Vec<Vec<F>>>) -> (Vec<CustomCommitsInfo<F>>, Vec<CustomCommitsInfo<F>>, Vec<Vec<bool>>) {
+    pub fn init_custom_commits(
+        setup: &Setup,
+        witness_custom: Option<Vec<Vec<F>>>,
+    ) -> (Vec<CustomCommitsInfo<F>>, Vec<CustomCommitsInfo<F>>) {
         let n_custom_commits = setup.stark_info.custom_commits.len();
-        let mut custom_commits_calculated = Vec::new();
 
         let mut custom_commits = Vec::new();
         let mut custom_commits_extended = Vec::new();
 
         for commit_id in 0..n_custom_commits {
-            let n_cols =
-                *setup.stark_info.map_sections_n.get(&(setup.stark_info.custom_commits[commit_id].name.clone() + "0")).unwrap()
-                    as usize;
-            custom_commits_calculated.push(vec![false; n_cols]);
+            let n_cols = *setup
+                .stark_info
+                .map_sections_n
+                .get(&(setup.stark_info.custom_commits[commit_id].name.clone() + "0"))
+                .unwrap() as usize;
             if let Some(witness_custom_value) = witness_custom.as_ref() {
-                custom_commits.push(CustomCommitsInfo::new(
-                    witness_custom_value[commit_id].clone(),
-                    PathBuf::new(),
-                )); 
+                custom_commits.push(CustomCommitsInfo::new(witness_custom_value[commit_id].clone(), PathBuf::new()));
             } else {
                 println!("No custom trace data found.");
-            }
-
-            let ids = get_custom_commit_map_ids_c(setup.p_setup.p_stark_info, commit_id as u64, 0);
-            for idx in ids {
-                custom_commits_calculated[commit_id][idx as usize] = true;
             }
 
             custom_commits_extended.push(CustomCommitsInfo::new(
@@ -200,7 +186,7 @@ impl<F: Field> AirInstance<F> {
             ));
         }
 
-        (custom_commits, custom_commits_extended, custom_commits_calculated)
+        (custom_commits, custom_commits_extended)
     }
 
     pub fn get_witness_ptr(&self) -> *mut u8 {
@@ -246,42 +232,12 @@ impl<F: Field> AirInstance<F> {
         ptrs
     }
 
-    pub fn is_commit_initialized(&self, index: usize) -> bool {
-        self.commits_calculated[index]
-    }
-
-    pub fn is_airgroup_value_initialized(&self, index: usize) -> bool {
-        self.airgroupvalue_calculated[index]
-    }
-
-    pub fn is_airvalue_initialized(&self, index: usize) -> bool {
-        self.airvalue_calculated[index]
-    }
-
-    pub fn is_custom_commit_initialized(&self, commit_id: usize, index: usize) -> bool {
-        self.custom_commits_calculated[commit_id][index]
-    }
-
-    pub fn set_custom_commit_cached_file(&mut self, setup_ctx: &SetupCtx, commit_id: u64, cached_file: PathBuf) {
-        let ps = setup_ctx.get_setup(self.airgroup_id, self.air_id);
-
+    pub fn set_custom_commit_cached_file(&mut self, commit_id: u64, cached_file: PathBuf) {
         self.custom_commits[commit_id as usize].cached_file = cached_file;
-
-        let ids = get_custom_commit_map_ids_c(ps.p_setup.p_stark_info, commit_id, 0);
-        for idx in ids {
-            self.set_custom_commit_calculated(commit_id as usize, idx as usize);
-        }
     }
 
-    pub fn set_custom_commit_id_buffer(&mut self, setup_ctx: &SetupCtx, buffer: Vec<F>, commit_id: u64) {
+    pub fn set_custom_commit_id_buffer(&mut self, buffer: Vec<F>, commit_id: u64) {
         self.custom_commits[commit_id as usize].buffer = buffer;
-
-        let ps = setup_ctx.get_setup(self.airgroup_id, self.air_id);
-
-        let ids = get_custom_commit_map_ids_c(ps.p_setup.p_stark_info, commit_id, 0);
-        for idx in ids {
-            self.set_custom_commit_calculated(commit_id as usize, idx as usize);
-        }
     }
 
     pub fn set_airvalue(&mut self, name: &str, lengths: Option<Vec<u64>>, value: F) {
@@ -305,7 +261,6 @@ impl<F: Field> AirInstance<F> {
             .unwrap_or_else(|| panic!("Name {} with specified lengths {:?} not found in airvalues", name, lengths));
 
         self.airvalues[airvalue_id * 3] = value;
-        self.set_airvalue_calculated(airvalue_id);
     }
 
     pub fn set_airvalue_ext(&mut self, name: &str, lengths: Option<Vec<u64>>, value: Vec<F>) {
@@ -335,8 +290,6 @@ impl<F: Field> AirInstance<F> {
         self.airvalues[airvalue_id * 3] = value_iter.next().unwrap();
         self.airvalues[airvalue_id * 3 + 1] = value_iter.next().unwrap();
         self.airvalues[airvalue_id * 3 + 2] = value_iter.next().unwrap();
-
-        self.set_airvalue_calculated(airvalue_id);
     }
 
     pub fn set_airgroupvalue(&mut self, name: &str, lengths: Option<Vec<u64>>, value: F) {
@@ -362,7 +315,6 @@ impl<F: Field> AirInstance<F> {
             });
 
         self.airgroup_values[airgroupvalue_id * 3] = value;
-        self.set_airgroupvalue_calculated(airgroupvalue_id);
     }
 
     pub fn set_airgroupvalue_ext(&mut self, name: &str, lengths: Option<Vec<u64>>, value: Vec<F>) {
@@ -394,28 +346,10 @@ impl<F: Field> AirInstance<F> {
         self.airgroup_values[airgroupvalue_id * 3] = value_iter.next().unwrap();
         self.airgroup_values[airgroupvalue_id * 3 + 1] = value_iter.next().unwrap();
         self.airgroup_values[airgroupvalue_id * 3 + 2] = value_iter.next().unwrap();
-
-        self.set_airgroupvalue_calculated(airgroupvalue_id);
-    }
-
-    pub fn set_commit_calculated(&mut self, id: usize) {
-        self.commits_calculated[id] = true;
-    }
-
-    pub fn set_custom_commit_calculated(&mut self, commit_id: usize, id: usize) {
-        self.custom_commits_calculated[commit_id][id] = true;
     }
 
     pub fn set_air_instance_id(&mut self, air_instance_id: usize, idx: usize) {
         self.air_instance_id = Some(air_instance_id);
         self.idx = Some(idx);
-    }
-
-    pub fn set_airgroupvalue_calculated(&mut self, id: usize) {
-        self.airgroupvalue_calculated[id] = true;
-    }
-
-    pub fn set_airvalue_calculated(&mut self, id: usize) {
-        self.airvalue_calculated[id] = true;
     }
 }

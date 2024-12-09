@@ -1,5 +1,4 @@
 use p3_field::Field;
-use std::collections::HashMap;
 
 pub trait Trace<F: Field>: Send {
     fn num_rows(&self) -> usize;
@@ -9,9 +8,7 @@ pub trait Trace<F: Field>: Send {
 }
 
 pub trait Values<F: Field>: Send {
-    fn num_values(&self) -> usize;
     fn get_buffer(&mut self) -> Vec<F>;
-    fn get_values_calculated(&mut self) -> HashMap<usize, bool>;
 }
 
 pub use proofman_macros::trace;

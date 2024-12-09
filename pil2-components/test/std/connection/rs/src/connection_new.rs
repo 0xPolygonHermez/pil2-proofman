@@ -6,7 +6,7 @@ use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-use crate::{ConnectionNewTrace, CONNECTION_AIRGROUP_ID, CONNECTION_NEW_AIR_IDS};
+use crate::ConnectionNewTrace;
 
 pub struct ConnectionNew<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -21,7 +21,10 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let connection_new = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        wcm.register_component(connection_new.clone(), Some(CONNECTION_AIRGROUP_ID), Some(CONNECTION_NEW_AIR_IDS));
+        let airgroup_id = ConnectionNewTrace::<F>::get_airgroup_id();
+        let air_id = ConnectionNewTrace::<F>::get_air_id();
+
+        wcm.register_component(connection_new.clone(), airgroup_id, air_id);
 
         connection_new
     }

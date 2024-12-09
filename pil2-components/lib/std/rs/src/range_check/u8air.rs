@@ -65,7 +65,7 @@ impl<F: PrimeField> U8Air<F> {
             mul_column: Mutex::new(HintFieldValue::Field(F::zero())),
         });
 
-        wcm.register_component(u8air.clone(), Some(airgroup_id), Some(&[air_id]));
+        wcm.register_component(u8air.clone(), airgroup_id, air_id);
 
         u8air
     }
@@ -115,7 +115,8 @@ impl<F: PrimeField> U8Air<F> {
                 let num_rows = pctx.global_info.airs[self.airgroup_id][self.air_id].num_rows;
                 let buffer_size = num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
-                let air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
+                let air_instance =
+                    AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
                 pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx));
                 pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
             };

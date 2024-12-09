@@ -4,6 +4,8 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+type FieldExtension<F> = [F; 3];
+
 pub const PILOUT_HASH: &[u8] = b"Build-hash";
 
 //AIRGROUP CONSTANTS
@@ -24,15 +26,24 @@ use serde::Deserialize;
 use serde::Serialize;
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct BuildPublics {
-     #[serde(default)] pub module: u64, #[serde(default)] pub in1: u64, #[serde(default)] pub in2: u64, #[serde(default)] pub out: u64, #[serde(default)] pub rom_root: [u64; 4],
+    #[serde(default)] 
+    pub module: u64,
+    #[serde(default)] 
+    pub in1: u64,
+    #[serde(default)] 
+    pub in2: u64,
+    #[serde(default)] 
+    pub out: u64,
+    #[serde(default)] 
+    pub rom_root: [u64; 4],
+    
 }
-
-values!(BuildPublicValues<F, 1> {
+values!(BuildPublicValues<F> {
  module: F, in1: F, in2: F, out: F, rom_root: [F; 4],
 });
  
-values!(BuildProofValues<F, 3> {
- value1: F, value2: F,
+values!(BuildProofValues<F> {
+ value1: FieldExtension<F>, value2: FieldExtension<F>,
 });
  
 trace!(FibonacciSquareTrace<F> {
@@ -50,3 +61,7 @@ trace!(U8AirTrace<F> {
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
 }, 0, 0, 1024, 0 );
+
+values!(FibonacciSquareAirValues<F> {
+ fibo1: [FieldExtension<F>; 2], fibo3: FieldExtension<F>,
+});

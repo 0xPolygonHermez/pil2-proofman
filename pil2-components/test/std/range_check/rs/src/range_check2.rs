@@ -8,7 +8,7 @@ use num_bigint::BigInt;
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-use crate::{RangeCheck2Trace, RANGE_CHECK_2_AIRGROUP_ID, RANGE_CHECK_2_AIR_IDS};
+use crate::RangeCheck2Trace;
 
 pub struct RangeCheck2<F: PrimeField> {
     std_lib: Arc<Std<F>>,
@@ -21,14 +21,17 @@ where
     const MY_NAME: &'static str = "RngChck2";
 
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
-        let range_check1 = Arc::new(Self { std_lib });
+        let range_check2 = Arc::new(Self { std_lib });
 
-        wcm.register_component(range_check1.clone(), Some(RANGE_CHECK_2_AIRGROUP_ID), Some(RANGE_CHECK_2_AIR_IDS));
+        let airgroup_id = RangeCheck2Trace::<F>::get_airgroup_id();
+        let air_id = RangeCheck2Trace::<F>::get_air_id();
+
+        wcm.register_component(range_check2.clone(), airgroup_id, air_id);
 
         // Register dependency relations
-        range_check1.std_lib.register_predecessor();
+        range_check2.std_lib.register_predecessor();
 
-        range_check1
+        range_check2
     }
 
     pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {

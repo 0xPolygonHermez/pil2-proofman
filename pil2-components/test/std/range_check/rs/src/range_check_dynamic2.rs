@@ -9,7 +9,7 @@ use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-use crate::{RangeCheckDynamic2Trace, RANGE_CHECK_DYNAMIC_2_AIRGROUP_ID, RANGE_CHECK_DYNAMIC_2_AIR_IDS};
+use crate::RangeCheckDynamic2Trace;
 
 pub struct RangeCheckDynamic2<F: PrimeField> {
     std_lib: Arc<Std<F>>,
@@ -24,11 +24,10 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let range_check_dynamic2 = Arc::new(Self { std_lib });
 
-        wcm.register_component(
-            range_check_dynamic2.clone(),
-            Some(RANGE_CHECK_DYNAMIC_2_AIRGROUP_ID),
-            Some(RANGE_CHECK_DYNAMIC_2_AIR_IDS),
-        );
+        let airgroup_id = RangeCheckDynamic2Trace::<F>::get_airgroup_id();
+        let air_id = RangeCheckDynamic2Trace::<F>::get_air_id();
+
+        wcm.register_component(range_check_dynamic2.clone(), airgroup_id, air_id);
 
         // Register dependency relations
         range_check_dynamic2.std_lib.register_predecessor();

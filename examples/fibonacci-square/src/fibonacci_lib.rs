@@ -3,15 +3,15 @@ use std::sync::Arc;
 use proofman_common::{initialize_logger, load_from_json, ExecutionCtx, ProofCtx, SetupCtx, VerboseMode};
 use proofman::{WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 
 use std::error::Error;
 use std::path::PathBuf;
 
-use crate::{BuildPublics, FibonacciSquare, Module};
+use crate::{BuildPublics, BuildPublicValues, FibonacciSquare, Module};
 
-pub struct FibonacciWitness<F: PrimeField> {
+pub struct FibonacciWitness<F: PrimeField64> {
     public_inputs_path: Option<PathBuf>,
     wcm: Option<Arc<WitnessManager<F>>>,
     fibonacci: Option<Arc<FibonacciSquare<F>>>,
@@ -19,13 +19,13 @@ pub struct FibonacciWitness<F: PrimeField> {
     std_lib: Option<Arc<Std<F>>>,
 }
 
-impl<F: PrimeField> FibonacciWitness<F> {
+impl<F: PrimeField64> FibonacciWitness<F> {
     pub fn new(public_inputs_path: Option<PathBuf>) -> Self {
         Self { public_inputs_path, wcm: None, fibonacci: None, module: None, std_lib: None }
     }
 }
 
-impl<F: PrimeField> WitnessLibrary<F> for FibonacciWitness<F> {
+impl<F: PrimeField64> WitnessLibrary<F> for FibonacciWitness<F> {
     fn start_proof(&mut self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), ectx.clone(), sctx.clone()));
 
@@ -40,9 +40,11 @@ impl<F: PrimeField> WitnessLibrary<F> for FibonacciWitness<F> {
 
         let public_inputs: BuildPublics = load_from_json(&self.public_inputs_path);
 
-        pctx.set_public_value_by_name(public_inputs.module, "module", None);
-        pctx.set_public_value_by_name(public_inputs.in1, "in1", None);
-        pctx.set_public_value_by_name(public_inputs.in2, "in2", None);
+        let mut publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
+
+        publics.module = F::from_canonical_u64(public_inputs.module);
+        publics.in1 = F::from_canonical_u64(public_inputs.in1);
+        publics.in2 = F::from_canonical_u64(public_inputs.in2);
 
         wcm.start_proof(pctx, ectx, sctx);
     }

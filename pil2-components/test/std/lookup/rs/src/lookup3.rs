@@ -5,7 +5,7 @@ use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
 
-use crate::{Lookup3Trace, LOOKUP_3_AIR_IDS, LOOKUP_AIRGROUP_ID};
+use crate::Lookup3Trace;
 
 pub struct Lookup3<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -17,7 +17,10 @@ impl<F: PrimeField + Copy> Lookup3<F> {
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let lookup3 = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        wcm.register_component(lookup3.clone(), Some(LOOKUP_AIRGROUP_ID), Some(LOOKUP_3_AIR_IDS));
+        let airgroup_id = Lookup3Trace::<F>::get_airgroup_id();
+        let air_id = Lookup3Trace::<F>::get_air_id();
+
+        wcm.register_component(lookup3.clone(), airgroup_id, air_id);
 
         lookup3
     }

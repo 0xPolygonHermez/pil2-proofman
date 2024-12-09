@@ -5,7 +5,7 @@ use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
 
-use crate::{Permutation2_6Trace, PERMUTATION_2_6_AIR_IDS, PERMUTATION_AIRGROUP_ID};
+use crate::Permutation2_6Trace;
 
 pub struct Permutation2<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -16,8 +16,11 @@ impl<F: PrimeField + Copy> Permutation2<F> {
 
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let permutation2 = Arc::new(Self { _phantom: std::marker::PhantomData });
+        
+        let airgroup_id = Permutation2_6Trace::<F>::get_airgroup_id();
+        let air_id = Permutation2_6Trace::<F>::get_air_id();
 
-        wcm.register_component(permutation2.clone(), Some(PERMUTATION_AIRGROUP_ID), Some(PERMUTATION_2_6_AIR_IDS));
+        wcm.register_component(permutation2.clone(), airgroup_id, air_id);
 
         permutation2
     }

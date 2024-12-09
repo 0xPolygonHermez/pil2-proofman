@@ -26,19 +26,16 @@ impl<F> WitnessManager<F> {
         WitnessManager { components: RwLock::new(Vec::new()), airs: RwLock::new(HashMap::new()), pctx, ectx, sctx }
     }
 
-    pub fn register_component(
-        &self,
-        component: Arc<dyn WitnessComponent<F>>,
-        airgroup_id: Option<AirGroupId>,
-        air_ids: Option<&[AirId]>,
-    ) {
+    pub fn register_component(&self, component: Arc<dyn WitnessComponent<F>>, airgroup_id: AirGroupId, air_id: AirId) {
         self.components.write().unwrap().push(component);
 
         let idx = self.components.write().unwrap().len() - 1;
 
-        if let Some(air_ids) = air_ids {
-            self.register_airs(airgroup_id.unwrap(), air_ids, idx);
-        }
+        self.register_air(airgroup_id, air_id, idx);
+    }
+
+    pub fn register_std(&self, component: Arc<dyn WitnessComponent<F>>) {
+        self.components.write().unwrap().push(component);
     }
 
     pub fn register_airs(&self, airgroup_id: AirGroupId, air_ids: &[AirId], component_idx: usize) {

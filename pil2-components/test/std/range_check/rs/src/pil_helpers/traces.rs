@@ -56,7 +56,6 @@ pub const U_8_AIR_AIR_IDS: &[usize] = &[0];
 
 pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[0];
 
-  
 trace!(RangeCheck3Trace<F> {
  c1: F, c2: F,
 },  0, 0, 32, 0 );

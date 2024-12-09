@@ -6,7 +6,7 @@ use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng};
 
-use crate::{Permutation1_6Trace, PERMUTATION_1_6_AIR_IDS, PERMUTATION_AIRGROUP_ID};
+use crate::Permutation1_6Trace;
 
 pub struct Permutation1_6<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -21,7 +21,10 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let permutation1_6 = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        wcm.register_component(permutation1_6.clone(), Some(PERMUTATION_AIRGROUP_ID), Some(PERMUTATION_1_6_AIR_IDS));
+        let airgroup_id = Permutation1_6Trace::<F>::get_airgroup_id();
+        let air_id = Permutation1_6Trace::<F>::get_air_id();
+
+        wcm.register_component(permutation1_6.clone(), airgroup_id, air_id);
 
         permutation1_6
     }

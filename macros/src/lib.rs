@@ -50,15 +50,6 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
         impl<#generics: Copy> #row_struct_name<#generics> {
             pub const ROW_SIZE: usize = #row_size;
-
-            pub fn as_slice(&self) -> &[#generics] {
-                unsafe {
-                    std::slice::from_raw_parts(
-                        self as *const #row_struct_name<#generics> as *const #generics,
-                        #row_size,
-                    )
-                }
-            }
         }
     };
 
@@ -85,12 +76,12 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows & (num_rows - 1) == 0);
 
                 let mut buff_uninit: Vec<std::mem::MaybeUninit<#generics>> = Vec::with_capacity(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
-                
+
                 unsafe {
                     buff_uninit.set_len(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
                 }
                 let buffer: Vec<#generics> = unsafe { std::mem::transmute(buff_uninit) };
-                
+
                 let slice_trace = unsafe {
                     std::slice::from_raw_parts_mut(
                         buffer.as_ptr() as *mut #row_struct_name<#generics>,
@@ -120,7 +111,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                         num_rows,
                     )
                 };
-                
+
                 #trace_struct_name {
                     buffer,
                     slice_trace,
@@ -133,6 +124,14 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
             pub fn num_rows(&self) -> usize {
                 self.num_rows
+            }
+
+            pub fn get_airgroup_id() -> usize {
+                Self::AIRGROUP_ID
+            }
+
+            pub fn get_air_id() -> usize {
+                Self::AIR_ID
             }
 
             pub fn airgroup_id(&self) -> usize {
@@ -179,7 +178,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             fn get_buffer(&mut self) -> Vec<#generics> {
                 let buffer = std::mem::take(&mut self.buffer);
                 buffer
-            }   
+            }
         }
     };
 
@@ -247,8 +246,8 @@ impl Parse for ParsedTraceInput {
             fields,
             airgroup_id,
             air_id,
-            num_rows, 
-            commit_id
+            num_rows,
+            commit_id,
         })
     }
 }
@@ -280,20 +279,19 @@ pub fn values(input: TokenStream) -> TokenStream {
 fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
     let parsed_input: ParsedValuesInput = parse2(input)?;
 
-    let struct_name = parsed_input.struct_name;
-    let generic_param = parsed_input.generic_param;
-    let dimensions = parsed_input.dimensions;
+    let row_struct_name = parsed_input.row_struct_name;
+    let values_struct_name = parsed_input.struct_name;
+    let generics = parsed_input.generics.params;
     let fields = parsed_input.fields;
 
-    // Calculate ROW_SIZE based on the field types
-    let row_size = fields
+    // Calculate TOTAL_SIZE based on the field types
+    let total_size = fields
         .named
         .iter()
-        .map(|field| calculate_field_size_literal(&field.ty))
+        .map(|field| calculate_field_slots(&field.ty))
         .collect::<Result<Vec<usize>>>()?
         .into_iter()
-        .sum::<usize>()
-        * dimensions;
+        .sum::<usize>();
 
     // Generate row struct
     let field_definitions = fields.named.iter().map(|field| {
@@ -303,47 +301,154 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
 
     let row_struct = quote! {
         #[repr(C)]
-        #[derive(Debug, Clone, Default)]
-        pub struct #struct_name<#generic_param> {
+        #[derive(Debug, Clone, Copy, Default)]
+        pub struct #row_struct_name<#generics> {
             #(#field_definitions)*
-        }        
-        impl<#generic_param: Copy> #struct_name<#generic_param> {
-            pub const ROW_SIZE: usize = #row_size;
+        }
 
-            pub fn as_slice(&self) -> &[#generic_param] {
-                unsafe {
-                    std::slice::from_raw_parts(
-                        self as *const #struct_name<#generic_param> as *const #generic_param,
-                        #row_size,
-                    )
+        impl<#generics: Copy> #row_struct_name<#generics> {
+            pub const TOTAL_SIZE: usize = #total_size;
+        }
+    };
+
+    let values_struct = quote! {
+        pub struct #values_struct_name<'a, #generics> {
+            pub buffer: Vec<#generics>,
+            pub slice_values: &'a mut #row_struct_name<#generics>,
+        }
+
+        impl<'a, #generics: Default + Clone + Copy> #values_struct_name<'a, #generics> {
+            pub fn new() -> Self {
+                let mut buffer = vec![#generics::default(); #row_struct_name::<#generics>::TOTAL_SIZE]; // Interpolate here as well
+
+                let slice_values = unsafe {
+                    let ptr = buffer.as_mut_ptr() as *mut #row_struct_name<#generics>;
+                    &mut *ptr
+                };
+
+                #values_struct_name {
+                    buffer: buffer,
+                    slice_values,
+                }
+            }
+
+            pub fn from_vec(
+                mut external_buffer: Vec<#generics>,
+            ) -> Self {
+                let slice_values = unsafe {
+                    // Create a mutable slice from the raw pointer of external_buffer
+                    let ptr = external_buffer.as_mut_ptr() as *mut #row_struct_name<#generics>;
+                    &mut *ptr
+                };
+
+                // Return the struct with the owned buffers and borrowed slices
+                #values_struct_name {
+                    buffer: external_buffer,
+                    slice_values,
+                }
+            }
+
+        pub fn from_vec_guard(
+            mut external_buffer_rw: std::sync::RwLockWriteGuard<Vec<#generics>>,
+        ) -> Self {
+                let slice_values = unsafe {
+                    let ptr = external_buffer_rw.as_mut_ptr() as *mut #row_struct_name<#generics>;
+                    &mut *ptr
+                };
+
+                #values_struct_name {
+                    buffer: Vec::new(),
+                    slice_values,
                 }
             }
         }
+
+        impl<'a, #generics> std::ops::Deref for #values_struct_name<'a, #generics> {
+            type Target = #row_struct_name<#generics>;
+
+            fn deref(&self) -> &Self::Target {
+                &self.slice_values
+            }
+        }
+
+        impl<'a, #generics> std::ops::DerefMut for #values_struct_name<'a, #generics> {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.slice_values
+            }
+        }
+
+        impl<'a, #generics: Send + p3_field::Field> common::trace::Values<#generics> for #values_struct_name<'a, #generics> {
+            fn get_buffer(&mut self) -> Vec<#generics> {
+                let buffer = std::mem::take(&mut self.buffer);
+                buffer
+            }
+        }
+
     };
 
     Ok(quote! {
         #row_struct
+        #values_struct
     })
 }
 
 struct ParsedValuesInput {
-    pub struct_name: Ident,
-    pub generic_param: Ident,
-    pub dimensions: usize,
-    pub fields: FieldsNamed,
+    row_struct_name: Ident,
+    struct_name: Ident,
+    generics: Generics,
+    fields: FieldsNamed,
 }
 
 impl Parse for ParsedValuesInput {
     fn parse(input: ParseStream) -> Result<Self> {
-        let struct_name: Ident = input.parse()?;
-        input.parse::<Token![<]>()?;
-        let generic_param: Ident = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let dimensions: LitInt = input.parse()?;
-        input.parse::<Token![>]>()?;
+        let lookahead = input.lookahead1();
+        let row_struct_name;
+
+        // Handle explicit or implicit row struct names
+        if lookahead.peek(Ident) && input.peek2(Token![,]) {
+            row_struct_name = Some(input.parse::<Ident>()?);
+            input.parse::<Token![,]>()?; // Skip comma after explicit row name
+        } else {
+            row_struct_name = None;
+        }
+
+        let struct_name = input.parse::<Ident>()?;
+        let row_struct_name = row_struct_name.unwrap_or_else(|| format_ident!("{}Row", struct_name));
+
+        let generics: Generics = input.parse()?;
         let fields: FieldsNamed = input.parse()?;
-        Ok(ParsedValuesInput { struct_name, generic_param, dimensions: dimensions.base10_parse()?, fields })
+
+        Ok(ParsedValuesInput { row_struct_name, struct_name, generics, fields })
     }
+}
+
+fn calculate_field_slots(ty: &syn::Type) -> Result<usize> {
+    match ty {
+        // Handle `F`
+        syn::Type::Path(type_path) if is_ident(type_path, "F") => Ok(1),
+
+        // Handle `FieldExtension<F>`
+        syn::Type::Path(type_path) if is_ident(type_path, "FieldExtension") => {
+            // Assuming FieldExtension size is always 3 slots for this example.
+            Ok(3)
+        }
+
+        // Handle `[F; N]` and `[FieldExtension<F>; N]`
+        syn::Type::Array(type_array) => {
+            let len = type_array.len.to_token_stream().to_string().parse::<usize>().map_err(|e| {
+                syn::Error::new_spanned(&type_array.len, format!("Failed to parse array length: {}", e))
+            })?;
+            let elem_slots = calculate_field_slots(&type_array.elem)?;
+            Ok(len * elem_slots)
+        }
+
+        _ => Err(syn::Error::new_spanned(ty, "Unsupported type for slot calculation")),
+    }
+}
+
+// Helper to check if a type is a specific identifier
+fn is_ident(type_path: &syn::TypePath, name: &str) -> bool {
+    type_path.path.segments.last().map_or(false, |seg| seg.ident == name)
 }
 
 #[test]
@@ -353,7 +458,7 @@ fn test_parse_values_01() {
     };
     let parsed: ParsedValuesInput = parse2(input).unwrap();
     assert_eq!(parsed.struct_name, "Values");
-    assert_eq!(parsed.generic_param, "F");
+    assert_eq!(parsed.generics, "F");
     assert_eq!(parsed.dimensions, 3);
 }
 
@@ -364,7 +469,7 @@ fn test_parse_values_02() {
     };
     let parsed: ParsedValuesInput = parse2(input).unwrap();
     assert_eq!(parsed.struct_name, "Something");
-    assert_eq!(parsed.generic_param, "G");
+    assert_eq!(parsed.generics, "G");
     assert_eq!(parsed.dimensions, 2);
 }
 
@@ -375,7 +480,7 @@ fn test_parse_values_03() {
     };
     let parsed: ParsedValuesInput = parse2(input).unwrap();
     assert_eq!(parsed.struct_name, "Something");
-    assert_eq!(parsed.generic_param, "G");
+    assert_eq!(parsed.generics, "G");
     assert_eq!(parsed.dimensions, 189_432);
 }
 

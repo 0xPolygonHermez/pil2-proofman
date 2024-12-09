@@ -8,7 +8,7 @@ use num_bigint::BigInt;
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
-use crate::{MultiRangeCheck2Trace, MULTI_RANGE_CHECK_2_AIRGROUP_ID, MULTI_RANGE_CHECK_2_AIR_IDS};
+use crate::MultiRangeCheck2Trace;
 
 pub struct MultiRangeCheck2<F: PrimeField> {
     std_lib: Arc<Std<F>>,
@@ -23,11 +23,10 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let multi_range_check2 = Arc::new(Self { std_lib });
 
-        wcm.register_component(
-            multi_range_check2.clone(),
-            Some(MULTI_RANGE_CHECK_2_AIRGROUP_ID),
-            Some(MULTI_RANGE_CHECK_2_AIR_IDS),
-        );
+        let airgroup_id = MultiRangeCheck2Trace::<F>::get_airgroup_id();
+        let air_id = MultiRangeCheck2Trace::<F>::get_air_id();
+
+        wcm.register_component(multi_range_check2.clone(), airgroup_id, air_id);
 
         // Register dependency relations
         multi_range_check2.std_lib.register_predecessor();

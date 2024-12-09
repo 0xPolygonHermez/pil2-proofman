@@ -76,14 +76,11 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
                 false => String::from(""),
             };
 
-            let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-            let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
-
             zkin = gen_recursive_proof_c(
                 p_setup,
                 p_address,
-                const_pols_ptr,
-                const_tree_ptr,
+                setup.get_const_ptr() as *mut c_void,
+                setup.get_const_tree_ptr() as *mut c_void,
                 p_publics,
                 &proof_file,
                 global_info_file,
@@ -139,14 +136,11 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
             false => String::from(""),
         };
 
-        let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-        let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
-
         let p_prove = gen_recursive_proof_c(
             p_setup,
             p_address,
-            const_pols_ptr,
-            const_tree_ptr,
+            setup.get_const_ptr() as *mut c_void,
+            setup.get_const_tree_ptr() as *mut c_void,
             p_publics,
             &proof_file,
             global_info_file,
@@ -232,16 +226,10 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                         let p_setup: *mut c_void = (&setup.p_setup).into();
                         let p_stark_info: *mut c_void = setup.p_setup.p_stark_info;
 
-                        let public_inputs_guard = pctx.public_inputs.inputs.read().unwrap();
-                        let challenges_guard = pctx.challenges.challenges.read().unwrap();
-
-                        let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
-                        let challenges = (*challenges_guard).as_ptr() as *mut c_void;
-
                         let zkin_recursive2 = join_zkin_recursive2_c(
                             airgroup as u64,
-                            public_inputs,
-                            challenges,
+                            pctx.get_publics_ptr() as *mut c_void,
+                            pctx.get_challenges_ptr() as *mut c_void,
                             global_info_file,
                             airgroup_proofs[airgroup][j].unwrap(),
                             airgroup_proofs[airgroup][j + 1].unwrap(),
@@ -284,14 +272,12 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                             MY_NAME,
                             format!("··· Generating recursive2 proof for instances of {}", air_instance_name)
                         );
-                        let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-                        let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
                         let zkin = gen_recursive_proof_c(
                             p_setup,
                             p_address,
-                            const_pols_ptr,
-                            const_tree_ptr,
+                            setup.get_const_ptr() as *mut c_void,
+                            setup.get_const_tree_ptr() as *mut c_void,
                             p_publics,
                             &proof_file,
                             global_info_file,
@@ -327,13 +313,6 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
         for proofs in airgroup_proofs {
             proofs_recursive2.push(proofs[0].unwrap());
         }
-        let public_inputs_guard = pctx.public_inputs.inputs.read().unwrap();
-        let challenges_guard = pctx.challenges.challenges.read().unwrap();
-        let proof_values_guard = pctx.proof_values.values.read().unwrap();
-
-        let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
-        let challenges = (*challenges_guard).as_ptr() as *mut c_void;
-        let proof_values = (*proof_values_guard).as_ptr() as *mut c_void;
 
         let mut stark_infos_recursive2 = Vec::new();
         for (idx, _) in pctx.global_info.air_groups.iter().enumerate() {
@@ -345,9 +324,9 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
         let stark_infos_recursive2_ptr = stark_infos_recursive2.as_mut_ptr();
 
         zkin_final = join_zkin_final_c(
-            public_inputs,
-            proof_values,
-            challenges,
+            pctx.get_publics_ptr() as *mut c_void,
+            pctx.get_proof_values_ptr() as *mut c_void,
+            pctx.get_challenges_ptr() as *mut c_void,
             global_info_file,
             proofs_recursive2_ptr,
             stark_infos_recursive2_ptr,
@@ -379,13 +358,11 @@ pub fn generate_vadcop_final_proof<F: Field>(
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
     // prove
-    let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-    let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
     let p_prove = gen_recursive_proof_c(
         p_setup,
         p_address,
-        const_pols_ptr,
-        const_tree_ptr,
+        setup.get_const_ptr() as *mut c_void,
+        setup.get_const_tree_ptr() as *mut c_void,
         p_publics,
         output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().as_ref(),
         global_info_file,
@@ -421,13 +398,11 @@ pub fn generate_recursivef_proof<F: Field>(
     log::info!("{}: ··· Generating recursiveF proof", MY_NAME);
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
-    let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
-    let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
     let p_prove = gen_recursive_proof_c(
         p_setup,
         p_address,
-        const_pols_ptr,
-        const_tree_ptr,
+        setup.get_const_ptr() as *mut c_void,
+        setup.get_const_tree_ptr() as *mut c_void,
         p_publics,
         output_dir_path.join("proofs/recursivef.json").to_string_lossy().as_ref(),
         global_info_file,

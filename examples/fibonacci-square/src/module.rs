@@ -3,23 +3,26 @@ use std::sync::{Arc, Mutex};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman::{WitnessManager, WitnessComponent};
 use pil_std_lib::Std;
-use p3_field::{AbstractField, PrimeField};
+use p3_field::{AbstractField, PrimeField64};
 use num_bigint::BigInt;
 
-use crate::{ModuleTrace, FIBONACCI_SQUARE_AIRGROUP_ID, MODULE_AIR_IDS};
+use crate::{ModuleTrace};
 
-pub struct Module<F: PrimeField> {
+pub struct Module<F: PrimeField64> {
     inputs: Mutex<Vec<(u64, u64)>>,
     std_lib: Arc<Std<F>>,
 }
 
-impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F> {
+impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<F> {
     const MY_NAME: &'static str = "ModuleSM";
 
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let module = Arc::new(Module { inputs: Mutex::new(Vec::new()), std_lib });
 
-        wcm.register_component(module.clone(), Some(FIBONACCI_SQUARE_AIRGROUP_ID), Some(MODULE_AIR_IDS));
+        let airgroup_id = ModuleTrace::<F>::get_airgroup_id();
+        let air_id = ModuleTrace::<F>::get_air_id();
+
+        wcm.register_component(module.clone(), airgroup_id, air_id);
 
         // Register dependency relations
         module.std_lib.register_predecessor();
@@ -44,7 +47,7 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
     fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        let module = pctx.get_public_value("module");
+        let module = F::as_canonical_u64(&pctx.get_public_value("module"));
 
         let mut trace = ModuleTrace::new_zeroes();
 
@@ -77,7 +80,7 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
     }
 }
 
-impl<F: PrimeField + AbstractField + Copy> WitnessComponent<F> for Module<F> {
+impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
     fn calculate_witness(
         &self,
         _stage: u32,

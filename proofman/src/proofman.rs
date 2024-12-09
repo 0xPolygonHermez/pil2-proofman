@@ -104,7 +104,6 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let mut transcript: FFITranscript = provers[0].new_transcript();
 
-        Self::check_stage(0, &mut provers, pctx.clone());
         for prover in provers.iter_mut() {
             prover.commit_stage(0, pctx.clone());
         }
@@ -121,25 +120,9 @@ impl<F: Field + 'static> ProofMan<F> {
             }
 
             Self::calculate_stage(stage, &mut provers, sctx.clone(), pctx.clone());
-            Self::check_stage(stage, &mut provers, pctx.clone());
 
             if !options.verify_constraints {
                 Self::commit_stage(stage, &mut provers, pctx.clone());
-            }
-
-            let publics_set = pctx.public_inputs.inputs_set.read().unwrap();
-            for i in 0..pctx.global_info.n_publics {
-                let public = pctx.global_info.publics_map.as_ref().expect("REASON").get(i).unwrap();
-                if !publics_set[i] {
-                    if !public.lengths.is_empty() {
-                        panic!(
-                            "Not all publics are set: Public {}[{}] is not calculated",
-                            public.name, public.lengths[0]
-                        );
-                    } else {
-                        panic!("Not all publics are set: Public {} is not calculated", public.name);
-                    }
-                }
             }
 
             if !options.verify_constraints || stage < num_commit_stages {
@@ -155,15 +138,6 @@ impl<F: Field + 'static> ProofMan<F> {
         }
 
         witness_lib.end_proof();
-
-        for i in 0..pctx.global_info.n_proof_values {
-            if !pctx.proof_values.values_set.read().unwrap()[i] {
-                panic!(
-                    "Proof cannot be generated: Proof value {} is not set",
-                    pctx.global_info.proof_values_map.as_ref().expect("REASON").get(i).unwrap().name
-                );
-            }
-        }
 
         if options.verify_constraints {
             return verify_constraints_proof(pctx.clone(), ectx.clone(), sctx.clone(), provers, witness_lib);
@@ -331,7 +305,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
         let buff_helper: Vec<F> = create_buffer_fast(buff_helper_size);
 
-        *pctx.buff_helper.buff_helper.write().unwrap() = buff_helper;
+        *pctx.buff_helper.values.write().unwrap() = buff_helper;
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);
     }
 
@@ -450,13 +424,6 @@ impl<F: Field + 'static> ProofMan<F> {
         }
     }
 
-    pub fn check_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], proof_ctx: Arc<ProofCtx<F>>) {
-        log::debug!("{}: Checking stage can be calculated", Self::MY_NAME);
-        for prover in provers.iter_mut() {
-            prover.check_stage(stage, proof_ctx.clone());
-        }
-    }
-
     pub fn commit_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], proof_ctx: Arc<ProofCtx<F>>) {
         if stage as usize == proof_ctx.global_info.n_challenges.len() + 1 {
             info!("{}: Committing stage Q", Self::MY_NAME);
@@ -515,10 +482,7 @@ impl<F: Field + 'static> ProofMan<F> {
         verify_constraints: bool,
     ) {
         if stage == 1 {
-            let public_inputs_guard = pctx.public_inputs.inputs.read().unwrap();
-            let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
-
-            transcript.add_elements(public_inputs, pctx.global_info.n_publics);
+            transcript.add_elements(pctx.get_publics_ptr() as *mut c_void, pctx.global_info.n_publics);
         }
 
         let dctx = ectx.dctx.read().unwrap();
@@ -662,25 +626,18 @@ impl<F: Field + 'static> ProofMan<F> {
             proves.push(prover.get_zkin_proof(proof_ctx.clone(), output_dir));
             prover.free();
         }
-        let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
-        let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
-        let proof_values_guard = proof_ctx.proof_values.values.read().unwrap();
 
         let n_publics = proof_ctx.global_info.n_publics as u64;
-        let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
-        let challenges = (*challenges_guard).as_ptr() as *mut c_void;
-
         let n_proof_values = proof_ctx.global_info.n_proof_values as u64;
-        let proof_values = (*proof_values_guard).as_ptr() as *mut c_void;
 
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
-        save_publics_c(n_publics, public_inputs, output_dir);
+        save_publics_c(n_publics, proof_ctx.get_publics_ptr() as *mut c_void, output_dir);
 
-        save_proof_values_c(n_proof_values, proof_values, output_dir);
+        save_proof_values_c(n_proof_values, proof_ctx.get_proof_values_ptr() as *mut c_void, output_dir);
 
-        save_challenges_c(challenges, global_info_file, output_dir);
+        save_challenges_c(proof_ctx.get_challenges_ptr() as *mut c_void, global_info_file, output_dir);
 
         timer_stop_and_log_debug!(FINALIZING_PROOF);
         proves

@@ -52,7 +52,7 @@ impl<F: PrimeField> StdSum<F> {
             debug_data: if mode.name == ModeName::Debug { Some(Mutex::new(HashMap::new())) } else { None },
         });
 
-        wcm.register_component(std_sum.clone(), None, None);
+        wcm.register_std(std_sum.clone());
 
         std_sum
     }
@@ -280,7 +280,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
                     // Populate the im columns
                     for hint in im_hints {
-                        let id = mul_hint_fields::<F>(
+                        mul_hint_fields::<F>(
                             &sctx,
                             &pctx,
                             air_instance,
@@ -291,8 +291,6 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                             "denominator",
                             HintFieldOptions::inverse(),
                         );
-
-                        air_instance.set_commit_calculated(id as usize);
                     }
 
                     // We know that at most one product hint exists
@@ -305,7 +303,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     // This call accumulates "expression" into "reference" expression and stores its last value to "result"
                     // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust,
                     // TODO: GENERALIZE CALLS
-                    let (pol_id, airgroupvalue_id) = acc_mul_hint_fields::<F>(
+                    acc_mul_hint_fields::<F>(
                         &sctx,
                         &pctx,
                         air_instance,
@@ -318,9 +316,6 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                         HintFieldOptions::inverse(),
                         true,
                     );
-
-                    air_instance.set_commit_calculated(pol_id as usize);
-                    air_instance.set_airgroupvalue_calculated(airgroupvalue_id as usize);
                 }
             }
         }

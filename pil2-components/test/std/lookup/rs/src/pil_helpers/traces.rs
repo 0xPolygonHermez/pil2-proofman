@@ -4,6 +4,8 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+type FieldExtension<F> = [F; 3];
+
 pub const PILOUT_HASH: &[u8] = b"Build-hash";
 
 //AIRGROUP CONSTANTS
