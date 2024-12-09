@@ -16,10 +16,9 @@ pub use proofman_macros::values;
 #[cfg(test)]
 use crate as common;
 
-
 #[test]
 fn check() {
-    trace!(TraceRow, MyTrace<F> { a: F, b:F}, 8, 0, 0, 0);
+    trace!(TraceRow, MyTrace<F> { a: F, b:F}, 0, 0, 8, 0);
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 2);
 
@@ -40,8 +39,8 @@ fn check() {
 }
 
 #[test]
-fn check_array() {    
-    trace!(TraceRow, MyTrace<F> { a: F, b: [F; 3], c: F }, 8, 0, 0, 0);
+fn check_array() {
+    trace!(TraceRow, MyTrace<F> { a: F, b: [F; 3], c: F }, 0, 0, 8, 0);
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 5);
     let mut trace = MyTrace::new();
@@ -70,7 +69,7 @@ fn check_array() {
 
 #[test]
 fn check_multi_array() {
-    trace!(TraceRow, MyTrace<F> { a: [[F;3]; 2], b: F }, 8, 0, 0, 0);
+    trace!(TraceRow, MyTrace<F> { a: [[F;3]; 2], b: F }, 0, 0, 8, 0);
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 7);
 
@@ -104,11 +103,10 @@ fn check_multi_array() {
 
 #[test]
 fn check_multi_array_2() {
-
-    trace!(TraceRow, MyTrace<F> { a: [[F;3]; 2], b: F, c: [F; 2] }, 8, 0, 0, 0);
+    trace!(TraceRow, MyTrace<F> { a: [[F;3]; 2], b: F, c: [F; 2] }, 0, 0, 8, 0);
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 9);
-    
+
     let mut trace = MyTrace::new();
     let num_rows = trace.num_rows();
 
@@ -126,7 +124,7 @@ fn check_multi_array_2() {
     }
 
     let buffer = trace.get_buffer();
-    
+
     // Check values
     for i in 0..num_rows {
         assert_eq!(buffer[i * TraceRow::<usize>::ROW_SIZE], i);

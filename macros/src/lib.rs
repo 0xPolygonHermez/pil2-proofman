@@ -454,7 +454,7 @@ fn is_ident(type_path: &syn::TypePath, name: &str) -> bool {
 #[test]
 fn test_trace_macro_generates_default_row_struct() {
     let input = quote! {
-        Simple<F> { a: F, b: F }, 2, 788
+        Simple<F> { a: F, b: F }, 0,0,0,0
     };
 
     let _generated = trace_impl(input).unwrap();
@@ -463,7 +463,7 @@ fn test_trace_macro_generates_default_row_struct() {
 #[test]
 fn test_trace_macro_with_explicit_row_struct_name() {
     let input = quote! {
-        SimpleRow, Simple<F> { a: F, b: F }, 4
+        SimpleRow, Simple<F> { a: F, b: F }, 0,0,0,0
     };
 
     let _generated = trace_impl(input).unwrap();
@@ -472,11 +472,13 @@ fn test_trace_macro_with_explicit_row_struct_name() {
 #[test]
 fn test_parsing_01() {
     let input = quote! {
-        TraceRow, MyTrace<F> { a: F, b: F }, 34, 38
+        TraceRow, MyTrace<F> { a: F, b: F }, 0, 0, 34, 38
     };
     let parsed: ParsedTraceInput = parse2(input).unwrap();
     assert_eq!(parsed.row_struct_name, "TraceRow");
     assert_eq!(parsed.struct_name, "MyTrace");
+    assert_eq!(parsed.airgroup_id.base10_parse::<usize>().unwrap(), 0);
+    assert_eq!(parsed.air_id.base10_parse::<usize>().unwrap(), 0);
     assert_eq!(parsed.num_rows.base10_parse::<usize>().unwrap(), 34);
     assert_eq!(parsed.commit_id.base10_parse::<usize>().unwrap(), 38);
 }
@@ -484,18 +486,21 @@ fn test_parsing_01() {
 #[test]
 fn test_parsing_02() {
     let input = quote! {
-        SimpleRow, Simple<F> { a: F }, 127_456
+        SimpleRow, Simple<F> { a: F }, 0, 0, 127_456, 0
     };
     let parsed: ParsedTraceInput = parse2(input).unwrap();
     assert_eq!(parsed.row_struct_name, "SimpleRow");
     assert_eq!(parsed.struct_name, "Simple");
+    assert_eq!(parsed.airgroup_id.base10_parse::<usize>().unwrap(), 0);
+    assert_eq!(parsed.air_id.base10_parse::<usize>().unwrap(), 0);
     assert_eq!(parsed.num_rows.base10_parse::<usize>().unwrap(), 127_456);
+    assert_eq!(parsed.commit_id.base10_parse::<usize>().unwrap(), 0);
 }
 
 #[test]
 fn test_parsing_03() {
     let input = quote! {
-        Simple<F> { a: F }, 2
+        Simple<F> { a: F }, 0, 0, 0, 0
     };
     let parsed: ParsedTraceInput = parse2(input).unwrap();
     assert_eq!(parsed.row_struct_name, "SimpleRow");

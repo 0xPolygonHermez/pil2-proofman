@@ -4,6 +4,9 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+#[warn(dead_code)]
+type FieldExtension<F> = [F; 3];
+
 pub const PILOUT_HASH: &[u8] = b"Build-hash";
 
 //AIRGROUP CONSTANTS
@@ -20,6 +23,7 @@ pub const PERMUTATION_1_8_AIR_IDS: &[usize] = &[2];
 
 pub const PERMUTATION_2_6_AIR_IDS: &[usize] = &[3];
 
+  
 trace!(Permutation1_6Trace<F> {
  a1: F, b1: F, a2: F, b2: F, a3: F, b3: F, a4: F, b4: F, c1: F, d1: F, c2: F, d2: F, sel1: F, sel2: F, sel3: F,
 },  0, 0, 64, 0 );

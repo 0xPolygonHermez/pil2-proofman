@@ -139,7 +139,7 @@ impl<F: Field> AirInstance<F> {
             None
         };
 
-        let air_values_info = if let Some(air_values) = air_values { Some(air_values.get_buffer()) } else { None };
+        let air_values_info = air_values.map(|air_values| air_values.get_buffer());
 
         let air_instance = AirInstance::new(
             setup_ctx,

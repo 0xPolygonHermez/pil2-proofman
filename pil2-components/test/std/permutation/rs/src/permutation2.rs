@@ -16,7 +16,7 @@ impl<F: PrimeField + Copy> Permutation2<F> {
 
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let permutation2 = Arc::new(Self { _phantom: std::marker::PhantomData });
-        
+
         let airgroup_id = Permutation2_6Trace::<F>::get_airgroup_id();
         let air_id = Permutation2_6Trace::<F>::get_air_id();
 

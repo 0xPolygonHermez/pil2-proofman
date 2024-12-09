@@ -4,6 +4,7 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+#[warn(dead_code)]
 type FieldExtension<F> = [F; 3];
 
 pub const PILOUT_HASH: &[u8] = b"{ project_name }-hash";

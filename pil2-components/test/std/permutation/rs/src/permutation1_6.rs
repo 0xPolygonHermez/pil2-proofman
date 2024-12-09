@@ -75,7 +75,42 @@ where
 
         AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace, None, None);
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace, None, None);
+        let mut trace2 = Permutation1_6Trace::new();
+
+        // Assumes
+        for i in 0..num_rows {
+            trace2[i].a1 = rng.gen();
+            trace2[i].b1 = rng.gen();
+
+            trace2[i].a2 = F::from_canonical_u8(200);
+            trace2[i].b2 = F::from_canonical_u8(201);
+
+            trace2[i].a3 = rng.gen();
+            trace2[i].b3 = rng.gen();
+
+            trace2[i].a4 = F::from_canonical_u8(100);
+            trace2[i].b4 = F::from_canonical_u8(101);
+
+            trace2[i].sel1 = F::from_bool(rng.gen_bool(0.5));
+            trace2[i].sel3 = F::one();
+        }
+
+        let mut indices: Vec<usize> = (0..num_rows).collect();
+        indices.shuffle(&mut rng);
+
+        // Proves
+        for i in 0..num_rows {
+            // We take a random permutation of the indices to show that the permutation check is passing
+            trace2[i].c1 = trace2[indices[i]].a1;
+            trace2[i].d1 = trace2[indices[i]].b1;
+
+            trace2[i].c2 = trace2[indices[i]].a3;
+            trace2[i].d2 = trace2[indices[i]].b3;
+
+            trace2[i].sel2 = trace2[indices[i]].sel1;
+        }
+
+        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace2, None, None);
     }
 }
 
