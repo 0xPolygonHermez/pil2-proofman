@@ -3,6 +3,8 @@
 #include <cuda_runtime.h>
 #include <sys/time.h>
 
+#define GPU_TIMING
+
 #ifdef GPU_TIMING
 #include "timer_gl.hpp"
 #endif
@@ -117,6 +119,8 @@ __device__ __constant__ uint64_t domain_size_inverse[33] = {
 
 // CUDA Threads Per Block
 #define TPB_NTT 16
+#define TPB_NTT_x 32
+#define TPB_NTT_y 16
 #define SHIFT 7
 
 __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols)
@@ -170,6 +174,41 @@ __global__ void reverse_permutation(gl64_t *data, uint32_t log_domain_size, uint
             tmp = data[idx * ncols + i];
             data[idx * ncols + i] = data[ibr * ncols + i];
             data[ibr * ncols + i] = tmp;
+        }
+    }
+}
+
+__global__ void reverse_permutation_1d(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
+{
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t row = idx / ncols;
+    uint32_t col = idx % ncols;
+
+    if (row < (1 << log_domain_size) && col < ncols)
+    {
+        uint32_t ibr = __brev(row) >> (32 - log_domain_size);
+        if (ibr > row)
+        {
+            gl64_t tmp = data[row * ncols + col];
+            data[row * ncols + col] = data[ibr * ncols + col];
+            data[ibr * ncols + col] = tmp;
+        }
+    }
+}
+
+__global__ void reverse_permutation_2d(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
+{
+    uint32_t col = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (row < (1 << log_domain_size) && col < ncols)
+    {
+        uint32_t ibr = __brev(row) >> (32 - log_domain_size);
+        if (ibr > row)
+        {
+            gl64_t tmp = data[row * ncols + col];
+            data[row * ncols + col] = data[ibr * ncols + col];
+            data[ibr * ncols + col] = tmp;
         }
     }
 }
@@ -299,6 +338,15 @@ void ntt_cuda(cudaStream_t stream, gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles
         blockDim = dim3(domain_size);
         gridDim = dim3(1);
     }
+   /*uint32_t total_elements = (1 << log_domain_size) * ncols;
+   dim3 blockDim(TPB_NTT_x);
+   dim3 gridDim((total_elements + TPB_NTT_x - 1) / TPB_NTT_x);*/
+
+   /*dim3 blockDim(TPB_NTT_x, TPB_NTT_y);
+   dim3 gridDim((ncols + TPB_NTT_x - 1) / TPB_NTT_x, ((1 << log_domain_size) + TPB_NTT_y - 1) / TPB_NTT_y);
+
+    printf("Grid dimensions: (%d, %d)\n", gridDim.x, gridDim.y);
+    printf("Block dimensions: (%d, %d)\n", blockDim.x, blockDim.y);*/
 
 #ifdef GPU_TIMING
     TimerStart(NTT_Core_ReversePermutation);
