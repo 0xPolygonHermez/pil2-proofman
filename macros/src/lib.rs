@@ -61,91 +61,32 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
     // Generate trace struct
     let trace_struct = quote! {
-        pub struct #trace_struct_name<'a, #generics> {
-            pub buffer: Option<Vec<#generics>>,
-            pub slice_trace: &'a mut [#row_struct_name<#generics>],
+        pub struct #trace_struct_name<#generics> {
+            pub buffer: Vec<#row_struct_name<#generics>>,
             num_rows: usize,
         }
 
-        impl<'a, #generics: Default + Clone + Copy> #trace_struct_name<'a, #generics> {
+        impl<#generics: Default + Clone + Copy> #trace_struct_name<#generics> {
             pub fn new(num_rows: usize) -> Self {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        buffer.as_ptr() as *mut #row_struct_name<#generics>,
-                        num_rows,
-                    )
-                };
-
-                #trace_struct_name {
-                    buffer: Some(buffer),
-                    slice_trace,
-                    num_rows,
+                let mut buff_uninit: Vec<std::mem::MaybeUninit<#row_struct_name<#generics>>> = Vec::with_capacity(num_rows);
+                unsafe {
+                    buff_uninit.set_len(num_rows);
                 }
+                let buffer: Vec<#row_struct_name<#generics>> = unsafe { std::mem::transmute(buff_uninit) };
+
+                #trace_struct_name { buffer, num_rows}
             }
 
-            pub fn map_buffer(
-                external_buffer: &'a mut [#generics],
-                num_rows: usize,
-                offset: usize,
-            ) -> Result<Self, Box<dyn std::error::Error>> {
+            pub fn new_zeroes(num_rows: usize) -> Self {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let start = offset;
-                let end = start + num_rows * #row_struct_name::<#generics>::ROW_SIZE;
+                let buffer = vec![#row_struct_name::<#generics>::default(); num_rows];
 
-                if end > external_buffer.len() {
-                    return Err("Buffer is too small to fit the trace".into());
-                }
-
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        external_buffer[start..end].as_ptr() as *mut #row_struct_name<#generics>,
-                        num_rows,
-                    )
-                };
-
-                Ok(#trace_struct_name {
-                    buffer: None,
-                    slice_trace,
-                    num_rows,
-                })
-            }
-
-            pub fn from_row_vec(
-                external_buffer: Vec<#row_struct_name<#generics>>,
-            ) -> Result<Self, Box<dyn std::error::Error>> {
-                let mut num_f = external_buffer.len() * #row_struct_name::<#generics>::ROW_SIZE;
-
-                let slice_trace = unsafe {
-                    let ptr = external_buffer.as_ptr() as *mut #row_struct_name<#generics>;
-                    std::slice::from_raw_parts_mut(
-                        ptr,
-                        external_buffer.len(),
-                    )
-                };
-
-                let buffer_f = unsafe {
-                    let mut vec = Vec::from_raw_parts(
-                        external_buffer.as_ptr() as *mut #generics,
-                        num_f,
-                        num_f,
-                    );
-                    vec.resize(num_f, #generics::default());
-                    vec
-                };
-
-                std::mem::forget(external_buffer);
-
-                Ok(#trace_struct_name {
-                    buffer: Some(buffer_f),
-                    slice_trace,
-                    num_rows: num_f / #row_struct_name::<#generics>::ROW_SIZE,
-                })
+                #trace_struct_name { buffer, num_rows}
             }
 
             pub fn num_rows(&self) -> usize {
@@ -153,28 +94,27 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
         }
 
-        impl<'a, #generics> std::ops::Index<usize> for #trace_struct_name<'a, #generics> {
+        impl<#generics> std::ops::Index<usize> for #trace_struct_name<#generics> {
             type Output = #row_struct_name<#generics>;
 
             fn index(&self, index: usize) -> &Self::Output {
-                &self.slice_trace[index]
+                &self.buffer[index]
             }
         }
 
-        impl<'a, #generics> std::ops::IndexMut<usize> for #trace_struct_name<'a, #generics> {
+        impl<#generics> std::ops::IndexMut<usize> for #trace_struct_name<#generics> {
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.slice_trace[index]
+                &mut self.buffer[index]
             }
         }
 
-        impl<'a, #generics: Send> common::trace::Trace for #trace_struct_name<'a, #generics> {
+        impl<#generics: Send> common::trace::Trace for #trace_struct_name<#generics> {
             fn num_rows(&self) -> usize {
                 self.num_rows
             }
 
             fn get_buffer_ptr(&mut self) -> *mut u8 {
-                let buffer = self.buffer.as_mut().expect("Buffer is not available");
-                buffer.as_mut_ptr() as *mut u8
+                self.buffer.as_mut_ptr() as *mut u8
             }
         }
     };
@@ -249,7 +189,7 @@ fn test_trace_macro_generates_default_row_struct() {
             pub const ROW_SIZE: usize = 2usize;
         }
         pub struct Simple<'a, F> {
-            pub buffer: Option<Vec<F>>,
+            pub buffer: Vec<F>,
             pub slice_trace: &'a mut [SimpleRow<F>],
             num_rows: usize,
         }
