@@ -61,8 +61,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             pub row_size: usize,
             pub airgroup_id: usize,
             pub air_id: usize,
-            // pub commit_id: Option<usize>,
-            pub commit_id: usize,
+            pub commit_id: Option<usize>,
         }
 
         impl<#generics: Default + Clone + Copy> #trace_struct_name<#generics> {
@@ -200,8 +199,7 @@ struct ParsedTraceInput {
     airgroup_id: LitInt,
     air_id: LitInt,
     num_rows: LitInt,
-    //commit_id: Option<LitInt>,
-    commit_id: LitInt,
+    commit_id: TokenStream2,
 }
 
 impl Parse for ParsedTraceInput {
@@ -232,15 +230,13 @@ impl Parse for ParsedTraceInput {
         input.parse::<Token![,]>()?;
         let num_rows = input.parse::<LitInt>()?;
 
-        input.parse::<Token![,]>()?;
-        let commit_id = input.parse::<LitInt>()?;
-
-        // let commit_id = if input.peek(Token![,]) {
-        //     input.parse::<Token![,]>()?;
-        //     Some(input.parse::<LitInt>()?)
-        // } else {
-        //     None
-        // };
+        let commit_id: TokenStream2 = if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+            let commit_id = input.parse::<LitInt>()?;
+            quote!(Some(#commit_id))
+        } else {
+            quote!(None)
+        };
 
         Ok(ParsedTraceInput {
             row_struct_name,

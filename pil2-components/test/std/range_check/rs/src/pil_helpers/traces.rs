@@ -4,6 +4,9 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+#[allow(dead_code)]
+type FieldExtension<F> = [F; 3];
+
 pub const PILOUT_HASH: &[u8] = b"Build-hash";
 
 //AIRGROUP CONSTANTS
@@ -56,50 +59,51 @@ pub const U_8_AIR_AIR_IDS: &[usize] = &[0];
 
 pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[0];
 
+  
 trace!(RangeCheck3Trace<F> {
  c1: F, c2: F,
-},  0, 0, 32, 0 );
+},  0, 0, 32 );
 
 trace!(RangeCheck2Trace<F> {
  b1: F, b2: F, b3: F,
-},  1, 0, 16, 0 );
+},  1, 0, 16 );
 
 trace!(RangeCheck1Trace<F> {
  a1: F, a2: F, a3: F, a4: F, a5: F, sel1: F, sel2: F, sel3: F,
-},  2, 0, 8, 0 );
+},  2, 0, 8 );
 
 trace!(RangeCheck4Trace<F> {
  a1: F, a2: F, a3: F, a4: F, a5: F, a6: F, a7: F, a8: F, sel1: F, sel2: F,
-},  3, 0, 64, 0 );
+},  3, 0, 64 );
 
 trace!(U16AirTrace<F> {
  mul: F,
-},  3, 1, 65536, 0 );
+},  3, 1, 65536 );
 
 trace!(MultiRangeCheck1Trace<F> {
  a: [F; 3], sel: [F; 3], range_sel: [F; 3],
-},  4, 0, 8, 0 );
+},  4, 0, 8 );
 
 trace!(MultiRangeCheck2Trace<F> {
  a: [F; 2], sel: [F; 2], range_sel: [F; 2],
-},  5, 0, 16, 0 );
+},  5, 0, 16 );
 
 trace!(RangeCheckDynamic1Trace<F> {
  colu: F, sel_7: F, sel_8: F, sel_16: F, sel_17: F,
-},  6, 0, 256, 0 );
+},  6, 0, 256 );
 
 trace!(RangeCheckDynamic2Trace<F> {
  colu: F, sel_1: F, sel_2: F, sel_3: F, sel_4: F, sel_5: F,
-},  7, 0, 64, 0 );
+},  7, 0, 64 );
 
 trace!(RangeCheckMixTrace<F> {
  a: [F; 4], b: [F; 2], c: [F; 1], range_sel: [F; 5],
-},  8, 0, 64, 0 );
+},  8, 0, 64 );
 
 trace!(U8AirTrace<F> {
  mul: F,
-},  9, 0, 256, 0 );
+},  9, 0, 256 );
 
 trace!(SpecifiedRangesTrace<F> {
  mul: [F; 20],
-},  10, 0, 131072, 0 );
+},  10, 0, 131072 );

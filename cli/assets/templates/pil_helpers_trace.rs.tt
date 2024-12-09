@@ -4,7 +4,7 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
-#[warn(dead_code)]
+#[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
 pub const PILOUT_HASH: &[u8] = b"{ project_name }-hash";
@@ -38,7 +38,7 @@ values!({ project_name }ProofValues<F> \{
 {{ endfor }} {{ for air_group in air_groups }}{{ for air in air_group.airs }}
 trace!({ air.name }Trace<F> \{
 {{ for column in air.columns }} { column.name }: { column.type },{{ endfor }}
-},  { air_group.airgroup_id }, { air.id }, { air.num_rows }, 0 );
+},  { air_group.airgroup_id }, { air.id }, { air.num_rows } );
 {{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for custom_commit in air.custom_columns  }}
 trace!({ air.name }{custom_commit.name}Trace<F> \{
 {{ for column in custom_commit.custom_columns }} { column.name }: { column.type },{{ endfor }}
