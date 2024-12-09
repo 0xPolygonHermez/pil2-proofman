@@ -1,13 +1,11 @@
-use p3_field::Field;
-
-pub trait Trace<F: Field>: Send {
+pub trait Trace<F>: Send {
     fn num_rows(&self) -> usize;
     fn airgroup_id(&self) -> usize;
     fn air_id(&self) -> usize;
     fn get_buffer(&mut self) -> Vec<F>;
 }
 
-pub trait Values<F: Field>: Send {
+pub trait Values<F>: Send {
     fn get_buffer(&mut self) -> Vec<F>;
 }
 
@@ -18,48 +16,15 @@ pub use proofman_macros::values;
 #[cfg(test)]
 use crate as common;
 
-#[test]
-#[should_panic]
-fn test_errors_are_launched_when_num_rows_is_invalid_1() {
-    let mut buffer = vec![0u8; 3];
-    trace!(SimpleRow, Simple<F> { a: F });
-    let _ = Simple::map_buffer(&mut buffer, 1, 0);
-}
-
-#[test]
-#[should_panic]
-fn test_errors_are_launched_when_num_rows_is_invalid_2() {
-    let mut buffer = vec![0u8; 3];
-    trace!(SimpleRow, Simple<F> { a: F });
-    let _ = Simple::map_buffer(&mut buffer, 3, 0);
-}
-
-#[test]
-#[should_panic]
-fn test_errors_are_launched_when_num_rows_is_invalid_3() {
-    trace!(SimpleRow, Simple<F> { a: F });
-    let _ = Simple::<u8>::new(1);
-}
-
-#[test]
-#[should_panic]
-fn test_errors_are_launched_when_num_rows_is_invalid_4() {
-    trace!(SimpleRow, Simple<F> { a: F });
-    let _ = Simple::<u8>::new(3);
-}
 
 #[test]
 fn check() {
-    const OFFSET: usize = 1;
-    let num_rows = 8;
-
-    trace!(TraceRow, MyTrace<F> { a: F, b:F});
+    trace!(TraceRow, MyTrace<F> { a: F, b:F}, 8, 0, 0, 0);
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 2);
 
-    let mut buffer = vec![0usize; num_rows * TraceRow::<usize>::ROW_SIZE + OFFSET];
-    let trace = MyTrace::map_buffer(&mut buffer, num_rows, OFFSET);
-    let mut trace = trace.unwrap();
+    let mut trace = MyTrace::new();
+    let num_rows = trace.num_rows();
 
     // Set values
     for i in 0..num_rows {
@@ -75,15 +40,12 @@ fn check() {
 }
 
 #[test]
-fn check_array() {
-    let num_rows = 8;
-
-    trace!(TraceRow, MyTrace<F> { a: F, b: [F; 3], c: F });
+fn check_array() {    
+    trace!(TraceRow, MyTrace<F> { a: F, b: [F; 3], c: F }, 8, 0, 0, 0);
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 5);
-    let mut buffer = vec![0usize; num_rows * TraceRow::<usize>::ROW_SIZE];
-    let trace = MyTrace::map_buffer(&mut buffer, num_rows, 0);
-    let mut trace = trace.unwrap();
+    let mut trace = MyTrace::new();
+    let num_rows = trace.num_rows();
 
     // Set values
     for i in 0..num_rows {
@@ -93,6 +55,8 @@ fn check_array() {
         trace[i].b[2] = i * 30;
         trace[i].c = i * 40;
     }
+
+    let buffer = trace.get_buffer();
 
     // Check values
     for i in 0..num_rows {
@@ -106,14 +70,12 @@ fn check_array() {
 
 #[test]
 fn check_multi_array() {
-    let num_rows = 8;
-
-    trace!(TraceRow, MyTrace<F> { a: [[F;3]; 2], b: F });
+    trace!(TraceRow, MyTrace<F> { a: [[F;3]; 2], b: F }, 8, 0, 0, 0);
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 7);
-    let mut buffer = vec![0usize; num_rows * TraceRow::<usize>::ROW_SIZE];
-    let trace = MyTrace::map_buffer(&mut buffer, num_rows, 0);
-    let mut trace = trace.unwrap();
+
+    let mut trace = MyTrace::new();
+    let num_rows = trace.num_rows();
 
     // Set values
     for i in 0..num_rows {
@@ -125,6 +87,8 @@ fn check_multi_array() {
         trace[i].a[1][2] = i * 50;
         trace[i].b = i + 3;
     }
+
+    let buffer = trace.get_buffer();
 
     // Check values
     for i in 0..num_rows {
@@ -140,14 +104,13 @@ fn check_multi_array() {
 
 #[test]
 fn check_multi_array_2() {
-    let num_rows = 8;
 
-    trace!(TraceRow, MyTrace<F> { a: [[F;3]; 2], b: F, c: [F; 2] });
+    trace!(TraceRow, MyTrace<F> { a: [[F;3]; 2], b: F, c: [F; 2] }, 8, 0, 0, 0);
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 9);
-    let mut buffer = vec![0usize; num_rows * TraceRow::<usize>::ROW_SIZE];
-    let trace = MyTrace::map_buffer(&mut buffer, num_rows, 0);
-    let mut trace = trace.unwrap();
+    
+    let mut trace = MyTrace::new();
+    let num_rows = trace.num_rows();
 
     // Set values
     for i in 0..num_rows {
@@ -162,6 +125,8 @@ fn check_multi_array_2() {
         trace[i].c[1] = i + 2;
     }
 
+    let buffer = trace.get_buffer();
+    
     // Check values
     for i in 0..num_rows {
         assert_eq!(buffer[i * TraceRow::<usize>::ROW_SIZE], i);

@@ -162,7 +162,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
         }
 
-        impl<'a, #generics: Send + p3_field::Field> common::trace::Trace<#generics> for #trace_struct_name<'a, #generics> {
+        impl<'a, #generics: Send> common::trace::Trace<#generics> for #trace_struct_name<'a, #generics> {
             fn num_rows(&self) -> usize {
                 self.num_rows
             }
@@ -377,7 +377,7 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
         }
 
-        impl<'a, #generics: Send + p3_field::Field> common::trace::Values<#generics> for #values_struct_name<'a, #generics> {
+        impl<'a, #generics: Send> common::trace::Values<#generics> for #values_struct_name<'a, #generics> {
             fn get_buffer(&mut self) -> Vec<#generics> {
                 let buffer = std::mem::take(&mut self.buffer);
                 buffer
@@ -452,39 +452,6 @@ fn is_ident(type_path: &syn::TypePath, name: &str) -> bool {
 }
 
 #[test]
-fn test_parse_values_01() {
-    let input = quote! {
-        Values<F, 3> { a: F, b: F }
-    };
-    let parsed: ParsedValuesInput = parse2(input).unwrap();
-    assert_eq!(parsed.struct_name, "Values");
-    assert_eq!(parsed.generics, "F");
-    assert_eq!(parsed.dimensions, 3);
-}
-
-#[test]
-fn test_parse_values_02() {
-    let input = quote! {
-        Something<G, 2> { a: G }
-    };
-    let parsed: ParsedValuesInput = parse2(input).unwrap();
-    assert_eq!(parsed.struct_name, "Something");
-    assert_eq!(parsed.generics, "G");
-    assert_eq!(parsed.dimensions, 2);
-}
-
-#[test]
-fn test_parse_values_03() {
-    let input = quote! {
-        Something<G, 189_432> { a: G, b: [G; 4] }
-    };
-    let parsed: ParsedValuesInput = parse2(input).unwrap();
-    assert_eq!(parsed.struct_name, "Something");
-    assert_eq!(parsed.generics, "G");
-    assert_eq!(parsed.dimensions, 189_432);
-}
-
-#[test]
 fn test_trace_macro_generates_default_row_struct() {
     let input = quote! {
         Simple<F> { a: F, b: F }, 2, 788
@@ -511,7 +478,7 @@ fn test_parsing_01() {
     assert_eq!(parsed.row_struct_name, "TraceRow");
     assert_eq!(parsed.struct_name, "MyTrace");
     assert_eq!(parsed.num_rows.base10_parse::<usize>().unwrap(), 34);
-    assert_eq!(parsed.commit_id.unwrap().base10_parse::<usize>().unwrap(), 38);
+    assert_eq!(parsed.commit_id.base10_parse::<usize>().unwrap(), 38);
 }
 
 #[test]
