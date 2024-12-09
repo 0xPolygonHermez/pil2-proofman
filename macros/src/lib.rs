@@ -55,17 +55,17 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
     // Generate trace struct
     let trace_struct = quote! {
-        pub struct #trace_struct_name<'a, #generics> {
-            pub buffer: Vec<#generics>,
-            pub slice_trace: &'a mut [#row_struct_name<#generics>],
+        pub struct #trace_struct_name<#generics> {
+            pub buffer: Vec<#row_struct_name<#generics>>,
             pub num_rows: usize,
+            pub row_size: usize,
             pub airgroup_id: usize,
             pub air_id: usize,
             // pub commit_id: Option<usize>,
             pub commit_id: usize,
         }
 
-        impl<'a, #generics: Default + Clone + Copy> #trace_struct_name<'a, #generics> {
+        impl<#generics: Default + Clone + Copy> #trace_struct_name<#generics> {
             const NUM_ROWS: usize = #num_rows;
             const AIRGROUP_ID: usize = #airgroup_id;
             const AIR_ID: usize = #air_id;
@@ -75,24 +75,17 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let mut buff_uninit: Vec<std::mem::MaybeUninit<#generics>> = Vec::with_capacity(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
+                let mut buff_uninit: Vec<std::mem::MaybeUninit<#row_struct_name<#generics>>> = Vec::with_capacity(num_rows);
 
                 unsafe {
                     buff_uninit.set_len(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
                 }
-                let buffer: Vec<#generics> = unsafe { std::mem::transmute(buff_uninit) };
-
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        buffer.as_ptr() as *mut #row_struct_name<#generics>,
-                        num_rows,
-                    )
-                };
+                let buffer: Vec<#row_struct_name::<#generics>> = unsafe { std::mem::transmute(buff_uninit) };
 
                 #trace_struct_name {
                     buffer,
-                    slice_trace,
                     num_rows,
+                    row_size: #row_struct_name::<#generics>::ROW_SIZE,
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
                     commit_id: #commit_id,
@@ -104,18 +97,12 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
-                let slice_trace = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        buffer.as_ptr() as *mut #row_struct_name<#generics>,
-                        num_rows,
-                    )
-                };
+                let buffer = vec![#row_struct_name::<#generics>::default(); num_rows];
 
                 #trace_struct_name {
                     buffer,
-                    slice_trace,
                     num_rows,
+                    row_size: #row_struct_name::<#generics>::ROW_SIZE,
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
                     commit_id: #commit_id,
@@ -143,26 +130,34 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
 
             pub fn get_buffer(&mut self) -> Vec<#generics> {
-                let buffer = std::mem::take(&mut self.buffer);
-                buffer
+                let mut buffer = std::mem::take(&mut self.buffer);
+                unsafe {
+                    let ptr = buffer.as_mut_ptr();
+                    let capacity = buffer.capacity() * self.row_size;
+                    let len = buffer.len() * self.row_size;
+
+                    std::mem::forget(buffer);
+
+                    Vec::from_raw_parts(ptr.cast(), len, capacity)
+                }
             }
         }
 
-        impl<'a, #generics> std::ops::Index<usize> for #trace_struct_name<'a, #generics> {
+        impl<#generics> std::ops::Index<usize> for #trace_struct_name<#generics> {
             type Output = #row_struct_name<#generics>;
 
             fn index(&self, index: usize) -> &Self::Output {
-                &self.slice_trace[index]
+                &self.buffer[index]
             }
         }
 
-        impl<'a, #generics> std::ops::IndexMut<usize> for #trace_struct_name<'a, #generics> {
+        impl<#generics> std::ops::IndexMut<usize> for #trace_struct_name<#generics> {
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.slice_trace[index]
+                &mut self.buffer[index]
             }
         }
 
-        impl<'a, #generics: Send> common::trace::Trace<#generics> for #trace_struct_name<'a, #generics> {
+        impl<#generics: Send> common::trace::Trace<#generics> for #trace_struct_name<#generics> {
             fn num_rows(&self) -> usize {
                 self.num_rows
             }
@@ -176,8 +171,16 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
 
             fn get_buffer(&mut self) -> Vec<#generics> {
-                let buffer = std::mem::take(&mut self.buffer);
-                buffer
+                let mut buffer = std::mem::take(&mut self.buffer);
+                unsafe {
+                    let ptr = buffer.as_mut_ptr();
+                    let capacity = buffer.capacity() * self.row_size;
+                    let len = buffer.len() * self.row_size;
+
+                    std::mem::forget(buffer);
+
+                    Vec::from_raw_parts(ptr.cast(), len, capacity)
+                }                
             }
         }
     };
@@ -348,9 +351,9 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
                 }
             }
 
-        pub fn from_vec_guard(
-            mut external_buffer_rw: std::sync::RwLockWriteGuard<Vec<#generics>>,
-        ) -> Self {
+            pub fn from_vec_guard(
+                mut external_buffer_rw: std::sync::RwLockWriteGuard<Vec<#generics>>,
+            ) -> Self {
                 let slice_values = unsafe {
                     let ptr = external_buffer_rw.as_mut_ptr() as *mut #row_struct_name<#generics>;
                     &mut *ptr
