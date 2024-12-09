@@ -10,7 +10,7 @@ use rayon::Scope;
 use proofman::WitnessManager;
 use proofman_common::ProofCtx;
 
-use crate::{StdProd, StdRangeCheck, StdSum};
+use crate::{StdProd, StdRangeCheck, RangeCheckAir, StdSum};
 
 pub struct Std<F: PrimeField> {
     range_check: Arc<StdRangeCheck<F>>,
@@ -51,5 +51,23 @@ impl<F: PrimeField> Std<F> {
     /// Processes the inputs for the range check.
     pub fn range_check(&self, val: F, multiplicity: F, id: usize) {
         self.range_check.assign_values(val, multiplicity, id);
+    }
+
+    pub fn get_ranges(&self) -> Vec<(usize, usize, RangeCheckAir)> {
+        self.range_check.get_ranges()
+    }
+
+    pub fn drain_inputs(&self, rc_type: &RangeCheckAir) {
+        match rc_type {
+            RangeCheckAir::U8Air => {
+                self.range_check.u8air.as_ref().unwrap().drain_inputs();
+            }
+            RangeCheckAir::U16Air => {
+                self.range_check.u16air.as_ref().unwrap().drain_inputs();
+            }
+            RangeCheckAir::SpecifiedRanges => {
+                self.range_check.specified_ranges.as_ref().unwrap().drain_inputs();
+            }
+        };
     }
 }

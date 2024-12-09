@@ -149,6 +149,14 @@ impl<F: PrimeField> U8Air<F> {
             mul_column.add(index, *mul);
         }
     }
+
+    pub fn airgroup_id(&self) -> usize {
+        self.airgroup_id
+    }
+
+    pub fn air_id(&self) -> usize {
+        self.air_id
+    }
 }
 
 impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
@@ -165,7 +173,6 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
         let num_rows = pctx.global_info.airs[self.airgroup_id][self.air_id].num_rows;
         let buffer_size = num_rows;
         let buffer = create_buffer_fast(buffer_size);
-
         // Add a new air instance. Since U8Air is a table, only this air instance is needed
         let mut air_instance = AirInstance::new(sctx.clone(), self.airgroup_id, self.air_id, None, buffer);
 
