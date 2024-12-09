@@ -485,11 +485,11 @@ fn generate_witness<F: Field>(
         // Call the function
         let dat_filename = setup_path.display().to_string() + ".dat";
         let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-        let dat_filename_ptr = dat_filename_str.as_ptr() as *const i8;
+        let dat_filename_ptr = dat_filename_str.as_ptr();
 
         let exec_filename = setup_path.display().to_string() + ".exec";
         let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
-        let exec_filename_ptr = exec_filename_str.as_ptr() as *const i8;
+        let exec_filename_ptr = exec_filename_str.as_ptr();
 
         let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
         let size_witness = get_size_witness();
