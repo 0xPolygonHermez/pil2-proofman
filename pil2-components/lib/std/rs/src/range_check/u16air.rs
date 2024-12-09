@@ -153,6 +153,14 @@ impl<F: PrimeField> U16Air<F> {
             mul_column.add(index, *mul);
         }
     }
+
+    pub fn airgroup_id(&self) -> usize {
+        self.airgroup_id
+    }
+
+    pub fn air_id(&self) -> usize {
+        self.air_id
+    }
 }
 
 impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {

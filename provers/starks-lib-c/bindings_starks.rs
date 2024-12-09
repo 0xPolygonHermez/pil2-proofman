@@ -80,14 +80,7 @@ extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPv"]
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
-extern "C" {
-    #[link_name = "\u{1}_Z25get_custom_commit_map_idsPvmm"]
-    pub fn get_custom_commit_map_ids(
-        pStarkInfo: *mut ::std::os::raw::c_void,
-        commit_id: u64,
-        stage: u64,
-    ) -> *mut ::std::os::raw::c_void;
-}
+
 extern "C" {
     #[link_name = "\u{1}_Z15stark_info_freePv"]
     pub fn stark_info_free(pStarkInfo: *mut ::std::os::raw::c_void);

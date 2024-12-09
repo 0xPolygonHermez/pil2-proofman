@@ -527,10 +527,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     fri_proof_get_tree_root_c(p_proof, value.as_mut_ptr() as *mut c_void, step_index as u64);
                 } else {
                     let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-                    let buffer = air_instance.get_trace_ptr() as *mut c_void;
-
                     let n_hash = (1 << (steps[n_steps].n_bits)) * Self::FIELD_EXTENSION as u64;
-                    let fri_pol = get_fri_pol_c(self.p_stark_info, buffer);
+                    let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_trace_ptr());
                     calculate_hash_c(p_stark, value.as_mut_ptr() as *mut c_void, fri_pol, n_hash);
                 }
             }
@@ -714,9 +712,8 @@ impl<F: Field> StarkProver<F> {
         }
 
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-        let buffer = air_instance.get_trace_ptr() as *mut c_void;
 
-        let fri_pol = get_fri_pol_c(self.p_stark_info, buffer);
+        let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_trace_ptr());
 
         let challenges_guard = proof_ctx.challenges.values.read().unwrap();
         let challenge: Vec<F> = challenges_guard.iter().skip(challenges_guard.len() - 3).cloned().collect();
@@ -726,8 +723,8 @@ impl<F: Field> StarkProver<F> {
 
         compute_fri_folding_c(
             step_index as u64,
-            fri_pol,
-            challenge.as_ptr() as *mut c_void,
+            fri_pol as *mut u8,
+            challenge.as_ptr() as *mut u8,
             self.stark_info.stark_struct.n_bits_ext,
             prev_bits,
             current_bits,
@@ -735,7 +732,7 @@ impl<F: Field> StarkProver<F> {
 
         if step_index != n_steps {
             let next_bits = steps[(step_index + 1) as usize].n_bits;
-            compute_fri_merkelize_c(self.p_stark, p_proof, step_index as u64, fri_pol, current_bits, next_bits);
+            compute_fri_merkelize_c(self.p_stark, p_proof, step_index as u64, fri_pol as *mut u8, current_bits, next_bits);
         }
     }
 
@@ -774,9 +771,7 @@ impl<F: Field> StarkProver<F> {
         );
 
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-        let buffer = air_instance.get_trace_ptr() as *mut c_void;
-
-        let fri_pol = get_fri_pol_c(self.p_stark_info, buffer);
+        let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_trace_ptr());
 
         let n_trees = self.num_stages() + 2 + self.stark_info.custom_commits.len() as u32;
         compute_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr(), n_queries, n_trees as u64);
@@ -793,7 +788,7 @@ impl<F: Field> StarkProver<F> {
 
         set_fri_final_pol_c(
             p_proof,
-            fri_pol,
+            fri_pol as *mut u8,
             self.stark_info.stark_struct.steps[self.stark_info.stark_struct.steps.len() - 1].n_bits,
         );
     }

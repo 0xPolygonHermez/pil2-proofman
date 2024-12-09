@@ -161,20 +161,6 @@ uint64_t get_map_total_n(void *pStarkInfo)
     return ((StarkInfo *)pStarkInfo)->mapTotalN;
 }
 
-void *get_custom_commit_map_ids(void *pStarkInfo, uint64_t commit_id, uint64_t stage) {
-    auto starkInfo = *(StarkInfo *)pStarkInfo;
-    VecU64Result customCommitIds;
-    customCommitIds.nElements = starkInfo.customCommits[commit_id].stageWidths[stage];
-    customCommitIds.ids = new uint64_t[customCommitIds.nElements];
-    uint64_t c = 0;
-    for(uint64_t i = 0; i < starkInfo.customCommitsMap[commit_id].size(); ++i) {
-        if(starkInfo.customCommitsMap[commit_id][i].stage == stage) {
-            customCommitIds.ids[c++] = i;
-        }
-    }
-    return new VecU64Result(customCommitIds);
-}
-
 void stark_info_free(void *pStarkInfo)
 {
     auto starkInfo = (StarkInfo *)pStarkInfo;

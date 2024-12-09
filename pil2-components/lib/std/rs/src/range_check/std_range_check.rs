@@ -25,25 +25,31 @@ pub enum RangeCheckAir {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum StdRangeCheckType {
+pub enum StdRangeCheckType {
     Valid(RangeCheckAir),
     U8AirDouble,
     U16AirDouble,
 }
 
 #[derive(Clone, Debug)]
-struct StdRangeItem<F: PrimeField> {
+pub struct StdRangeItem<F: PrimeField> {
     rc_type: StdRangeCheckType,
     range: Range<F>,
+}
+
+impl<F: PrimeField> StdRangeItem<F> {
+    pub fn range_type(&self) -> StdRangeCheckType {
+        self.rc_type.clone()
+    }
 }
 
 // TODO: Remove Arc
 pub struct StdRangeCheck<F: PrimeField> {
     mode: StdMode,
     ranges: Mutex<Vec<StdRangeItem<F>>>,
-    u8air: Option<Arc<U8Air<F>>>,
-    u16air: Option<Arc<U16Air<F>>>,
-    specified_ranges: Option<Arc<SpecifiedRanges<F>>>,
+    pub u8air: Option<Arc<U8Air<F>>>,
+    pub u16air: Option<Arc<U16Air<F>>>,
+    pub specified_ranges: Option<Arc<SpecifiedRanges<F>>>,
 }
 
 impl<F: PrimeField> Decider<F> for StdRangeCheck<F> {
@@ -256,6 +262,24 @@ impl<F: PrimeField> StdRangeCheck<F> {
         if let Some(specified_ranges) = self.specified_ranges.as_ref() {
             specified_ranges.drain_inputs();
         }
+    }
+
+    pub fn get_ranges(&self) -> Vec<(usize, usize, RangeCheckAir)> {
+        let mut ranges = Vec::new();
+
+        if let Some(u8air) = self.u8air.as_ref() {
+            ranges.push((u8air.airgroup_id(), u8air.air_id(), RangeCheckAir::U8Air));
+        }
+
+        if let Some(u16air) = self.u16air.as_ref() {
+            ranges.push((u16air.airgroup_id(), u16air.air_id(), RangeCheckAir::U16Air));
+        }
+
+        if let Some(specified_ranges) = self.specified_ranges.as_ref() {
+            ranges.push((specified_ranges.airgroup_id(), specified_ranges.air_id(), RangeCheckAir::SpecifiedRanges));
+        }
+
+        ranges
     }
 }
 

@@ -4,6 +4,7 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+#[warn(dead_code)]
 type FieldExtension<F> = [F; 3];
 
 pub const PILOUT_HASH: &[u8] = b"Build-hash";
@@ -38,6 +39,7 @@ pub struct BuildPublics {
     pub rom_root: [u64; 4],
     
 }
+
 values!(BuildPublicValues<F> {
  module: F, in1: F, in2: F, out: F, rom_root: [F; 4],
 });

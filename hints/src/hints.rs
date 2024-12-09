@@ -1176,8 +1176,8 @@ pub fn print_row<F: Field>(setup_ctx: &SetupCtx, air_instance: &AirInstance<F>, 
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let buffer = match stage == 1 {
-        true => air_instance.get_witness_ptr() as *mut c_void,
-        false => air_instance.get_trace_ptr() as *mut c_void,
+        true => air_instance.get_witness_ptr(),
+        false => air_instance.get_trace_ptr(),
     };
 
     print_row_c((&setup.p_setup).into(), buffer, stage, row);

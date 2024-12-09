@@ -20,7 +20,7 @@ include!("../bindings_starks.rs");
 use std::ffi::CString;
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn save_challenges_c(p_challenges: *mut std::os::raw::c_void, global_info_file: &str, output_dir: &str) {
+pub fn save_challenges_c(p_challenges: *mut u8, global_info_file: &str, output_dir: &str) {
     unsafe {
         let file_dir = CString::new(output_dir).unwrap();
         let file_ptr = file_dir.as_ptr() as *mut std::os::raw::c_char;
@@ -127,20 +127,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
 }
 
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_custom_commit_map_ids_c(p_stark_info: *mut c_void, commit_id: u64, stage: u64) -> Vec<u64> {
-    unsafe {
-        let raw_ptr = get_custom_commit_map_ids(p_stark_info, commit_id, stage);
-
-        let ids_result = Box::from_raw(raw_ptr as *mut VecU64Result);
-
-        let slice = std::slice::from_raw_parts(ids_result.values, ids_result.n_values as usize);
-
-        // Copy the contents of the slice into a Vec<u64>
-
-        slice.to_vec()
-    }
-}
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn stark_info_free_c(p_stark_info: *mut c_void) {
@@ -402,8 +388,8 @@ pub fn calculate_xdivxsub_c(p_stark: *mut c_void, xi_challenge: *mut c_void, xdi
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_fri_pol_c(p_stark_info: *mut c_void, buffer: *mut c_void) -> *mut c_void {
-    unsafe { get_fri_pol(p_stark_info, buffer) }
+pub fn get_fri_pol_c(p_stark_info: *mut c_void, buffer: *mut u8) -> *mut c_void {
+    unsafe { get_fri_pol(p_stark_info, buffer as *mut std::os::raw::c_void) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -510,14 +496,14 @@ pub fn compute_evals_c(p_stark: *mut c_void, params: *mut c_void, lev: *mut c_vo
 #[cfg(not(feature = "no_lib_link"))]
 pub fn compute_fri_folding_c(
     step: u64,
-    buffer: *mut c_void,
-    challenge: *mut c_void,
+    buffer: *mut u8,
+    challenge: *mut u8,
     n_bits_ext: u64,
     prev_bits: u64,
     current_bits: u64,
 ) {
     unsafe {
-        compute_fri_folding(step, buffer, challenge, n_bits_ext, prev_bits, current_bits);
+        compute_fri_folding(step, buffer as *mut std::os::raw::c_void, challenge as *mut std::os::raw::c_void, n_bits_ext, prev_bits, current_bits);
     }
 }
 
@@ -526,12 +512,12 @@ pub fn compute_fri_merkelize_c(
     p_starks: *mut c_void,
     p_proof: *mut c_void,
     step: u64,
-    buffer: *mut c_void,
+    buffer: *mut u8,
     current_bits: u64,
     next_bits: u64,
 ) {
     unsafe {
-        compute_fri_merkelize(p_starks, p_proof, step, buffer, current_bits, next_bits);
+        compute_fri_merkelize(p_starks, p_proof, step, buffer as *mut std::os::raw::c_void, current_bits, next_bits);
     }
 }
 
@@ -563,9 +549,9 @@ pub fn compute_fri_queries_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn set_fri_final_pol_c(p_proof: *mut c_void, buffer: *mut c_void, n_bits: u64) {
+pub fn set_fri_final_pol_c(p_proof: *mut c_void, buffer: *mut u8, n_bits: u64) {
     unsafe {
-        set_fri_final_pol(p_proof, buffer, n_bits);
+        set_fri_final_pol(p_proof, buffer as *mut std::os::raw::c_void, n_bits);
     }
 }
 
@@ -624,22 +610,22 @@ pub fn verify_constraints_c(p_setup: *mut c_void, p_steps_params: *mut c_void) -
 #[cfg(not(feature = "no_lib_link"))]
 pub fn verify_global_constraints_c(
     p_global_constraints_bin: *mut c_void,
-    publics: *mut c_void,
-    challenges: *mut c_void,
-    proof_values: *mut c_void,
-    airgroupvalues: *mut *mut c_void,
+    publics: *mut u8,
+    challenges: *mut u8,
+    proof_values: *mut u8,
+    airgroupvalues: *mut *mut u8,
 ) -> *mut c_void {
-    unsafe { verify_global_constraints(p_global_constraints_bin, publics, challenges, proof_values, airgroupvalues) }
+    unsafe { verify_global_constraints(p_global_constraints_bin, publics as *mut std::os::raw::c_void, challenges as *mut std::os::raw::c_void, proof_values as *mut std::os::raw::c_void, airgroupvalues as *mut *mut std::os::raw::c_void) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_global_constraints_c(
     p_global_constraints_bin: *mut c_void,
-    publics: *mut c_void,
-    challenges: *mut c_void,
-    proof_values: *mut c_void,
-    airgroupvalues: *mut *mut c_void,
+    publics: *mut u8,
+    challenges: *mut u8,
+    proof_values: *mut u8,
+    airgroupvalues: *mut *mut u8,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -648,10 +634,10 @@ pub fn get_hint_field_global_constraints_c(
     unsafe {
         get_hint_field_global_constraints(
             p_global_constraints_bin,
-            publics,
-            challenges,
-            proof_values,
-            airgroupvalues,
+            publics as *mut std::os::raw::c_void,
+            challenges as *mut std::os::raw::c_void,
+            proof_values as *mut std::os::raw::c_void,
+            airgroupvalues as *mut *mut std::os::raw::c_void,
             hint_id,
             field_name.as_ptr() as *mut std::os::raw::c_char,
             print_expression,
@@ -662,8 +648,8 @@ pub fn get_hint_field_global_constraints_c(
 #[cfg(not(feature = "no_lib_link"))]
 pub fn set_hint_field_global_constraints_c(
     p_global_constraints_bin: *mut c_void,
-    proof_values: *mut c_void,
-    values: *mut c_void,
+    proof_values: *mut u8,
+    values: *mut u8,
     hint_id: u64,
     hint_field_name: &str,
 ) -> u64 {
@@ -671,8 +657,8 @@ pub fn set_hint_field_global_constraints_c(
     unsafe {
         set_hint_field_global_constraints(
             p_global_constraints_bin,
-            proof_values,
-            values,
+            proof_values as *mut std::os::raw::c_void,
+            values as *mut std::os::raw::c_void,
             hint_id,
             field_name.as_ptr() as *mut std::os::raw::c_char,
         )
@@ -680,9 +666,9 @@ pub fn set_hint_field_global_constraints_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn print_row_c(p_setup_ctx: *mut c_void, buffer: *mut c_void, stage: u64, row: u64) {
+pub fn print_row_c(p_setup_ctx: *mut c_void, buffer: *mut u8, stage: u64, row: u64) {
     unsafe {
-        print_row(p_setup_ctx, buffer, stage, row);
+        print_row(p_setup_ctx, buffer as *mut std::os::raw::c_void, stage, row);
     }
 }
 
@@ -690,10 +676,10 @@ pub fn print_row_c(p_setup_ctx: *mut c_void, buffer: *mut c_void, stage: u64, ro
 #[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_c(
     p_setup_ctx: *mut c_void,
-    p_address: *mut c_void,
-    p_const_pols: *mut c_void,
-    p_const_tree: *mut c_void,
-    p_public_inputs: *mut c_void,
+    p_address: *mut u8,
+    p_const_pols: *mut u8,
+    p_const_tree: *mut u8,
+    p_public_inputs: *mut u8,
     proof_file: &str,
     global_info_file: &str,
     airgroup_id: u64,
@@ -710,10 +696,10 @@ pub fn gen_recursive_proof_c(
             p_setup_ctx,
             global_info_file_ptr,
             airgroup_id,
-            p_address,
-            p_const_pols,
-            p_const_tree,
-            p_public_inputs,
+            p_address as *mut std::os::raw::c_void,
+            p_const_pols as *mut std::os::raw::c_void,
+            p_const_tree as *mut std::os::raw::c_void,
+            p_public_inputs as *mut std::os::raw::c_void,
             proof_file_ptr,
             vadcop,
         )
@@ -738,9 +724,9 @@ pub fn add_recursive2_verkey_c(p_zkin: *mut c_void, recursive2_verkey: &str) -> 
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn join_zkin_final_c(
-    p_publics: *mut c_void,
-    p_proof_values: *mut c_void,
-    p_challenges: *mut c_void,
+    p_publics: *mut u8,
+    p_proof_values: *mut u8,
+    p_challenges: *mut u8,
     global_info_file: &str,
     zkin_recursive2: *mut *mut c_void,
     stark_info_recursive2: *mut *mut c_void,
@@ -750,9 +736,9 @@ pub fn join_zkin_final_c(
 
     unsafe {
         join_zkin_final(
-            p_publics,
-            p_proof_values,
-            p_challenges,
+            p_publics as *mut std::os::raw::c_void,
+            p_proof_values as *mut std::os::raw::c_void,
+            p_challenges as *mut std::os::raw::c_void,
             global_info_file_ptr,
             zkin_recursive2,
             stark_info_recursive2,
@@ -763,8 +749,8 @@ pub fn join_zkin_final_c(
 #[cfg(not(feature = "no_lib_link"))]
 pub fn join_zkin_recursive2_c(
     airgroup_id: u64,
-    p_publics: *mut c_void,
-    p_challenges: *mut c_void,
+    p_publics: *mut u8,
+    p_challenges: *mut u8,
     global_info_file: &str,
     zkin1: *mut c_void,
     zkin2: *mut c_void,
@@ -777,8 +763,8 @@ pub fn join_zkin_recursive2_c(
         join_zkin_recursive2(
             global_info_file_ptr,
             airgroup_id,
-            p_publics,
-            p_challenges,
+            p_publics as *mut std::os::raw::c_void,
+            p_challenges as *mut std::os::raw::c_void,
             zkin1,
             zkin2,
             stark_info_recursive2,
@@ -824,29 +810,29 @@ pub fn serialized_proof_free_c(zkin_cstr: *mut std::os::raw::c_char) {
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
-    circomWitness: *mut ::std::os::raw::c_void,
-    execFile: *mut ::std::os::raw::c_char,
-    witness: *mut ::std::os::raw::c_void,
-    pPublics: *mut ::std::os::raw::c_void,
+    circomWitness: *mut u8,
+    execFile: *const i8,
+    witness: *mut u8,
+    pPublics: *mut u8,
     sizeWitness: u64,
     N: u64,
     nPublics: u64,
     nCols: u64,
 ) {
     unsafe {
-        get_committed_pols(circomWitness, execFile, witness, pPublics, sizeWitness, N, nPublics, nCols);
+        get_committed_pols(circomWitness as *mut std::os::raw::c_void, execFile as *mut std::os::raw::c_char, witness as *mut std::os::raw::c_void, pPublics as *mut std::os::raw::c_void, sizeWitness, N, nPublics, nCols);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_final_snark_proof_c(circomWitnessFinal: *mut ::std::os::raw::c_void, zkeyFile: &str, outputDir: &str) {
+pub fn gen_final_snark_proof_c(circomWitnessFinal: *mut u8, zkeyFile: &str, outputDir: &str) {
     let zkey_file_name = CString::new(zkeyFile).unwrap();
     let zkey_file_ptr = zkey_file_name.as_ptr() as *mut std::os::raw::c_char;
 
     let output_dir_name = CString::new(outputDir).unwrap();
     let output_dir_ptr = output_dir_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
-        gen_final_snark_proof(circomWitnessFinal, zkey_file_ptr, output_dir_ptr);
+        gen_final_snark_proof(circomWitnessFinal as *mut std::os::raw::c_void, zkey_file_ptr, output_dir_ptr);
     }
 }
 
@@ -861,7 +847,7 @@ pub fn set_log_level_c(level: u64) {
 // MOCK METHODS FOR TESTING
 // ------------------------
 #[cfg(feature = "no_lib_link")]
-pub fn save_challenges_c(_p_challenges: *mut std::os::raw::c_void, _global_info_file: &str, _output_dir: &str) {
+pub fn save_challenges_c(_p_challenges: *mut u8, _global_info_file: &str, _output_dir: &str) {
     trace!("{}: ··· {}", "ffi     ", "save_challenges: This is a mock call because there is no linked library");
 }
 
@@ -949,16 +935,6 @@ pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
 pub fn get_custom_commit_id_c(_p_stark_info: *mut c_void, _name: &str) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_custom_commit_id: This is a mock call because there is no linked library");
     100000000
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn get_custom_commit_map_ids_c(_p_stark_info: *mut c_void, _commit_id: u64, _stage: u64) -> Vec<u64> {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_custom_commit_map_ids: This is a mock call because there is no linked library"
-    );
-    Vec::new()
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1205,7 +1181,7 @@ pub fn calculate_xdivxsub_c(_p_stark: *mut c_void, _xi_challenge: *mut c_void, _
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_fri_pol_c(_p_stark_info: *mut c_void, _buffer: *mut c_void) -> *mut c_void {
+pub fn get_fri_pol_c(_p_stark_info: *mut c_void, _buffer: *mut u8) -> *mut c_void {
     trace!("ffi     : ··· {}", "get_fri_pol: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -1213,8 +1189,8 @@ pub fn get_fri_pol_c(_p_stark_info: *mut c_void, _buffer: *mut c_void) -> *mut c
 #[cfg(feature = "no_lib_link")]
 pub fn compute_fri_folding_c(
     _step: u64,
-    _buffer: *mut c_void,
-    _challenge: *mut c_void,
+    _buffer: *mut u8,
+    _challenge: *mut u8,
     _n_bits_ext: u64,
     _prev_bits: u64,
     _current_bits: u64,
@@ -1227,7 +1203,7 @@ pub fn compute_fri_merkelize_c(
     _p_starks: *mut c_void,
     _p_proof: *mut c_void,
     _step: u64,
-    _buffer: *mut c_void,
+    _buffer: *mut u8,
     _current_bits: u64,
     _next_bits: u64,
 ) {
@@ -1258,7 +1234,7 @@ pub fn compute_fri_queries_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn set_fri_final_pol_c(_p_proof: *mut c_void, _buffer: *mut c_void, _n_bits: u64) {
+pub fn set_fri_final_pol_c(_p_proof: *mut c_void, _buffer: *mut u8, _n_bits: u64) {
     trace!("{}: ··· {}", "ffi     ", "set_fri_final_pol: This is a mock call because there is no linked library");
 }
 
@@ -1311,10 +1287,10 @@ pub fn verify_constraints_c(_p_setup: *mut c_void, _p_steps_params: *mut c_void)
 #[cfg(feature = "no_lib_link")]
 pub fn verify_global_constraints_c(
     _p_global_constraints_bin: *mut c_void,
-    _publics: *mut c_void,
-    _challenges: *mut c_void,
-    _proof_values: *mut c_void,
-    _airgroupvalues: *mut *mut c_void,
+    _publics: *mut u8,
+    _challenges: *mut u8,
+    _proof_values: *mut u8,
+    _airgroupvalues: *mut *mut u8,
 ) -> *mut c_void {
     trace!(
         "{}: ··· {}",
@@ -1328,10 +1304,10 @@ pub fn verify_global_constraints_c(
 #[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_global_constraints_c(
     _p_global_constraints_bin: *mut c_void,
-    _publics: *mut c_void,
-    _challenges: *mut c_void,
-    _proof_values: *mut c_void,
-    _airgroupvalues: *mut *mut c_void,
+    _publics: *mut u8,
+    _challenges: *mut u8,
+    _proof_values: *mut u8,
+    _airgroupvalues: *mut *mut u8,
     _hint_id: u64,
     _hint_field_name: &str,
     _print_expression: bool,
@@ -1347,8 +1323,8 @@ pub fn get_hint_field_global_constraints_c(
 #[cfg(feature = "no_lib_link")]
 pub fn set_hint_field_global_constraints_c(
     _p_global_constraints_bin: *mut c_void,
-    _proof_values: *mut c_void,
-    _values: *mut c_void,
+    _proof_values: *mut u8,
+    _values: *mut u8,
     _hint_id: u64,
     _hint_field_name: &str,
 ) -> u64 {
@@ -1361,7 +1337,7 @@ pub fn set_hint_field_global_constraints_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn print_row_c(_p_setup_ctx: *mut c_void, _buffer: *mut c_void, _stage: u64, _row: u64) {
+pub fn print_row_c(_p_setup_ctx: *mut c_void, _buffer: *mut u8, _stage: u64, _row: u64) {
     trace!("{}: ··· {}", "ffi     ", "print_row: This is a mock call because there is no linked library");
 }
 
@@ -1369,10 +1345,10 @@ pub fn print_row_c(_p_setup_ctx: *mut c_void, _buffer: *mut c_void, _stage: u64,
 #[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_c(
     _p_setup_ctx: *mut c_void,
-    _p_address: *mut c_void,
-    _p_const_pols: *mut c_void,
-    _p_const_tree: *mut c_void,
-    _p_public_inputs: *mut c_void,
+    _p_address: *mut u8,
+    _p_const_pols: *mut u8,
+    _p_const_tree: *mut u8,
+    _p_public_inputs: *mut u8,
     _proof_file: &str,
     _global_info_file: &str,
     _airgroup_id: u64,
@@ -1397,8 +1373,8 @@ pub fn add_recursive2_verkey_c(_p_zkin: *mut c_void, _recursive2_verkey: &str) -
 #[cfg(feature = "no_lib_link")]
 pub fn join_zkin_recursive2_c(
     _airgroup_id: u64,
-    _p_publics: *mut c_void,
-    _p_challenges: *mut c_void,
+    _p_publics: *mut u8,
+    _p_challenges: *mut u8,
     _global_info_file: &str,
     _zkin1: *mut c_void,
     _zkin2: *mut c_void,
@@ -1410,9 +1386,9 @@ pub fn join_zkin_recursive2_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn join_zkin_final_c(
-    _p_publics: *mut c_void,
-    _p_proof_values: *mut c_void,
-    _p_challenges: *mut c_void,
+    _p_publics: *mut u8,
+    _p_proof_values: *mut u8,
+    _p_challenges: *mut u8,
     _global_info_file: &str,
     _zkin_recursive2: *mut *mut c_void,
     _stark_info_recursive2: *mut *mut c_void,
@@ -1452,10 +1428,10 @@ pub fn serialized_proof_free_c(_zkin_cstr: *mut std::os::raw::c_char) {
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
-    _circomWitness: *mut ::std::os::raw::c_void,
-    _execFile: *mut ::std::os::raw::c_char,
-    _witness: *mut ::std::os::raw::c_void,
-    _pPublics: *mut ::std::os::raw::c_void,
+    _circomWitness: *mut u8,
+    _execFile: *const i8,
+    _witness: *mut u8,
+    _pPublics: *mut u8,
     _sizeWitness: u64,
     _N: u64,
     _nPublics: u64,
@@ -1465,7 +1441,7 @@ pub fn get_committed_pols_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_final_snark_proof_c(_circomWitnessFinal: *mut ::std::os::raw::c_void, _zkeyFile: &str, _outputDir: &str) {
+pub fn gen_final_snark_proof_c(_circomWitnessFinal: *mut u8, _zkeyFile: &str, _outputDir: &str) {
     trace!("{}: ··· {}", "ffi     ", "gen_final_snark_proof: This is a mock call because there is no linked library");
 }
 

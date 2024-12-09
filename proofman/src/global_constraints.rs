@@ -8,8 +8,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use proofman_common::{GlobalConstraintInfo, GlobalConstraintsResults, ExtensionField, ProofCtx, SetupCtx};
 
-use std::os::raw::c_void;
-
 pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<F>> {
     const FIELD_EXTENSION: usize = 3;
 
@@ -73,10 +71,10 @@ pub fn verify_global_constraints_proof<F: Field>(
 
     let raw_ptr = verify_global_constraints_c(
         sctx.get_global_bin(),
-        pctx.get_publics_ptr() as *mut c_void,
-        pctx.get_challenges_ptr() as *mut c_void,
-        pctx.get_proof_values_ptr() as *mut c_void,
-        airgroup_values_ptrs.as_mut_ptr() as *mut *mut c_void,
+        pctx.get_publics_ptr(),
+        pctx.get_challenges_ptr(),
+        pctx.get_proof_values_ptr(),
+        airgroup_values_ptrs.as_mut_ptr() as *mut *mut u8,
     );
 
     unsafe {
@@ -101,10 +99,10 @@ pub fn get_hint_field_gc<F: Field>(
 
     let raw_ptr = get_hint_field_global_constraints_c(
         sctx.get_global_bin(),
-        pctx.get_publics_ptr() as *mut c_void,
-        pctx.get_challenges_ptr() as *mut c_void,
-        pctx.get_proof_values_ptr() as *mut c_void,
-        airgroup_values_ptrs.as_mut_ptr() as *mut *mut c_void,
+        pctx.get_publics_ptr(),
+        pctx.get_challenges_ptr(),
+        pctx.get_proof_values_ptr(),
+        airgroup_values_ptrs.as_mut_ptr() as *mut *mut u8,
         hint_id,
         hint_field_name,
         print_expression,
@@ -135,10 +133,10 @@ pub fn get_hint_field_gc_a<F: Field>(
 
     let raw_ptr = get_hint_field_global_constraints_c(
         sctx.get_global_bin(),
-        pctx.get_publics_ptr() as *mut c_void,
-        pctx.get_challenges_ptr() as *mut c_void,
-        pctx.get_proof_values_ptr() as *mut c_void,
-        airgroup_values_ptrs.as_mut_ptr() as *mut *mut c_void,
+        pctx.get_publics_ptr(),
+        pctx.get_challenges_ptr(),
+        pctx.get_proof_values_ptr(),
+        airgroup_values_ptrs.as_mut_ptr() as *mut *mut u8,
         hint_id,
         hint_field_name,
         print_expression,
@@ -175,10 +173,10 @@ pub fn get_hint_field_gc_m<F: Field>(
 
     let raw_ptr = get_hint_field_global_constraints_c(
         sctx.get_global_bin(),
-        pctx.get_publics_ptr() as *mut c_void,
-        pctx.get_challenges_ptr() as *mut c_void,
-        pctx.get_proof_values_ptr() as *mut c_void,
-        airgroup_values_ptrs.as_mut_ptr() as *mut *mut c_void,
+        pctx.get_publics_ptr(),
+        pctx.get_challenges_ptr(),
+        pctx.get_proof_values_ptr(),
+        airgroup_values_ptrs.as_mut_ptr() as *mut *mut u8,
         hint_id,
         hint_field_name,
         print_expression,
@@ -225,12 +223,10 @@ pub fn set_hint_field<F: Field>(
         }
     };
 
-    let values_ptr = value_array.as_ptr() as *mut c_void;
-
     set_hint_field_global_constraints_c(
         sctx.get_global_bin(),
-        pctx.get_proof_values_ptr() as *mut c_void,
-        values_ptr,
+        pctx.get_proof_values_ptr(),
+        value_array.as_ptr() as *mut u8,
         hint_id,
         hint_field_name,
     );

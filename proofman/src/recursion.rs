@@ -55,9 +55,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
             let (buffer, publics) = generate_witness::<F>(&setup_path, setup, proofs[prover_idx], 18)?;
 
-            let p_publics = publics.as_ptr() as *mut c_void;
-            let p_address = buffer.as_ptr() as *mut c_void;
-
             log::info!(
                 "{}: {}",
                 MY_NAME,
@@ -78,10 +75,10 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
             zkin = gen_recursive_proof_c(
                 p_setup,
-                p_address,
-                setup.get_const_ptr() as *mut c_void,
-                setup.get_const_tree_ptr() as *mut c_void,
-                p_publics,
+                buffer.as_ptr() as *mut u8,
+                setup.get_const_ptr(),
+                setup.get_const_tree_ptr(),
+                publics.as_ptr() as *mut u8,
                 &proof_file,
                 global_info_file,
                 air_instance.airgroup_id as u64,
@@ -115,9 +112,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
         let (buffer, publics) = generate_witness::<F>(&setup_path, setup, zkin, 18)?;
 
-        let p_publics = publics.as_ptr() as *mut c_void;
-        let p_address = buffer.as_ptr() as *mut c_void;
-
         log::info!(
             "{}: {}",
             MY_NAME,
@@ -138,10 +132,10 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
         let p_prove = gen_recursive_proof_c(
             p_setup,
-            p_address,
-            setup.get_const_ptr() as *mut c_void,
-            setup.get_const_tree_ptr() as *mut c_void,
-            p_publics,
+            buffer.as_ptr() as *mut u8,
+            setup.get_const_ptr(),
+            setup.get_const_tree_ptr(),
+            publics.as_ptr() as *mut u8,
             &proof_file,
             global_info_file,
             air_instance.airgroup_id as u64,
@@ -228,8 +222,8 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 
                         let zkin_recursive2 = join_zkin_recursive2_c(
                             airgroup as u64,
-                            pctx.get_publics_ptr() as *mut c_void,
-                            pctx.get_challenges_ptr() as *mut c_void,
+                            pctx.get_publics_ptr(),
+                            pctx.get_challenges_ptr(),
                             global_info_file,
                             airgroup_proofs[airgroup][j].unwrap(),
                             airgroup_proofs[airgroup][j + 1].unwrap(),
@@ -248,8 +242,6 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                         let setup_path = pctx.global_info.get_air_setup_path(airgroup, 0, &ProofType::Recursive2);
 
                         let (buffer, publics) = generate_witness::<F>(&setup_path, setup, zkin_recursive2_updated, 18)?;
-                        let p_publics = publics.as_ptr() as *mut c_void;
-                        let p_address = buffer.as_ptr() as *mut c_void;
 
                         timer_start_trace!(GENERATE_RECURSIVE2_PROOF);
                         let proof_file = match save_proof {
@@ -275,10 +267,10 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 
                         let zkin = gen_recursive_proof_c(
                             p_setup,
-                            p_address,
-                            setup.get_const_ptr() as *mut c_void,
-                            setup.get_const_tree_ptr() as *mut c_void,
-                            p_publics,
+                            buffer.as_ptr() as *mut u8,
+                            setup.get_const_ptr(),
+                            setup.get_const_tree_ptr(),
+                            publics.as_ptr() as *mut u8,
                             &proof_file,
                             global_info_file,
                             airgroup as u64,
@@ -324,9 +316,9 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
         let stark_infos_recursive2_ptr = stark_infos_recursive2.as_mut_ptr();
 
         zkin_final = join_zkin_final_c(
-            pctx.get_publics_ptr() as *mut c_void,
-            pctx.get_proof_values_ptr() as *mut c_void,
-            pctx.get_challenges_ptr() as *mut c_void,
+            pctx.get_publics_ptr(),
+            pctx.get_proof_values_ptr(),
+            pctx.get_challenges_ptr(),
             global_info_file,
             proofs_recursive2_ptr,
             stark_infos_recursive2_ptr,
@@ -352,18 +344,16 @@ pub fn generate_vadcop_final_proof<F: Field>(
     let setup_path = pctx.global_info.get_setup_path("vadcop_final");
 
     let (buffer, publics) = generate_witness::<F>(&setup_path, &setup, proof, 18)?;
-    let p_address = buffer.as_ptr() as *mut c_void;
-    let p_publics = publics.as_ptr() as *mut c_void;
 
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
     // prove
     let p_prove = gen_recursive_proof_c(
         p_setup,
-        p_address,
-        setup.get_const_ptr() as *mut c_void,
-        setup.get_const_tree_ptr() as *mut c_void,
-        p_publics,
+        buffer.as_ptr() as *mut u8,
+        setup.get_const_ptr(),
+        setup.get_const_tree_ptr(),
+        publics.as_ptr() as *mut u8,
         output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().as_ref(),
         global_info_file,
         0,
@@ -392,18 +382,16 @@ pub fn generate_recursivef_proof<F: Field>(
     let setup_path = pctx.global_info.get_setup_path("recursivef");
 
     let (buffer, publics) = generate_witness::<F>(&setup_path, &setup, proof, 12)?;
-    let p_address = buffer.as_ptr() as *mut c_void;
-    let p_publics = publics.as_ptr() as *mut c_void;
 
     log::info!("{}: ··· Generating recursiveF proof", MY_NAME);
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_c(
         p_setup,
-        p_address,
-        setup.get_const_ptr() as *mut c_void,
-        setup.get_const_tree_ptr() as *mut c_void,
-        p_publics,
+        buffer.as_ptr() as *mut u8,
+        setup.get_const_ptr(),
+        setup.get_const_tree_ptr(),
+        publics.as_ptr() as *mut u8,
         output_dir_path.join("proofs/recursivef.json").to_string_lossy().as_ref(),
         global_info_file,
         0,
@@ -444,12 +432,12 @@ pub fn generate_fflonk_snark_proof<F: Field>(
         let size_witness = get_size_witness();
 
         let witness: Vec<u8> = create_buffer_fast((size_witness * 32) as usize);
-        let witness_ptr = witness.as_ptr() as *mut c_void;
+        let witness_ptr = witness.as_ptr() as *mut u8;
 
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
 
         let nmutex = 128;
-        get_witness(proof, dat_filename_ptr, witness_ptr, nmutex);
+        get_witness(proof, dat_filename_ptr, witness_ptr as *mut c_void, nmutex);
 
         timer_stop_and_log_trace!(CALCULATE_FINAL_WITNESS);
 
@@ -479,11 +467,11 @@ fn generate_witness<F: Field>(
     let n = 1 << (setup.stark_info.stark_struct.n_bits);
 
     let buffer: Vec<F> = create_buffer_fast(n_cols * n);
-    let p_address = buffer.as_ptr() as *mut c_void;
+    let p_address = buffer.as_ptr() as *mut u8;
 
     let n_publics = setup.stark_info.n_publics as usize;
     let publics: Vec<F> = create_buffer_fast(n_publics);
-    let p_publics = publics.as_ptr() as *mut c_void;
+    let p_publics = publics.as_ptr() as *mut u8;
 
     let rust_lib_filename = setup_path.display().to_string() + ".so";
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
@@ -497,11 +485,11 @@ fn generate_witness<F: Field>(
         // Call the function
         let dat_filename = setup_path.display().to_string() + ".dat";
         let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-        let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
+        let dat_filename_ptr = dat_filename_str.as_ptr() as *const i8;
 
         let exec_filename = setup_path.display().to_string() + ".exec";
         let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
-        let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
+        let exec_filename_ptr = exec_filename_str.as_ptr() as *const i8;
 
         let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
         let size_witness = get_size_witness();
@@ -513,13 +501,13 @@ fn generate_witness<F: Field>(
         let n_adds = u64::from_le_bytes(n_adds);
 
         let witness: Vec<F> = create_buffer_fast((size_witness + n_adds) as usize);
-        let witness_ptr = witness.as_ptr() as *mut c_void;
+        let witness_ptr = witness.as_ptr() as *mut u8;
 
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
 
         let nmutex = 128;
 
-        get_witness(zkin, dat_filename_ptr, witness_ptr, nmutex);
+        get_witness(zkin, dat_filename_ptr, witness_ptr as *mut c_void, nmutex);
 
         get_committed_pols_c(
             witness_ptr,

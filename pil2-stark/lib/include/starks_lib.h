@@ -26,7 +26,6 @@
     // ========================================================================================
     void *stark_info_new(char* filename);
     uint64_t get_map_total_n(void *pStarkInfo);
-    void *get_custom_commit_map_ids(void *pStarkInfo, uint64_t commit_id, uint64_t stage);
     void stark_info_free(void *pStarkInfo);
 
     // Prover Helpers
