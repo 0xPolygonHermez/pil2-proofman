@@ -482,7 +482,7 @@ impl<F: Field + 'static> ProofMan<F> {
         verify_constraints: bool,
     ) {
         if stage == 1 {
-            transcript.add_elements(pctx.get_publics_ptr() as *mut c_void, pctx.global_info.n_publics);
+            transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
         }
 
         let dctx = ectx.dctx.read().unwrap();
@@ -504,7 +504,7 @@ impl<F: Field + 'static> ProofMan<F> {
         for group_idxs in dctx.my_groups.iter() {
             if verify_constraints {
                 let dummy_elements = [F::zero(), F::one(), F::two(), F::neg_one()];
-                transcript.add_elements(dummy_elements.as_ptr() as *mut c_void, 4);
+                transcript.add_elements(dummy_elements.as_ptr() as *mut u8, 4);
             } else {
                 let mut values = Vec::new();
                 for idx in group_idxs.iter() {
@@ -518,7 +518,7 @@ impl<F: Field + 'static> ProofMan<F> {
                 }
                 if !values.is_empty() {
                     let value = Self::hash_b_tree(&*provers[0], values);
-                    transcript.add_elements(value.as_ptr() as *mut c_void, value.len());
+                    transcript.add_elements(value.as_ptr() as *mut u8, value.len());
                 }
             }
         }
@@ -633,9 +633,9 @@ impl<F: Field + 'static> ProofMan<F> {
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
-        save_publics_c(n_publics, proof_ctx.get_publics_ptr() as *mut c_void, output_dir);
+        save_publics_c(n_publics, proof_ctx.get_publics_ptr(), output_dir);
 
-        save_proof_values_c(n_proof_values, proof_ctx.get_proof_values_ptr() as *mut c_void, output_dir);
+        save_proof_values_c(n_proof_values, proof_ctx.get_proof_values_ptr(), output_dir);
 
         save_challenges_c(proof_ctx.get_challenges_ptr(), global_info_file, output_dir);
 

@@ -1,4 +1,4 @@
-use std::{os::raw::c_void, sync::Arc};
+use std::sync::Arc;
 use std::path::PathBuf;
 use p3_field::Field;
 use proofman_util::create_buffer_fast;
@@ -7,23 +7,23 @@ use crate::{trace::Trace, trace::Values, ProofCtx, ExecutionCtx, SetupCtx, Setup
 
 #[repr(C)]
 pub struct StepsParams {
-    pub witness: *mut c_void,
-    pub trace: *mut c_void,
-    pub public_inputs: *mut c_void,
-    pub challenges: *mut c_void,
-    pub airgroup_values: *mut c_void,
-    pub airvalues: *mut c_void,
-    pub evals: *mut c_void,
-    pub xdivxsub: *mut c_void,
-    pub p_const_pols: *mut c_void,
-    pub p_const_tree: *mut c_void,
-    pub custom_commits: [*mut c_void; 10],
-    pub custom_commits_extended: [*mut c_void; 10],
+    pub witness: *mut u8,
+    pub trace: *mut u8,
+    pub public_inputs: *mut u8,
+    pub challenges: *mut u8,
+    pub airgroup_values: *mut u8,
+    pub airvalues: *mut u8,
+    pub evals: *mut u8,
+    pub xdivxsub: *mut u8,
+    pub p_const_pols: *mut u8,
+    pub p_const_tree: *mut u8,
+    pub custom_commits: [*mut u8; 10],
+    pub custom_commits_extended: [*mut u8; 10],
 }
 
-impl From<&StepsParams> for *mut c_void {
-    fn from(params: &StepsParams) -> *mut c_void {
-        params as *const StepsParams as *mut c_void
+impl From<&StepsParams> for *mut u8 {
+    fn from(params: &StepsParams) -> *mut u8 {
+        params as *const StepsParams as *mut u8
     }
 }
 
@@ -216,18 +216,18 @@ impl<F: Field> AirInstance<F> {
         }
     }
 
-    pub fn get_custom_commits_ptr(&self) -> [*mut c_void; 10] {
+    pub fn get_custom_commits_ptr(&self) -> [*mut u8; 10] {
         let mut ptrs = [std::ptr::null_mut(); 10];
         for (i, custom_commit) in self.custom_commits.iter().enumerate() {
-            ptrs[i] = custom_commit.buffer.as_ptr() as *mut c_void;
+            ptrs[i] = custom_commit.buffer.as_ptr() as *mut u8;
         }
         ptrs
     }
 
-    pub fn get_custom_commits_extended_ptr(&self) -> [*mut c_void; 10] {
+    pub fn get_custom_commits_extended_ptr(&self) -> [*mut u8; 10] {
         let mut ptrs = [std::ptr::null_mut(); 10];
         for (i, custom_commit) in self.custom_commits_extended.iter().enumerate() {
-            ptrs[i] = custom_commit.buffer.as_ptr() as *mut c_void;
+            ptrs[i] = custom_commit.buffer.as_ptr() as *mut u8;
         }
         ptrs
     }

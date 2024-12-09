@@ -2,7 +2,6 @@ use proofman_starks_lib_c::{extend_and_merkelize_custom_commit_c, fri_proof_new_
 use p3_goldilocks::Goldilocks;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::os::raw::c_void;
 use std::path::PathBuf;
 
 use crate::{Setup, SetupCtx};
@@ -50,8 +49,8 @@ pub fn get_custom_commit_trace(
         starks_new_c((&setup.p_setup).into(), std::ptr::null_mut()),
         commit_id,
         step,
-        buffer.as_ptr() as *mut c_void,
-        buffer_ext.as_ptr() as *mut c_void,
+        buffer.as_ptr() as *mut u8,
+        buffer_ext.as_ptr() as *mut u8,
         fri_proof_new_c((&setup.p_setup).into()),
         std::ptr::null_mut(),
         buffer_str,

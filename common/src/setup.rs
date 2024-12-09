@@ -115,8 +115,7 @@ impl Setup {
         let const_size = get_const_size_c(p_stark_info) as usize;
         let const_pols: Vec<u8> = create_buffer_fast(const_size);
 
-        let p_const_pols_address = const_pols.as_ptr() as *mut c_void;
-        load_const_pols_c(p_const_pols_address, const_pols_path.as_str(), const_size as u64);
+        load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_size as u64);
         *self.const_pols.values.write().unwrap() = const_pols;
     }
 
@@ -138,14 +137,17 @@ impl Setup {
 
         let const_tree: Vec<u8> = create_buffer_fast(const_tree_size);
 
-        let p_const_tree_address = const_tree.as_ptr() as *mut c_void;
         if PathBuf::from(&const_pols_tree_path).exists() {
-            load_const_tree_c(p_const_tree_address, const_pols_tree_path.as_str(), const_tree_size as u64);
+            load_const_tree_c(const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str(), const_tree_size as u64);
         } else {
             let const_pols = self.const_pols.values.read().unwrap();
-            let p_const_pols_address = (*const_pols).as_ptr() as *mut c_void;
             let tree_filename = if save_file { const_pols_tree_path.as_str() } else { "" };
-            calculate_const_tree_c(p_stark_info, p_const_pols_address, p_const_tree_address, tree_filename);
+            calculate_const_tree_c(
+                p_stark_info,
+                (*const_pols).as_ptr() as *mut u8,
+                const_tree.as_ptr() as *mut u8,
+                tree_filename,
+            );
         };
         *self.const_tree.values.write().unwrap() = const_tree;
     }
