@@ -127,7 +127,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
 }
 
-
 #[cfg(not(feature = "no_lib_link"))]
 pub fn stark_info_free_c(p_stark_info: *mut c_void) {
     unsafe {
@@ -503,7 +502,14 @@ pub fn compute_fri_folding_c(
     current_bits: u64,
 ) {
     unsafe {
-        compute_fri_folding(step, buffer as *mut std::os::raw::c_void, challenge as *mut std::os::raw::c_void, n_bits_ext, prev_bits, current_bits);
+        compute_fri_folding(
+            step,
+            buffer as *mut std::os::raw::c_void,
+            challenge as *mut std::os::raw::c_void,
+            n_bits_ext,
+            prev_bits,
+            current_bits,
+        );
     }
 }
 
@@ -615,7 +621,15 @@ pub fn verify_global_constraints_c(
     proof_values: *mut u8,
     airgroupvalues: *mut *mut u8,
 ) -> *mut c_void {
-    unsafe { verify_global_constraints(p_global_constraints_bin, publics as *mut std::os::raw::c_void, challenges as *mut std::os::raw::c_void, proof_values as *mut std::os::raw::c_void, airgroupvalues as *mut *mut std::os::raw::c_void) }
+    unsafe {
+        verify_global_constraints(
+            p_global_constraints_bin,
+            publics as *mut std::os::raw::c_void,
+            challenges as *mut std::os::raw::c_void,
+            proof_values as *mut std::os::raw::c_void,
+            airgroupvalues as *mut *mut std::os::raw::c_void,
+        )
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -820,7 +834,16 @@ pub fn get_committed_pols_c(
     nCols: u64,
 ) {
     unsafe {
-        get_committed_pols(circomWitness as *mut std::os::raw::c_void, execFile as *mut std::os::raw::c_char, witness as *mut std::os::raw::c_void, pPublics as *mut std::os::raw::c_void, sizeWitness, N, nPublics, nCols);
+        get_committed_pols(
+            circomWitness as *mut std::os::raw::c_void,
+            execFile as *mut std::os::raw::c_char,
+            witness as *mut std::os::raw::c_void,
+            pPublics as *mut std::os::raw::c_void,
+            sizeWitness,
+            N,
+            nPublics,
+            nCols,
+        );
     }
 }
 

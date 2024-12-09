@@ -732,7 +732,14 @@ impl<F: Field> StarkProver<F> {
 
         if step_index != n_steps {
             let next_bits = steps[(step_index + 1) as usize].n_bits;
-            compute_fri_merkelize_c(self.p_stark, p_proof, step_index as u64, fri_pol as *mut u8, current_bits, next_bits);
+            compute_fri_merkelize_c(
+                self.p_stark,
+                p_proof,
+                step_index as u64,
+                fri_pol as *mut u8,
+                current_bits,
+                next_bits,
+            );
         }
     }
 
