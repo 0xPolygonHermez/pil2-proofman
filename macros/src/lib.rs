@@ -198,7 +198,7 @@ struct ParsedTraceInput {
     generics: Generics,
     fields: FieldsNamed,
     num_rows: LitInt,
-    commit_id: Option<LitInt>,
+    commit_id: TokenStream2,
 }
 
 impl Parse for ParsedTraceInput {
