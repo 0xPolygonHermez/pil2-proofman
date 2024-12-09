@@ -617,7 +617,6 @@ extern "C" {
     pub fn setLogLevel(level: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z22genDeviceCommitBuffersmmm"]
-    pub fn genDeviceCommitBuffers(maxNExtended: u64, maxWitCols: u64, maxTraceSize: u64)
-        -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z25gen_device_commit_buffersPv"]
+    pub fn gen_device_commit_buffers(maxSizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 }

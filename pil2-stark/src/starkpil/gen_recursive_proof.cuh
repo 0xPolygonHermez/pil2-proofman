@@ -35,9 +35,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     TimerStart(STARK_PROOF);
 
     Goldilocks::Element *trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
-    gl64_t *d_trace;
-    CHECKCUDAERR(cudaMalloc(&d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMemset(d_trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemset(d_buffers->d_trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
     
 
     TimerStart(SOLAPE1);
@@ -72,6 +70,18 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         pConstPolsExtendedTreeAddress: pConstTree,
     };
 
+    /*StepsParams d_params = {
+        trace: d_witness,
+        pols : d_trace,
+        publicInputs : publicInputs,
+        challenges : nullptr,
+        airgroupValues : nullptr,
+        evals : nullptr,
+        xDivXSub : nullptr,
+        pConstPolsAddress: pConstPols,
+        pConstPolsExtendedTreeAddress: pConstTree,
+    };*/
+
     //--------------------------------
     // 0.- Add const root and publics to transcript
     //--------------------------------
@@ -89,13 +99,13 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
             starks.addTranscript(transcript, hash, nFieldElements);
         }
     }
-
     TimerStopAndLog(STARK_STEP_0);
 
     TimerStart(STARK_STEP_1);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 1) {
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
+            //rick: aqui un cudamemcpy dels challenge
         }
     }
     TimerStopAndLog(SOLAPE1);
@@ -103,10 +113,10 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     //Allocate d_tree
     uint64_t** d_tree = new uint64_t*[1];
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage_inplace(1, d_witness, d_trace, d_tree, d_buffers);
+    starks.commitStage_inplace(1, d_witness, d_buffers->d_trace, d_tree, d_buffers);
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
 
-    offloadCommit(1, starks.treesGL, trace, d_trace, *d_tree, proof, setupCtx);
+    offloadCommit(1, starks.treesGL, trace, d_buffers->d_trace, *d_tree, proof, setupCtx);
 
     //sprint: baixar tot el que necessito per aplicar expressions
     //rick: aqui em sincronitzo amb el llençament del commit 1
@@ -120,6 +130,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
+            //rick: aqui un cudamemcpy dels challenge
         }
     }
 
@@ -305,7 +316,6 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     zkin = publics2zkin(zkin, publicInputs, globalInfo, airgroupId);
 
     delete trace;
-    CHECKCUDAERR(cudaFree(d_trace));
     return (void *) new nlohmann::json(zkin);
 }
 #endif

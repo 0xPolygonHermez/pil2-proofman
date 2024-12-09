@@ -18,7 +18,7 @@ use crate::{WitnessLibInitFn, WitnessLibrary};
 use crate::verify_constraints_proof;
 use crate::{
     generate_vadcop_recursive1_proof, generate_vadcop_final_proof, generate_vadcop_recursive2_proof,
-    generate_recursivef_proof, generate_fflonk_snark_proof, discover_max_sizes
+    generate_recursivef_proof, generate_fflonk_snark_proof, discover_max_sizes, MaxSizes,
 };
 
 use proofman_common::{ExecutionCtx, ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop};
@@ -198,8 +198,9 @@ impl<F: Field + 'static> ProofMan<F> {
         log::info!("{}: ··· Generating aggregated proofs", Self::MY_NAME);
 
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
-        let (max_n_ext, max_witness_cols, max_trace_size) = discover_max_sizes(&pctx, setups.clone());
-        let d_buffers = gen_device_commit_buffers_c(max_n_ext, max_witness_cols, max_trace_size);
+        let max_sizes= discover_max_sizes(&pctx, setups.clone());
+        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+        let d_buffers = gen_device_commit_buffers_c(max_sizes_ptr);
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         let recursive1_proofs =
             generate_vadcop_recursive1_proof(&pctx, setups.clone(), &proves_out, output_dir_path.clone(), d_buffers, false)?;

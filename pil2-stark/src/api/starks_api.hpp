@@ -145,6 +145,6 @@
 
     // GPU calls
     // =================================================================================
-    void* genDeviceCommitBuffers(uint64_t maxNExtended, uint64_t maxWitCols, uint64_t maxTraceSize);
+    void* gen_device_commit_buffers(void* maxSizes);
 
 #endif

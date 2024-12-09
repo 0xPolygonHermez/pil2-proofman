@@ -549,7 +549,7 @@ void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgro
 
     return proof;
 }
-void* genDeviceCommitBuffers(uint64_t maxNExtended, uint64_t maxWitCols, uint64_t maxTraceSize){
+void* gen_device_commit_buffers(void* max_sizes){
     assert(0); //Does not make sense to use this function without CUDA
     return NULL;
 };

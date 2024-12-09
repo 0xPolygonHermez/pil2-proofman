@@ -880,9 +880,9 @@ pub fn set_log_level_c(level: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_commit_buffers_c(maxNExtended: u64, maxWitCols: u64, maxTraceSize: u64) -> *mut c_void {
+pub fn gen_device_commit_buffers_c( max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
     unsafe {
-        genDeviceCommitBuffers(maxNExtended, maxWitCols, maxTraceSize)
+        gen_device_commit_buffers(max_sizes)
     }
 }
 
@@ -1530,7 +1530,7 @@ pub fn set_log_level_c(_level: u64) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_commit_buffers_c(maxNExtended: u64, maxWitCols: u64, maxTraceSize: u64) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "genDeviceCommitBuffers: This is a mock call because there is no linked library");
+pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+    trace!("{}: ··· {}", "ffi     ", "gen_device_commit_buffers: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }

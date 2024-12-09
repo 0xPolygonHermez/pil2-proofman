@@ -677,6 +677,9 @@ public:
 
 struct DeviceCommitBuffers {
     gl64_t *d_witness;
+    gl64_t *d_constPols;
+    gl64_t *d_constTree;
+    gl64_t *d_publicInputs;
     gl64_t *d_trace;
     gl64_t *d_forwardTwiddleFactors;
     gl64_t *d_inverseTwiddleFactors;

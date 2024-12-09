@@ -21,72 +21,68 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 type GenWitnessResult<F> = Result<(Vec<MaybeUninit<F>>, Vec<MaybeUninit<F>>), Box<dyn std::error::Error>>;
 
+
+pub struct MaxSizes {
+    pub max_n: u64,
+    pub max_n_ext: u64,
+    pub max_wit_pols: u64,
+    pub max_const_pols: u64,
+    pub max_n_publics: u64,
+    pub max_trace_area: u64,
+    pub max_const_tree_size: u64,
+}
+
 pub fn discover_max_sizes<F: Field>(
     pctx: &ProofCtx<F>,
     setups: Arc<SetupsVadcop>,
-) -> (u64, u64, u64)
-{
+) -> MaxSizes {
+    let mut max_n_bits = 0;
     let mut max_n_bits_ext = 0;
-    let mut max_total_n = 0;
+    let max_wit_pols = 18;
+    let mut max_const_pols = 0;
+    let mut max_n_publics = 0;
+    let mut max_trace_area = 0;
+    let mut max_const_tree_size = 0;
 
-    for  air_instance in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut() {
-        //compressor
+    let mut update_max_values = |setup: &Setup| {
+        max_n_bits = max_n_bits.max(setup.stark_info.stark_struct.n_bits);
+        max_n_bits_ext = max_n_bits_ext.max(setup.stark_info.stark_struct.n_bits_ext);
+        max_const_pols = max_const_pols.max(setup.stark_info.n_constants);
+        max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
+        max_trace_area = max_trace_area.max(get_map_totaln_c(setup.p_setup.p_stark_info));
+        max_const_tree_size = max_const_tree_size.max(get_const_tree_size_c(setup.p_setup.p_stark_info));
+    };
+
+    for air_instance in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut() {
         if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) {
-            let setup =
-                setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
-            if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
-                max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
-            }
-            let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
-            if total_n > max_total_n {
-                max_total_n = total_n;
-            }
-
+            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
+            update_max_values(&setup);
         }
-        //recursive1
+
         let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
-        if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
-            max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
-        }
-        let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
-            if total_n > max_total_n {
-                max_total_n = total_n;
-            }
-        //recursive2
+        update_max_values(&setup);
+
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
-        if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
-            max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
-        }
-        let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
-        if total_n > max_total_n {
-            max_total_n = total_n;
-        }
-    }
-    //vadcop final
-    let setup = setups.setup_vadcop_final.as_ref().unwrap();
-    if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
-        max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
-    }
-    let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
-    if total_n > max_total_n {
-        max_total_n = total_n;
+        update_max_values(&setup);
     }
 
-    //recursivef
-    if setups.setup_recursivef.as_ref().is_some() {
-        let setup = setups.setup_recursivef.as_ref().unwrap();
-        if setup.stark_info.stark_struct.n_bits_ext > max_n_bits_ext {
-            max_n_bits_ext = setup.stark_info.stark_struct.n_bits_ext;
-        }
-        let total_n = get_map_totaln_c(setup.p_setup.p_stark_info);
-        if total_n > max_total_n {
-            max_total_n = total_n;
-        }
+    if let Some(setup) = setups.setup_vadcop_final.as_ref() {
+        update_max_values(&setup);
     }
 
-    //evaluate max_n_ext
-    let max_n_ext = 1 << max_n_bits_ext;
-    return (max_n_ext, 18, max_total_n);
+    if let Some(setup) = setups.setup_recursivef.as_ref() {
+        update_max_values(&setup);
+    }
+
+    MaxSizes {
+        max_n: 1 << max_n_bits,
+        max_n_ext: 1 << max_n_bits_ext,
+        max_wit_pols,
+        max_const_pols,
+        max_n_publics,
+        max_trace_area,
+        max_const_tree_size,
+    }
 }
 
 pub fn generate_vadcop_recursive1_proof<F: Field>(

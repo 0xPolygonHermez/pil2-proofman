@@ -5,6 +5,16 @@
 #ifdef __USE_CUDA__
 #include "gen_recursive_proof.cuh"
 
+struct MaxSizes {
+        uint64_t maxN;
+        uint64_t maxNExtended;
+        uint64_t maxWitPols;
+        uint64_t maxConstPols;
+        uint64_t maxNPublics;
+        uint64_t maxTraceArea;
+        uint64_t maxConstTreeSize;
+};
+
 void *gen_recursive_proof(void *pSetupCtx_, char* globalInfoFile, uint64_t airgroupId, void* witness, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop, void* d_buffers_) {
 
     json globalInfo;
@@ -15,29 +25,43 @@ void *gen_recursive_proof(void *pSetupCtx_, char* globalInfoFile, uint64_t airgr
     double time = omp_get_wtime();
 
     CHECKCUDAERR(cudaSetDevice(0));
-    uint64_t size = (1 << setupCtx->starkInfo.starkStruct.nBits) * (setupCtx->starkInfo.mapSectionsN["cm1"])* sizeof(Goldilocks::Element);
-    CHECKCUDAERR(cudaMemcpy(d_buffers->d_witness, witness, size, cudaMemcpyHostToDevice));
+    uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+    uint64_t sizeWitness = N * (setupCtx->starkInfo.mapSectionsN["cm1"])* sizeof(Goldilocks::Element);
+    uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants)* sizeof(Goldilocks::Element);
+    uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo);
+
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_witness, witness, sizeWitness, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_constPols, pConstPols, sizeConstPols, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_constTree, pConstTree, sizeConstTree, cudaMemcpyHostToDevice));
+    
+    
     time = omp_get_wtime() - time;
-    std::cout << "rick genDeviceTrace time: " << time << std::endl;
+    std::cout << "rick genDeviceBuffers time: " << time << std::endl;
 
     time = omp_get_wtime();
     void * proof = genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, globalInfo, airgroupId, (Goldilocks::Element *)witness, d_buffers->d_witness, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), d_buffers);
     time = omp_get_wtime() - time;
     std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
+    
     return proof;
 }
 
-void* genDeviceCommitBuffers(uint64_t maxNExtended, uint64_t maxWitCols, uint64_t maxTraceSize){
+void* gen_device_commit_buffers(void * maxSizes_) {
+
+    MaxSizes* maxSizes = (MaxSizes *)maxSizes_;
     
     CHECKCUDAERR(cudaSetDevice(0));
     DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
-    CHECKCUDAERR(cudaMalloc(&buffers->d_witness, maxNExtended * maxWitCols * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_trace, maxTraceSize * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_forwardTwiddleFactors, maxNExtended * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_inverseTwiddleFactors, maxNExtended * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_r, maxNExtended * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_ntt, maxNExtended * maxWitCols * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_tree, maxNExtended * sizeof(uint64_t)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_witness, maxSizes->maxN * maxSizes->maxWitPols * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->maxConstPols * maxSizes->maxN * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_constTree, maxSizes->maxConstTreeSize * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_publicInputs, maxSizes->maxNPublics * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_trace, maxSizes->maxTraceArea * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_forwardTwiddleFactors, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_inverseTwiddleFactors, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_r, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_ntt, maxSizes->maxNExtended * maxSizes->maxWitPols * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_tree, maxSizes->maxNExtended * sizeof(uint64_t)));
     return (void *) buffers;
 }
 #endif
