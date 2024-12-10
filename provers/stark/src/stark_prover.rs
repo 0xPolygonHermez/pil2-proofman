@@ -405,11 +405,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 .stark_info
                 .airvalues_map
                 .as_ref()
-                .map(|map| {
-                    map.iter()
-                        .filter(|entry| entry.stage == stage)
-                        .count()
-                })
+                .map(|map| map.iter().filter(|entry| entry.stage == stage).count())
                 .unwrap_or(0);
 
             if stage == 1 || n_airvals_stage > 0 {
@@ -454,13 +450,15 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 let mut p = 0;
                 let mut count = 0;
                 for air_value in airvalues_map {
-                    if air_value.stage > stage { break; }
+                    if air_value.stage > stage {
+                        break;
+                    }
                     if air_value.stage == 1 {
                         if stage == 1 {
                             values_hash[2 * self.n_field_elements + count] = air_instance.airvalues[p];
-                            count+=1;
+                            count += 1;
                         }
-                        p+=1;
+                        p += 1;
                     } else {
                         if air_value.stage == stage {
                             values_hash[self.n_field_elements + count] = air_instance.airvalues[p];
@@ -468,7 +466,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                             values_hash[self.n_field_elements + count + 2] = air_instance.airvalues[p + 2];
                             count += 3;
                         }
-                        p+= 3;
+                        p += 3;
                     }
                 }
 

@@ -264,7 +264,6 @@ impl<F: Field> AirInstance<F> {
             // Check if name matches
             let name_matches = value.name == name;
 
-            
             // If lengths is provided, check that it matches airvalue.lengths
             let lengths_match = if let Some(ref provided_lengths) = lengths {
                 Some(&value.lengths) == Some(provided_lengths)
