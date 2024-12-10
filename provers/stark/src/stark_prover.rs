@@ -29,7 +29,6 @@ pub struct VecU64Result {
 
 #[allow(dead_code)]
 pub struct StarkProver<F: Field> {
-    initialized: bool,
     prover_idx: usize,
     air_id: usize,
     airgroup_id: usize,
@@ -69,7 +68,6 @@ impl<F: Field> StarkProver<F> {
         let p_proof = fri_proof_new_c((&setup.p_setup).into());
 
         Self {
-            initialized: true,
             prover_idx,
             air_id,
             airgroup_id,
@@ -92,8 +90,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
         let aux_trace = create_buffer_fast(get_map_totaln_c(self.p_stark_info) as usize);
         air_instance.set_aux_trace(aux_trace);
-
-        self.initialized = true;
     }
 
     fn free(&mut self) {

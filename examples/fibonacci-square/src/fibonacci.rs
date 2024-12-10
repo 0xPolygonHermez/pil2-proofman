@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_common::{AirInstance, FromTrace, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{add_air_instance, AirInstance, FromTrace, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::PrimeField64;
@@ -29,13 +29,18 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
         fibonacci
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        if let Err(e) = Self::calculate_trace(self, pctx, sctx) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        if let Err(e) = Self::calculate_trace(self, pctx, ectx, sctx) {
             panic!("Failed to calculate fibonacci: {:?}", e);
         }
     }
 
-    fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> Result<u64, Box<dyn std::error::Error>> {
+    fn calculate_trace(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        ectx: Arc<ExecutionCtx>,
+        sctx: Arc<SetupCtx>,
+    ) -> Result<u64, Box<dyn std::error::Error>> {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         let mut publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
@@ -80,7 +85,7 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
             sctx.clone(),
             FromTrace::new(&mut trace).with_custom_traces(vec![&mut trace_rom]).with_air_values(&mut air_values),
         );
-        pctx.air_instance_repo.add_air_instance(air_instance, Some(0));
+        add_air_instance::<F>(air_instance, ectx, pctx.clone());
 
         Ok(b)
     }

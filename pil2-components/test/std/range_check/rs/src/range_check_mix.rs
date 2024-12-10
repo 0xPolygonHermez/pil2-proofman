@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pil_std_lib::Std;
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{FromTrace, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{add_air_instance, FromTrace, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -35,7 +35,7 @@ where
         range_check_mix
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = RangeCheckMixTrace::new_zeroes();
@@ -134,7 +134,7 @@ where
         }
 
         let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
-        pctx.air_instance_repo.add_air_instance(air_instance, Some(0));
+        add_air_instance::<F>(air_instance, ectx, pctx.clone());
     }
 }
 

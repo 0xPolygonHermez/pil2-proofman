@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use proofman_common::{FromTrace, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{add_air_instance, FromTrace, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman::{WitnessManager, WitnessComponent};
 use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField64};
@@ -37,11 +37,11 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
         x_mod
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.calculate_trace(pctx, sctx);
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        self.calculate_trace(pctx, ectx, sctx);
     }
 
-    fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         let module = F::as_canonical_u64(&pctx.get_public_value("module"));
@@ -72,7 +72,7 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
         }
 
         let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
-        pctx.air_instance_repo.add_air_instance(air_instance, Some(0));
+        add_air_instance::<F>(air_instance, ectx, pctx.clone());
 
         self.std_lib.unregister_predecessor(pctx, None);
     }
