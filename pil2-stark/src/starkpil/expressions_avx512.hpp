@@ -305,13 +305,23 @@ public:
         }
 
         Goldilocks3::Element_avx512 airgroupValues[setupCtx.starkInfo.airgroupValuesMap.size()];
+        uint64_t p = 0;
         for(uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); ++i) {
-            airgroupValues[i][0] = _mm512_set1_epi64(params.airgroupValues[i * FIELD_EXTENSION].fe);
-            airgroupValues[i][1] = _mm512_set1_epi64(params.airgroupValues[i * FIELD_EXTENSION + 1].fe);
-            airgroupValues[i][2] = _mm512_set1_epi64(params.airgroupValues[i * FIELD_EXTENSION + 2].fe);
+            if(setupCtx.starkInfo.airgroupValuesMap[i].stage == 1) {
+                airgroupValues[i][0] = _mm512_set1_epi64x(params.airgroupValues[p].fe);
+                airgroupValues[i][1] = _mm512_set1_epi64x(0);
+                airgroupValues[i][2] = _mm512_set1_epi64x(0);
+                p += 1;
+            } else {
+                airgroupValues[i][0] = _mm512_set1_epi64x(params.airgroupValues[p].fe);
+                airgroupValues[i][1] = _mm512_set1_epi64x(params.airgroupValues[p + 1].fe);
+                airgroupValues[i][2] = _mm512_set1_epi64x(params.airgroupValues[p + 2].fe);
+                p += 3;
+            }
         }
 
-        uint64_t p = 0;
+        Goldilocks3::Element_avx512 airValues[setupCtx.starkInfo.airValuesMap.size()];
+        p = 0;
         for(uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); ++i) {
             if(setupCtx.starkInfo.airValuesMap[i].stage == 1) {
                 airValues[i][0] = _mm512_set1_epi64x(params.airValues[p].fe);

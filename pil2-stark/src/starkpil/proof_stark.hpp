@@ -249,9 +249,17 @@ public:
     }
 
     void setAirgroupValues(Goldilocks::Element *_airgroupValues) {
-        for (uint64_t i = 0; i < airgroupValues.size(); i++)
+        uint64_t p = 0;
+        for (uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++)
         {
-            std::memcpy(&airgroupValues[i][0], &_airgroupValues[i * FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+            if(starkInfo.airgroupValuesMap[i].stage == 1) {
+                airgroupValues[i][0] = _airgroupValues[p++];
+                airgroupValues[i][1] = Goldilocks::zero();
+                airgroupValues[i][2] = Goldilocks::zero();
+            } else {
+                std::memcpy(&airgroupValues[i][0], &_airgroupValues[p], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+                p += 3;
+            }
         }
     }
 

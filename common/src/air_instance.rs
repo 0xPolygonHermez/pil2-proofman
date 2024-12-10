@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use std::ptr;
 use std::path::PathBuf;
 use p3_field::Field;
 use proofman_util::create_buffer_fast;
 
-use crate::{trace::Trace, trace::Values, SetupCtx, Setup, StarkInfo};
+use crate::{trace::Trace, trace::Values, SetupCtx, Setup, StarkInfo, PolMap};
 
 #[repr(C)]
 pub struct StepsParams {
@@ -41,11 +42,12 @@ impl Default for StepsParams {
             p_const_pols: ptr::null_mut(),
             p_const_tree: ptr::null_mut(),
             custom_commits: [ptr::null_mut(); 10],
+            custom_commits_extended: [ptr::null_mut(); 10],
         }
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CustomCommitsInfo<F> {
     pub buffer: Vec<F>,
     pub cached_file: PathBuf,
@@ -255,24 +257,23 @@ impl<F: Field> AirInstance<F> {
         self.custom_commits[commit_id as usize].buffer = buffer;
     }
 
-    pub fn set_airvalue(&mut self, name: &str, lengths: Option<Vec<u64>>, value: F) {
-        let airvalues_map = self.stark_info.airvalues_map.as_ref().unwrap();
+    fn find_value_map(values_map: &Vec<PolMap>, name: &str, lengths: Option<Vec<u64>>) -> usize {
         let mut id = 0;
         let mut found = false;
-        for air_value in airvalues_map {
+        for value in values_map {
             // Check if name matches
-            let name_matches = air_value.name == name;
+            let name_matches = value.name == name;
 
             
             // If lengths is provided, check that it matches airvalue.lengths
             let lengths_match = if let Some(ref provided_lengths) = lengths {
-                Some(&air_value.lengths) == Some(provided_lengths)
+                Some(&value.lengths) == Some(provided_lengths)
             } else {
                 true // If lengths is None, skip the lengths check
             };
 
             if !name_matches || !lengths_match {
-                if air_value.stage == 1 {
+                if value.stage == 1 {
                     id += 1;
                 } else {
                     id += 3;
@@ -287,40 +288,18 @@ impl<F: Field> AirInstance<F> {
             panic!("Name {} with specified lengths {:?} not found in airvalues", name, lengths);
         }
 
+        id
+    }
+
+    pub fn set_airvalue(&mut self, name: &str, lengths: Option<Vec<u64>>, value: F) {
+        let airvalues_map = self.stark_info.airvalues_map.as_ref().unwrap();
+        let id = Self::find_value_map(airvalues_map, name, lengths);
         self.airvalues[id] = value;
     }
 
     pub fn set_airvalue_ext(&mut self, name: &str, lengths: Option<Vec<u64>>, value: Vec<F>) {
         let airvalues_map = self.stark_info.airvalues_map.as_ref().unwrap();
-        let mut id = 0;
-        let mut found = false;
-        for air_value in airvalues_map {
-            // Check if name matches
-            let name_matches = air_value.name == name;
-
-            
-            // If lengths is provided, check that it matches airvalue.lengths
-            let lengths_match = if let Some(ref provided_lengths) = lengths {
-                Some(&air_value.lengths) == Some(provided_lengths)
-            } else {
-                true // If lengths is None, skip the lengths check
-            };
-
-            if !name_matches || !lengths_match {
-                if air_value.stage == 1 {
-                    id += 1;
-                } else {
-                    id += 3;
-                }
-            } else {
-                found = true;
-                break;
-            }
-        }
-
-        if !found {
-            panic!("Name {} with specified lengths {:?} not found in airvalues", name, lengths);
-        }
+        let id = Self::find_value_map(airvalues_map, name, lengths);
 
         assert!(value.len() == 3, "Value vector must have exactly 3 elements");
 
@@ -333,58 +312,21 @@ impl<F: Field> AirInstance<F> {
 
     pub fn set_airgroupvalue(&mut self, name: &str, lengths: Option<Vec<u64>>, value: F) {
         let airgroupvalues_map = self.stark_info.airgroupvalues_map.as_ref().unwrap();
-        let airgroupvalue_id = (0..airgroupvalues_map.len())
-            .find(|&i| {
-                let airgroupvalue = airgroupvalues_map.get(i).unwrap();
-
-                // Check if name matches
-                let name_matches = airgroupvalues_map[i].name == name;
-
-                // If lengths is provided, check that it matches airgroupvalues.lengths
-                let lengths_match = if let Some(ref provided_lengths) = lengths {
-                    Some(&airgroupvalue.lengths) == Some(provided_lengths)
-                } else {
-                    true // If lengths is None, skip the lengths check
-                };
-
-                name_matches && lengths_match
-            })
-            .unwrap_or_else(|| {
-                panic!("Name {} with specified lengths {:?} not found in airgroupvalues", name, lengths)
-            });
-
-        self.airgroup_values[airgroupvalue_id * 3] = value;
+        let id = Self::find_value_map(airgroupvalues_map, name, lengths);
+        self.airgroup_values[id] = value;
     }
 
     pub fn set_airgroupvalue_ext(&mut self, name: &str, lengths: Option<Vec<u64>>, value: Vec<F>) {
         let airgroupvalues_map = self.stark_info.airgroupvalues_map.as_ref().unwrap();
-        let airgroupvalue_id = (0..airgroupvalues_map.len())
-            .find(|&i| {
-                let airgroupvalue = airgroupvalues_map.get(i).unwrap();
-
-                // Check if name matches
-                let name_matches = airgroupvalues_map[i].name == name;
-
-                // If lengths is provided, check that it matches airgroupvalues.lengths
-                let lengths_match = if let Some(ref provided_lengths) = lengths {
-                    Some(&airgroupvalue.lengths) == Some(provided_lengths)
-                } else {
-                    true // If lengths is None, skip the lengths check
-                };
-
-                name_matches && lengths_match
-            })
-            .unwrap_or_else(|| {
-                panic!("Name {} with specified lengths {:?} not found in airgroupvalues", name, lengths)
-            });
+        let id = Self::find_value_map(airgroupvalues_map, name, lengths);
 
         assert!(value.len() == 3, "Value vector must have exactly 3 elements");
 
         let mut value_iter = value.into_iter();
 
-        self.airgroup_values[airgroupvalue_id * 3] = value_iter.next().unwrap();
-        self.airgroup_values[airgroupvalue_id * 3 + 1] = value_iter.next().unwrap();
-        self.airgroup_values[airgroupvalue_id * 3 + 2] = value_iter.next().unwrap();
+        self.airgroup_values[id] = value_iter.next().unwrap();
+        self.airgroup_values[id + 1] = value_iter.next().unwrap();
+        self.airgroup_values[id + 2] = value_iter.next().unwrap();
     }
 
     pub fn set_air_instance_id(&mut self, air_instance_id: usize, idx: usize) {
