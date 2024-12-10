@@ -198,6 +198,7 @@ template <typename ElementType>
 class Proofs
 {
 public:
+    StarkInfo &starkInfo;
     uint64_t nStages;
     uint64_t nCustomCommits;
     uint64_t nFieldElements;
@@ -209,19 +210,20 @@ public:
     std::vector<std::vector<Goldilocks::Element>> airgroupValues;
     std::vector<std::vector<Goldilocks::Element>> airValues;
     std::vector<std::string> customCommits;
-    Proofs(StarkInfo &starkInfo) :
-        fri(starkInfo),
-        evals(starkInfo.evMap.size(), std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())),
-        airgroupValues(starkInfo.airgroupValuesMap.size(), std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())),
-        airValues(starkInfo.airValuesMap.size(), std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())),
-        customCommits(starkInfo.customCommits.size())
+    Proofs(StarkInfo &starkInfo_) :
+        starkInfo(starkInfo_),
+        fri(starkInfo_),
+        evals(starkInfo_.evMap.size(), std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())),
+        airgroupValues(starkInfo_.airgroupValuesMap.size(), std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())),
+        airValues(starkInfo_.airValuesMap.size(), std::vector<Goldilocks::Element>(FIELD_EXTENSION, Goldilocks::zero())),
+        customCommits(starkInfo_.customCommits.size())
         {
-            nStages = starkInfo.nStages + 1;
-            nCustomCommits = starkInfo.customCommits.size();
+            nStages = starkInfo_.nStages + 1;
+            nCustomCommits = starkInfo_.customCommits.size();
             roots = new ElementType*[nStages + nCustomCommits];
-            nFieldElements = starkInfo.starkStruct.verificationHashType == "GL" ? HASH_SIZE : 1;
-            airId = starkInfo.airId;
-            airgroupId = starkInfo.airgroupId;
+            nFieldElements = starkInfo_.starkStruct.verificationHashType == "GL" ? HASH_SIZE : 1;
+            airId = starkInfo_.airId;
+            airgroupId = starkInfo_.airgroupId;
             for(uint64_t i = 0; i < nStages + nCustomCommits; i++)
             {
                 roots[i] = new ElementType[nFieldElements];
@@ -254,9 +256,17 @@ public:
     }
 
     void setAirValues(Goldilocks::Element *_airValues) {
-        for (uint64_t i = 0; i < airValues.size(); i++)
+        uint64_t p = 0;
+        for (uint64_t i = 0; i < starkInfo.airValuesMap.size(); i++)
         {
-            std::memcpy(&airValues[i][0], &_airValues[i * FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+            if(starkInfo.airValuesMap[i].stage == 1) {
+                airValues[i][0] = _airValues[p++];
+                airValues[i][1] = Goldilocks::zero();
+                airValues[i][2] = Goldilocks::zero();
+            } else {
+                std::memcpy(&airValues[i][0], &_airValues[p], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+                p += 3;
+            }
         }
     }
 

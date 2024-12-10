@@ -330,17 +330,26 @@ public:
         }
 
         Goldilocks::Element airValues[setupCtx.starkInfo.airValuesMap.size()*FIELD_EXTENSION*nrowsPack];
+        uint64_t p = 0;
         if(!compilation_time) {
             for(uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); ++i) {
                 for(uint64_t j = 0; j < nrowsPack; ++j) {
-                    airValues[(i*FIELD_EXTENSION)*nrowsPack + j] = params.airValues[i * FIELD_EXTENSION];
-                    airValues[(i*FIELD_EXTENSION + 1)*nrowsPack + j] = params.airValues[i * FIELD_EXTENSION + 1];
-                    airValues[(i*FIELD_EXTENSION + 2)*nrowsPack + j] = params.airValues[i * FIELD_EXTENSION + 2];
+                    if(setupCtx.starkInfo.airValuesMap[i].stage == 1) {
+                        airValues[(i*FIELD_EXTENSION)*nrowsPack + j] = params.airValues[p];
+                        airValues[(i*FIELD_EXTENSION + 1)*nrowsPack + j] = Goldilocks::zero();
+                        airValues[(i*FIELD_EXTENSION + 2)*nrowsPack + j] = Goldilocks::zero();
+                        p += 1;
+                    } else {
+                        airValues[(i*FIELD_EXTENSION)*nrowsPack + j] = params.airValues[p];
+                        airValues[(i*FIELD_EXTENSION + 1)*nrowsPack + j] = params.airValues[p + 1];
+                        airValues[(i*FIELD_EXTENSION + 2)*nrowsPack + j] = params.airValues[p + 2];
+                        p += 3;
+                    }
                 }
             }
-            }
+        }
 
-    // #pragma omp parallel for
+    #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
             Goldilocks::Element bufferT_[nOpenings*nCols*nrowsPack];
 

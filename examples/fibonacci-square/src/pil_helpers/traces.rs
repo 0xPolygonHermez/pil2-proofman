@@ -4,7 +4,7 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
-#[warn(dead_code)]
+#[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
 pub const PILOUT_HASH: &[u8] = b"Build-hash";
@@ -50,20 +50,20 @@ values!(BuildProofValues<F> {
  
 trace!(FibonacciSquareTrace<F> {
  a: F, b: F,
-},  0, 0, 1024, 0 );
+},  0, 0, 1024 );
 
 trace!(ModuleTrace<F> {
  x: F, q: F, x_mod: F,
-},  0, 1, 1024, 0 );
+},  0, 1, 1024 );
 
 trace!(U8AirTrace<F> {
  mul: F,
-},  0, 2, 256, 0 );
+},  0, 2, 256 );
 
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
 }, 0, 0, 1024, 0 );
 
 values!(FibonacciSquareAirValues<F> {
- fibo1: [FieldExtension<F>; 2], fibo3: FieldExtension<F>,
+ fibo1: [F; 2], fibo3: FieldExtension<F>,
 });

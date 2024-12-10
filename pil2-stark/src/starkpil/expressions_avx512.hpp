@@ -311,11 +311,19 @@ public:
             airgroupValues[i][2] = _mm512_set1_epi64(params.airgroupValues[i * FIELD_EXTENSION + 2].fe);
         }
 
-        Goldilocks3::Element_avx512 airValues[setupCtx.starkInfo.airValuesMap.size()];
+        uint64_t p = 0;
         for(uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); ++i) {
-            airValues[i][0] = _mm512_set1_epi64(params.airValues[i * FIELD_EXTENSION].fe);
-            airValues[i][1] = _mm512_set1_epi64(params.airValues[i * FIELD_EXTENSION + 1].fe);
-            airValues[i][2] = _mm512_set1_epi64(params.airValues[i * FIELD_EXTENSION + 2].fe);
+            if(setupCtx.starkInfo.airValuesMap[i].stage == 1) {
+                airValues[i][0] = _mm512_set1_epi64x(params.airValues[p].fe);
+                airValues[i][1] = _mm512_set1_epi64x(0);
+                airValues[i][2] = _mm512_set1_epi64x(0);
+                p += 1;
+            } else {
+                airValues[i][0] = _mm512_set1_epi64x(params.airValues[p].fe);
+                airValues[i][1] = _mm512_set1_epi64x(params.airValues[p + 1].fe);
+                airValues[i][2] = _mm512_set1_epi64x(params.airValues[p + 2].fe);
+                p += 3;
+            }
         }
 
         Goldilocks3::Element_avx512 evals[setupCtx.starkInfo.evMap.size()];

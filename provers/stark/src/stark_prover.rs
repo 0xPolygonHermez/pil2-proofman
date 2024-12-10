@@ -401,28 +401,16 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
         let mut value = vec![Goldilocks::zero(); self.n_field_elements];
         if stage <= (Self::num_stages(self) + 1) as u64 {
-            let (n_airvals_stage, indexes): (usize, Vec<usize>) = self
+            let n_airvals_stage: usize = self
                 .stark_info
                 .airvalues_map
                 .as_ref()
                 .map(|map| {
-                    let mut indexes = Vec::new();
-                    let count = map
-                        .iter()
-                        .enumerate()
-                        .filter(|(index, entry)| {
-                            if entry.stage == stage {
-                                indexes.push(*index);
-                                true
-                            } else {
-                                false
-                            }
-                        })
-                        .count();
-
-                    (count, indexes)
+                    map.iter()
+                        .filter(|entry| entry.stage == stage)
+                        .count()
                 })
-                .unwrap_or((0, Vec::new()));
+                .unwrap_or(0);
 
             if stage == 1 || n_airvals_stage > 0 {
                 let size = if stage == 1 {
@@ -462,17 +450,25 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     values_hash[index] = root_value;
                 }
                 let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-                for index in 0..n_airvals_stage {
-                    if stage == 1 {
-                        values_hash[2 * self.n_field_elements + index] =
-                            air_instance.airvalues[indexes[index] * Self::FIELD_EXTENSION];
+                let airvalues_map = self.stark_info.airvalues_map.as_ref().unwrap();
+                let mut p = 0;
+                let mut count = 0;
+                for air_value in airvalues_map {
+                    if air_value.stage > stage { break; }
+                    if air_value.stage == 1 {
+                        if stage == 1 {
+                            values_hash[2 * self.n_field_elements + count] = air_instance.airvalues[p];
+                            count+=1;
+                        }
+                        p+=1;
                     } else {
-                        values_hash[self.n_field_elements + index * Self::FIELD_EXTENSION] =
-                            air_instance.airvalues[indexes[index] * Self::FIELD_EXTENSION];
-                        values_hash[self.n_field_elements + index * Self::FIELD_EXTENSION + 1] =
-                            air_instance.airvalues[indexes[index] * Self::FIELD_EXTENSION];
-                        values_hash[self.n_field_elements + index * Self::FIELD_EXTENSION + 2] =
-                            air_instance.airvalues[indexes[index] * Self::FIELD_EXTENSION];
+                        if air_value.stage == stage {
+                            values_hash[self.n_field_elements + count] = air_instance.airvalues[p];
+                            values_hash[self.n_field_elements + count + 1] = air_instance.airvalues[p + 1];
+                            values_hash[self.n_field_elements + count + 2] = air_instance.airvalues[p + 2];
+                            count += 3;
+                        }
+                        p+= 3;
                     }
                 }
 

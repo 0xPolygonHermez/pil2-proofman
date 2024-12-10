@@ -265,7 +265,11 @@ impl PilHelpersCmd {
                             if air.air_values.is_empty() {
                                 air.air_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
                             }
-                            air.air_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
+                            if symbol.stage == Some(1) {
+                                air.air_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
+                            } else {
+                                air.air_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
+                            }
                         } else if symbol.r#type == SymbolType::AirGroupValue as i32 {
                             if air.airgroup_values.is_empty() {
                                 air.airgroup_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });

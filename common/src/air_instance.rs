@@ -257,54 +257,78 @@ impl<F: Field> AirInstance<F> {
 
     pub fn set_airvalue(&mut self, name: &str, lengths: Option<Vec<u64>>, value: F) {
         let airvalues_map = self.stark_info.airvalues_map.as_ref().unwrap();
-        let airvalue_id = (0..airvalues_map.len())
-            .find(|&i| {
-                let airvalue = airvalues_map.get(i).unwrap();
+        let mut id = 0;
+        let mut found = false;
+        for air_value in airvalues_map {
+            // Check if name matches
+            let name_matches = air_value.name == name;
 
-                // Check if name matches
-                let name_matches = airvalues_map[i].name == name;
+            
+            // If lengths is provided, check that it matches airvalue.lengths
+            let lengths_match = if let Some(ref provided_lengths) = lengths {
+                Some(&air_value.lengths) == Some(provided_lengths)
+            } else {
+                true // If lengths is None, skip the lengths check
+            };
 
-                // If lengths is provided, check that it matches airvalue.lengths
-                let lengths_match = if let Some(ref provided_lengths) = lengths {
-                    Some(&airvalue.lengths) == Some(provided_lengths)
+            if !name_matches || !lengths_match {
+                if air_value.stage == 1 {
+                    id += 1;
                 } else {
-                    true // If lengths is None, skip the lengths check
-                };
+                    id += 3;
+                }
+            } else {
+                found = true;
+                break;
+            }
+        }
 
-                name_matches && lengths_match
-            })
-            .unwrap_or_else(|| panic!("Name {} with specified lengths {:?} not found in airvalues", name, lengths));
+        if !found {
+            panic!("Name {} with specified lengths {:?} not found in airvalues", name, lengths);
+        }
 
-        self.airvalues[airvalue_id * 3] = value;
+        self.airvalues[id] = value;
     }
 
     pub fn set_airvalue_ext(&mut self, name: &str, lengths: Option<Vec<u64>>, value: Vec<F>) {
         let airvalues_map = self.stark_info.airvalues_map.as_ref().unwrap();
-        let airvalue_id = (0..airvalues_map.len())
-            .find(|&i| {
-                let airvalue = airvalues_map.get(i).unwrap();
+        let mut id = 0;
+        let mut found = false;
+        for air_value in airvalues_map {
+            // Check if name matches
+            let name_matches = air_value.name == name;
 
-                // Check if name matches
-                let name_matches = airvalues_map[i].name == name;
+            
+            // If lengths is provided, check that it matches airvalue.lengths
+            let lengths_match = if let Some(ref provided_lengths) = lengths {
+                Some(&air_value.lengths) == Some(provided_lengths)
+            } else {
+                true // If lengths is None, skip the lengths check
+            };
 
-                // If lengths is provided, check that it matches airvalue.lengths
-                let lengths_match = if let Some(ref provided_lengths) = lengths {
-                    Some(&airvalue.lengths) == Some(provided_lengths)
+            if !name_matches || !lengths_match {
+                if air_value.stage == 1 {
+                    id += 1;
                 } else {
-                    true // If lengths is None, skip the lengths check
-                };
+                    id += 3;
+                }
+            } else {
+                found = true;
+                break;
+            }
+        }
 
-                name_matches && lengths_match
-            })
-            .unwrap_or_else(|| panic!("Name {} with specified lengths {:?} not found in airvalues", name, lengths));
+        if !found {
+            panic!("Name {} with specified lengths {:?} not found in airvalues", name, lengths);
+        }
 
         assert!(value.len() == 3, "Value vector must have exactly 3 elements");
 
         let mut value_iter = value.into_iter();
 
-        self.airvalues[airvalue_id * 3] = value_iter.next().unwrap();
-        self.airvalues[airvalue_id * 3 + 1] = value_iter.next().unwrap();
-        self.airvalues[airvalue_id * 3 + 2] = value_iter.next().unwrap();
+        self.airvalues[id] = value_iter.next().unwrap();
+        self.airvalues[id + 1] = value_iter.next().unwrap();
+        self.airvalues[id + 2] = value_iter.next().unwrap();
     }
 
     pub fn set_airgroupvalue(&mut self, name: &str, lengths: Option<Vec<u64>>, value: F) {

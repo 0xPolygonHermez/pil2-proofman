@@ -77,8 +77,8 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
         proof_values.value2[0] = F::from_canonical_u64(125);
 
         let mut air_values = FibonacciSquareAirValues::<F>::new();
-        air_values.fibo1[0][0] = F::from_canonical_u64(1);
-        air_values.fibo1[1][0] = F::from_canonical_u64(2);
+        air_values.fibo1[0] = F::from_canonical_u64(1);
+        air_values.fibo1[1] = F::from_canonical_u64(2);
         air_values.fibo3 = [F::from_canonical_u64(5), F::from_canonical_u64(5), F::from_canonical_u64(5)];
 
         let air_instance = AirInstance::new_from_trace(
