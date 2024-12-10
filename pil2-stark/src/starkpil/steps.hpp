@@ -5,8 +5,8 @@
 
 struct StepsParams
 {
-    Goldilocks::Element *witness;
     Goldilocks::Element *trace;
+    Goldilocks::Element *aux_trace;
     Goldilocks::Element *publicInputs;
     Goldilocks::Element *challenges;
     Goldilocks::Element *airgroupValues;

@@ -90,13 +90,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn build(&mut self, proof_ctx: Arc<ProofCtx<F>>) {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
 
-        let trace = create_buffer_fast(get_map_totaln_c(self.p_stark_info) as usize);
-        air_instance.set_trace(trace);
-
-        //initialize the common challenges if have not been initialized by another prover
-        let challenges =
-            vec![F::zero(); self.stark_info.challenges_map.as_ref().unwrap().len() * Self::FIELD_EXTENSION];
-        *proof_ctx.challenges.values.write().unwrap() = challenges;
+        let aux_trace = create_buffer_fast(get_map_totaln_c(self.p_stark_info) as usize);
+        air_instance.set_aux_trace(aux_trace);
 
         self.initialized = true;
     }
@@ -124,8 +119,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let setup = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
         let steps_params = StepsParams {
-            witness: air_instance.get_witness_ptr(),
             trace: air_instance.get_trace_ptr(),
+            aux_trace: air_instance.get_aux_trace_ptr(),
             public_inputs: proof_ctx.get_publics_ptr(),
             challenges: proof_ctx.get_challenges_ptr(),
             airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -153,8 +148,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let setup = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
         let steps_params = StepsParams {
-            witness: air_instance.get_witness_ptr(),
             trace: air_instance.get_trace_ptr(),
+            aux_trace: air_instance.get_aux_trace_ptr(),
             public_inputs: proof_ctx.get_publics_ptr(),
             challenges: proof_ctx.get_challenges_ptr(),
             airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -223,7 +218,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             timer_start_trace!(STARK_COMMIT_STAGE_, stage_id);
 
             let witness = match stage_id == 1 {
-                true => air_instance.get_witness_ptr(),
+                true => air_instance.get_trace_ptr(),
                 false => std::ptr::null_mut(),
             };
 
@@ -234,7 +229,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 element_type,
                 stage_id as u64,
                 witness,
-                air_instance.get_trace_ptr(),
+                air_instance.get_aux_trace_ptr(),
                 p_proof,
                 proof_ctx.get_buff_helper_ptr(),
             );
@@ -519,7 +514,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 } else {
                     let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
                     let n_hash = (1 << (steps[n_steps].n_bits)) * Self::FIELD_EXTENSION as u64;
-                    let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_trace_ptr());
+                    let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_aux_trace_ptr());
                     calculate_hash_c(p_stark, value.as_mut_ptr() as *mut u8, fri_pol as *mut u8, n_hash);
                 }
             }
@@ -638,8 +633,8 @@ impl<F: Field> StarkProver<F> {
         let p_proof = self.p_proof;
 
         let steps_params = StepsParams {
-            witness: std::ptr::null_mut(),
-            trace: air_instance.get_trace_ptr(),
+            trace: std::ptr::null_mut(),
+            aux_trace: air_instance.get_aux_trace_ptr(),
             public_inputs: std::ptr::null_mut(),
             challenges: std::ptr::null_mut(),
             airgroup_values: std::ptr::null_mut(),
@@ -665,8 +660,8 @@ impl<F: Field> StarkProver<F> {
         let p_stark = self.p_stark;
 
         let steps_params = StepsParams {
-            witness: std::ptr::null_mut(),
-            trace: air_instance.get_trace_ptr(),
+            trace: std::ptr::null_mut(),
+            aux_trace: air_instance.get_aux_trace_ptr(),
             public_inputs: proof_ctx.get_publics_ptr(),
             challenges: proof_ctx.get_challenges_ptr(),
             airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -702,7 +697,7 @@ impl<F: Field> StarkProver<F> {
 
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
 
-        let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_trace_ptr());
+        let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_aux_trace_ptr());
 
         let challenges_guard = proof_ctx.challenges.values.read().unwrap();
         let challenge: Vec<F> = challenges_guard.iter().skip(challenges_guard.len() - 3).cloned().collect();
@@ -767,7 +762,7 @@ impl<F: Field> StarkProver<F> {
         );
 
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
-        let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_trace_ptr());
+        let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_aux_trace_ptr());
 
         let n_trees = self.num_stages() + 2 + self.stark_info.custom_commits.len() as u32;
         compute_queries_c(p_stark, p_proof, fri_queries.as_mut_ptr(), n_queries, n_trees as u64);

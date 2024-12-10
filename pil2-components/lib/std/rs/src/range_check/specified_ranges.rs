@@ -5,7 +5,7 @@ use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
 use proofman::{get_hint_field_gc, WitnessComponent, WitnessManager};
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{TraceInfo, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{
     get_hint_field, get_hint_field_constant, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue,
 };
@@ -134,7 +134,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
                 let buffer_size = multiplicities.len() * num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
                 let air_instance =
-                    AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
+                    AirInstance::new(sctx.clone(), TraceInfo::new(self.airgroup_id, self.air_id, buffer));
                 pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx));
                 pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
             };
@@ -304,7 +304,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         let buffer = create_buffer_fast(buffer_size as usize);
 
         // Add a new air instance. Since Specified Ranges is a table, only this air instance is needed
-        let mut air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
+        let mut air_instance = AirInstance::new(sctx.clone(), TraceInfo::new(self.airgroup_id, self.air_id, buffer));
         let mut mul_columns_guard = self.mul_columns.lock().unwrap();
         for hint in hints_guard[1..].iter() {
             mul_columns_guard.push(get_hint_field::<F>(

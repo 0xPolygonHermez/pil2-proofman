@@ -34,7 +34,7 @@ impl<F> WitnessManager<F> {
         self.register_air(airgroup_id, air_id, idx);
     }
 
-    pub fn register_std(&self, component: Arc<dyn WitnessComponent<F>>) {
+    pub fn register_proxy_component(&self, component: Arc<dyn WitnessComponent<F>>) {
         self.components.write().unwrap().push(component);
     }
 
@@ -79,12 +79,12 @@ impl<F> WitnessManager<F> {
         let mut components = HashMap::new();
         let airs = self.airs.read().unwrap();
         for (air_instance_id, air_instance) in air_instances.iter().enumerate() {
-            let component = airs.get(&(air_instance.airgroup_id, air_instance.air_id)).unwrap();
-
-            components
-                .entry((air_instance.airgroup_id, air_instance.air_id))
-                .or_insert_with(Vec::new)
-                .push((component, air_instance_id));
+            if let Some(component) = airs.get(&(air_instance.airgroup_id, air_instance.air_id)) {
+                components
+                    .entry((air_instance.airgroup_id, air_instance.air_id))
+                    .or_insert_with(Vec::new)
+                    .push((component, air_instance_id));
+            }
         }
         drop(air_instances);
 

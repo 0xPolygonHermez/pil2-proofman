@@ -120,9 +120,9 @@ public:
                     for(uint64_t j = 0; j < nrowsPack; ++j) {
                         uint64_t l = (row + j + nextStrides[o]) % domainSize;
                         if(stage == 1 && !domainExtended) {
-                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.witness[l * nColsStages[stage] + stagePos + d];
+                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.trace[l * nColsStages[stage] + stagePos + d];
                         } else {
-                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.aux_trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                         }
                     }
                 }

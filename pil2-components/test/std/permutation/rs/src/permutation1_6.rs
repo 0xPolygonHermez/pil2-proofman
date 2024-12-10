@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{FromTrace, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng};
@@ -21,15 +21,15 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let permutation1_6 = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        let airgroup_id = Permutation1_6Trace::<F>::get_airgroup_id();
-        let air_id = Permutation1_6Trace::<F>::get_air_id();
+        let airgroup_id = Permutation1_6Trace::<F>::AIRGROUP_ID;
+        let air_id = Permutation1_6Trace::<F>::AIR_ID;
 
         wcm.register_component(permutation1_6.clone(), airgroup_id, air_id);
 
         permutation1_6
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = Permutation1_6Trace::new();
@@ -73,7 +73,8 @@ where
             trace[i].sel2 = trace[indices[i]].sel1;
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace, None, None);
+        let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
+        pctx.air_instance_repo.add_air_instance(air_instance, Some(0));
 
         let mut trace2 = Permutation1_6Trace::new();
 
@@ -110,7 +111,8 @@ where
             trace2[i].sel2 = trace2[indices[i]].sel1;
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace2, None, None);
+        let air_instance2 = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace2));
+        pctx.air_instance_repo.add_air_instance(air_instance2, Some(0));
     }
 }
 

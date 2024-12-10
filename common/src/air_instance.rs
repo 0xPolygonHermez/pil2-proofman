@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use p3_field::Field;
 use proofman_util::create_buffer_fast;
 
-use crate::{trace::Trace, trace::Values, ProofCtx, ExecutionCtx, SetupCtx, Setup, StarkInfo};
+use crate::{trace::Trace, trace::Values, SetupCtx, Setup, StarkInfo};
 
 #[repr(C)]
 pub struct StepsParams {
-    pub witness: *mut u8,
     pub trace: *mut u8,
+    pub aux_trace: *mut u8,
     pub public_inputs: *mut u8,
     pub challenges: *mut u8,
     pub airgroup_values: *mut u8,
@@ -30,8 +30,8 @@ impl From<&StepsParams> for *mut u8 {
 impl Default for StepsParams {
     fn default() -> Self {
         StepsParams {
-            witness: ptr::null_mut(),
             trace: ptr::null_mut(),
+            aux_trace: ptr::null_mut(),
             public_inputs: ptr::null_mut(),
             challenges: ptr::null_mut(),
             airgroup_values: ptr::null_mut(),
@@ -57,6 +57,52 @@ impl<F> CustomCommitsInfo<F> {
     }
 }
 
+pub struct TraceInfo<F> {
+    airgroup_id: usize,
+    air_id: usize,
+    trace: Vec<F>,
+    custom_traces: Option<Vec<Vec<F>>>,
+    air_values: Option<Vec<F>>,
+}
+
+impl<F> TraceInfo<F> {
+    pub fn new(airgroup_id: usize, air_id: usize, trace: Vec<F>) -> Self {
+        Self { airgroup_id, air_id, trace, custom_traces: None, air_values: None }
+    }
+
+    pub fn with_custom_traces(mut self, custom_traces: Vec<Vec<F>>) -> Self {
+        self.custom_traces = Some(custom_traces);
+        self
+    }
+
+    pub fn with_air_values(mut self, air_values: Vec<F>) -> Self {
+        self.air_values = Some(air_values);
+        self
+    }
+}
+
+pub struct FromTrace<'a, F> {
+    pub trace: &'a mut dyn Trace<F>,
+    pub custom_traces: Option<Vec<&'a mut dyn Trace<F>>>,
+    pub air_values: Option<&'a mut dyn Values<F>>,
+}
+
+impl<'a, F> FromTrace<'a, F> {
+    pub fn new(trace: &'a mut dyn Trace<F>) -> Self {
+        Self { trace, custom_traces: None, air_values: None }
+    }
+
+    pub fn with_custom_traces(mut self, custom_traces: Vec<&'a mut dyn Trace<F>>) -> Self {
+        self.custom_traces = Some(custom_traces);
+        self
+    }
+
+    pub fn with_air_values(mut self, air_values: &'a mut dyn Values<F>) -> Self {
+        self.air_values = Some(air_values);
+        self
+    }
+}
+
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 #[repr(C)]
@@ -64,12 +110,11 @@ impl<F> CustomCommitsInfo<F> {
 pub struct AirInstance<F> {
     pub airgroup_id: usize,
     pub air_id: usize,
-    pub air_segment_id: Option<usize>,
     pub air_instance_id: Option<usize>,
     pub idx: Option<usize>,
     pub global_idx: Option<usize>,
-    pub witness: Vec<F>,
-    pub trace: Option<Vec<F>>,
+    pub trace: Vec<F>,
+    pub aux_trace: Option<Vec<F>>,
     pub custom_commits: Vec<CustomCommitsInfo<F>>,
     pub custom_commits_extended: Vec<CustomCommitsInfo<F>>,
     pub airgroup_values: Vec<F>,
@@ -79,20 +124,15 @@ pub struct AirInstance<F> {
 }
 
 impl<F: Field> AirInstance<F> {
-    pub fn new(
-        setup_ctx: Arc<SetupCtx>,
-        air_segment_id: Option<usize>,
-        airgroup_id: usize,
-        air_id: usize,
-        witness: Vec<F>,
-        witness_custom: Option<Vec<Vec<F>>>,
-        air_values: Option<Vec<F>>,
-    ) -> Self {
+    pub fn new(setup_ctx: Arc<SetupCtx>, trace_info: TraceInfo<F>) -> Self {
+        let airgroup_id = trace_info.airgroup_id;
+        let air_id = trace_info.air_id;
+
         let ps = setup_ctx.get_setup(airgroup_id, air_id);
 
-        let (custom_commits, custom_commits_extended) = Self::init_custom_commits(ps, witness_custom);
+        let (custom_commits, custom_commits_extended) = Self::init_custom_commits(ps, trace_info.custom_traces);
 
-        let airvalues = if let Some(air_values) = air_values {
+        let airvalues = if let Some(air_values) = trace_info.air_values {
             air_values
         } else {
             vec![F::zero(); ps.stark_info.airvalues_map.as_ref().unwrap().len() * 3]
@@ -101,12 +141,11 @@ impl<F: Field> AirInstance<F> {
         AirInstance {
             airgroup_id,
             air_id,
-            air_segment_id,
             air_instance_id: None,
             idx: None,
             global_idx: None,
-            witness,
-            trace: None,
+            trace: trace_info.trace,
+            aux_trace: None,
             custom_commits,
             custom_commits_extended,
             airgroup_values: vec![F::zero(); ps.stark_info.airgroupvalues_map.as_ref().unwrap().len() * 3],
@@ -116,52 +155,28 @@ impl<F: Field> AirInstance<F> {
         }
     }
 
-    pub fn from_trace(
-        proof_ctx: Arc<ProofCtx<F>>,
-        execution_ctx: Arc<ExecutionCtx>,
-        setup_ctx: Arc<SetupCtx>,
-        air_segment_id: Option<usize>,
-        trace: &mut dyn Trace<F>,
-        traces_custom: Option<&mut Vec<&mut dyn Trace<F>>>,
-        air_values: Option<&mut dyn Values<F>>,
-    ) {
-        let airgroup_id = trace.airgroup_id();
-        let air_id = trace.air_id();
-        let witness = trace.get_buffer();
+    pub fn new_from_trace(setup_ctx: Arc<SetupCtx>, mut traces: FromTrace<'_, F>) -> Self {
+        let mut trace_info =
+            TraceInfo::new(traces.trace.airgroup_id(), traces.trace.air_id(), traces.trace.get_buffer());
 
-        let custom_witnesses = if let Some(custom_traces) = traces_custom {
-            let mut custom_witnesses = Vec::new();
+        if let Some(custom_traces) = traces.custom_traces.as_mut() {
+            let mut traces = Vec::new();
             for custom_trace in custom_traces.iter_mut() {
-                custom_witnesses.push(custom_trace.get_buffer());
+                traces.push(custom_trace.get_buffer());
             }
-            Some(custom_witnesses)
-        } else {
-            None
-        };
-
-        let air_values_info = air_values.map(|air_values| air_values.get_buffer());
-
-        let air_instance = AirInstance::new(
-            setup_ctx,
-            air_segment_id,
-            airgroup_id,
-            air_id,
-            witness,
-            custom_witnesses,
-            air_values_info,
-        );
-
-        let (is_mine, gid) =
-            execution_ctx.dctx.write().unwrap().add_instance(air_instance.airgroup_id, air_instance.air_id, 1);
-
-        if is_mine {
-            proof_ctx.air_instance_repo.add_air_instance(air_instance, Some(gid));
+            trace_info = trace_info.with_custom_traces(traces);
         }
+
+        if let Some(air_values) = traces.air_values.as_mut() {
+            trace_info = trace_info.with_air_values(air_values.get_buffer());
+        }
+
+        AirInstance::new(setup_ctx, trace_info)
     }
 
     pub fn init_custom_commits(
         setup: &Setup,
-        witness_custom: Option<Vec<Vec<F>>>,
+        traces_custom: Option<Vec<Vec<F>>>,
     ) -> (Vec<CustomCommitsInfo<F>>, Vec<CustomCommitsInfo<F>>) {
         let n_custom_commits = setup.stark_info.custom_commits.len();
 
@@ -174,8 +189,8 @@ impl<F: Field> AirInstance<F> {
                 .map_sections_n
                 .get(&(setup.stark_info.custom_commits[commit_id].name.clone() + "0"))
                 .unwrap() as usize;
-            if let Some(witness_custom_value) = witness_custom.as_ref() {
-                custom_commits.push(CustomCommitsInfo::new(witness_custom_value[commit_id].clone(), PathBuf::new()));
+            if let Some(traces_custom_vals) = traces_custom.as_ref() {
+                custom_commits.push(CustomCommitsInfo::new(traces_custom_vals[commit_id].clone(), PathBuf::new()));
             } else {
                 println!("No custom trace data found.");
             }
@@ -189,8 +204,8 @@ impl<F: Field> AirInstance<F> {
         (custom_commits, custom_commits_extended)
     }
 
-    pub fn get_witness_ptr(&self) -> *mut u8 {
-        self.witness.as_ptr() as *mut u8
+    pub fn get_trace_ptr(&self) -> *mut u8 {
+        self.trace.as_ptr() as *mut u8
     }
 
     pub fn get_evals_ptr(&self) -> *mut u8 {
@@ -205,13 +220,13 @@ impl<F: Field> AirInstance<F> {
         self.airvalues.as_ptr() as *mut u8
     }
 
-    pub fn set_trace(&mut self, trace: Vec<F>) {
-        self.trace = Some(trace);
+    pub fn set_aux_trace(&mut self, aux_trace: Vec<F>) {
+        self.aux_trace = Some(aux_trace);
     }
 
-    pub fn get_trace_ptr(&self) -> *mut u8 {
-        match &self.trace {
-            Some(trace) => trace.as_ptr() as *mut u8,
+    pub fn get_aux_trace_ptr(&self) -> *mut u8 {
+        match &self.aux_trace {
+            Some(aux_trace) => aux_trace.as_ptr() as *mut u8,
             None => std::ptr::null_mut(), // Return null if `trace` is `None`
         }
     }

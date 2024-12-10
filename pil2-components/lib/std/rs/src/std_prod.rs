@@ -51,7 +51,7 @@ impl<F: PrimeField> StdProd<F> {
             debug_data: if mode.name == ModeName::Debug { Some(Mutex::new(HashMap::new())) } else { None },
         });
 
-        wcm.register_std(std_prod.clone());
+        wcm.register_proxy_component(std_prod.clone());
 
         std_prod
     }

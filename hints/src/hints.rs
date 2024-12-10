@@ -681,8 +681,8 @@ pub fn mul_hint_fields<F: Field + Field>(
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
-        witness: air_instance.get_witness_ptr(),
         trace: air_instance.get_trace_ptr(),
+        aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -721,8 +721,8 @@ pub fn acc_hint_field<F: Field>(
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
-        witness: air_instance.get_witness_ptr(),
         trace: air_instance.get_trace_ptr(),
+        aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -769,8 +769,8 @@ pub fn acc_mul_hint_fields<F: Field>(
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
-        witness: air_instance.get_witness_ptr(),
         trace: air_instance.get_trace_ptr(),
+        aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -814,8 +814,8 @@ pub fn get_hint_field<F: Field>(
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
-        witness: air_instance.get_witness_ptr(),
         trace: air_instance.get_trace_ptr(),
+        aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -862,8 +862,8 @@ pub fn get_hint_field_a<F: Field>(
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
-        witness: air_instance.get_witness_ptr(),
         trace: air_instance.get_trace_ptr(),
+        aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -916,8 +916,8 @@ pub fn get_hint_field_m<F: Field>(
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
-        witness: air_instance.get_witness_ptr(),
         trace: air_instance.get_trace_ptr(),
+        aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -1103,8 +1103,8 @@ pub fn set_hint_field<F: Field>(
     values: &HintFieldValue<F>,
 ) {
     let steps_params = StepsParams {
-        witness: air_instance.get_witness_ptr(),
         trace: air_instance.get_trace_ptr(),
+        aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: std::ptr::null_mut(),
         challenges: std::ptr::null_mut(),
         airgroup_values: std::ptr::null_mut(),
@@ -1136,8 +1136,8 @@ pub fn set_hint_field_val<F: Field>(
     value: HintFieldOutput<F>,
 ) {
     let steps_params = StepsParams {
-        witness: std::ptr::null_mut(),
         trace: std::ptr::null_mut(),
+        aux_trace: std::ptr::null_mut(),
         public_inputs: std::ptr::null_mut(),
         challenges: std::ptr::null_mut(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
@@ -1174,8 +1174,8 @@ pub fn print_row<F: Field>(setup_ctx: &SetupCtx, air_instance: &AirInstance<F>, 
     let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let buffer = match stage == 1 {
-        true => air_instance.get_witness_ptr(),
-        false => air_instance.get_trace_ptr(),
+        true => air_instance.get_trace_ptr(),
+        false => air_instance.get_aux_trace_ptr(),
     };
 
     print_row_c((&setup.p_setup).into(), buffer, stage, row);

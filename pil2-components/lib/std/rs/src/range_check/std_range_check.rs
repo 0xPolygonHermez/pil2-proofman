@@ -86,7 +86,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
 
         let std_range_check = Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u16air, specified_ranges });
 
-        wcm.register_std(std_range_check.clone());
+        wcm.register_proxy_component(std_range_check.clone());
 
         std_range_check
     }

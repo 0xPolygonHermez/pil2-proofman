@@ -3,7 +3,7 @@ use num_traits::ToPrimitive;
 use p3_field::{Field, PrimeField};
 
 use proofman::{get_hint_field_gc, WitnessComponent, WitnessManager};
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{TraceInfo, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman_hints::{get_hint_field, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue};
 use proofman_util::create_buffer_fast;
 use std::sync::atomic::Ordering;
@@ -116,7 +116,7 @@ impl<F: PrimeField> U8Air<F> {
                 let buffer_size = num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
                 let air_instance =
-                    AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
+                    AirInstance::new(sctx.clone(), TraceInfo::new(self.airgroup_id, self.air_id, buffer));
                 pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx));
                 pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
             };
@@ -176,7 +176,7 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
         let buffer = create_buffer_fast(buffer_size);
 
         // Add a new air instance. Since U8Air is a table, only this air instance is needed
-        let mut air_instance = AirInstance::new(sctx.clone(), None, self.airgroup_id, self.air_id, buffer, None, None);
+        let mut air_instance = AirInstance::new(sctx.clone(), TraceInfo::new(self.airgroup_id, self.air_id, buffer));
 
         *self.mul_column.lock().unwrap() = get_hint_field::<F>(
             &sctx,

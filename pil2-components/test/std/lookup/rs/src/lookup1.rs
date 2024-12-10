@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{FromTrace, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
@@ -21,15 +21,15 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let lookup1 = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        let airgroup_id = Lookup1Trace::<F>::get_airgroup_id();
-        let air_id = Lookup1Trace::<F>::get_air_id();
+        let airgroup_id = Lookup1Trace::<F>::AIRGROUP_ID;
+        let air_id = Lookup1Trace::<F>::AIR_ID;
 
         wcm.register_component(lookup1.clone(), airgroup_id, air_id);
 
         lookup1
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = Lookup1Trace::new();
@@ -54,7 +54,8 @@ where
             trace[i].mul = F::from_canonical_usize(n_sel);
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace, None, None);
+        let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
+        pctx.air_instance_repo.add_air_instance(air_instance, Some(0));
     }
 }
 

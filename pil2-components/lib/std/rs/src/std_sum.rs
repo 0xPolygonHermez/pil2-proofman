@@ -52,7 +52,7 @@ impl<F: PrimeField> StdSum<F> {
             debug_data: if mode.name == ModeName::Debug { Some(Mutex::new(HashMap::new())) } else { None },
         });
 
-        wcm.register_std(std_sum.clone());
+        wcm.register_proxy_component(std_sum.clone());
 
         std_sum
     }

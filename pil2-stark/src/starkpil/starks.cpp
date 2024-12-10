@@ -59,7 +59,7 @@ void Starks<ElementType>::loadCustomCommit(uint64_t commitId, uint64_t step, Gol
 }
 
 template <typename ElementType>
-void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element *witness, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
+void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *aux_trace, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
 {   
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -67,8 +67,8 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     std::string section = "cm" + to_string(step);  
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)];
     
-    Goldilocks::Element *pBuff = step == 1 ? witness : &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
-    Goldilocks::Element *pBuffExtended = &buffer[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
+    Goldilocks::Element *pBuff = step == 1 ? trace : &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
+    Goldilocks::Element *pBuffExtended = &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
 
     NTT_Goldilocks ntt(N);
     if(pBuffHelper != nullptr) {
@@ -83,16 +83,16 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
 }
 
 template <typename ElementType>
-void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *witness, Goldilocks::Element *trace, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper)
+void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *aux_trace, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper)
 {  
 
     if (step <= setupCtx.starkInfo.nStages)
     {
-        extendAndMerkelize(step, witness, trace, proof, pBuffHelper);
+        extendAndMerkelize(step, trace, aux_trace, proof, pBuffHelper);
     }
     else
     {
-        computeQ(step, trace, proof, pBuffHelper);
+        computeQ(step, aux_trace, proof, pBuffHelper);
     }
 }
 
@@ -244,7 +244,7 @@ void Starks<ElementType>::evmap(StepsParams& params, Goldilocks::Element *LEv)
 
     int num_threads = omp_get_max_threads();
     int size_thread = size_eval * FIELD_EXTENSION;
-    Goldilocks::Element *evals_acc = &params.trace[setupCtx.starkInfo.mapOffsets[std::make_pair("evals", true)]];
+    Goldilocks::Element *evals_acc = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("evals", true)]];
     memset(&evals_acc[0], 0, num_threads * size_thread * sizeof(Goldilocks::Element));
     
     Polinomial *ordPols = new Polinomial[size_eval];
@@ -253,7 +253,7 @@ void Starks<ElementType>::evmap(StepsParams& params, Goldilocks::Element *LEv)
     {
         EvMap ev = setupCtx.starkInfo.evMap[i];
         string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom" : "fixed";
-        Goldilocks::Element *pAddress = type == "cm" ? params.trace : type == "custom" ? params.pCustomCommitsExtended[ev.commitId] : &params.pConstPolsExtendedTreeAddress[2];
+        Goldilocks::Element *pAddress = type == "cm" ? params.aux_trace : type == "custom" ? params.pCustomCommitsExtended[ev.commitId] : &params.pConstPolsExtendedTreeAddress[2];
         PolMap polInfo = type == "cm" ? setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id] : setupCtx.starkInfo.constPolsMap[ev.id];
         setupCtx.starkInfo.getPolynomial(ordPols[i], pAddress, type, polInfo, true);
     }
@@ -341,7 +341,7 @@ void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams 
     std::vector<Dest> dests;
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
         if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
-            Goldilocks::Element* pAddress = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.witness : params.trace;
+            Goldilocks::Element* pAddress = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.trace : params.aux_trace;
             Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
             destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
             
@@ -371,7 +371,7 @@ void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params) {
 #else
     ExpressionsPack expressionsCtx(setupCtx);
 #endif
-    expressionsCtx.calculateExpression(params, &params.trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
+    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
 }
 
 template <typename ElementType>
@@ -383,5 +383,5 @@ void Starks<ElementType>::calculateFRIPolynomial(StepsParams &params) {
 #else
     ExpressionsPack expressionsCtx(setupCtx);
 #endif
-    expressionsCtx.calculateExpression(params, &params.trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.friExpId);
+    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.friExpId);
 }

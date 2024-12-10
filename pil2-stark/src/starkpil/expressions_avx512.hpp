@@ -125,9 +125,9 @@ public:
                     for(uint64_t j = 0; j < nrowsPack; ++j) {
                         uint64_t l = (row + j + nextStrides[o]) % domainSize;
                         if(stage == 1 && !domainExtended) {
-                            bufferT[nrowsPack*o + j] = params.witness[l * nColsStages[stage] + stagePos + d];
+                            bufferT[nrowsPack*o + j] = params.trace[l * nColsStages[stage] + stagePos + d];
                         } else {
-                            bufferT[nrowsPack*o + j] = params.trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                            bufferT[nrowsPack*o + j] = params.aux_trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                         } 
                     }
                     Goldilocks::load_avx512(bufferT_[nColsStagesAcc[ns*o + stage] + (stagePos + d)], &bufferT[nrowsPack*o]);

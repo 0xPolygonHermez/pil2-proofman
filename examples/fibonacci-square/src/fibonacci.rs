@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{AirInstance, FromTrace, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::PrimeField64;
@@ -20,26 +20,22 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
     pub fn new(wcm: Arc<WitnessManager<F>>, module: Arc<Module<F>>) -> Arc<Self> {
         let fibonacci = Arc::new(Self { module });
 
-        let airgroup_id = FibonacciSquareTrace::<F>::get_airgroup_id();
-        let air_id = FibonacciSquareTrace::<F>::get_air_id();
-
-        wcm.register_component(fibonacci.clone(), airgroup_id, air_id);
+        wcm.register_component(
+            fibonacci.clone(),
+            FibonacciSquareTrace::<F>::AIRGROUP_ID,
+            FibonacciSquareTrace::<F>::AIR_ID,
+        );
 
         fibonacci
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        if let Err(e) = Self::calculate_trace(self, pctx, ectx, sctx) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        if let Err(e) = Self::calculate_trace(self, pctx, sctx) {
             panic!("Failed to calculate fibonacci: {:?}", e);
         }
     }
 
-    fn calculate_trace(
-        &self,
-        pctx: Arc<ProofCtx<F>>,
-        ectx: Arc<ExecutionCtx>,
-        sctx: Arc<SetupCtx>,
-    ) -> Result<u64, Box<dyn std::error::Error>> {
+    fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> Result<u64, Box<dyn std::error::Error>> {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         let mut publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
@@ -80,15 +76,11 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
         air_values.fibo1[1][0] = F::from_canonical_u64(2);
         air_values.fibo3 = [F::from_canonical_u64(5), F::from_canonical_u64(5), F::from_canonical_u64(5)];
 
-        AirInstance::from_trace(
-            pctx.clone(),
-            ectx.clone(),
+        let air_instance = AirInstance::new_from_trace(
             sctx.clone(),
-            Some(0),
-            &mut trace,
-            Some(&mut vec![&mut trace_rom]),
-            Some(&mut air_values),
+            FromTrace::new(&mut trace).with_custom_traces(vec![&mut trace_rom]).with_air_values(&mut air_values),
         );
+        pctx.air_instance_repo.add_air_instance(air_instance, Some(0));
 
         Ok(b)
     }

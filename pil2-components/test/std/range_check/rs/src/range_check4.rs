@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pil_std_lib::Std;
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{FromTrace, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -24,8 +24,8 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let range_check4 = Arc::new(Self { std_lib });
 
-        let airgroup_id = RangeCheck4Trace::<F>::get_airgroup_id();
-        let air_id = RangeCheck4Trace::<F>::get_air_id();
+        let airgroup_id = RangeCheck4Trace::<F>::AIRGROUP_ID;
+        let air_id = RangeCheck4Trace::<F>::AIR_ID;
 
         wcm.register_component(range_check4.clone(), airgroup_id, air_id);
 
@@ -35,7 +35,7 @@ where
         range_check4
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = RangeCheck4Trace::new_zeroes();
@@ -101,7 +101,8 @@ where
             self.std_lib.range_check(trace[i].a8, F::one(), range9);
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), None, &mut trace, None, None);
+        let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
+        pctx.air_instance_repo.add_air_instance(air_instance, Some(0));
     }
 }
 

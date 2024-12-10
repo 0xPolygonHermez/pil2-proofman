@@ -63,18 +63,4 @@ impl<F: Field> AirInstancesRepository<F> {
 
         indices
     }
-
-    pub fn find_last_segment(&self, airgroup_id: usize, air_id: usize) -> Option<usize> {
-        let air_instances = self.air_instances.read().unwrap();
-
-        air_instances
-            .iter()
-            .filter(|air_instance| {
-                air_instance.airgroup_id == airgroup_id
-                    && air_instance.air_id == air_id
-                    && air_instance.air_segment_id.is_some()
-            })
-            .map(|air_instance| air_instance.air_segment_id.unwrap_or(0))
-            .max()
-    }
 }

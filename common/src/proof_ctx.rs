@@ -60,12 +60,13 @@ impl<F: Field> ProofCtx<F> {
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info.n_proof_values;
+        let n_challenges = global_info.n_challenges.iter().fold(0, |acc, &x| acc + x);
 
         Self {
             global_info,
             public_inputs: Values::new(n_publics),
             proof_values: Values::new(n_proof_values * 3),
-            challenges: Values::default(),
+            challenges: Values::new(n_challenges * 3),
             buff_helper: Values::default(),
             air_instance_repo: AirInstancesRepository::new(),
         }

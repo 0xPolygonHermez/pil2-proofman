@@ -65,9 +65,9 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
         }
 
         impl<#generics: Default + Clone + Copy> #trace_struct_name<#generics> {
-            const NUM_ROWS: usize = #num_rows;
-            const AIRGROUP_ID: usize = #airgroup_id;
-            const AIR_ID: usize = #air_id;
+            pub const NUM_ROWS: usize = #num_rows;
+            pub const AIRGROUP_ID: usize = #airgroup_id;
+            pub const AIR_ID: usize = #air_id;
 
             pub fn new() -> Self {
                 let num_rows = Self::NUM_ROWS;
@@ -77,7 +77,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 let mut buff_uninit: Vec<std::mem::MaybeUninit<#row_struct_name<#generics>>> = Vec::with_capacity(num_rows);
 
                 unsafe {
-                    buff_uninit.set_len(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
+                    buff_uninit.set_len(num_rows);
                 }
                 let buffer: Vec<#row_struct_name::<#generics>> = unsafe { std::mem::transmute(buff_uninit) };
 
@@ -110,14 +110,6 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
             pub fn num_rows(&self) -> usize {
                 self.num_rows
-            }
-
-            pub fn get_airgroup_id() -> usize {
-                Self::AIRGROUP_ID
-            }
-
-            pub fn get_air_id() -> usize {
-                Self::AIR_ID
             }
 
             pub fn airgroup_id(&self) -> usize {

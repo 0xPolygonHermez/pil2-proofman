@@ -217,7 +217,7 @@ HintFieldValues getHintField(
             hintFieldInfo.fieldType = dim == 1 ? HintFieldType::Column : HintFieldType::ColumnExtended;
             hintFieldInfo.offset = dim;
             if(!hintOptions.dest) {
-                Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage == 1 ? params.witness : params.trace;
+                Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage == 1 ? params.trace : params.aux_trace;
                 getPolynomial(setupCtx, pAddress, hintFieldInfo.values, setupCtx.starkInfo.cmPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, "cm");
                 if(hintOptions.inverse) {
                     zklog.error("Inverse not supported still for polynomials");
@@ -364,7 +364,7 @@ uint64_t setHintField(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Eleme
 
     auto hintFieldVal = hintField->values[0];
     if(hintFieldVal.operand == opType::cm) {
-        Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage > 1 ? params.trace : params.witness;
+        Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage > 1 ? params.aux_trace : params.trace;
         setPolynomial(setupCtx, pAddress, values, hintFieldVal.id);
     } else if(hintFieldVal.operand == opType::airgroupvalue) {
         if(setupCtx.starkInfo.airgroupValuesMap[hintFieldVal.id].stage > 1) {
@@ -452,7 +452,7 @@ uint64_t multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hi
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
-    Goldilocks::Element *buff = &params.trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos];
+    Goldilocks::Element *buff = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos];
     
     opHintFields(setupCtx, params, buff, offset, hintId, {hintFieldName1, hintFieldName2}, {hintOptions1, hintOptions2});
 

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{FromTrace, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
 use proofman::{WitnessManager, WitnessComponent};
 use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField64};
@@ -19,10 +19,7 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let module = Arc::new(Module { inputs: Mutex::new(Vec::new()), std_lib });
 
-        let airgroup_id = ModuleTrace::<F>::get_airgroup_id();
-        let air_id = ModuleTrace::<F>::get_air_id();
-
-        wcm.register_component(module.clone(), airgroup_id, air_id);
+        wcm.register_component(module.clone(), ModuleTrace::<F>::AIRGROUP_ID, ModuleTrace::<F>::AIR_ID);
 
         // Register dependency relations
         module.std_lib.register_predecessor();
@@ -40,11 +37,11 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
         x_mod
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.calculate_trace(pctx, ectx, sctx);
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+        self.calculate_trace(pctx, sctx);
     }
 
-    fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         let module = F::as_canonical_u64(&pctx.get_public_value("module"));
@@ -74,7 +71,8 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
             self.std_lib.range_check(F::from_canonical_u64(module), F::one(), range);
         }
 
-        AirInstance::from_trace(pctx.clone(), ectx.clone(), sctx.clone(), Some(0), &mut trace, None, None);
+        let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
+        pctx.air_instance_repo.add_air_instance(air_instance, Some(0));
 
         self.std_lib.unregister_predecessor(pctx, None);
     }
