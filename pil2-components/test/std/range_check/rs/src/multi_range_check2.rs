@@ -34,7 +34,7 @@ where
         multi_range_check2
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, _sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = MultiRangeCheck2Trace::new_zeroes();
@@ -83,7 +83,7 @@ where
             }
         }
 
-        let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
+        let air_instance = AirInstance::new_from_trace( FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, ectx, pctx.clone());
     }
 }

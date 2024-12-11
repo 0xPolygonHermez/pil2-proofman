@@ -29,8 +29,8 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
         fibonacci
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        if let Err(e) = Self::calculate_trace(self, pctx, ectx, sctx) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, _sctx: Arc<SetupCtx>) {
+        if let Err(e) = Self::calculate_trace(self, pctx, ectx) {
             panic!("Failed to calculate fibonacci: {:?}", e);
         }
     }
@@ -39,7 +39,6 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
         &self,
         pctx: Arc<ProofCtx<F>>,
         ectx: Arc<ExecutionCtx>,
-        sctx: Arc<SetupCtx>,
     ) -> Result<u64, Box<dyn std::error::Error>> {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
@@ -82,7 +81,6 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
         air_values.fibo3 = [F::from_canonical_u64(5), F::from_canonical_u64(5), F::from_canonical_u64(5)];
 
         let air_instance = AirInstance::new_from_trace(
-            sctx.clone(),
             FromTrace::new(&mut trace).with_custom_traces(vec![&mut trace_rom]).with_air_values(&mut air_values),
         );
         add_air_instance::<F>(air_instance, ectx, pctx.clone());

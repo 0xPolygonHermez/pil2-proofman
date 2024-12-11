@@ -25,7 +25,7 @@ impl ExecutionCtx {
     }
 
     pub fn dctx_distribute_multiplicity(&self, multiplicity: &mut [u64], instance_idx: usize) {
-        let dctx = self.dctx.write().unwrap();
+        let dctx = self.dctx.read().unwrap();
         let owner = dctx.owner(instance_idx);
         dctx.distribute_multiplicity(multiplicity, owner);
     }

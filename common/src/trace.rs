@@ -2,6 +2,7 @@ pub trait Trace<F>: Send {
     fn num_rows(&self) -> usize;
     fn airgroup_id(&self) -> usize;
     fn air_id(&self) -> usize;
+    fn commit_id(&self) -> Option<usize>;
     fn get_buffer(&mut self) -> Vec<F>;
 }
 

@@ -29,7 +29,7 @@ where
         permutation1_6
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, _sctx: Arc<SetupCtx>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = Permutation1_6Trace::new();
@@ -73,7 +73,7 @@ where
             trace[i].sel2 = trace[indices[i]].sel1;
         }
 
-        let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
+        let air_instance = AirInstance::new_from_trace( FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, ectx.clone(), pctx.clone());
 
         let mut trace2 = Permutation1_6Trace::new();
@@ -111,7 +111,7 @@ where
             trace2[i].sel2 = trace2[indices[i]].sel1;
         }
 
-        let air_instance2 = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace2));
+        let air_instance2 = AirInstance::new_from_trace( FromTrace::new(&mut trace2));
         add_air_instance::<F>(air_instance2, ectx, pctx.clone());
     }
 }

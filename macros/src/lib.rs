@@ -161,6 +161,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 self.air_id
             }
 
+            fn commit_id(&self) -> Option<usize> {
+                self.commit_id
+            }
+
             fn get_buffer(&mut self) -> Vec<#generics> {
                 let mut buffer = std::mem::take(&mut self.buffer);
                 unsafe {

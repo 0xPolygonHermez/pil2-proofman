@@ -6,7 +6,7 @@ use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField64};
 use num_bigint::BigInt;
 
-use crate::{ModuleTrace};
+use crate::ModuleTrace;
 
 pub struct Module<F: PrimeField64> {
     inputs: Mutex<Vec<(u64, u64)>>,
@@ -37,11 +37,11 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
         x_mod
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.calculate_trace(pctx, ectx, sctx);
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, _sctx: Arc<SetupCtx>) {
+        self.calculate_trace(pctx, ectx);
     }
 
-    fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>) {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         let module = F::as_canonical_u64(&pctx.get_public_value("module"));
@@ -71,7 +71,7 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
             self.std_lib.range_check(F::from_canonical_u64(module), F::one(), range);
         }
 
-        let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
+        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, ectx, pctx.clone());
 
         self.std_lib.unregister_predecessor(pctx, None);

@@ -25,7 +25,7 @@ impl<F: PrimeField + Copy> Lookup3<F> {
         lookup3
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, _sctx: Arc<SetupCtx>) {
         // For simplicity, add a single instance of each air
         let mut trace = Lookup3Trace::new();
         let num_rows = trace.num_rows();
@@ -54,7 +54,7 @@ impl<F: PrimeField + Copy> Lookup3<F> {
             }
         }
 
-        let air_instance = AirInstance::new_from_trace(sctx.clone(), FromTrace::new(&mut trace));
+        let air_instance = AirInstance::new_from_trace( FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, ectx, pctx.clone());
     }
 }

@@ -11,7 +11,7 @@ use proofman_common::{
 };
 use log::{debug, trace};
 use transcript::FFITranscript;
-use proofman_util::{create_buffer_fast, timer_start_trace, timer_stop_and_log_trace};
+use proofman_util::{timer_start_trace, timer_stop_and_log_trace};
 use proofman_starks_lib_c::*;
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
@@ -87,9 +87,35 @@ impl<F: Field> StarkProver<F> {
 impl<F: Field> Prover<F> for StarkProver<F> {
     fn build(&mut self, proof_ctx: Arc<ProofCtx<F>>) {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        air_instance.init_aux_trace(get_map_totaln_c(self.p_stark_info) as usize);
+        air_instance.init_evals(self.stark_info.ev_map.len() * Self::FIELD_EXTENSION);
 
-        let aux_trace = create_buffer_fast(get_map_totaln_c(self.p_stark_info) as usize);
-        air_instance.set_aux_trace(aux_trace);
+        let n_custom_commits = self.stark_info.custom_commits.len();
+
+        for commit_id in 0..n_custom_commits {
+            let n_cols = *self
+                .stark_info
+                .map_sections_n
+                .get(&(self.stark_info.custom_commits[commit_id].name.clone() + "0"))
+                .unwrap() as usize;
+
+            if air_instance.custom_commits[commit_id].is_empty() {
+                air_instance.init_custom_commit(commit_id, (1 << self.stark_info.stark_struct.n_bits_ext) * n_cols);
+            }
+            air_instance
+                .init_custom_commit_extended(commit_id, (1 << self.stark_info.stark_struct.n_bits_ext) * n_cols);
+        }
+
+        let n_airgroup_values = self.stark_info.airgroupvalues_map.as_ref().unwrap().len();
+        let n_air_values = self.stark_info.airvalues_map.as_ref().unwrap().len();
+
+        if n_air_values > 0 && air_instance.airvalues.is_empty() {
+            air_instance.init_airvalues(n_air_values * Self::FIELD_EXTENSION);
+        }
+
+        if n_airgroup_values > 0 && air_instance.airgroup_values.is_empty() {
+            air_instance.init_airgroup_values(n_airgroup_values * Self::FIELD_EXTENSION);
+        }
     }
 
     fn free(&mut self) {
@@ -241,28 +267,16 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     .any(|custom_commit| custom_commit.stage == stage_id as u64);
 
                 if custom_commits_stage {
-                    if air_instance.custom_commits[commit_id].cached_file.to_str() == Some("") {
-                        extend_and_merkelize_custom_commit_c(
-                            p_stark,
-                            commit_id as u64,
-                            stage_id as u64,
-                            air_instance.custom_commits[commit_id].buffer.as_ptr() as *mut u8,
-                            air_instance.custom_commits_extended[commit_id].buffer.as_ptr() as *mut u8,
-                            p_proof,
-                            proof_ctx.get_buff_helper_ptr(),
-                            "",
-                        );
-                    } else {
-                        load_custom_commit_c(
-                            p_stark,
-                            commit_id as u64,
-                            stage_id as u64,
-                            air_instance.custom_commits[commit_id].buffer.as_ptr() as *mut u8,
-                            air_instance.custom_commits_extended[commit_id].buffer.as_ptr() as *mut u8,
-                            p_proof,
-                            air_instance.custom_commits[commit_id].cached_file.to_str().unwrap(),
-                        );
-                    }
+                    extend_and_merkelize_custom_commit_c(
+                        p_stark,
+                        commit_id as u64,
+                        stage_id as u64,
+                        air_instance.custom_commits[commit_id].as_ptr() as *mut u8,
+                        air_instance.custom_commits_extended[commit_id].as_ptr() as *mut u8,
+                        p_proof,
+                        proof_ctx.get_buff_helper_ptr(),
+                        "",
+                    );
                 }
 
                 let mut value = vec![F::zero(); self.n_field_elements];
