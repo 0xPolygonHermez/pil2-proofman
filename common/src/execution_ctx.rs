@@ -18,6 +18,17 @@ impl ExecutionCtx {
     pub fn builder() -> ExecutionCtxBuilder {
         ExecutionCtxBuilder::new()
     }
+
+    pub fn dctx_add_instance(&self, airgroup_id: usize, air_id: usize, weight: usize) -> (bool, usize) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.add_instance(airgroup_id, air_id, weight)
+    }
+
+    pub fn dctx_distribute_multiplicity(&self, multiplicity: &mut [u64], instance_idx: usize) {
+        let dctx = self.dctx.write().unwrap();
+        let owner = dctx.owner(instance_idx);
+        dctx.distribute_multiplicity(multiplicity, owner);
+    }
 }
 
 pub struct ExecutionCtxBuilder {
