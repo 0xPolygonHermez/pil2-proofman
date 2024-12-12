@@ -110,9 +110,9 @@ void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges
 
     for (uint64_t i = 0; i < starkInfo.proofValuesMap.size(); i++)
     {
-        zkin["proofValues"][i][0] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION]);
-        zkin["proofValues"][i][1] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION + 1]);
-        zkin["proofValues"][i][2] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION + 2]);
+        zkin["proofvalues"][i][0] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION]);
+        zkin["proofvalues"][i][1] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION + 1]);
+        zkin["proofvalues"][i][2] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION + 2]);
     }
 
     json challengesJson = challenges2zkin(globalInfo, challenges);
