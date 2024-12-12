@@ -42,7 +42,7 @@ private:
     uint64_t val;
 
 public:
-    using mem_t = gl64_t;
+
     static const uint32_t degree = 1;
     static const unsigned nbits = 64;
     static const uint64_t MOD = 0xffffffff00000001U;

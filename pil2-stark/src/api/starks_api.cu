@@ -39,7 +39,7 @@ void *gen_recursive_proof(void *pSetupCtx_, char* globalInfoFile, uint64_t airgr
     std::cout << "rick genDeviceBuffers time: " << time << std::endl;
 
     time = omp_get_wtime();
-    void * proof = genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, globalInfo, airgroupId, (Goldilocks::Element *)witness, d_buffers->d_witness, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), d_buffers);
+    void * proof = genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, globalInfo, airgroupId, (Goldilocks::Element *)witness,(Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), d_buffers);
     time = omp_get_wtime() - time;
     std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
     

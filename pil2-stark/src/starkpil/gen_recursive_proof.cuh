@@ -5,6 +5,7 @@
 #include "proof2zkinStark.hpp"
 #include "cuda_utils.cuh"
 #include "gl64_t.cuh"
+#include "expressions_gpu.cuh"
 
 
 void offloadCommit(uint64_t step, MerkleTreeGL** treesGL, Goldilocks::Element *trace, gl64_t *d_trace, uint64_t* d_tree, FRIProof<Goldilocks::Element> &proof, SetupCtx& setupCtx){
@@ -25,12 +26,8 @@ void offloadCommit(uint64_t step, MerkleTreeGL** treesGL, Goldilocks::Element *t
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
 }
 
-void freeDeviceWitness(gl64_t *d_witness){
-    CHECKCUDAERR(cudaFree(d_witness));
-}
-
 template <typename ElementType>
-void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, gl64_t *d_witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, DeviceCommitBuffers* d_buffers) { 
+void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, DeviceCommitBuffers* d_buffers) { 
 
     TimerStart(STARK_PROOF);
 
@@ -48,7 +45,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     //rick: aqui ja puc llençar el commit 1 no?
 
 
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsGPU expressionsCtx(setupCtx);
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
 
@@ -70,17 +67,17 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         pConstPolsExtendedTreeAddress: pConstTree,
     };
 
-    /*StepsParams d_params = {
-        trace: d_witness,
-        pols : d_trace,
-        publicInputs : publicInputs,
+    StepsParams d_params = {
+        trace: (Goldilocks::Element* ) d_buffers->d_witness,
+        pols : (Goldilocks::Element* ) d_buffers->d_trace,
+        publicInputs : (Goldilocks::Element* ) d_buffers->d_publicInputs,
         challenges : nullptr,
         airgroupValues : nullptr,
         evals : nullptr,
         xDivXSub : nullptr,
-        pConstPolsAddress: pConstPols,
-        pConstPolsExtendedTreeAddress: pConstTree,
-    };*/
+        pConstPolsAddress: (Goldilocks::Element* ) d_buffers->d_constPols,
+        pConstPolsExtendedTreeAddress: (Goldilocks::Element* ) d_buffers->d_constTree,
+    };
 
     //--------------------------------
     // 0.- Add const root and publics to transcript
@@ -113,7 +110,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     //Allocate d_tree
     uint64_t** d_tree = new uint64_t*[1];
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage_inplace(1, d_witness, d_buffers->d_trace, d_tree, d_buffers);
+    starks.commitStage_inplace(1, d_buffers->d_witness, d_buffers->d_trace, d_tree, d_buffers);
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
 
     offloadCommit(1, starks.treesGL, trace, d_buffers->d_trace, *d_tree, proof, setupCtx);
@@ -152,7 +149,11 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     //rick: fins aqui
 
     //rick: tot aixo va a la GPU
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
+    double time = omp_get_wtime();
+    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
+
+    time = omp_get_wtime() - time;
+    std::cout << "rick calculateExpressions time: " << time << std::endl;
     
 
     Goldilocks3::copy((Goldilocks3::Element *)&gprod[0], &Goldilocks3::one());
@@ -176,9 +177,12 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     delete den;
     delete gprod;
 
+    time = omp_get_wtime();
     TimerStart(CALCULATE_IM_POLS);
     starks.calculateImPolsExpressions(2, params); // a la GPU
     TimerStopAndLog(CALCULATE_IM_POLS);
+    time = omp_get_wtime() - time;
+    std::cout << "rick calculateImPolsExpressions time: " << time << std::endl;
     TimerStopAndLog(SOLAPE2);
 
 
@@ -197,8 +201,10 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
         }
     }
-    
+    time = omp_get_wtime();
     expressionsCtx.calculateExpression(params, &params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
+    time = omp_get_wtime() - time;
+    std::cout << "rick calculateExpression time: " << time << std::endl;
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.pols, proof);
