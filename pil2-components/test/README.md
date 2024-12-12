@@ -124,3 +124,51 @@ mkdir -p ./pil2-components/test/std/range_check/build/ \
      --proving-key ./pil2-components/test/std/range_check/build/provingKey \
      --output-dir ./pil2-components/test/std/range_check/build/proofs \
 && node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/range_check/build/provingKey -p ./pil2-components/test/std/range_check/build/proofs
+
+------------------------------------
+SPECIAL
+
+mkdir -p ./pil2-components/test/std/special/build/ \
+&& rm -rf pil2-components/test/special/build/proofs/ \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/diff_buses.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/diff_buses.pilout \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/direct_update.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/direct_update.pilout \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/expr_optimizations.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/expr_optimizations.pilout \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_sums.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/intermediate_sums.pilout \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/range_check_airgroup.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/range_check_airgroup.pilout \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/table.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/table.pilout \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/diff_buses.pilout \
+     -b ./pil2-components/test/std/special/build \
+     -t ./pil2-stark/build/bctree \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/direct_update.pilout \
+     -b ./pil2-components/test/std/special/build \
+     -t ./pil2-stark/build/bctree \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/expr_optimizations.pilout \
+     -b ./pil2-components/test/std/special/build \
+     -t ./pil2-stark/build/bctree \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/intermediate_sums.pilout \
+     -b ./pil2-components/test/std/special/build \
+     -t ./pil2-stark/build/bctree \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/range_check_airgroup.pilout \
+     -b ./pil2-components/test/std/special/build \
+     -t ./pil2-stark/build/bctree \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/table.pilout \
+     -b ./pil2-components/test/std/special/build \
+     -t ./pil2-stark/build/bctree

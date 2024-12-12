@@ -1,7 +1,7 @@
 require "std_permutation.pil";
 require "std_lookup.pil";
 require "std_range_check.pil";
-require "std_common.pil";
+require "std_direct.pil";
 
 const int OP_BUS_ID1 = 100;
 const int OPID1 = 333;

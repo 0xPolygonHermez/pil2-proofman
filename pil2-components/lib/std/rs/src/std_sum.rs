@@ -97,16 +97,16 @@ impl<F: PrimeField> StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            let opid =
-                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "opid", HintFieldOptions::default());
-            if let HintFieldOutput::Field(opid) = opid.get(0) {
+            let busid =
+                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "busid", HintFieldOptions::default());
+            if let HintFieldOutput::Field(opid) = busid.get(0) { // TODO: Fix this!
                 if let Some(opids) = &self.mode.opids {
                     if !opids.contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
                         continue;
                     }
                 }
             } else {
-                panic!("opid must be a field element");
+                panic!("busid must be a field element");
             };
 
             let HintFieldValue::Field(is_global) = get_hint_field_constant::<F>(
@@ -166,7 +166,7 @@ impl<F: PrimeField> StdSum<F> {
                     airgroup_id,
                     air_id,
                     instance_id,
-                    &opid,
+                    &busid,
                     &proves,
                     &mul,
                     &expressions,
@@ -181,7 +181,7 @@ impl<F: PrimeField> StdSum<F> {
                         airgroup_id,
                         air_id,
                         instance_id,
-                        &opid,
+                        &busid,
                         &proves,
                         &mul,
                         &expressions,
@@ -198,7 +198,7 @@ impl<F: PrimeField> StdSum<F> {
             airgroup_id: usize,
             air_id: usize,
             instance_id: usize,
-            opid: &HintFieldValue<F>,
+            busid: &HintFieldValue<F>,
             proves: &HintFieldValue<F>,
             mul: &HintFieldValue<F>,
             expressions: &HintFieldValuesVec<F>,
@@ -212,9 +212,9 @@ impl<F: PrimeField> StdSum<F> {
             };
 
             if !mul.is_zero() {
-                let opid = match opid.get(row) {
-                    HintFieldOutput::Field(opid) => opid,
-                    _ => panic!("opid must be a field element"),
+                let busid = match busid.get(row) {
+                    HintFieldOutput::Field(busid) => busid,
+                    _ => panic!("busid must be a field element"),
                 };
 
                 let proves = match proves.get(row) {
@@ -234,7 +234,7 @@ impl<F: PrimeField> StdSum<F> {
 
                 update_debug_data(
                     debug_data,
-                    opid,
+                    busid,
                     expressions.get(row),
                     airgroup_id,
                     air_id,
@@ -304,9 +304,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                         air_instance.set_commit_calculated(id as usize);
                     }
 
-                    // We know that at most one product hint exists
+                    // We know that at most one gsum hint exists
                     let gsum_hint = if gsum_hints.len() > 1 {
-                        panic!("Multiple product hints found for AIR '{}'", air.name().unwrap_or("unknown"));
+                        panic!("Multiple gsum hints found for AIR '{}'", air.name().unwrap_or("unknown"));
                     } else {
                         gsum_hints[0] as usize
                     };

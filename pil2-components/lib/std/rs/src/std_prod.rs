@@ -92,16 +92,16 @@ impl<F: PrimeField> StdProd<F> {
                 HintFieldOptions::default(),
             );
 
-            let opid =
-                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "opid", HintFieldOptions::default());
-            let opid = if let HintFieldValue::Field(opid) = opid {
+            let busid =
+                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "busid", HintFieldOptions::default());
+            let busid = if let HintFieldValue::Field(busid) = busid {
                 if let Some(opids) = &self.mode.opids {
-                    if !opids.contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
+                    if !opids.contains(&busid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
                         continue;
                     }
                 }
 
-                opid
+                busid
             } else {
                 panic!("sumid must be a field element");
             };
@@ -179,7 +179,7 @@ impl<F: PrimeField> StdProd<F> {
                     airgroup_id,
                     air_id,
                     instance_id,
-                    opid,
+                    busid,
                     proves,
                     &selector,
                     &expressions,
@@ -194,7 +194,7 @@ impl<F: PrimeField> StdProd<F> {
                         airgroup_id,
                         air_id,
                         instance_id,
-                        opid,
+                        busid,
                         proves,
                         &selector,
                         &expressions,
@@ -210,7 +210,7 @@ impl<F: PrimeField> StdProd<F> {
                 airgroup_id: usize,
                 air_id: usize,
                 instance_id: usize,
-                opid: F,
+                busid: F,
                 proves: bool,
                 selector: &HintFieldValue<F>,
                 expressions: &HintFieldValuesVec<F>,
@@ -232,7 +232,7 @@ impl<F: PrimeField> StdProd<F> {
                 if sel {
                     update_debug_data(
                         debug_data,
-                        opid,
+                        busid,
                         expressions.get(row),
                         airgroup_id,
                         air_id,
@@ -285,9 +285,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                         self.debug(&pctx, &sctx, air_instance, num_rows, debug_hints_data.clone());
                     }
 
-                    // We know that at most one product hint exists
+                    // We know that at most one gprod hint exists
                     let gprod_hint = if gprod_hints.len() > 1 {
-                        panic!("Multiple product hints found for AIR '{}'", air.name().unwrap_or("unknown"));
+                        panic!("Multiple gprod hints found for AIR '{}'", air.name().unwrap_or("unknown"));
                     } else {
                         gprod_hints[0] as usize
                     };
