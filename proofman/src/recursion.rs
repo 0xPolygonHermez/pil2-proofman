@@ -464,15 +464,6 @@ fn generate_witness<F: Field>(
     // Load the symbol (function) from the library
     timer_start_trace!(CALCULATE_WITNESS);
 
-    let n = 1 << (setup.stark_info.stark_struct.n_bits);
-
-    let buffer: Vec<F> = create_buffer_fast(n_cols * n);
-    let p_address = buffer.as_ptr() as *mut u8;
-
-    let n_publics = setup.stark_info.n_publics as usize;
-    let publics: Vec<F> = create_buffer_fast(n_publics);
-    let p_publics = publics.as_ptr() as *mut u8;
-
     let rust_lib_filename = setup_path.display().to_string() + ".so";
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
@@ -481,45 +472,56 @@ fn generate_witness<F: Field>(
     }
 
     let library: Library = unsafe { Library::new(rust_lib_path)? };
-    unsafe {
-        // Call the function
-        let dat_filename = setup_path.display().to_string() + ".dat";
-        let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-        let dat_filename_ptr = dat_filename_str.as_ptr();
 
-        let exec_filename = setup_path.display().to_string() + ".exec";
-        let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
-        let exec_filename_ptr = exec_filename_str.as_ptr();
+    let dat_filename = setup_path.display().to_string() + ".dat";
+    let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
+    let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
+    let nmutex = 128;
+
+    let exec_filename = setup_path.display().to_string() + ".exec";
+    let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
+    let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
+
+    let size_witness = unsafe {
         let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-        let size_witness = get_size_witness();
+        get_size_witness()
+    };
 
-        let mut file = File::open(exec_filename)?; // Open the file
+    let mut file = File::open(exec_filename)?; // Open the file
 
-        let mut n_adds = [0u8; 8]; // Buffer for nAdds (u64 is 8 bytes)
-        file.read_exact(&mut n_adds)?;
-        let n_adds = u64::from_le_bytes(n_adds);
+    let mut n_adds = [0u8; 8]; // Buffer for nAdds (u64 is 8 bytes)
+    file.read_exact(&mut n_adds)?;
+    let n_adds = u64::from_le_bytes(n_adds);
 
-        let witness: Vec<F> = create_buffer_fast((size_witness + n_adds) as usize);
-        let witness_ptr = witness.as_ptr() as *mut u8;
+    let witness: Vec<F> = create_buffer_fast((size_witness + n_adds) as usize);
+    let witness_ptr = witness.as_ptr() as *mut c_void;
 
+    unsafe {
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-
-        let nmutex = 128;
-
-        get_witness(zkin, dat_filename_ptr, witness_ptr as *mut c_void, nmutex);
-
-        get_committed_pols_c(
-            witness_ptr,
-            exec_filename_ptr,
-            p_address,
-            p_publics,
-            size_witness,
-            n as u64,
-            n_publics as u64,
-            n_cols as u64,
-        );
+        get_witness(zkin, dat_filename_ptr, witness_ptr, nmutex);
     }
+
+    let n = 1 << (setup.stark_info.stark_struct.n_bits);
+
+    let buffer = create_buffer_fast(n_cols * n);
+    let p_address = buffer.as_ptr() as *mut u8;
+
+    let n_publics = setup.stark_info.n_publics as usize;
+    let publics = create_buffer_fast(n_publics);
+    let p_publics = publics.as_ptr() as *mut u8;
+
+    get_committed_pols_c(
+        witness.as_ptr() as *mut u8,
+        exec_filename_ptr,
+        p_address,
+        p_publics,
+        size_witness,
+        n as u64,
+        n_publics as u64,
+        n_cols as u64,
+    );
+
     timer_stop_and_log_trace!(CALCULATE_WITNESS);
 
     Ok((buffer, publics))

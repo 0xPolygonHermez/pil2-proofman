@@ -144,6 +144,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             trace: air_instance.get_trace_ptr(),
             aux_trace: air_instance.get_aux_trace_ptr(),
             public_inputs: proof_ctx.get_publics_ptr(),
+            proof_values: proof_ctx.get_proof_values_ptr(),
             challenges: proof_ctx.get_challenges_ptr(),
             airgroup_values: air_instance.get_airgroup_values_ptr(),
             airvalues: air_instance.get_airvalues_ptr(),
@@ -173,6 +174,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             trace: air_instance.get_trace_ptr(),
             aux_trace: air_instance.get_aux_trace_ptr(),
             public_inputs: proof_ctx.get_publics_ptr(),
+            proof_values: proof_ctx.get_proof_values_ptr(),
             challenges: proof_ctx.get_challenges_ptr(),
             airgroup_values: air_instance.get_airgroup_values_ptr(),
             airvalues: air_instance.get_airvalues_ptr(),
@@ -575,17 +577,19 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>, output_dir: &str) -> *mut c_void {
-        let gidx = proof_ctx.air_instance_repo.air_instances.read().unwrap()[self.prover_idx].global_idx.unwrap();
-
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
+        let proof_name =
+            format!("{}_{}", proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name, self.instance_id);
+
         fri_proof_get_zkinproof_c(
-            gidx as u64,
             self.p_proof,
             proof_ctx.get_publics_ptr(),
             proof_ctx.get_challenges_ptr(),
+            proof_ctx.get_proof_values_ptr(),
             self.p_stark_info,
+            &proof_name,
             global_info_file,
             output_dir,
         )
@@ -640,6 +644,7 @@ impl<F: Field> StarkProver<F> {
             trace: std::ptr::null_mut(),
             aux_trace: air_instance.get_aux_trace_ptr(),
             public_inputs: std::ptr::null_mut(),
+            proof_values: std::ptr::null_mut(),
             challenges: std::ptr::null_mut(),
             airgroup_values: std::ptr::null_mut(),
             airvalues: std::ptr::null_mut(),
@@ -667,6 +672,7 @@ impl<F: Field> StarkProver<F> {
             trace: std::ptr::null_mut(),
             aux_trace: air_instance.get_aux_trace_ptr(),
             public_inputs: proof_ctx.get_publics_ptr(),
+            proof_values: proof_ctx.get_proof_values_ptr(),
             challenges: proof_ctx.get_challenges_ptr(),
             airgroup_values: air_instance.get_airgroup_values_ptr(),
             airvalues: air_instance.get_airvalues_ptr(),

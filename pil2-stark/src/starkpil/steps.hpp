@@ -8,6 +8,7 @@ struct StepsParams
     Goldilocks::Element *trace;
     Goldilocks::Element *aux_trace;
     Goldilocks::Element *publicInputs;
+    Goldilocks::Element *proofValues;
     Goldilocks::Element *challenges;
     Goldilocks::Element *airgroupValues;
     Goldilocks::Element *airValues;

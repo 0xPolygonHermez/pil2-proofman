@@ -1,6 +1,6 @@
 use proofman_starks_lib_c::{
     acc_hint_field_c, acc_mul_hint_fields_c, get_hint_field_c, get_hint_ids_by_name_c, mul_hint_fields_c, print_row_c,
-    set_hint_field_c, VecU64Result,
+    set_hint_field_c, update_airgroupvalue_c, VecU64Result,
 };
 
 use std::collections::HashMap;
@@ -684,6 +684,7 @@ pub fn mul_hint_fields<F: Field + Field>(
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
+        proof_values: proof_ctx.get_proof_values_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
@@ -724,6 +725,7 @@ pub fn acc_hint_field<F: Field>(
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
+        proof_values: proof_ctx.get_proof_values_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
@@ -772,6 +774,7 @@ pub fn acc_mul_hint_fields<F: Field>(
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
+        proof_values: proof_ctx.get_proof_values_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
@@ -803,6 +806,56 @@ pub fn acc_mul_hint_fields<F: Field>(
     (slice[0], slice[1])
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn update_airgroupvalue<F: Field>(
+    setup_ctx: &SetupCtx,
+    proof_ctx: &ProofCtx<F>,
+    air_instance: &mut AirInstance<F>,
+    hint_id: usize,
+    hint_field_airgroupvalue: &str,
+    hint_field_name1: &str,
+    hint_field_name2: &str,
+    options1: HintFieldOptions,
+    options2: HintFieldOptions,
+    add: bool,
+) -> u64 {
+    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+
+    let steps_params = StepsParams {
+        trace: air_instance.get_trace_ptr(),
+        aux_trace: air_instance.get_aux_trace_ptr(),
+        public_inputs: proof_ctx.get_publics_ptr(),
+        proof_values: proof_ctx.get_proof_values_ptr(),
+        challenges: proof_ctx.get_challenges_ptr(),
+        airgroup_values: air_instance.get_airgroup_values_ptr(),
+        airvalues: air_instance.get_airvalues_ptr(),
+        evals: air_instance.get_evals_ptr(),
+        xdivxsub: std::ptr::null_mut(),
+        p_const_pols: setup.get_const_ptr(),
+        p_const_tree: setup.get_const_tree_ptr(),
+        custom_commits: air_instance.get_custom_commits_ptr(),
+        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+    };
+
+    let raw_ptr = update_airgroupvalue_c(
+        (&setup.p_setup).into(),
+        (&steps_params).into(),
+        hint_id as u64,
+        hint_field_airgroupvalue,
+        hint_field_name1,
+        hint_field_name2,
+        (&options1).into(),
+        (&options2).into(),
+        add,
+    );
+
+    let hint_ids_result = unsafe { Box::from_raw(raw_ptr as *mut VecU64Result) };
+
+    let slice = unsafe { std::slice::from_raw_parts(hint_ids_result.values, hint_ids_result.n_values as usize) };
+
+    slice[0]
+}
+
 pub fn get_hint_field<F: Field>(
     setup_ctx: &SetupCtx,
     proof_ctx: &ProofCtx<F>,
@@ -817,6 +870,7 @@ pub fn get_hint_field<F: Field>(
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
+        proof_values: proof_ctx.get_proof_values_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
@@ -865,6 +919,7 @@ pub fn get_hint_field_a<F: Field>(
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
+        proof_values: proof_ctx.get_proof_values_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
@@ -919,6 +974,7 @@ pub fn get_hint_field_m<F: Field>(
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: proof_ctx.get_publics_ptr(),
+        proof_values: proof_ctx.get_proof_values_ptr(),
         challenges: proof_ctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
@@ -1106,6 +1162,7 @@ pub fn set_hint_field<F: Field>(
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
         public_inputs: std::ptr::null_mut(),
+        proof_values: std::ptr::null_mut(),
         challenges: std::ptr::null_mut(),
         airgroup_values: std::ptr::null_mut(),
         airvalues: std::ptr::null_mut(),
@@ -1139,6 +1196,7 @@ pub fn set_hint_field_val<F: Field>(
         trace: std::ptr::null_mut(),
         aux_trace: std::ptr::null_mut(),
         public_inputs: std::ptr::null_mut(),
+        proof_values: std::ptr::null_mut(),
         challenges: std::ptr::null_mut(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),

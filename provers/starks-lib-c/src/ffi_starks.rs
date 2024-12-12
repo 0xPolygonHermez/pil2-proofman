@@ -79,12 +79,14 @@ pub fn fri_proof_set_air_values_c(p_fri_proof: *mut c_void, p_air_values: *mut u
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn fri_proof_get_zkinproof_c(
-    proof_id: u64,
     p_fri_proof: *mut c_void,
     p_publics: *mut u8,
     p_challenges: *mut u8,
+    p_proof_values: *mut u8,
     p_stark_info: *mut c_void,
+    proof_name: &str,
     global_info_file: &str,
     output_dir_file: &str,
 ) -> *mut c_void {
@@ -94,13 +96,17 @@ pub fn fri_proof_get_zkinproof_c(
     let file_dir = CString::new(output_dir_file).unwrap();
     let file_ptr = file_dir.as_ptr() as *mut std::os::raw::c_char;
 
+    let proof_name = CString::new(proof_name).unwrap();
+    let proof_name_ptr = proof_name.as_ptr() as *mut std::os::raw::c_char;
+
     unsafe {
         fri_proof_get_zkinproof(
-            proof_id,
             p_fri_proof,
             p_publics as *mut std::os::raw::c_void,
             p_challenges as *mut std::os::raw::c_void,
+            p_proof_values as *mut std::os::raw::c_void,
             p_stark_info,
+            proof_name_ptr,
             global_info_file_ptr,
             file_ptr,
         )
@@ -333,6 +339,38 @@ pub fn acc_mul_hint_fields_c(
             p_steps_params as *mut std::os::raw::c_void,
             hint_id,
             field_dest.as_ptr() as *mut std::os::raw::c_char,
+            field_airgroupvalue.as_ptr() as *mut std::os::raw::c_char,
+            field_name1.as_ptr() as *mut std::os::raw::c_char,
+            field_name2.as_ptr() as *mut std::os::raw::c_char,
+            hint_options1 as *mut std::os::raw::c_void,
+            hint_options2 as *mut std::os::raw::c_void,
+            add,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
+pub fn update_airgroupvalue_c(
+    p_setup_ctx: *mut c_void,
+    p_steps_params: *mut u8,
+    hint_id: u64,
+    hint_field_airgroupvalue: &str,
+    hint_field_name1: &str,
+    hint_field_name2: &str,
+    hint_options1: *mut u8,
+    hint_options2: *mut u8,
+    add: bool,
+) -> *mut c_void {
+    let field_airgroupvalue = CString::new(hint_field_airgroupvalue).unwrap();
+    let field_name1 = CString::new(hint_field_name1).unwrap();
+    let field_name2: CString = CString::new(hint_field_name2).unwrap();
+
+    unsafe {
+        update_airgroupvalue(
+            p_setup_ctx,
+            p_steps_params as *mut std::os::raw::c_void,
+            hint_id,
             field_airgroupvalue.as_ptr() as *mut std::os::raw::c_char,
             field_name1.as_ptr() as *mut std::os::raw::c_char,
             field_name2.as_ptr() as *mut std::os::raw::c_char,
@@ -945,12 +983,14 @@ pub fn fri_proof_set_air_values_c(_p_fri_proof: *mut c_void, _p_params: *mut u8)
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn fri_proof_get_zkinproof_c(
-    _proof_id: u64,
     _p_fri_proof: *mut c_void,
     _p_publics: *mut u8,
     _p_challenges: *mut u8,
+    _p_proof_values: *mut u8,
     _p_stark_info: *mut c_void,
+    _proof_name: &str,
     _global_info_file: &str,
     _output_dir_file: &str,
 ) -> *mut c_void {
@@ -1107,6 +1147,23 @@ pub fn acc_mul_hint_fields_c(
     _add: bool,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "acc_mul_hint_fields: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn update_airgroupvalue_c(
+    _p_setup_ctx: *mut c_void,
+    _p_steps_params: *mut c_void,
+    _hint_id: u64,
+    _hint_field_airgroupvalue: &str,
+    _hint_field_name1: &str,
+    _hint_field_name2: &str,
+    _hint_options1: *mut c_void,
+    _hint_options2: *mut c_void,
+    _add: bool,
+) -> *mut c_void {
+    trace!("{}: ··· {}", "ffi     ", "update_airgroupvalue: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
