@@ -38,11 +38,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     for (prover_idx, air_instance) in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut().enumerate() {
         let air_instance_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
 
-        log::info!("NAME {}", air_instance_name);
-
-        if air_instance_name != "ArithTable" {
-            continue;
-        };
         let mut zkin;
 
         if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) {
