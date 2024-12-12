@@ -409,42 +409,15 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
     });
     HintFieldValue hintFieldVal = hintField->values[0];
 
-    Dest destStruct(dest, offset);
-
-    for(uint64_t i = 0; i < hintFieldNames.size(); ++i) {
-        std::string name = hintFieldNames[i];
-        auto hintField = std::find_if(hint.fields.begin(), hint.fields.end(), [name](const HintField& hintField) {
-            return hintField.name == name;
-        });
-        HintFieldValue hintFieldVal = hintField->values[0];
-
-        if(hintField == hint.fields.end()) {
-            zklog.error("Hint field " + name + " not found in hint " + hint.name + ".");
-            exitProcess();
-            exit(-1);
-        }
-
-        if(hintFieldOptions[i].print_expression) {
-            std::string expression_line = getExpressionDebug(setupCtx, hintId, hintFieldNames[i], hintFieldVal);
-            cout << expression_line << endl;
-        }
-        if(hintFieldVal.operand == opType::cm) {
-            destStruct.addCmPol(setupCtx.starkInfo.cmPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions[i].inverse);
-        } else if(hintFieldVal.operand == opType::const_) {
-            destStruct.addConstPol(setupCtx.starkInfo.constPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions[i].inverse);
-        } else if(hintFieldVal.operand == opType::number) {
-            destStruct.addNumber(hintFieldVal.value, hintFieldOptions[i].inverse);
-        } else if(hintFieldVal.operand == opType::tmp) {
-            destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[hintFieldVal.id], hintFieldOptions[i].inverse);
-        } else {
-            zklog.error("Op type " + to_string(hintFieldVal.operand) + "is not considered yet.");
-            exitProcess();
-            exit(-1);
-        }
+    if(hintField == hint.fields.end()) {
+        zklog.error("Hint field " + hintFieldName + " not found in hint " + hint.name + ".");
+        exitProcess();
+        exit(-1);
     }
 
     if(hintFieldOptions.print_expression) {
-        printExpressionDebug(setupCtx, hintId, hintFieldName, hintFieldVal);
+        std::string expression_line = getExpressionDebug(setupCtx, hintId, hintFieldName, hintFieldVal);
+        cout << expression_line << endl;
     }
     if(hintFieldVal.operand == opType::cm) {
         destStruct.addCmPol(setupCtx.starkInfo.cmPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions.inverse);
