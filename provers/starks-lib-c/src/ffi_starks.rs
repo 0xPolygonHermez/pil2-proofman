@@ -1154,13 +1154,13 @@ pub fn acc_mul_hint_fields_c(
 #[allow(clippy::too_many_arguments)]
 pub fn update_airgroupvalue_c(
     _p_setup_ctx: *mut c_void,
-    _p_steps_params: *mut c_void,
+    _p_steps_params: *mut u8,
     _hint_id: u64,
     _hint_field_airgroupvalue: &str,
     _hint_field_name1: &str,
     _hint_field_name2: &str,
-    _hint_options1: *mut c_void,
-    _hint_options2: *mut c_void,
+    _hint_options1: *mut u8,
+    _hint_options2: *mut u8,
     _add: bool,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "update_airgroupvalue: This is a mock call because there is no linked library");
