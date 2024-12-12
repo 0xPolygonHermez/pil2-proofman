@@ -100,11 +100,11 @@ impl<F: Field> AirInstancesRepository<F> {
     //     for (_, indices) in my_air_groups_indices {
     //         instances_info.my_air_groups.push(indices);
     //     }
-        
+
     //     println!("// MY AIR GROUPS {:?} // MY GROUPS {:?}", instances_info.my_air_groups, instances_info.my_groups);
-    
+
     // }
-    
+
     pub fn find_last_segment(&self, airgroup_id: usize, air_id: usize) -> Option<usize> {
         let air_instances = self.air_instances.read().unwrap();
 
