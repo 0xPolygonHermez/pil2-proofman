@@ -331,7 +331,7 @@ impl<F: Field + 'static> ProofMan<F> {
             }
         }
 
-        let buff_helper = create_buffer_fast(3 * buff_helper_size);
+        let buff_helper = create_buffer_fast(buff_helper_size);
 
         *pctx.buff_helper.buff_helper.write().unwrap() = buff_helper;
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);
