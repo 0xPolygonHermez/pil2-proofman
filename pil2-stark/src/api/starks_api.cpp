@@ -549,7 +549,7 @@ void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgro
 
 void *get_zkin_ptr(char *zkin_file) {
     json zkin;
-    file2json(zkin_file, zkin);
+    
 
     return (void *) new nlohmann::json(zkin);
 }
