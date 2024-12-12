@@ -681,6 +681,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
         let challenges = (*challenges_guard).as_ptr() as *mut c_void;
 
+        let proof_values_guard = proof_ctx.proof_values.values.read().unwrap();
+        let proof_values = (*proof_values_guard).as_ptr() as *mut c_void;
+
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
@@ -691,6 +694,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             self.p_proof,
             public_inputs,
             challenges,
+            proof_values,
             self.p_stark_info,
             &proof_name,
             global_info_file,

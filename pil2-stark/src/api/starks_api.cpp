@@ -89,7 +89,7 @@ void fri_proof_set_airvalues(void *pFriProof, void *airValues)
     FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
     friProof->proof.setAirValues((Goldilocks::Element *)airValues);
 }
-void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pStarkInfo, char* proof_name, char* globalInfoFile, char *fileDir)
+void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, void *pStarkInfo, char* proof_name, char* globalInfoFile, char *fileDir)
 {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
@@ -101,10 +101,18 @@ void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges
 
     Goldilocks::Element *publics = (Goldilocks::Element *)pPublics;
     Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
+    Goldilocks::Element *proofValues = (Goldilocks::Element *)pProofValues;
 
     for (uint64_t i = 0; i < starkInfo.nPublics; i++)
     {
         zkin["publics"][i] = Goldilocks::toString(publics[i]);
+    }
+
+    for (uint64_t i = 0; i < starkInfo.proofValuesMap.size(); i++)
+    {
+        zkin["proofValues"][i][0] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION]);
+        zkin["proofValues"][i][1] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION + 1]);
+        zkin["proofValues"][i][2] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION + 2]);
     }
 
     json challengesJson = challenges2zkin(globalInfo, challenges);
