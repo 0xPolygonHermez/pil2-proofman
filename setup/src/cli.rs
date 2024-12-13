@@ -1,6 +1,7 @@
+#![allow(unused)]
+
 use std::path::PathBuf;
 use serde_json::Value;
-
 #[derive(Debug)]
 pub struct Config {
     pub airout: AiroutConfig,
