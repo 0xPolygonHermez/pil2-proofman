@@ -98,17 +98,17 @@ where
         self.wcm.get().unwrap().end_proof();
     }
 
-    fn execute(&self, pctx: Arc<ProofCtx<F>>,  sctx: Arc<SetupCtx>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         // Execute those components that need to be executed
-        self.range_check1.get().unwrap().execute(pctx.clone(), sctx.clone());
-        self.range_check2.get().unwrap().execute(pctx.clone(), sctx.clone());
-        self.range_check3.get().unwrap().execute(pctx.clone(), sctx.clone());
-        self.range_check4.get().unwrap().execute(pctx.clone(), sctx.clone());
-        self.multi_range_check1.get().unwrap().execute(pctx.clone(), sctx.clone());
-        self.multi_range_check2.get().unwrap().execute(pctx.clone(), sctx.clone());
-        self.range_check_dynamic1.get().unwrap().execute(pctx.clone(), sctx.clone());
-        self.range_check_dynamic2.get().unwrap().execute(pctx.clone(), sctx.clone());
-        self.range_check_mix.get().unwrap().execute(pctx.clone(), sctx.clone());
+        self.range_check1.get().unwrap().execute(pctx.clone());
+        self.range_check2.get().unwrap().execute(pctx.clone());
+        self.range_check3.get().unwrap().execute(pctx.clone());
+        self.range_check4.get().unwrap().execute(pctx.clone());
+        self.multi_range_check1.get().unwrap().execute(pctx.clone());
+        self.multi_range_check2.get().unwrap().execute(pctx.clone());
+        self.range_check_dynamic1.get().unwrap().execute(pctx.clone());
+        self.range_check_dynamic2.get().unwrap().execute(pctx.clone());
+        self.range_check_mix.get().unwrap().execute(pctx.clone());
     }
 
     fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>,  sctx: Arc<SetupCtx>) {

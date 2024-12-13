@@ -201,7 +201,7 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_start_debug!(INITIALIZE_WITNESS);
         witness_lib.start_proof(pctx.clone(), sctx.clone());
 
-        witness_lib.execute(pctx.clone(), sctx);
+        witness_lib.execute(pctx.clone());
 
         // After the execution print the planned instances
         trace!("{}: --> Air instances: ", Self::MY_NAME);

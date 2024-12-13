@@ -25,7 +25,7 @@ impl<F: PrimeField + Copy> Lookup3<F> {
         lookup3
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>,  _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         // For simplicity, add a single instance of each air
         let mut trace = Lookup3Trace::new();
         let num_rows = trace.num_rows();

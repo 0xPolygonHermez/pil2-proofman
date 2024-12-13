@@ -11,9 +11,9 @@ pub trait WitnessLibrary<F> {
 
     fn end_proof(&mut self);
 
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>);
+    fn execute(&self, pctx: Arc<ProofCtx<F>>);
 
     fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>);
 
-    fn debug(&mut self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx>) {}
+    fn debug(&mut self, _pctx: Arc<ProofCtx<F>>) {}
 }

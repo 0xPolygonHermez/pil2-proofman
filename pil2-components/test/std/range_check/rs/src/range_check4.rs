@@ -35,7 +35,7 @@ where
         range_check4
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>,  _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = RangeCheck4Trace::new_zeroes();

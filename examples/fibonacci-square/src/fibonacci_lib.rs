@@ -53,9 +53,9 @@ impl<F: PrimeField64> WitnessLibrary<F> for FibonacciWitness<F> {
         self.wcm.as_ref().unwrap().end_proof();
     }
 
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
-        self.fibonacci.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.module.as_ref().unwrap().execute(pctx, sctx);
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+        self.fibonacci.as_ref().unwrap().execute(pctx.clone());
+        self.module.as_ref().unwrap().execute(pctx);
     }
 
     fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {

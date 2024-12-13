@@ -29,7 +29,7 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
         fibonacci
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         if let Err(e) = Self::calculate_trace(self, pctx) {
             panic!("Failed to calculate fibonacci: {:?}", e);
         }

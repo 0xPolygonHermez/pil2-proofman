@@ -29,7 +29,7 @@ where
         permutation1_7
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>,  _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
         let mut trace = Permutation1_7Trace::new();
         let num_rows = trace.num_rows();

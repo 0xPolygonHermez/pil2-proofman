@@ -65,11 +65,11 @@ where
         self.wcm.as_ref().unwrap().end_proof();
     }
 
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         // Execute those components that need to be executed
-        self.connection1.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.connection2.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.connection_new.as_ref().unwrap().execute(pctx, sctx);
+        self.connection1.as_ref().unwrap().execute(pctx.clone());
+        self.connection2.as_ref().unwrap().execute(pctx.clone());
+        self.connection_new.as_ref().unwrap().execute(pctx);
     }
 
     fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {

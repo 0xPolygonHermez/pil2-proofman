@@ -29,7 +29,7 @@ where
         simple_right
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut trace = SimpleRightTrace::new();
         let num_rows = trace.num_rows();
 

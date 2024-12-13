@@ -25,7 +25,7 @@ impl<F: PrimeField + Copy> Permutation2<F> {
         permutation2
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>,  _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut trace = Permutation2_6Trace::new();
         let num_rows = trace.num_rows();
 

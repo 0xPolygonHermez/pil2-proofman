@@ -83,14 +83,14 @@ where
         self.wcm.as_ref().unwrap().end_proof();
     }
 
-    fn execute(&self, pctx: Arc<ProofCtx<F>>,  sctx: Arc<SetupCtx>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         // Execute those components that need to be executed
-        self.lookup0.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.lookup1.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.lookup2_12.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.lookup2_13.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.lookup2_15.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.lookup3.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
+        self.lookup0.as_ref().unwrap().execute(pctx.clone());
+        self.lookup1.as_ref().unwrap().execute(pctx.clone());
+        self.lookup2_12.as_ref().unwrap().execute(pctx.clone());
+        self.lookup2_13.as_ref().unwrap().execute(pctx.clone());
+        self.lookup2_15.as_ref().unwrap().execute(pctx.clone());
+        self.lookup3.as_ref().unwrap().execute(pctx.clone());
     }
 
     fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>,  sctx: Arc<SetupCtx>) {

@@ -75,12 +75,12 @@ where
         self.wcm.as_ref().unwrap().end_proof();
     }
 
-    fn execute(&self, pctx: Arc<ProofCtx<F>>,  sctx: Arc<SetupCtx>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         // Execute those components that need to be executed
-        self.permutation1_6.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.permutation1_7.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.permutation1_8.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.permutation2.as_ref().unwrap().execute(pctx, sctx);
+        self.permutation1_6.as_ref().unwrap().execute(pctx.clone());
+        self.permutation1_7.as_ref().unwrap().execute(pctx.clone());
+        self.permutation1_8.as_ref().unwrap().execute(pctx.clone());
+        self.permutation2.as_ref().unwrap().execute(pctx);
     }
 
     fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>,  sctx: Arc<SetupCtx>) {

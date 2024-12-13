@@ -35,7 +35,7 @@ where
         range_check_mix
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>,  _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = RangeCheckMixTrace::new_zeroes();

@@ -37,7 +37,7 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
         x_mod
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         self.calculate_trace(pctx);
     }
 

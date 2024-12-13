@@ -62,13 +62,13 @@ where
         self.wcm.as_ref().unwrap().end_proof();
     }
 
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         // Execute those components that need to be executed
-        self.simple_left.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
-        self.simple_right.as_ref().unwrap().execute(pctx, sctx);
+        self.simple_left.as_ref().unwrap().execute(pctx.clone());
+        self.simple_right.as_ref().unwrap().execute(pctx);
     }
 
-    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>) {
         self.wcm.as_ref().unwrap().calculate_witness(stage, pctx, sctx);
     }
 }

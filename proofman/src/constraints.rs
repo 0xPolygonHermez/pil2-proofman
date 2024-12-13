@@ -20,7 +20,7 @@ pub fn verify_constraints_proof<F: Field>(
 
     log::info!("{}: --> Checking constraints", MY_NAME);
 
-    witness_lib.debug(pctx.clone(), sctx.clone());
+    witness_lib.debug(pctx.clone());
 
     let mut constraints = Vec::new();
     for prover in provers.iter() {

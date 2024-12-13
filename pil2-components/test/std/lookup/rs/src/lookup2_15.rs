@@ -29,7 +29,7 @@ where
         lookup2_15
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>,  _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = Lookup2_15Trace::new();
