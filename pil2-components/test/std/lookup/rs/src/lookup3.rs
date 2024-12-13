@@ -17,10 +17,7 @@ impl<F: PrimeField + Copy> Lookup3<F> {
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let lookup3 = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        let airgroup_id = Lookup3Trace::<F>::AIRGROUP_ID;
-        let air_id = Lookup3Trace::<F>::AIR_ID;
-
-        wcm.register_component(lookup3.clone(), airgroup_id, air_id);
+        wcm.register_component(lookup3.clone());
 
         lookup3
     }

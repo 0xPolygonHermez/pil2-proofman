@@ -65,7 +65,7 @@ impl<F: PrimeField> U8Air<F> {
             mul_column: Mutex::new(HintFieldValue::Field(F::zero())),
         });
 
-        wcm.register_component(u8air.clone(), airgroup_id, air_id);
+        wcm.register_component(u8air.clone());
 
         u8air
     }

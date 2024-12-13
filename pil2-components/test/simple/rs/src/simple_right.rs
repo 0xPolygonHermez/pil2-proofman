@@ -21,10 +21,7 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let simple_right = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        let airgroup_id = SimpleRightTrace::<F>::AIRGROUP_ID;
-        let air_id = SimpleRightTrace::<F>::AIR_ID;
-
-        wcm.register_component(simple_right.clone(), airgroup_id, air_id);
+        wcm.register_component(simple_right.clone());
 
         simple_right
     }

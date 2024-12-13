@@ -51,7 +51,7 @@ impl<F: PrimeField> StdProd<F> {
             debug_data: if mode.name == ModeName::Debug { Some(Mutex::new(HashMap::new())) } else { None },
         });
 
-        wcm.register_proxy_component(std_prod.clone());
+        wcm.register_component(std_prod.clone());
 
         std_prod
     }
@@ -249,7 +249,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
         self.decide(sctx);
     }
 
-    fn calculate_witness(&self, stage: u32, _air_instance: Option<usize>, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         if stage == 2 {
             let prod_airs = self.prod_airs.lock().unwrap();
 

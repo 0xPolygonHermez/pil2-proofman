@@ -84,6 +84,104 @@ pub fn verify_global_constraints_proof<F: Field>(
     .to_vec()
 }
 
+pub fn get_hint_field_constant_gc<F: Field>(
+    sctx: Arc<SetupCtx>,
+    hint_id: u64,
+    hint_field_name: &str,
+    print_expression: bool,
+) -> HintFieldValue<F> {
+    let raw_ptr = get_hint_field_global_constraints_c(
+        sctx.get_global_bin(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut() as *mut *mut u8,
+        hint_id,
+        hint_field_name,
+        print_expression,
+    );
+
+    unsafe {
+        let hint_field_values = &*(raw_ptr as *mut HintFieldInfoValues<F>);
+        let value = &*(hint_field_values.hint_field_values.add(0));
+        if value.matrix_size != 0 {
+            panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
+        }
+        HintCol::from_hint_field(value)
+    }
+}
+
+pub fn get_hint_field_gc_constant_a<F: Field>(
+    sctx: Arc<SetupCtx>,
+    hint_id: u64,
+    hint_field_name: &str,
+    print_expression: bool,
+) -> HintFieldValuesVec<F> {
+    let raw_ptr = get_hint_field_global_constraints_c(
+        sctx.get_global_bin(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut() as *mut *mut u8,
+        hint_id,
+        hint_field_name,
+        print_expression,
+    );
+
+    unsafe {
+        let mut hint_field_values = Vec::new();
+        let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
+        for v in 0..hint_field.n_values {
+            let h = &*(hint_field.hint_field_values.add(v as usize));
+            if v == 0 && h.matrix_size != 1 {
+                panic!("get_hint_field_m can only be called with an array of expressions!");
+            }
+            let hint_value = HintCol::from_hint_field(h);
+            hint_field_values.push(hint_value);
+        }
+
+        HintFieldValuesVec { values: hint_field_values }
+    }
+}
+
+pub fn get_hint_field_constant_gc_m<F: Field>(
+    sctx: Arc<SetupCtx>,
+    hint_id: u64,
+    hint_field_name: &str,
+    print_expression: bool,
+) -> HintFieldValues<F> {
+    let raw_ptr = get_hint_field_global_constraints_c(
+        sctx.get_global_bin(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut() as *mut *mut u8,
+        hint_id,
+        hint_field_name,
+        print_expression,
+    );
+
+    unsafe {
+        let hint_field = &*(raw_ptr as *mut HintFieldInfoValues<F>);
+        let mut hint_field_values = HashMap::with_capacity(hint_field.n_values as usize);
+
+        for v in 0..hint_field.n_values {
+            let h = &*(hint_field.hint_field_values.add(v as usize));
+            if v == 0 && h.matrix_size > 2 {
+                panic!("get_hint_field_m can only be called with a matrix of expressions!",);
+            }
+            let hint_value = HintCol::from_hint_field(h);
+            let mut pos = Vec::new();
+            for p in 0..h.matrix_size {
+                pos.push(h.pos.wrapping_add(p as usize) as u64);
+            }
+            hint_field_values.insert(pos, hint_value);
+        }
+
+        HintFieldValues { values: hint_field_values }
+    }
+}
+
 pub fn get_hint_field_gc<F: Field>(
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx>,

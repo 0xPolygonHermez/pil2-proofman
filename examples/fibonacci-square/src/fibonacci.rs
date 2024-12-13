@@ -20,11 +20,7 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
     pub fn new(wcm: Arc<WitnessManager<F>>, module: Arc<Module<F>>) -> Arc<Self> {
         let fibonacci = Arc::new(Self { module });
 
-        wcm.register_component(
-            fibonacci.clone(),
-            FibonacciSquareTrace::<F>::AIRGROUP_ID,
-            FibonacciSquareTrace::<F>::AIR_ID,
-        );
+        wcm.register_component(fibonacci.clone());
 
         fibonacci
     }

@@ -24,10 +24,7 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let range_check_mix = Arc::new(Self { std_lib });
 
-        let airgroup_id = RangeCheckMixTrace::<F>::AIRGROUP_ID;
-        let air_id = RangeCheckMixTrace::<F>::AIR_ID;
-
-        wcm.register_component(range_check_mix.clone(), airgroup_id, air_id);
+        wcm.register_component(range_check_mix.clone());
 
         // Register dependency relations
         range_check_mix.std_lib.register_predecessor();

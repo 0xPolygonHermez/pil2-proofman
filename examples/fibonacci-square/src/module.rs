@@ -19,7 +19,7 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let module = Arc::new(Module { inputs: Mutex::new(Vec::new()), std_lib });
 
-        wcm.register_component(module.clone(), ModuleTrace::<F>::AIRGROUP_ID, ModuleTrace::<F>::AIR_ID);
+        wcm.register_component(module.clone());
 
         // Register dependency relations
         module.std_lib.register_predecessor();

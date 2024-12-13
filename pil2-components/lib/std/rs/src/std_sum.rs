@@ -53,7 +53,7 @@ impl<F: PrimeField> StdSum<F> {
             debug_data: if mode.name == ModeName::Debug { Some(Mutex::new(HashMap::new())) } else { None },
         });
 
-        wcm.register_proxy_component(std_sum.clone());
+        wcm.register_component(std_sum.clone());
 
         std_sum
     }
@@ -247,7 +247,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
         self.decide(sctx);
     }
 
-    fn calculate_witness(&self, stage: u32, _air_instance: Option<usize>, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         if stage == 2 {
             let sum_airs = self.sum_airs.lock().unwrap();
 

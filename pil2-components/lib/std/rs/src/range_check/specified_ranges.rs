@@ -73,7 +73,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             mul_columns: Mutex::new(Vec::new()),
         });
 
-        wcm.register_component(specified_ranges.clone(), airgroup_id, air_id);
+        wcm.register_component(specified_ranges.clone());
 
         specified_ranges
     }

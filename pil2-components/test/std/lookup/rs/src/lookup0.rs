@@ -21,10 +21,7 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let lookup0 = Arc::new(Self { _phantom: std::marker::PhantomData });
 
-        let airgroup_id = Lookup0Trace::<F>::AIRGROUP_ID;
-        let air_id = Lookup0Trace::<F>::AIR_ID;
-
-        wcm.register_component(lookup0.clone(), airgroup_id, air_id);
+        wcm.register_component(lookup0.clone());
 
         lookup0
     }

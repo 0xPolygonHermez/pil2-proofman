@@ -23,10 +23,7 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let multi_range_check1 = Arc::new(Self { std_lib });
 
-        let airgroup_id = MultiRangeCheck1Trace::<F>::AIRGROUP_ID;
-        let air_id = MultiRangeCheck1Trace::<F>::AIR_ID;
-
-        wcm.register_component(multi_range_check1.clone(), airgroup_id, air_id);
+        wcm.register_component(multi_range_check1.clone());
 
         // Register dependency relations
         multi_range_check1.std_lib.register_predecessor();

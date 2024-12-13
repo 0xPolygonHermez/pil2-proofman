@@ -24,10 +24,7 @@ where
     pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
         let range_check_dynamic2 = Arc::new(Self { std_lib });
 
-        let airgroup_id = RangeCheckDynamic2Trace::<F>::AIRGROUP_ID;
-        let air_id = RangeCheckDynamic2Trace::<F>::AIR_ID;
-
-        wcm.register_component(range_check_dynamic2.clone(), airgroup_id, air_id);
+        wcm.register_component(range_check_dynamic2.clone());
 
         // Register dependency relations
         range_check_dynamic2.std_lib.register_predecessor();
