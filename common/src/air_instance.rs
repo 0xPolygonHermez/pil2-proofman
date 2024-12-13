@@ -1,4 +1,5 @@
 use std::mem::MaybeUninit;
+use std::ptr;
 use std::{collections::HashMap, os::raw::c_void, sync::Arc};
 use std::path::PathBuf;
 use p3_field::Field;
@@ -11,6 +12,7 @@ pub struct StepsParams {
     pub trace: *mut c_void,
     pub pols: *mut c_void,
     pub public_inputs: *mut c_void,
+    pub proof_values: *mut c_void,
     pub challenges: *mut c_void,
     pub airgroup_values: *mut c_void,
     pub airvalues: *mut c_void,
@@ -24,6 +26,25 @@ pub struct StepsParams {
 impl From<&StepsParams> for *mut c_void {
     fn from(params: &StepsParams) -> *mut c_void {
         params as *const StepsParams as *mut c_void
+    }
+}
+
+impl Default for StepsParams {
+    fn default() -> Self {
+        StepsParams {
+            trace: ptr::null_mut(),
+            pols: ptr::null_mut(),
+            public_inputs: ptr::null_mut(),
+            proof_values: ptr::null_mut(),
+            challenges: ptr::null_mut(),
+            airgroup_values: ptr::null_mut(),
+            airvalues: ptr::null_mut(),
+            evals: ptr::null_mut(),
+            xdivxsub: ptr::null_mut(),
+            p_const_pols: ptr::null_mut(),
+            p_const_tree: ptr::null_mut(),
+            custom_commits: [ptr::null_mut(); 10],
+        }
     }
 }
 

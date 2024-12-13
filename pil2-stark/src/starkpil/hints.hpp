@@ -33,6 +33,7 @@ struct HintFieldOptions {
     bool inverse = false;
     bool print_expression = false;
     bool initialize_zeros = false;
+    bool compilation_time = false;
 };
 
 
@@ -156,12 +157,14 @@ void printExpressionDebug(SetupCtx& setupCtx, uint64_t hintId, std::string hintF
         cout << endl;
     } else if (hintFieldVal.operand == opType::public_) {
         cout << "public input " << setupCtx.starkInfo.publicsMap[hintFieldVal.id].name << endl;
+    } else if (hintFieldVal.operand == opType::proofvalue) {
+        cout << "proof value  " << setupCtx.starkInfo.proofValuesMap[hintFieldVal.id].name << endl;
     } else if (hintFieldVal.operand == opType::number) {
         cout << "number " << hintFieldVal.value << endl;
     } else if (hintFieldVal.operand == opType::airgroupvalue) {
         cout << "airgroupValue " << setupCtx.starkInfo.airgroupValuesMap[hintFieldVal.id].name << endl;
     } else if (hintFieldVal.operand == opType::airvalue) {
-        cout << "airgroupValue " << setupCtx.starkInfo.airValuesMap[hintFieldVal.id].name << endl;
+        cout << "airValue " << setupCtx.starkInfo.airValuesMap[hintFieldVal.id].name << endl;
     } else if (hintFieldVal.operand == opType::challenge) {
         cout << "challenge " << setupCtx.starkInfo.challengesMap[hintFieldVal.id].name << endl;
     } else if (hintFieldVal.operand == opType::string_) {
@@ -211,7 +214,6 @@ HintFieldValues getHintField(
     for(uint64_t i = 0; i < hintField->values.size(); ++i) {
         HintFieldValue hintFieldVal = hintField->values[i];
         if(hintOptions.dest && (hintFieldVal.operand != opType::cm && hintFieldVal.operand != opType::airgroupvalue && hintFieldVal.operand != opType::airvalue)) {
-            cout << hintFieldName << " " << hintFieldVal.operand << endl;
             zklog.error("Invalid destination.");
             exitProcess();
             exit(-1);
@@ -261,11 +263,19 @@ HintFieldValues getHintField(
                 exitProcess();
             }
         } else if (hintFieldVal.operand == opType::tmp) {
-            uint64_t dim = setupCtx.expressionsBin.expressionsInfo[hintFieldVal.id].destDim;
-            hintFieldInfo.size = deg*dim;
-            hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
-            hintFieldInfo.fieldType = dim == 1 ? HintFieldType::Column : HintFieldType::ColumnExtended;
-            hintFieldInfo.offset = dim;
+            if(hintOptions.compilation_time) {
+                hintFieldInfo.size = 1;
+                hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
+                hintFieldInfo.fieldType = HintFieldType::Field;
+                hintFieldInfo.offset = 1;
+                ExpressionsPack expressionsCtx(setupCtx, 1);
+                expressionsCtx.calculateExpression(params, hintFieldInfo.values, hintFieldVal.id, hintOptions.inverse, true);
+            } else {
+                uint64_t dim = setupCtx.expressionsBin.expressionsInfo[hintFieldVal.id].destDim;
+                hintFieldInfo.size = deg*dim;
+                hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
+                hintFieldInfo.fieldType = dim == 1 ? HintFieldType::Column : HintFieldType::ColumnExtended;
+                hintFieldInfo.offset = dim;
 #ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
 #elif defined(__AVX2__)
@@ -273,7 +283,8 @@ HintFieldValues getHintField(
 #else
     ExpressionsPack expressionsCtx(setupCtx);
 #endif
-            expressionsCtx.calculateExpression(params, hintFieldInfo.values, hintFieldVal.id, hintOptions.inverse);
+                expressionsCtx.calculateExpression(params, hintFieldInfo.values, hintFieldVal.id, hintOptions.inverse, false);
+            }
         } else if (hintFieldVal.operand == opType::public_) {
             hintFieldInfo.size = 1;
             hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
@@ -296,7 +307,7 @@ HintFieldValues getHintField(
                 if(hintOptions.inverse)  {
                     Goldilocks3::inv((Goldilocks3::Element *)hintFieldInfo.values, (Goldilocks3::Element *)&params.airgroupValues[FIELD_EXTENSION*hintFieldVal.id]);
                 } else {
-                    std::memcpy(hintFieldInfo.values, &params.airgroupValues[FIELD_EXTENSION*hintFieldVal.id], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+                    std::memcpy(hintFieldInfo.values, &params.airgroupValues[FIELD_EXTENSION*hintFieldVal.id], hintFieldInfo.size * sizeof(Goldilocks::Element));
                 }
             }
         } else if (hintFieldVal.operand == opType::airvalue) {
@@ -309,7 +320,20 @@ HintFieldValues getHintField(
                 if(hintOptions.inverse)  {
                     Goldilocks3::inv((Goldilocks3::Element *)hintFieldInfo.values, (Goldilocks3::Element *)&params.airValues[FIELD_EXTENSION*hintFieldVal.id]);
                 } else {
-                    std::memcpy(hintFieldInfo.values, &params.airValues[FIELD_EXTENSION*hintFieldVal.id], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+                    std::memcpy(hintFieldInfo.values, &params.airValues[FIELD_EXTENSION*hintFieldVal.id], hintFieldInfo.size * sizeof(Goldilocks::Element));
+                }
+            }
+        } else if (hintFieldVal.operand == opType::proofvalue) {
+            uint64_t dim = 1;
+            hintFieldInfo.size = dim;
+            hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
+            hintFieldInfo.fieldType = dim == 1 ? HintFieldType::Field : HintFieldType::FieldExtended;
+            hintFieldInfo.offset = FIELD_EXTENSION;
+            if(!hintOptions.dest) {
+                if(hintOptions.inverse)  {
+                    Goldilocks3::inv((Goldilocks3::Element *)hintFieldInfo.values, (Goldilocks3::Element *)&params.proofValues[FIELD_EXTENSION*hintFieldVal.id]);
+                } else {
+                    std::memcpy(hintFieldInfo.values, &params.proofValues[FIELD_EXTENSION*hintFieldVal.id], hintFieldInfo.size * sizeof(Goldilocks::Element));
                 }
             }
         } else if (hintFieldVal.operand == opType::challenge) {
@@ -320,7 +344,7 @@ HintFieldValues getHintField(
             if(hintOptions.inverse) {
                 Goldilocks3::inv((Goldilocks3::Element *)hintFieldInfo.values, (Goldilocks3::Element *)&params.challenges[FIELD_EXTENSION*hintFieldVal.id]);
             } else {
-                std::memcpy(hintFieldInfo.values, &params.challenges[FIELD_EXTENSION*hintFieldVal.id], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+                std::memcpy(hintFieldInfo.values, &params.challenges[FIELD_EXTENSION*hintFieldVal.id], hintFieldInfo.size * sizeof(Goldilocks::Element));
             }
         } else if (hintFieldVal.operand == opType::string_) {
             hintFieldInfo.values = nullptr;
@@ -390,42 +414,39 @@ uint64_t setHintField(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Eleme
     return hintFieldVal.id;
 }
 
-void opHintFields(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element* dest, uint64_t offset, uint64_t hintId, std::vector<string> hintFieldNames, std::vector<HintFieldOptions> hintFieldOptions) {
+void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest &destStruct, std::string hintFieldName, HintFieldOptions hintFieldOptions) {
     Hint hint = setupCtx.expressionsBin.hints[hintId];
+    
+    auto hintField = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldName](const HintField& hintField) {
+        return hintField.name == hintFieldName;
+    });
+    HintFieldValue hintFieldVal = hintField->values[0];
 
-    Dest destStruct(dest, offset);
-
-    for(uint64_t i = 0; i < hintFieldNames.size(); ++i) {
-        std::string name = hintFieldNames[i];
-        auto hintField = std::find_if(hint.fields.begin(), hint.fields.end(), [name](const HintField& hintField) {
-            return hintField.name == name;
-        });
-        HintFieldValue hintFieldVal = hintField->values[0];
-
-        if(hintField == hint.fields.end()) {
-            zklog.error("Hint field " + name + " not found in hint " + hint.name + ".");
-            exitProcess();
-            exit(-1);
-        }
-
-        if(hintFieldOptions[i].print_expression) {
-            printExpressionDebug(setupCtx, hintId, hintFieldNames[i], hintFieldVal);
-        }
-        if(hintFieldVal.operand == opType::cm) {
-            destStruct.addCmPol(setupCtx.starkInfo.cmPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions[i].inverse);
-        } else if(hintFieldVal.operand == opType::const_) {
-            destStruct.addConstPol(setupCtx.starkInfo.constPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions[i].inverse);
-        } else if(hintFieldVal.operand == opType::number) {
-            destStruct.addNumber(hintFieldVal.value, hintFieldOptions[i].inverse);
-        } else if(hintFieldVal.operand == opType::tmp) {
-            destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[hintFieldVal.id], hintFieldOptions[i].inverse);
-        } else {
-            zklog.error("Op type " + to_string(hintFieldVal.operand) + "is not considered yet.");
-            exitProcess();
-            exit(-1);
-        }
+    if(hintField == hint.fields.end()) {
+        zklog.error("Hint field " + hintFieldName + " not found in hint " + hint.name + ".");
+        exitProcess();
+        exit(-1);
     }
 
+    if(hintFieldOptions.print_expression) {
+        printExpressionDebug(setupCtx, hintId, hintFieldName, hintFieldVal);
+    }
+    if(hintFieldVal.operand == opType::cm) {
+        destStruct.addCmPol(setupCtx.starkInfo.cmPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions.inverse);
+    } else if(hintFieldVal.operand == opType::const_) {
+        destStruct.addConstPol(setupCtx.starkInfo.constPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions.inverse);
+    } else if(hintFieldVal.operand == opType::number) {
+        destStruct.addNumber(hintFieldVal.value, hintFieldOptions.inverse);
+    } else if(hintFieldVal.operand == opType::tmp) {
+        destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[hintFieldVal.id], hintFieldOptions.inverse);
+    } else {
+        zklog.error("Op type " + to_string(hintFieldVal.operand) + "is not considered yet.");
+        exitProcess();
+        exit(-1);
+    }
+}
+
+void opHintFields(SetupCtx& setupCtx, StepsParams& params, std::vector<Dest> &dests) {
 #ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
 #elif defined(__AVX2__)
@@ -435,8 +456,7 @@ void opHintFields(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element* 
 #endif
 
     uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    std::vector<Dest> dests = {destStruct};
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, {destStruct}, domainSize);
+    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
 }
 
 uint64_t multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldName1, std::string hintFieldName2,  HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2) {
@@ -456,7 +476,14 @@ uint64_t multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hi
     uint64_t offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
     Goldilocks::Element *buff = &params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos];
     
-    opHintFields(setupCtx, params, buff, offset, hintId, {hintFieldName1, hintFieldName2}, {hintOptions1, hintOptions2});
+    Dest destStruct(buff, offset);
+
+    addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
+    addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
+
+    std::vector<Dest> dests = {destStruct};
+
+    opHintFields(setupCtx, params, dests);
 
     return hintFieldDestVal.id;
 }
@@ -516,8 +543,14 @@ VecU64Result accMulHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t 
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
     Goldilocks::Element *vals = new Goldilocks::Element[dim * N];
-    uint64_t offset = 0;
-    opHintFields(setupCtx, params, vals, offset, hintId, {hintFieldName1, hintFieldName2}, {hintOptions1, hintOptions2});
+    
+    Dest destStruct(vals, 0);
+    addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
+    addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
+
+    std::vector<Dest> dests = {destStruct};
+
+    opHintFields(setupCtx, params, dests);
 
     for(uint64_t i = 1; i < N; ++i) {
         if(add) {
@@ -540,6 +573,51 @@ VecU64Result accMulHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t 
     hintIds.ids = new uint64_t[hintIds.nElements];
     hintIds.ids[0] = setHintField(setupCtx, params, vals, hintId, hintFieldNameDest);
     hintIds.ids[1] = setHintField(setupCtx, params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
+
+    delete[] vals;
+
+    return hintIds;
+}
+
+VecU64Result updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
+    
+    Hint hint = setupCtx.expressionsBin.hints[hintId];
+
+    auto hintFieldAirgroup = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldNameAirgroupVal](const HintField& hintField) {
+        return hintField.name == hintFieldNameAirgroupVal;
+    });
+    HintFieldValue hintFieldAirgroupVal = hintFieldAirgroup->values[0];
+
+    Goldilocks::Element *vals = new Goldilocks::Element[3];
+    
+    Dest destStruct(vals, 0);
+    addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
+    addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
+
+    std::vector<Dest> dests = {destStruct};
+
+    ExpressionsPack expressionsCtx(setupCtx, 1);
+    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, 1, false);
+
+    Goldilocks::Element *airgroupValue = &params.airgroupValues[FIELD_EXTENSION*hintFieldAirgroupVal.id];
+    if(add) {
+        if(destStruct.dim == 1) {
+            Goldilocks::add(airgroupValue[0], airgroupValue[0], vals[0]);
+        } else {
+            Goldilocks3::add((Goldilocks3::Element &)airgroupValue[0], (Goldilocks3::Element &)airgroupValue[0], (Goldilocks3::Element &)vals[0]);
+        }
+    } else {
+        if(destStruct.dim == 1) {
+            Goldilocks::mul(airgroupValue[0], airgroupValue[0], vals[0]);
+        } else {
+            Goldilocks3::mul((Goldilocks3::Element &)airgroupValue[0], (Goldilocks3::Element &)airgroupValue[0], (Goldilocks3::Element &)vals[0]);
+        }
+    }
+
+    VecU64Result hintIds;
+    hintIds.nElements = 1;
+    hintIds.ids = new uint64_t[1];
+    hintIds.ids[0] = hintFieldAirgroupVal.id;
 
     delete[] vals;
 

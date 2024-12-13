@@ -133,6 +133,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let setup = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
+        let proof_values_guard = proof_ctx.proof_values.values.read().unwrap();
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
 
         let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
@@ -142,6 +143,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             trace: air_instance.get_trace_ptr() as *mut c_void,
             pols: air_instance.get_buffer_ptr() as *mut c_void,
             public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
+            proof_values: (*proof_values_guard).as_ptr() as *mut c_void,
             challenges: (*challenges_guard).as_ptr() as *mut c_void,
             airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
             airvalues: air_instance.airvalues.as_ptr() as *mut c_void,
@@ -169,6 +171,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let setup = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
+        let proof_values_guard = proof_ctx.proof_values.values.read().unwrap();
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
 
         let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
@@ -178,6 +181,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             trace: air_instance.get_trace_ptr() as *mut c_void,
             pols: air_instance.get_buffer_ptr() as *mut c_void,
             public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
+            proof_values: (*proof_values_guard).as_ptr() as *mut c_void,
             challenges: (*challenges_guard).as_ptr() as *mut c_void,
             airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
             airvalues: air_instance.airvalues.as_ptr() as *mut c_void,
@@ -671,22 +675,28 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>, output_dir: &str) -> *mut c_void {
-        let gidx = proof_ctx.air_instance_repo.air_instances.read().unwrap()[self.prover_idx].global_idx.unwrap();
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
         let public_inputs = (*public_inputs_guard).as_ptr() as *mut c_void;
 
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
         let challenges = (*challenges_guard).as_ptr() as *mut c_void;
 
+        let proof_values_guard = proof_ctx.proof_values.values.read().unwrap();
+        let proof_values = (*proof_values_guard).as_ptr() as *mut c_void;
+
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
+        let proof_name =
+            format!("{}_{}", proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name, self.instance_id);
+
         fri_proof_get_zkinproof_c(
-            gidx as u64,
             self.p_proof,
             public_inputs,
             challenges,
+            proof_values,
             self.p_stark_info,
+            &proof_name,
             global_info_file,
             output_dir,
         )
@@ -746,6 +756,7 @@ impl<F: Field> StarkProver<F> {
             trace: std::ptr::null_mut(),
             pols: air_instance.get_buffer_ptr() as *mut c_void,
             public_inputs: std::ptr::null_mut(),
+            proof_values: std::ptr::null_mut(),
             challenges: std::ptr::null_mut(),
             airgroup_values: std::ptr::null_mut(),
             airvalues: std::ptr::null_mut(),
@@ -767,6 +778,7 @@ impl<F: Field> StarkProver<F> {
         let setup = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
         let public_inputs_guard = proof_ctx.public_inputs.inputs.read().unwrap();
+        let proof_values_guard = proof_ctx.proof_values.values.read().unwrap();
         let challenges_guard = proof_ctx.challenges.challenges.read().unwrap();
         let buff_helper_guard = proof_ctx.buff_helper.buff_helper.read().unwrap();
 
@@ -779,6 +791,7 @@ impl<F: Field> StarkProver<F> {
             trace: std::ptr::null_mut(),
             pols: air_instance.get_buffer_ptr() as *mut c_void,
             public_inputs: (*public_inputs_guard).as_ptr() as *mut c_void,
+            proof_values: (*proof_values_guard).as_ptr() as *mut c_void,
             challenges: (*challenges_guard).as_ptr() as *mut c_void,
             airgroup_values: air_instance.airgroup_values.as_ptr() as *mut c_void,
             airvalues: air_instance.airvalues.as_ptr() as *mut c_void,
