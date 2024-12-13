@@ -187,13 +187,4 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
         //pctx.air_instance_repo.add_air_instance(air_instance);
         //note: there is room for simplification heres
     }
-
-    fn calculate_witness(
-        &self,
-        _stage: u32,
-        _air_instance: Option<usize>,
-        _pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx>,
-    ) {
-    }
 }

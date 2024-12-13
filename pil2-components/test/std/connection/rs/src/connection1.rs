@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{add_air_instance, FromTrace, AirInstance,  ProofCtx, SetupCtx};
+use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use p3_field::PrimeField;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
@@ -43,22 +43,9 @@ where
             trace[i].c = rng.gen();
         }
 
-        let air_instance = AirInstance::new_from_trace( FromTrace::new(&mut trace));
+        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
 
-impl<F: PrimeField + Copy> WitnessComponent<F> for Connection1<F>
-where
-    Standard: Distribution<F>,
-{
-    fn calculate_witness(
-        &self,
-        _stage: u32,
-        _air_instance_id: Option<usize>,
-        _pctx: Arc<ProofCtx<F>>,
-        _
-        _sctx: Arc<SetupCtx>,
-    ) {
-    }
-}
+impl<F: PrimeField + Copy> WitnessComponent<F> for Connection1<F> where Standard: Distribution<F> {}

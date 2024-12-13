@@ -2,7 +2,7 @@ use std::{error::Error, path::PathBuf, sync::Arc};
 
 use pil_std_lib::Std;
 use proofman::{WitnessLibrary, WitnessManager};
-use proofman_common::{initialize_logger,  ProofCtx, SetupCtx, VerboseMode};
+use proofman_common::{initialize_logger, ProofCtx, SetupCtx, VerboseMode};
 
 use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
@@ -43,7 +43,7 @@ where
         }
     }
 
-    pub fn initialize(&mut self, pctx: Arc<ProofCtx<F>>,  sctx: Arc<SetupCtx>) {
+    pub fn initialize(&mut self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         let wcm = Arc::new(WitnessManager::new(pctx, sctx));
 
         let std_lib = Std::new(wcm.clone());
@@ -65,7 +65,7 @@ impl<F: PrimeField> WitnessLibrary<F> for PermutationWitness<F>
 where
     Standard: Distribution<F>,
 {
-    fn start_proof(&mut self, pctx: Arc<ProofCtx<F>>,  sctx: Arc<SetupCtx>) {
+    fn start_proof(&mut self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         self.initialize(pctx.clone(), sctx.clone());
 
         self.wcm.as_ref().unwrap().start_proof(pctx, sctx);
@@ -83,7 +83,7 @@ where
         self.permutation2.as_ref().unwrap().execute(pctx);
     }
 
-    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>,  sctx: Arc<SetupCtx>) {
+    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         self.wcm.as_ref().unwrap().calculate_witness(stage, pctx, sctx);
     }
 }

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 use proofman::{WitnessManager, WitnessComponent};
 use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField64};
@@ -78,13 +78,4 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
     }
 }
 
-impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
-    fn calculate_witness(
-        &self,
-        _stage: u32,
-        _air_instance_id: Option<usize>,
-        _pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx>,
-    ) {
-    }
-}
+impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {}

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_common::{add_air_instance, AirInstance, FromTrace, ProofCtx, SetupCtx};
+use proofman_common::{add_air_instance, AirInstance, FromTrace, ProofCtx};
 use proofman::{WitnessManager, WitnessComponent};
 
 use p3_field::PrimeField64;
@@ -85,13 +85,4 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
     }
 }
 
-impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
-    fn calculate_witness(
-        &self,
-        _stage: u32,
-        _air_instance_id: Option<usize>,
-        _pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx>,
-    ) {
-    }
-}
+impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {}

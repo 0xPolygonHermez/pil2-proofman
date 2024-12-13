@@ -287,14 +287,4 @@ impl<F: PrimeField> WitnessComponent<F> for StdRangeCheck<F> {
     fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         self.decide(sctx);
     }
-
-    fn calculate_witness(
-        &self,
-        _stage: u32,
-        _air_instance: Option<usize>,
-        _pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx>,
-    ) {
-        // Nothing to do
-    }
 }

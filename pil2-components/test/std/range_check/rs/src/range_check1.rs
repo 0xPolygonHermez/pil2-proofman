@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pil_std_lib::Std;
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{add_air_instance, FromTrace, AirInstance,  ProofCtx, SetupCtx};
+use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use num_bigint::BigInt;
 use p3_field::PrimeField;
@@ -80,23 +80,10 @@ where
             }
         }
 
-        let air_instance = AirInstance::new_from_trace( FromTrace::new(&mut trace));
+        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, pctx.clone());
-    }
-}
-
-impl<F: PrimeField> WitnessComponent<F> for RangeCheck1<F>
-where
-    Standard: Distribution<F>,
-{
-    fn calculate_witness(
-        &self,
-        _stage: u32,
-        _air_instance_id: Option<usize>,
-        pctx: Arc<ProofCtx<F>>,
-        _
-        _sctx: Arc<SetupCtx>,
-    ) {
         self.std_lib.unregister_predecessor(pctx, None);
     }
 }
+
+impl<F: PrimeField> WitnessComponent<F> for RangeCheck1<F> where Standard: Distribution<F> {}

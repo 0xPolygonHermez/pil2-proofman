@@ -2,7 +2,7 @@ use std::{error::Error, path::PathBuf, sync::Arc};
 
 use pil_std_lib::Std;
 use proofman::{WitnessLibrary, WitnessManager};
-use proofman_common::{initialize_logger,  ProofCtx, SetupCtx, VerboseMode};
+use proofman_common::{initialize_logger, ProofCtx, SetupCtx, VerboseMode};
 
 use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
@@ -68,7 +68,7 @@ where
         self.simple_right.as_ref().unwrap().execute(pctx);
     }
 
-    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>) {
+    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         self.wcm.as_ref().unwrap().calculate_witness(stage, pctx, sctx);
     }
 }
