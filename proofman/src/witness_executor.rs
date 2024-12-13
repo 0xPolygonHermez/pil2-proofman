@@ -1,5 +1,5 @@
-use proofman_common::{ExecutionCtx, ProofCtx};
+use proofman_common::ProofCtx;
 
 pub trait WitnessExecutor<F> {
-    fn execute(&self, pctx: &mut ProofCtx<F>, ectx: &mut ExecutionCtx);
+    fn execute(&self, pctx: &mut ProofCtx<F>);
 }

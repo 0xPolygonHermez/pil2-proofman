@@ -7,7 +7,7 @@ use proofman_starks_lib_c::*;
 use std::path::{Path, PathBuf};
 use std::io::Read;
 
-use proofman_common::{ExecutionCtx, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
+use proofman_common::{ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 
 use std::os::raw::{c_void, c_char};
 
@@ -154,7 +154,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
 pub fn generate_vadcop_recursive2_proof<F: Field>(
     pctx: &ProofCtx<F>,
-    ectx: &ExecutionCtx,
     sctx: Arc<SetupCtx>,
     proofs: &[*mut c_void],
     output_dir_path: PathBuf,
@@ -165,7 +164,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
-    let mut dctx = ectx.dctx.write().unwrap();
+    let mut dctx = pctx.dctx.write().unwrap();
     let n_airgroups = pctx.global_info.air_groups.len();
     let mut alives = Vec::with_capacity(n_airgroups);
     let mut airgroup_proofs: Vec<Vec<Option<*mut c_void>>> = Vec::with_capacity(n_airgroups);

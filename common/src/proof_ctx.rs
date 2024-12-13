@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
+use crate::{distribution_ctx::DistributionCtx, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -21,6 +21,7 @@ impl<F> Default for Values<F> {
     }
 }
 
+#[derive(Clone)]
 pub struct ProofOptions {
     pub verify_constraints: bool,
     pub verbose_mode: VerboseMode,
@@ -49,12 +50,14 @@ pub struct ProofCtx<F> {
     pub buff_helper: Values<F>,
     pub global_info: GlobalInfo,
     pub air_instance_repo: AirInstancesRepository<F>,
+    pub options: ProofOptions,
+    pub dctx: RwLock<DistributionCtx>,
 }
 
 impl<F: Field> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
-    pub fn create_ctx(proving_key_path: PathBuf) -> Self {
+    pub fn create_ctx(proving_key_path: PathBuf, options: ProofOptions) -> Self {
         log::info!("{}: Creating proof context", Self::MY_NAME);
 
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
@@ -69,7 +72,20 @@ impl<F: Field> ProofCtx<F> {
             challenges: Values::new(n_challenges * 3),
             buff_helper: Values::default(),
             air_instance_repo: AirInstancesRepository::new(),
+            dctx: RwLock::new(DistributionCtx::new()),
+            options,
         }
+    }
+
+    pub fn dctx_add_instance(&self, airgroup_id: usize, air_id: usize, weight: usize) -> (bool, usize) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.add_instance(airgroup_id, air_id, weight)
+    }
+
+    pub fn dctx_distribute_multiplicity(&self, multiplicity: &mut [u64], instance_idx: usize) {
+        let dctx = self.dctx.read().unwrap();
+        let owner = dctx.owner(instance_idx);
+        dctx.distribute_multiplicity(multiplicity, owner);
     }
 
     pub fn set_proof_value(&self, name: &str, value: F) {

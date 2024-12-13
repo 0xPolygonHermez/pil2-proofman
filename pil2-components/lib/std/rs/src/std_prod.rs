@@ -7,7 +7,7 @@ use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{AirInstance, ExecutionCtx, ModeName, ProofCtx, SetupCtx, StdMode};
+use proofman_common::{AirInstance, ModeName, ProofCtx, SetupCtx, StdMode};
 use proofman_hints::{
     get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a, get_hint_ids_by_name,
     update_airgroupvalue, acc_mul_hint_fields, HintFieldOptions, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
@@ -91,10 +91,10 @@ impl<F: PrimeField> StdProd<F> {
             let opid =
                 get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "opid", HintFieldOptions::default());
             let opid = if let HintFieldValue::Field(opid) = opid {
-                if let Some(opids) = &self.mode.opids {
-                    if !opids.contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
-                        continue;
-                    }
+                if !self.mode.opids.is_empty()
+                    && !self.mode.opids.contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
+                {
+                    continue;
                 }
 
                 opid
@@ -245,18 +245,11 @@ impl<F: PrimeField> StdProd<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
-    fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         self.decide(sctx);
     }
 
-    fn calculate_witness(
-        &self,
-        stage: u32,
-        _air_instance: Option<usize>,
-        pctx: Arc<ProofCtx<F>>,
-        _ectx: Arc<ExecutionCtx>,
-        sctx: Arc<SetupCtx>,
-    ) {
+    fn calculate_witness(&self, stage: u32, _air_instance: Option<usize>, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         if stage == 2 {
             let prod_airs = self.prod_airs.lock().unwrap();
 

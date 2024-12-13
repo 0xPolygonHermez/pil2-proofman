@@ -5,7 +5,7 @@ use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
 use proofman::{get_hint_field_gc, WitnessComponent, WitnessManager};
-use proofman_common::{TraceInfo, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{AirInstance, DistributionCtx, ProofCtx, SetupCtx, TraceInfo};
 use proofman_hints::{
     get_hint_field, get_hint_field_constant, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue,
 };
@@ -95,12 +95,11 @@ impl<F: PrimeField> SpecifiedRanges<F> {
         let mut inputs = self.inputs.lock().unwrap();
         let drained_inputs = inputs.drain(..).collect();
         let pctx = self.wcm.get_pctx();
-        let ectx = self.wcm.get_ectx();
 
         // Perform the last update
         self.update_multiplicity(drained_inputs);
 
-        let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = ectx.dctx.write().unwrap();
+        let mut dctx: std::sync::RwLockWriteGuard<'_, DistributionCtx> = pctx.dctx.write().unwrap();
 
         let (is_mine, global_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
 
@@ -188,7 +187,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
-    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         // Obtain info from the mul hints
         let setup = sctx.get_setup(self.airgroup_id, self.air_id);
         let specified_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges");
@@ -343,7 +342,6 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         _stage: u32,
         _air_instance: Option<usize>,
         _pctx: Arc<ProofCtx<F>>,
-        _ectx: Arc<ExecutionCtx>,
         _sctx: Arc<SetupCtx>,
     ) {
     }

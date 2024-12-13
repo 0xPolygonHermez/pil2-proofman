@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{add_air_instance, FromTrace, AirInstance, ExecutionCtx, ProofCtx, SetupCtx};
+use proofman_common::{add_air_instance, FromTrace, AirInstance,  ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
 
@@ -25,7 +25,7 @@ impl<F: PrimeField + Copy> Lookup3<F> {
         lookup3
     }
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, _sctx: Arc<SetupCtx>) {
+    pub fn execute(&self, pctx: Arc<ProofCtx<F>>,  _sctx: Arc<SetupCtx>) {
         // For simplicity, add a single instance of each air
         let mut trace = Lookup3Trace::new();
         let num_rows = trace.num_rows();
@@ -55,7 +55,7 @@ impl<F: PrimeField + Copy> Lookup3<F> {
         }
 
         let air_instance = AirInstance::new_from_trace( FromTrace::new(&mut trace));
-        add_air_instance::<F>(air_instance, ectx, pctx.clone());
+        add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
 
@@ -65,7 +65,7 @@ impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup3<F> {
         _stage: u32,
         _air_instance_id: Option<usize>,
         _pctx: Arc<ProofCtx<F>>,
-        _ectx: Arc<ExecutionCtx>,
+        _
         _sctx: Arc<SetupCtx>,
     ) {
     }

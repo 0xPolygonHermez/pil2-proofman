@@ -7,7 +7,7 @@ use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx, StdMode, ModeName};
+use proofman_common::{AirInstance, ProofCtx, SetupCtx, StdMode, ModeName};
 use proofman_hints::{
     get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a, acc_mul_hint_fields,
     update_airgroupvalue, get_hint_ids_by_name, mul_hint_fields, HintFieldOptions, HintFieldOutput, HintFieldValue,
@@ -93,10 +93,10 @@ impl<F: PrimeField> StdSum<F> {
             let opid =
                 get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "opid", HintFieldOptions::default());
             if let HintFieldOutput::Field(opid) = opid.get(0) {
-                if let Some(opids) = &self.mode.opids {
-                    if !opids.contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
-                        continue;
-                    }
+                if !self.mode.opids.is_empty()
+                    && !self.mode.opids.contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
+                {
+                    continue;
                 }
             } else {
                 panic!("opid must be a field element");
@@ -243,18 +243,11 @@ impl<F: PrimeField> StdSum<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
-    fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         self.decide(sctx);
     }
 
-    fn calculate_witness(
-        &self,
-        stage: u32,
-        _air_instance: Option<usize>,
-        pctx: Arc<ProofCtx<F>>,
-        _ectx: Arc<ExecutionCtx>,
-        sctx: Arc<SetupCtx>,
-    ) {
+    fn calculate_witness(&self, stage: u32, _air_instance: Option<usize>, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         if stage == 2 {
             let sum_airs = self.sum_airs.lock().unwrap();
 

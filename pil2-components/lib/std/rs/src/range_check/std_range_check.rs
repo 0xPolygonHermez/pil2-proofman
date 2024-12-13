@@ -8,7 +8,7 @@ use num_bigint::BigInt;
 use p3_field::PrimeField;
 
 use proofman::{WitnessComponent, WitnessManager};
-use proofman_common::{ExecutionCtx, ProofCtx, SetupCtx, StdMode, ModeName};
+use proofman_common::{ProofCtx, SetupCtx, StdMode, ModeName};
 use proofman_hints::{get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 use rayon::Scope;
 
@@ -284,7 +284,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for StdRangeCheck<F> {
-    fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    fn start_proof(&self, _pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         self.decide(sctx);
     }
 
@@ -293,7 +293,6 @@ impl<F: PrimeField> WitnessComponent<F> for StdRangeCheck<F> {
         _stage: u32,
         _air_instance: Option<usize>,
         _pctx: Arc<ProofCtx<F>>,
-        _ectx: Arc<ExecutionCtx>,
         _sctx: Arc<SetupCtx>,
     ) {
         // Nothing to do

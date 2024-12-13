@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_common::{initialize_logger, load_from_json, ExecutionCtx, ProofCtx, SetupCtx, VerboseMode};
+use proofman_common::{initialize_logger, load_from_json, ProofCtx, SetupCtx, VerboseMode};
 use proofman::{WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
 use p3_field::PrimeField64;
@@ -26,8 +26,8 @@ impl<F: PrimeField64> FibonacciWitness<F> {
 }
 
 impl<F: PrimeField64> WitnessLibrary<F> for FibonacciWitness<F> {
-    fn start_proof(&mut self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), ectx.clone(), sctx.clone()));
+    fn start_proof(&mut self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
 
         let std_lib = Std::new(wcm.clone());
         let module = Module::new(wcm.clone(), std_lib.clone());
@@ -46,20 +46,20 @@ impl<F: PrimeField64> WitnessLibrary<F> for FibonacciWitness<F> {
         publics.in1 = F::from_canonical_u64(public_inputs.in1);
         publics.in2 = F::from_canonical_u64(public_inputs.in2);
 
-        wcm.start_proof(pctx, ectx, sctx);
+        wcm.start_proof(pctx, sctx);
     }
 
     fn end_proof(&mut self) {
         self.wcm.as_ref().unwrap().end_proof();
     }
 
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.fibonacci.as_ref().unwrap().execute(pctx.clone(), ectx.clone(), sctx.clone());
-        self.module.as_ref().unwrap().execute(pctx, ectx, sctx);
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+        self.fibonacci.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
+        self.module.as_ref().unwrap().execute(pctx, sctx);
     }
 
-    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.wcm.as_ref().unwrap().calculate_witness(stage, pctx, ectx, sctx);
+    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+        self.wcm.as_ref().unwrap().calculate_witness(stage, pctx, sctx);
     }
 }
 

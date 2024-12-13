@@ -2,7 +2,7 @@ use std::{error::Error, path::PathBuf, sync::Arc};
 
 use pil_std_lib::Std;
 use proofman::{WitnessLibrary, WitnessManager};
-use proofman_common::{initialize_logger, ExecutionCtx, ProofCtx, SetupCtx, VerboseMode};
+use proofman_common::{initialize_logger,  ProofCtx, SetupCtx, VerboseMode};
 
 use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
@@ -35,8 +35,8 @@ where
         ConnectionWitness { wcm: None, connection1: None, connection2: None, connection_new: None, std_lib: None }
     }
 
-    pub fn initialize(&mut self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        let wcm = Arc::new(WitnessManager::new(pctx, ectx, sctx));
+    pub fn initialize(&mut self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+        let wcm = Arc::new(WitnessManager::new(pctx, sctx));
 
         let std_lib = Std::new(wcm.clone());
         let connection1 = Connection1::new(wcm.clone());
@@ -55,25 +55,25 @@ impl<F: PrimeField> WitnessLibrary<F> for ConnectionWitness<F>
 where
     Standard: Distribution<F>,
 {
-    fn start_proof(&mut self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.initialize(pctx.clone(), ectx.clone(), sctx.clone());
+    fn start_proof(&mut self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+        self.initialize(pctx.clone(), sctx.clone());
 
-        self.wcm.as_ref().unwrap().start_proof(pctx, ectx, sctx);
+        self.wcm.as_ref().unwrap().start_proof(pctx, sctx);
     }
 
     fn end_proof(&mut self) {
         self.wcm.as_ref().unwrap().end_proof();
     }
 
-    fn execute(&self, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         // Execute those components that need to be executed
-        self.connection1.as_ref().unwrap().execute(pctx.clone(), ectx.clone(), sctx.clone());
-        self.connection2.as_ref().unwrap().execute(pctx.clone(), ectx.clone(), sctx.clone());
-        self.connection_new.as_ref().unwrap().execute(pctx, ectx, sctx);
+        self.connection1.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
+        self.connection2.as_ref().unwrap().execute(pctx.clone(), sctx.clone());
+        self.connection_new.as_ref().unwrap().execute(pctx, sctx);
     }
 
-    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.wcm.as_ref().unwrap().calculate_witness(stage, pctx, ectx, sctx);
+    fn calculate_witness(&mut self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+        self.wcm.as_ref().unwrap().calculate_witness(stage, pctx, sctx);
     }
 }
 

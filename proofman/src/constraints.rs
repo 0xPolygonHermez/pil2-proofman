@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use crate::{verify_global_constraints_proof, WitnessLibrary};
 
-use proofman_common::{ExecutionCtx, ProofCtx, Prover, SetupCtx};
+use proofman_common::{ProofCtx, Prover, SetupCtx};
 
 use colored::*;
 
 pub fn verify_constraints_proof<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    ectx: Arc<ExecutionCtx>,
+
     sctx: Arc<SetupCtx>,
     provers: &mut [Box<dyn Prover<F>>],
     witness_lib: &mut Box<dyn WitnessLibrary<F>>,
@@ -20,7 +20,7 @@ pub fn verify_constraints_proof<F: Field>(
 
     log::info!("{}: --> Checking constraints", MY_NAME);
 
-    witness_lib.debug(pctx.clone(), ectx.clone(), sctx.clone());
+    witness_lib.debug(pctx.clone(), sctx.clone());
 
     let mut constraints = Vec::new();
     for prover in provers.iter() {

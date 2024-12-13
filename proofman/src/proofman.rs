@@ -20,7 +20,7 @@ use crate::{
     generate_recursivef_proof, generate_fflonk_snark_proof,
 };
 
-use proofman_common::{ExecutionCtx, ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop};
+use proofman_common::{ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop};
 
 use std::os::raw::c_void;
 
@@ -39,7 +39,6 @@ impl<F: Field + 'static> ProofMan<F> {
         witness_lib_path: PathBuf,
         rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
-        cached_buffers_paths: Option<HashMap<String, PathBuf>>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
         options: ProofOptions,
@@ -52,34 +51,27 @@ impl<F: Field + 'static> ProofMan<F> {
             &witness_lib_path,
             &rom_path,
             &public_inputs_path,
-            &cached_buffers_paths,
             &proving_key_path,
             &output_dir_path,
             options.verify_constraints,
         )?;
-        let ectx = ExecutionCtx::builder()
-            .with_rom_path(rom_path.clone())
-            .with_cached_buffers_path(cached_buffers_paths.clone())
-            .with_verbose_mode(options.verbose_mode)
-            .with_std_mode(options.std_mode)
-            .build();
-        let ectx = Arc::new(ectx);
+
         // Load the witness computation dynamic library
         let library = unsafe { Library::new(&witness_lib_path)? };
 
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
 
-        let mut witness_lib = witness_lib(rom_path, public_inputs_path, ectx.verbose_mode)?;
+        let mut witness_lib = witness_lib(rom_path, public_inputs_path, options.verbose_mode)?;
 
-        let pctx = Arc::new(ProofCtx::create_ctx(proving_key_path.clone()));
+        let pctx = Arc::new(ProofCtx::create_ctx(proving_key_path.clone(), options));
 
-        let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, options.aggregation, options.final_snark));
+        let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
         let sctx: Arc<SetupCtx> = setups.sctx.clone();
 
-        Self::initialize_witness(&mut witness_lib, pctx.clone(), ectx.clone(), sctx.clone());
-        witness_lib.calculate_witness(1, pctx.clone(), ectx.clone(), sctx.clone());
+        Self::initialize_witness(&mut witness_lib, pctx.clone(), sctx.clone());
+        witness_lib.calculate_witness(1, pctx.clone(), sctx.clone());
 
-        let mut dctx = ectx.dctx.write().unwrap();
+        let mut dctx = pctx.dctx.write().unwrap();
         dctx.close(pctx.global_info.air_groups.len());
         let mpi_rank = dctx.rank;
         drop(dctx);
@@ -87,16 +79,10 @@ impl<F: Field + 'static> ProofMan<F> {
             Self::print_summary(pctx.clone());
         }
 
-        Self::initialize_fixed_pols(
-            setups.clone(),
-            pctx.clone(),
-            ectx.clone(),
-            options.aggregation,
-            options.final_snark,
-        );
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
 
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
-        Self::initialize_provers(sctx.clone(), &mut provers, pctx.clone(), ectx.clone());
+        Self::initialize_provers(sctx.clone(), &mut provers, pctx.clone());
 
         if provers.is_empty() {
             return Err("No instances found".into());
@@ -115,56 +101,42 @@ impl<F: Field + 'static> ProofMan<F> {
             if stage != 1 {
                 timer_start_debug!(CALCULATING_WITNESS);
                 info!("{}: Calculating witness stage {}", Self::MY_NAME, stage);
-                witness_lib.calculate_witness(stage, pctx.clone(), ectx.clone(), sctx.clone());
+                witness_lib.calculate_witness(stage, pctx.clone(), sctx.clone());
                 timer_stop_and_log_debug!(CALCULATING_WITNESS);
             }
 
             Self::calculate_stage(stage, &mut provers, sctx.clone(), pctx.clone());
 
-            if !options.verify_constraints {
+            if !pctx.options.verify_constraints {
                 Self::commit_stage(stage, &mut provers, pctx.clone());
             }
 
-            if !options.verify_constraints || stage < num_commit_stages {
-                Self::calculate_challenges(
-                    stage,
-                    &mut provers,
-                    pctx.clone(),
-                    ectx.clone(),
-                    &mut transcript,
-                    options.verify_constraints,
-                );
+            if !pctx.options.verify_constraints || stage < num_commit_stages {
+                Self::calculate_challenges(stage, &mut provers, pctx.clone(), &mut transcript);
             }
         }
 
         witness_lib.end_proof();
 
-        if options.verify_constraints {
-            return verify_constraints_proof(pctx.clone(), ectx.clone(), sctx.clone(), &mut provers, &mut witness_lib);
+        if pctx.options.verify_constraints {
+            return verify_constraints_proof(pctx.clone(), sctx.clone(), &mut provers, &mut witness_lib);
         }
 
         // Compute Quotient polynomial
         Self::get_challenges(num_commit_stages + 1, &mut provers, pctx.clone(), &transcript);
         Self::calculate_stage(num_commit_stages + 1, &mut provers, sctx.clone(), pctx.clone());
         Self::commit_stage(num_commit_stages + 1, &mut provers, pctx.clone());
-        Self::calculate_challenges(
-            num_commit_stages + 1,
-            &mut provers,
-            pctx.clone(),
-            ectx.clone(),
-            &mut transcript,
-            false,
-        );
+        Self::calculate_challenges(num_commit_stages + 1, &mut provers, pctx.clone(), &mut transcript);
 
         // Compute openings
-        Self::opening_stages(&mut provers, pctx.clone(), sctx.clone(), ectx.clone(), &mut transcript);
+        Self::opening_stages(&mut provers, pctx.clone(), sctx.clone(), &mut transcript);
 
         //Generate proves_out
         let proves_out = Self::finalize_proof(&mut provers, pctx.clone(), output_dir_path.to_string_lossy().as_ref());
 
         timer_stop_and_log_info!(GENERATING_PROOF);
 
-        if !options.aggregation {
+        if !pctx.options.aggregation {
             return Ok(());
         }
 
@@ -177,12 +149,11 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         log::info!("{}: Compressor and recursive1 proofs generated successfully", Self::MY_NAME);
 
-        ectx.dctx.read().unwrap().barrier();
+        pctx.dctx.read().unwrap().barrier();
         timer_start_info!(GENERATING_RECURSIVE2_PROOFS);
         let sctx_recursive2 = setups.sctx_recursive2.clone();
         let recursive2_proof = generate_vadcop_recursive2_proof(
             &pctx,
-            &ectx,
             sctx_recursive2.as_ref().unwrap().clone(),
             &recursive1_proofs,
             output_dir_path.clone(),
@@ -191,7 +162,7 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
         log::info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
 
-        ectx.dctx.read().unwrap().barrier();
+        pctx.dctx.read().unwrap().barrier();
         if mpi_rank == 0 {
             timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
             let final_proof = generate_vadcop_final_proof(
@@ -205,7 +176,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
             timer_stop_and_log_info!(GENERATING_AGGREGATION_PROOFS);
 
-            if options.final_snark {
+            if pctx.options.final_snark {
                 timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
                 let recursivef_proof = generate_recursivef_proof(
                     &pctx,
@@ -222,20 +193,15 @@ impl<F: Field + 'static> ProofMan<F> {
         }
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
         log::info!("{}: Proofs generated successfully", Self::MY_NAME);
-        ectx.dctx.read().unwrap().barrier();
+        pctx.dctx.read().unwrap().barrier();
         Ok(())
     }
 
-    fn initialize_witness(
-        witness_lib: &mut Box<dyn WitnessLibrary<F>>,
-        pctx: Arc<ProofCtx<F>>,
-        ectx: Arc<ExecutionCtx>,
-        sctx: Arc<SetupCtx>,
-    ) {
+    fn initialize_witness(witness_lib: &mut Box<dyn WitnessLibrary<F>>, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         timer_start_debug!(INITIALIZE_WITNESS);
-        witness_lib.start_proof(pctx.clone(), ectx.clone(), sctx.clone());
+        witness_lib.start_proof(pctx.clone(), sctx.clone());
 
-        witness_lib.execute(pctx.clone(), ectx, sctx);
+        witness_lib.execute(pctx.clone(), sctx);
 
         // After the execution print the planned instances
         trace!("{}: --> Air instances: ", Self::MY_NAME);
@@ -269,12 +235,7 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_stop_and_log_debug!(INITIALIZE_WITNESS);
     }
 
-    fn initialize_provers(
-        sctx: Arc<SetupCtx>,
-        provers: &mut Vec<Box<dyn Prover<F>>>,
-        pctx: Arc<ProofCtx<F>>,
-        _ectx: Arc<ExecutionCtx>,
-    ) {
+    fn initialize_provers(sctx: Arc<SetupCtx>, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: Arc<ProofCtx<F>>) {
         timer_start_debug!(INITIALIZE_PROVERS);
         info!("{}: Initializing provers", Self::MY_NAME);
         for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
@@ -309,13 +270,7 @@ impl<F: Field + 'static> ProofMan<F> {
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);
     }
 
-    fn initialize_fixed_pols(
-        setups: Arc<SetupsVadcop>,
-        pctx: Arc<ProofCtx<F>>,
-        _ectx: Arc<ExecutionCtx>,
-        aggregation: bool,
-        final_snark: bool,
-    ) {
+    fn initialize_fixed_pols(setups: Arc<SetupsVadcop>, pctx: Arc<ProofCtx<F>>) {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_debug!(INITIALIZE_SETUP);
         timer_start_debug!(INITIALIZE_CONST_POLS);
@@ -334,7 +289,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
         timer_stop_and_log_debug!(INITIALIZE_CONST_POLS);
 
-        if aggregation {
+        if pctx.options.aggregation {
             info!("{}: Initializing setup fixed pols aggregation", Self::MY_NAME);
 
             let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
@@ -389,7 +344,7 @@ impl<F: Field + 'static> ProofMan<F> {
             setup_vadcop_final.load_const_pols_tree(&pctx.global_info, &ProofType::VadcopFinal, false);
             timer_stop_and_log_debug!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
 
-            if final_snark {
+            if pctx.options.final_snark {
                 let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
                 timer_start_debug!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
                 info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
@@ -477,15 +432,14 @@ impl<F: Field + 'static> ProofMan<F> {
         stage: u32,
         provers: &mut [Box<dyn Prover<F>>],
         pctx: Arc<ProofCtx<F>>,
-        ectx: Arc<ExecutionCtx>,
+
         transcript: &mut FFITranscript,
-        verify_constraints: bool,
     ) {
         if stage == 1 {
             transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
         }
 
-        let dctx = ectx.dctx.read().unwrap();
+        let dctx = pctx.dctx.read().unwrap();
 
         // calculate my roots
         let mut roots: Vec<u64> = vec![0; 4 * provers.len()];
@@ -502,7 +456,7 @@ impl<F: Field + 'static> ProofMan<F> {
 
         // add challenges to transcript in order
         for group_idxs in dctx.my_groups.iter() {
-            if verify_constraints {
+            if pctx.options.verify_constraints {
                 let dummy_elements = [F::zero(), F::one(), F::two(), F::neg_one()];
                 transcript.add_elements(dummy_elements.as_ptr() as *mut u8, 4);
             } else {
@@ -538,7 +492,7 @@ impl<F: Field + 'static> ProofMan<F> {
         provers: &mut [Box<dyn Prover<F>>],
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx>,
-        ectx: Arc<ExecutionCtx>,
+
         transcript: &mut FFITranscript,
     ) {
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
@@ -557,7 +511,7 @@ impl<F: Field + 'static> ProofMan<F> {
         }
 
         timer_stop_and_log_debug!(CALCULATING_EVALS);
-        Self::calculate_challenges(num_commit_stages + 2, provers, pctx.clone(), ectx.clone(), transcript, false);
+        Self::calculate_challenges(num_commit_stages + 2, provers, pctx.clone(), transcript);
 
         // Calculate fri polynomial
         Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 3, provers, pctx.clone(), transcript);
@@ -611,9 +565,7 @@ impl<F: Field + 'static> ProofMan<F> {
                     pctx.global_info.n_challenges.len() as u32 + 4 + opening_id,
                     provers,
                     pctx.clone(),
-                    ectx.clone(),
                     transcript,
-                    false,
                 );
             }
             timer_stop_and_log_debug!(CALCULATING_FRI_STEP);
@@ -685,7 +637,6 @@ impl<F: Field + 'static> ProofMan<F> {
         witness_lib_path: &PathBuf,
         rom_path: &Option<PathBuf>,
         public_inputs_path: &Option<PathBuf>,
-        cached_buffers_paths: &Option<HashMap<String, PathBuf>>,
         proving_key_path: &PathBuf,
         output_dir_path: &PathBuf,
         verify_constraints: bool,
@@ -706,15 +657,6 @@ impl<F: Field + 'static> ProofMan<F> {
         if let Some(publics_path) = public_inputs_path {
             if !publics_path.exists() {
                 return Err(format!("Public inputs file not found at path: {:?}", publics_path).into());
-            }
-        }
-
-        // Check each path in cached_buffers_paths exists
-        if let Some(cached_buffers) = cached_buffers_paths {
-            for (key, path) in cached_buffers {
-                if !path.exists() {
-                    return Err(format!("Cached buffer not found for key '{}' at path: {:?}", key, path).into());
-                }
             }
         }
 
