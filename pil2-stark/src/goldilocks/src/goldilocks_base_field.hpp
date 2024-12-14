@@ -256,10 +256,10 @@ static void store_avx512(Goldilocks::Element *a8, uint64_t stride_a, const __m51
 #endif
 
     /* Pack operations */
-    static void copy_pack( uint64_t nrowsPack, Element *dst, const Element *src);
-    static void copy_pack( uint64_t nrowsPack, Element *dst, uint64_t stride_dst, const Element *src);
+    static void copy_pack( uint64_t nrowsPack, Element *dst, const Element *src, bool const_src);
+    static void copy_pack( uint64_t nrowsPack, Element *dst, uint64_t stride_dst, const Element *src, bool const_src);
     static void copy_pack( uint64_t nrowsPack, Element *dst, const Element *src, uint64_t stride_src);
-    static void op_pack( uint64_t nrowsPack, uint64_t op, Element *c, const Element *a, const Element *b);
+    static void op_pack( uint64_t nrowsPack, uint64_t op, Element *c, const Element *a, bool const_a, const Element *b, bool const_b);
 
 };
 

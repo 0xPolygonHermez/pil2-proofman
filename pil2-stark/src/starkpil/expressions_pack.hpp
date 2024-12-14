@@ -181,14 +181,14 @@ public:
                     }
                 }
             } else {
-                Goldilocks::copy_pack(nrowsPack, &destVals[0], &tmp[0]);
+                Goldilocks::copy_pack(nrowsPack, &destVals[0], &tmp[0], false);
             }
         } else if(dim == FIELD_EXTENSION) {
             if(inverse) {
                 Goldilocks::Element buff[FIELD_EXTENSION*nrowsPack];
-                Goldilocks::copy_pack(nrowsPack, &buff[0], uint64_t(FIELD_EXTENSION), &tmp[0]);
-                Goldilocks::copy_pack(nrowsPack, &buff[1], uint64_t(FIELD_EXTENSION), &tmp[nrowsPack]);
-                Goldilocks::copy_pack(nrowsPack, &buff[2], uint64_t(FIELD_EXTENSION), &tmp[2*nrowsPack]);
+                Goldilocks::copy_pack(nrowsPack, &buff[0], uint64_t(FIELD_EXTENSION), &tmp[0], false);
+                Goldilocks::copy_pack(nrowsPack, &buff[1], uint64_t(FIELD_EXTENSION), &tmp[nrowsPack], false);
+                Goldilocks::copy_pack(nrowsPack, &buff[2], uint64_t(FIELD_EXTENSION), &tmp[2*nrowsPack], false);
                 if(batch) {
                     Goldilocks3::batchInverse((Goldilocks3::Element *)buff, (Goldilocks3::Element *)buff, nrowsPack);
                 } else {
@@ -200,28 +200,28 @@ public:
                 Goldilocks::copy_pack(nrowsPack, &destVals[nrowsPack], &buff[1], uint64_t(FIELD_EXTENSION));
                 Goldilocks::copy_pack(nrowsPack, &destVals[2*nrowsPack], &buff[2], uint64_t(FIELD_EXTENSION));
             } else {
-                Goldilocks::copy_pack(nrowsPack, &destVals[0], &tmp[0]);
-                Goldilocks::copy_pack(nrowsPack, &destVals[nrowsPack], &tmp[nrowsPack]);
-                Goldilocks::copy_pack(nrowsPack, &destVals[2*nrowsPack], &tmp[2*nrowsPack]);
+                Goldilocks::copy_pack(nrowsPack, &destVals[0], &tmp[0], false);
+                Goldilocks::copy_pack(nrowsPack, &destVals[nrowsPack], &tmp[nrowsPack], false);
+                Goldilocks::copy_pack(nrowsPack, &destVals[2*nrowsPack], &tmp[2*nrowsPack], false);
             }
         }
     }
 
     inline void multiplyPolynomials(Dest &dest, Goldilocks::Element* destVals) {
         if(dest.dim == 1) {
-            Goldilocks::op_pack(nrowsPack, 2, &destVals[0], &destVals[0], &destVals[FIELD_EXTENSION*nrowsPack]);
+            Goldilocks::op_pack(nrowsPack, 2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION*nrowsPack], omp_atv_false);
         } else {
             Goldilocks::Element vals[FIELD_EXTENSION*nrowsPack];
             if(dest.params[0].dim == FIELD_EXTENSION && dest.params[1].dim == FIELD_EXTENSION) {
-                Goldilocks3::op_pack(nrowsPack, 2, &vals[0], &destVals[0], &destVals[FIELD_EXTENSION*nrowsPack]);
+                Goldilocks3::op_pack(nrowsPack, 2, &vals[0], &destVals[0], false, &destVals[FIELD_EXTENSION*nrowsPack], false);
             } else if(dest.params[0].dim == FIELD_EXTENSION && dest.params[1].dim == 1) {
-                Goldilocks3::op_31_pack(nrowsPack, 2, &vals[0], &destVals[0], &destVals[FIELD_EXTENSION*nrowsPack]);
+                Goldilocks3::op_31_pack(nrowsPack, 2, &vals[0], &destVals[0], false, &destVals[FIELD_EXTENSION*nrowsPack], false);
             } else {
-                Goldilocks3::op_31_pack(nrowsPack, 2, &vals[0], &destVals[FIELD_EXTENSION*nrowsPack], &destVals[0]);
+                Goldilocks3::op_31_pack(nrowsPack, 2, &vals[0], &destVals[FIELD_EXTENSION*nrowsPack], false, &destVals[0], false);
             } 
-            Goldilocks::copy_pack(nrowsPack, &destVals[0], &vals[0]);
-            Goldilocks::copy_pack(nrowsPack, &destVals[nrowsPack], &vals[nrowsPack]);
-            Goldilocks::copy_pack(nrowsPack, &destVals[2*nrowsPack], &vals[2*nrowsPack]);
+            Goldilocks::copy_pack(nrowsPack, &destVals[0], &vals[0], false);
+            Goldilocks::copy_pack(nrowsPack, &destVals[nrowsPack], &vals[nrowsPack], false);
+            Goldilocks::copy_pack(nrowsPack, &destVals[2*nrowsPack], &vals[2*nrowsPack], false);
         }
     }
 
@@ -229,19 +229,19 @@ public:
         for(uint64_t i = 0; i < dests.size(); ++i) {
             if(dests[i].dim == 1) {
                 uint64_t offset = dests[i].offset != 0 ? dests[i].offset : 1;
-                Goldilocks::copy_pack(nrowsPack, &dests[i].dest[row*offset], uint64_t(offset), &destVals[i][0]);
+                Goldilocks::copy_pack(nrowsPack, &dests[i].dest[row*offset], uint64_t(offset), &destVals[i][0], false);
             } else {
                 uint64_t offset = dests[i].offset != 0 ? dests[i].offset : FIELD_EXTENSION;
-                Goldilocks::copy_pack(nrowsPack, &dests[i].dest[row*offset], uint64_t(offset), &destVals[i][0]);
-                Goldilocks::copy_pack(nrowsPack, &dests[i].dest[row*offset + 1], uint64_t(offset), &destVals[i][nrowsPack]);
-                Goldilocks::copy_pack(nrowsPack, &dests[i].dest[row*offset + 2], uint64_t(offset), &destVals[i][2*nrowsPack]);
+                Goldilocks::copy_pack(nrowsPack, &dests[i].dest[row*offset], uint64_t(offset), &destVals[i][0], false);
+                Goldilocks::copy_pack(nrowsPack, &dests[i].dest[row*offset + 1], uint64_t(offset), &destVals[i][nrowsPack], false);
+                Goldilocks::copy_pack(nrowsPack, &dests[i].dest[row*offset + 2], uint64_t(offset), &destVals[i][2*nrowsPack], false);
             }
         }
     }
 
     inline void printTmp1(uint64_t row, Goldilocks::Element* tmp) {
         Goldilocks::Element buff[nrowsPack];
-        Goldilocks::copy_pack(nrowsPack, buff, tmp);
+        Goldilocks::copy_pack(nrowsPack, buff, tmp, false);
         for(uint64_t i = 0; i < nrowsPack; ++i) {
             cout << "Value at row " << row + i << " is " << Goldilocks::toString(buff[i]) << endl;
         }
@@ -256,15 +256,15 @@ public:
     inline void printCommit(uint64_t row, Goldilocks::Element* bufferT, bool extended) {
         if(extended) {
             Goldilocks::Element buff[FIELD_EXTENSION*nrowsPack];
-            Goldilocks::copy_pack(nrowsPack, &buff[0], uint64_t(FIELD_EXTENSION), &bufferT[0]);
-            Goldilocks::copy_pack(nrowsPack, &buff[1], uint64_t(FIELD_EXTENSION), &bufferT[setupCtx.starkInfo.openingPoints.size()]);
-            Goldilocks::copy_pack(nrowsPack, &buff[2], uint64_t(FIELD_EXTENSION), &bufferT[2*setupCtx.starkInfo.openingPoints.size()]);
+            Goldilocks::copy_pack(nrowsPack, &buff[0], uint64_t(FIELD_EXTENSION), &bufferT[0], false);
+            Goldilocks::copy_pack(nrowsPack, &buff[1], uint64_t(FIELD_EXTENSION), &bufferT[setupCtx.starkInfo.openingPoints.size()], false);
+            Goldilocks::copy_pack(nrowsPack, &buff[2], uint64_t(FIELD_EXTENSION), &bufferT[2*setupCtx.starkInfo.openingPoints.size()], false);
             for(uint64_t i = 0; i < 1; ++i) {
                 cout << "Value at row " << row + i << " is [" << Goldilocks::toString(buff[FIELD_EXTENSION*i]) << ", " << Goldilocks::toString(buff[FIELD_EXTENSION*i + 1]) << ", " << Goldilocks::toString(buff[FIELD_EXTENSION*i + 2]) << "]" << endl;
             }
         } else {
             Goldilocks::Element buff[nrowsPack];
-            Goldilocks::copy_pack(nrowsPack, &buff[0], &bufferT[0]);
+            Goldilocks::copy_pack(nrowsPack, &buff[0], &bufferT[0], false);
             for(uint64_t i = 0; i < nrowsPack; ++i) {
                 cout << "Value at row " << row + i << " is " << Goldilocks::toString(buff[i]) << endl;
             }
@@ -279,55 +279,12 @@ public:
         uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].params[0].parserParams.destDim : 0;
         setBufferTInfo(domainExtended, expId);
 
-        Goldilocks::Element challenges[setupCtx.starkInfo.challengesMap.size()*FIELD_EXTENSION*nrowsPack];
-        for(uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); ++i) {
-            for(uint64_t j = 0; j < nrowsPack; ++j) {
-                challenges[(i*FIELD_EXTENSION)*nrowsPack + j] = params.challenges[i * FIELD_EXTENSION];
-                challenges[(i*FIELD_EXTENSION + 1)*nrowsPack + j] = params.challenges[i * FIELD_EXTENSION + 1];
-                challenges[(i*FIELD_EXTENSION + 2)*nrowsPack + j] = params.challenges[i * FIELD_EXTENSION + 2];
-            }
-        }
-
-        Goldilocks::Element numbers_[parserArgs.nNumbers*nrowsPack];
-        for(uint64_t i = 0; i < parserArgs.nNumbers; ++i) {
-            for(uint64_t k = 0; k < nrowsPack; ++k) {
-                numbers_[i*nrowsPack + k] = Goldilocks::fromU64(parserArgs.numbers[i]);
-            }
-        }
-
-        Goldilocks::Element publics[setupCtx.starkInfo.nPublics*nrowsPack];
-        for(uint64_t i = 0; i < setupCtx.starkInfo.nPublics; ++i) {
-            for(uint64_t j = 0; j < nrowsPack; ++j) {
-                publics[i*nrowsPack + j] = params.publicInputs[i];
-            }
-        }
-
-        Goldilocks::Element evals[setupCtx.starkInfo.evMap.size()*FIELD_EXTENSION*nrowsPack];
-        for(uint64_t i = 0; i < setupCtx.starkInfo.evMap.size(); ++i) {
-            for(uint64_t j = 0; j < nrowsPack; ++j) {
-                evals[(i*FIELD_EXTENSION)*nrowsPack + j] = params.evals[i * FIELD_EXTENSION];
-                evals[(i*FIELD_EXTENSION + 1)*nrowsPack + j] = params.evals[i * FIELD_EXTENSION + 1];
-                evals[(i*FIELD_EXTENSION + 2)*nrowsPack + j] = params.evals[i * FIELD_EXTENSION + 2];
-            }
-        }
-
-        Goldilocks::Element airgroupValues[setupCtx.starkInfo.airgroupValuesMap.size()*FIELD_EXTENSION*nrowsPack];
-        for(uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); ++i) {
-            for(uint64_t j = 0; j < nrowsPack; ++j) {
-                airgroupValues[(i*FIELD_EXTENSION)*nrowsPack + j] = params.airgroupValues[i * FIELD_EXTENSION];
-                airgroupValues[(i*FIELD_EXTENSION + 1)*nrowsPack + j] = params.airgroupValues[i * FIELD_EXTENSION + 1];
-                airgroupValues[(i*FIELD_EXTENSION + 2)*nrowsPack + j] = params.airgroupValues[i * FIELD_EXTENSION + 2];
-            }
-        }
-
-        Goldilocks::Element airValues[setupCtx.starkInfo.airValuesMap.size()*FIELD_EXTENSION*nrowsPack];
-        for(uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); ++i) {
-            for(uint64_t j = 0; j < nrowsPack; ++j) {
-                airValues[(i*FIELD_EXTENSION)*nrowsPack + j] = params.airValues[i * FIELD_EXTENSION];
-                airValues[(i*FIELD_EXTENSION + 1)*nrowsPack + j] = params.airValues[i * FIELD_EXTENSION + 1];
-                airValues[(i*FIELD_EXTENSION + 2)*nrowsPack + j] = params.airValues[i * FIELD_EXTENSION + 2];
-            }
-        }
+        Goldilocks::Element* challenges = params.challenges;
+        Goldilocks::Element* numbers =(Goldilocks::Element*) parserArgs.numbers;
+        Goldilocks::Element* publics = params.publicInputs;
+        Goldilocks::Element* evals = params.evals;
+        Goldilocks::Element* airgroupValues = params.airgroupValues;
+        Goldilocks::Element* airValues = params.airValues;
 
     #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
@@ -365,427 +322,427 @@ public:
                         switch (ops[kk]) {
                             case 0: {
                                 // COPY commit1 to tmp1
-                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack]);
+                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], false);
                                 i_args += 3;
                                 break;
                             }
                             case 1: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: commit1
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack], false);
                                 i_args += 6;
                                 break;
                             }
                             case 2: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: tmp1
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &tmp1[args[i_args + 4] * nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &tmp1[args[i_args + 4] * nrowsPack],false);
                                 i_args += 5;
                                 break;
                             }
                             case 3: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: public
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &publics[args[i_args + 4] * nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &publics[args[i_args + 4]], true);
                                 i_args += 5;
                                 break;
                             }
                             case 4: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: number
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &numbers_[args[i_args + 4]*nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &numbers[args[i_args + 4]], true);
                                 i_args += 5;
                                 break;
                             }
                             case 5: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: airvalue1
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &airValues[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airValues[args[i_args + 4]*FIELD_EXTENSION], true);
                                 i_args += 5;
                                 break;
                             }
                             case 6: {
                                 // COPY tmp1 to tmp1
-                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &tmp1[args[i_args + 1] * nrowsPack]);
+                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &tmp1[args[i_args + 1] * nrowsPack], false);
                                 i_args += 2;
                                 break;
                             }
                             case 7: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: tmp1
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], &tmp1[args[i_args + 3] * nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &tmp1[args[i_args + 3] * nrowsPack], false);
                                 i_args += 4;
                                 break;
                             }
                             case 8: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: public
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], &publics[args[i_args + 3] * nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &publics[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 9: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: number
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], &numbers_[args[i_args + 3]*nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &numbers[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 10: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: airvalue1
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 11: {
                                 // COPY public to tmp1
-                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &publics[args[i_args + 1] * nrowsPack]);
+                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &publics[args[i_args + 1]], true);
                                 i_args += 2;
                                 break;
                             }
                             case 12: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: public
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2] * nrowsPack], &publics[args[i_args + 3] * nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2]], true, &publics[args[i_args + 3]],true);
                                 i_args += 4;
                                 break;
                             }
                             case 13: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: number
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2] * nrowsPack], &numbers_[args[i_args + 3]*nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2]], true, &numbers[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 14: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: airvalue1
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2] * nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2]], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 15: {
                                 // COPY number to tmp1
-                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &numbers_[args[i_args + 1]*nrowsPack]);
+                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], false, &numbers[args[i_args + 1]], true);
                                 i_args += 2;
                                 break;
                             }
                             case 16: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: number
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &numbers_[args[i_args + 2]*nrowsPack], &numbers_[args[i_args + 3]*nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &numbers[args[i_args + 2]], true, &numbers[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 17: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: airvalue1
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &numbers_[args[i_args + 2]*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &numbers[args[i_args + 2]], true,  &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 18: {
                                 // COPY airvalue1 to tmp1
-                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &airValues[args[i_args + 1]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &airValues[args[i_args + 1]*FIELD_EXTENSION], true);
                                 i_args += 2;
                                 break;
                             }
                             case 19: {
                                 // OPERATION WITH DEST: tmp1 - SRC0: airvalue1 - SRC1: airvalue1
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &airValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 20: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: commit1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack], false);
                                 i_args += 6;
                                 break;
                             }
                             case 21: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: tmp1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &tmp1[args[i_args + 4] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &tmp1[args[i_args + 4] * nrowsPack], false);
                                 i_args += 5;
                                 break;
                             }
                             case 22: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: public
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &publics[args[i_args + 4] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &publics[args[i_args + 4]], true);
                                 i_args += 5;
                                 break;
                             }
                             case 23: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: number
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &numbers_[args[i_args + 4]*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &numbers[args[i_args + 4]], true);
                                 i_args += 5;
                                 break;
                             }
                             case 24: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airvalue1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &airValues[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airValues[args[i_args + 4]*FIELD_EXTENSION], true);
                                 i_args += 5;
                                 break;
                             }
                             case 25: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: commit1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack],false);
                                 i_args += 5;
                                 break;
                             }
                             case 26: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: tmp1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &tmp1[args[i_args + 3] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION],false, &tmp1[args[i_args + 3] * nrowsPack], false);
                                 i_args += 4;
                                 break;
                             }
                             case 27: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: public
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &publics[args[i_args + 3] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION],false, &publics[args[i_args + 3]],true);
                                 i_args += 4;
                                 break;
                             }
                             case 28: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: number
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &numbers_[args[i_args + 3]*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &numbers[args[i_args + 3]],true);
                                 i_args += 4;
                                 break;
                             }
                             case 29: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airvalue1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION],false, &airValues[args[i_args + 3]*FIELD_EXTENSION],true);
                                 i_args += 4;
                                 break;
                             }
                             case 30: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: commit1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack],false);
                                 i_args += 5;
                                 break;
                             }
                             case 31: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: tmp1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &tmp1[args[i_args + 3] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &tmp1[args[i_args + 3] * nrowsPack],false);
                                 i_args += 4;
                                 break;
                             }
                             case 32: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: public
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &publics[args[i_args + 3] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true,  &publics[args[i_args + 3]],true);
                                 i_args += 4;
                                 break;
                             }
                             case 33: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: number
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &numbers_[args[i_args + 3]*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 34: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airvalue1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 35: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: commit1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
                                 i_args += 5;
                                 break;
                             }
                             case 36: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: tmp1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &tmp1[args[i_args + 3] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &tmp1[args[i_args + 3] * nrowsPack], false);
                                 i_args += 4;
                                 break;
                             }
                             case 37: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: public
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &publics[args[i_args + 3] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &publics[args[i_args + 3]],true);
                                 i_args += 4;
                                 break;
                             }
                             case 38: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: number
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &numbers_[args[i_args + 3]*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 39: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airvalue1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 40: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: commit1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
                                 i_args += 5;
                                 break;
                             }
                             case 41: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: tmp1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &tmp1[args[i_args + 3] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &tmp1[args[i_args + 3] * nrowsPack], false);
                                 i_args += 4;
                                 break;
                             }
                             case 42: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: public
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &publics[args[i_args + 3] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &publics[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 43: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: number
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &numbers_[args[i_args + 3]*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 44: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: airvalue1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 45: {
                                 // COPY commit3 to tmp3
-                                Goldilocks3::copy_pack(nrowsPack, &tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack]);
+                                Goldilocks3::copy_pack(nrowsPack, &tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], false);
                                 i_args += 3;
                                 break;
                             }
                             case 46: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: commit3
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack], false);
                                 i_args += 6;
                                 break;
                             }
                             case 47: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: tmp3
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &tmp3[args[i_args + 4] * nrowsPack * FIELD_EXTENSION]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &tmp3[args[i_args + 4] * nrowsPack * FIELD_EXTENSION],false);
                                 i_args += 5;
                                 break;
                             }
                             case 48: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: challenge
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &challenges[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &challenges[args[i_args + 4]*FIELD_EXTENSION], true);
                                 i_args += 5;
                                 break;
                             }
                             case 49: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airgroupvalue
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &airgroupValues[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airgroupValues[args[i_args + 4]*FIELD_EXTENSION], true);
                                 i_args += 5;
                                 break;
                             }
                             case 50: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airvalue3
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &airValues[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airValues[args[i_args + 4]*FIELD_EXTENSION], true);
                                 i_args += 5;
                                 break;
                             }
                             case 51: {
                                 // COPY tmp3 to tmp3
-                                Goldilocks3::copy_pack(nrowsPack, &tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION]);
+                                Goldilocks3::copy_pack(nrowsPack, &tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], false);
                                 i_args += 2;
                                 break;
                             }
                             case 52: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: tmp3
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &tmp3[args[i_args + 3] * nrowsPack * FIELD_EXTENSION], false);
                                 i_args += 4;
                                 break;
                             }
                             case 53: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: challenge
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &challenges[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 54: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airgroupvalue
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &airgroupValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 55: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airvalue3
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &airValues[args[i_args + 3]*FIELD_EXTENSION],true);
                                 i_args += 4;
                                 break;
                             }
                             case 56: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: challenge
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &challenges[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &challenges[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 57: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airgroupvalue
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airgroupValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &airgroupValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 58: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airvalue3
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 59: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airgroupvalue
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airgroupValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &airgroupValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 60: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airvalue3
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack], LDBL_TRUE_MIN);
                                 i_args += 4;
                                 break;
                             }
                             case 61: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: airvalue3
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 62: {
                                 // COPY eval to tmp3
-                                Goldilocks3::copy_pack(nrowsPack, &tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 1]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::copy_pack(nrowsPack, &tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 1]*FIELD_EXTENSION], true);
                                 i_args += 2;
                                 break;
                             }
                             case 63: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: eval
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &evals[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &evals[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 64: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: eval
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &evals[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 65: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: commit1
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
                                 i_args += 5;
                                 break;
                             }
                             case 66: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: eval
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &evals[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &evals[args[i_args + 4]*FIELD_EXTENSION], true);
                                 i_args += 5;
                                 break;
                             }
                             case 67: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: eval
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &evals[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION], true, &evals[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }
                             case 68: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: public
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &publics[args[i_args + 3] * nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION], true, &publics[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 69: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: number
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &numbers_[args[i_args + 3]*nrowsPack]);
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
                                 i_args += 4;
                                 break;
                             }
                             case 70: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: eval
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &evals[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &evals[args[i_args + 3]*FIELD_EXTENSION], true);
                                 i_args += 4;
                                 break;
                             }

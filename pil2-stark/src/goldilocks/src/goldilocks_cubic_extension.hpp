@@ -321,14 +321,14 @@ public:
 
     /* Pack operations */
 
-    static void copy_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_);
-    static void add_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
-    static void sub_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
-    static void mul_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
-    static void mul_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *challenge_, const Goldilocks::Element *challenge_ops_);
+    static void copy_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, bool const_a);
+    static void add_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, bool const_a, const Goldilocks::Element *b_, bool const_b);
+    static void sub_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, bool const_a, const Goldilocks::Element *b_, bool cont_b);
+    static void mul_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, bool const_a, const Goldilocks::Element *b_, bool const_b);
+    static void mul_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, bool const_a, const Goldilocks::Element *challenge_, const Goldilocks::Element *challenge_ops_);
     
-    static void op_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const Goldilocks::Element *b);
-    static void op_31_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const Goldilocks::Element *b);
+    static void op_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, bool const_a, const Goldilocks::Element *b, bool const_b);
+    static void op_31_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, bool const_a, const Goldilocks::Element *b, bool const_b);
 
     /* AVX operations */
     static void copy_avx(Element_avx c_, const Element_avx a_);
