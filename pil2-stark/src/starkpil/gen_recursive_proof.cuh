@@ -141,9 +141,9 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
     uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
 
-    Dest numStruct(num);
+    Dest numStruct(num, N*FIELD_EXTENSION, false);
     numStruct.addParams(setupCtx.expressionsBin.expressionsInfo[numFieldId]);
-    Dest denStruct(den);
+    Dest denStruct(den, N*FIELD_EXTENSION, false);
     denStruct.addParams(setupCtx.expressionsBin.expressionsInfo[denFieldId], true);
     std::vector<Dest> dests = {numStruct, denStruct};
     //rick: fins aqui
