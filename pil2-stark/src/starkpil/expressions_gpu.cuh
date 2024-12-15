@@ -55,11 +55,17 @@ struct DeviceArguments {
     //Dests
     DestGPU* dests;
     uint64_t nDests;
+    // Expressions bin
+    uint8_t* ops;
+    uint32_t nOpsTotal;
+    uint16_t* args;
+    uint32_t nArgsTotal;
     //buffer
     uint64_t nBlocks; 
     uint64_t singleBufferSize;
     uint64_t bufferTSize;
-    Goldilocks::Element * bufferT_; 
+    Goldilocks::Element * bufferT_;
+
 };
 
  __global__ void setDestsParams(DestGPU* d_dests, Params* d_params, uint64_t iDests);
@@ -201,6 +207,11 @@ public:
         deviceArgs.airgroupValues = params.airgroupValues;
         deviceArgs.nAirValues = setupCtx.starkInfo.airValuesMap.size();
         deviceArgs.airValues = params.airValues;
+        // Expressions bin
+        deviceArgs.ops = parserArgs.ops;
+        deviceArgs.nOpsTotal = parserArgs.nOpsTotal;
+        deviceArgs.args = parserArgs.args;
+        deviceArgs.nArgsTotal = parserArgs.nArgsTotal;
         
     }
 
@@ -1470,6 +1481,15 @@ public:
         cudaMalloc(&d_airValues, deviceArgs.nAirValues * sizeof(Goldilocks::Element));
         cudaMemcpy(d_airValues, deviceArgs.airValues, deviceArgs.nAirValues * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
 
+        // binary expressions
+        uint8_t* d_ops;
+        cudaMalloc(&d_ops, deviceArgs.nOpsTotal * sizeof(uint8_t));
+        cudaMemcpy(d_ops, deviceArgs.ops, deviceArgs.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice);
+
+        uint16_t* d_args;
+        cudaMalloc(&d_args, deviceArgs.nArgsTotal * sizeof(uint64_t));
+        cudaMemcpy(d_args, deviceArgs.args, deviceArgs.nArgsTotal * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
 
         // Update the device struct with device pointers
         DeviceArguments h_deviceArgs = deviceArgs;
@@ -1486,17 +1506,18 @@ public:
         h_deviceArgs.pols = params_gpu.pols;
         h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
         h_deviceArgs.dests = d_dests;
+        for(uint32_t iDest = 0; iDest < deviceArgs.nDests; ++iDest) {
+            setDestsParams<<<1,1>>>(d_dests, d_params[iDest], iDest);
+        }
         h_deviceArgs.challenges = d_challenges;
         h_deviceArgs.numbers = d_numbers;
         h_deviceArgs.publics = d_publics;
         h_deviceArgs.evals = d_evals;
         h_deviceArgs.airgroupValues = d_airgroupValues;
         h_deviceArgs.airValues = d_airValues;
+        h_deviceArgs.ops = d_ops;
+        h_deviceArgs.args = d_args;
         
-        for(uint32_t iDest = 0; iDest < deviceArgs.nDests; ++iDest) {
-            setDestsParams<<<1,1>>>(d_dests, d_params[iDest], iDest);
-        }
-
         // Copy the updated struct to the device
         cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice);
     }
