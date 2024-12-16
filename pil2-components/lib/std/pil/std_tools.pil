@@ -21,9 +21,26 @@ function compress_exprs(const expr busid, const expr expressions[]): expr {
     return exprs_compressed;
 }
 
-function get_L1(): expr {
+// function get_L1(): expr {
+//     if (!defined(air.__L1__)) {
+//         col fixed air.__L1__ = [1,0...];
+//     }
+//     return air.__L1__;
+// }
+
+function init_L1_LAST() {
     if (!defined(air.__L1__)) {
         col fixed air.__L1__ = [1,0...];
+        const expr air.__LAST__ = air.__L1__';
     }
+}
+
+function get_L1(): expr {    
+    init_L1_LAST();
     return air.__L1__;
+}
+
+function get_LAST(): expr {    
+    init_L1_LAST();
+    return air.__LAST__;
 }

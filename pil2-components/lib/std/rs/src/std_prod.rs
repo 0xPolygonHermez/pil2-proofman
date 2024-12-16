@@ -3,61 +3,51 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
-use proofman::{WitnessComponent, WitnessManager};
+use proofman::{get_hint_field_gc_constant_a, WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ModeName, ProofCtx, SetupCtx, StdMode};
 use proofman_hints::{
-    get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a, get_hint_ids_by_name,
-    update_airgroupvalue, acc_mul_hint_fields, HintFieldOptions, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
+    get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a, acc_mul_hint_fields,
+    update_airgroupvalue, get_hint_ids_by_name, HintFieldOptions, HintFieldValue, HintFieldValuesVec,
 };
 
-use crate::{print_debug_info, update_debug_data, DebugData, Decider};
-
-type ProdAirsItem = (usize, usize, Vec<u64>, Vec<u64>); // (airgroup_id, air_id, gprod_hints, debug_hints_data, debug_hints)
+use crate::{
+    print_debug_info, update_debug_data, DebugData, get_global_hint_field_constant_as, get_hint_field_constant_as_field,
+    get_row_field_value, extract_field_element_as_usize,
+};
 
 pub struct StdProd<F: PrimeField> {
     mode: StdMode,
-    prod_airs: Mutex<Vec<ProdAirsItem>>,
+    stage_wc: Option<Mutex<u32>>,
     debug_data: Option<DebugData<F>>,
-}
-
-impl<F: PrimeField> Decider<F> for StdProd<F> {
-    fn decide(&self, sctx: Arc<SetupCtx>, pctx: Arc<ProofCtx<F>>) {
-        // Scan the pilout for airs that have prod-related hints
-        for airgroup in pctx.pilout.air_groups() {
-            for air in airgroup.airs() {
-                let airgroup_id = air.airgroup_id;
-                let air_id = air.air_id;
-
-                let setup = sctx.get_setup(airgroup_id, air_id);
-                let p_expressions_bin = setup.p_setup.p_expressions_bin;
-
-                let gprod_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_col");
-                let debug_hints_data = get_hint_ids_by_name(p_expressions_bin, "gprod_member_data");
-                if !gprod_hints.is_empty() {
-                    // Save the air for latter witness computation
-                    self.prod_airs.lock().unwrap().push((airgroup_id, air_id, gprod_hints, debug_hints_data));
-                }
-            }
-        }
-    }
 }
 
 impl<F: PrimeField> StdProd<F> {
     const MY_NAME: &'static str = "STD Prod";
 
-    pub fn new(mode: StdMode, wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
+    pub fn new(mode: StdMode, wcm: Arc<WitnessManager<F>>) {
+        let sctx = wcm.get_sctx();
+
+        // Retrieve the std_prod_users hint ID
+        let std_prod_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");
+
+        // Initialize std_prod with the extracted data
         let std_prod = Arc::new(Self {
             mode: mode.clone(),
-            prod_airs: Mutex::new(Vec::new()),
+            stage_wc: match std_prod_users_id.is_empty() {
+                true => None,
+                false => {
+                    // Get the "stage_wc" hint
+                    let stage_wc = get_global_hint_field_constant_as::<u32, F>(sctx.clone(), std_prod_users_id[0], "stage_wc");
+                    Some(Mutex::new(stage_wc))
+                }
+            },
             debug_data: if mode.name == ModeName::Debug { Some(Mutex::new(HashMap::new())) } else { None },
         });
 
+        // Register the component
         wcm.register_component(std_prod.clone(), None, None);
-
-        std_prod
     }
 
     fn debug(
@@ -66,19 +56,21 @@ impl<F: PrimeField> StdProd<F> {
         sctx: &SetupCtx,
         air_instance: &mut AirInstance<F>,
         num_rows: usize,
-        debug_hints_data: Vec<u64>,
+        debug_data_hints: Vec<u64>,
     ) {
         let debug_data = self.debug_data.as_ref().expect("Debug data missing");
         let airgroup_id = air_instance.airgroup_id;
         let air_id = air_instance.air_id;
         let instance_id = air_instance.air_instance_id.unwrap_or_default();
 
-        for hint in debug_hints_data.iter() {
+        // Process each debug hint
+        for &hint in debug_data_hints.iter() {
+            // Extract hint fields
             let _name_piop = get_hint_field_constant::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
-                *hint as usize,
+                hint as usize,
                 "name_piop",
                 HintFieldOptions::default(),
             );
@@ -87,48 +79,37 @@ impl<F: PrimeField> StdProd<F> {
                 sctx,
                 airgroup_id,
                 air_id,
-                *hint as usize,
+                hint as usize,
                 "name_expr",
                 HintFieldOptions::default(),
             );
 
-            let busid =
-                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "busid", HintFieldOptions::default());
-            let busid = if let HintFieldValue::Field(busid) = busid {
-                if let Some(opids) = &self.mode.opids {
-                    if !opids.contains(&busid.as_canonical_biguint().to_u64().expect("Cannot convert to u64")) {
-                        continue;
-                    }
-                }
-
-                busid
-            } else {
-                panic!("sumid must be a field element");
-            };
-
-            let HintFieldValue::Field(is_global) = get_hint_field_constant::<F>(
+            let opid = get_hint_field_constant_as_field::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
-                *hint as usize,
+                hint as usize,
+                "busid",
+                HintFieldOptions::default(),
+            );
+
+            let is_global = get_hint_field_constant_as_field::<F>(
+                sctx,
+                airgroup_id,
+                air_id,
+                hint as usize,
                 "is_global",
                 HintFieldOptions::default(),
-            ) else {
-                log::error!("is_global hint must be a field element");
-                panic!();
-            };
+            );
 
-            let HintFieldValue::Field(proves) = get_hint_field_constant::<F>(
+            let proves = get_hint_field_constant_as_field::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
-                *hint as usize,
+                hint as usize,
                 "proves",
                 HintFieldOptions::default(),
-            ) else {
-                log::error!("proves hint must be a field element");
-                panic!();
-            };
+            );
             let proves = if proves.is_zero() {
                 false
             } else if proves.is_one() {
@@ -138,48 +119,43 @@ impl<F: PrimeField> StdProd<F> {
                 panic!();
             };
 
-            let selector =
-                get_hint_field::<F>(sctx, pctx, air_instance, *hint as usize, "selector", HintFieldOptions::default());
+            let selector: HintFieldValue<F> =
+                get_hint_field::<F>(sctx, pctx, air_instance, hint as usize, "selector", HintFieldOptions::default());
 
             let expressions = get_hint_field_a::<F>(
                 sctx,
                 pctx,
                 air_instance,
-                *hint as usize,
+                hint as usize,
                 "expressions",
                 HintFieldOptions::default(),
             );
 
-            let HintFieldValue::Field(deg_expr) = get_hint_field_constant::<F>(
+            let deg_expr = get_hint_field_constant_as_field::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
-                *hint as usize,
+                hint as usize,
                 "deg_expr",
                 HintFieldOptions::default(),
-            ) else {
-                log::error!("deg_expr hint must be a field element");
-                panic!();
-            };
+            );
 
-            let HintFieldValue::Field(deg_sel) = get_hint_field_constant::<F>(
+            let deg_sel = get_hint_field_constant_as_field::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
-                *hint as usize,
+                hint as usize,
                 "deg_sel",
                 HintFieldOptions::default(),
-            ) else {
-                log::error!("deg_sel hint must be a field element");
-                panic!();
-            };
+            );
 
+            // If both the expresion and the mul are of degree zero, then simply update the bus once
             if deg_expr.is_zero() && deg_sel.is_zero() {
                 update_bus(
                     airgroup_id,
                     air_id,
                     instance_id,
-                    busid,
+                    opid,
                     proves,
                     &selector,
                     &expressions,
@@ -187,14 +163,15 @@ impl<F: PrimeField> StdProd<F> {
                     debug_data,
                     is_global.is_one(),
                 );
-            } else {
-                // Otherwise, update the bus for each row
+            }
+            // Otherwise, update the bus for each row
+            else {
                 for j in 0..num_rows {
                     update_bus(
                         airgroup_id,
                         air_id,
                         instance_id,
-                        busid,
+                        opid,
                         proves,
                         &selector,
                         &expressions,
@@ -210,7 +187,7 @@ impl<F: PrimeField> StdProd<F> {
                 airgroup_id: usize,
                 air_id: usize,
                 instance_id: usize,
-                busid: F,
+                opid: F,
                 proves: bool,
                 selector: &HintFieldValue<F>,
                 expressions: &HintFieldValuesVec<F>,
@@ -218,41 +195,29 @@ impl<F: PrimeField> StdProd<F> {
                 debug_data: &DebugData<F>,
                 is_global: bool,
             ) {
-                let sel = if let HintFieldOutput::Field(selector) = selector.get(row) {
-                    if !selector.is_zero() && !selector.is_one() {
-                        log::error!("Selector must be either 0 or 1");
-                        panic!();
-                    }
-                    selector.is_one()
-                } else {
-                    log::error!("Selector must be a field element");
-                    panic!();
-                };
-
-                if sel {
-                    update_debug_data(
-                        debug_data,
-                        busid,
-                        expressions.get(row),
-                        airgroup_id,
-                        air_id,
-                        instance_id,
-                        row,
-                        proves,
-                        F::one(),
-                        is_global,
-                    );
+                let selector = get_row_field_value(selector, row, "sel");
+                if selector.is_zero() {
+                    return;
                 }
+
+                update_debug_data(
+                    debug_data,
+                    opid,
+                    expressions.get(row),
+                    airgroup_id,
+                    air_id,
+                    instance_id,
+                    row,
+                    proves,
+                    F::one(),
+                    is_global,
+                );
             }
         }
     }
 }
 
 impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
-    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, _ectx: Arc<ExecutionCtx>, sctx: Arc<SetupCtx>) {
-        self.decide(sctx, pctx);
-    }
-
     fn calculate_witness(
         &self,
         stage: u32,
@@ -261,75 +226,94 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
         _ectx: Arc<ExecutionCtx>,
         sctx: Arc<SetupCtx>,
     ) {
-        if stage == 2 {
-            let prod_airs = self.prod_airs.lock().unwrap();
+        let stage_wc = self.stage_wc.as_ref();
+        if stage_wc.is_none() {
+            return;
+        }
 
-            for (airgroup_id, air_id, gprod_hints, debug_hints_data) in prod_airs.iter() {
-                let air_instance_ids = pctx.air_instance_repo.find_air_instances(*airgroup_id, *air_id);
+        if stage == *stage_wc.unwrap().lock().unwrap() {
+            // Get the number of product check users and their airgroup and air IDs
+            let std_prod_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users")[0];
 
+            let num_users = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), std_prod_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), std_prod_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), std_prod_users, "air_ids", false);
+
+            // Process each product check user
+            for i in 0..num_users {
+                let airgroup_id = extract_field_element_as_usize(&airgroup_ids.values[i], "airgroup_id");
+                let air_id = extract_field_element_as_usize(&air_ids.values[i], "air_id");
+
+                // Get all air instances ids for this airgroup and air_id
+                let air_instance_ids = pctx.air_instance_repo.find_air_instances(airgroup_id, air_id);
                 for air_instance_id in air_instance_ids {
-                    let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
-                    let air_instance = &mut air_instances_vec[air_instance_id];
+                    // Retrieve all air instances
+                    let air_instaces = &mut pctx.air_instance_repo.air_instances.write().unwrap();
+                    let air_instance = &mut air_instaces[air_instance_id];
 
-                    // Get the air associated with the air_instance
-                    let airgroup_id = air_instance.airgroup_id;
-                    let air_id = air_instance.air_id;
+                    // Get the AIR associated with the air_instance
                     let air = pctx.pilout.get_air(airgroup_id, air_id);
                     let air_name = air.name().unwrap_or("unknown");
-
                     log::debug!("{}: ··· Computing witness for AIR '{}' at stage {}", Self::MY_NAME, air_name, stage);
 
+                    // Setup and process AIR instance
                     let num_rows = air.num_rows();
+                    let setup = sctx.get_setup(airgroup_id, air_id);
+                    let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
+                    let gprod_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_col");
+                    let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_debug_data");
+
+                    // Debugging, if enabled
                     if self.mode.name == ModeName::Debug {
-                        self.debug(&pctx, &sctx, air_instance, num_rows, debug_hints_data.clone());
+                        self.debug(&pctx, &sctx, air_instance, num_rows, debug_data_hints.clone());
                     }
 
                     // We know that at most one gprod hint exists
-                    let gprod_hint = if gprod_hints.len() > 1 {
-                        panic!("Multiple gprod hints found for AIR '{}'", air.name().unwrap_or("unknown"));
-                    } else {
-                        gprod_hints[0] as usize
-                    };
+                    if gprod_hints.len() > 1 {
+                        panic!("Multiple gprod hints found for AIR '{}'", air_name);
+                    }
 
-                    // This call calculates "numerator" / "denominator" and accumulates it into "reference". Its last value is stored into "result"
-                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and calculating the operations in Rust,
-                    let (pol_id, _) = acc_mul_hint_fields::<F>(
-                        &sctx,
-                        &pctx,
-                        air_instance,
-                        gprod_hint,
-                        "reference",
-                        "result",
-                        "numerator_air",
-                        "denominator_air",
-                        HintFieldOptions::default(),
-                        HintFieldOptions::inverse(),
-                        false,
-                    );
+                    // Process the gprod hints
+                    if let Some(&gprod_hint) = gprod_hints.first() {
+                        // This call calculates "numerator" / "denominator" and accumulates it into "reference". Its last value is stored into "result"
+                        // Alternatively, this could be done using get_hint_field and set_hint_field methods and calculating the operations in Rust,
+                        let (pol_id, _) = acc_mul_hint_fields::<F>(
+                            &sctx,
+                            &pctx,
+                            air_instance,
+                            gprod_hint as usize,
+                            "reference",
+                            "result",
+                            "numerator_air",
+                            "denominator_air",
+                            HintFieldOptions::default(),
+                            HintFieldOptions::inverse(),
+                            false,
+                        );
+                        air_instance.set_commit_calculated(pol_id as usize);
 
-                    air_instance.set_commit_calculated(pol_id as usize);
-
-                    let airgroupvalue_id = update_airgroupvalue::<F>(
-                        &sctx,
-                        &pctx,
-                        air_instance,
-                        gprod_hint,
-                        "result",
-                        "numerator_direct",
-                        "denominator_direct",
-                        HintFieldOptions::default(),
-                        HintFieldOptions::inverse(),
-                        false,
-                    );
-
-                    air_instance.set_airgroupvalue_calculated(airgroupvalue_id as usize);
+                        let airgroupvalue_id = update_airgroupvalue::<F>(
+                            &sctx,
+                            &pctx,
+                            air_instance,
+                            gprod_hint as usize,
+                            "result",
+                            "numerator_direct",
+                            "denominator_direct",
+                            HintFieldOptions::default(),
+                            HintFieldOptions::inverse(),
+                            false,
+                        );
+                        air_instance.set_airgroupvalue_calculated(airgroupvalue_id as usize);
+                    }
                 }
             }
         }
     }
 
     fn end_proof(&self) {
+        // Print debug info if in debug mode
         if self.mode.name == ModeName::Debug {
             let name = Self::MY_NAME;
             let max_values_to_print = self.mode.n_vals;
