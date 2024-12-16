@@ -1,0 +1,62 @@
+<% let airgroupId; -%>
+<% if(starkInfo.airgroupId !== undefined) { -%>
+<%      airgroupId = starkInfo.airgroupId; -%>
+<% } -%>
+
+<%  let prefix_ = prefix !== "" ? `${prefix}_` : ""; -%>
+
+<%  if(!options.final && !isNaN(airgroupId)) { -%>
+    component <%- componentName %> = StarkVerifier<%- airgroupId %>();
+<%  } else { -%>
+    component <%- componentName %> = StarkVerifier();
+<%  } -%>
+
+<%  if(options.addPublics && nPublics > 0) { -%>
+    for (var i=0; i< <%- nPublics %>; i++) {
+        <%- componentName %>.publics[i] <== <%- prefix_ %>publics[i];
+    }
+<%  } -%>
+
+<%  if(starkInfo.airgroupValuesMap.length > 0) { -%>
+    <%- componentName %>.airgroupvalues <== <%- prefix_ %>airgroupvalues;
+<%  } -%>
+
+<%  if(starkInfo.airValuesMap.length > 0) { -%>
+    <%- componentName %>.airvalues <== <%- prefix_ %>airvalues;
+<%  } -%>
+
+<%  for (let s=1; s<=starkInfo.nStages + 1; ++s) { -%>
+    <%- componentName %>.root<%- s %> <== <%- prefix_ %>root<%- s %>;
+<% } -%>
+
+    <%- componentName %>.evals <== <%- prefix_ %>evals;
+
+    <%- componentName %>.s0_valsC <== <%- prefix_ %>s0_valsC;
+    <%- componentName %>.s0_siblingsC <== <%- prefix_ %>s0_siblingsC;
+
+<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    <%- componentName %>.s0_vals_<%- starkInfo.customCommits[i].name %>_0 <== <%- prefix_ %>s0_vals_<%- starkInfo.customCommits[i].name %>_0;
+    <%- componentName %>.s0_siblings_<%- starkInfo.customCommits[i].name %>_0 <== <%- prefix_ %>s0_siblings_<%- starkInfo.customCommits[i].name %>_0;
+<%  } -%>
+
+<%  for (let s=1; s<=starkInfo.nStages + 1; ++s) { -%>
+<%     if (starkInfo.mapSectionsN[`cm${s}`] > 0) { -%>
+    <%- componentName %>.s0_vals<%- s %> <== <%- prefix_ %>s0_vals<%- s %>;
+    <%- componentName %>.s0_siblings<%- s %> <== <%- prefix_ %>s0_siblings<%- s %>;
+<%     } -%>
+<% } -%>
+
+<% for (let s=1; s<starkInfo.starkStruct.steps.length; s++) {   -%>
+    <%- componentName %>.s<%- s %>_root <== <%- prefix_ %>s<%- s %>_root;
+<% }                                                  -%>
+<% for (let s=1; s<starkInfo.starkStruct.steps.length; s++) {   -%>
+    <%- componentName %>.s<%- s %>_vals <== <%- prefix_ %>s<%- s %>_vals;
+    <%- componentName %>.s<%- s %>_siblings <== <%- prefix_ %>s<%- s %>_siblings;
+<% }                                                -%>
+
+    <%- componentName %>.finalPol <== <%- prefix_ %>finalPol;
+
+<%  if(options.setEnableInput) { -%>
+<%  let enableInput = options.setEnableInput === true ? 1 : options.setEnableInput -%>
+    <%- componentName %>.enable <== <%- enableInput %>;
+<%  } -%>

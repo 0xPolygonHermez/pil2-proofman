@@ -1,0 +1,46 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+include "iszero.circom";
+include "mux1.circom";
+<% for (let i = 0; i < verifierFilenames.length; ++i) { -%>
+include "<%- verifierFilenames[i] %>";
+<% } -%>
+
+<%- include('src/recursion/helpers/templates/verify_recursive2.circom.ejs', { publics, isTest: false }); %>
+<%- include('src/recursion/helpers/templates/select_vk.circom.ejs', { publics, isTest: false }); %>
+
+template Main() {
+    var rootCBasic[4] = [<%- basicVK[0].join(",") %>];
+
+    signal input publics[<%- starkInfo.nPublics - 4 %>];
+    signal input rootC[4];
+
+<%  if(options.selectCircuitInput) { -%> 
+    signal input a_isAggregatedCircuit;
+    signal input b_isAggregatedCircuit;
+<%  } -%> 
+
+<%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "a", starkInfo, nPublics: starkInfo.nPublics - 4 }); %>
+<%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "b", starkInfo, nPublics: starkInfo.nPublics - 4 }); %>
+    
+    VerifyRecursive2()(publics, a_publics, b_publics);
+
+<%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vA", prefix: "a", starkInfo, nPublics: starkInfo.nPublics - 4,  options: { ...options, addPublics: true } }); %>
+<%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vB", prefix: "b", starkInfo, nPublics: starkInfo.nPublics - 4,  options: { ...options, addPublics: true } }); %>
+
+    for (var i=0; i<4; i++) {
+        vA.publics[<%- publics.nPublics %> + i] <== rootC[i];
+        vB.publics[<%- publics.nPublics %> + i] <== rootC[i];
+    }
+
+<%  if(options.selectCircuitInput) { -%>
+    vA.rootC <== SelectVerificationKey()(a_isAggregatedCircuit, rootCBasic, rootC);
+    vB.rootC <== SelectVerificationKey()(b_isAggregatedCircuit, rootCBasic, rootC);
+<%  } else { -%> 
+    vA.rootC <== SelectVerificationKey()(a_publics, rootCBasic, rootC);
+    vB.rootC <== SelectVerificationKey()(b_publics, rootCBasic, rootC);
+<%  } -%>
+}
+
+component main {public [publics, rootC]}= Main();

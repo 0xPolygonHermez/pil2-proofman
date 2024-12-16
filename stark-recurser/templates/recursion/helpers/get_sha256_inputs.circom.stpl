@@ -1,0 +1,84 @@
+
+<% if(isTest) { -%>
+    pragma circom 2.1.0;
+    pragma custom_templates;
+<% } -%>
+
+include "lessthangl.circom";
+include "sha256/sha256.circom";
+include "bitify.circom";
+
+template getSha256Inputs() {
+<%  if(options.addAggregatorAddr) { -%>
+    signal input aggregatorAddr;
+<%  } -%>
+
+    signal input publics[<%- publics.nPublics %>];
+
+    signal output publicsHash;
+
+<%  let totalBits = publics.definitions.reduce((curr, acc) => curr + acc.chunks[0]*acc.chunks[1], 0); -%>
+<%  if(options.addAggregatorAddr) { -%>
+<%  totalBits += 160; -%> 
+<%  } -%>
+
+    var totalBits = <%- totalBits %>;
+
+    component publicsHasher = Sha256(totalBits);
+
+<%  let offset = 0; -%>
+<%  for(let i = 0; i < publics.definitions.length; i++) { -%>
+<%      let nChunks = publics.definitions[i].chunks[0]; -%>
+<%      let nBitsPerChunk = publics.definitions[i].chunks[1]; -%>
+<%      let name = publics.definitions[i].name; -%>
+    var <%- name %>Pos = <%- publics.definitions[i].initialPos %>;
+    var <%- name %>BitsOffset = <%- offset %>;
+<% offset += nChunks * nBitsPerChunk -%>
+<%  if(nChunks === 1) { -%>
+    signal <%- name %> <== publics[<%- name %>Pos];
+<%  let nBitsPerChunk_ = publics.definitions[i].avoidAlias ? nBitsPerChunk - 1 : nBitsPerChunk; -%>
+    signal <%- name %>Bits[<%- nBitsPerChunk_ %>] <== Num2Bits(<%- nChunks * nBitsPerChunk_ %>)(<%- name %>);
+    for (var j=0; j< <%- nBitsPerChunk_ %>; j++) {
+        publicsHasher.in[<%- name %>BitsOffset + <%- nBitsPerChunk %> - 1 - j] <== <%- name %>Bits[j];
+    }
+<%      if(publics.definitions[i].avoidAlias) { -%>
+    publicsHasher.in[<%- name %>BitsOffset] <== 0;
+<%      } -%>
+<%  } else { -%>
+    signal <%- name %>[<%- nChunks %>];
+    signal <%- name %>Bits[<%- nChunks %>][<%- nBitsPerChunk %>];
+    for(var i=0; i< <%- nChunks %>; i++) {
+        <%- name %>[i] <== publics[<%- name %>Pos + i];
+        <%- name %>Bits[i] <== Num2Bits(<%- nBitsPerChunk %>)(<%- name %>[i]);
+        for(var j = 0; j < <%- nBitsPerChunk %>; j++) {
+            publicsHasher.in[<%- name%>BitsOffset + <%- nBitsPerChunk %>*(<%- nChunks %> - i) - 1 - j] <== <%- name %>Bits[i][j];
+        }
+    }
+<%  if(publics.definitions[i].lessThanGL) { -%>
+    for (var i = 0; i < <%- nChunks / 2 %>; i++) {
+        _<== LessThanGoldilocks()(<%- name %>[2*i] + (1 << 32) * <%- name %>[2*i + 1]); 
+    }
+<%  } -%>
+<%  } -%>
+
+<%  } -%>
+
+<%  if(options.addAggregatorAddr) { -%>
+    var aggregatorAddrBitsOffset = <%- offset %>;
+    signal aggregatorAddrBits[160] <== Num2Bits(160)(aggregatorAddr);
+    for (var i=0; i<160; i++) {
+        publicsHasher.in[aggregatorAddrBitsOffset + 160 - 1 -i] <== aggregatorAddrBits[i];
+    }
+<%  } -%>
+
+    component b2nPublicsHash = Bits2Num(256);
+    for (var i = 0; i < 256; i++) {
+        b2nPublicsHash.in[i] <== publicsHasher.out[255-i];
+    }
+    
+    publicsHash <== b2nPublicsHash.out;
+}
+
+<% if(isTest) { -%>
+component main = getSha256Inputs();
+<% } -%>

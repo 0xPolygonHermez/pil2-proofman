@@ -1,0 +1,40 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+<% for (let i = 0; i < verifierFilenames.length; ++i) { -%>
+include "<%- verifierFilenames[i] %>";
+<% } -%>
+
+<%  if(options.hasRecursion) { -%>
+<%- include('src/recursion/helpers/select_vk.circom.ejs', { publics, isTest: false }); %>
+<%  } -%>
+
+template Main() {
+<%  if(options.selectCircuitInput) { -%> 
+    signal input isAggregatedCircuit;
+<%  } -%>
+
+<%  if(options.hasRecursion) { -%>
+    var rootCBasic[4] = [<%- basicVK[0].join(",") %>];
+    var rootCAgg[4] = [<%- aggregatedVK[0].join(",") %>];
+<%  } -%>
+
+    <%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "", starkInfo, nPublics: options.hasRecursion ? starkInfo.nPublics - 4 : starkInfo.nPublics, options: { ...options, addPublics: true } }); %>
+
+    <%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "sV", prefix: "", starkInfo, nPublics: options.hasRecursion ? starkInfo.nPublics - 4 : starkInfo.nPublics,  options: { ...options, addPublics: true } }); %>
+
+<%  if(options.hasRecursion) { -%>
+    for (var i=0; i<4; i++) {
+        vA.publics[<%- nPublics %> + i] <== rootCAgg[i];
+    }
+
+<%  if(options.selectCircuitInput) { -%> 
+    sV.rootC <== SelectVerificationKey(publics, rootCBasic, rootCAgg);
+<%  } else { -%>
+    sV.rootC <== SelectVerificationKey(isAggregatedCircuit, rootCBasic, rootCAgg);
+<%  } -%>
+
+<%  } -%>
+}
+
+component main {public [ publics ]}= Main();

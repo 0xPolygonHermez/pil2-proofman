@@ -1,0 +1,31 @@
+<%  let signalType = options.isInput ? "input" : "output" -%>
+<%  let prefix_ = prefix ? `${prefix}_` : ""; -%>
+
+    signal <%- signalType %> <%- prefix_ %>circuitType;
+<%  if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}circuitType`) -%>
+
+<%  if(vadcopInfo.aggTypes[airgroupId].length > 0) { -%>
+<%  if(!options.isAggregation) { -%>
+    signal <%- signalType %> <%- prefix_ %>aggregationTypes[<%- vadcopInfo.aggTypes[airgroupId].length  %>];
+<%    if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}aggregationTypes`) -%>
+<%  } -%>
+    signal <%- signalType %> <%- prefix_ %>airgroupvalues[<%- vadcopInfo.aggTypes[airgroupId].length  %>][3];
+<%    if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}airgroupvalues`) -%>
+<%  } -%>
+
+
+<%  for (let i = 0; i < vadcopInfo.numChallenges.length + 1; ++i) { -%>
+    signal <%- signalType %> <%- prefix_ %>root<%- i + 1 %>[4];
+<%    if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}root${i + 1}`) -%>
+<%  } -%>
+
+    signal <%- signalType %> <%- prefix_ %>evalsHash[4];
+<%  if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}evalsHash`) -%>
+
+<%  for(let i = 1; i < vadcopInfo.stepsFRI.length; i++) { -%>
+    signal <%- signalType %> <%- prefix_ %>s<%- i %>_root[4];
+<%    if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}s${i}_root`) -%>
+<%  } -%>
+
+    signal <%- signalType %> <%- prefix_ %>finalPolHash[4];
+<%  if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}finalPolHash`) -%>

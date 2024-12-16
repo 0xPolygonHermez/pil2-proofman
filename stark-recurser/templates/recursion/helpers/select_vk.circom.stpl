@@ -1,0 +1,29 @@
+<% if(isTest) { -%>
+    pragma circom 2.1.0;
+    pragma custom_templates;
+
+    include "iszero.circom";
+    include "mux1.circom";
+<% } -%>
+
+template SelectVerificationKey() {
+<%  if(publics.verificationKey) { -%>
+    signal input publics[<%- publics.nPublics %>];
+<%  } else { -%>
+    signal input isAggregatedCircuit;
+<%  } -%>
+    signal input rootCBasic[4];
+    signal input rootC[4];
+    
+    signal output selectedRootC[4];
+
+<%  if(publics.verificationKey) { -%>
+<%  let newPos = publics.definitions.find(d => d.name === publics.verificationKey[0]).initialPos; -%>
+<%  let oldPos = publics.definitions.find(d => d.name === publics.verificationKey[1]).initialPos; -%>
+    signal isBasic <== IsZero()(publics[<%- newPos %>] - publics[<%- oldPos %>] - 1);
+<%  } else { -%>
+    signal isBasic <== IsZero()(isAggregatedCircuit);
+<%  } -%>
+
+    selectedRootC <== MultiMux1(4)([rootC, rootCBasic], isBasic);
+}

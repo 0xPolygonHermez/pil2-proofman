@@ -1,0 +1,53 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+<% for (let i = 0; i < verifierFilenames.length; ++i) { -%>
+include "<%- verifierFilenames[i] %>";
+<% } -%>
+
+<% let batchPublics = publics[0]; -%>
+<% let blobInnerPublics = publics[1]; -%>
+<% let blobOuterPublics = publics[2]; -%>
+
+<% let starkInfoBatch = starkInfo[0]; -%>
+<% let starkInfoBlob = starkInfo[1]; -%>
+
+
+<%- include('src/recursion/helpers/templates/select_vk.circom.ejs', { publics: batchPublics }); %>
+
+<%- include('src/recursion/helpers/templates/verify_recursive2.circom.ejs', { publics: batchPublics }); %>
+
+<%- include('src/recursion/helpers/templates/verify_blob_outer.circom.ejs', { batchPublics, blobOuterPublics, blobInnerPublics }); %>
+
+
+template Main() {
+
+    var rootCBasicBatch[4] = [<%- basicVK[0].join(",") %>];
+    var rootCAggBatch[4] = [<%- aggregatedVK[0].join(",") %>];
+
+    signal input publics[<%- blobOuterPublics.nPublics %>];
+    signal input rootC[4];
+
+    signal input chainId;
+
+    // Batch Proof Inputs
+    signal input batch_isAggregatedCircuit;
+    <%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "batch", starkInfo: starkInfoBatch }); %>
+    
+    // Blob Inner Proof Inputs
+    <%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "blob", starkInfo: starkInfoBlob }); %>
+
+    signal isValidBlob <== VerifyBlobOuter()(publics, batch_publics, blob_inner_publics, chainId);
+
+    <%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vBatch", starkInfo: starkInfoBatch, nPublics: batchPublics.nPublics, options: { addPublics: true, setEnableInput: "isValidBlob" } }); %>
+
+    for (var i=0; i<4; i++) {
+        vBatch.publics[<%- batchPublics.nPublics %> + i] <== rootCAggBatch[i];
+    }
+
+    vBatch.rootC <== SelectVerificationKey()batch_isAggregatedCircuit, rootCBasicBatch, rootCAggBatch);
+
+    <%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vBlob", starkInfo: starkInfoBlob, options: { addPublics: true } }); %>
+}
+
+component main {public [publics, rootC]}= Main();

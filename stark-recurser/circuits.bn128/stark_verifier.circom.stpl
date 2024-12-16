@@ -1,0 +1,1412 @@
+pragma circom 2.1.0;
+<% if(custom) { -%> pragma custom_templates; <% } -%>
+
+<%  const NFields = Math.floor(((starkInfo.starkStruct.nQueries *  starkInfo.starkStruct.steps[0].nBits) - 1)/253)+1; -%>
+<%
+class Transcript {
+    constructor(name) {
+        this.state = "0";
+        this.pending = [];
+        this.out = [];
+        this.stCnt =0;
+        this.hCnt =0;
+        this.hiCnt =0;
+        this.n2bCnt =0;
+        this.lastCodePrinted = 0;
+        this.name = name;
+
+        this.code = [];
+    }
+
+
+    getField(v) {
+        this.code.push(`${v} <== BN1toGL3()(${this.getFields1()});`);    
+    }
+
+    getFieldHash(v) {
+        this.code.push(`${v} <== ${this.getFields1()};`);    
+    }
+
+    getFields1() {
+        if (this.out.length > 0) {
+            this.hiCnt++;
+            return this.out.shift();
+        }
+        this.updateState();
+        return this.getFields1();
+    }
+
+    getFields253() {
+        if (this.out.length > 0) {
+            this.hiCnt++;
+            return this.out.shift();
+        }
+        this.updateState();
+        return this.getFields253();
+    }
+
+    updateState() {
+        let signalName = "transcriptHash";
+        if(this.name) signalName += "_" + this.name;
+        if(this.hCnt > 0) {
+            const firstUnused = Math.max(this.hiCnt, 1);
+            if(firstUnused < (transcriptArity + 1)) {
+                this.code.push(`for(var i = ${firstUnused}; i < ${transcriptArity + 1}; i++){
+        _ <== ${signalName}_${this.hCnt -1}[i]; // Unused transcript values        
+    }`)
+            }
+        }
+        while (this.pending.length < transcriptArity) {
+            this.pending.push("0");
+        }
+        const poseidon = custom ? `CustomPoseidon(${transcriptArity})` : `PoseidonEx(${transcriptArity}, ${transcriptArity + 1})`;
+        this.code.push(`\n    signal ${signalName}_${this.hCnt++}[${Number(transcriptArity) + 1}] <== ${poseidon}([${this.pending.join(',')}], ${this.state});`);
+        for (let i=0; i<transcriptArity+1; i++) {
+            this.out[i] = `${signalName}_${this.hCnt-1}[${i}]`;
+        }
+        this.state = `${signalName}_${this.hCnt-1}[0]`;
+        this.pending = [];
+        this.hiCnt = 0;
+    }
+
+
+    put(a, l) {
+        if (typeof l !== "undefined") {
+            for (let i=0; i<l; i++) {
+                this._add1(`${a}[${i}]`);
+            }
+        } else {
+            this._add1(a);
+        }
+    }
+
+    _add1(a) {
+        this.out = [];
+        this.pending.push(a);
+        if (this.pending.length == transcriptArity) {
+            this.updateState();
+        }
+    }
+
+    getPermutations(v, n, nBits) {
+        let signalName = "transcriptHash";
+        if(this.name) signalName += "_" + this.name;
+        const totalBits = n*nBits;
+        const n2b = [];
+        for (let i=0; i<NFields; i++) {
+            const f = this.getFields253();
+            n2b[i] = `transcriptN2b_${this.n2bCnt++}`;
+            this.code.push(`signal {binary} ${n2b[i]}[254] <== Num2Bits_strictT()(${f});`);
+        }
+        if(this.hiCnt < transcriptArity + 1) {
+            this.code.push(`for(var i = ${this.hiCnt}; i < ${transcriptArity + 1}; i++){
+        _ <== ${signalName}_${this.hCnt - 1}[i]; // Unused transcript values           
+    }\n`)
+        }
+        this.code.push(`// From each transcript hash converted to bits, we assign those bits to queriesFRI[q] to define the query positions`)
+        this.code.push(`var q = 0; // Query number `)
+        this.code.push(`var b = 0; // Bit number `)
+        for(let i = 0; i<NFields; i++) {
+            const nBits = i + 1 == NFields ? totalBits - 253*i : 253;
+            this.code.push(`for(var j = 0; j < ${nBits}; j++) {
+        ${v}[q][b] <== ${n2b[i]}[j];
+        b++;
+        if(b == ${starkStruct.steps[0].nBits}) {
+            b = 0; 
+            q++;
+        }
+    }`);
+            if(nBits === 253) {
+                this.code.push(`_ <== ${n2b[i]}[253]; // Unused last bit\n`);
+            } else {
+                this.code.push(`for(var j = ${nBits}; j < 254; j++) {
+        _ <== ${n2b[i]}[j]; // Unused bits
+    }`);
+            }
+        }
+    }
+
+    getCode() {
+        for (let i=this.lastCodePrinted; i<this.code.length; i++) this.code[i] = "    "+this.code[i];
+        let code = this.code.slice(this.lastCodePrinted, this.code.length).join("\n");
+        this.lastCodePrinted = this.code.length;
+        return code;
+    }
+
+} -%>
+
+<% function unrollCode(code) {                                                          -%>
+<%  let c = 0; -%>
+<%  let v = 0; -%>
+<%  let values = {}; -%>
+<%    function ref(r, destDim) { -%>
+<%        if (r.type == "eval") { -%>
+<%            return "evals[" + r.id + "]"; -%>
+<%        } else if (r.type == "challenge") { -%>
+<%            if(r.stage === qStage) { -%>
+<%                return "challengeQ"; -%>
+<%            } else if(r.stage === evalsStage) { -%>
+<%                return "challengeXi"; -%>
+<%            } else if(r.stage === friStage) { -%>
+<%                return "challengesFRI[" + r.stageId + "]"; -%>
+<%            } else { -%>
+<%                return "challengesStage" + r.stage + "[" + r.stageId + "]"; -%>
+<%            } -%>
+<%        } else if (r.type == "public") { -%>
+<%            return "publics[" + r.id + "]"; -%>
+<%        } else if (r.type == "x") { -%>
+<%            return "challengeXi"; -%>
+<%        } else if (r.type == "Zi") { -%>
+<%            const boundary = starkInfo.boundaries[r.boundaryId]; -%>
+<%            if(boundary.name === "everyRow") { -%>
+<%                return "Zh"; -%>
+<%            } else if(boundary.name === "firstRow") { -%>
+<%                return "Zfirst"; -%>
+<%            } else if(boundary.name === "lastRow") { -%>
+<%                return "Zlast"; -%>
+<%            } else if(boundary.name === "everyFrame") { -%>
+<%                const boundaryId = starkInfo.boundaries.filter(b=>b.name === "everyFrame").findIndex(b => b.offsetMin === boundary.offsetMin && b.offsetMax === boundary.offsetMax); -%>
+<%                return "Zframe" + boundaryId + "[" + (boundary.offsetMin + boundary.offsetMax - 1) + "]"; -%>
+<%            } else throw new Error("Invalid boundary: " + r.boundaryId); -%>
+<%        } else if (r.type == "xDivXSubXi") { -%>
+<%            return "xDivXSubXi[" + r.id + "]"; -%>
+<%        } else if (r.type == "tmp") { -%>
+<%            return "tmp_"+r.id; -%>
+<%        } else if (r.type == "cm") { -%>
+<%            const pol = starkInfo.cmPolsMap[r.id]; -%>
+<%            return "mapValues." + r.type + pol.stage + "_" + pol.stageId; -%>
+<%        } else if (r.type == "custom") { -%>
+<%            const pol = starkInfo.customCommitsMap[r.commitId][r.id]; -%>
+<%            return "mapValues." + r.type + "_" + starkInfo.customCommits[r.commitId].name + "_" + pol.stage + "_" + pol.stageId; -%>
+<%        } else if (r.type == "const") { -%>
+<%            return "consts[" + r.id + "]"; -%>
+<%        } else if (r.type === "airgroupvalue") { -%>
+<%            return "airgroupvalues[" + r.id + "]"; -%>
+<%        } else if (r.type == "number") { -%>
+<%            let val = r.value; -%>
+<%            if(val < 0n) val = F.add(BigInt(val),18446744069414584321n); -%>
+<%            if(!((BigInt(val) + "_" + destDim) in values)) {     -%>
+<%                 if(destDim === 1) { -%>
+    signal {maxNum} constValue_<%- c %> <== GLConst(<%- val %>)();
+<%                 } else { -%>
+    signal {maxNum} constValue_<%- c %>[3] <== GLConst3(<%- val %>)();
+<%                 } -%>
+<%                    values[BigInt(val) + "_" + destDim] = "constValue_" + c++;                                    -%>
+<%            }                                                                                         -%>
+<%            return values[BigInt(val) + "_" + destDim]; -%>
+<%        } else { -%>
+<%            throw new Error("Invalid Ref: " +r.type); -%>
+<%        } -%>
+<%    } -%>
+<% for(let i=0; i<code.length; i++) {                                 -%>
+<%      let inst = code[i];                                           -%>
+<%      if (inst.dest.type == "tmp" && ![1,3].includes(inst.dest.dim)) {                -%>
+<%          throw new Error("Invalid dimension");                                       -%>
+<%      }                                                                               -%>
+<%      if(inst.src[0] && inst.src[0].type === "Zi") inst.src[0].dim = 3;               -%>
+<%      if(inst.src[1] && inst.src[1].type === "Zi") inst.src[1].dim = 3;               -%>
+<%      if(inst.src[2] && inst.src[2].type === "Zi") inst.src[2].dim = 3;               -%>
+<%      let ina;                                                                        -%>
+<%      let inb;                                                                        -%>
+<%      if(["add", "sub", "mul"].includes(inst.op)) {                                   -%>
+<%          ina = ref(inst.src[0], inst.dest.dim);                                      -%>
+<%          inb = ref(inst.src[1], inst.dest.dim);                                                    -%>
+<%          let val0, val1; -%>
+<%          if(inst.src[0].type === "number") val0 = BigInt(inst.src[0].value) >= 0n ? BigInt(inst.src[0].value) : F.add(BigInt(inst.src[0].value), 18446744069414584321n); -%>
+<%          if(inst.src[1].type === "number") val1 = BigInt(inst.src[1].value) >= 0n ? BigInt(inst.src[1].value) : F.add(BigInt(inst.src[1].value), 18446744069414584321n); -%>
+<%          if(inst.src[0].dim === 1 && inst.src[1].dim === 3 && (inst.src[0].type !== "number" 
+                || (val0 !== 0n && !((val0 + "_" + inst.dest.dim) in values)))) {                        -%>
+    signal {maxNum} <%- "value_" + v %>[3] <== GLC3()(<%- ina %>);
+<%          ina = "value_" + v++;                                                       -%>
+<%          } else if (inst.src[0].dim === 3 && inst.src[1].dim === 1 && (inst.src[1].type !== "number" 
+                || (val1 !== 0n && !((val1 + "_" + inst.dest.dim) in values)))) {                -%>
+    signal {maxNum} <%- "value_" + v %>[3] <== GLC3()(<%- inb %>);
+<%          inb = "value_" + v++;                                                       -%>
+<%          }                                                                           -%>
+<%      } else if (inst.op == "copy") {                                                 -%>
+<%          ina = ref(inst.src[0], inst.dest.dim);                                                     -%>
+<%      }   -%>
+<%      if (inst.op == "add") {                                                         -%>
+<%          if ((inst.src[0].dim==1) && (inst.src[1].dim==1)) {                         -%>
+    signal {maxNum} <%- ref(inst.dest) %> <== GLAdd()(<%- ina %>,<%- inb %>);
+<%          } else if ([1,3].includes(inst.src[0].dim) && [1,3].includes(inst.src[1].dim)) { -%>
+    signal {maxNum} <%- ref(inst.dest) %>[3] <== GLCAdd()(<%- ina %>, <%- inb %>);
+<%          } else throw new Error("Invalid src dimensions");                          -%>
+<%      } else if (inst.op == "sub") {                                                  -%>
+<%          if ((inst.src[0].dim==1) && (inst.src[1].dim==1)) {                         -%>
+    signal {maxNum} <%- ref(inst.dest) %> <== GLSub()(<%- ina %>,<%- inb %>);
+<%          } else if ((inst.src[0].dim==1) && (inst.src[1].dim==3)) {                  -%>
+    signal {maxNum} <%- ref(inst.dest) %>[3] <== GLCSub()(<%- ina %>, <%- inb %>);
+<%          } else if ((inst.src[0].dim==3) && (inst.src[1].dim==1)) {                  -%>
+<%              if(inst.src[1].type !== "number" || BigInt(inst.src[1].value) !== 0n) { -%>
+    signal {maxNum} <%- ref(inst.dest) %>[3] <== GLCSub()(<%- ina %>, <%- inb %>);
+<%              } else { -%>
+    signal {maxNum} <%- ref(inst.dest) %>[3] <== GLCCopy()(<%- ina %>);
+<%              } -%>
+<%          } else if ((inst.src[0].dim==3) && (inst.src[1].dim==3)) {                  -%>
+    signal {maxNum} <%- ref(inst.dest) %>[3] <== GLCSub()(<%- ina %>, <%- inb %>);
+<%          } else throw new Error("Invalid src dimensions");                          -%>
+<%      } else if (inst.op == "mul") {                                                  -%>
+<%          if ((inst.src[0].dim==1) && (inst.src[1].dim==1)) {                         -%>
+    signal {maxNum} <%- ref(inst.dest) %> <== GLMul()(<%- ina %>,<%- inb %>);
+<%          } else if ([1,3].includes(inst.src[0].dim) && [1,3].includes(inst.src[1].dim)) { -%>
+    signal {maxNum} <%- ref(inst.dest) %>[3] <== GLCMul()(<%- ina %>, <%- inb %>);
+<%          } else throw new Error("Invalid src dimensions");                          -%>
+<%      } else if (inst.op == "copy") {                                                 -%>
+<%          if (inst.src[0].dim==1) {                                                   -%>
+    signal <%- ref(inst.dest) %> <== <%- ref(inst.src[0]) %>;
+<%          } else if (inst.src[0].dim==3) {                                            -%>
+    signal <%- ref(inst.dest) %>[3] <== <%- ref(inst.src[0]) %>;
+<%          } else throw new Error("Invalid src dimensions");                          -%>
+<%      } else throw new Error("Invalid op");                                           -%>
+<% }                                                                                    -%>
+<% return ref(code[code.length-1].dest);                                                -%>
+<% }                                                                                    -%>
+    
+
+<% if(custom) { -%>
+include "custom/evalpol.circom";
+include "custom/fft.circom";
+include "custom/gl.circom";
+include "custom/lessthangl.circom";
+include "custom/merklehash.circom";
+include "custom/poseidon.circom";
+//include "custom/rangecheck.circom";
+<% } else { -%>
+include "evalpol.circom";
+include "fft.circom";
+include "gl.circom";
+include "lessthangl.circom";
+include "merklehash.circom";
+include "poseidon.circom";
+<% } -%>
+include "bitifyT.circom";
+include "bn1togl3.circom";
+include "treeselector.circom";
+<% if (!options.skipMain) {  -%>
+include "compconstant64.circom";
+include "bitify.circom";
+include "sha256/sha256.circom";
+<% } -%>
+
+
+<% let qStage = starkInfo.nStages + 1; -%>
+<% let evalsStage = starkInfo.nStages + 2; -%>
+<% let friStage = starkInfo.nStages + 3; -%>
+
+template GLConst(num) {
+    signal output {maxNum} out;
+
+    out.maxNum = num;
+    out <== num;
+}
+
+template GLConst3(num) {
+    signal output {maxNum} out[3];
+
+    out.maxNum = num;
+    out <== [num, 0, 0];
+}
+
+template GLC3() {
+    signal input {maxNum} in;
+    signal output {maxNum} out[3];
+
+    out.maxNum = in.maxNum;
+    out <== [in, 0, 0];
+}
+/* 
+    Calculate FRI Queries
+*/
+template calculateFRIQueries() {
+    
+    signal input challengeFRIQueries[3];
+    signal output {binary} queriesFRI[<%- starkStruct.nQueries %>][<%- starkStruct.steps[0].nBits %>];
+
+<%  const transcriptQueries = new Transcript("friQueries"); -%>
+<%  transcriptQueries.put("challengeFRIQueries", 3); -%>
+
+<% transcriptQueries.getPermutations("queriesFRI", starkStruct.nQueries, starkStruct.steps[0].nBits, true); -%>
+<%- transcriptQueries.getCode(); %>
+}
+
+<% if (!options.inputChallenges) { -%>
+
+/* 
+    Calculate the transcript
+*/ 
+template Transcript() {
+<%  if(starkInfo.nPublics > 0) { -%>
+    signal input {maxNum} publics[<%- starkInfo.nPublics %>];
+<%  } -%>
+    signal input rootC;
+<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+<%  const stage = i + 1; -%>
+    signal input root<%- stage %>;
+<% } -%>
+    signal input root<%- qStage %>;
+    signal input {maxNum} evals[<%- starkInfo.evMap.length %>][3]; 
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+    signal input s<%- s %>_root;
+<% }                                                     -%>
+    signal input {maxNum} finalPol[<%- 1 << starkStruct.steps[starkStruct.steps.length-1].nBits %>][3];
+
+<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+    signal output {maxNum} challengesStage<%- i + 1 %>[<%- starkInfo.challengesMap.filter(c => c.stage === i + 1).length %>][3];
+<%  } -%>
+
+    signal output {maxNum} challengeQ[3];
+    signal output {maxNum} challengeXi[3];
+    signal output {maxNum} challengesFRI[2][3];
+    signal output {maxNum} challengesFRISteps[<%- starkStruct.steps.length %>][3];
+    signal output {binary} queriesFRI[<%- starkStruct.nQueries %>][<%- starkStruct.steps[0].nBits %>];
+
+<%  if(starkInfo.starkStruct.hashCommits) { -%>
+<%  if(starkInfo.nPublics > 0) { -%>
+    signal publicsHash;
+<%  } -%>
+    signal evalsHash;
+    signal lastPolFRIHash;
+<%  } -%>
+<%  const transcript = new Transcript(); -%>
+<%  transcript.put("rootC"); -%>
+<%  if(starkInfo.nPublics > 0) { -%>
+<%   if(!starkInfo.starkStruct.hashCommits) { -%>
+<%         transcript.put("publics", starkInfo.nPublics); -%>
+<%   } else { -%>
+<%-      transcript.getCode(); %>
+<%      const transcriptPublics = new Transcript("publics");
+        transcriptPublics.put("publics", starkInfo.nPublics);
+        transcriptPublics.getFieldHash("publicsHash"); -%>
+<%-      transcriptPublics.getCode(); %>
+<%      transcript.put("publicsHash"); -%>
+<%  } -%>
+<%  } -%>
+
+<%   for(let i=0; i < starkInfo.nStages; i++) {
+        const stage = i + 1;
+        for(let j = 0; j < starkInfo.challengesMap.filter(c => c.stage === stage).length; ++j) {
+            transcript.getField("challengesStage" + stage + "[" + j + "]", 3);
+        }
+        transcript.put("root" + stage);
+    }    
+    
+    transcript.getField("challengeQ", 3);
+    transcript.put("root" + qStage);
+
+    transcript.getField("challengeXi", 3); -%>
+<%   if(!starkInfo.starkStruct.hashCommits) { -%>
+<%      for (let i=0; i<starkInfo.evMap.length; i++) {
+            transcript.put(`evals[${i}]`, 3);
+        } -%>
+<%   } else { -%>
+<%-      transcript.getCode(); %>
+<%      const transcriptEvals = new Transcript("evals");
+        for (let i=0; i<starkInfo.evMap.length; i++) {
+            transcriptEvals.put(`evals[${i}]`, 3);
+        }
+        transcriptEvals.getField("evalsHash"); -%>
+<%-      transcriptEvals.getCode(); %>
+<%      transcript.put("evalsHash"); -%>
+<%  } -%>
+    
+<%  transcript.getField("challengesFRI[0]", 3);
+    transcript.getField("challengesFRI[1]", 3); -%>
+<%  for (let si=0; si<starkStruct.steps.length; si++) { -%>
+<%      transcript.getField(`challengesFRISteps[${si}]`, 3); -%>
+<%      if (si < starkStruct.steps.length-1) { -%>
+<%          transcript.put(`s${si+1}_root`); -%>
+<%        } else { -%>
+<%          if(!starkInfo.starkStruct.hashCommits) { -%>
+<%              for (let j=0; j< 1<<starkStruct.steps[starkStruct.steps.length-1].nBits; j++ ) {
+                    transcript.put(`finalPol[${j}]`, 3);
+                } -%>
+<%          } else { -%>
+<%-             transcript.getCode(); %>
+<%              const transcriptLastPolFRI = new Transcript("lastPolFRI");
+                for (let j=0; j< 1<<starkStruct.steps[starkStruct.steps.length-1].nBits; j++ ) {
+                    transcriptLastPolFRI.put(`finalPol[${j}]`, 3);
+                }
+                transcriptLastPolFRI.getField("lastPolFRIHash"); -%>
+<%-              transcriptLastPolFRI.getCode(); %>
+<%              transcript.put("lastPolFRIHash"); -%>
+<%          } -%>
+<%      } -%>
+<%  } -%>
+<%- transcript.getCode() %>
+
+    signal challengeFRIQueries[3];
+<%  transcript.getField("challengeFRIQueries", 3); -%>
+<%- transcript.getCode() %>
+
+    queriesFRI <== calculateFRIQueries()(challengeFRIQueries);
+}
+
+<% } -%>
+
+/*
+    Verify that FRI polynomials are built properly
+*/
+template parallel VerifyFRI(prevStepBits, currStepBits, nextStepBits, e0, e1) {
+    var nextStep = currStepBits - nextStepBits;
+    var step = prevStepBits - currStepBits;
+
+    signal input {binary} queriesFRI[currStepBits];
+    signal input {maxNum} challengeFRIStep[3];
+    signal input {maxNum} s_vals_curr[1 << step][3];
+    signal input {maxNum} s_vals_next[1 << nextStep][3];
+    signal input {binary} enable;
+
+    var q = 0xFFFFFFFFFFFFFFFF;
+
+    signal {maxNum} s_sx[currStepBits - 1];
+    s_sx.maxNum = q;
+
+    signal {maxNum} inp[currStepBits - 2];
+    inp.maxNum = q;
+
+    signal {maxNum} ina;
+    signal {maxNum} inb;
+    ina.maxNum = q;
+    inb.maxNum = q;
+
+    ina <== queriesFRI[0] * (e1 - e0) + e0;
+    inb <== queriesFRI[1] * (invroots(prevStepBits - 1) -1) + 1;
+    s_sx[0] <== GLMul()(ina, inb);
+    for (var i=1; i< currStepBits - 1; i++) {
+        inp[i - 1] <== queriesFRI[i + 1] * (invroots(prevStepBits - (i + 1)) -1) + 1;
+        s_sx[i] <== GLMul()(s_sx[i-1], inp[i - 1]);
+    }
+
+    signal {maxNum} s_X[3]; 
+    if(currStepBits > 1) {
+        s_X.maxNum = s_sx.maxNum;
+        s_X <== [s_sx[currStepBits - 2], 0, 0];
+    } else {
+        signal {maxNum} inp1 <== GLConst(e0)();
+        signal {maxNum} inp2;
+        inp2.maxNum = q;
+        inp2 <== queriesFRI[0] * (invroots(prevStepBits) -1) + 1;
+
+        signal {maxNum} mul <== GLMul()(inp1, inp2);
+        s_X.maxNum = mul.maxNum;
+        s_X <== [mul, 0, 0];
+    }
+
+    signal {maxNum} coefs[1 << step][3] <== FFT(step, 1)(s_vals_curr);
+    signal {maxNum} evalXprime[3] <== GLCMul()(challengeFRIStep, s_X);
+    signal {maxNum} evalPol[3] <== EvalPol(1 << step)(coefs, evalXprime);
+    
+    signal {binary} s_keys_lowValues[nextStep];
+    for(var i = 0; i < nextStep; i++) { s_keys_lowValues[i] <== queriesFRI[i + nextStepBits]; } 
+    signal {maxNum} lowValues[3] <== TreeSelector(nextStep, 3)(s_vals_next, s_keys_lowValues);
+
+    signal {maxNum} vals[3] <== GLCSub()(evalPol, lowValues);
+    signal {maxNum} normC[3] <== GLCNorm()(vals);
+    
+    enable * normC[0] === 0;
+    enable * normC[1] === 0;
+    enable * normC[2] === 0;
+}
+
+/* 
+    Verify that all committed polynomials are calculated correctly
+*/
+template parallel VerifyEvaluations() {
+<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.challengesMap.filter(c => c.stage === stage).length === 0) continue; -%>
+    signal input {maxNum} challengesStage<%- stage %>[<%- starkInfo.challengesMap.filter(c => c.stage === stage).length -%>][3];
+<%  } -%>
+    signal input {maxNum} challengeQ[3];
+    signal input {maxNum} challengeXi[3];
+    signal input {maxNum} evals[<%- starkInfo.evMap.length %>][3];
+<%  if(starkInfo.nPublics > 0) { -%>
+    signal input {maxNum} publics[<%- starkInfo.nPublics %>];
+<%  } -%>
+<%  if(starkInfo.airgroupValuesMap.length > 0) { -%>
+    signal input airgroupvalues[<%- starkInfo.airgroupValuesMap.length %>][3];
+<%  } -%>
+    signal input {binary} enable;
+
+    var q = 0xFFFFFFFFFFFFFFFF;
+
+    // zMul stores all the powers of z (which is stored in challengeXi) up to nBits, i.e, [z, z^2, ..., z^nBits]
+    signal {maxNum} zMul[<%- starkStruct.nBits %>][3];
+    zMul.maxNum = q;
+    for (var i=0; i< <%- starkStruct.nBits %> ; i++) {
+        if(i==0){
+            zMul[i] <== GLCMul()(challengeXi, challengeXi);
+        } else {
+            zMul[i] <== GLCMul()(zMul[i-1], zMul[i-1]);
+        }
+    }
+
+    signal {maxNum} oneGL[3];
+    oneGL.maxNum = 1;
+    oneGL <== [1,0,0];
+
+    // Store the vanishing polynomial Zh = x^nBits - 1 evaluated at z
+    signal {maxNum} Z[3] <== GLCSub()(zMul[<%- starkStruct.nBits - 1 %>], oneGL);
+    signal {maxNum} Zh[3] <== GLCInv()(Z);
+
+<%  if(starkInfo.boundaries.map(b => b.name).includes("firstRow")) { -%>
+    signal {maxNum} Zf[3] <== GLCSub()(challengeXi, oneGL);
+    signal {maxNum} Zfirst[3] <== GLCInv()(Zf);
+<%  } -%>
+
+<%  if(starkInfo.boundaries.map(b => b.name).includes("lastRow")) { -%>
+<%  let root = F.one; -%>
+<%  for(let i = 0; i < (1 << starkStruct.nBits) - 1; ++i) { -%>
+<%    root = F.mul(root, F.w[starkStruct.nBits]); -%>
+<%  } -%>
+
+    signal {maxNum} rootGL[3];
+    rootGL.maxNum = root;
+    rootGL <== [<%- root %>,0,0];
+
+    signal {maxNum} Zl[3] <== GLCSub(challengeXi, rootGL);
+    signal {maxNum} Zlast[3] <== GLCInv()(Zl);
+<%  } -%>
+
+<%  if(starkInfo.boundaries.map(b => b.name).includes("everyFrame")) { -%>
+<%  const constraintFrames = starkInfo.boundaries.filter(b => b.name === "everyFrame"); -%>
+<%  for(let i = 0; i < constraintFrames.length; ++i) { -%>
+<%      let frame = constraintFrames[i]; -%>
+<%      let c = 0; -%>
+    signal {maxNum} Zframe<%- i %>[<%- frame.offsetMin + frame.offsetMax %>][3];
+    signal {maxNum} Zf<%- i %>[<%- frame.offsetMin + frame.offsetMax %>][3];
+    signal {maxNum} root<%- i %>GL[<%- frame.offsetMin + frame.offsetMax %>][3];
+    root<%- i %>GL.maxNum = q;
+<%      for(let j = 0; j < frame.offsetMin; j++) { -%>
+<%          let root = F.one; -%>
+<%          for(let k = 0; k < j; ++k) { -%>
+<%              root = F.mul(root, F.w[starkStruct.nBits]); -%>
+<%          } -%>
+    root<%- i %>GL[<%- c %>] <== [<%- root %>,0,0];
+    Zf<%- i %>[<%- c %>] <== GLCSub(challengeXi, root<%- i %>GL);
+<%          if(c === 0) { -%> 
+    Zframe<%- i %>[<%- c %>] <== GLCMul()(Zh, Zf<%- i %>[c]);
+<%          } else { -%>
+    Zframe<%- i %>[<%- c %>] <== GLCMul()(Zframe<%- i %>, Zf<%- i %>[c]);
+<%          } -%>
+<%          c++; -%>
+<%      } -%>
+<%      for(let j = 0; j < frame.offsetMax; j++) { -%>
+<%          let root = F.one; -%>
+<%          for(let k = 0; k < ((1<<starkStruct.nBits) - i - 1); ++k) { -%>
+<%              root = F.mul(root, F.w[starkStruct.nBits]); -%>
+<%          } -%>
+    root<%- i %>GL[<%- c %>] <== [<%- root %>,0,0];
+    Zf<%- i %>[<%- c %>] <== GLCSub(challengeXi, root<%- i %>GL);
+<%          if(c === 0) { -%> 
+    Zframe<%- i %>[<%- c %>] <== GLCMul()(Zh, Zf<%- i %>[<%- c %>]);
+<%          } else { -%>
+    Zframe<%- i %>[<%- c %>] <== GLCMul()(Zframe<%- i %>, Zf<%- i %>[<%- c %>]);
+<%          } -%>
+<%          c++; -%>
+<%      } -%>
+<%  } -%>
+<%  } -%>
+
+    // Using the evaluations committed and the challenges,
+    // calculate the sum of q_i, i.e, q_0(X) + challenge * q_1(X) + challenge^2 * q_2(X) +  ... + challenge^(l-1) * q_l-1(X) evaluated at z 
+<% const evalP = unrollCode(verifierInfo.qVerifier.code) -%>
+
+    signal {maxNum} xAcc[<%- starkInfo.qDeg %>][3]; //Stores, at each step, x^i evaluated at z
+    signal {maxNum} qStep[<%- starkInfo.qDeg-1 %>][3]; // Stores the evaluations of Q_i
+    signal {maxNum} qAcc[<%- starkInfo.qDeg %>][3]; // Stores the accumulate sum of Q_i
+    
+    qStep.maxNum = q;
+    qAcc.maxNum = <%- starkInfo.qDeg %>*q;
+    xAcc.maxNum = q;
+
+    // Note: Each Qi has degree < n. qDeg determines the number of polynomials of degree < n needed to define Q
+    // Calculate Q(X) = Q1(X) + X^n*Q2(X) + X^(2n)*Q3(X) + ..... X^((qDeg-1)n)*Q(X) evaluated at z 
+    for (var i=0; i< <%- starkInfo.qDeg %>; i++) {
+<%      let qIndex = starkInfo.cmPolsMap.findIndex(p => p.stage === qStage && p.stageId === 0); -%>
+<%      const evId = starkInfo.evMap.findIndex(e => e.type === "cm" && e.id === qIndex); -%>
+        if (i==0) {
+            xAcc[0] <== [1, 0, 0];
+            qAcc[0] <== evals[<%- evId %>+i];
+        } else {
+            xAcc[i] <== GLCMul()(xAcc[i-1], zMul[<%- starkStruct.nBits - 1 %>]);
+            qStep[i-1] <== GLCMul()(xAcc[i], evals[<%- evId %>+i]);
+            qAcc[i] <== GLCAdd()(qAcc[i-1], qStep[i-1]);
+        }
+    }
+
+    // Final normalization
+    signal {maxNum} vals[3] <== GLCSub()(<%- evalP %>, qAcc[<%- starkInfo.qDeg-1 %>]);
+    signal {maxNum} normC[3] <== GLCNorm()(vals);
+
+    // Final Verification
+    enable * normC[0] === 0;
+    enable * normC[1] === 0;
+    enable * normC[2] === 0;
+
+}
+
+/* 
+    Verify that the initial FRI polynomial, which is the lineal combination of the committed polynomials
+    during the STARK phases, is built properly
+*/
+template parallel VerifyQuery(currStepBits, nextStepBits) {
+    var nextStep = currStepBits - nextStepBits;
+    signal input {binary} queriesFRI[<%- starkStruct.steps[0].nBits %>];
+    signal input {maxNum} challengeXi[3];
+    signal input {maxNum} challengesFRI[2][3];
+    signal input {maxNum} evals[<%- starkInfo.evMap.length %>][3];
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal input {maxNum} cm<%- stage %>[<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<%  } -%>
+<% } -%>
+    signal input {maxNum} cm<%- qStage %>[<%- starkInfo.mapSectionsN[`cm${qStage}`] %>];
+    signal input {maxNum} consts[<%- starkInfo.nConstants %>];
+<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    signal input custom_<%- starkInfo.customCommits[i].name %>_0[<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>];
+<%  } -%>
+    signal input {maxNum} s1_vals[1 << nextStep][3];
+    signal input {binary} enable;
+
+    // Map the s0_vals so that they are converted either into single vars (if they belong to base field) or arrays of 3 elements (if 
+    // they belong to the extended field). 
+    component mapValues = MapValues();
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    mapValues.vals<%- stage %> <== cm<%- stage %>;
+<%  } -%>
+<% } -%>
+    mapValues.vals<%- qStage %> <== cm<%- qStage %>;
+<% for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    mapValues.vals_<%- starkInfo.customCommits[i].name %>_0 <== custom_<%- starkInfo.customCommits[i].name %>_0;
+<%  } -%>
+
+    var q = 0xFFFFFFFFFFFFFFFF;
+
+    signal {maxNum} xacc[<%- starkStruct.steps[0].nBits -1 %>];
+    xacc.maxNum = q;
+
+    signal {maxNum} ina;
+    signal {maxNum} inb;
+    ina.maxNum = q;
+    inb.maxNum = q;
+
+    signal {maxNum} inp[<%- starkStruct.steps[0].nBits -1 %>];
+    inp.maxNum = q;
+
+    for (var i=1; i<<%- starkStruct.steps[0].nBits %>; i++ ) {
+        if(i==1) {
+        ina <== queriesFRI[0]*<%- F.shift * F.w[starkStruct.steps[0].nBits] - F.shift %> + <%- F.shift %>;
+        inb <==  queriesFRI[1]*(<%- F.w[starkStruct.steps[0].nBits - 1] %> - 1) +1;
+        xacc[i-1] <== GLMul()(ina,inb);
+        } else {
+        inp[i - 2] <== queriesFRI[i]*(roots(<%- starkStruct.steps[0].nBits %> - i) - 1) +1;
+        xacc[i-1] <== GLMul()(xacc[i-2], inp[i-2]);
+        }
+    }
+
+    signal {maxNum} X[3];
+<% if (starkStruct.steps[0].nBits>1) {  -%>
+    X.maxNum = xacc.maxNum;
+    X <== [xacc[<%- starkStruct.steps[0].nBits -2 %>], 0, 0];
+<% } else {                             -%>
+    X.maxNum = q;
+    X <== [queriesFRI[0]*(<%- F.shift %> * roots(<%- starkStruct.steps[0].nBits %>)-<%- F.shift %>) + <%- F.shift %>, 0, 0];
+<% }                                    -%>
+
+    signal {maxNum} xDivXSubXi[<%- starkInfo.openingPoints.length %>][3];
+
+    signal {maxNum} rootWXi[3];
+    rootWXi.maxNum = q;
+    rootWXi <== [roots(<%- starkStruct.nBits %>), 0, 0];
+
+    signal {maxNum} rootWXiInv[3];
+    rootWXiInv.maxNum = q;
+    rootWXiInv <== [invroots(<%- starkStruct.nBits %>), 0, 0];
+
+<%  for(var i=0; i<starkInfo.openingPoints.length; ++i) { -%>
+<%  const opening = Number(starkInfo.openingPoints[i]); -%>
+<%  if (opening) { -%>
+    signal {maxNum} w<%- i %>[<%- opening %>][3];
+    w<%- i %>[0] <== GLCMul()(rootWXi, challengeXi);
+<%      for(let j = 1; j < Math.abs(opening); ++j) { -%>
+<%  let rootsFunction = opening > 0 ? 'rootWXi' : 'rootWXiInv'; -%>
+    w<%- i %>[<%- j %>] <== GLCMul()(rootWXiInv, w<%- i %>[<%- j-1 %>]);
+<%      } -%>
+    signal {maxNum} den<%- i %>[3] <== GLCSub()(X, w<%- i %>[<%- opening - 1 %>]);
+    signal {maxNum} den<%- i %>inv[3] <== GLCInv()(den<%- i %>);
+<%  } else { -%>
+    signal {maxNum} den<%- i %>[3] <== GLCSub()(X, challengeXi);
+    signal {maxNum} den<%- i %>inv[3] <== GLCInv()(den<%- i %>);
+<%  } -%>
+    xDivXSubXi[<%- i %>] <== GLCMul()(X, den<%- i %>inv);
+
+<%  } -%>
+
+<% const evalQ = unrollCode(verifierInfo.queryVerifier.code) -%>
+
+    // Final Normalization
+    signal queryVals[3] <== GLCNorm()(<%- evalQ %>);
+
+    signal {binary} s0_keys_lowValues[nextStep];
+    for(var i = 0; i < nextStep; i++) {
+        s0_keys_lowValues[i] <== queriesFRI[i + nextStepBits];
+    } 
+   
+    signal {maxNum} lowValues[3] <== TreeSelector(nextStep, 3)(s1_vals, s0_keys_lowValues);
+
+    signal {maxNum} vals[3] <== GLCSub()(<%- evalQ %>, lowValues);
+    signal {maxNum} normC[3] <== GLCNorm()(vals);
+    
+    enable * normC[0] === 0;
+    enable * normC[1] === 0;
+    enable * normC[2] === 0;
+}
+
+// Polynomials can either have dimension 1 (if they are defined in the base field) or dimension 3 (if they are defined in the 
+// extended field). In general, all initial polynomials (constants and tr) will have dim 1 and the other ones such as Z (grand product),
+// Q (quotient) or h_i (plookup) will have dim 3.
+// This function processes the values, which are stored in an array vals[n] and splits them in multiple signals of size 1 (vals_i) 
+// or 3 (vals_i[3]) depending on its dimension.
+template MapValues() {
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal input {maxNum} vals<%- stage %>[<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<%  } -%>
+<% } -%>
+    signal input {maxNum} vals<%- qStage %>[<%- starkInfo.mapSectionsN[`cm${qStage}`]  %>];
+<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    signal input {maxNum} vals_<%- starkInfo.customCommits[i].name %>_0[<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>];
+<%  } -%>
+
+<% for (let t = 1; t<=starkInfo.nStages + 1; t++) {                              -%>
+<%      let sectionsStage = starkInfo.cmPolsMap.filter(p => p.stage === t);  -%>
+<%      for (let i=0; i< sectionsStage.length; i++) {         -%>
+<%          const p = sectionsStage[i];  -%>
+<%          if (p.dim == 1) {                                                    -%>
+    signal output {maxNum} cm<%- t %>_<%- i %>;
+<%          } else if (p.dim == 3) {                                             -%>
+    signal output {maxNum} cm<%- t %>_<%- i %>[3];
+<%          } else throw new Error("Invalid dim")                                -%>
+<%      }                                                                        -%>
+<% }                                                                             -%>
+<% for (let t = 0; t < starkInfo.customCommits.length; ++t) { -%>
+<%    for(let l = 0; l < starkInfo.customCommits[t].stageWidths.length; ++l) { -%>
+<%        let sectionsStage = starkInfo.customCommitsMap[t].filter(p => p.stage === l);  -%>
+<%        for (let i=0; i< sectionsStage.length; i++) {         -%>
+<%        const p = sectionsStage[i];  -%>
+<%            if (p.dim == 1) {                                                    -%>
+    signal output {maxNum} custom_<%- starkInfo.customCommits[t].name%>_<%- l %>_<%- i %>;
+<%            } else if (p.dim == 3) {                                             -%>
+    signal output {maxNum} custom_<%- starkInfo.customCommits[t].name%>_<%- l %>_<%- i %>[3];
+<%            } else throw new Error("Invalid dim")                                -%>
+<%        } -%>
+<%    } -%>
+<% } -%>
+
+<% for (let t = 0; t < starkInfo.customCommits.length; ++t) { -%>
+<%    for(let l = 0; l < starkInfo.customCommits[t].stageWidths.length; ++l) { -%>
+<%       let sectionsStage = starkInfo.customCommitsMap[t].filter(p => p.stage === l);  -%>
+<%        for (let i=0; i< sectionsStage.length; i++) {         -%>
+<%            const p = sectionsStage[i];  -%>
+<%            if (p.dim == 1) {                                                    -%>
+    custom_<%- starkInfo.customCommits[t].name%>_<%- l %>_<%- i %> <== vals_<%- starkInfo.customCommits[t].name %>_0[<%- p.stagePos %>];
+<%            } else if (p.dim == 3) {                                             -%>
+    custom_<%- starkInfo.customCommits[t].name%>_<%- l %>_<%- i %> <== [vals_<%- starkInfo.customCommits[t].name %>_0[<%- p.stagePos %>],vals_<%- starkInfo.customCommits[t].name %>_0[<%- p.stagePos + 1 %>] , vals_<%- starkInfo.customCommits[t].name %>_0[<%- p.stagePos + 2 %>]];
+<%            } else throw new Error("Invalid dim")                                -%>
+<%        } -%>
+<%    } -%>
+<% } -%>
+
+<% for (let t = 1; t<=starkInfo.nStages + 1; t++) {                              -%>
+<%      let sectionsStage = starkInfo.cmPolsMap.filter(p => p.stage === t);  -%>
+<%      for (let i=0; i< sectionsStage.length; i++) {         -%>
+<%          const p = sectionsStage[i];  -%>
+<%          if (p.dim == 1) {                                                    -%>
+    cm<%- t %>_<%- i %> <== GLCopy()(vals<%- t %>[<%- p.stagePos %>]);
+<%          } else if (p.dim == 3) {                                             -%>
+    cm<%- t %>_<%- i %>.maxNum = 0xFFFFFFFFFFFFFFFF;
+    cm<%- t %>_<%- i %> <== [vals<%- t %>[<%- p.stagePos %>],vals<%- t %>[<%- p.stagePos + 1 %>] , vals<%- t %>[<%- p.stagePos + 2 %>]];
+<%          } else throw new Error("Invalid dim")                                -%>
+<%      }                                                                        -%>
+<% }                                                                             -%>
+}
+
+
+template parallel VerifyFinalPol() {
+    ///////
+    // Check Degree last pol
+    ///////
+    signal input {maxNum} finalPol[<%- 1 << starkStruct.steps[starkStruct.steps.length-1].nBits %>][3];
+    signal input {binary} enable;
+
+<% const nLastBits = starkStruct.steps[ starkStruct.steps.length-1].nBits;  -%>
+<% const maxDegBits =  Math.max(nLastBits -  (starkStruct.nBitsExt - starkStruct.nBits), 0); -%>
+    // Calculate the IFFT to get the coefficients of finalPol 
+    signal lastIFFT[<%- 1 << nLastBits %>][3] <== FFT(<%- nLastBits %>, 1)(finalPol);
+
+    // Check that the degree of the final polynomial is bounded by the degree defined in the last step of the folding
+    // This means ?????? in terms of IFFT
+    for (var k= <%- 1 << maxDegBits %>; k< <%- 1 << nLastBits %>; k++) {
+        for (var e=0; e<3; e++) {
+            enable * lastIFFT[k][e] === 0;
+        }
+    }
+
+    // The coefficients of lower degree can have any value
+    for (var k= 0; k < <%- 1 << maxDegBits %>; k++) {
+        _ <== lastIFFT[k];
+    }
+}
+
+template StarkVerifier() {
+<%  if(starkInfo.nPublics > 0) { -%>
+    signal input publics[<%- starkInfo.nPublics %>];
+<%  } -%>
+<% if(starkInfo.airgroupValuesMap.length > 0) { -%>
+    signal input airgroupvalues[<%- starkInfo.airgroupValuesMap.length %>][3]; // airgroupvalue values
+<% } -%>
+<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+<%  const stage = i + 1; -%>
+    signal input root<%- stage %>; // Merkle tree root of stage <%- stage %>
+<% } -%>
+    signal input root<%- qStage %>; // Merkle tree root of the evaluations of the quotient Q1 and Q2 polynomials
+
+<% if (options.verkeyInput) {  -%>
+<% /* Depending on the STARK being verified, the rootC will be hardcoded or passed as an input */%>
+    signal input rootC; // Merkle tree root of the evaluations of constant polynomials
+<% } else { -%>
+    signal rootC <== <%- constRoot %>; // Merkle tree root of the evaluations of constant polynomials
+<% } -%>
+
+    signal input evals[<%- starkInfo.evMap.length %>][3]; // Evaluations of the set polynomials at a challenge value z and gz
+
+    // Leaves values of the merkle tree used to check all the queries
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal input s0_vals<%- stage %>[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<%  } -%>
+<% } -%>
+    signal input s0_vals<%- qStage %>[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${qStage}`] %>];
+    signal input s0_valsC[<%- starkStruct.nQueries %>][<%- starkInfo.nConstants%>];
+<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    signal input s0_vals_<%- starkInfo.customCommits[i].name %>_0[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>];
+<% }-%>
+
+    // Merkle proofs for each of the evaluations
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal input s0_siblings<%- stage %>[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
+<% } -%>
+<% } -%>
+    signal input s0_siblings<%- qStage %>[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
+    signal input s0_siblingsC[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
+<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    signal input s0_siblings_<%- starkInfo.customCommits[i].name %>_0[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
+<% } -%>
+
+    // Contains the root of the original polynomial and all the intermediate FRI polynomials except for the last step
+<% let si_roots = []; -%>
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+<% si_roots.push(`s${s}_root`); -%>
+    signal input s<%- s %>_root;
+<% }                                                     -%>
+
+    // For each intermediate FRI polynomial and the last one, we store at vals the values needed to check the queries.
+    // Given a query r,  the verifier needs b points to check it out, being b = 2^u, where u is the difference between two consecutive step
+    // and the sibling paths for each query.
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+    signal input s<%- s %>_vals[<%- starkStruct.nQueries %>][<%- (1 << (starkStruct.steps[s-1].nBits - starkStruct.steps[s].nBits))*3 %>];
+    signal input s<%- s %>_siblings[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[s].nBits -1) /nBitsArity) +1 %>][<%- arity %>];
+<% }                                                  -%>
+
+    // Evaluations of the final FRI polynomial over a set of points of size bounded its degree
+    signal input finalPol[<%- 1 << starkStruct.steps[starkStruct.steps.length-1].nBits %>][3];
+
+    signal {binary} enabled;
+<% if (options.enableInput) { -%>
+    signal input enable;
+    enable * (enable -1 ) === 0;
+    enabled <== enable;
+<% } else { -%>
+    enabled <== 1;
+<% } -%>
+
+<%  if(starkInfo.nPublics > 0) { -%>
+    signal {maxNum} publicsGL[<%- starkInfo.nPublics %>]; 
+    for(var i = 0; i < <%- starkInfo.nPublics %>; i++){
+        publicsGL[i] <== LessThan64Bits()(publics[i]);
+    }
+<%  } -%>
+
+    signal {maxNum} evalsGL[<%- starkInfo.evMap.length %>][3];
+    for(var i = 0; i < <%- starkInfo.evMap.length %>; i++){
+        for(var j = 0; j < 3; j++) {
+            evalsGL[i][j] <== LessThan64Bits()(evals[i][j]);
+        }
+    }
+
+<%  if(starkInfo.airgroupValuesMap.length > 0) { -%>
+    signal {maxNum} airgroupValuesGL[<%- starkInfo.airgroupValuesMap.length %>][3];
+    for(var i = 0; i < <%- starkInfo.airgroupValuesMap.length %>; i++){
+        for(var j = 0; j < 3; j++) {
+            airgroupValuesGL[i][j] <== LessThan64Bits()(airgroupvalues[i][j]);
+        }
+    }
+<%  } -%>
+
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal {maxNum} s0_vals<%- stage %>GL[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<% } -%>
+<% } -%>
+    signal {maxNum} s0_vals<%- qStage %>GL[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${qStage}`] %>];
+    signal {maxNum} s0_valsCGL[<%- starkStruct.nQueries %>][<%- starkInfo.nConstants%>];
+<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    signal s0_vals_<%- starkInfo.customCommits[i].name %>_0GL[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>];
+<% }-%>
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+    signal {maxNum} s<%- s %>_valsGL[<%- starkStruct.nQueries %>][<%- (1 << (starkStruct.steps[s-1].nBits - starkStruct.steps[s].nBits))*3 %>];
+<% }                                                  -%>
+
+    for(var i = 0; i < <%- starkStruct.nQueries %>; i++){
+        for(var j = 0; j < <%- starkInfo.nConstants %>; j++) {
+            s0_valsCGL[i][j] <== LessThan64Bits()(s0_valsC[i][j]);
+        }
+
+        for(var j = 0; j < <%- starkInfo.mapSectionsN[`cm${qStage}`] %>; j++) {
+            s0_vals<%- qStage %>GL[i][j] <== LessThan64Bits()(s0_vals<%- qStage %>[i][j]);
+        }
+
+<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    for (var j = 0; j < <%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>; j++) {
+        s0_vals_<%- starkInfo.customCommits[i].name %>_0GL[i][j] = LessThan64Bits()(s0_vals_<%- starkInfo.customCommits[i].name %>_0[i][j]);
+    }
+<% }-%>
+
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+        for(var j = 0; j < <%- starkInfo.mapSectionsN[`cm${stage}`] %>; j++) {
+            s0_vals<%- stage %>GL[i][j] <== LessThan64Bits()(s0_vals<%- stage %>[i][j]);
+        }
+<%  } -%>
+<% } -%>
+
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+        for(var j = 0; j < <%- (1 << (starkStruct.steps[s-1].nBits - starkStruct.steps[s].nBits))*3 %>; j++) {
+            s<%- s %>_valsGL[i][j] <== LessThan64Bits()(s<%- s %>_vals[i][j]);
+        }
+<% }                                                  -%>
+    }
+
+    signal {maxNum} finalPolGL[<%- 1 << starkStruct.steps[starkStruct.steps.length-1].nBits %>][3];
+    for(var i = 0; i < <%- 1 << starkStruct.steps[starkStruct.steps.length-1].nBits %>; i++){
+        for(var j = 0; j < 3; j++) {
+            finalPolGL[i][j] <== LessThan64Bits()(finalPol[i][j]);
+        }
+    }
+
+<%  let challengeNames = []; -%>
+<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+    signal {maxNum} challengesStage<%- i + 1 %>GL[<%- starkInfo.challengesMap.filter(c => c.stage === i + 1).length %>][3];
+<%      challengeNames.push("challengesStage" + (i + 1) + "GL"); -%>
+<%  }-%>
+
+    signal {maxNum} challengeQGL[3];
+    signal {maxNum} challengeXiGL[3];
+    signal {maxNum} challengesFRIGL[2][3];
+<%      challengeNames.push(...["challengeQGL", "challengeXiGL", "challengesFRIGL"]); -%>
+
+    // challengesFRISteps contains the random value provided by the verifier at each step of the folding so that 
+    // the prover can commit the polynomial.
+    // Remember that, when folding, the prover does as follows: f0 = g_0 + X*g_1 + ... + (X^b)*g_b and then the 
+    // verifier provides a random X so that the prover can commit it. This value is stored here.
+    signal {maxNum} challengesFRIStepsGL[<%- starkStruct.steps.length -%>][3];
+    
+    // Each of the queries values represented in binary
+    signal {binary} queriesFRIGL[<%- starkStruct.nQueries %>][<%- starkStruct.steps[0].nBits %>];
+
+<% if (!options.inputChallenges) { -%>
+    ///////////
+    // Calculate challenges, challengesFRISteps and queriesFRI
+    ///////////
+
+<%  const stageRoots = []; -%> 
+<%  for(let i = 0; i < starkInfo.nStages; i++) { stageRoots.push(`root${i + 1}`) } -%>
+    (<%- challengeNames.join(",") %>,challengesFRIStepsGL,queriesFRIGL) <== Transcript()(<%- starkInfo.nPublics > 0 ? "publicsGL," : "" %>rootC, <%- stageRoots.join(",") %>,root<%- qStage %>,evalsGL<%- si_roots.length > 0 ? "," + si_roots.join(",") : "" %>,finalPolGL);
+
+<% } else { -%>
+<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+        signal input challengesStage<%- i + 1 %>[<% starkInfo.challengesMap.filter(c => c.stage === i + 1).length -%>][3];
+<%  }-%>
+
+    signal input challengeQ[3];
+    signal input challengeXi[3];
+    signal input challengesFRI[2][3];
+
+    // challengesFRISteps contains the random value provided by the verifier at each step of the folding so that 
+    // the prover can commit the polynomial.
+    // Remember that, when folding, the prover does as follows: f0 = g_0 + X*g_1 + ... + (X^b)*g_b and then the 
+    // verifier provides a random X so that the prover can commit it. This value is stored here.
+    signal input challengesFRISteps[<%- starkStruct.steps.length -%>][3];
+
+    signal input challengeFRIQueries[3];
+
+<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+<%      for(let j = 0; j < starkInfo.challengesMap.filter(c => c.stage === i + 1).length; ++j) { -%>
+    challengesStage<%- i + 1 %>GL[<%- j %>] <== LessThan64Bits()(challengeStage<%- i + 1 %>[<%- j %>]);
+<%  }-%>
+<%  }-%>
+    challengeQGL <== LessThan64Bits()(challengeQ); 
+    challengeXiGL <== LessThan64Bits()(challengeXi);
+    challengesFRIGL[0] <== LessThan64Bits()(challengesFRI[0]);
+    challengesFRIGL[1] <== LessThan64Bits()(challengesFRI[1]);
+    queriesFRIGL[<%- starkStruct.nQueries %>][<%- starkStruct.steps[0].nBits %>] <== calculateFRIQueries()(challengeFRIQueries);
+<% } -%>
+
+    var p = 0xFFFFFFFF00000001;
+
+    ///////////
+    // Check constraints polynomial in the evaluation point
+    ///////////
+
+<%  const verifyEvalsInputs = []; -%>
+<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%      const stage = i + 1; -%>
+<%  if(starkInfo.challengesMap.filter(c => c.stage === stage).length === 0) continue; -%>
+<%      verifyEvalsInputs.push("challengesStage" + stage + "GL"); -%>
+<%  } -%> 
+<%      verifyEvalsInputs.push("challengeQGL"); -%>
+<%      verifyEvalsInputs.push("challengeXiGL"); -%>
+<%      verifyEvalsInputs.push("evalsGL"); -%>
+<%      if(starkInfo.nPublics > 0) verifyEvalsInputs.push("publicsGL"); -%>
+<%      if(starkInfo.airgroupValuesMap.length > 0) verifyEvalsInputs.push("airgroupValuesGL"); -%>
+<%      verifyEvalsInputs.push("enabled"); -%>
+
+    VerifyEvaluations()(<%- verifyEvalsInputs.join(", ") %>);    
+
+    ///////////
+    // Preprocess s_i vals
+    ///////////
+
+    // Preprocess the s_i vals given as inputs so that we can use anonymous components.
+    // Two different processings are done:
+    // For s0_vals, the arrays are transposed so that they fit MerkleHash template
+    // For (s_i)_vals, the values are passed all together in a single array of length nVals*3. We convert them to vals[nVals][3]
+    
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal {maxNum} s0_vals<%- stage %>_p[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${stage}`] %>][1];
+<% } -%>
+<% } -%> 
+    signal {maxNum} s0_vals<%- qStage %>_p[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${qStage}`] %>][1];
+    signal {maxNum} s0_valsC_p[<%- starkStruct.nQueries %>][<%- starkInfo.nConstants %>][1];
+<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    signal {maxNum} s0_vals_<%- starkInfo.customCommits[i].name %>_0_p[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>][1];
+<% }-%>
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+    signal {maxNum} s<%- s %>_vals_p[<%- starkStruct.nQueries %>][<%- (1 << (starkStruct.steps[s-1].nBits - starkStruct.steps[s].nBits)) %>][3]; 
+<% } -%>
+
+    for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
+        // Preprocess vals for the initial FRI polynomial
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+        for (var i = 0; i < <%- starkInfo.mapSectionsN[`cm${stage}`] %>; i++) {
+            s0_vals<%- stage %>_p[q][i][0] <== GLCopy()(s0_vals<%- stage %>GL[q][i]);
+        }
+<%  } -%>
+<% } -%> 
+        for (var i = 0; i < <%- starkInfo.mapSectionsN[`cm${qStage}`] %>; i++) {
+            s0_vals<%- qStage %>_p[q][i][0] <== GLCopy()(s0_vals<%- qStage %>GL[q][i]);
+        }
+        for (var i = 0; i < <%- starkInfo.nConstants %>; i++) {
+            s0_valsC_p[q][i][0] <== GLCopy()(s0_valsCGL[q][i]);
+        }
+
+<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    for (var i = 0; i < <%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>; i++) {
+        s0_vals_<%- starkInfo.customCommits[i].name %>_0_p[q][i][0] = GLCopy()(s0_vals_<%- starkInfo.customCommits[i].name %>_0[q][i]);
+    }
+<% }-%>
+
+        // Preprocess vals for each folded polynomial
+        for(var e=0; e < 3; e++) {
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+            for(var c=0; c < <%- (1 << (starkStruct.steps[s-1].nBits - starkStruct.steps[s].nBits))%>; c++) {
+                s<%- s %>_vals_p[q][c][e] <== GLCopy()(s<%- s %>_valsGL[q][c*3+e]);
+            }
+<% } -%>
+        }
+    }
+    
+    ///////////
+    // Verify Merkle roots
+    ///////////
+        
+    //Calculate merkle root for s0 vals
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
+        VerifyMerkleHash(1, <%- starkInfo.mapSectionsN[`cm${stage}`] %>, <%- 1 << starkStruct.steps[0].nBits %>,<%- arity %>)(s0_vals<%- stage %>_p[q], s0_siblings<%- stage %>[q], queriesFRIGL[q], root<%- stage %>, enabled);
+    }
+<%  } -%>
+<% } -%>
+
+    for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
+        VerifyMerkleHash(1, <%- starkInfo.mapSectionsN[`cm${qStage}`] %>, <%- 1 << starkStruct.steps[0].nBits %>,<%- arity %>)(s0_vals<%- qStage %>_p[q], s0_siblings<%- qStage %>[q], queriesFRIGL[q], root<%- qStage %>, enabled);
+    }
+
+    for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
+        VerifyMerkleHash(1, <%- starkInfo.nConstants %>, <%- 1 << starkStruct.steps[0].nBits %>, <%- arity %>)(s0_valsC_p[q], s0_siblingsC[q], queriesFRIGL[q], rootC, enabled);  
+    }                                  
+
+<% for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
+    signal root_<%- starkInfo.customCommits[i].name %>_0 <== publics[<%- starkInfo.customCommits[i].publicValues[0].idx %>];
+    for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
+        VerifyMerkleHash(1, <%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>, <%- 1 << starkStruct.steps[0].nBits %>, <%- arity %>)(s0_vals_<%- starkInfo.customCommits[i].name %>_0_p[q], s0_siblings_<%- starkInfo.customCommits[i].name %>_0[q], queriesFRIGL[q], root_<%- starkInfo.customCommits[i].name %>_0, enabled);                                    
+    }
+<% } -%>
+
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+    signal {binary} s<%- s %>_keys_merkle[<%- starkStruct.nQueries %>][<%- starkStruct.steps[s].nBits %>];
+    for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
+        // Calculate merkle root for s<%- s %> vals
+        for(var i = 0; i < <%-starkStruct.steps[s].nBits %>; i++) { s<%- s %>_keys_merkle[q][i] <== queriesFRIGL[q][i]; }
+        VerifyMerkleHash(3, <%- 1 << (starkStruct.steps[s-1].nBits - starkStruct.steps[s].nBits) %>, <%- 1 << starkStruct.steps[s].nBits %>,<%- arity %>)(s<%- s %>_vals_p[q], s<%- s %>_siblings[q], s<%- s %>_keys_merkle[q], s<%- s %>_root, enabled);
+    }
+<% } -%>
+
+
+    ///////////
+    // Verify FRI query
+    ///////////
+
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+    signal {binary} s<%- s %>_queriesFRI[<%- starkStruct.nQueries %>][<%- starkStruct.steps[s].nBits%>];
+<% } -%> 
+    // After checking that all merkle roots are properly built, the query and the intermediate 
+    // polynomials need to be verified 
+    for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
+<%  let nextValsPol = 0 < starkStruct.steps.length-1 ? "s1_vals_p[q]" : "finalPolGL"; 
+    let nextStep = 0 < starkStruct.steps.length-1 ? starkStruct.steps[1].nBits : 0; 
+    let queryVals = [];
+    for(let i = 0; i < starkInfo.nStages; ++i) { 
+        const stage = i + 1;
+        if(starkInfo.mapSectionsN[`cm${stage}`] > 0) {
+            queryVals.push(`s0_vals${stage}GL[q]`);
+        }
+    }
+    queryVals.push("s0_vals" + qStage + "GL[q]");
+    queryVals.push("s0_valsCGL[q]");
+    for(let i = 0; i < starkInfo.customCommits.length; ++i) { 
+        queryVals.push(`s0_vals_${starkInfo.customCommits[i].name}_0GL[q]`);
+    }
+-%>
+        // Verify that the query is properly constructed. This is done by checking that the linear combination of the set of 
+        // polynomials committed during the different rounds evaluated at z matches with the commitment of the FRI polynomial (unsure)
+        VerifyQuery(<%- starkStruct.steps[0].nBits %>, <%- nextStep %>)(queriesFRIGL[q], challengeXiGL, challengesFRIGL, evalsGL, <%- queryVals.join(", ") %>, <%- nextValsPol %>, enabled);
+
+        ///////////
+        // Verify FRI construction
+        ///////////
+
+        // For each folding level we need to check that the polynomial is properly constructed
+        // Remember that if the step between polynomials is b = 2^l, the next polynomial p_(i+1) will have degree deg(p_i) / b
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+<%
+    const e1 = F.inv( F.mul(
+        F.exp(F.shift, 1 << (starkStruct.nBitsExt -starkStruct.steps[s-1].nBits) ),
+        F.w[starkStruct.steps[s-1].nBits]
+    ));
+    const e0 = F.inv(F.exp(F.shift, 1 << (starkStruct.nBitsExt -starkStruct.steps[s-1].nBits) ) );
+-%>
+
+        // Check S<%- s %> 
+        for(var i = 0; i < <%- starkStruct.steps[s].nBits%>; i++) { s<%- s %>_queriesFRI[q][i] <== queriesFRIGL[q][i]; } 
+<%  const nextPolFRI = s < starkStruct.steps.length-1 ? `s${s+1}_vals_p[q]` : "finalPolGL"; -%>
+<%  const nextStepFRI = s < starkStruct.steps.length-1 ? starkStruct.steps[s+1].nBits : 0; -%>
+        VerifyFRI(<%- starkStruct.steps[s-1].nBits %>, <%- starkStruct.steps[s].nBits %>, <%- nextStepFRI %>, <%- e0 %>, <%- e1 %>)(s<%- s %>_queriesFRI[q], challengesFRIStepsGL[<%- s %>], s<%- s %>_vals_p[q], <%- nextPolFRI %>, enabled);
+<% } -%>
+    }
+
+    VerifyFinalPol()(finalPolGL, enabled);
+}
+
+<% if (!options.skipMain) {  -%>
+
+    template Main() {
+    signal input proverAddr;
+<%  if(starkInfo.nPublics > 0) { -%>
+    signal output publicsHash;
+<%  } -%>
+
+<%  if(starkInfo.nPublics > 0) { -%>
+    signal input publics[<%- starkInfo.nPublics %>];
+<% } -%>
+<%  if(starkInfo.airgroupValuesMap.length > 0) { -%>
+    signal input airgroups[<%- starkInfo.airgroupValuesMap.length %>];
+<% } -%>
+<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+<%  const stage = i + 1; -%>
+    signal input root<%- stage %>;
+<% } -%>
+    signal input root<%- qStage %>;
+    signal input evals[<%- starkInfo.evMap.length %>][3];
+
+    // Leaves values of the merkle tree used to check all the queries
+<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%>
+    signal input s0_vals<%- stage %>[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<%  } -%>
+<% } -%>
+    signal input s0_vals<%- qStage %>[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${qStage}`] %>];
+    signal input s0_valsC[<%- starkStruct.nQueries %>][<%- starkInfo.nConstants%>];
+<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%>
+    signal input s0_siblings<%- stage %>[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
+<% } -%>
+<% } -%>
+    signal input s0_siblings<%- qStage %>[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
+    signal input s0_siblingsC[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
+
+<% for (let s=0; s<starkStruct.steps.length-1; s++) {   -%>
+    signal input s<%- s+1 %>_root;
+<% }                                                     -%>
+
+    // For each intermediate FRI polynomial and the last one, we store at vals the values needed to check the queries.
+    // Given a query r,  the verifier needs b points to check it out, being b = 2^u, where u is the difference between two consecutive step
+    // and the sibling paths for each query.
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+    signal input s<%- s %>_vals[<%- starkStruct.nQueries %>][<%- (1 << (starkStruct.steps[s-1].nBits - starkStruct.steps[s].nBits))*3 %>];
+    signal input s<%- s %>_siblings[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[s].nBits -1) /nBitsArity) +1 %>][<%- arity %>];
+<% }                                                  -%>
+
+    signal input finalPol[<%- 1 << starkStruct.steps[starkStruct.steps.length-1].nBits %>][3];
+
+<% if(options.inputChallenges) { -%>
+<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+    signal input challengesStage<%- i + 1 %>[<% starkInfo.challengesMap.filter(c => c.stage === i + 1).length -%>][3];
+<%  }-%>
+    signal input challengeQ[3];
+    signal input challengeXi[3];
+    signal input challengesFRI[2][3];
+
+    signal input challengesFRISteps[<%- starkStruct.steps.length -%>][3];
+
+    signal input challengeFRIQueries[3];
+<% } -%>
+
+    component sv = StarkVerifier();
+
+<%  if(starkInfo.nPublics > 0) { -%>
+    sv.publics <== publics;
+<%  } -%>
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+    sv.root<%- stage %> <== root<%- stage %>;
+<% } -%> 
+    sv.root<%- qStage %> <== root<%- qStage %>;
+    sv.evals <== evals;
+
+
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%>
+    sv.s0_vals<%- stage %> <== s0_vals<%- stage %>;
+<%  } -%>
+<% } -%> 
+    sv.s0_vals<%- qStage %> <== s0_vals<%- qStage %>;
+    sv.s0_valsC <== s0_valsC;
+<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  const stage = i + 1; -%>
+<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%>
+    sv.s0_siblings<%- stage %> <== s0_siblings<%- stage %>;
+<%  } -%>
+<% } -%>
+    sv.s0_siblings<%- qStage %> <== s0_siblings<%- qStage %>;
+    sv.s0_siblingsC <== s0_siblingsC;
+
+<% for (let s=0; s<starkStruct.steps.length-1; s++) {   -%>
+    sv.s<%- s+1 %>_root <== s<%- s+1 %>_root;
+<% }                                                     -%>
+
+<% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
+    sv.s<%- s %>_vals <== s<%- s %>_vals;
+    sv.s<%- s %>_siblings <== s<%- s %>_siblings;
+<% }                                                  -%>
+    sv.finalPol <== finalPol;
+
+<% if(options.inputChallenges) { -%>
+<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+    sv.challengesStage<%- i + 1 %> <== challengesStage<%- i + 1 %>;
+<%  }-%>
+    sv.challengeQ <== challengeQ;
+    sv.challengeXi <== challengeXi;
+    sv.challengesFRI <== challengesFRI;
+
+    sv.challengesFRISteps <== challengesFRISteps;
+    sv.challengeFRIQueries <== challengeFRIQueries;
+<% } -%>
+
+    //////
+    // Calculate Publics Hash
+    //////
+
+<%  if(starkInfo.nPublics > 0) { -%>
+    component publicsHasher = Sha256(<%- 160 + 64*starkInfo.nPublics %>);
+    component n2bProverAddr = Num2Bits(160);
+    component n2bPublics[<%- starkInfo.nPublics %>];
+    component cmpPublics[<%- starkInfo.nPublics %>];
+
+    n2bProverAddr.in <== proverAddr;
+    for (var i=0; i<160; i++) {
+        publicsHasher.in[160 - 1 -i] <== n2bProverAddr.out[i];
+    }
+
+    var offset = 160;
+
+    for (var i=0; i<<%- starkInfo.nPublics %>; i++) {
+        n2bPublics[i] = Num2Bits(64);
+        cmpPublics[i] = CompConstant64(0xFFFFFFFF00000000);
+        n2bPublics[i].in <== publics[i];
+        for (var j=0; j<64; j++) {
+            publicsHasher.in[offset + 64 - 1 -j] <== n2bPublics[i].out[j];
+            cmpPublics[i].in[j] <== n2bPublics[i].out[j];
+        }
+        cmpPublics[i].out === 0;
+        offset += 64;
+    }
+
+    component n2bPublicsHash = Bits2Num(256);
+    for (var i = 0; i < 256; i++) {
+        n2bPublicsHash.in[i] <== publicsHasher.out[255-i];
+    }
+
+    publicsHash <== n2bPublicsHash.out;
+<% } -%>
+}
+
+component main = Main();
+<% } -%>
+

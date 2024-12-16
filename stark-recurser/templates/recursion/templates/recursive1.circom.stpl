@@ -1,0 +1,20 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+<% for (let i = 0; i < verifierFilenames.length; ++i) { -%>
+include "<%- verifierFilenames[i] %>";
+<% } -%>
+
+template Main() {
+<%  if(options.setAggregatedVK) { -%>
+    signal input rootCAgg[4];
+<%  } -%>
+<%- include('src/main_templates/define_stark_inputs.circom.ejs', { starkInfo, prefix: "", nPublics: starkInfo.nPublics }); %>
+<%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "sV", prefix: "", publics, starkInfo, nPublics: starkInfo.nPublics,  options: { ...options, addPublics: true } }); %>
+}
+
+<%  if(options.setAggregatedVK) { -%>
+component main {public [publics, rootCAgg]}= Main();
+<%  } else { -%>
+component main {public [publics]}= Main();
+<%  } -%>

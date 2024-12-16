@@ -1,0 +1,53 @@
+<% if(isTest) { -%>
+pragma circom 2.1.0;
+pragma custom_templates;
+<% } -%>
+
+template VerifyRecursive2() {
+<%  for(let i = 0; i < publics.definitions.length; i++) { -%>
+    var <%- publics.definitions[i].name %>Pos = <%- publics.definitions[i].initialPos %>;
+<%  } -%>
+
+    signal input publicsAggregated[<%- publics.nPublics %>];
+    signal input a_publics[<%- publics.nPublics %>];
+    signal input b_publics[<%- publics.nPublics %>];
+
+    // Check recursive 2 publics
+    
+<%  for(let i = 0; i < publics.checks.length; i++) { -%>
+<%     let public1 = publics.definitions.find(d => d.name === publics.checks[i][0]) -%>
+<%     let public2 = publics.definitions.find(d => d.name === publics.checks[i][1]) -%>
+<%     let public1Index = publics.definitions.indexOf(public1); -%>
+<%     let length = public1Index === publics.definitions.length - 1 
+            ? publics.nPublics - public1.initialPos 
+            : publics.definitions[public1Index + 1].initialPos - public1.initialPos; -%>
+    // Checking that <%- public1.name %> in a_publics matches <%- public2.name %> in b_publics
+<%     if(length === 1) { -%>
+    a_publics[<%- public1.name %>Pos] === b_publics[<%- public2.name %>Pos];
+<%     } else { -%>
+    for(var i = 0; i < <%- length %>; i++) {
+        a_publics[<%- public1.name %>Pos + i] === b_publics[<%- public2.name %>Pos + i];
+    }
+<%     } -%>
+<%  } -%>
+
+<%  for(let i = 0; i < publics.definitions.length; i++) { -%> 
+<%      const pub = publics.definitions[i].prevSource ? "a_publics" : "b_publics"; -%>
+<%      const name = `${publics.definitions[i].name}Pos`; -%>
+<%      let length = i === publics.definitions.length - 1 
+            ? publics.nPublics - publics.definitions[i].initialPos 
+            : publics.definitions[i + 1].initialPos - publics.definitions[i].initialPos; -%>
+<%  if(length === 1) { -%>
+    publicsAggregated[<%- name %>] === <%- pub %>[<%- name %>];
+<%  } else { -%>
+    for(var i = 0; i < <%- length %>; i++) {
+        publicsAggregated[<%- name %> + i] === <%- pub %>[<%- name %> + i];
+    }
+<%  } -%>
+<%  } -%>  
+}
+
+
+<% if(isTest) { -%>
+    component main = VerifyRecursive2();
+<% } -%>

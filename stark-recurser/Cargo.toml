@@ -1,0 +1,10 @@
+[package]
+name = "stark-recurser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+proofman-common.workspace = true
+sailfish = "0.9.0"
+sysinfo = "0.31.2"
+colored = "2"
