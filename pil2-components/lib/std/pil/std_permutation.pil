@@ -103,7 +103,7 @@ function permutation(const int opid, const expr expressions[], const expr sel = 
         case PIOP_BUS_SUM:
             sum(name, 2, [opid], opid, expressions, sel);
         case PIOP_BUS_PROD:
-            error("Free permutation with product bus is not supported");
+            prod(name, 2, opid, expressions, sel);
         default:
             error(`Unknown bus type: ${bus_type}`);
     }

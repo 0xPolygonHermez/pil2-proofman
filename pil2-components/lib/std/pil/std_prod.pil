@@ -1,19 +1,32 @@
 require "std_constants.pil";
 require "std_tools.pil";
 
+function prod(const int name, const int type, const int opid, const expr expressions[], const expr sel = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
+    switch (type) {
+        case 0: // Assume
+            update_piop_prod(name, 0, opid, sel, expressions, direct_type);
+        case 1: // Prove
+            update_piop_prod(name, 1, opid, sel, expressions, direct_type);
+        case 2: // Free
+            update_piop_prod(name, 2, opid, sel, expressions, direct_type);
+        default:
+            error("Invalid product type: ${type}");
+    }
+}
+
 function prod_assumes(const int name, const int opid, const expr expressions[], const expr sel = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
-    update_piop_prod(name, 0, opid, sel, expressions, direct_type);
+    prod(name, 0, opid, expressions, sel, direct_type);
 }
 
 function prod_proves(const int name, const int opid, const expr expressions[], const expr sel = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
-    update_piop_prod(name, 1, opid, sel, expressions, direct_type);
+    prod(name, 1, opid, expressions, sel, direct_type);
 }
 
 /**
  * It updates the product check constraints.
  *
  * @param name        The name of the PIOP consuming the product check
- * @param proves      1 if the PIOP proves a statement, 0 if it assumes a statement
+ * @param proves      1 if the PIOP proves a statement, 0 if it assumes a statement and 2 if it is free
  * @param opid        The ID that uniquely identifies the PIOP in the bus
  * @param sel         The selector of the PIOP
  * @param expressions The vector of expressions of the PIOP
@@ -40,7 +53,7 @@ private function update_piop_prod(const int name, const int proves, const int op
         sum_expr += expressions[i];
     }
     @gprod_debug_data{name_piop: get_piop_name(name), name_expr: name_expr, busid: opid, is_global: direct_type == PIOP_DIRECT_TYPE_GLOBAL,
-                          proves: proves, selector: sel, expressions: expressions, deg_expr: degree(sum_expr), deg_sel: degree(sel)};
+                          proves: proves == 2 ? sel : proves, selector: sel, expressions: expressions, deg_expr: degree(sum_expr), deg_sel: degree(sel)};
 
     initial_checks_prod(proves, opid, exprs_num, direct_type);
 
@@ -120,6 +133,10 @@ private function init_air_containers_prod(const int name) {
         expr gprod_proves_sel[100];
         expr gprod_proves[100];
 
+        int gprod_free_count = 0;
+        expr gprod_free_sel[100];
+        expr gprod_free_expr[100];
+
         // Direct-related data, used to update `gprod` at the air level
         int direct_gprod_assumes_count = 0;
         expr direct_gprod_assumes_sel[100];
@@ -148,8 +165,15 @@ private function initial_checks_prod(const int proves, const int opid, const int
 
     // The same opid can appear in different airs, so we keep track of the number of proves and assumes
     // for final checks
-    const string is_proves_str = proves ? "proves" : "assumes";
-    proof.std.gprod.`id${opid}`.`${is_proves_str}`++;
+    if (proves == 2) {
+        // If the user is responsible for the use of proves and assumes, then mark both
+        proof.std.gprod.`id${opid}`.proves++;
+        proof.std.gprod.`id${opid}`.assumes++;
+    } else {
+        // Otherwise, we mark it correctly
+        const string is_proves_str = proves ? "proves" : "assumes";
+        proof.std.gprod.`id${opid}`.`${is_proves_str}`++;
+    }
 }
 
 private function gprod_update_global_constraint_data(const int proves, const expr sel, const expr exprs_compressed) {
@@ -180,14 +204,22 @@ private function gprod_update_air_constraint_data(const int proves, const expr s
             direct_gprod_assumes_count++;
         }
     } else {
-        if (proves) {
-            gprod_proves_sel[gprod_proves_count] = sel;
-            gprod_proves[gprod_proves_count] = exprs_compressed;
-            gprod_proves_count++;
-        } else {
-            gprod_assumes_sel[gprod_assumes_count] = sel;
-            gprod_assumes[gprod_assumes_count] = exprs_compressed;
-            gprod_assumes_count++;
+        switch (proves) {
+            case 0: // Assume
+                gprod_assumes_sel[gprod_assumes_count] = sel;
+                gprod_assumes[gprod_assumes_count] = exprs_compressed;
+                gprod_assumes_count++;
+            case 1: // Prove
+                gprod_proves_sel[gprod_proves_count] = sel;
+                gprod_proves[gprod_proves_count] = exprs_compressed;
+                gprod_proves_count++;
+            case 2: // Free
+                gprod_free_sel[gprod_free_count] = sel;
+                gprod_free_expr[gprod_free_count] = exprs_compressed;
+                gprod_free_count++;
+
+            default:
+                error("Invalid proves: ${proves}");
         }
     }
 }
@@ -203,16 +235,21 @@ private function piop_gprod_air() {
 
     airgroupval aggregate(prod) default(1) gprod_result;
 
-    //                                        (st1·(t1+ɣ-1)+1)·(st2·(t2+ɣ-1)+1)
-    //  gprod === ('gprod * (1 - L1) + L1) * -----------------------------------
-    //                                        (sf1·(f1+ɣ-1)+1)·(sf2·(f2+ɣ-1)+1)
-    //
-    // Note: The ti and fi are not necessarily related to each other
+    /*
+                                            (st1·(t1+ɣ-1)+1)·(st2·(t2+ɣ-1)+1)·(sh·(sh+1)/2·(h+ɣ-1)+1)
+        gprod === ('gprod * (1 - L1) + L1) * ----------------------------------------------------
+                                            (sf1·(f1+ɣ-1)+1)·(sf2·(f2+ɣ-1)+1)·(sh·(sh-1)/2·(h+ɣ-1)+1)
+
+    Notice that (sh·(sh+1)/2·(h+ɣ-1)+1) = 1 if sh = 0,-1 and equals to h+ɣ if sh = 1.
+    Similarly, (sh·(sh-1)/2·(h+ɣ-1)+1) = 1 if sh = 0,1 and equals to h+ɣ if sh = -1.
+    This is used for a "free" permutation.
+    */
 
     if (!defined(std_gamma)) {
         challenge stage(2) std_gamma;
     }
 
+    // Treat the standard assumes/proves
     expr air_num = 1;
     for (int i = 0; i < gprod_proves_count; i++) {
         air_num *= (gprod_proves_sel[i] * (gprod_proves[i] + std_gamma - 1) + 1);
@@ -221,6 +258,13 @@ private function piop_gprod_air() {
     expr air_den = 1;
     for (int i = 0; i < gprod_assumes_count; i++) {
         air_den *= (gprod_assumes_sel[i] * (gprod_assumes[i] + std_gamma - 1) + 1);
+    }
+
+    // Treat the free case
+    const int two_inv = 1 / 2;
+    for (int i = 0; i < gprod_free_count; i++) {
+        air_num *= (gprod_free_sel[i] * (gprod_free_sel[i] + 1) * two_inv * (gprod_free_expr[i] + std_gamma - 1) + 1);
+        air_den *= (gprod_free_sel[i] * (gprod_free_sel[i] - 1) * two_inv * (gprod_free_expr[i] + std_gamma - 1) + 1);
     }
 
     //  At this point, the constraint has been transformed to:

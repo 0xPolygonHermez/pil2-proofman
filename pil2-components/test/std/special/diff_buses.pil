@@ -3,7 +3,7 @@ require "std_permutation.pil";
 require "std_lookup.pil";
 
 // One can use the following function to set the bus type for the entire std
-// set_bus_type(PIOP_BUS_SUM);
+// set_std_bus_type(PIOP_BUS_SUM);
 
 airtemplate Air1(const int N = 2**4) {
     col witness a,b;

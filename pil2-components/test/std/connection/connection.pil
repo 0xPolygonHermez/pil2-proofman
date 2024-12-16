@@ -10,7 +10,7 @@ const int TEST_OPID = 44;
 // TODO: Finish Connection2 and Connection3, compute examples of permutations
 // TODO: Add examples combining both approaches
 
-set_bus_type(PIOP_BUS_PROD);
+set_permutation_bus_type(PIOP_BUS_PROD);
 
 airtemplate Connection1(const int N = 2**3) {
     if (N != 2**3) error(`Unsupported N = ${N}`);

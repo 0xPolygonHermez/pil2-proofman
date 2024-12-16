@@ -10,7 +10,7 @@ function sum(const int name, const int type, const int opids[], const expr busid
         case 2: // Free
             update_piop_sum(name, 2, opids, busid, mul, expressions, direct_type);
         default:
-            error("Invalid type: ${type}");
+            error("Invalid sum type: ${type}");
     }
 }
 
@@ -26,7 +26,7 @@ function sum_proves(const int name, const int opids[], const expr busid, const e
  * It updates the sum check constraints.
  *
  * @param name        The name of the PIOP consuming the sum check
- * @param proves      1 if the PIOP proves a statement, 0 if it assumes a statement
+ * @param proves      1 if the PIOP proves a statement, 0 if it assumes a statement and 2 if it is free
  * @param opids       The vector of opids of the PIOP
  * @param busid       The ID that uniquely identifies the PIOP in the bus
  * @param sel         The selector of the PIOP
@@ -163,8 +163,8 @@ private function initial_checks_sum(const int proves, const int opids[], const i
             proof.std.gsum.`id${opids[i]}`.assumes++;
         } else {
             // Otherwise, we mark it correctly
-            const string name_str = proves ? "proves" : "assumes";
-            proof.std.gsum.`id${opids[i]}`.`${name_str}`++;
+            const string is_proves_str = proves ? "proves" : "assumes";
+            proof.std.gsum.`id${opids[i]}`.`${is_proves_str}`++;
         }
     }
 }
@@ -222,8 +222,6 @@ private function piop_gsum_air(const int blowupFactor = 2) {
                                             muli       seli
         gsum === 'gsum * (1 - L1) + ∑ᵢ ( -------- - -------- )
                                            ti + ɣ     fi + ɣ
-
-    Note: The ti and fi are not necessarily related to each other
     */
 
     /*
