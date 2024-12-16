@@ -4,6 +4,7 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "gl64_t.cuh"
+#include "omp.h"
 
 
 struct DestGPU {
@@ -62,9 +63,8 @@ struct DeviceArguments {
     uint32_t nArgsTotal;
     //buffer
     uint64_t nBlocks; 
-    uint64_t singleBufferSize;
-    uint64_t bufferTSize;
-    Goldilocks::Element * bufferT_;
+    uint64_t bufferSize;
+    Goldilocks::Element** bufferT_;
     //destVals
     Goldilocks::Element*** destVals;
 
@@ -75,12 +75,13 @@ void multiplyPolynomials(DeviceArguments* deviceArgs, DestGPU &dest, Goldilocks:
 void storePolynomial(DeviceArguments* deviceArgs, DestGPU* dests, uint32_t nDests,  Goldilocks::Element** destVals, uint64_t row);
 __global__ void allocateDestVals(DeviceArguments* d_deviceArgs);
 __global__ void setDestsParams(DestGPU* d_dests, Params* d_params, uint64_t iDests);
-__global__ void loadPolynomials_(DeviceArguments* d_deviceArgs, uint64_t row);
+__global__ void loadPolynomials_(DeviceArguments* d_deviceArgs, uint64_t row, uint32_t iBlock);
 
 
 class ExpressionsGPU : public ExpressionsCtx {
 public:
     uint64_t nrowsPack;
+    uint32_t nBlocks;
     uint64_t nCols;
     vector<uint64_t> nColsStages;
     vector<uint64_t> nColsStagesAcc;
@@ -88,7 +89,7 @@ public:
     DeviceArguments deviceArgs;
     DeviceArguments* d_deviceArgs;
     
-    ExpressionsGPU(SetupCtx& setupCtx, uint64_t nrowsPack_ = 64) : ExpressionsCtx(setupCtx), nrowsPack(nrowsPack_) {};
+    ExpressionsGPU(SetupCtx& setupCtx, uint64_t nrowsPack_ = 64, uint32_t nBlocks_ = 32) : ExpressionsCtx(setupCtx), nrowsPack(nrowsPack_), nBlocks(nBlocks_) {};
 
     void setBufferTInfo(uint64_t domainSize, StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> &dests) {
 
@@ -402,8 +403,10 @@ public:
         Goldilocks::Element* airgroupValues = params.airgroupValues;
         Goldilocks::Element* airValues = params.airValues;
         
-    #pragma omp parallel for
-        for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
+        uint64_t numIters=domainSize/ nrowsPack;
+        #pragma omp parallel for
+        for (uint64_t l = 0; l < numIters; l++) {
+            uint64_t i = l * nrowsPack;
             Goldilocks::Element bufferT_[nOpenings*nCols*nrowsPack];
             loadPolynomials(bufferT_, i); 
 
@@ -941,12 +944,17 @@ public:
         cudaMemcpy(d_x_2ns, deviceArgs.x_2ns, deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
 
         // bufferT_
-        deviceArgs.nBlocks = 1;
-        deviceArgs.singleBufferSize = deviceArgs.nOpenings * deviceArgs.nCols * deviceArgs.nrowsPack;
-        deviceArgs.bufferTSize = deviceArgs.nBlocks * (deviceArgs.singleBufferSize+ 4); // this for GL elements are used just to separate local buffers and avoid collinsions into the same cache line
-        Goldilocks::Element* d_bufferT_;
-        cudaMalloc(&d_bufferT_, deviceArgs.bufferTSize * sizeof(Goldilocks::Element)); 
-        deviceArgs.bufferT_ = d_bufferT_;
+        deviceArgs.nBlocks = nBlocks;
+        deviceArgs.bufferSize = deviceArgs.nOpenings * deviceArgs.nCols * deviceArgs.nrowsPack;// this for GL elements are used just to separate local buffers and avoid collinsions into the same cache line
+        Goldilocks::Element** bufferT_ = new Goldilocks::Element*[deviceArgs.nBlocks];
+        for(uint64_t i = 0; i < deviceArgs.nBlocks; ++i) {
+            cudaMalloc(&bufferT_[i], deviceArgs.bufferSize * sizeof(Goldilocks::Element));
+        }        
+        deviceArgs.bufferT_ = bufferT_;
+        Goldilocks::Element** d_bufferT_;
+        cudaMalloc(&d_bufferT_, deviceArgs.nBlocks * sizeof(Goldilocks::Element*)); 
+        cudaMemcpy(d_bufferT_, deviceArgs.bufferT_, deviceArgs.nBlocks * sizeof(Goldilocks::Element*), cudaMemcpyHostToDevice);
+
 
         //Dests
         DestGPU* d_dests; //rick: com alliberare aquest punter?
@@ -959,7 +967,7 @@ public:
         }
 
         // destVals
-        deviceArgs.destVals = new Goldilocks::Element**[deviceArgs.nDests];
+        deviceArgs.destVals = new Goldilocks::Element**[deviceArgs.nBlocks];
         for(int i=0; i<deviceArgs.nBlocks; i++) {
             deviceArgs.destVals[i] = new Goldilocks::Element*[deviceArgs.nDests];
             for(uint64_t j = 0; j < deviceArgs.nDests; ++j) {
@@ -967,7 +975,7 @@ public:
             }
         }
         Goldilocks::Element*** d_destVals;
-        cudaMalloc(&d_destVals, deviceArgs.nDests * sizeof(Goldilocks::Element**));
+        cudaMalloc(&d_destVals, deviceArgs.nBlocks * sizeof(Goldilocks::Element**));
 
         // non-polynomial arguments
         Goldilocks::Element* d_challenges;
@@ -1031,6 +1039,7 @@ public:
         h_deviceArgs.ops = d_ops;
         h_deviceArgs.args = d_args;
         h_deviceArgs.destVals = d_destVals;
+        h_deviceArgs.bufferT_ = d_bufferT_;
         
         // Copy the updated struct to the device
         cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice);
@@ -1038,7 +1047,6 @@ public:
 
     }
 
-    
 };
     void copyPolynomial(DeviceArguments* deviceArgs, Goldilocks::Element* destVals, bool inverse, bool batch, uint64_t dim, Goldilocks::Element* tmp) {
         if(dim == 1) {
@@ -1117,7 +1125,6 @@ public:
         Goldilocks::Element* evals = deviceArgs->evals;
         Goldilocks::Element* airgroupValues = deviceArgs->airgroupValues;
         Goldilocks::Element* airValues = deviceArgs->airValues;
-        Goldilocks::Element** destVals = deviceArgs->destVals[0];
         uint64_t* nColsStagesAcc = deviceArgs->nColsStagesAcc;
         uint64_t domainSize = deviceArgs->domainSize;
         uint64_t nrowsPack = deviceArgs->nrowsPack;
@@ -1126,14 +1133,17 @@ public:
         DestGPU* dests = deviceArgs->dests;
         uint32_t nDests = deviceArgs->nDests;
         
+        uint64_t numIters=domainSize/ nrowsPack;
+        #pragma omp parallel for num_threads(deviceArgs->nBlocks)
+        for (uint64_t l = 0; l < numIters; l++) {
 
-        //#pragma omp parallel for
-        for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
-
+            uint64_t i = l * nrowsPack;
+            uint32_t iBlock= omp_get_thread_num();
             Goldilocks::Element bufferT_[nOpenings*nCols*nrowsPack];
-            CHECKCUDAERR(cudaMemset(deviceArgs->bufferT_, 0, deviceArgs->singleBufferSize * sizeof(Goldilocks::Element)));
-            loadPolynomials_<<<1, nrowsPack >>>(d_deviceArgs, i);
-            CHECKCUDAERR(cudaMemcpy(bufferT_, deviceArgs->bufferT_, deviceArgs->singleBufferSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+            CHECKCUDAERR(cudaMemset(deviceArgs->bufferT_[iBlock], 0, deviceArgs->bufferSize * sizeof(Goldilocks::Element)));
+            loadPolynomials_<<<1, nrowsPack >>>(d_deviceArgs, i, iBlock);
+            CHECKCUDAERR(cudaMemcpy(bufferT_, deviceArgs->bufferT_[iBlock], deviceArgs->bufferSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+            Goldilocks::Element** destVals = deviceArgs->destVals[iBlock];
 
             for(uint64_t j = 0; j < nDests; ++j) {
                 for(uint64_t k = 0; k < dests[j].nParams; ++k) {
@@ -1153,8 +1163,8 @@ public:
                         continue;
                     }
 
-                    uint8_t* ops = &deviceArgs->ops[dests[j].params[k].parserParams.opsOffset]; //tenir a deviceARgs
-                    uint16_t* args = &deviceArgs->args[dests[j].params[k].parserParams.argsOffset]; //tenir a device Args
+                    uint8_t* ops = &deviceArgs->ops[dests[j].params[k].parserParams.opsOffset];
+                    uint16_t* args = &deviceArgs->args[dests[j].params[k].parserParams.argsOffset];
                     Goldilocks::Element tmp1[dests[j].params[k].parserParams.nTemp1*nrowsPack]; 
                     Goldilocks::Element tmp3[dests[j].params[k].parserParams.nTemp3*nrowsPack*FIELD_EXTENSION]; 
 
@@ -1613,6 +1623,7 @@ public:
         }
 
     }
+    
     __global__ void setDestsParams(DestGPU* d_dests, Params* d_params, uint64_t iDest) {
         d_dests[iDest].params = d_params;
     }
@@ -1624,7 +1635,7 @@ public:
             }
         }
     }
-    __global__ void loadPolynomials_(DeviceArguments* d_deviceArgs, uint64_t row){
+    __global__ void loadPolynomials_(DeviceArguments* d_deviceArgs, uint64_t row, uint32_t iBlock){
 
         uint64_t row_loc = threadIdx.x;
         uint64_t nOpenings = d_deviceArgs->nOpenings;
@@ -1646,7 +1657,7 @@ public:
         Goldilocks::Element* x_n = d_deviceArgs->x_n;
         Goldilocks::Element* x_2ns = d_deviceArgs->x_2ns;
         Goldilocks::Element* xDivXSub = d_deviceArgs->xDivXSub;
-        Goldilocks::Element* d_bufferT_ = d_deviceArgs->bufferT_;
+        Goldilocks::Element* d_bufferT_ = d_deviceArgs->bufferT_[iBlock];
 
         for(uint64_t k = 0; k < constPolsSize;  ++k) {
             for(uint64_t o = 0; o < nOpenings; ++o) {
