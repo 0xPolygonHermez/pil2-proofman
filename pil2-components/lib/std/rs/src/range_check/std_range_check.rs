@@ -7,10 +7,9 @@ use std::{
 use num_bigint::BigInt;
 use p3_field::PrimeField;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{ProofCtx, SetupCtx, StdMode, ModeName};
 use proofman_hints::{get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
-use rayon::Scope;
 
 use crate::{Decider, Range, SpecifiedRanges, U16Air, U8Air};
 
@@ -71,24 +70,21 @@ impl<F: PrimeField> Decider<F> for StdRangeCheck<F> {
 impl<F: PrimeField> StdRangeCheck<F> {
     const _MY_NAME: &'static str = "STD Range Check";
 
-    pub fn new(mode: StdMode, wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let sctx = wcm.get_sctx();
-
+    pub fn new(mode: StdMode, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> Arc<Self> {
         // Scan global hints to know which airs are associated with the range check
         let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
         let u16air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
         let specified_ranges_hint = get_hint_ids_by_name(sctx.get_global_bin(), "specified_ranges");
 
-        let u8air = if !u8air_hint.is_empty() { Some(U8Air::new(wcm.clone())) } else { None };
-        let u16air = if !u16air_hint.is_empty() { Some(U16Air::new(wcm.clone())) } else { None };
-        let specified_ranges =
-            if !specified_ranges_hint.is_empty() { Some(SpecifiedRanges::new(wcm.clone())) } else { None };
+        let u8air = if !u8air_hint.is_empty() { Some(U8Air::new(pctx.clone(), sctx.clone())) } else { None };
+        let u16air = if !u16air_hint.is_empty() { Some(U16Air::new(pctx.clone(), sctx.clone())) } else { None };
+        let specified_ranges = if !specified_ranges_hint.is_empty() {
+            Some(SpecifiedRanges::new(pctx.clone(), sctx.clone()))
+        } else {
+            None
+        };
 
-        let std_range_check = Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u16air, specified_ranges });
-
-        wcm.register_component(std_range_check.clone());
-
-        std_range_check
+        Arc::new(Self { mode, ranges: Mutex::new(Vec::new()), u8air, u16air, specified_ranges })
     }
 
     fn register_range(&self, sctx: Arc<SetupCtx>, airgroup_id: usize, air_id: usize, hint: u64) {
@@ -252,15 +248,15 @@ impl<F: PrimeField> StdRangeCheck<F> {
         }
     }
 
-    pub fn drain_inputs(&self, _pctx: Arc<ProofCtx<F>>, _scope: Option<&Scope>) {
+    pub fn drain_inputs(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         if let Some(u8air) = self.u8air.as_ref() {
-            u8air.drain_inputs();
+            u8air.drain_inputs(pctx.clone(), sctx.clone());
         }
         if let Some(u16air) = self.u16air.as_ref() {
-            u16air.drain_inputs();
+            u16air.drain_inputs(pctx.clone(), sctx.clone());
         }
         if let Some(specified_ranges) = self.specified_ranges.as_ref() {
-            specified_ranges.drain_inputs();
+            specified_ranges.drain_inputs(pctx.clone(), sctx.clone());
         }
     }
 

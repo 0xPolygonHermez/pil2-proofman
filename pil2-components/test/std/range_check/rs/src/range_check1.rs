@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use pil_std_lib::Std;
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
+
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use num_bigint::BigInt;
@@ -20,18 +21,21 @@ where
 {
     const MY_NAME: &'static str = "RngChck1";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
+    pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
         let range_check1 = Arc::new(Self { std_lib });
-
-        wcm.register_component(range_check1.clone());
 
         // Register dependency relations
         range_check1.std_lib.register_predecessor();
 
         range_check1
     }
+}
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+impl<F: PrimeField> WitnessComponent<F> for RangeCheck1<F>
+where
+    Standard: Distribution<F>,
+{
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = RangeCheck1Trace::new_zeroes();
@@ -79,8 +83,6 @@ where
 
         let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, pctx.clone());
-        self.std_lib.unregister_predecessor(pctx, None);
+        self.std_lib.unregister_predecessor();
     }
 }
-
-impl<F: PrimeField> WitnessComponent<F> for RangeCheck1<F> where Standard: Distribution<F> {}

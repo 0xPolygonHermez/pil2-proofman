@@ -1,17 +1,11 @@
 [package]
-name = "proofman"
+name = "witness"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 proofman-common = { path = "../common" }
-proofman-hints = { path = "../hints" }
 proofman-util = { path = "../util" }
-pilout = { path = "../pilout" }
-stark = { path = "../provers/stark" }
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
-transcript = { path = "../transcript" }
-witness = { path = "../witness" }
 
 log.workspace = true
 env_logger.workspace = true
@@ -26,5 +20,5 @@ serde_json = "1.0.68"
 
 [features]
 default = []
-no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
-distributed = ["proofman-common/distributed", "dep:mpi"]
+no_lib_link = []
+distributed = []

@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-proofman.workspace = true
 proofman-common.workspace = true
 proofman-hints.workspace = true
 proofman-util.workspace = true
@@ -15,3 +14,4 @@ num-traits.workspace = true
 p3-goldilocks.workspace = true
 p3-field.workspace = true
 rayon.workspace = true
+witness.workspace = true

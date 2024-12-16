@@ -6,7 +6,7 @@ use std::{
 use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{AirInstance, ModeName, ProofCtx, SetupCtx, StdMode};
 use proofman_hints::{
     get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a, get_hint_ids_by_name,
@@ -44,16 +44,12 @@ impl<F: PrimeField> Decider<F> for StdProd<F> {
 impl<F: PrimeField> StdProd<F> {
     const MY_NAME: &'static str = "STD Prod";
 
-    pub fn new(mode: StdMode, wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let std_prod = Arc::new(Self {
+    pub fn new(mode: StdMode) -> Arc<Self> {
+        Arc::new(Self {
             mode: mode.clone(),
             prod_airs: Mutex::new(Vec::new()),
             debug_data: if mode.name == ModeName::Debug { Some(Mutex::new(HashMap::new())) } else { None },
-        });
-
-        wcm.register_component(std_prod.clone());
-
-        std_prod
+        })
     }
 
     fn debug(

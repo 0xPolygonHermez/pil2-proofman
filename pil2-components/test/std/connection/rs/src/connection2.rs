@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use p3_field::PrimeField;
@@ -8,25 +8,22 @@ use rand::{distributions::Standard, prelude::Distribution, Rng};
 
 use crate::Connection2Trace;
 
-pub struct Connection2<F> {
-    _phantom: std::marker::PhantomData<F>,
-}
+pub struct Connection2;
 
-impl<F: PrimeField + Copy> Connection2<F>
-where
-    Standard: Distribution<F>,
+impl Connection2
 {
     const MY_NAME: &'static str = "Connct_2";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let connection2 = Arc::new(Self { _phantom: std::marker::PhantomData });
-
-        wcm.register_component(connection2.clone());
-
-        connection2
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self)
     }
+}
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+impl<F: PrimeField + Copy> WitnessComponent<F> for Connection2
+where
+    Standard: Distribution<F>,
+{
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = Connection2Trace::new_zeroes();
@@ -46,5 +43,3 @@ where
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for Connection2<F> where Standard: Distribution<F> {}

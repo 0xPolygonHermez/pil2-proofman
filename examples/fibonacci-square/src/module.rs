@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
-use proofman::{WitnessManager, WitnessComponent};
+use witness::WitnessComponent;
 use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField64};
 use num_bigint::BigInt;
@@ -16,10 +16,8 @@ pub struct Module<F: PrimeField64> {
 impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<F> {
     const MY_NAME: &'static str = "ModuleSM";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>, std_lib: Arc<Std<F>>) -> Arc<Self> {
+    pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
         let module = Arc::new(Module { inputs: Mutex::new(Vec::new()), std_lib });
-
-        wcm.register_component(module.clone());
 
         // Register dependency relations
         module.std_lib.register_predecessor();
@@ -36,12 +34,10 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
 
         x_mod
     }
+}
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        self.calculate_trace(pctx);
-    }
-
-    fn calculate_trace(&self, pctx: Arc<ProofCtx<F>>) {
+impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         let module = F::as_canonical_u64(&pctx.get_public_value("module"));
@@ -74,8 +70,6 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
         let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, pctx.clone());
 
-        self.std_lib.unregister_predecessor(pctx, None);
+        self.std_lib.unregister_predecessor();
     }
 }
-
-impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {}

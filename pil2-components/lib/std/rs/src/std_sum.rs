@@ -6,7 +6,7 @@ use std::{
 use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{AirInstance, ProofCtx, SetupCtx, StdMode, ModeName};
 use proofman_hints::{
     get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a, acc_mul_hint_fields,
@@ -46,16 +46,12 @@ impl<F: PrimeField> Decider<F> for StdSum<F> {
 impl<F: PrimeField> StdSum<F> {
     const MY_NAME: &'static str = "STD Sum ";
 
-    pub fn new(mode: StdMode, wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let std_sum = Arc::new(Self {
+    pub fn new(mode: StdMode) -> Arc<Self> {
+        Arc::new(Self {
             mode: mode.clone(),
             sum_airs: Mutex::new(Vec::new()),
             debug_data: if mode.name == ModeName::Debug { Some(Mutex::new(HashMap::new())) } else { None },
-        });
-
-        wcm.register_component(std_sum.clone());
-
-        std_sum
+        })
     }
 
     fn debug(

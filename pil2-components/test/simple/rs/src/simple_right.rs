@@ -1,32 +1,28 @@
 use std::sync::Arc;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use rand::{distributions::Standard, prelude::Distribution};
 
 use crate::SimpleRightTrace;
 
-pub struct SimpleRight<F> {
-    _phantom: std::marker::PhantomData<F>,
+pub struct SimpleRight;
+
+impl SimpleRight {
+    const MY_NAME: &'static str = "SimRight";
+
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
 }
 
-impl<F: PrimeField + Copy> SimpleRight<F>
+impl<F: PrimeField64 + Copy> WitnessComponent<F> for SimpleRight
 where
     Standard: Distribution<F>,
 {
-    const MY_NAME: &'static str = "SimRight";
-
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let simple_right = Arc::new(Self { _phantom: std::marker::PhantomData });
-
-        wcm.register_component(simple_right.clone());
-
-        simple_right
-    }
-
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut trace = SimpleRightTrace::new();
         let num_rows = trace.num_rows();
 
@@ -47,5 +43,3 @@ where
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for SimpleRight<F> where Standard: Distribution<F> {}

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use p3_field::PrimeField;
@@ -8,28 +8,24 @@ use rand::{distributions::Standard, prelude::Distribution, Rng};
 
 use crate::Lookup0Trace;
 
-pub struct Lookup0<F> {
-    _phantom: std::marker::PhantomData<F>,
+pub struct Lookup0;
+
+impl Lookup0 {
+    const MY_NAME: &'static str = "Lookup_0";
+
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
 }
 
-impl<F: PrimeField + Copy> Lookup0<F>
+impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup0
 where
     Standard: Distribution<F>,
 {
-    const MY_NAME: &'static str = "Lookup0";
-
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let lookup0 = Arc::new(Self { _phantom: std::marker::PhantomData });
-
-        wcm.register_component(lookup0.clone());
-
-        lookup0
-    }
-
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
 
-        let mut trace = Lookup0Trace::new();
+        let mut trace = Lookup0Trace::new_zeroes();
         let num_rows = trace.num_rows();
 
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
@@ -57,5 +53,3 @@ where
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup0<F> where Standard: Distribution<F> {}

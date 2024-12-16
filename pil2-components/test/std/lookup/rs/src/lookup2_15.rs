@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use p3_field::PrimeField;
@@ -8,25 +8,21 @@ use rand::{distributions::Standard, prelude::Distribution, Rng};
 
 use crate::Lookup2_15Trace;
 
-pub struct Lookup2_15<F> {
-    _phantom: std::marker::PhantomData<F>,
+pub struct Lookup2_15;
+
+impl Lookup2_15 {
+    const MY_NAME: &'static str = "Lkup2_15";
+
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
 }
 
-impl<F: PrimeField + Copy> Lookup2_15<F>
+impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup2_15
 where
     Standard: Distribution<F>,
 {
-    const MY_NAME: &'static str = "Lkup2_15";
-
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let lookup2_15 = Arc::new(Self { _phantom: std::marker::PhantomData });
-
-        wcm.register_component(lookup2_15.clone());
-
-        lookup2_15
-    }
-
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = Lookup2_15Trace::new();
@@ -67,5 +63,3 @@ where
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup2_15<F> where Standard: Distribution<F> {}

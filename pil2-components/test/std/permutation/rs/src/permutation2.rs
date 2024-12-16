@@ -1,28 +1,24 @@
 use std::sync::Arc;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use p3_field::PrimeField;
 
 use crate::Permutation2_6Trace;
 
-pub struct Permutation2<F> {
-    _phantom: std::marker::PhantomData<F>,
-}
+pub struct Permutation2;
 
-impl<F: PrimeField + Copy> Permutation2<F> {
+impl Permutation2 {
     const MY_NAME: &'static str = "Perm2   ";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let permutation2 = Arc::new(Self { _phantom: std::marker::PhantomData });
-        
-        wcm.register_component(permutation2.clone());
-
-        permutation2
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self)
     }
+}
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+impl<F: PrimeField + Copy> WitnessComponent<F> for Permutation2 {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut trace = Permutation2_6Trace::new();
         let num_rows = trace.num_rows();
 
@@ -46,5 +42,3 @@ impl<F: PrimeField + Copy> Permutation2<F> {
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for Permutation2<F> {}

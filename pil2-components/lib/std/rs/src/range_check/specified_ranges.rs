@@ -4,10 +4,11 @@ use std::sync::{Arc, Mutex};
 use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
-use proofman::{get_hint_field_gc, WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{AirInstance, DistributionCtx, ProofCtx, SetupCtx, TraceInfo};
 use proofman_hints::{
-    get_hint_field, get_hint_field_constant, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue,
+    get_hint_field_gc, get_hint_field, get_hint_field_constant, get_hint_ids_by_name, set_hint_field, HintFieldOptions,
+    HintFieldValue,
 };
 use proofman_util::create_buffer_fast;
 
@@ -16,8 +17,6 @@ use crate::Range;
 const PROVE_CHUNK_SIZE: usize = 1 << 5;
 
 pub struct SpecifiedRanges<F: PrimeField> {
-    wcm: Arc<WitnessManager<F>>,
-
     // Parameters
     hints: Mutex<Vec<u64>>,
     airgroup_id: usize,
@@ -33,10 +32,7 @@ pub struct SpecifiedRanges<F: PrimeField> {
 impl<F: PrimeField> SpecifiedRanges<F> {
     const MY_NAME: &'static str = "SpecRang";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let pctx = wcm.get_pctx();
-        let sctx = wcm.get_sctx();
-
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> Arc<Self> {
         // Scan global hints to get the airgroup_id and air_id
         let hint_global = get_hint_ids_by_name(sctx.get_global_bin(), "specified_ranges");
         let airgroup_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "airgroup_id", false);
@@ -62,8 +58,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             }
         };
 
-        let specified_ranges = Arc::new(Self {
-            wcm: wcm.clone(),
+        Arc::new(Self {
             hints: Mutex::new(Vec::new()),
             airgroup_id,
             air_id,
@@ -71,11 +66,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             ranges: Mutex::new(Vec::new()),
             inputs: Mutex::new(Vec::new()),
             mul_columns: Mutex::new(Vec::new()),
-        });
-
-        wcm.register_component(specified_ranges.clone());
-
-        specified_ranges
+        })
     }
 
     pub fn update_inputs(&self, value: F, range: Range<F>, multiplicity: F) {
@@ -91,10 +82,9 @@ impl<F: PrimeField> SpecifiedRanges<F> {
         }
     }
 
-    pub fn drain_inputs(&self) {
+    pub fn drain_inputs(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         let mut inputs = self.inputs.lock().unwrap();
         let drained_inputs = inputs.drain(..).collect();
-        let pctx = self.wcm.get_pctx();
 
         // Perform the last update
         self.update_multiplicity(drained_inputs);
@@ -123,7 +113,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             // Set the multiplicity columns as done
             let hints = self.hints.lock().unwrap();
 
-            let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
+            let air_instance_repo = &pctx.air_instance_repo;
             let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
             let air_instance_id = if !instance.is_empty() {
                 air_instance_repo.find_air_instances(self.airgroup_id, self.air_id)[0]
@@ -146,7 +136,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
                 .collect::<Vec<HintFieldValue<F>>>();
 
             for (index, hint) in hints[1..].iter().enumerate() {
-                set_hint_field(&self.wcm.get_sctx(), air_instance, *hint, "reference", &mul_columns_2[index]);
+                set_hint_field(&sctx, air_instance, *hint, "reference", &mul_columns_2[index]);
             }
 
             log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "SpecifiedRanges");

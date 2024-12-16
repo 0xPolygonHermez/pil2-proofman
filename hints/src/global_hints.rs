@@ -1,12 +1,10 @@
 use p3_field::Field;
-use proofman_hints::{HintCol, HintFieldInfoValues, HintFieldOutput, HintFieldValue, HintFieldValues, HintFieldValuesVec};
-use proofman_starks_lib_c::{
-    get_hint_field_global_constraints_c, set_hint_field_global_constraints_c, verify_global_constraints_c,
-};
+use crate::{HintCol, HintFieldInfoValues, HintFieldOutput, HintFieldValue, HintFieldValues, HintFieldValuesVec};
+use proofman_starks_lib_c::{get_hint_field_global_constraints_c, set_hint_field_global_constraints_c};
 
 use std::{collections::HashMap, sync::Arc};
 
-use proofman_common::{GlobalConstraintInfo, GlobalConstraintsResults, ExtensionField, ProofCtx, SetupCtx};
+use proofman_common::{ExtensionField, ProofCtx, SetupCtx};
 
 pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<F>> {
     const FIELD_EXTENSION: usize = 3;
@@ -54,36 +52,6 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<F>> {
     airgroupvalues
 }
 
-pub fn verify_global_constraints_proof<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
-) -> Vec<GlobalConstraintInfo> {
-    const MY_NAME: &str = "GlCstVfy";
-
-    log::info!("{}: --> Checking global constraints", MY_NAME);
-
-    let mut airgroupvalues = aggregate_airgroupvals(pctx.clone());
-
-    let mut airgroup_values_ptrs: Vec<*mut F> = airgroupvalues
-        .iter_mut() // Iterate mutably over the inner Vecs
-        .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
-        .collect();
-
-    let raw_ptr = verify_global_constraints_c(
-        sctx.get_global_bin(),
-        pctx.get_publics_ptr(),
-        pctx.get_challenges_ptr(),
-        pctx.get_proof_values_ptr(),
-        airgroup_values_ptrs.as_mut_ptr() as *mut *mut u8,
-    );
-
-    unsafe {
-        let constraints_result = Box::from_raw(raw_ptr as *mut GlobalConstraintsResults);
-        std::slice::from_raw_parts(constraints_result.constraints_info, constraints_result.n_constraints as usize)
-    }
-    .to_vec()
-}
-
 pub fn get_hint_field_constant_gc<F: Field>(
     sctx: Arc<SetupCtx>,
     hint_id: u64,
@@ -95,7 +63,7 @@ pub fn get_hint_field_constant_gc<F: Field>(
         std::ptr::null_mut(),
         std::ptr::null_mut(),
         std::ptr::null_mut(),
-        std::ptr::null_mut() as *mut *mut u8,
+        std::ptr::null_mut(),
         hint_id,
         hint_field_name,
         print_expression,
@@ -122,7 +90,7 @@ pub fn get_hint_field_gc_constant_a<F: Field>(
         std::ptr::null_mut(),
         std::ptr::null_mut(),
         std::ptr::null_mut(),
-        std::ptr::null_mut() as *mut *mut u8,
+        std::ptr::null_mut(),
         hint_id,
         hint_field_name,
         print_expression,
@@ -155,7 +123,7 @@ pub fn get_hint_field_constant_gc_m<F: Field>(
         std::ptr::null_mut(),
         std::ptr::null_mut(),
         std::ptr::null_mut(),
-        std::ptr::null_mut() as *mut *mut u8,
+        std::ptr::null_mut(),
         hint_id,
         hint_field_name,
         print_expression,
@@ -301,7 +269,7 @@ pub fn get_hint_field_gc_m<F: Field>(
     }
 }
 
-pub fn set_hint_field<F: Field>(
+pub fn set_hint_field_gc<F: Field>(
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx>,
     hint_id: u64,

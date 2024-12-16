@@ -1,6 +1,6 @@
 use libloading::{Library, Symbol};
 use log::{info, trace};
-use p3_field::Field;
+use p3_field::PrimeField;
 use stark::StarkProver;
 use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
 use std::fs;
@@ -12,11 +12,11 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use transcript::FFITranscript;
 
-use crate::{WitnessLibInitFn, WitnessLibrary};
-use crate::verify_constraints_proof;
+use witness::{WitnessLibInitFn, WitnessManager};
+
 use crate::{
-    generate_vadcop_recursive1_proof, generate_vadcop_final_proof, generate_vadcop_recursive2_proof,
-    generate_recursivef_proof, generate_fflonk_snark_proof,
+    verify_constraints_proof, generate_vadcop_recursive1_proof, generate_vadcop_final_proof,
+    generate_vadcop_recursive2_proof, generate_recursivef_proof, generate_fflonk_snark_proof,
 };
 
 use proofman_common::{ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop};
@@ -31,7 +31,7 @@ pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: Field + 'static> ProofMan<F> {
+impl<F: PrimeField + 'static> ProofMan<F> {
     const MY_NAME: &'static str = "ProofMan";
 
     pub fn generate_proof(
@@ -55,20 +55,15 @@ impl<F: Field + 'static> ProofMan<F> {
             options.verify_constraints,
         )?;
 
-        // Load the witness computation dynamic library
-        let library = unsafe { Library::new(&witness_lib_path)? };
-
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-
-        let mut witness_lib = witness_lib(rom_path, public_inputs_path, options.verbose_mode)?;
-
         let pctx = Arc::new(ProofCtx::create_ctx(proving_key_path.clone(), options));
 
         let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
         let sctx: Arc<SetupCtx> = setups.sctx.clone();
 
-        Self::initialize_witness(&mut witness_lib, pctx.clone(), sctx.clone());
-        witness_lib.calculate_witness(1, pctx.clone(), sctx.clone());
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path));
+
+        Self::initialize_witness(witness_lib_path, wcm.clone())?;
+        wcm.calculate_witness(1);
 
         let mut dctx = pctx.dctx.write().unwrap();
         dctx.close(pctx.global_info.air_groups.len());
@@ -100,7 +95,7 @@ impl<F: Field + 'static> ProofMan<F> {
             if stage != 1 {
                 timer_start_debug!(CALCULATING_WITNESS);
                 info!("{}: Calculating witness stage {}", Self::MY_NAME, stage);
-                witness_lib.calculate_witness(stage, pctx.clone(), sctx.clone());
+                wcm.calculate_witness(stage);
                 timer_stop_and_log_debug!(CALCULATING_WITNESS);
             }
 
@@ -115,10 +110,10 @@ impl<F: Field + 'static> ProofMan<F> {
             }
         }
 
-        witness_lib.end_proof();
+        wcm.end_proof();
 
         if pctx.options.verify_constraints {
-            return verify_constraints_proof(pctx.clone(), sctx.clone(), &mut provers, &mut witness_lib);
+            return verify_constraints_proof(pctx.clone(), sctx.clone(), &mut provers);
         }
 
         // Compute Quotient polynomial
@@ -196,11 +191,23 @@ impl<F: Field + 'static> ProofMan<F> {
         Ok(())
     }
 
-    fn initialize_witness(witness_lib: &mut Box<dyn WitnessLibrary<F>>, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn initialize_witness(
+        witness_lib_path: PathBuf,
+        wcm: Arc<WitnessManager<F>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         timer_start_debug!(INITIALIZE_WITNESS);
-        witness_lib.start_proof(pctx.clone(), sctx.clone());
 
-        witness_lib.execute(pctx.clone());
+        // Load the witness computation dynamic library
+        let library = unsafe { Library::new(&witness_lib_path)? };
+
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(wcm.get_pctx().options.verbose_mode)?;
+        witness_lib.register_witness(wcm.clone());
+
+        wcm.start_proof();
+        wcm.execute();
+
+        let pctx = wcm.get_pctx();
 
         // After the execution print the planned instances
         trace!("{}: --> Air instances: ", Self::MY_NAME);
@@ -232,6 +239,7 @@ impl<F: Field + 'static> ProofMan<F> {
             }
         }
         timer_stop_and_log_debug!(INITIALIZE_WITNESS);
+        Ok(())
     }
 
     fn initialize_provers(sctx: Arc<SetupCtx>, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: Arc<ProofCtx<F>>) {

@@ -5,41 +5,58 @@ use std::sync::{
 
 use num_bigint::BigInt;
 use p3_field::PrimeField;
-use rayon::Scope;
 
-use proofman::WitnessManager;
-use proofman_common::ProofCtx;
+use witness::WitnessManager;
 
 use crate::{StdProd, StdRangeCheck, RangeCheckAir, StdSum};
 
 pub struct Std<F: PrimeField> {
-    range_check: Arc<StdRangeCheck<F>>,
+    pub wcm: Arc<WitnessManager<F>>,
+    pub range_check: Arc<StdRangeCheck<F>>,
     range_check_predecessors: AtomicU32,
+    pub std_prod: Arc<StdProd<F>>,
+    pub std_sum: Arc<StdSum<F>>,
 }
 
 impl<F: PrimeField> Std<F> {
     const MY_NAME: &'static str = "STD     ";
 
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let mode = wcm.get_pctx().options.std_mode.clone();
-
-        log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, mode.name);
+        let std_mode = wcm.get_pctx().options.std_mode.clone();
+        log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
-        let _ = StdProd::new(mode.clone(), wcm.clone());
-        let _ = StdSum::new(mode.clone(), wcm.clone());
-        let range_check = StdRangeCheck::new(mode, wcm);
+        let std_prod = StdProd::new(std_mode.clone());
+        let std_sum = StdSum::new(std_mode.clone());
+        let range_check = StdRangeCheck::new(std_mode.clone(), wcm.get_pctx(), wcm.get_sctx());
 
-        Arc::new(Self { range_check, range_check_predecessors: AtomicU32::new(0) })
+        wcm.register_component(std_prod.clone());
+        wcm.register_component(std_sum.clone());
+
+        if range_check.u8air.is_some() {
+            wcm.register_component(range_check.u8air.clone().unwrap());
+        }
+
+        if range_check.u16air.is_some() {
+            wcm.register_component(range_check.u16air.clone().unwrap());
+        }
+
+        if range_check.specified_ranges.is_some() {
+            wcm.register_component(range_check.specified_ranges.clone().unwrap());
+        }
+
+        wcm.register_component(range_check.clone());
+
+        Arc::new(Self { wcm, range_check, range_check_predecessors: AtomicU32::new(0), std_prod, std_sum })
     }
 
     pub fn register_predecessor(&self) {
         self.range_check_predecessors.fetch_add(1, Ordering::SeqCst);
     }
 
-    pub fn unregister_predecessor(&self, pctx: Arc<ProofCtx<F>>, scope: Option<&Scope>) {
+    pub fn unregister_predecessor(&self) {
         if self.range_check_predecessors.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.range_check.drain_inputs(pctx, scope);
+            self.range_check.drain_inputs(self.wcm.get_pctx(), self.wcm.get_sctx());
         }
     }
 
@@ -60,13 +77,17 @@ impl<F: PrimeField> Std<F> {
     pub fn drain_inputs(&self, rc_type: &RangeCheckAir) {
         match rc_type {
             RangeCheckAir::U8Air => {
-                self.range_check.u8air.as_ref().unwrap().drain_inputs();
+                self.range_check.u8air.as_ref().unwrap().drain_inputs(self.wcm.get_pctx(), self.wcm.get_sctx());
             }
             RangeCheckAir::U16Air => {
-                self.range_check.u16air.as_ref().unwrap().drain_inputs();
+                self.range_check.u16air.as_ref().unwrap().drain_inputs(self.wcm.get_pctx(), self.wcm.get_sctx());
             }
             RangeCheckAir::SpecifiedRanges => {
-                self.range_check.specified_ranges.as_ref().unwrap().drain_inputs();
+                self.range_check
+                    .specified_ranges
+                    .as_ref()
+                    .unwrap()
+                    .drain_inputs(self.wcm.get_pctx(), self.wcm.get_sctx());
             }
         };
     }

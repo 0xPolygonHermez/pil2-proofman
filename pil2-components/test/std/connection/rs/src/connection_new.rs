@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use p3_field::PrimeField;
@@ -8,25 +8,22 @@ use rand::{distributions::Standard, prelude::Distribution, Rng};
 
 use crate::ConnectionNewTrace;
 
-pub struct ConnectionNew<F> {
-    _phantom: std::marker::PhantomData<F>,
-}
+pub struct ConnectionNew;
 
-impl<F: PrimeField> ConnectionNew<F>
-where
-    Standard: Distribution<F>,
+impl ConnectionNew
 {
     const MY_NAME: &'static str = "Connct_N";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let connection_new = Arc::new(Self { _phantom: std::marker::PhantomData });
-
-        wcm.register_component(connection_new.clone());
-
-        connection_new
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self)
     }
+}
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+impl<F: PrimeField> WitnessComponent<F> for ConnectionNew
+where
+    Standard: Distribution<F>,
+{
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
         let mut trace = ConnectionNewTrace::new_zeroes();
         let num_rows = trace.num_rows();
@@ -137,5 +134,3 @@ where
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
-
-impl<F: PrimeField> WitnessComponent<F> for ConnectionNew<F> where Standard: Distribution<F> {}

@@ -2,9 +2,11 @@ use std::sync::{atomic::AtomicU64, Arc, Mutex};
 use num_traits::ToPrimitive;
 use p3_field::{Field, PrimeField};
 
-use proofman::{get_hint_field_gc, WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{TraceInfo, AirInstance, ProofCtx, SetupCtx};
-use proofman_hints::{get_hint_field, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue};
+use proofman_hints::{
+    get_hint_field_gc, get_hint_field, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue,
+};
 use proofman_util::create_buffer_fast;
 use std::sync::atomic::Ordering;
 
@@ -12,8 +14,6 @@ const PROVE_CHUNK_SIZE: usize = 1 << 5;
 const NUM_ROWS: usize = 1 << 8;
 
 pub struct U8Air<F: Field> {
-    wcm: Arc<WitnessManager<F>>,
-
     // Parameters
     hint: AtomicU64,
     airgroup_id: usize,
@@ -27,10 +27,7 @@ pub struct U8Air<F: Field> {
 impl<F: PrimeField> U8Air<F> {
     const MY_NAME: &'static str = "U8Air   ";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let pctx = wcm.get_pctx();
-        let sctx = wcm.get_sctx();
-
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> Arc<Self> {
         // Scan global hints to get the airgroup_id and air_id
         let hint_global = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
         let airgroup_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "airgroup_id", false);
@@ -56,18 +53,13 @@ impl<F: PrimeField> U8Air<F> {
             }
         };
 
-        let u8air = Arc::new(Self {
-            wcm: wcm.clone(),
+        Arc::new(Self {
             hint: AtomicU64::new(0),
             airgroup_id,
             air_id,
             inputs: Mutex::new(Vec::new()),
             mul_column: Mutex::new(HintFieldValue::Field(F::zero())),
-        });
-
-        wcm.register_component(u8air.clone());
-
-        u8air
+        })
     }
 
     pub fn update_inputs(&self, value: F, multiplicity: F) {
@@ -83,10 +75,9 @@ impl<F: PrimeField> U8Air<F> {
         }
     }
 
-    pub fn drain_inputs(&self) {
+    pub fn drain_inputs(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         let mut inputs = self.inputs.lock().unwrap();
         let drained_inputs = inputs.drain(..).collect();
-        let pctx = self.wcm.get_pctx();
 
         // Perform the last update
         self.update_multiplicity(drained_inputs);
@@ -105,7 +96,7 @@ impl<F: PrimeField> U8Air<F> {
         dctx.distribute_multiplicity(&mut multiplicity, owner);
 
         if is_mine {
-            let air_instance_repo = &self.wcm.get_pctx().air_instance_repo;
+            let air_instance_repo = &pctx.air_instance_repo;
             let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
             let air_instance_id = if !instance.is_empty() {
                 air_instance_repo.find_air_instances(self.airgroup_id, self.air_id)[0]
@@ -125,13 +116,7 @@ impl<F: PrimeField> U8Air<F> {
             let mul_column_2 =
                 HintFieldValue::Column(multiplicity.iter().map(|x| F::from_canonical_u64(*x)).collect::<Vec<F>>());
 
-            set_hint_field(
-                &self.wcm.get_sctx(),
-                air_instance,
-                self.hint.load(Ordering::Acquire),
-                "reference",
-                &mul_column_2,
-            );
+            set_hint_field(&sctx, air_instance, self.hint.load(Ordering::Acquire), "reference", &mul_column_2);
 
             log::trace!("{}: ··· Drained inputs for AIR '{}'", Self::MY_NAME, "U8Air");
         }

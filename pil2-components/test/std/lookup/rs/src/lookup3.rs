@@ -1,28 +1,28 @@
 use std::sync::Arc;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
+use rand::{distributions::Standard, prelude::Distribution};
 
 use p3_field::PrimeField;
 
 use crate::Lookup3Trace;
 
-pub struct Lookup3<F> {
-    _phantom: std::marker::PhantomData<F>,
-}
+pub struct Lookup3;
 
-impl<F: PrimeField + Copy> Lookup3<F> {
+impl Lookup3 {
     const MY_NAME: &'static str = "Lookup_3";
 
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let lookup3 = Arc::new(Self { _phantom: std::marker::PhantomData });
-
-        wcm.register_component(lookup3.clone());
-
-        lookup3
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self)
     }
+}
 
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup3
+where
+    Standard: Distribution<F>,
+{
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         // For simplicity, add a single instance of each air
         let mut trace = Lookup3Trace::new();
         let num_rows = trace.num_rows();
@@ -55,5 +55,3 @@ impl<F: PrimeField + Copy> Lookup3<F> {
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup3<F> {}

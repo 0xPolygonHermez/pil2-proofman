@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman::{WitnessComponent, WitnessManager};
+use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use p3_field::PrimeField;
@@ -8,25 +8,20 @@ use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng
 
 use crate::Permutation1_6Trace;
 
-pub struct Permutation1_6<F> {
-    _phantom: std::marker::PhantomData<F>,
-}
+pub struct Permutation1_6;
 
-impl<F: PrimeField + Copy> Permutation1_6<F>
+impl Permutation1_6 {
+    const MY_NAME: &'static str = "Perm1_6 ";
+
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
+}
+impl<F: PrimeField + Copy> WitnessComponent<F> for Permutation1_6
 where
     Standard: Distribution<F>,
 {
-    const MY_NAME: &'static str = "Perm1_6 ";
-
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let permutation1_6 = Arc::new(Self { _phantom: std::marker::PhantomData });
-
-        wcm.register_component(permutation1_6.clone());
-
-        permutation1_6
-    }
-
-    pub fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
 
         let mut trace = Permutation1_6Trace::new();
@@ -112,5 +107,3 @@ where
         add_air_instance::<F>(air_instance2, pctx.clone());
     }
 }
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for Permutation1_6<F> where Standard: Distribution<F> {}
