@@ -168,8 +168,11 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
             "reference",
             HintFieldOptions::dest_with_zeros(),
         );
+    }
 
-        //pctx.air_instance_repo.add_air_instance(air_instance);
-        //note: there is room for simplification heres
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+        if stage == 1 {
+            Self::drain_inputs(self, pctx, sctx);
+        }
     }
 }

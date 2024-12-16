@@ -22,12 +22,7 @@ where
     const MY_NAME: &'static str = "MtRngCh1";
 
     pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
-        let multi_range_check1 = Arc::new(Self { std_lib });
-
-        // Register dependency relations
-        multi_range_check1.std_lib.register_predecessor();
-
-        multi_range_check1
+        Arc::new(Self { std_lib })
     }
 }
 
@@ -104,6 +99,5 @@ where
 
         let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, pctx.clone());
-        self.std_lib.unregister_predecessor();
     }
 }

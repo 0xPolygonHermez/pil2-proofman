@@ -17,12 +17,7 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
     const MY_NAME: &'static str = "ModuleSM";
 
     pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
-        let module = Arc::new(Module { inputs: Mutex::new(Vec::new()), std_lib });
-
-        // Register dependency relations
-        module.std_lib.register_predecessor();
-
-        module
+        Arc::new(Module { inputs: Mutex::new(Vec::new()), std_lib })
     }
 
     pub fn calculate_module(&self, x: u64, module: u64) -> u64 {
@@ -69,7 +64,5 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
 
         let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
         add_air_instance::<F>(air_instance, pctx.clone());
-
-        self.std_lib.unregister_predecessor();
     }
 }

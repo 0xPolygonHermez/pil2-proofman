@@ -1,19 +1,17 @@
-use std::sync::{
-    atomic::{AtomicU32, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
 use num_bigint::BigInt;
 use p3_field::PrimeField;
 
+use proofman_common::{ProofCtx, SetupCtx};
 use witness::WitnessManager;
 
 use crate::{StdProd, StdRangeCheck, RangeCheckAir, StdSum};
 
 pub struct Std<F: PrimeField> {
-    pub wcm: Arc<WitnessManager<F>>,
+    pub pctx: Arc<ProofCtx<F>>,
+    pub sctx: Arc<SetupCtx>,
     pub range_check: Arc<StdRangeCheck<F>>,
-    range_check_predecessors: AtomicU32,
     pub std_prod: Arc<StdProd<F>>,
     pub std_sum: Arc<StdSum<F>>,
 }
@@ -30,6 +28,12 @@ impl<F: PrimeField> Std<F> {
         let std_sum = StdSum::new(std_mode.clone());
         let range_check = StdRangeCheck::new(std_mode.clone(), wcm.get_pctx(), wcm.get_sctx());
 
+        Self::register_std(wcm.clone(), std_prod.clone(), std_sum.clone(), range_check.clone());
+
+        Arc::new(Self { pctx: wcm.get_pctx(), sctx: wcm.get_sctx(), range_check, std_prod, std_sum })
+    }
+
+    pub fn register_std(wcm: Arc<WitnessManager<F>>, std_prod: Arc<StdProd<F>>, std_sum: Arc<StdSum<F>>, range_check: Arc<StdRangeCheck<F>>) {
         wcm.register_component(std_prod.clone());
         wcm.register_component(std_sum.clone());
 
@@ -46,18 +50,6 @@ impl<F: PrimeField> Std<F> {
         }
 
         wcm.register_component(range_check.clone());
-
-        Arc::new(Self { wcm, range_check, range_check_predecessors: AtomicU32::new(0), std_prod, std_sum })
-    }
-
-    pub fn register_predecessor(&self) {
-        self.range_check_predecessors.fetch_add(1, Ordering::SeqCst);
-    }
-
-    pub fn unregister_predecessor(&self) {
-        if self.range_check_predecessors.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.range_check.drain_inputs(self.wcm.get_pctx(), self.wcm.get_sctx());
-        }
     }
 
     /// Gets the range for the range check.
@@ -77,17 +69,17 @@ impl<F: PrimeField> Std<F> {
     pub fn drain_inputs(&self, rc_type: &RangeCheckAir) {
         match rc_type {
             RangeCheckAir::U8Air => {
-                self.range_check.u8air.as_ref().unwrap().drain_inputs(self.wcm.get_pctx(), self.wcm.get_sctx());
+                self.range_check.u8air.as_ref().unwrap().drain_inputs(self.pctx.clone(), self.sctx.clone());
             }
             RangeCheckAir::U16Air => {
-                self.range_check.u16air.as_ref().unwrap().drain_inputs(self.wcm.get_pctx(), self.wcm.get_sctx());
+                self.range_check.u16air.as_ref().unwrap().drain_inputs(self.pctx.clone(), self.sctx.clone());
             }
             RangeCheckAir::SpecifiedRanges => {
                 self.range_check
                     .specified_ranges
                     .as_ref()
                     .unwrap()
-                    .drain_inputs(self.wcm.get_pctx(), self.wcm.get_sctx());
+                    .drain_inputs(self.pctx.clone(), self.sctx.clone());
             }
         };
     }

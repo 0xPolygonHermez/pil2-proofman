@@ -6,8 +6,8 @@ public in2;
 public out;
 public rom_root[4];
 
-proofval value1;
-proofval value2;
+proofval stage(1) value1;
+proofval stage(1) value2;
 
 private function checkProofValues()
 {

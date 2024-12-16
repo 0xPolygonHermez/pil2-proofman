@@ -18,6 +18,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         wcm.register_component(fibonacci.clone());
         wcm.register_component(module.clone());
 
+        
         let public_inputs: BuildPublics = load_from_json(&wcm.get_public_inputs_path());
 
         let mut publics = BuildPublicValues::from_vec_guard(wcm.get_pctx().get_publics());
