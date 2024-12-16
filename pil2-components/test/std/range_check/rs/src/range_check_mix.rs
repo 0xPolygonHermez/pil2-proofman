@@ -171,6 +171,6 @@ where
             }
         }
 
-        self.std_lib.unregister_predecessor(pctx, None);
+        self.std_lib.unregister_predecessor();
     }
 }

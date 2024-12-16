@@ -86,7 +86,7 @@ impl<F: PrimeField + AbstractField + Clone + Copy + Default + 'static> Module<F>
             pctx.air_instance_repo.add_air_instance(air_instance, Some(gid));
         }
 
-        self.std_lib.unregister_predecessor(pctx, None);
+        self.std_lib.unregister_predecessor();
     }
 }
 

@@ -15,8 +15,8 @@ use proofman_hints::{
 };
 
 use crate::{
-    print_debug_info, update_debug_data, DebugData, get_global_hint_field_constant_as, get_hint_field_constant_as_field,
-    get_row_field_value, extract_field_element_as_usize,
+    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as_field,
+    get_row_field_value, print_debug_info, update_debug_data, AirComponent, DebugData,
 };
 
 pub struct StdSum<F: PrimeField> {
@@ -25,23 +25,30 @@ pub struct StdSum<F: PrimeField> {
     debug_data: Option<DebugData<F>>,
 }
 
-impl<F: PrimeField> StdSum<F> {
+impl<F: PrimeField> AirComponent<F> for StdSum<F> {
     const MY_NAME: &'static str = "STD Sum ";
 
-    pub fn new(mode: StdMode, wcm: Arc<WitnessManager<F>>) {
+    fn new(
+        wcm: Arc<WitnessManager<F>>,
+        mode: Option<StdMode>,
+        _airgroup_id: Option<usize>,
+        _air_id: Option<usize>,
+    ) -> Arc<Self> {
         let sctx = wcm.get_sctx();
 
         // Retrieve the std_sum_users hint ID
         let std_sum_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users");
 
         // Initialize std_sum with the extracted data
+        let mode = mode.expect("Mode must be provided");
         let std_sum = Arc::new(Self {
             mode: mode.clone(),
             stage_wc: match std_sum_users_id.is_empty() {
                 true => None,
                 false => {
                     // Get the "stage_wc" hint
-                    let stage_wc = get_global_hint_field_constant_as::<u32, F>(sctx.clone(), std_sum_users_id[0], "stage_wc");
+                    let stage_wc =
+                        get_global_hint_field_constant_as::<u32, F>(sctx.clone(), std_sum_users_id[0], "stage_wc");
                     Some(Mutex::new(stage_wc))
                 }
             },
@@ -50,6 +57,8 @@ impl<F: PrimeField> StdSum<F> {
 
         // Register the component
         wcm.register_component(std_sum.clone(), None, None);
+
+        std_sum
     }
 
     fn debug(

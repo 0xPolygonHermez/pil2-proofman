@@ -2,9 +2,30 @@ use std::sync::Arc;
 
 use p3_field::PrimeField;
 use num_traits::ToPrimitive;
-use proofman::get_hint_field_constant_gc;
-use proofman_common::SetupCtx;
+use proofman::{get_hint_field_constant_gc, WitnessManager};
+use proofman_common::{AirInstance, ProofCtx, SetupCtx, StdMode};
 use proofman_hints::{get_hint_field_constant, HintFieldOptions, HintFieldOutput, HintFieldValue};
+
+pub trait AirComponent<F> {
+    const MY_NAME: &'static str;
+
+    fn new(
+        wcm: Arc<WitnessManager<F>>,
+        mode: Option<StdMode>,
+        airgroup_id: Option<usize>,
+        air_id: Option<usize>,
+    ) -> Arc<Self>;
+
+    fn debug(
+        &self,
+        _pctx: &ProofCtx<F>,
+        _sctx: &SetupCtx,
+        _air_instance: &mut AirInstance<F>,
+        _num_rows: usize,
+        _debug_data_hints: Vec<u64>,
+    ) {
+    }
+}
 
 // Helper to extract hint fields
 pub fn get_global_hint_field_constant_as<T, F>(sctx: Arc<SetupCtx>, hint_id: u64, field_name: &str) -> T

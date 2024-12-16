@@ -211,8 +211,7 @@ private function find_repeated_proves() {
 private function piop_gsum_air(const int blowupFactor = 2) {
     use air.std.gsum;
 
-    const expr L1 = get_L1();      // [1,0,...]
-    const expr LLAST = get_LAST(); // [0,...,0,1]
+    const expr L1 = get_L1(); // [1,0,...]
 
     col witness stage(2) gsum;
 
@@ -391,7 +390,7 @@ private function piop_gsum_air(const int blowupFactor = 2) {
 
     @gsum_col{reference: gsum, numerator_air: sum_ims * isolated_den + isolated_num, denominator_air: isolated_den, 
                                numerator_direct: direct_num, denominator_direct: direct_den, result: gsum_result};
-    LLAST * ((gsum_result - gsum) * direct_den - direct_num) === 0;
+    L1' * ((gsum_result - gsum) * direct_den - direct_num) === 0;
 
     // Store the airgroup and air ids for global hints
     proof.std.gsum.airgroup_ids[proof.std.gsum.air_count] = AIRGROUP_ID;

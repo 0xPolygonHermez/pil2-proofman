@@ -398,6 +398,11 @@ private function opid_process(const int min, const int max, const int predefined
         int predefineds[100];
         int mins[100];
         int maxs[100];
+
+        // For global hints
+        int air_count = 0;
+        int airgroup_ids[100];
+        int air_ids[100];
     }
 
     container airgroup.std.rc {
@@ -405,6 +410,24 @@ private function opid_process(const int min, const int max, const int predefined
         int u8_used = 0;
         int u16_used = 0;
     }
+
+    // Store the airgroup and air ids for global hints if it appears the first time
+    int found = 0;
+    for (int i = 0; i < rcproof.air_count; i++) {
+        if (rcproof.airgroup_ids[i] == AIRGROUP_ID && rcproof.air_ids[i] == AIR_ID) {
+            found = 1;
+            break;
+        }
+    }
+
+    if (!found) {
+        rcproof.airgroup_ids[rcproof.air_count] = AIRGROUP_ID;
+        rcproof.air_ids[rcproof.air_count] = AIR_ID;
+        rcproof.air_count++;
+    }
+
+    // Generate global hints
+    on final proof rc_issue_global_hints(); 
 
     // If the range has already been introduced, we reuse the same opid
     for (int i = 0; i < rcproof.opids_count; i++) {
@@ -562,4 +585,9 @@ private function createPreMetadata() {
 
 private function createMetadata() {
     @specified_ranges{airgroup_id: proof.std.specified.airgroup_id, air_id: proof.std.specified.air_id};
+}
+
+private function rc_issue_global_hints() {
+    use proof.std.rc;
+    @std_rc_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids};
 }

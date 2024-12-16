@@ -5,12 +5,10 @@ use std::sync::{
 
 use num_bigint::BigInt;
 use p3_field::PrimeField;
-use rayon::Scope;
 
 use proofman::WitnessManager;
-use proofman_common::ProofCtx;
 
-use crate::{StdProd, StdRangeCheck, StdSum};
+use crate::{AirComponent, StdProd, StdRangeCheck, StdSum};
 
 pub struct Std<F: PrimeField> {
     // Data of components with public API
@@ -27,8 +25,8 @@ impl<F: PrimeField> Std<F> {
         log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, mode.name);
 
         // Instantiate the STD components
-        StdProd::new(mode.clone(), wcm.clone());
-        StdSum::new(mode.clone(), wcm.clone());
+        StdProd::new(wcm.clone(), Some(mode.clone()), None, None);
+        StdSum::new(wcm.clone(), Some(mode.clone()), None, None);
         let range_check = StdRangeCheck::new(mode, wcm);
 
         Arc::new(Self { range_check, range_check_predecessors: AtomicU32::new(0) })
@@ -38,9 +36,9 @@ impl<F: PrimeField> Std<F> {
         self.range_check_predecessors.fetch_add(1, Ordering::SeqCst);
     }
 
-    pub fn unregister_predecessor(&self, pctx: Arc<ProofCtx<F>>, scope: Option<&Scope>) {
+    pub fn unregister_predecessor(&self) {
         if self.range_check_predecessors.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.range_check.drain_inputs(pctx, scope);
+            self.range_check.drain_inputs();
         }
     }
 
