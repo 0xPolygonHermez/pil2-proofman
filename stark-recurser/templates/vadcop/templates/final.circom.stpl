@@ -1,0 +1,90 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+<% for (let i = 0; i < verifier_filenames.length; ++i) { -%>
+include "<%- verifier_filenames[i] %>";
+<% } -%>
+include "iszero.circom";
+include "select_vk.circom";
+
+<%- include('src/vadcop/helpers/templates/verify_global_challenge.circom.ejs', { global_info }); %>
+
+<%- include('src/vadcop/helpers/templates/verify_global_constraints.circom.ejs', { global_info }); %>
+
+template Final() {
+
+<%  if(global_info.nPublics > 0) { -%>
+    signal input publics[<%- global_info.nPublics %>];
+<%  } -%>
+
+<%  if(global_info.numProofValues > 0) { -%>
+    signal input proofValues[<%- global_info.numProofValues %>][3];
+<%  } -%>
+
+    signal input challenges[<%- global_info.numChallenges.reduce((nc, acc) => nc + acc, 0) + 4 %>][3];
+    signal input challengesFRISteps[<%- global_info.stepsFRI.length + 1%>][3];
+
+<%  for(let i = 0; i < global_info.aggTypes.length; ++i) { -%>
+<%  let stark_infoRecursive2 = (global_info.air_groups.length > 1) ? stark_info[i] : stark_info; -%>
+<%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: `s${i}`, stark_info: stark_infoRecursive2, nPublics: global_info.nPublics, options: { addPublics: false } }); %>
+<%- include('src/main_templates/vadcop/define_vadcop_inputs.circom.ejs', { prefix: `s${i}_sv`, global_info, stark_info: stark_infoRecursive2, airgroupId: i, options: {...options, addPublics: false, isInput: true, isAggregation: false } }); %>
+<%  } -%>
+
+<%  for(let i = 0; i < global_info.aggTypes.length; ++i) { -%>
+<%  let stark_infoRecursive2 = (global_info.air_groups.length > 1) ? stark_info[i] : stark_info; -%>
+<%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: `sV${i}`, prefix: `s${i}`, stark_info: stark_infoRecursive2, nPublics: global_info.nPublics, options }); %>
+<%- include('src/main_templates/vadcop/assign_vadcop_inputs.circom.ejs', { componentName: `sV${i}`, prefix: `s${i}_sv`, prefixStark: `s${i}`, airgroupId:i, global_info, options: { addPrefixAggTypes: true, setEnableInput: (global_info.air_groups.length > 1 || global_info.airs[0].length > 1)  } }); %>
+
+    var s<%- i %>_sv_rootCAgg[4] = [<%- aggregatedVK[i].join(",") %>];
+    var s<%- i %>_sv_rootCBasics[<%- global_info.airs[i].length %>][4];
+
+<% for(let j = 0; j < global_info.airs[i].length; j++) { -%>
+    s<%- i %>_sv_rootCBasics[<%- j %>] = [<%- basicVK[i][j].join(",") %>];
+<% } -%>
+
+<%  if(global_info.air_groups.length === 1 && global_info.airs[0].length === 1) { -%>
+    sV<%- i %>.rootC <== SelectVerificationKey(<%- global_info.airs[i].length %>)(s<%- i %>_sv_circuitType, s<%- i %>_sv_rootCBasics, s<%- i %>_sv_rootCAgg);
+<%  } else { -%> 
+    sV<%- i %>.rootC <== SelectVerificationKeyNull(<%- global_info.airs[i].length %>)(s<%- i %>_sv_circuitType, s<%- i %>_sv_rootCBasics, s<%- i %>_sv_rootCAgg);
+<%  } -%>
+
+    for (var i=0; i<4; i++) {
+        sV<%- i %>.publics[<%- stark_infoRecursive2.nPublics - 4 %> + i] <== s<%- i %>_sv_rootCAgg[i];
+    }
+<%  } -%>
+
+    // Calculate transcript and check that matches with the global challenges
+    component verifyChallenges = VerifyGlobalChallenges();
+    verifyChallenges.challenges <== challenges;
+    verifyChallenges.challengesFRISteps <== challengesFRISteps;
+<%  if(global_info.nPublics > 0) { -%>
+    verifyChallenges.publics <== publics;
+<%  } -%>
+<%  for(let i = 0; i < global_info.aggTypes.length; ++i) { -%>
+<%      for (let j = 0; j < global_info.numChallenges.length + 1; ++j) { -%>
+    verifyChallenges.root<%- j + 1 %>[<%- i %>] <== s<%- i %>_sv_root<%- j+1 %>;
+<%      } -%>
+    verifyChallenges.evalsHash[<%- i %>] <== s<%- i %>_sv_evalsHash;
+<%      for (let j = 1; j < global_info.stepsFRI.length; ++j) { -%>
+    verifyChallenges.s<%- j %>_root[<%- i %>] <== s<%- i %>_sv_s<%- j %>_root;
+<%      } -%>
+    verifyChallenges.finalPolHash[<%- i %>] <== s<%- i %>_sv_finalPolHash;
+<%  } -%>
+
+    // Verify global constraints
+    component verifyGlobalConstraints = VerifyGlobalConstraints();
+<%  if(global_info.nPublics > 0) { -%>
+    verifyGlobalConstraints.publics <== publics;
+<%  } -%>
+<%  if(global_info.numProofValues> 0) { -%>
+    verifyGlobalConstraints.proofValues <== proofValues;
+<%  } -%>
+    verifyGlobalConstraints.challenges <== challenges;
+<%  for(let i = 0; i < global_info.aggTypes.length; ++i) { -%>
+<%  if(global_info.aggTypes[i].length > 0) { -%>
+    verifyGlobalConstraints.s<%- i %>_airgroupvalues <== s<%- i %>_sv_airgroupvalues;
+<%  } -%>
+<%  } -%>
+}
+
+component main <%- global_info.nPublics > 0 ? "{public [publics]}" : ""%>= Final();

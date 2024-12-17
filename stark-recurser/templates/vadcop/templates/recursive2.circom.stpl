@@ -1,0 +1,63 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+include "select_vk.circom";
+include "agg_values.circom";
+
+<% for (let i = 0; i < verifier_filenames.length; ++i) { -%>
+include "<%- verifier_filenames[i] %>";
+<% } -%>
+
+
+template Recursive2() {
+    var rootCBasics[<%- global_info.airs[airgroupId].length %>][4];
+
+<% for(let i = 0; i < global_info.airs[airgroupId].length; ++i) { -%>
+    rootCBasics[<%- i %>] = [<%- basicVK[i].join(",") %>];
+<%  } -%>
+
+<%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "a", stark_info, nPublics: global_info.nPublics, addPublics: false }); %>
+<%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "b", stark_info, nPublics: global_info.nPublics, addPublics: false }); %>
+
+<%  if(global_info.nPublics > 0) { -%>
+    signal input publics[<%- global_info.nPublics %>];
+<%  } -%>
+
+    signal input challenges[<%- global_info.numChallenges.reduce((nc, acc) => nc + acc, 0) + 4 %>][3];
+    signal input challengesFRISteps[<%- global_info.stepsFRI.length + 1%>][3];
+
+    signal input rootCAgg[4];
+
+<%  if(global_info.aggTypes[airgroupId].length > 0) { -%>
+    signal input aggregationTypes[<%- global_info.aggTypes[airgroupId].length %>];
+<%  } -%>
+
+<%- include('src/main_templates/vadcop/define_vadcop_inputs.circom.ejs', { prefix: "a_sv", global_info, airgroupId, stark_info, options: {...options, addPublics: false, isInput: true, isAggregation: true} }); %>
+<%- include('src/main_templates/vadcop/define_vadcop_inputs.circom.ejs', { prefix: "b_sv", global_info, airgroupId, stark_info, options: {...options, addPublics: false, isInput: true, isAggregation: true} }); %>
+
+<%- include('src/main_templates/vadcop/define_vadcop_inputs.circom.ejs', { prefix: "sv", global_info, airgroupId, stark_info, options: {...options, isInput: false} }); %>
+
+<%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vA", prefix: "a", stark_info, nPublics: global_info.nPublics }); %>
+<%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vB", prefix: "b", stark_info, nPublics: global_info.nPublics }); %>
+
+<%- include('src/main_templates/vadcop/assign_vadcop_inputs.circom.ejs', { componentName: "vA", global_info, prefix: "a_sv", prefixStark: "a", airgroupId, options: { setEnableInput: (global_info.air_groups.length > 1 || global_info.airs[0].length > 1)  } }); %>
+<%- include('src/main_templates/vadcop/assign_vadcop_inputs.circom.ejs', { componentName: "vB", global_info, prefix: "b_sv", prefixStark: "b", airgroupId, options: { setEnableInput: (global_info.air_groups.length > 1 || global_info.airs[0].length > 1)  } }); %>
+
+<% if(global_info.air_groups.length === 1 && global_info.airs[0].length === 1) { -%>
+    vA.rootC <== SelectVerificationKey(<%- global_info.airs[airgroupId].length %>)(a_sv_circuitType, rootCBasics, rootCAgg);
+    vB.rootC <== SelectVerificationKey(<%- global_info.airs[airgroupId].length %>)(b_sv_circuitType, rootCBasics, rootCAgg);
+<%  } else { -%>
+    vA.rootC <== SelectVerificationKeyNull(<%- global_info.airs[airgroupId].length %>)(a_sv_circuitType, rootCBasics, rootCAgg);
+    vB.rootC <== SelectVerificationKeyNull(<%- global_info.airs[airgroupId].length %>)(b_sv_circuitType, rootCBasics, rootCAgg);
+<%  } -%>
+
+<%- include('src/main_templates/vadcop/agg_vadcop_inputs.circom.ejs', { global_info, prefix1: "a_sv", prefix2: "b_sv", prefix: "sv", airgroupId }); %>
+
+    for (var i=0; i<4; i++) {
+        vA.publics[<%- stark_info.nPublics - 4 %> + i] <== rootCAgg[i];
+        vB.publics[<%- stark_info.nPublics - 4 %> + i] <== rootCAgg[i];
+    }
+}
+
+
+component main {public [<%- global_info.nPublics > 0 ? "publics," : "" %>challenges, challengesFRISteps, rootCAgg]} = Recursive2();

@@ -147,9 +147,9 @@ pub struct StarkInfo {
     pub stark_struct: StarkStruct,
 
     #[serde(default, rename = "airgroupId")]
-    pub airgroup_id: u64,
+    pub airgroup_id: Option<u64>,
     #[serde(default, rename = "airId")]
-    pub air_id: u64,
+    pub air_id: Option<u64>,
 
     #[serde(rename = "nPublics")]
     pub n_publics: u64,
@@ -217,8 +217,17 @@ fn default_hash_commits() -> bool {
     false
 }
 
+
 impl StarkInfo {
     pub fn from_json(stark_info_json: &str) -> Self {
         serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")
+    }
+
+    pub fn get_n_airgroup_values(&self) -> usize {
+        self.airgroupvalues_map.as_ref().map_or(0, |map| map.len())
+    }
+
+    pub fn get_n_airvalues(&self) -> usize {
+        self.airvalues_map.as_ref().map_or(0, |map| map.len())
     }
 }

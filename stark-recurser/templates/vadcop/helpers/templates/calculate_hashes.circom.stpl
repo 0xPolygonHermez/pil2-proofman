@@ -1,0 +1,83 @@
+template CalculateStage1Hash() {
+    signal input rootC[4];
+    signal input root1[4];
+
+<%  let air_values_exist = stark_info.airvalues_map.as_ref().map_or(false, |map| map.iter().any(|a| a.stage == 1 as u64)); %>
+
+<%  if air_values_exist { %>
+    signal input airValues[<%= stark_info.get_n_airvalues() %>][3];
+<%  } %>
+
+    signal output stageHash[4];
+
+<%  let mut transcript_stage = Transcript::new(None); %>
+<%  transcript_stage.put("rootC", 4); %>
+<%  transcript_stage.put("root1", 4); %>
+<%  if let Some(ref airvalues_map) = stark_info.airvalues_map { %>
+<%    for (j, air_value) in airvalues_map.iter().enumerate() { %>
+<%        if air_value.stage == 1 { %>
+<%            transcript_stage.put(&format!("airValues[{}]", j), 1); %>
+<%        } else { %>
+   _ <== airValues[<%= j %>];
+<%        } %>
+<%    } %>
+<%  } %>
+<%    transcript_stage.get_state("stageHash"); %>
+<%   let code = transcript_stage.get_code(); %>
+<%=  code %>
+}
+
+<%  for i in 1..stark_info.n_stages { %>
+<%  let air_values_exist = stark_info.airvalues_map.as_ref().map_or(false, |map| map.iter().any(|a| a.stage == (i + 1) as u64)); %>
+<%  if air_values_exist { %>
+template CalculateStage<%= i+1 %>Hash() {
+    signal input root[4];
+    signal input airValues[<%= stark_info.get_n_airvalues() %>][3];
+
+    signal output stageHash[4];
+
+<%  let mut transcript_stage = Transcript::new(None); %>
+<%  transcript_stage.put("root", 4); %>
+<%  if let Some(ref airvalues_map) = stark_info.airvalues_map { %>
+<%    for (j, air_value) in airvalues_map.iter().enumerate() { %>
+<%        if air_value.stage == (i + 1) as u64 { %>
+<%            transcript_stage.put(&format!("airValues[{}]", j), 3); %>
+<%        } else { %>
+   _ <== airValues[<%= j %>];
+<%        } %>
+<%    } %>
+<%  } %>
+<%    transcript_stage.get_state("stageHash"); %>
+<%    let code =transcript_stage.get_code(); %>
+<%=   code %>
+}
+<%  } %>
+<%  } %>
+
+template CalculateEvalsHash() {
+    signal input evals[<%= stark_info.ev_map.len() %>][3];
+
+    signal output evalsHash[4];
+
+<%  let mut transcript_evals = Transcript::new(None); %>
+<%  for j in 0..stark_info.ev_map.len() {
+        transcript_evals.put(&format!("evals[{}]", j), 3);
+    }
+    transcript_evals.get_state("evalsHash"); %>
+<%  let code = transcript_evals.get_code(); %>
+<%= code %>
+}
+
+template CalculateFinalPolHash() {
+    signal input finalPol[<%= 1 << stark_info.stark_struct.steps.last().unwrap().n_bits %>][3];
+
+    signal output finalPolHash[4];
+
+<%  let mut transcript_final_pol = Transcript::new(None); %>
+<%  for j in 0..1 << stark_info.stark_struct.steps.last().unwrap().n_bits {
+        transcript_final_pol.put(&format!("finalPol[{}]", j), 3);
+    }
+    transcript_final_pol.get_state("finalPolHash"); %>
+<%  let code = transcript_final_pol.get_code(); %>
+<%=  code %>
+}

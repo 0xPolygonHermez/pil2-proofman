@@ -1,7 +1,7 @@
 pragma circom 2.1.0;
 
-<% for (let i = 0; i < verifierFilenames.length; ++i) { -%>
-    include "<%- verifierFilenames[i] %>";
+<% for (let i = 0; i < verifier_filenames.length; ++i) { -%>
+    include "<%- verifier_filenames[i] %>";
     <% } -%>
 
 <%- include('src/recursion/helpers/templates/get_sha256_inputs.circom.ejs', { publics, isTest: false, options }); %>
@@ -13,9 +13,9 @@ template Main() {
     signal input aggregatorAddr;
 <% } -%>
 
-<%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "", starkInfo, nPublics: starkInfo.nPublics, options: { ...options, addPublics: true, final: true } }); %>
+<%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "", stark_info, nPublics: stark_info.nPublics, options: { ...options, addPublics: true, final: true } }); %>
 
-<%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "sV", prefix:"", starkInfo, nPublics: starkInfo.nPublics, options: { addPublics: true, final: true } }); %>
+<%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "sV", prefix:"", stark_info, nPublics: stark_info.nPublics, options: { addPublics: true, final: true } }); %>
 
 <% if(options.addAggregatorAddr) { -%>
     publicsHash <== getSha256Inputs()(aggregatorAddr, publics);

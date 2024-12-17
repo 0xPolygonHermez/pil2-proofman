@@ -1,72 +1,69 @@
-<%  let prefix_ = prefix ? `${prefix}_` : ""; -%>
-<%  let prefixStark_ = prefixStark ? `${prefixStark}_` : ""; -%>
-<%  let nPublicsInps = 0; -%>
+<%  let mut n_publics_inps = 0; %>
 
-    <%- componentName %>.publics[<%- nPublicsInps++ %>] <== <%- prefix_ %>circuitType;
+    <%= component_name %>.publics[<%= n_publics_inps %>] <== <%= prefix_vadcop %>circuitType;
+<%  n_publics_inps += 1; %>
 
-<%  if(vadcopInfo.aggTypes[airgroupId].length  > 0) { -%>
-    for(var i = 0; i < <%- vadcopInfo.aggTypes[airgroupId].length  %>; i++) {
-        <%- componentName %>.publics[<%- nPublicsInps %> + i] <== <%- options.addPrefixAggTypes ? prefix_ : "" %>aggregationTypes[i];
+<%  if global_info.agg_types[stark_info.airgroup_id.unwrap() as usize].len() > 0  { %>
+    for i in 0..global_info.agg_types[stark_info.airgroup_id.unwrap() as usize].len() {
+        <%= component_name %>.publics[<%= n_publics_inps %> + i] <== <%= if !is_aggregation { prefix_vadcop.clone() } else { String::new() } %>aggregationTypes[i];
     }
-<%  nPublicsInps += vadcopInfo.aggTypes[airgroupId].length ; -%>
+<%  n_publics_inps += global_info.agg_types[stark_info.airgroup_id.unwrap() as usize].len() ; %>
 
-    for(var i = 0; i < <%- vadcopInfo.aggTypes[airgroupId].length  %>; i++) {
-        <%- componentName %>.publics[<%- nPublicsInps %> + 3*i] <== <%- prefix_ %>airgroupvalues[i][0];
-        <%- componentName %>.publics[<%- nPublicsInps %> + 3*i + 1] <== <%- prefix_ %>airgroupvalues[i][1];
-        <%- componentName %>.publics[<%- nPublicsInps %> + 3*i + 2] <== <%- prefix_ %>airgroupvalues[i][2];
+    for i in 0..global_info.agg_types[stark_info.airgroup_id.unwrap() as usize].len() {
+        <%= component_name %>.publics[<%= n_publics_inps %> + 3*i] <== <%= prefix_vadcop %>airgroupvalues[i][0];
+        <%= component_name %>.publics[<%= n_publics_inps %> + 3*i + 1] <== <%= prefix_vadcop %>airgroupvalues[i][1];
+        <%= component_name %>.publics[<%= n_publics_inps %> + 3*i + 2] <== <%= prefix_vadcop %>airgroupvalues[i][2];
     }
-<%  nPublicsInps += 3*vadcopInfo.aggTypes[airgroupId].length ; -%>
-<%  } -%>
+<%  n_publics_inps += 3*global_info.agg_types[stark_info.airgroup_id.unwrap() as usize].len() ; %>
+<%  } %>
 
-
-<%  for (let i = 0; i < vadcopInfo.numChallenges.length + 1; i++) { -%>
+<%  for i in 0..global_info.n_challenges.len() + 1 { %>
     for(var i = 0; i < 4; i++) {
-        <%- componentName %>.publics[<%- nPublicsInps %> + i] <== <%- prefix_ %>root<%- i+1 %>[i];
+        <%= component_name %>.publics[<%= n_publics_inps %> + i] <== <%= prefix_vadcop %>root<%= i+1 %>[i];
     }
 
-<%  nPublicsInps += 4 -%>
-<%  } -%>
+<%  n_publics_inps += 4; %>
+<%  } %>
 
     for(var i = 0; i < 4; i++) {
-        <%- componentName %>.publics[<%- nPublicsInps %> + i] <== <%- prefix_ %>evalsHash[i];
+        <%= component_name %>.publics[<%= n_publics_inps %> + i] <== <%= prefix_vadcop %>evalsHash[i];
     }
-<%  nPublicsInps += 4 -%>
+<%  n_publics_inps += 4; %>
 
-<%  for(let i = 1; i < vadcopInfo.stepsFRI.length; i++) { -%>
+<%  for i in 1..global_info.steps_fri.len() { %>
     for(var i = 0; i < 4; i++) {
-        <%- componentName %>.publics[<%- nPublicsInps %> + i] <== <%- prefix_ %>s<%- i %>_root[i];
+        <%= component_name %>.publics[<%= n_publics_inps %> + i] <== <%= prefix_vadcop %>s<%= i %>_root[i];
     }
-<%  nPublicsInps += 4 -%>
-<%  } -%>
+<%  n_publics_inps += 4; %>
+<%  } %>
 
     for(var i = 0; i < 4; i++) {
-        <%- componentName %>.publics[<%- nPublicsInps %> + i] <== <%- prefix_ %>finalPolHash[i];
+        <%= component_name %>.publics[<%= n_publics_inps %> + i] <== <%= prefix_vadcop %>finalPolHash[i];
     }
-<%  nPublicsInps += 4 -%>
+<%  n_publics_inps += 4; %>
 
-<%  if(vadcopInfo.nPublics > 0) { -%>
-    for(var i = 0; i < <%- vadcopInfo.nPublics %>; i++) {
-        <%- componentName %>.publics[<%- nPublicsInps %> + i] <== publics[i];
+<%  if global_info.n_publics > 0 { %>
+    for(var i = 0; i < <%= global_info.n_publics %>; i++) {
+        <%= component_name %>.publics[<%= n_publics_inps %> + i] <== publics[i];
     }
-<%  nPublicsInps += vadcopInfo.nPublics -%>
-<%  } -%>
+<%  n_publics_inps += global_info.n_publics; %>
+<%  } %>
 
-    for(var i = 0; i < <%- vadcopInfo.numChallenges.reduce((nc, acc) => nc + acc, 0) + 4 %>; i++) {
-        <%- componentName %>.publics[<%- nPublicsInps %> + 3*i] <== challenges[i][0];
-        <%- componentName %>.publics[<%- nPublicsInps %> + 3*i+1] <== challenges[i][1];
-        <%- componentName %>.publics[<%- nPublicsInps %> + 3*i+2] <== challenges[i][2];
+    for(var i = 0; i < <%= global_info.n_challenges.iter().fold(4, |acc, &nc| acc + nc) %>; i++) {
+        <%= component_name %>.publics[<%= n_publics_inps %> + 3*i] <== challenges[i][0];
+        <%= component_name %>.publics[<%= n_publics_inps %> + 3*i+1] <== challenges[i][1];
+        <%= component_name %>.publics[<%= n_publics_inps %> + 3*i+2] <== challenges[i][2];
     }
-<%  nPublicsInps += 3*(vadcopInfo.numChallenges.reduce((nc, acc) => nc + acc, 0) + 4); -%>
+<%  n_publics_inps += 3*global_info.n_challenges.iter().fold(4, |acc, &nc| acc + nc); %>
 
-    for(var i = 0; i < <%- vadcopInfo.stepsFRI.length + 1 %>; i++) {
-        <%- componentName %>.publics[<%- nPublicsInps %> + 3*i] <== challengesFRISteps[i][0];
-        <%- componentName %>.publics[<%- nPublicsInps %> + 3*i+1] <== challengesFRISteps[i][1];
-        <%- componentName %>.publics[<%- nPublicsInps %> + 3*i+2] <== challengesFRISteps[i][2];
+    for(var i = 0; i < <%= global_info.steps_fri.len() + 1 %>; i++) {
+        <%= component_name %>.publics[<%= n_publics_inps %> + 3*i] <== challengesFRISteps[i][0];
+        <%= component_name %>.publics[<%= n_publics_inps %> + 3*i+1] <== challengesFRISteps[i][1];
+        <%= component_name %>.publics[<%= n_publics_inps %> + 3*i+2] <== challengesFRISteps[i][2];
     }
-<%  nPublicsInps += 3*(vadcopInfo.stepsFRI.length); -%>
 
-<%  if(options.setEnableInput) { -%>
-    signal {binary} <%- prefix_ %>isNull <== IsZero()(<%- prefix_ %>circuitType);
+<%  if set_enable_input { %>
+    signal {binary} <%= prefix_vadcop %>isNull <== IsZero()(<%= prefix_vadcop %>circuitType);
 
-    <%- componentName %>.enable <== 1 - <%- prefix_ %>isNull;
-<%  } -%>
+    <%= component_name %>.enable <== 1 - <%= prefix_vadcop %>isNull;
+<%  } %>

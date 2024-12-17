@@ -1,76 +1,77 @@
-<%  let prefixStark_ = prefixStark ? `${prefixStark}_` : ""; -%>
-<%  let prefix_ = prefix ? `${prefix}_` : ""; -%>
+<%  let mut c = 0; %>
+<%  for i in 0..global_info.n_challenges.len() { %>
+<%      for j in 0..global_info.n_challenges[i] { %>
+<%          if i < stark_info.n_stages as usize &&
+            stark_info.challenges_map.as_ref()
+                .map(|challenges_map| challenges_map.iter().filter(|&map| map.stage == (i + 1) as u64).count())
+                .unwrap_or(0) > j { %>
+    <%= component_name %>.challengesStage<%= i + 1 %>[<%= j %>] <== challenges[<%= c %>];
+<%          } %>
+<%          c += 1; %>
+<%      } %>
+<%  } %>
 
-
-<%  let c = 0; -%>
-<%  for(let i = 0; i < vadcopInfo.numChallenges.length; ++i) { -%>
-<%      for(let j = 0; j < vadcopInfo.numChallenges[i]; ++j) { -%>
-<%          if(i < starkInfo.nStages && j < starkInfo.challengesMap.filter(c => c.stage == i + 1).length) { -%>
-    <%- componentName %>.challengesStage<%- i + 1 %>[<%-j %>] <== challenges[<%- c++ %>];
-<%          } else { -%>
-<%                c++; -%>
-<%          } -%>
-<%      } -%>
-<%  } -%>
-
-    <%- componentName %>.challengeQ <== challenges[<%- c++ %>];
-    <%- componentName %>.challengeXi <== challenges[<%- c++ %>];
-    <%- componentName %>.challengesFRI[0] <== challenges[<%- c++ %>];
-    <%- componentName %>.challengesFRI[1] <== challenges[<%- c++  %>];
+    <%= component_name %>.challengeQ <== challenges[<%= c %>];
+    <%= component_name %>.challengeXi <== challenges[<%= c+1 %>];
+    <%= component_name %>.challengesFRI[0] <== challenges[<%= c+2 %>];
+    <%= component_name %>.challengesFRI[1] <== challenges[<%= c+3  %>];
 
 <%  c = 0; %>
-<%  for(let i = 0; i < vadcopInfo.stepsFRI.length; ++i) { -%>
-<%      if(c < starkInfo.starkStruct.steps.length && starkInfo.starkStruct.steps[c].nBits === vadcopInfo.stepsFRI[i].nBits) { -%>
-    <%- componentName %>.challengesFRISteps[<%- c++ %>] <== challengesFRISteps[<%- i %>];
-<%      } -%>
-<%  } -%>
-<%- componentName %>.challengesFRISteps[<%- starkInfo.starkStruct.steps.length %>] <== challengesFRISteps[<%- vadcopInfo.stepsFRI.length %>];
+<%  for i in 0..global_info.steps_fri.len() { %>
+<%      if c < stark_info.stark_struct.steps.len() && stark_info.stark_struct.steps[c].n_bits == global_info.steps_fri[i].n_bits as u64 { %>
+    <%= component_name %>.challengesFRISteps[<%= c %>] <== challengesFRISteps[<%= i %>];
+<%      c += 1; %>
+<%      } %>
+<%  } %>
+    <%= component_name %>.challengesFRISteps[<%= stark_info.stark_struct.steps.len() %>] <== challengesFRISteps[<%= global_info.steps_fri.len() %>];
 
 
-<%  let circuitType = (vadcopInfo.air_groups.length > 1 || vadcopInfo.airs[0].length > 1) ? starkInfo.airId + 2 : starkInfo.airId + 1; -%>
-    <%- prefix_ %>circuitType <== <%- circuitType %>;
+<%  let circuit_type = if global_info.air_groups.len() > 1 || global_info.airs[0].len() > 1 { stark_info.air_id.unwrap_or(0) + 2 } else { stark_info.air_id.unwrap_or(0) + 1 }; %>
+    <%= prefix_vadcop %>circuitType <== <%= circuit_type %>;
     
-<%  if(vadcopInfo.aggTypes[airgroupId].length > 0) { -%>
-    <%- prefix_ %>aggregationTypes <== [<%- vadcopInfo.aggTypes[airgroupId].map(a => a.aggType).join(",") %>];
-<%  } -%>
+<%  if global_info.agg_types[stark_info.airgroup_id.unwrap() as usize].len() > 0  { %>
+    <%= prefix_vadcop %>aggregationTypes <== [<%= global_info.agg_types[stark_info.airgroup_id.unwrap() as usize].iter().map(|a| a.agg_type.to_string()).collect::<Vec<String>>().join(",") %>];
+<%  } %>
 
-<%  if(vadcopInfo.aggTypes[airgroupId].length > 0) { -%>
-<%      for (let i = 0; i < vadcopInfo.aggTypes[airgroupId].length; ++i) { -%>
-    <%- prefix_ %>airgroupvalues[<%- i %>] <== <%- prefixStark_ %>airgroupvalues[<%- i %>];
-<%      } -%>
-<%  } -%>
+<%  if global_info.agg_types[stark_info.airgroup_id.unwrap() as usize].len() > 0  { %>
+<%      for i in 0..global_info.agg_types[stark_info.airgroup_id.unwrap() as usize].len() { %>
+    <%= prefix_vadcop %>airgroupvalues[<%= i %>] <== <%= prefix %>airgroupvalues[<%= i %>];
+<%      } %>
+<%  } %>
 
 
-<%  for (let i = 0; i < starkInfo.nStages; ++i) { -%>
-<%  if(i == 0) { -%>
-<%  if(starkInfo.airValuesMap.filter(a => a.stage == i + 1).length > 0) { -%>
-    <%- prefix_ %>root<%- i+1 %> <== CalculateStage<%- i+1 %>Hash()(<%- componentName %>.rootC, <%- prefixStark_%>root<%- i+1 %>, <%- prefixStark_ %>airvalues);
-<%  } else { -%>
-    <%- prefix_ %>root<%- i+1 %> <== CalculateStage<%- i+1 %>Hash()(<%- componentName %>.rootC, <%- prefixStark_%>root<%- i+1 %>);
-<%  } -%>
-<%  } else { -%>
-<%  if(starkInfo.airValuesMap.filter(a => a.stage == i + 1).length > 0) { -%>
-    <%- prefix_ %>root<%- i+1 %> <== CalculateStage<%- i+1 %>Hash()(<%- prefixStark_%>root<%- i+1 %>, <%- prefixStark_ %>airvalues);
-<%  } else { -%>
-    <%- prefix_ %>root<%- i+1 %> <== <%- prefixStark_ %>root<%- i+1 %>;
-<%  } -%>
-<%  } -%>
-<%  } -%>
-<%  for (let i = starkInfo.nStages; i < vadcopInfo.numChallenges.length; ++i) { -%>
-    <%- prefix_ %>root<%- i+1 %> <== [0,0,0,0];
-<%  } -%>
+<%  for i in 0..stark_info.n_stages { %>
+<%  let air_values_exist = stark_info.airvalues_map.as_ref().map_or(false, |map| map.iter().any(|a| a.stage == (i + 1) as u64)); %>
+<%  if i == 0 { %>
+<%  if air_values_exist { %>
+    <%= prefix_vadcop %>root<%= i+1 %> <== CalculateStage<%= i+1 %>Hash()(<%= component_name %>.rootC, <%= prefix%>root<%= i+1 %>, <%= prefix %>airvalues);
+<%  } else { %>
+    <%= prefix_vadcop %>root<%= i+1 %> <== CalculateStage<%= i+1 %>Hash()(<%= component_name %>.rootC, <%= prefix%>root<%= i+1 %>);
+<%  } %>
+<%  } else { %>
+<%  if air_values_exist { %>
+    <%= prefix_vadcop %>root<%= i+1 %> <== CalculateStage<%= i+1 %>Hash()(<%= prefix%>root<%= i+1 %>, <%= prefix %>airvalues);
+<%  } else { %>
+    <%= prefix_vadcop %>root<%= i+1 %> <== <%= prefix %>root<%= i+1 %>;
+<%  } %>
+<%  } %>
+<%  } %>
+<%  for i in stark_info.n_stages..global_info.n_challenges.len() as u32 { %>
+    <%= prefix_vadcop %>root<%= i+1 %> <== [0,0,0,0];
+<%  } %>
 
-    <%- prefix_ %>root<%- starkInfo.nStages + 1 %> <== <%- prefixStark_ %>root<%- starkInfo.nStages + 1 %>;
+    <%= prefix_vadcop %>root<%= stark_info.n_stages + 1 %> <== <%= prefix %>root<%= stark_info.n_stages + 1 %>;
 
-    <%- prefix_ %>evalsHash <== CalculateEvalsHash()(<%- prefixStark_ %>evals);
+    <%= prefix_vadcop %>evalsHash <== CalculateEvalsHash()(<%= prefix %>evals);
 
-<%  let friCounter = 0; -%>
-<%  for(let i = 1; i < vadcopInfo.stepsFRI.length; i++) { -%>
-<%     if(friCounter < starkInfo.starkStruct.steps.length - 1 && starkInfo.starkStruct.steps[friCounter].nBits === vadcopInfo.stepsFRI[i - 1].nBits) { -%>
-    <%- prefix_ %>s<%- i %>_root <== <%- prefixStark_ %>s<%- ++friCounter %>_root;
-<%     } else { -%>
-    <%- prefix_ %>s<%- i %>_root <== [0,0,0,0];
-<%     } -%>
-<%  } -%>
+<%  let mut fri_counter = 0; %>
+<%  for i in 1..global_info.steps_fri.len() { %>
+<%     if fri_counter < stark_info.stark_struct.steps.len() - 1 && stark_info.stark_struct.steps[fri_counter].n_bits == global_info.steps_fri[i - 1].n_bits  as u64 { %>
+    <%= prefix_vadcop %>s<%= i %>_root <== <%= prefix %>s<%= fri_counter %>_root;
+<% fri_counter += 1; %>
+<%     } else { %>
+    <%= prefix_vadcop %>s<%= i %>_root <== [0,0,0,0];
+<%     } %>
+<%  } %>
     
-    <%- prefix_ %>finalPolHash <== CalculateFinalPolHash()(<%- prefixStark_ %>finalPol);
+    <%= prefix_vadcop %>finalPolHash <== CalculateFinalPolHash()(<%= prefix %>finalPol);

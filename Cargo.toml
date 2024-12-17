@@ -11,6 +11,7 @@ members = [
     "transcript",
     "witness",
     "util",
+    "stark-recurser",
     "pil2-components/lib/std/rs",
     # "pil2-components/test/std/range_check/rs",
     # "pil2-components/test/std/lookup/rs",
@@ -35,6 +36,7 @@ proofman-util = { path = "util", version = "0.1.0" }
 proofman-cli = { path = "cli", version = "0.1.0" }
 pil-std-lib = { path = "pil2-components/lib/std/rs", version = "0.1.0" }
 witness = { path = "witness", version = "0.1.0" }
+stark-recurser = { path = "stark-recurser", version = "0.1.0" }
 pilout = { path = "pilout", version = "0.1.0" }
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"

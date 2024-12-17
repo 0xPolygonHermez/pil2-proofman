@@ -1,0 +1,71 @@
+template VerifyGlobalChallenges() {
+
+<%  if global_info.n_publics > 0 { %>
+    signal input publics[<%= global_info.n_publics%>];
+<%  } %>
+<% for i in 0..global_info.n_challenges.len() {  %>
+    signal input root<%= i + 1 %>[<%= global_info.agg_types.len() %>][4];
+<% } %>                  
+    signal input root<%= global_info.n_challenges.len() + 1 %>[<%= global_info.agg_types.len() %>][4];
+    signal input evalsHash[<%= global_info.agg_types.len() %>][4]; 
+<% for s in 1..global_info.steps_fri.len() {   %>
+    signal input s<%= s %>_root[<%= global_info.agg_types.len() %>][4];
+<% }                                                     %>
+    signal input finalPolHash[<%= global_info.agg_types.len() %>][4];
+
+    signal input challenges[<%= global_info.n_challenges.iter().fold(4, |acc, &nc| acc + nc) %>][3];
+    signal input challengesFRISteps[<%= global_info.steps_fri.len() + 1 %>][3];
+
+    signal calculatedChallenges[<%= global_info.n_challenges.iter().fold(4, |acc, &nc| acc + nc) %>][3];
+    signal calculatedChallengesFRISteps[<%= global_info.steps_fri.len() + 1 %>][3];
+    
+
+<%   let mut transcript = Transcript::new(None); %>
+<%   if global_info.n_publics > 0 { transcript.put("publics", global_info.n_publics) }; %>
+<%   let mut c = 0; %>
+<%   for (i, &n_challenges) in global_info.n_challenges.iter().enumerate() {
+        for _ in 0..n_challenges {
+            transcript.get_field(&format!("calculatedChallenges[{}]", c));
+            c += 1;
+        }
+        for k in 0..global_info.agg_types.len() {
+            transcript.put(&format!("root{}[{}]", i + 1, k), 4);
+        }
+} %>
+<%   transcript.get_field(&format!("calculatedChallenges[{}]", c)); %>
+<%   c += 1; %>
+<%   for i in 0..global_info.agg_types.len() {
+<%      transcript.put(&format!("root{}[{}]", global_info.n_challenges.len() + 1, i), 4); %>
+<%   } %>
+<%   transcript.get_field(&format!("calculatedChallenges[{}]", c)); %>
+<%   c += 1; %>
+<%   for i in 0..global_info.agg_types.len() { -%>
+<%      transcript.put(&format!("evalsHash[{}]", i), 4); %>
+<%   } %>
+<%   transcript.get_field(&format!("calculatedChallenges[{}]", c));%>
+<%   c += 1; %>
+<%   transcript.get_field(&format!("calculatedChallenges[{}]", c));%>
+<%   c += 1; %>
+<%  for si in 0..global_info.steps_fri.len() { %>
+<%      transcript.get_field(&format!("calculatedChallengesFRISteps[{}]", si)); %>
+<%      for k in 0..global_info.agg_types.len() { %>
+<%          if si < global_info.steps_fri.len() - 1 { %>
+<%              transcript.put(&format!("s{}_root[{}]", si + 1, k), 4); %>
+<%          } else { %>
+<%              transcript.put(&format!("finalPolHash[{}]", k), 4); %>
+<%          } %>
+<%      } %>
+<%  } %>
+<%  transcript.get_field(&format!("calculatedChallengesFRISteps[{}]", global_info.steps_fri.len())); %>
+<%= let code = transcript.get_code(); %>
+<%=  code %>
+
+    // Check that all the challenges match
+<%  for i in 0..global_info.n_challenges.iter().fold(4, |acc, &nc| acc + nc) { %>
+    calculatedChallenges[<%= i %>] === challenges[<%= i %>];
+<%  } %>
+
+<%  for i in 0..global_info.steps_fri.len() + 1{ %>
+    calculatedChallengesFRISteps[<%= i %>] === challengesFRISteps[<%= i %>];
+<%  } %>
+}

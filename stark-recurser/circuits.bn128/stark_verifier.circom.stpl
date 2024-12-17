@@ -1,7 +1,7 @@
 pragma circom 2.1.0;
 <% if(custom) { -%> pragma custom_templates; <% } -%>
 
-<%  const NFields = Math.floor(((starkInfo.starkStruct.nQueries *  starkInfo.starkStruct.steps[0].nBits) - 1)/253)+1; -%>
+<%  const NFields = Math.floor(((stark_info.starkStruct.nQueries *  stark_info.starkStruct.steps[0].nBits) - 1)/253)+1; -%>
 <%
 class Transcript {
     constructor(name) {
@@ -157,7 +157,7 @@ class Transcript {
 <%        } else if (r.type == "x") { -%>
 <%            return "challengeXi"; -%>
 <%        } else if (r.type == "Zi") { -%>
-<%            const boundary = starkInfo.boundaries[r.boundaryId]; -%>
+<%            const boundary = stark_info.boundaries[r.boundaryId]; -%>
 <%            if(boundary.name === "everyRow") { -%>
 <%                return "Zh"; -%>
 <%            } else if(boundary.name === "firstRow") { -%>
@@ -165,7 +165,7 @@ class Transcript {
 <%            } else if(boundary.name === "lastRow") { -%>
 <%                return "Zlast"; -%>
 <%            } else if(boundary.name === "everyFrame") { -%>
-<%                const boundaryId = starkInfo.boundaries.filter(b=>b.name === "everyFrame").findIndex(b => b.offsetMin === boundary.offsetMin && b.offsetMax === boundary.offsetMax); -%>
+<%                const boundaryId = stark_info.boundaries.filter(b=>b.name === "everyFrame").findIndex(b => b.offsetMin === boundary.offsetMin && b.offsetMax === boundary.offsetMax); -%>
 <%                return "Zframe" + boundaryId + "[" + (boundary.offsetMin + boundary.offsetMax - 1) + "]"; -%>
 <%            } else throw new Error("Invalid boundary: " + r.boundaryId); -%>
 <%        } else if (r.type == "xDivXSubXi") { -%>
@@ -173,11 +173,11 @@ class Transcript {
 <%        } else if (r.type == "tmp") { -%>
 <%            return "tmp_"+r.id; -%>
 <%        } else if (r.type == "cm") { -%>
-<%            const pol = starkInfo.cmPolsMap[r.id]; -%>
+<%            const pol = stark_info.cmPolsMap[r.id]; -%>
 <%            return "mapValues." + r.type + pol.stage + "_" + pol.stageId; -%>
 <%        } else if (r.type == "custom") { -%>
-<%            const pol = starkInfo.customCommitsMap[r.commitId][r.id]; -%>
-<%            return "mapValues." + r.type + "_" + starkInfo.customCommits[r.commitId].name + "_" + pol.stage + "_" + pol.stageId; -%>
+<%            const pol = stark_info.customCommitsMap[r.commitId][r.id]; -%>
+<%            return "mapValues." + r.type + "_" + stark_info.customCommits[r.commitId].name + "_" + pol.stage + "_" + pol.stageId; -%>
 <%        } else if (r.type == "const") { -%>
 <%            return "consts[" + r.id + "]"; -%>
 <%        } else if (r.type === "airgroupvalue") { -%>
@@ -290,9 +290,9 @@ include "sha256/sha256.circom";
 <% } -%>
 
 
-<% let qStage = starkInfo.nStages + 1; -%>
-<% let evalsStage = starkInfo.nStages + 2; -%>
-<% let friStage = starkInfo.nStages + 3; -%>
+<% let qStage = stark_info.nStages + 1; -%>
+<% let evalsStage = stark_info.nStages + 2; -%>
+<% let friStage = stark_info.nStages + 3; -%>
 
 template GLConst(num) {
     signal output {maxNum} out;
@@ -336,24 +336,24 @@ template calculateFRIQueries() {
     Calculate the transcript
 */ 
 template Transcript() {
-<%  if(starkInfo.nPublics > 0) { -%>
-    signal input {maxNum} publics[<%- starkInfo.nPublics %>];
+<%  if(stark_info.nPublics > 0) { -%>
+    signal input {maxNum} publics[<%- stark_info.nPublics %>];
 <%  } -%>
     signal input rootC;
-<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+<% for(let i=0; i < stark_info.nStages; i++) {  -%>
 <%  const stage = i + 1; -%>
     signal input root<%- stage %>;
 <% } -%>
     signal input root<%- qStage %>;
-    signal input {maxNum} evals[<%- starkInfo.evMap.length %>][3]; 
+    signal input {maxNum} evals[<%- stark_info.evMap.length %>][3]; 
 <% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
     signal input s<%- s %>_root;
 <% }                                                     -%>
     signal input {maxNum} finalPol[<%- 1 << starkStruct.steps[starkStruct.steps.length-1].nBits %>][3];
 
-<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
-<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
-    signal output {maxNum} challengesStage<%- i + 1 %>[<%- starkInfo.challengesMap.filter(c => c.stage === i + 1).length %>][3];
+<%  for(let i = 0; i < stark_info.nStages; ++i) { -%>
+<%  if(stark_info.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+    signal output {maxNum} challengesStage<%- i + 1 %>[<%- stark_info.challengesMap.filter(c => c.stage === i + 1).length %>][3];
 <%  } -%>
 
     signal output {maxNum} challengeQ[3];
@@ -362,8 +362,8 @@ template Transcript() {
     signal output {maxNum} challengesFRISteps[<%- starkStruct.steps.length %>][3];
     signal output {binary} queriesFRI[<%- starkStruct.nQueries %>][<%- starkStruct.steps[0].nBits %>];
 
-<%  if(starkInfo.starkStruct.hashCommits) { -%>
-<%  if(starkInfo.nPublics > 0) { -%>
+<%  if(stark_info.starkStruct.hashCommits) { -%>
+<%  if(stark_info.nPublics > 0) { -%>
     signal publicsHash;
 <%  } -%>
     signal evalsHash;
@@ -371,22 +371,22 @@ template Transcript() {
 <%  } -%>
 <%  const transcript = new Transcript(); -%>
 <%  transcript.put("rootC"); -%>
-<%  if(starkInfo.nPublics > 0) { -%>
-<%   if(!starkInfo.starkStruct.hashCommits) { -%>
-<%         transcript.put("publics", starkInfo.nPublics); -%>
+<%  if(stark_info.nPublics > 0) { -%>
+<%   if(!stark_info.starkStruct.hashCommits) { -%>
+<%         transcript.put("publics", stark_info.nPublics); -%>
 <%   } else { -%>
 <%-      transcript.getCode(); %>
 <%      const transcriptPublics = new Transcript("publics");
-        transcriptPublics.put("publics", starkInfo.nPublics);
+        transcriptPublics.put("publics", stark_info.nPublics);
         transcriptPublics.getFieldHash("publicsHash"); -%>
 <%-      transcriptPublics.getCode(); %>
 <%      transcript.put("publicsHash"); -%>
 <%  } -%>
 <%  } -%>
 
-<%   for(let i=0; i < starkInfo.nStages; i++) {
+<%   for(let i=0; i < stark_info.nStages; i++) {
         const stage = i + 1;
-        for(let j = 0; j < starkInfo.challengesMap.filter(c => c.stage === stage).length; ++j) {
+        for(let j = 0; j < stark_info.challengesMap.filter(c => c.stage === stage).length; ++j) {
             transcript.getField("challengesStage" + stage + "[" + j + "]", 3);
         }
         transcript.put("root" + stage);
@@ -396,14 +396,14 @@ template Transcript() {
     transcript.put("root" + qStage);
 
     transcript.getField("challengeXi", 3); -%>
-<%   if(!starkInfo.starkStruct.hashCommits) { -%>
-<%      for (let i=0; i<starkInfo.evMap.length; i++) {
+<%   if(!stark_info.starkStruct.hashCommits) { -%>
+<%      for (let i=0; i<stark_info.evMap.length; i++) {
             transcript.put(`evals[${i}]`, 3);
         } -%>
 <%   } else { -%>
 <%-      transcript.getCode(); %>
 <%      const transcriptEvals = new Transcript("evals");
-        for (let i=0; i<starkInfo.evMap.length; i++) {
+        for (let i=0; i<stark_info.evMap.length; i++) {
             transcriptEvals.put(`evals[${i}]`, 3);
         }
         transcriptEvals.getField("evalsHash"); -%>
@@ -418,7 +418,7 @@ template Transcript() {
 <%      if (si < starkStruct.steps.length-1) { -%>
 <%          transcript.put(`s${si+1}_root`); -%>
 <%        } else { -%>
-<%          if(!starkInfo.starkStruct.hashCommits) { -%>
+<%          if(!stark_info.starkStruct.hashCommits) { -%>
 <%              for (let j=0; j< 1<<starkStruct.steps[starkStruct.steps.length-1].nBits; j++ ) {
                     transcript.put(`finalPol[${j}]`, 3);
                 } -%>
@@ -514,19 +514,19 @@ template parallel VerifyFRI(prevStepBits, currStepBits, nextStepBits, e0, e1) {
     Verify that all committed polynomials are calculated correctly
 */
 template parallel VerifyEvaluations() {
-<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.challengesMap.filter(c => c.stage === stage).length === 0) continue; -%>
-    signal input {maxNum} challengesStage<%- stage %>[<%- starkInfo.challengesMap.filter(c => c.stage === stage).length -%>][3];
+<%  if(stark_info.challengesMap.filter(c => c.stage === stage).length === 0) continue; -%>
+    signal input {maxNum} challengesStage<%- stage %>[<%- stark_info.challengesMap.filter(c => c.stage === stage).length -%>][3];
 <%  } -%>
     signal input {maxNum} challengeQ[3];
     signal input {maxNum} challengeXi[3];
-    signal input {maxNum} evals[<%- starkInfo.evMap.length %>][3];
-<%  if(starkInfo.nPublics > 0) { -%>
-    signal input {maxNum} publics[<%- starkInfo.nPublics %>];
+    signal input {maxNum} evals[<%- stark_info.evMap.length %>][3];
+<%  if(stark_info.nPublics > 0) { -%>
+    signal input {maxNum} publics[<%- stark_info.nPublics %>];
 <%  } -%>
-<%  if(starkInfo.airgroupValuesMap.length > 0) { -%>
-    signal input airgroupvalues[<%- starkInfo.airgroupValuesMap.length %>][3];
+<%  if(stark_info.airgroupValuesMap.length > 0) { -%>
+    signal input airgroupvalues[<%- stark_info.airgroupValuesMap.length %>][3];
 <%  } -%>
     signal input {binary} enable;
 
@@ -551,12 +551,12 @@ template parallel VerifyEvaluations() {
     signal {maxNum} Z[3] <== GLCSub()(zMul[<%- starkStruct.nBits - 1 %>], oneGL);
     signal {maxNum} Zh[3] <== GLCInv()(Z);
 
-<%  if(starkInfo.boundaries.map(b => b.name).includes("firstRow")) { -%>
+<%  if(stark_info.boundaries.map(b => b.name).includes("firstRow")) { -%>
     signal {maxNum} Zf[3] <== GLCSub()(challengeXi, oneGL);
     signal {maxNum} Zfirst[3] <== GLCInv()(Zf);
 <%  } -%>
 
-<%  if(starkInfo.boundaries.map(b => b.name).includes("lastRow")) { -%>
+<%  if(stark_info.boundaries.map(b => b.name).includes("lastRow")) { -%>
 <%  let root = F.one; -%>
 <%  for(let i = 0; i < (1 << starkStruct.nBits) - 1; ++i) { -%>
 <%    root = F.mul(root, F.w[starkStruct.nBits]); -%>
@@ -570,8 +570,8 @@ template parallel VerifyEvaluations() {
     signal {maxNum} Zlast[3] <== GLCInv()(Zl);
 <%  } -%>
 
-<%  if(starkInfo.boundaries.map(b => b.name).includes("everyFrame")) { -%>
-<%  const constraintFrames = starkInfo.boundaries.filter(b => b.name === "everyFrame"); -%>
+<%  if(stark_info.boundaries.map(b => b.name).includes("everyFrame")) { -%>
+<%  const constraintFrames = stark_info.boundaries.filter(b => b.name === "everyFrame"); -%>
 <%  for(let i = 0; i < constraintFrames.length; ++i) { -%>
 <%      let frame = constraintFrames[i]; -%>
 <%      let c = 0; -%>
@@ -614,19 +614,19 @@ template parallel VerifyEvaluations() {
     // calculate the sum of q_i, i.e, q_0(X) + challenge * q_1(X) + challenge^2 * q_2(X) +  ... + challenge^(l-1) * q_l-1(X) evaluated at z 
 <% const evalP = unrollCode(verifierInfo.qVerifier.code) -%>
 
-    signal {maxNum} xAcc[<%- starkInfo.qDeg %>][3]; //Stores, at each step, x^i evaluated at z
-    signal {maxNum} qStep[<%- starkInfo.qDeg-1 %>][3]; // Stores the evaluations of Q_i
-    signal {maxNum} qAcc[<%- starkInfo.qDeg %>][3]; // Stores the accumulate sum of Q_i
+    signal {maxNum} xAcc[<%- stark_info.qDeg %>][3]; //Stores, at each step, x^i evaluated at z
+    signal {maxNum} qStep[<%- stark_info.qDeg-1 %>][3]; // Stores the evaluations of Q_i
+    signal {maxNum} qAcc[<%- stark_info.qDeg %>][3]; // Stores the accumulate sum of Q_i
     
     qStep.maxNum = q;
-    qAcc.maxNum = <%- starkInfo.qDeg %>*q;
+    qAcc.maxNum = <%- stark_info.qDeg %>*q;
     xAcc.maxNum = q;
 
     // Note: Each Qi has degree < n. qDeg determines the number of polynomials of degree < n needed to define Q
     // Calculate Q(X) = Q1(X) + X^n*Q2(X) + X^(2n)*Q3(X) + ..... X^((qDeg-1)n)*Q(X) evaluated at z 
-    for (var i=0; i< <%- starkInfo.qDeg %>; i++) {
-<%      let qIndex = starkInfo.cmPolsMap.findIndex(p => p.stage === qStage && p.stageId === 0); -%>
-<%      const evId = starkInfo.evMap.findIndex(e => e.type === "cm" && e.id === qIndex); -%>
+    for (var i=0; i< <%- stark_info.qDeg %>; i++) {
+<%      let qIndex = stark_info.cmPolsMap.findIndex(p => p.stage === qStage && p.stageId === 0); -%>
+<%      const evId = stark_info.evMap.findIndex(e => e.type === "cm" && e.id === qIndex); -%>
         if (i==0) {
             xAcc[0] <== [1, 0, 0];
             qAcc[0] <== evals[<%- evId %>+i];
@@ -638,7 +638,7 @@ template parallel VerifyEvaluations() {
     }
 
     // Final normalization
-    signal {maxNum} vals[3] <== GLCSub()(<%- evalP %>, qAcc[<%- starkInfo.qDeg-1 %>]);
+    signal {maxNum} vals[3] <== GLCSub()(<%- evalP %>, qAcc[<%- stark_info.qDeg-1 %>]);
     signal {maxNum} normC[3] <== GLCNorm()(vals);
 
     // Final Verification
@@ -657,17 +657,17 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
     signal input {binary} queriesFRI[<%- starkStruct.steps[0].nBits %>];
     signal input {maxNum} challengeXi[3];
     signal input {maxNum} challengesFRI[2][3];
-    signal input {maxNum} evals[<%- starkInfo.evMap.length %>][3];
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+    signal input {maxNum} evals[<%- stark_info.evMap.length %>][3];
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
-    signal input {maxNum} cm<%- stage %>[<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal input {maxNum} cm<%- stage %>[<%- stark_info.mapSectionsN[`cm${stage}`] %>];
 <%  } -%>
 <% } -%>
-    signal input {maxNum} cm<%- qStage %>[<%- starkInfo.mapSectionsN[`cm${qStage}`] %>];
-    signal input {maxNum} consts[<%- starkInfo.nConstants %>];
-<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    signal input custom_<%- starkInfo.customCommits[i].name %>_0[<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>];
+    signal input {maxNum} cm<%- qStage %>[<%- stark_info.mapSectionsN[`cm${qStage}`] %>];
+    signal input {maxNum} consts[<%- stark_info.nConstants %>];
+<%  for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    signal input custom_<%- stark_info.customCommits[i].name %>_0[<%- stark_info.mapSectionsN[`${stark_info.customCommits[i].name}0`] %>];
 <%  } -%>
     signal input {maxNum} s1_vals[1 << nextStep][3];
     signal input {binary} enable;
@@ -675,15 +675,15 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
     // Map the s0_vals so that they are converted either into single vars (if they belong to base field) or arrays of 3 elements (if 
     // they belong to the extended field). 
     component mapValues = MapValues();
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
     mapValues.vals<%- stage %> <== cm<%- stage %>;
 <%  } -%>
 <% } -%>
     mapValues.vals<%- qStage %> <== cm<%- qStage %>;
-<% for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    mapValues.vals_<%- starkInfo.customCommits[i].name %>_0 <== custom_<%- starkInfo.customCommits[i].name %>_0;
+<% for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    mapValues.vals_<%- stark_info.customCommits[i].name %>_0 <== custom_<%- stark_info.customCommits[i].name %>_0;
 <%  } -%>
 
     var q = 0xFFFFFFFFFFFFFFFF;
@@ -719,7 +719,7 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
     X <== [queriesFRI[0]*(<%- F.shift %> * roots(<%- starkStruct.steps[0].nBits %>)-<%- F.shift %>) + <%- F.shift %>, 0, 0];
 <% }                                    -%>
 
-    signal {maxNum} xDivXSubXi[<%- starkInfo.openingPoints.length %>][3];
+    signal {maxNum} xDivXSubXi[<%- stark_info.openingPoints.length %>][3];
 
     signal {maxNum} rootWXi[3];
     rootWXi.maxNum = q;
@@ -729,8 +729,8 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
     rootWXiInv.maxNum = q;
     rootWXiInv <== [invroots(<%- starkStruct.nBits %>), 0, 0];
 
-<%  for(var i=0; i<starkInfo.openingPoints.length; ++i) { -%>
-<%  const opening = Number(starkInfo.openingPoints[i]); -%>
+<%  for(var i=0; i<stark_info.openingPoints.length; ++i) { -%>
+<%  const opening = Number(stark_info.openingPoints[i]); -%>
 <%  if (opening) { -%>
     signal {maxNum} w<%- i %>[<%- opening %>][3];
     w<%- i %>[0] <== GLCMul()(rootWXi, challengeXi);
@@ -774,19 +774,19 @@ template parallel VerifyQuery(currStepBits, nextStepBits) {
 // This function processes the values, which are stored in an array vals[n] and splits them in multiple signals of size 1 (vals_i) 
 // or 3 (vals_i[3]) depending on its dimension.
 template MapValues() {
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
-    signal input {maxNum} vals<%- stage %>[<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal input {maxNum} vals<%- stage %>[<%- stark_info.mapSectionsN[`cm${stage}`] %>];
 <%  } -%>
 <% } -%>
-    signal input {maxNum} vals<%- qStage %>[<%- starkInfo.mapSectionsN[`cm${qStage}`]  %>];
-<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    signal input {maxNum} vals_<%- starkInfo.customCommits[i].name %>_0[<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>];
+    signal input {maxNum} vals<%- qStage %>[<%- stark_info.mapSectionsN[`cm${qStage}`]  %>];
+<%  for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    signal input {maxNum} vals_<%- stark_info.customCommits[i].name %>_0[<%- stark_info.mapSectionsN[`${stark_info.customCommits[i].name}0`] %>];
 <%  } -%>
 
-<% for (let t = 1; t<=starkInfo.nStages + 1; t++) {                              -%>
-<%      let sectionsStage = starkInfo.cmPolsMap.filter(p => p.stage === t);  -%>
+<% for (let t = 1; t<=stark_info.nStages + 1; t++) {                              -%>
+<%      let sectionsStage = stark_info.cmPolsMap.filter(p => p.stage === t);  -%>
 <%      for (let i=0; i< sectionsStage.length; i++) {         -%>
 <%          const p = sectionsStage[i];  -%>
 <%          if (p.dim == 1) {                                                    -%>
@@ -796,36 +796,36 @@ template MapValues() {
 <%          } else throw new Error("Invalid dim")                                -%>
 <%      }                                                                        -%>
 <% }                                                                             -%>
-<% for (let t = 0; t < starkInfo.customCommits.length; ++t) { -%>
-<%    for(let l = 0; l < starkInfo.customCommits[t].stageWidths.length; ++l) { -%>
-<%        let sectionsStage = starkInfo.customCommitsMap[t].filter(p => p.stage === l);  -%>
+<% for (let t = 0; t < stark_info.customCommits.length; ++t) { -%>
+<%    for(let l = 0; l < stark_info.customCommits[t].stageWidths.length; ++l) { -%>
+<%        let sectionsStage = stark_info.customCommitsMap[t].filter(p => p.stage === l);  -%>
 <%        for (let i=0; i< sectionsStage.length; i++) {         -%>
 <%        const p = sectionsStage[i];  -%>
 <%            if (p.dim == 1) {                                                    -%>
-    signal output {maxNum} custom_<%- starkInfo.customCommits[t].name%>_<%- l %>_<%- i %>;
+    signal output {maxNum} custom_<%- stark_info.customCommits[t].name%>_<%- l %>_<%- i %>;
 <%            } else if (p.dim == 3) {                                             -%>
-    signal output {maxNum} custom_<%- starkInfo.customCommits[t].name%>_<%- l %>_<%- i %>[3];
+    signal output {maxNum} custom_<%- stark_info.customCommits[t].name%>_<%- l %>_<%- i %>[3];
 <%            } else throw new Error("Invalid dim")                                -%>
 <%        } -%>
 <%    } -%>
 <% } -%>
 
-<% for (let t = 0; t < starkInfo.customCommits.length; ++t) { -%>
-<%    for(let l = 0; l < starkInfo.customCommits[t].stageWidths.length; ++l) { -%>
-<%       let sectionsStage = starkInfo.customCommitsMap[t].filter(p => p.stage === l);  -%>
+<% for (let t = 0; t < stark_info.customCommits.length; ++t) { -%>
+<%    for(let l = 0; l < stark_info.customCommits[t].stageWidths.length; ++l) { -%>
+<%       let sectionsStage = stark_info.customCommitsMap[t].filter(p => p.stage === l);  -%>
 <%        for (let i=0; i< sectionsStage.length; i++) {         -%>
 <%            const p = sectionsStage[i];  -%>
 <%            if (p.dim == 1) {                                                    -%>
-    custom_<%- starkInfo.customCommits[t].name%>_<%- l %>_<%- i %> <== vals_<%- starkInfo.customCommits[t].name %>_0[<%- p.stagePos %>];
+    custom_<%- stark_info.customCommits[t].name%>_<%- l %>_<%- i %> <== vals_<%- stark_info.customCommits[t].name %>_0[<%- p.stagePos %>];
 <%            } else if (p.dim == 3) {                                             -%>
-    custom_<%- starkInfo.customCommits[t].name%>_<%- l %>_<%- i %> <== [vals_<%- starkInfo.customCommits[t].name %>_0[<%- p.stagePos %>],vals_<%- starkInfo.customCommits[t].name %>_0[<%- p.stagePos + 1 %>] , vals_<%- starkInfo.customCommits[t].name %>_0[<%- p.stagePos + 2 %>]];
+    custom_<%- stark_info.customCommits[t].name%>_<%- l %>_<%- i %> <== [vals_<%- stark_info.customCommits[t].name %>_0[<%- p.stagePos %>],vals_<%- stark_info.customCommits[t].name %>_0[<%- p.stagePos + 1 %>] , vals_<%- stark_info.customCommits[t].name %>_0[<%- p.stagePos + 2 %>]];
 <%            } else throw new Error("Invalid dim")                                -%>
 <%        } -%>
 <%    } -%>
 <% } -%>
 
-<% for (let t = 1; t<=starkInfo.nStages + 1; t++) {                              -%>
-<%      let sectionsStage = starkInfo.cmPolsMap.filter(p => p.stage === t);  -%>
+<% for (let t = 1; t<=stark_info.nStages + 1; t++) {                              -%>
+<%      let sectionsStage = stark_info.cmPolsMap.filter(p => p.stage === t);  -%>
 <%      for (let i=0; i< sectionsStage.length; i++) {         -%>
 <%          const p = sectionsStage[i];  -%>
 <%          if (p.dim == 1) {                                                    -%>
@@ -866,13 +866,13 @@ template parallel VerifyFinalPol() {
 }
 
 template StarkVerifier() {
-<%  if(starkInfo.nPublics > 0) { -%>
-    signal input publics[<%- starkInfo.nPublics %>];
+<%  if(stark_info.nPublics > 0) { -%>
+    signal input publics[<%- stark_info.nPublics %>];
 <%  } -%>
-<% if(starkInfo.airgroupValuesMap.length > 0) { -%>
-    signal input airgroupvalues[<%- starkInfo.airgroupValuesMap.length %>][3]; // airgroupvalue values
+<% if(stark_info.airgroupValuesMap.length > 0) { -%>
+    signal input airgroupvalues[<%- stark_info.airgroupValuesMap.length %>][3]; // airgroupvalue values
 <% } -%>
-<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+<% for(let i=0; i < stark_info.nStages; i++) {  -%>
 <%  const stage = i + 1; -%>
     signal input root<%- stage %>; // Merkle tree root of stage <%- stage %>
 <% } -%>
@@ -885,32 +885,32 @@ template StarkVerifier() {
     signal rootC <== <%- constRoot %>; // Merkle tree root of the evaluations of constant polynomials
 <% } -%>
 
-    signal input evals[<%- starkInfo.evMap.length %>][3]; // Evaluations of the set polynomials at a challenge value z and gz
+    signal input evals[<%- stark_info.evMap.length %>][3]; // Evaluations of the set polynomials at a challenge value z and gz
 
     // Leaves values of the merkle tree used to check all the queries
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
-    signal input s0_vals<%- stage %>[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal input s0_vals<%- stage %>[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`cm${stage}`] %>];
 <%  } -%>
 <% } -%>
-    signal input s0_vals<%- qStage %>[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${qStage}`] %>];
-    signal input s0_valsC[<%- starkStruct.nQueries %>][<%- starkInfo.nConstants%>];
-<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    signal input s0_vals_<%- starkInfo.customCommits[i].name %>_0[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>];
+    signal input s0_vals<%- qStage %>[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`cm${qStage}`] %>];
+    signal input s0_valsC[<%- starkStruct.nQueries %>][<%- stark_info.nConstants%>];
+<%  for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    signal input s0_vals_<%- stark_info.customCommits[i].name %>_0[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`${stark_info.customCommits[i].name}0`] %>];
 <% }-%>
 
     // Merkle proofs for each of the evaluations
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
     signal input s0_siblings<%- stage %>[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
 <% } -%>
 <% } -%>
     signal input s0_siblings<%- qStage %>[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
     signal input s0_siblingsC[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
-<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    signal input s0_siblings_<%- starkInfo.customCommits[i].name %>_0[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
+<%  for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    signal input s0_siblings_<%- stark_info.customCommits[i].name %>_0[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
 <% } -%>
 
     // Contains the root of the original polynomial and all the intermediate FRI polynomials except for the last step
@@ -940,63 +940,63 @@ template StarkVerifier() {
     enabled <== 1;
 <% } -%>
 
-<%  if(starkInfo.nPublics > 0) { -%>
-    signal {maxNum} publicsGL[<%- starkInfo.nPublics %>]; 
-    for(var i = 0; i < <%- starkInfo.nPublics %>; i++){
+<%  if(stark_info.nPublics > 0) { -%>
+    signal {maxNum} publicsGL[<%- stark_info.nPublics %>]; 
+    for(var i = 0; i < <%- stark_info.nPublics %>; i++){
         publicsGL[i] <== LessThan64Bits()(publics[i]);
     }
 <%  } -%>
 
-    signal {maxNum} evalsGL[<%- starkInfo.evMap.length %>][3];
-    for(var i = 0; i < <%- starkInfo.evMap.length %>; i++){
+    signal {maxNum} evalsGL[<%- stark_info.evMap.length %>][3];
+    for(var i = 0; i < <%- stark_info.evMap.length %>; i++){
         for(var j = 0; j < 3; j++) {
             evalsGL[i][j] <== LessThan64Bits()(evals[i][j]);
         }
     }
 
-<%  if(starkInfo.airgroupValuesMap.length > 0) { -%>
-    signal {maxNum} airgroupValuesGL[<%- starkInfo.airgroupValuesMap.length %>][3];
-    for(var i = 0; i < <%- starkInfo.airgroupValuesMap.length %>; i++){
+<%  if(stark_info.airgroupValuesMap.length > 0) { -%>
+    signal {maxNum} airgroupValuesGL[<%- stark_info.airgroupValuesMap.length %>][3];
+    for(var i = 0; i < <%- stark_info.airgroupValuesMap.length %>; i++){
         for(var j = 0; j < 3; j++) {
             airgroupValuesGL[i][j] <== LessThan64Bits()(airgroupvalues[i][j]);
         }
     }
 <%  } -%>
 
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
-    signal {maxNum} s0_vals<%- stage %>GL[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal {maxNum} s0_vals<%- stage %>GL[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`cm${stage}`] %>];
 <% } -%>
 <% } -%>
-    signal {maxNum} s0_vals<%- qStage %>GL[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${qStage}`] %>];
-    signal {maxNum} s0_valsCGL[<%- starkStruct.nQueries %>][<%- starkInfo.nConstants%>];
-<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    signal s0_vals_<%- starkInfo.customCommits[i].name %>_0GL[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>];
+    signal {maxNum} s0_vals<%- qStage %>GL[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`cm${qStage}`] %>];
+    signal {maxNum} s0_valsCGL[<%- starkStruct.nQueries %>][<%- stark_info.nConstants%>];
+<%  for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    signal s0_vals_<%- stark_info.customCommits[i].name %>_0GL[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`${stark_info.customCommits[i].name}0`] %>];
 <% }-%>
 <% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
     signal {maxNum} s<%- s %>_valsGL[<%- starkStruct.nQueries %>][<%- (1 << (starkStruct.steps[s-1].nBits - starkStruct.steps[s].nBits))*3 %>];
 <% }                                                  -%>
 
     for(var i = 0; i < <%- starkStruct.nQueries %>; i++){
-        for(var j = 0; j < <%- starkInfo.nConstants %>; j++) {
+        for(var j = 0; j < <%- stark_info.nConstants %>; j++) {
             s0_valsCGL[i][j] <== LessThan64Bits()(s0_valsC[i][j]);
         }
 
-        for(var j = 0; j < <%- starkInfo.mapSectionsN[`cm${qStage}`] %>; j++) {
+        for(var j = 0; j < <%- stark_info.mapSectionsN[`cm${qStage}`] %>; j++) {
             s0_vals<%- qStage %>GL[i][j] <== LessThan64Bits()(s0_vals<%- qStage %>[i][j]);
         }
 
-<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    for (var j = 0; j < <%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>; j++) {
-        s0_vals_<%- starkInfo.customCommits[i].name %>_0GL[i][j] = LessThan64Bits()(s0_vals_<%- starkInfo.customCommits[i].name %>_0[i][j]);
+<%  for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    for (var j = 0; j < <%- stark_info.mapSectionsN[`${stark_info.customCommits[i].name}0`] %>; j++) {
+        s0_vals_<%- stark_info.customCommits[i].name %>_0GL[i][j] = LessThan64Bits()(s0_vals_<%- stark_info.customCommits[i].name %>_0[i][j]);
     }
 <% }-%>
 
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
-        for(var j = 0; j < <%- starkInfo.mapSectionsN[`cm${stage}`] %>; j++) {
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
+        for(var j = 0; j < <%- stark_info.mapSectionsN[`cm${stage}`] %>; j++) {
             s0_vals<%- stage %>GL[i][j] <== LessThan64Bits()(s0_vals<%- stage %>[i][j]);
         }
 <%  } -%>
@@ -1017,9 +1017,9 @@ template StarkVerifier() {
     }
 
 <%  let challengeNames = []; -%>
-<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
-<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
-    signal {maxNum} challengesStage<%- i + 1 %>GL[<%- starkInfo.challengesMap.filter(c => c.stage === i + 1).length %>][3];
+<%  for(let i = 0; i < stark_info.nStages; ++i) { -%>
+<%  if(stark_info.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+    signal {maxNum} challengesStage<%- i + 1 %>GL[<%- stark_info.challengesMap.filter(c => c.stage === i + 1).length %>][3];
 <%      challengeNames.push("challengesStage" + (i + 1) + "GL"); -%>
 <%  }-%>
 
@@ -1043,13 +1043,13 @@ template StarkVerifier() {
     ///////////
 
 <%  const stageRoots = []; -%> 
-<%  for(let i = 0; i < starkInfo.nStages; i++) { stageRoots.push(`root${i + 1}`) } -%>
-    (<%- challengeNames.join(",") %>,challengesFRIStepsGL,queriesFRIGL) <== Transcript()(<%- starkInfo.nPublics > 0 ? "publicsGL," : "" %>rootC, <%- stageRoots.join(",") %>,root<%- qStage %>,evalsGL<%- si_roots.length > 0 ? "," + si_roots.join(",") : "" %>,finalPolGL);
+<%  for(let i = 0; i < stark_info.nStages; i++) { stageRoots.push(`root${i + 1}`) } -%>
+    (<%- challengeNames.join(",") %>,challengesFRIStepsGL,queriesFRIGL) <== Transcript()(<%- stark_info.nPublics > 0 ? "publicsGL," : "" %>rootC, <%- stageRoots.join(",") %>,root<%- qStage %>,evalsGL<%- si_roots.length > 0 ? "," + si_roots.join(",") : "" %>,finalPolGL);
 
 <% } else { -%>
-<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
-<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
-        signal input challengesStage<%- i + 1 %>[<% starkInfo.challengesMap.filter(c => c.stage === i + 1).length -%>][3];
+<%  for(let i = 0; i < stark_info.nStages; ++i) { -%>
+<%  if(stark_info.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+        signal input challengesStage<%- i + 1 %>[<% stark_info.challengesMap.filter(c => c.stage === i + 1).length -%>][3];
 <%  }-%>
 
     signal input challengeQ[3];
@@ -1064,9 +1064,9 @@ template StarkVerifier() {
 
     signal input challengeFRIQueries[3];
 
-<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
-<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
-<%      for(let j = 0; j < starkInfo.challengesMap.filter(c => c.stage === i + 1).length; ++j) { -%>
+<%  for(let i = 0; i < stark_info.nStages; ++i) { -%>
+<%  if(stark_info.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+<%      for(let j = 0; j < stark_info.challengesMap.filter(c => c.stage === i + 1).length; ++j) { -%>
     challengesStage<%- i + 1 %>GL[<%- j %>] <== LessThan64Bits()(challengeStage<%- i + 1 %>[<%- j %>]);
 <%  }-%>
 <%  }-%>
@@ -1084,16 +1084,16 @@ template StarkVerifier() {
     ///////////
 
 <%  const verifyEvalsInputs = []; -%>
-<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<%  for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%      const stage = i + 1; -%>
-<%  if(starkInfo.challengesMap.filter(c => c.stage === stage).length === 0) continue; -%>
+<%  if(stark_info.challengesMap.filter(c => c.stage === stage).length === 0) continue; -%>
 <%      verifyEvalsInputs.push("challengesStage" + stage + "GL"); -%>
 <%  } -%> 
 <%      verifyEvalsInputs.push("challengeQGL"); -%>
 <%      verifyEvalsInputs.push("challengeXiGL"); -%>
 <%      verifyEvalsInputs.push("evalsGL"); -%>
-<%      if(starkInfo.nPublics > 0) verifyEvalsInputs.push("publicsGL"); -%>
-<%      if(starkInfo.airgroupValuesMap.length > 0) verifyEvalsInputs.push("airgroupValuesGL"); -%>
+<%      if(stark_info.nPublics > 0) verifyEvalsInputs.push("publicsGL"); -%>
+<%      if(stark_info.airgroupValuesMap.length > 0) verifyEvalsInputs.push("airgroupValuesGL"); -%>
 <%      verifyEvalsInputs.push("enabled"); -%>
 
     VerifyEvaluations()(<%- verifyEvalsInputs.join(", ") %>);    
@@ -1107,16 +1107,16 @@ template StarkVerifier() {
     // For s0_vals, the arrays are transposed so that they fit MerkleHash template
     // For (s_i)_vals, the values are passed all together in a single array of length nVals*3. We convert them to vals[nVals][3]
     
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
-    signal {maxNum} s0_vals<%- stage %>_p[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${stage}`] %>][1];
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
+    signal {maxNum} s0_vals<%- stage %>_p[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`cm${stage}`] %>][1];
 <% } -%>
 <% } -%> 
-    signal {maxNum} s0_vals<%- qStage %>_p[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${qStage}`] %>][1];
-    signal {maxNum} s0_valsC_p[<%- starkStruct.nQueries %>][<%- starkInfo.nConstants %>][1];
-<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    signal {maxNum} s0_vals_<%- starkInfo.customCommits[i].name %>_0_p[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>][1];
+    signal {maxNum} s0_vals<%- qStage %>_p[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`cm${qStage}`] %>][1];
+    signal {maxNum} s0_valsC_p[<%- starkStruct.nQueries %>][<%- stark_info.nConstants %>][1];
+<%  for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    signal {maxNum} s0_vals_<%- stark_info.customCommits[i].name %>_0_p[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`${stark_info.customCommits[i].name}0`] %>][1];
 <% }-%>
 <% for (let s=1; s<starkStruct.steps.length; s++) {   -%>
     signal {maxNum} s<%- s %>_vals_p[<%- starkStruct.nQueries %>][<%- (1 << (starkStruct.steps[s-1].nBits - starkStruct.steps[s].nBits)) %>][3]; 
@@ -1124,24 +1124,24 @@ template StarkVerifier() {
 
     for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
         // Preprocess vals for the initial FRI polynomial
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
-        for (var i = 0; i < <%- starkInfo.mapSectionsN[`cm${stage}`] %>; i++) {
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
+        for (var i = 0; i < <%- stark_info.mapSectionsN[`cm${stage}`] %>; i++) {
             s0_vals<%- stage %>_p[q][i][0] <== GLCopy()(s0_vals<%- stage %>GL[q][i]);
         }
 <%  } -%>
 <% } -%> 
-        for (var i = 0; i < <%- starkInfo.mapSectionsN[`cm${qStage}`] %>; i++) {
+        for (var i = 0; i < <%- stark_info.mapSectionsN[`cm${qStage}`] %>; i++) {
             s0_vals<%- qStage %>_p[q][i][0] <== GLCopy()(s0_vals<%- qStage %>GL[q][i]);
         }
-        for (var i = 0; i < <%- starkInfo.nConstants %>; i++) {
+        for (var i = 0; i < <%- stark_info.nConstants %>; i++) {
             s0_valsC_p[q][i][0] <== GLCopy()(s0_valsCGL[q][i]);
         }
 
-<%  for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    for (var i = 0; i < <%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>; i++) {
-        s0_vals_<%- starkInfo.customCommits[i].name %>_0_p[q][i][0] = GLCopy()(s0_vals_<%- starkInfo.customCommits[i].name %>_0[q][i]);
+<%  for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    for (var i = 0; i < <%- stark_info.mapSectionsN[`${stark_info.customCommits[i].name}0`] %>; i++) {
+        s0_vals_<%- stark_info.customCommits[i].name %>_0_p[q][i][0] = GLCopy()(s0_vals_<%- stark_info.customCommits[i].name %>_0[q][i]);
     }
 <% }-%>
 
@@ -1160,27 +1160,27 @@ template StarkVerifier() {
     ///////////
         
     //Calculate merkle root for s0 vals
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%> 
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%> 
     for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
-        VerifyMerkleHash(1, <%- starkInfo.mapSectionsN[`cm${stage}`] %>, <%- 1 << starkStruct.steps[0].nBits %>,<%- arity %>)(s0_vals<%- stage %>_p[q], s0_siblings<%- stage %>[q], queriesFRIGL[q], root<%- stage %>, enabled);
+        VerifyMerkleHash(1, <%- stark_info.mapSectionsN[`cm${stage}`] %>, <%- 1 << starkStruct.steps[0].nBits %>,<%- arity %>)(s0_vals<%- stage %>_p[q], s0_siblings<%- stage %>[q], queriesFRIGL[q], root<%- stage %>, enabled);
     }
 <%  } -%>
 <% } -%>
 
     for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
-        VerifyMerkleHash(1, <%- starkInfo.mapSectionsN[`cm${qStage}`] %>, <%- 1 << starkStruct.steps[0].nBits %>,<%- arity %>)(s0_vals<%- qStage %>_p[q], s0_siblings<%- qStage %>[q], queriesFRIGL[q], root<%- qStage %>, enabled);
+        VerifyMerkleHash(1, <%- stark_info.mapSectionsN[`cm${qStage}`] %>, <%- 1 << starkStruct.steps[0].nBits %>,<%- arity %>)(s0_vals<%- qStage %>_p[q], s0_siblings<%- qStage %>[q], queriesFRIGL[q], root<%- qStage %>, enabled);
     }
 
     for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
-        VerifyMerkleHash(1, <%- starkInfo.nConstants %>, <%- 1 << starkStruct.steps[0].nBits %>, <%- arity %>)(s0_valsC_p[q], s0_siblingsC[q], queriesFRIGL[q], rootC, enabled);  
+        VerifyMerkleHash(1, <%- stark_info.nConstants %>, <%- 1 << starkStruct.steps[0].nBits %>, <%- arity %>)(s0_valsC_p[q], s0_siblingsC[q], queriesFRIGL[q], rootC, enabled);  
     }                                  
 
-<% for(let i = 0; i < starkInfo.customCommits.length; ++i) { -%>
-    signal root_<%- starkInfo.customCommits[i].name %>_0 <== publics[<%- starkInfo.customCommits[i].publicValues[0].idx %>];
+<% for(let i = 0; i < stark_info.customCommits.length; ++i) { -%>
+    signal root_<%- stark_info.customCommits[i].name %>_0 <== publics[<%- stark_info.customCommits[i].publicValues[0].idx %>];
     for (var q=0; q<<%- starkStruct.nQueries %>; q++) {
-        VerifyMerkleHash(1, <%- starkInfo.mapSectionsN[`${starkInfo.customCommits[i].name}0`] %>, <%- 1 << starkStruct.steps[0].nBits %>, <%- arity %>)(s0_vals_<%- starkInfo.customCommits[i].name %>_0_p[q], s0_siblings_<%- starkInfo.customCommits[i].name %>_0[q], queriesFRIGL[q], root_<%- starkInfo.customCommits[i].name %>_0, enabled);                                    
+        VerifyMerkleHash(1, <%- stark_info.mapSectionsN[`${stark_info.customCommits[i].name}0`] %>, <%- 1 << starkStruct.steps[0].nBits %>, <%- arity %>)(s0_vals_<%- stark_info.customCommits[i].name %>_0_p[q], s0_siblings_<%- stark_info.customCommits[i].name %>_0[q], queriesFRIGL[q], root_<%- stark_info.customCommits[i].name %>_0, enabled);                                    
     }
 <% } -%>
 
@@ -1207,16 +1207,16 @@ template StarkVerifier() {
 <%  let nextValsPol = 0 < starkStruct.steps.length-1 ? "s1_vals_p[q]" : "finalPolGL"; 
     let nextStep = 0 < starkStruct.steps.length-1 ? starkStruct.steps[1].nBits : 0; 
     let queryVals = [];
-    for(let i = 0; i < starkInfo.nStages; ++i) { 
+    for(let i = 0; i < stark_info.nStages; ++i) { 
         const stage = i + 1;
-        if(starkInfo.mapSectionsN[`cm${stage}`] > 0) {
+        if(stark_info.mapSectionsN[`cm${stage}`] > 0) {
             queryVals.push(`s0_vals${stage}GL[q]`);
         }
     }
     queryVals.push("s0_vals" + qStage + "GL[q]");
     queryVals.push("s0_valsCGL[q]");
-    for(let i = 0; i < starkInfo.customCommits.length; ++i) { 
-        queryVals.push(`s0_vals_${starkInfo.customCommits[i].name}_0GL[q]`);
+    for(let i = 0; i < stark_info.customCommits.length; ++i) { 
+        queryVals.push(`s0_vals_${stark_info.customCommits[i].name}_0GL[q]`);
     }
 -%>
         // Verify that the query is properly constructed. This is done by checking that the linear combination of the set of 
@@ -1253,35 +1253,35 @@ template StarkVerifier() {
 
     template Main() {
     signal input proverAddr;
-<%  if(starkInfo.nPublics > 0) { -%>
+<%  if(stark_info.nPublics > 0) { -%>
     signal output publicsHash;
 <%  } -%>
 
-<%  if(starkInfo.nPublics > 0) { -%>
-    signal input publics[<%- starkInfo.nPublics %>];
+<%  if(stark_info.nPublics > 0) { -%>
+    signal input publics[<%- stark_info.nPublics %>];
 <% } -%>
-<%  if(starkInfo.airgroupValuesMap.length > 0) { -%>
-    signal input airgroups[<%- starkInfo.airgroupValuesMap.length %>];
+<%  if(stark_info.airgroupValuesMap.length > 0) { -%>
+    signal input airgroups[<%- stark_info.airgroupValuesMap.length %>];
 <% } -%>
-<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+<% for(let i=0; i < stark_info.nStages; i++) {  -%>
 <%  const stage = i + 1; -%>
     signal input root<%- stage %>;
 <% } -%>
     signal input root<%- qStage %>;
-    signal input evals[<%- starkInfo.evMap.length %>][3];
+    signal input evals[<%- stark_info.evMap.length %>][3];
 
     // Leaves values of the merkle tree used to check all the queries
-<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+<% for(let i=0; i < stark_info.nStages; i++) {  -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%>
-    signal input s0_vals<%- stage %>[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${stage}`] %>];
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%>
+    signal input s0_vals<%- stage %>[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`cm${stage}`] %>];
 <%  } -%>
 <% } -%>
-    signal input s0_vals<%- qStage %>[<%- starkStruct.nQueries %>][<%- starkInfo.mapSectionsN[`cm${qStage}`] %>];
-    signal input s0_valsC[<%- starkStruct.nQueries %>][<%- starkInfo.nConstants%>];
-<% for(let i=0; i < starkInfo.nStages; i++) {  -%>
+    signal input s0_vals<%- qStage %>[<%- starkStruct.nQueries %>][<%- stark_info.mapSectionsN[`cm${qStage}`] %>];
+    signal input s0_valsC[<%- starkStruct.nQueries %>][<%- stark_info.nConstants%>];
+<% for(let i=0; i < stark_info.nStages; i++) {  -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%>
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%>
     signal input s0_siblings<%- stage %>[<%- starkStruct.nQueries %>][<%- Math.floor((starkStruct.steps[0].nBits - 1)/nBitsArity)+1 %>][<%- arity %>];
 <% } -%>
 <% } -%>
@@ -1303,9 +1303,9 @@ template StarkVerifier() {
     signal input finalPol[<%- 1 << starkStruct.steps[starkStruct.steps.length-1].nBits %>][3];
 
 <% if(options.inputChallenges) { -%>
-<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
-<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
-    signal input challengesStage<%- i + 1 %>[<% starkInfo.challengesMap.filter(c => c.stage === i + 1).length -%>][3];
+<%  for(let i = 0; i < stark_info.nStages; ++i) { -%>
+<%  if(stark_info.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+    signal input challengesStage<%- i + 1 %>[<% stark_info.challengesMap.filter(c => c.stage === i + 1).length -%>][3];
 <%  }-%>
     signal input challengeQ[3];
     signal input challengeXi[3];
@@ -1318,10 +1318,10 @@ template StarkVerifier() {
 
     component sv = StarkVerifier();
 
-<%  if(starkInfo.nPublics > 0) { -%>
+<%  if(stark_info.nPublics > 0) { -%>
     sv.publics <== publics;
 <%  } -%>
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
     sv.root<%- stage %> <== root<%- stage %>;
 <% } -%> 
@@ -1329,17 +1329,17 @@ template StarkVerifier() {
     sv.evals <== evals;
 
 
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%>
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%>
     sv.s0_vals<%- stage %> <== s0_vals<%- stage %>;
 <%  } -%>
 <% } -%> 
     sv.s0_vals<%- qStage %> <== s0_vals<%- qStage %>;
     sv.s0_valsC <== s0_valsC;
-<% for(let i = 0; i < starkInfo.nStages; ++i) { -%>
+<% for(let i = 0; i < stark_info.nStages; ++i) { -%>
 <%  const stage = i + 1; -%>
-<%  if(starkInfo.mapSectionsN[`cm${stage}`] > 0) { -%>
+<%  if(stark_info.mapSectionsN[`cm${stage}`] > 0) { -%>
     sv.s0_siblings<%- stage %> <== s0_siblings<%- stage %>;
 <%  } -%>
 <% } -%>
@@ -1357,8 +1357,8 @@ template StarkVerifier() {
     sv.finalPol <== finalPol;
 
 <% if(options.inputChallenges) { -%>
-<%  for(let i = 0; i < starkInfo.nStages; ++i) { -%>
-<%  if(starkInfo.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
+<%  for(let i = 0; i < stark_info.nStages; ++i) { -%>
+<%  if(stark_info.challengesMap.filter(c => c.stage === i + 1).length === 0) continue; -%>
     sv.challengesStage<%- i + 1 %> <== challengesStage<%- i + 1 %>;
 <%  }-%>
     sv.challengeQ <== challengeQ;
@@ -1373,11 +1373,11 @@ template StarkVerifier() {
     // Calculate Publics Hash
     //////
 
-<%  if(starkInfo.nPublics > 0) { -%>
-    component publicsHasher = Sha256(<%- 160 + 64*starkInfo.nPublics %>);
+<%  if(stark_info.nPublics > 0) { -%>
+    component publicsHasher = Sha256(<%- 160 + 64*stark_info.nPublics %>);
     component n2bProverAddr = Num2Bits(160);
-    component n2bPublics[<%- starkInfo.nPublics %>];
-    component cmpPublics[<%- starkInfo.nPublics %>];
+    component n2bPublics[<%- stark_info.nPublics %>];
+    component cmpPublics[<%- stark_info.nPublics %>];
 
     n2bProverAddr.in <== proverAddr;
     for (var i=0; i<160; i++) {
@@ -1386,7 +1386,7 @@ template StarkVerifier() {
 
     var offset = 160;
 
-    for (var i=0; i<<%- starkInfo.nPublics %>; i++) {
+    for (var i=0; i<<%- stark_info.nPublics %>; i++) {
         n2bPublics[i] = Num2Bits(64);
         cmpPublics[i] = CompConstant64(0xFFFFFFFF00000000);
         n2bPublics[i].in <== publics[i];

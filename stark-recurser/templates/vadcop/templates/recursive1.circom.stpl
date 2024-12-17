@@ -1,0 +1,59 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+include "iszero.circom";
+include "<%= verifier_filename %>";
+
+<%  if !has_compressor { %>
+<% include!("../helpers/templates/calculate_hashes.circom.stpl"); %>
+<%  } %>
+
+template Recursive1() {
+
+<% include!("../../basic/define_stark_inputs.circom.stpl"); %>
+
+<% include!("../../basic/vadcop/define_vadcop_inputs.circom.stpl"); %>
+
+<%  if global_info.n_publics > 0 { %>
+    signal input publics[<%= global_info.n_publics %>];
+<%  } %>
+
+
+    signal input challenges[<%= global_info.n_challenges.iter().fold(4, |acc, &nc| acc + nc) %>][3];
+    signal input challengesFRISteps[<%= global_info.steps_fri.len() + 1 %>][3];
+   
+    signal input rootCAgg[4];
+
+<% include!("../../basic/assign_stark_inputs.circom.stpl"); %>
+
+
+<%  if !has_compressor { %>
+<% include!("../../basic/vadcop/init_vadcop_inputs.circom.stpl"); %>
+<%  } else { %>
+<% include!("../../basic/vadcop/assign_vadcop_inputs.circom.stpl"); %>
+<%  } %>
+}
+
+<% if !has_compressor { %>
+<% let publics = if global_info.n_publics > 0 { "[publics, challenges, challengesFRISteps,rootCAgg]" } else { "[challenges, challengesFRISteps,rootCAgg]" }; %>
+component main { public [<%= publics %>]} = Recursive1();
+<% } else { %>
+<% let mut publics_names: Vec<String> = Vec::new(); %>
+<% if global_info.n_publics > 0 { publics_names.push("publics".to_string()); } %>
+<% publics_names.push("sv_circuitType".to_string()); %>
+<% if global_info.agg_types[stark_info.airgroup_id.unwrap_or(0) as usize].len() > 0 { %>
+<% publics_names.push("sv_aggregationTypes".to_string()); %>
+<% publics_names.push("sv_airgroupvalues".to_string()); %>
+<% } %>
+<%  for i in 0..=global_info.n_challenges.len() { %>
+    <% publics_names.push(format!("{}root{}", prefix_vadcop, i+1)); %>
+<%  } %>
+<%  publics_names.push(format!("{}evalsHash", prefix_vadcop)); %>
+<%  for i in 1..global_info.steps_fri.len() { %>
+<%      publics_names.push(format!("{}s{}root", prefix_vadcop, i)); %>
+<%  } %>
+<%  publics_names.push(format!("{}finalPolHash", prefix_vadcop)); %>
+<% let additional_publics = vec!["challenges", "challengesFRISteps", "rootCAgg"]; %>
+<% publics_names.extend(additional_publics.iter().map(|&s| s.to_string())); %>
+component main {public [<%= publics_names.join(", ") %>]} = Recursive1();
+<% } %>

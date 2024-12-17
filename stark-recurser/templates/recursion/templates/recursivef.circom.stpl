@@ -1,8 +1,8 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-<% for (let i = 0; i < verifierFilenames.length; ++i) { -%>
-include "<%- verifierFilenames[i] %>";
+<% for (let i = 0; i < verifier_filenames.length; ++i) { -%>
+include "<%- verifier_filenames[i] %>";
 <% } -%>
 
 <%  if(options.hasRecursion) { -%>
@@ -19,9 +19,9 @@ template Main() {
     var rootCAgg[4] = [<%- aggregatedVK[0].join(",") %>];
 <%  } -%>
 
-    <%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "", starkInfo, nPublics: options.hasRecursion ? starkInfo.nPublics - 4 : starkInfo.nPublics, options: { ...options, addPublics: true } }); %>
+    <%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "", stark_info, nPublics: options.hasRecursion ? stark_info.nPublics - 4 : stark_info.nPublics, options: { ...options, addPublics: true } }); %>
 
-    <%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "sV", prefix: "", starkInfo, nPublics: options.hasRecursion ? starkInfo.nPublics - 4 : starkInfo.nPublics,  options: { ...options, addPublics: true } }); %>
+    <%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "sV", prefix: "", stark_info, nPublics: options.hasRecursion ? stark_info.nPublics - 4 : stark_info.nPublics,  options: { ...options, addPublics: true } }); %>
 
 <%  if(options.hasRecursion) { -%>
     for (var i=0; i<4; i++) {

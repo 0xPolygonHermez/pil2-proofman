@@ -1,31 +1,22 @@
-<%  let signalType = options.isInput ? "input" : "output" -%>
-<%  let prefix_ = prefix ? `${prefix}_` : ""; -%>
+<%  let signal_type = if is_signal_input { "input" } else { "output" }; %>
 
-    signal <%- signalType %> <%- prefix_ %>circuitType;
-<%  if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}circuitType`) -%>
+    signal <%= signal_type %> <%= prefix_vadcop %>circuitType;
 
-<%  if(vadcopInfo.aggTypes[airgroupId].length > 0) { -%>
-<%  if(!options.isAggregation) { -%>
-    signal <%- signalType %> <%- prefix_ %>aggregationTypes[<%- vadcopInfo.aggTypes[airgroupId].length  %>];
-<%    if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}aggregationTypes`) -%>
-<%  } -%>
-    signal <%- signalType %> <%- prefix_ %>airgroupvalues[<%- vadcopInfo.aggTypes[airgroupId].length  %>][3];
-<%    if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}airgroupvalues`) -%>
-<%  } -%>
+<%  if global_info.agg_types[stark_info.airgroup_id.unwrap_or(0) as usize].len() > 0 { %>
+<%  if !is_aggregation { %>
+    signal <%= signal_type %> <%= prefix_vadcop %>aggregationTypes[<%= global_info.agg_types[stark_info.airgroup_id.unwrap_or(0) as usize].len()  %>];
+<%  } %>
+    signal <%= signal_type %> <%= prefix_vadcop %>airgroupvalues[<%= global_info.agg_types[stark_info.airgroup_id.unwrap_or(0) as usize].len()  %>][3];
+<%  } %>
 
+<%  for i in 0..=global_info.n_challenges.len() { %>
+    signal <%= signal_type %> <%= prefix_vadcop %>root<%= i + 1 %>[4];
+<%  } %>
 
-<%  for (let i = 0; i < vadcopInfo.numChallenges.length + 1; ++i) { -%>
-    signal <%- signalType %> <%- prefix_ %>root<%- i + 1 %>[4];
-<%    if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}root${i + 1}`) -%>
-<%  } -%>
+    signal <%= signal_type %> <%= prefix_vadcop %>evalsHash[4];
 
-    signal <%- signalType %> <%- prefix_ %>evalsHash[4];
-<%  if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}evalsHash`) -%>
+<%  for i in 1..global_info.steps_fri.len() { %>
+    signal <%= signal_type %> <%= prefix_vadcop %>s<%= i %>_root[4];
+<%  } %>
 
-<%  for(let i = 1; i < vadcopInfo.stepsFRI.length; i++) { -%>
-    signal <%- signalType %> <%- prefix_ %>s<%- i %>_root[4];
-<%    if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}s${i}_root`) -%>
-<%  } -%>
-
-    signal <%- signalType %> <%- prefix_ %>finalPolHash[4];
-<%  if(Array.isArray(options.publicsNames)) options.publicsNames.push(`${prefix_}finalPolHash`) -%>
+    signal <%= signal_type %> <%= prefix_vadcop %>finalPolHash[4];

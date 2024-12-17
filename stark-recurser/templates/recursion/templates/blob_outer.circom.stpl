@@ -1,16 +1,16 @@
 pragma circom 2.1.0;
 pragma custom_templates;
 
-<% for (let i = 0; i < verifierFilenames.length; ++i) { -%>
-include "<%- verifierFilenames[i] %>";
+<% for (let i = 0; i < verifier_filenames.length; ++i) { -%>
+include "<%- verifier_filenames[i] %>";
 <% } -%>
 
 <% let batchPublics = publics[0]; -%>
 <% let blobInnerPublics = publics[1]; -%>
 <% let blobOuterPublics = publics[2]; -%>
 
-<% let starkInfoBatch = starkInfo[0]; -%>
-<% let starkInfoBlob = starkInfo[1]; -%>
+<% let stark_infoBatch = stark_info[0]; -%>
+<% let stark_infoBlob = stark_info[1]; -%>
 
 
 <%- include('src/recursion/helpers/templates/select_vk.circom.ejs', { publics: batchPublics }); %>
@@ -32,14 +32,14 @@ template Main() {
 
     // Batch Proof Inputs
     signal input batch_isAggregatedCircuit;
-    <%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "batch", starkInfo: starkInfoBatch }); %>
+    <%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "batch", stark_info: stark_infoBatch }); %>
     
     // Blob Inner Proof Inputs
-    <%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "blob", starkInfo: starkInfoBlob }); %>
+    <%- include('src/main_templates/define_stark_inputs.circom.ejs', { prefix: "blob", stark_info: stark_infoBlob }); %>
 
     signal isValidBlob <== VerifyBlobOuter()(publics, batch_publics, blob_inner_publics, chainId);
 
-    <%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vBatch", starkInfo: starkInfoBatch, nPublics: batchPublics.nPublics, options: { addPublics: true, setEnableInput: "isValidBlob" } }); %>
+    <%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vBatch", stark_info: stark_infoBatch, nPublics: batchPublics.nPublics, options: { addPublics: true, setEnableInput: "isValidBlob" } }); %>
 
     for (var i=0; i<4; i++) {
         vBatch.publics[<%- batchPublics.nPublics %> + i] <== rootCAggBatch[i];
@@ -47,7 +47,7 @@ template Main() {
 
     vBatch.rootC <== SelectVerificationKey()batch_isAggregatedCircuit, rootCBasicBatch, rootCAggBatch);
 
-    <%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vBlob", starkInfo: starkInfoBlob, options: { addPublics: true } }); %>
+    <%- include('src/main_templates/assign_stark_inputs.circom.ejs', { componentName: "vBlob", stark_info: stark_infoBlob, options: { addPublics: true } }); %>
 }
 
 component main {public [publics, rootC]}= Main();

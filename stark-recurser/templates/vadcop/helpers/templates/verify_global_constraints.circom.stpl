@@ -1,0 +1,90 @@
+<% function unrollCode(code) {                                                          -%>
+<%
+    function ref(r) {
+        if (r.type == "public") {
+            return "publics[" + r.id + "]";
+        } else if (r.type == "proofvalue") {
+            return "proofValues[" + r.id + "]";
+        } else if (r.type == "tmp") {
+            return "tmp_"+r.id;
+        } else if (r.type == "number") {
+            return r.value;
+        } else if (r.type == "challenge") {
+            return "challenges[" + r.id + "]";
+        } else if (r.type === "airgroupvalue") {
+            return "s" + r.airgroupId + "_airgroupvalues[" + r.id + "]";
+        } else {
+            throw new Error("Invalid Ref: " +r.type);
+        }
+    }
+-%>
+<% for(let i=0; i<code.length; i++) {                                 -%>
+<%      let inst = code[i];                                           -%>
+<%      if (inst.dest.type == "tmp" && ![1,3].includes(inst.dest.dim)) {                -%>
+<%          throw new Error("Invalid dimension");                                       -%>
+<%      }                                                                               -%>
+<%      if(inst.src[0] && inst.src[0].type === "proofvalue") inst.src[0].dim = 3;       -%>
+<%      if(inst.src[1] && inst.src[1].type === "proofvalue") inst.src[1].dim = 3;       -%>
+<%      if (inst.op == "add") {                                                         -%>
+<%          if ((inst.src[0].dim==1) && (inst.src[1].dim==1)) {                         -%>
+    signal <%- ref(inst.dest) %> <== <%- ref(inst.src[0]) %> + <%- ref(inst.src[1]) %>;
+<%          } else if ((inst.src[0].dim==1) && (inst.src[1].dim==3)) {                  -%>
+    signal <%- ref(inst.dest) %>[3] <== [<%- ref(inst.src[0]) %> + <%- ref(inst.src[1]) %>[0], <%- ref(inst.src[1]) %>[1],  <%- ref(inst.src[1]) %>[2]];
+<%          } else if ((inst.src[0].dim==3) && (inst.src[1].dim==1)) {                  -%>
+    signal <%- ref(inst.dest) %>[3] <== [<%- ref(inst.src[0]) %>[0] + <%- ref(inst.src[1]) %>, <%- ref(inst.src[0]) %>[1], <%- ref(inst.src[0]) %>[2]];
+<%          } else if ((inst.src[0].dim==3) && (inst.src[1].dim==3)) {                  -%>
+    signal <%- ref(inst.dest) %>[3] <== [<%- ref(inst.src[0]) %>[0] + <%- ref(inst.src[1]) %>[0], <%- ref(inst.src[0]) %>[1] + <%- ref(inst.src[1]) %>[1], <%- ref(inst.src[0]) %>[2] + <%- ref(inst.src[1]) %>[2]];
+<%          } else throw new Error("Invalid src dimensions");                          -%>
+<%      } else if (inst.op == "sub") {                                                  -%>
+<%          if ((inst.src[0].dim==1) && (inst.src[1].dim==1)) {                         -%>
+    signal <%- ref(inst.dest) %> <== <%- ref(inst.src[0]) %> - <%- ref(inst.src[1]) %>;
+<%          } else if ((inst.src[0].dim==1) && (inst.src[1].dim==3)) {                  -%>
+    signal <%- ref(inst.dest) %>[3] <== [<%- ref(inst.src[0]) %> - <%- ref(inst.src[1]) %>[0], -<%- ref(inst.src[1]) %>[1], -<%- ref(inst.src[1]) %>[2]];
+<%          } else if ((inst.src[0].dim==3) && (inst.src[1].dim==1)) {                  -%>
+    signal <%- ref(inst.dest) %>[3] <== [<%- ref(inst.src[0]) %>[0] - <%- ref(inst.src[1]) %>, <%- ref(inst.src[0]) %>[1], <%- ref(inst.src[0]) %>[2]];
+<%          } else if ((inst.src[0].dim==3) && (inst.src[1].dim==3)) {                  -%>
+    signal <%- ref(inst.dest) %>[3] <== [<%- ref(inst.src[0]) %>[0] - <%- ref(inst.src[1]) %>[0], <%- ref(inst.src[0]) %>[1] - <%- ref(inst.src[1]) %>[1], <%- ref(inst.src[0]) %>[2] - <%- ref(inst.src[1]) %>[2]];
+<%          } else throw new Error("Invalid src dimensions");                          -%>
+<%      } else if (inst.op == "mul") {                                                  -%>
+<%          if ((inst.src[0].dim==1) && (inst.src[1].dim==1)) {                         -%>
+    signal <%- ref(inst.dest) %> <== <%- ref(inst.src[0]) %> * <%- ref(inst.src[1]) %>;
+<%          } else if ((inst.src[0].dim==1) && (inst.src[1].dim==3)) {                  -%>
+    signal <%- ref(inst.dest) %>[3] <== [<%- ref(inst.src[0]) %> * <%- ref(inst.src[1]) %>[0], <%- ref(inst.src[0]) %> * <%- ref(inst.src[1]) %>[1], <%- ref(inst.src[0]) %> * <%- ref(inst.src[1]) %>[2]];
+<%          } else if ((inst.src[0].dim==3) && (inst.src[1].dim==1)) {                  -%>
+    signal <%- ref(inst.dest) %>[3] <== [<%- ref(inst.src[0]) %>[0] * <%- ref(inst.src[1]) %>, <%- ref(inst.src[0]) %>[1] * <%- ref(inst.src[1]) %>, <%- ref(inst.src[0]) %>[2] * <%- ref(inst.src[1]) %>];
+<%          } else if ((inst.src[0].dim==3) && (inst.src[1].dim==3)) {                  -%>
+    signal <%- ref(inst.dest) %>[3] <== CMul()(<%- ref(inst.src[0]) %>, <%- ref(inst.src[1]) %>);
+<%          } else throw new Error("Invalid src dimensions");                              -%>
+<%      } else if (inst.op == "copy") {                                                 -%>
+<%          if (inst.src[0].dim==1) {                                                   -%>
+    signal <%- ref(inst.dest) %> <== <%- ref(inst.src[0]) %>;
+<%          } else if (inst.src[0].dim==3) {                                            -%>
+    signal <%- ref(inst.dest) %>[3] <== <%- ref(inst.src[0]) %>;
+<%          } else throw new Error("Invalid src dimensions");                          -%>
+<%      } else throw new Error("Invalid op");                                           -%>
+<% }                                                                                    -%>
+<% return ref(code[code.length-1].dest);                                                -%>
+<% }                                                                                    -%>
+
+template VerifyGlobalConstraints() {
+
+<%  for(let i = 0; i < global_info.aggTypes.length; ++i) { -%>
+    signal input s<%- i %>_airgroupvalues[<%- global_info.aggTypes[i].length %>][3];
+<%  } -%>
+<%  if(global_info.nPublics > 0) { -%>
+    signal input publics[<%- global_info.nPublics %>];
+<%  } -%>
+<%  if(global_info.numProofValues> 0) { -%>
+    signal input proofValues[<%- global_info.numProofValues %>][3];
+<%  } -%>
+
+    signal input challenges[<%- global_info.numChallenges.reduce((nc, acc) => nc + acc, 0) + 4 %>][3];
+
+    // Verify global constraints
+<% for(let i = 0; i < global_info.globalConstraints.length; i++) { -%>
+<% const c = unrollCode(global_info.globalConstraints[i].code) -%>
+    <%- c %>[0] === 0;
+    <%- c %>[1] === 0;
+    <%- c %>[2] === 0;
+<%  } -%>
+}

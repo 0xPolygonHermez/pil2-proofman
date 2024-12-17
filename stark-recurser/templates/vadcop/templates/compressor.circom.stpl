@@ -1,0 +1,35 @@
+pragma circom 2.1.0;
+pragma custom_templates;
+
+include "<%= verifier_filename %>";
+
+<% include!("../helpers/templates/calculate_hashes.circom.stpl"); %>
+
+template Compressor() {
+
+<% include!("../../basic/define_stark_inputs.circom.stpl"); %>
+
+<%  if global_info.n_publics > 0 { %>
+    signal input publics[<%= global_info.n_publics %>];
+<%  } %>
+
+    signal input challenges[<%= global_info.n_challenges.iter().fold(4, |acc, &nc| acc + nc) %>][3];
+    signal input challengesFRISteps[<%= global_info.steps_fri.len() + 1 %>][3];
+   
+<% include!("../../basic/vadcop/define_vadcop_inputs.circom.stpl"); %>
+
+<% include!("../../basic/assign_stark_inputs.circom.stpl"); %>
+
+<%  if global_info.n_publics > 0 { %>
+    for (var i=0; i< <%= global_info.n_publics %>; i++) {
+        sV.publics[i] <== publics[i];
+    }
+<%  } %>
+
+<% include!("../../basic/vadcop/init_vadcop_inputs.circom.stpl"); %>
+
+}
+
+<% let publics = if global_info.n_publics > 0 { "[publics, challenges, challengesFRISteps]" } else { "[challenges, challengesFRISteps]" }; %>
+component main { public [<%= publics %>]} = Compressor();
+ 
