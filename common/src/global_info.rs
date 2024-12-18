@@ -40,8 +40,6 @@ pub struct GlobalInfo {
     pub n_publics: usize,
     #[serde(rename = "numChallenges")]
     pub n_challenges: Vec<usize>,
-    #[serde(rename = "numProofValues")]
-    pub n_proof_values: Vec<usize>,
 
     #[serde(rename = "proofValuesMap")]
     pub proof_values_map: Option<Vec<ProofValueMap>>,
