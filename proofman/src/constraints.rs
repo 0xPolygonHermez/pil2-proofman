@@ -104,19 +104,25 @@ pub fn verify_constraints_proof<F: Field>(
             log::info!(
                 "{}: ··· {}",
                 MY_NAME,
-                format!("\u{2717} Not all constraints for Instance #{} of {} were verified", air_instance.air_instance_id.unwrap(),
-                air_name)
-                    .bright_red()
-                    .bold()
+                format!(
+                    "\u{2717} Not all constraints for Instance #{} of {} were verified",
+                    air_instance.air_instance_id.unwrap(),
+                    air_name
+                )
+                .bright_red()
+                .bold()
             );
         } else {
             log::info!(
                 "{}:     {}",
                 MY_NAME,
-                format!("\u{2713} All constraints for Instance #{} of {} were verified", air_instance.air_instance_id.unwrap(),
-                air_name)
-                    .bright_green()
-                    .bold()
+                format!(
+                    "\u{2713} All constraints for Instance #{} of {} were verified",
+                    air_instance.air_instance_id.unwrap(),
+                    air_name
+                )
+                .bright_green()
+                .bold()
             );
         }
 
