@@ -6,7 +6,7 @@
     // ========================================================================================
     void save_challenges(void *pChallenges, char* globalInfoFile, char *fileDir);
     void save_publics(unsigned long numPublicInputs, void *pPublicInputs, char *fileDir);
-    void save_proof_values(unsigned long numProofValues, void *pProofValues, char *fileDir);
+    void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir);
 
     // FRIProof
     // ========================================================================================
@@ -110,9 +110,9 @@
 
     // Global constraints
     // =================================================================================
-    void *verify_global_constraints(void *globalBin, void *publics, void* challenges, void *proofValues, void **airgroupValues);
-    void *get_hint_field_global_constraints(void *globalBin, void *publics, void* challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression);
-    uint64_t set_hint_field_global_constraints(void* p_globalinfo_bin, void *proofValues, void *values, uint64_t hintId, char *hintFieldName);
+    void *verify_global_constraints(char* globalInfoFile, void *globalBin, void *publics, void* challenges, void *proofValues, void **airgroupValues);
+    void *get_hint_field_global_constraints(char* globalInfoFile, void *globalBin, void *publics, void* challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression);
+    uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *proofValues, void *values, uint64_t hintId, char *hintFieldName);
     
     // Debug functions
     // =================================================================================

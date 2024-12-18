@@ -33,7 +33,12 @@ impl<F: PrimeField> Std<F> {
         Arc::new(Self { pctx: wcm.get_pctx(), sctx: wcm.get_sctx(), range_check, std_prod, std_sum })
     }
 
-    pub fn register_std(wcm: Arc<WitnessManager<F>>, std_prod: Arc<StdProd<F>>, std_sum: Arc<StdSum<F>>, range_check: Arc<StdRangeCheck<F>>) {
+    pub fn register_std(
+        wcm: Arc<WitnessManager<F>>,
+        std_prod: Arc<StdProd<F>>,
+        std_sum: Arc<StdSum<F>>,
+        range_check: Arc<StdRangeCheck<F>>,
+    ) {
         wcm.register_component(std_prod.clone());
         wcm.register_component(std_sum.clone());
 
@@ -75,11 +80,7 @@ impl<F: PrimeField> Std<F> {
                 self.range_check.u16air.as_ref().unwrap().drain_inputs(self.pctx.clone(), self.sctx.clone());
             }
             RangeCheckAir::SpecifiedRanges => {
-                self.range_check
-                    .specified_ranges
-                    .as_ref()
-                    .unwrap()
-                    .drain_inputs(self.pctx.clone(), self.sctx.clone());
+                self.range_check.specified_ranges.as_ref().unwrap().drain_inputs(self.pctx.clone(), self.sctx.clone());
             }
         };
     }

@@ -59,6 +59,7 @@ pub fn get_hint_field_constant_gc<F: Field>(
     print_expression: bool,
 ) -> HintFieldValue<F> {
     let raw_ptr = get_hint_field_global_constraints_c(
+        sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
         std::ptr::null_mut(),
         std::ptr::null_mut(),
@@ -86,6 +87,7 @@ pub fn get_hint_field_gc_constant_a<F: Field>(
     print_expression: bool,
 ) -> HintFieldValuesVec<F> {
     let raw_ptr = get_hint_field_global_constraints_c(
+        sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
         std::ptr::null_mut(),
         std::ptr::null_mut(),
@@ -119,6 +121,7 @@ pub fn get_hint_field_constant_gc_m<F: Field>(
     print_expression: bool,
 ) -> HintFieldValues<F> {
     let raw_ptr = get_hint_field_global_constraints_c(
+        sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
         std::ptr::null_mut(),
         std::ptr::null_mut(),
@@ -164,6 +167,7 @@ pub fn get_hint_field_gc<F: Field>(
         .collect();
 
     let raw_ptr = get_hint_field_global_constraints_c(
+        sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
         pctx.get_publics_ptr(),
         pctx.get_challenges_ptr(),
@@ -198,6 +202,7 @@ pub fn get_hint_field_gc_a<F: Field>(
         .collect();
 
     let raw_ptr = get_hint_field_global_constraints_c(
+        sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
         pctx.get_publics_ptr(),
         pctx.get_challenges_ptr(),
@@ -238,6 +243,7 @@ pub fn get_hint_field_gc_m<F: Field>(
         .collect();
 
     let raw_ptr = get_hint_field_global_constraints_c(
+        sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
         pctx.get_publics_ptr(),
         pctx.get_challenges_ptr(),
@@ -290,6 +296,7 @@ pub fn set_hint_field_gc<F: Field>(
     };
 
     set_hint_field_global_constraints_c(
+        sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
         pctx.get_proof_values_ptr(),
         value_array.as_ptr() as *mut u8,

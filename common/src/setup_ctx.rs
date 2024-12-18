@@ -85,6 +85,7 @@ impl SetupsVadcop {
 pub struct SetupRepository {
     setups: HashMap<(usize, usize), Setup>,
     global_bin: Option<*mut c_void>,
+    global_info_file: String,
 }
 
 unsafe impl Send for SetupRepository {}
@@ -104,6 +105,9 @@ impl SetupRepository {
             false => None,
         };
 
+        let global_info_path = &global_info.get_proving_key_path().join("pilout.globalInfo.json");
+        let global_info_file = global_info_path.to_str().unwrap().to_string();
+
         // Initialize Hashmap for each airgroup_id, air_id
         if setup_type != &ProofType::VadcopFinal {
             for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
@@ -117,7 +121,7 @@ impl SetupRepository {
 
         timer_stop_and_log_debug!(INITIALIZE_SETUPS);
 
-        Self { setups, global_bin }
+        Self { setups, global_bin, global_info_file }
     }
 
     pub fn free(&self) {
@@ -159,5 +163,9 @@ impl SetupCtx {
 
     pub fn get_global_bin(&self) -> *mut c_void {
         self.setup_repository.global_bin.unwrap()
+    }
+
+    pub fn get_global_info_file(&self) -> String {
+        self.setup_repository.global_info_file.clone()
     }
 }

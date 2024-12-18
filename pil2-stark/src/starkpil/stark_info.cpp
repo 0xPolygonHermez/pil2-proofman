@@ -126,6 +126,7 @@ void StarkInfo::load(json j)
     {
         PolMap map;
         map.name = j["proofValuesMap"][i]["name"];
+        map.stage = j["proofValuesMap"][i]["stage"];
         proofValuesMap.push_back(map);
     }
 

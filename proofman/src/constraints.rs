@@ -25,6 +25,7 @@ pub fn verify_global_constraints_proof<F: Field>(
         .collect();
 
     let raw_ptr = verify_global_constraints_c(
+        sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
         pctx.get_publics_ptr(),
         pctx.get_challenges_ptr(),

@@ -187,7 +187,11 @@ impl PilHelpersCmd {
                     if proof_values.is_empty() {
                         proof_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
                     }
-                    proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
+                    if symbol.stage == Some(1) {
+                        proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
+                    } else {
+                        proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
+                    }
                 } else {
                     if publics.is_empty() {
                         publics.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });

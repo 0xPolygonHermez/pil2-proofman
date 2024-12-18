@@ -45,7 +45,7 @@ values!(BuildPublicValues<F> {
 });
  
 values!(BuildProofValues<F> {
- value1: FieldExtension<F>, value2: FieldExtension<F>,
+ value1: F, value2: F,
 });
  
 trace!(FibonacciSquareTrace<F> {

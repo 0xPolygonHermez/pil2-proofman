@@ -56,8 +56,8 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
         }
 
         let mut proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());
-        proof_values.value1[0] = F::from_canonical_u64(5);
-        proof_values.value2[0] = F::from_canonical_u64(125);
+        proof_values.value1 = F::from_canonical_u64(5);
+        proof_values.value2 = F::from_canonical_u64(125);
 
         let mut air_values = FibonacciSquareAirValues::<F>::new();
         air_values.fibo1[0] = F::from_canonical_u64(1);

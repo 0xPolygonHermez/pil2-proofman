@@ -15,10 +15,10 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z17save_proof_valuesmPvPc"]
+    #[link_name = "\u{1}_Z17save_proof_valuesPvPcS0_"]
     pub fn save_proof_values(
-        numProofValues: ::std::os::raw::c_ulong,
         pProofValues: *mut ::std::os::raw::c_void,
+        globalInfoFile: *mut ::std::os::raw::c_char,
         fileDir: *mut ::std::os::raw::c_char,
     );
 }
@@ -81,7 +81,6 @@ extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPv"]
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
-
 extern "C" {
     #[link_name = "\u{1}_Z15stark_info_freePv"]
     pub fn stark_info_free(pStarkInfo: *mut ::std::os::raw::c_void);
@@ -293,7 +292,7 @@ extern "C" {
         pStarks: *mut ::std::os::raw::c_void,
         elementType: u32,
         step: u64,
-        witness: *mut ::std::os::raw::c_void,
+        trace: *mut ::std::os::raw::c_void,
         buffer: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
         pBuffHelper: *mut ::std::os::raw::c_void,
@@ -419,8 +418,9 @@ extern "C" {
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z25verify_global_constraintsPvS_S_S_PS_"]
+    #[link_name = "\u{1}_Z25verify_global_constraintsPcPvS0_S0_S0_PS0_"]
     pub fn verify_global_constraints(
+        globalInfoFile: *mut ::std::os::raw::c_char,
         globalBin: *mut ::std::os::raw::c_void,
         publics: *mut ::std::os::raw::c_void,
         challenges: *mut ::std::os::raw::c_void,
@@ -429,8 +429,9 @@ extern "C" {
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z33get_hint_field_global_constraintsPvS_S_S_PS_mPcb"]
+    #[link_name = "\u{1}_Z33get_hint_field_global_constraintsPcPvS0_S0_S0_PS0_mS_b"]
     pub fn get_hint_field_global_constraints(
+        globalInfoFile: *mut ::std::os::raw::c_char,
         globalBin: *mut ::std::os::raw::c_void,
         publics: *mut ::std::os::raw::c_void,
         challenges: *mut ::std::os::raw::c_void,
@@ -442,8 +443,9 @@ extern "C" {
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z33set_hint_field_global_constraintsPvS_S_mPc"]
+    #[link_name = "\u{1}_Z33set_hint_field_global_constraintsPcPvS0_S0_mS_"]
     pub fn set_hint_field_global_constraints(
+        globalInfoFile: *mut ::std::os::raw::c_char,
         p_globalinfo_bin: *mut ::std::os::raw::c_void,
         proofValues: *mut ::std::os::raw::c_void,
         values: *mut ::std::os::raw::c_void,

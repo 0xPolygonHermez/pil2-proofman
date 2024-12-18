@@ -289,7 +289,7 @@ HintFieldValues getHintField(
             hintFieldInfo.size = dim;
             hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
             hintFieldInfo.fieldType = dim == 1 ? HintFieldType::Field : HintFieldType::FieldExtended;
-            hintFieldInfo.offset = FIELD_EXTENSION;
+            hintFieldInfo.offset = dim;
             if(!hintOptions.dest) {
                 if(hintOptions.inverse)  {
                     Goldilocks3::inv((Goldilocks3::Element *)hintFieldInfo.values, (Goldilocks3::Element *)&params.airgroupValues[FIELD_EXTENSION*hintFieldVal.id]);
@@ -302,7 +302,7 @@ HintFieldValues getHintField(
             hintFieldInfo.size = dim;
             hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
             hintFieldInfo.fieldType = dim == 1 ? HintFieldType::Field : HintFieldType::FieldExtended;
-            hintFieldInfo.offset = FIELD_EXTENSION;
+            hintFieldInfo.offset = dim;
             if(!hintOptions.dest) {
                 if(hintOptions.inverse)  {
                     Goldilocks3::inv((Goldilocks3::Element *)hintFieldInfo.values, (Goldilocks3::Element *)&params.airValues[FIELD_EXTENSION*hintFieldVal.id]);
@@ -311,11 +311,11 @@ HintFieldValues getHintField(
                 }
             }
         } else if (hintFieldVal.operand == opType::proofvalue) {
-            uint64_t dim = 1;
+            uint64_t dim = setupCtx.starkInfo.proofValuesMap[hintFieldVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
             hintFieldInfo.size = dim;
             hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
             hintFieldInfo.fieldType = dim == 1 ? HintFieldType::Field : HintFieldType::FieldExtended;
-            hintFieldInfo.offset = FIELD_EXTENSION;
+            hintFieldInfo.offset = dim;
             if(!hintOptions.dest) {
                 if(hintOptions.inverse)  {
                     Goldilocks3::inv((Goldilocks3::Element *)hintFieldInfo.values, (Goldilocks3::Element *)&params.proofValues[FIELD_EXTENSION*hintFieldVal.id]);

@@ -445,6 +445,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
         }
 
+        let proof_values_stage = pctx.get_proof_values_by_stage(stage);
+        if !proof_values_stage.is_empty() {
+            transcript.add_elements(proof_values_stage.as_ptr() as *mut u8, proof_values_stage.len());
+        }
+
         // TODO: ACTIVATE DCTX BACK
         // let dctx = pctx.dctx.read().unwrap();
 
@@ -627,14 +632,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
 
         let n_publics = proof_ctx.global_info.n_publics as u64;
-        let n_proof_values = proof_ctx.global_info.n_proof_values as u64;
 
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
         save_publics_c(n_publics, proof_ctx.get_publics_ptr(), output_dir);
 
-        save_proof_values_c(n_proof_values, proof_ctx.get_proof_values_ptr(), output_dir);
+        save_proof_values_c(proof_ctx.get_proof_values_ptr(), global_info_file, output_dir);
 
         save_challenges_c(proof_ctx.get_challenges_ptr(), global_info_file, output_dir);
 

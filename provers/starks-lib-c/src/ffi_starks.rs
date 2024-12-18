@@ -45,12 +45,16 @@ pub fn save_publics_c(n_publics: u64, public_inputs: *mut u8, output_dir: &str) 
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn save_proof_values_c(n_proof_values: u64, proof_values: *mut u8, output_dir: &str) {
+pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output_dir: &str) {
     let file_dir: CString = CString::new(output_dir).unwrap();
+
+    let global_info_file_name = CString::new(global_info_file).unwrap();
+    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
+
     unsafe {
         save_proof_values(
-            n_proof_values,
             proof_values as *mut std::os::raw::c_void,
+            global_info_file_ptr,
             file_dir.as_ptr() as *mut std::os::raw::c_char,
         );
     }
@@ -683,14 +687,19 @@ pub fn verify_constraints_c(p_setup: *mut c_void, p_steps_params: *mut u8) -> *m
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn verify_global_constraints_c(
+    global_info_file: &str,
     p_global_constraints_bin: *mut c_void,
     publics: *mut u8,
     challenges: *mut u8,
     proof_values: *mut u8,
     airgroupvalues: *mut *mut u8,
 ) -> *mut c_void {
+    let global_info_file_name = CString::new(global_info_file).unwrap();
+    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
+
     unsafe {
         verify_global_constraints(
+            global_info_file_ptr,
             p_global_constraints_bin,
             publics as *mut std::os::raw::c_void,
             challenges as *mut std::os::raw::c_void,
@@ -703,6 +712,7 @@ pub fn verify_global_constraints_c(
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_global_constraints_c(
+    global_info_file: &str,
     p_global_constraints_bin: *mut c_void,
     publics: *mut u8,
     challenges: *mut u8,
@@ -713,8 +723,13 @@ pub fn get_hint_field_global_constraints_c(
     print_expression: bool,
 ) -> *mut c_void {
     let field_name = CString::new(hint_field_name).unwrap();
+
+    let global_info_file_name = CString::new(global_info_file).unwrap();
+    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
+
     unsafe {
         get_hint_field_global_constraints(
+            global_info_file_ptr,
             p_global_constraints_bin,
             publics as *mut std::os::raw::c_void,
             challenges as *mut std::os::raw::c_void,
@@ -729,6 +744,7 @@ pub fn get_hint_field_global_constraints_c(
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn set_hint_field_global_constraints_c(
+    global_info_file: &str,
     p_global_constraints_bin: *mut c_void,
     proof_values: *mut u8,
     values: *mut u8,
@@ -736,8 +752,13 @@ pub fn set_hint_field_global_constraints_c(
     hint_field_name: &str,
 ) -> u64 {
     let field_name = CString::new(hint_field_name).unwrap();
+
+    let global_info_file_name = CString::new(global_info_file).unwrap();
+    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
+
     unsafe {
         set_hint_field_global_constraints(
+            global_info_file_ptr,
             p_global_constraints_bin,
             proof_values as *mut std::os::raw::c_void,
             values as *mut std::os::raw::c_void,
@@ -948,7 +969,7 @@ pub fn save_publics_c(_n_publics: u64, _public_inputs: *mut u8, _output_dir: &st
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn save_proof_values_c(_n_proof_values: u64, _proof_values: *mut u8, _output_dir: &str) {
+pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _output_dir: &str) {
     trace!("{}: ··· {}", "ffi     ", "save_proof_values: This is a mock call because there is no linked library");
 }
 
@@ -1396,6 +1417,7 @@ pub fn verify_constraints_c(_p_setup: *mut c_void, _p_steps_params: *mut u8) -> 
 
 #[cfg(feature = "no_lib_link")]
 pub fn verify_global_constraints_c(
+    _global_info_file: &str,
     _p_global_constraints_bin: *mut c_void,
     _publics: *mut u8,
     _challenges: *mut u8,
@@ -1413,6 +1435,7 @@ pub fn verify_global_constraints_c(
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
 pub fn get_hint_field_global_constraints_c(
+    _global_info_file: &str,
     _p_global_constraints_bin: *mut c_void,
     _publics: *mut u8,
     _challenges: *mut u8,
@@ -1432,6 +1455,7 @@ pub fn get_hint_field_global_constraints_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn set_hint_field_global_constraints_c(
+    _global_info_file: &str,
     _p_global_constraints_bin: *mut c_void,
     _proof_values: *mut u8,
     _values: *mut u8,

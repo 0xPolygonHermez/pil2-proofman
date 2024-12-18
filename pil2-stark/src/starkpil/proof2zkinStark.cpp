@@ -387,13 +387,20 @@ json joinzkinfinal(json& globalInfo, Goldilocks::Element* publics, Goldilocks::E
         }
     }
 
-    if(globalInfo["numProofValues"] > 0) {
+    if(globalInfo["proofValuesMap"].size() > 0) {
+        uint64_t p = 0;
         zkinFinal["proofValues"] = json::array();
-        for (uint64_t i = 0; i < globalInfo["numProofValues"]; i++)
+        for (uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); i++)
         {
             zkinFinal["proofValues"][i] = json::array();
-            for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
-                zkinFinal["proofValues"][i][j] = Goldilocks::toString(proofValues[i*FIELD_EXTENSION + j]);
+            if(globalInfo["proofValuesMap"][i]["stage"] == 1) {
+                zkinFinal["proofValues"][i][0] = Goldilocks::toString(proofValues[p++]);
+                zkinFinal["proofValues"][i][1] = "0";
+                zkinFinal["proofValues"][i][2] = "0";
+            } else {
+                zkinFinal["proofValues"][i][0] = Goldilocks::toString(proofValues[p++]);
+                zkinFinal["proofValues"][i][1] = Goldilocks::toString(proofValues[p++]);
+                zkinFinal["proofValues"][i][2] = Goldilocks::toString(proofValues[p++]);
             }
         }
     }

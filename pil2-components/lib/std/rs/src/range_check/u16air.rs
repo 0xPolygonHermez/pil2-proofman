@@ -171,7 +171,6 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
             "reference",
             HintFieldOptions::dest_with_zeros(),
         );
-
     }
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {

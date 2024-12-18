@@ -310,6 +310,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
             break;
         }
     }
+
     // if dctx.rank == 0 {
     let mut proofs_recursive2: Vec<*mut c_void> = Vec::with_capacity(n_airgroups);
     for proofs in airgroup_proofs {

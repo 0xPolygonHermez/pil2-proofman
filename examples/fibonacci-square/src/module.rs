@@ -6,7 +6,7 @@ use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField64};
 use num_bigint::BigInt;
 
-use crate::ModuleTrace;
+use crate::{BuildPublicValues, ModuleTrace};
 
 pub struct Module<F: PrimeField64> {
     inputs: Mutex<Vec<(u64, u64)>>,
@@ -35,7 +35,8 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
     fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        let module = F::as_canonical_u64(&pctx.get_public_value("module"));
+        let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
+        let module = F::as_canonical_u64(&publics.module);
 
         let mut trace = ModuleTrace::new_zeroes();
 
