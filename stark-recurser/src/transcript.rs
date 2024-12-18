@@ -27,13 +27,7 @@ impl Transcript {
     }
 
     pub fn get_field(&mut self, v: &str) {
-        let field_code = format!(
-            "{} <== [{}, {}, {}];",
-            v,
-            self.get_fields1(),
-            self.get_fields1(),
-            self.get_fields1()
-        );
+        let field_code = format!("{} <== [{}, {}, {}];", v, self.get_fields1(), self.get_fields1(), self.get_fields1());
         self.code.push(field_code);
     }
 
@@ -128,10 +122,7 @@ impl Transcript {
             let n2b_var = format!("transcriptN2b_{}", self.n2b_cnt);
             self.n2b_cnt += 1;
 
-            self.code.push(format!(
-                "signal {{binary}} {}[64] <== Num2Bits_strict()({});",
-                n2b_var, f
-            ));
+            self.code.push(format!("signal {{binary}} {}[64] <== Num2Bits_strict()({});", n2b_var, f));
             n2b.push(n2b_var);
         }
 

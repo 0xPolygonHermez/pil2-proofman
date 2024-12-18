@@ -217,7 +217,6 @@ fn default_hash_commits() -> bool {
     false
 }
 
-
 impl StarkInfo {
     pub fn from_json(stark_info_json: &str) -> Self {
         serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")

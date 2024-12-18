@@ -1,43 +1,45 @@
-    <%- prefix %>_circuitType <== <%- (global_info.air_groups.length > 1 || global_info.airs[0].length > 1) ? 1 : 0 %>;
+<% let airgroup_id = stark_info.airgroup_id.unwrap() as usize; %>
 
-<%  if(global_info.aggTypes[airgroupId].length > 0) { -%>
-    <%- prefix %>_aggregationTypes <== aggregationTypes;
-    signal {binary} aggTypes[<%- global_info.aggTypes[airgroupId].length  %>];
-    for(var i = 0; i < <%- global_info.aggTypes[airgroupId].length  %>; i++) {
-        <%- prefix %>_aggregationTypes[i] * (<%- prefix %>_aggregationTypes[i] - 1) === 0;
-        aggTypes[i] <== <%- prefix %>_aggregationTypes[i];
+    <%= prefix_vadcop %>_circuitType <== <%= if global_info.air_groups.len() > 1 || global_info.airs[0].len() > 1 { 1 } else { 0 } %>;
+
+<%  if global_info.agg_types[airgroup_id].len() > 0 { %>
+    <%= prefix_vadcop %>_aggregationTypes <== aggregationTypes;
+    signal {binary} aggTypes[<%= global_info.agg_types[airgroup_id].len()  %>];
+    for(var i = 0; i < <%= global_info.agg_types[airgroup_id].len()  %>; i++) {
+        <%= prefix_vadcop %>_aggregationTypes[i] * (<%= prefix_vadcop %>_aggregationTypes[i] - 1) === 0;
+        aggTypes[i] <== <%= prefix_vadcop %>_aggregationTypes[i];
     }
-<%  } -%>
-<%  if(global_info.air_groups.length > 1 || global_info.airs[0].length > 1) { -%>
-<%  if(global_info.aggTypes[airgroupId].length > 0) { -%>
-    for(var i = 0; i < <%- global_info.aggTypes[airgroupId].length %>; i++) {
-        <%- prefix %>_airgroupvalues[i] <== AggregateAirgroupValuesNull()(<%- prefix1 %>_airgroupvalues[i], <%- prefix2 %>_airgroupvalues[i], aggTypes[i], <%- prefix1%>_isNull, <%- prefix2%>_isNull);
+<%  } %>
+<%  if global_info.air_groups.len() > 1 || global_info.airs[0].len() > 1 { %>
+<%  if global_info.agg_types[airgroup_id].len() > 0 { %>
+    for(var i = 0; i < <%= global_info.agg_types[airgroup_id].len() %>; i++) {
+        <%= prefix_vadcop %>_airgroupvalues[i] <== AggregateAirgroupValuesNull()(<%= prefix_a %>_airgroupvalues[i], <%= prefix_b %>_airgroupvalues[i], aggTypes[i], <%= prefix_a%>_isNull, <%= prefix_b%>_isNull);
     }
-<%  } -%>
+<%  } %>
 
-<%  for (let i = 0; i < global_info.numChallenges.length + 1; ++i) { -%>
-        <%- prefix %>_root<%- i+1 %> <== AggregateValuesNull()(<%- prefix1 %>_root<%- i+1 %>, <%- prefix2 %>_root<%- i+1 %>, <%- prefix1%>_isNull, <%- prefix2%>_isNull);
-<%  } -%>
+<%  for i in 0..(global_info.n_challenges.len() + 1) { %>
+        <%= prefix_vadcop %>_root<%= i+1 %> <== AggregateValuesNull()(<%= prefix_a %>_root<%= i+1 %>, <%= prefix_b %>_root<%= i+1 %>, <%= prefix_a%>_isNull, <%= prefix_b%>_isNull);
+<%  } %>
 
-    <%- prefix %>_evalsHash <== AggregateValuesNull()(<%- prefix1 %>_evalsHash, <%- prefix2 %>_evalsHash, <%- prefix1%>_isNull, <%- prefix2%>_isNull);
-<%      for(let i = 1; i < global_info.stepsFRI.length; i++) { -%>
-    <%- prefix %>_s<%- i %>_root <== AggregateValuesNull()(<%- prefix1 %>_s<%- i %>_root, <%- prefix2 %>_s<%- i %>_root, <%- prefix1%>_isNull, <%- prefix2%>_isNull);
-<%  } -%>
-<%- prefix %>_finalPolHash <== AggregateValuesNull()(<%- prefix1 %>_finalPolHash, <%- prefix2 %>_finalPolHash, <%- prefix1%>_isNull, <%- prefix2%>_isNull);
-<%  } else { -%>
-<%  if(global_info.aggTypes[airgroupId].length > 0) { -%>
-    for(var i = 0; i < <%- global_info.aggTypes[airgroupId].length %>; i++) {
-        <%- prefix %>_airgroupvalues[i] <== AggregateAirgroupValues()(<%- prefix1 %>_airgroupvalues[i], <%- prefix2 %>_airgroupvalues[i], aggTypes[i]);
+    <%= prefix_vadcop %>_evalsHash <== AggregateValuesNull()(<%= prefix_a %>_evalsHash, <%= prefix_b %>_evalsHash, <%= prefix_a%>_isNull, <%= prefix_b%>_isNull);
+<%      for i in 1..global_info.steps_fri.len() { %>
+    <%= prefix_vadcop %>_s<%= i %>_root <== AggregateValuesNull()(<%= prefix_a %>_s<%= i %>_root, <%= prefix_b %>_s<%= i %>_root, <%= prefix_a%>_isNull, <%= prefix_b%>_isNull);
+<%  } %>
+<%= prefix_vadcop %>_finalPolHash <== AggregateValuesNull()(<%= prefix_a %>_finalPolHash, <%= prefix_b %>_finalPolHash, <%= prefix_a%>_isNull, <%= prefix_b%>_isNull);
+<%  } else { %>
+<%  if global_info.agg_types[airgroup_id].len() > 0 { %>
+    for(var i = 0; i < <%= global_info.agg_types[airgroup_id].len() %>; i++) {
+        <%= prefix_vadcop %>_airgroupvalues[i] <== AggregateAirgroupValues()(<%= prefix_a %>_airgroupvalues[i], <%= prefix_b %>_airgroupvalues[i], aggTypes[i]);
     }
-<%  } -%>
+<%  } %>
 
-<%  for (let i = 0; i < global_info.numChallenges.length + 1; ++i) { -%>
-        <%- prefix %>_root<%- i+1 %> <== AggregateValues()(<%- prefix1 %>_root<%- i+1 %>, <%- prefix2 %>_root<%- i+1 %>);
-<%  } -%>
+<%  for i in 0..(global_info.n_challenges.len() + 1) { %>
+        <%= prefix_vadcop %>_root<%= i+1 %> <== AggregateValues()(<%= prefix_a %>_root<%= i+1 %>, <%= prefix_b %>_root<%= i+1 %>);
+<%  } %>
 
-    <%- prefix %>_evalsHash <== AggregateValues()(<%- prefix1 %>_evalsHash, <%- prefix2 %>_evalsHash);
-<%      for(let i = 1; i < global_info.stepsFRI.length; i++) { -%>
-    <%- prefix %>_s<%- i %>_root <== AggregateValues()(<%- prefix1 %>_s<%- i %>_root, <%- prefix2 %>_s<%- i %>_root);
-<%  } -%>
-    <%- prefix %>_finalPolHash <== AggregateValues()(<%- prefix1 %>_finalPolHash, <%- prefix2 %>_finalPolHash);
-<%  } -%>
+    <%= prefix_vadcop %>_evalsHash <== AggregateValues()(<%= prefix_a %>_evalsHash, <%= prefix_b %>_evalsHash);
+<%      for i in 1..global_info.steps_fri.len() { %>
+    <%= prefix_vadcop %>_s<%= i %>_root <== AggregateValues()(<%= prefix_a %>_s<%= i %>_root, <%= prefix_b %>_s<%= i %>_root);
+<%  } %>
+    <%= prefix_vadcop %>_finalPolHash <== AggregateValues()(<%= prefix_a %>_finalPolHash, <%= prefix_b %>_finalPolHash);
+<%  } %>
