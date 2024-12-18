@@ -62,7 +62,7 @@ impl<F: Field> ProofCtx<F> {
 
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;
-        let n_proof_values = global_info.n_proof_values.iter().sum::<usize>();
+        let n_proof_values = global_info.proof_values_map.as_ref().unwrap().len();
         let n_challenges = 4 + global_info.n_challenges.iter().sum::<usize>();
 
         Self {
