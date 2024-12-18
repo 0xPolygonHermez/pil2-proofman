@@ -18,6 +18,10 @@
     <%= component_name %>.airvalues <== <%= prefix %>airvalues;
 <%  } %>
 
+<%  if global_info.proof_values_map.as_ref().unwrap().len() > 0 { %>
+    <%= component_name %>.proofvalues <== <%= prefix %>proofvalues;
+<%  } %>
+
 <%  for s in 1..=stark_info.n_stages + 1 { %>
     <%= component_name %>.root<%= s %> <== <%= prefix %>root<%= s %>;
 <% } %>

@@ -9,6 +9,10 @@
     signal input <%= prefix %>airvalues[<%= stark_info.get_n_airvalues() %>][3];
 <%  } %>
 
+<%  if global_info.proof_values_map.as_ref().unwrap().len() > 0 { %>
+    signal input <%= prefix %>proofvalues[<%= global_info.proof_values_map.as_ref().unwrap().len() %>][3];
+<%  } %>
+
 <%  for s in 1..=stark_info.n_stages + 1 { %>
 <%    if stark_info.stark_struct.verification_hash_type == "BN128" { %>
     signal input <%= prefix %>root<%= s %>;

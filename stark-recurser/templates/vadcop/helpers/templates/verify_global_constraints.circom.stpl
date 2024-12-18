@@ -4,6 +4,9 @@
         if (r.type == "public") {
             return "publics[" + r.id + "]";
         } else if (r.type == "proofvalue") {
+            if(r.dim == 1) {
+                return "proofValues[" + r.id + "][0]";
+            }
             return "proofValues[" + r.id + "]";
         } else if (r.type == "tmp") {
             return "tmp_"+r.id;
@@ -23,8 +26,6 @@
 <%      if (inst.dest.type == "tmp" && ![1,3].includes(inst.dest.dim)) {                -%>
 <%          throw new Error("Invalid dimension");                                       -%>
 <%      }                                                                               -%>
-<%      if(inst.src[0] && inst.src[0].type === "proofvalue") inst.src[0].dim = 3;       -%>
-<%      if(inst.src[1] && inst.src[1].type === "proofvalue") inst.src[1].dim = 3;       -%>
 <%      if (inst.op == "add") {                                                         -%>
 <%          if ((inst.src[0].dim==1) && (inst.src[1].dim==1)) {                         -%>
     signal <%- ref(inst.dest) %> <== <%- ref(inst.src[0]) %> + <%- ref(inst.src[1]) %>;
@@ -68,23 +69,27 @@
 
 template VerifyGlobalConstraints() {
 
-<%  for(let i = 0; i < global_info.aggTypes.length; ++i) { -%>
-    signal input s<%- i %>_airgroupvalues[<%- global_info.aggTypes[i].length %>][3];
+<%  for(let i = 0; i < vadcopInfo.aggTypes.length; ++i) { -%>
+    signal input s<%- i %>_airgroupvalues[<%- vadcopInfo.aggTypes[i].length %>][3];
 <%  } -%>
-<%  if(global_info.nPublics > 0) { -%>
-    signal input publics[<%- global_info.nPublics %>];
+<%  if(vadcopInfo.nPublics > 0) { -%>
+    signal input publics[<%- vadcopInfo.nPublics %>];
 <%  } -%>
-<%  if(global_info.numProofValues> 0) { -%>
-    signal input proofValues[<%- global_info.numProofValues %>][3];
+<%  if(vadcopInfo.numProofValues> 0) { -%>
+    signal input proofValues[<%- vadcopInfo.numProofValues %>][3];
 <%  } -%>
 
-    signal input challenges[<%- global_info.numChallenges.reduce((nc, acc) => nc + acc, 0) + 4 %>][3];
+    signal input challenges[<%- vadcopInfo.numChallenges.reduce((nc, acc) => nc + acc, 0) + 4 %>][3];
 
     // Verify global constraints
-<% for(let i = 0; i < global_info.globalConstraints.length; i++) { -%>
-<% const c = unrollCode(global_info.globalConstraints[i].code) -%>
+<% for(let i = 0; i < vadcopInfo.globalConstraints.length; i++) { -%>
+<% const c = unrollCode(vadcopInfo.globalConstraints[i].code) -%>
+<% if(vadcopInfo.globalConstraints[i].code[vadcopInfo.globalConstraints[i].code.length - 1].dest.dim == 1) { -%>
+    <%- c %> === 0;
+<% } else { -%>
     <%- c %>[0] === 0;
     <%- c %>[1] === 0;
     <%- c %>[2] === 0;
+<%  } -%>
 <%  } -%>
 }

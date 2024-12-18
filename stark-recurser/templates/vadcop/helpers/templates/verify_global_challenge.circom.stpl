@@ -3,6 +3,9 @@ template VerifyGlobalChallenges() {
 <%  if global_info.n_publics > 0 { %>
     signal input publics[<%= global_info.n_publics%>];
 <%  } %>
+<%  if global_info.proof_values_map.as_ref().unwrap().len() > 0 { %>
+    signal input proofValues[<%- global_info.proof_values_map.as_ref().unwrap().len() %>][3];
+<%  } %>
 <% for i in 0..global_info.n_challenges.len() {  %>
     signal input root<%= i + 1 %>[<%= global_info.agg_types.len() %>][4];
 <% } %>                  
@@ -24,6 +27,16 @@ template VerifyGlobalChallenges() {
 <%   if global_info.n_publics > 0 { transcript.put("publics", global_info.n_publics) }; %>
 <%   let mut c = 0; %>
 <%   for (i, &n_challenges) in global_info.n_challenges.iter().enumerate() {
+        let stage = (i + 1) as u64;
+        for j in 0..global_info.proof_values_map.as_ref().unwrap().len() {
+            if global_info.proof_values_map.as_ref().unwrap()[j].stage == stage {
+                if stage == 1 {
+                    transcript.put(&format!("proofValues[{}]", j), 1);
+                } else {
+                    transcript.put(&format!("proofValues[{}]", j), 3);
+                }
+            }
+        }
         for _ in 0..n_challenges {
             transcript.get_field(&format!("calculatedChallenges[{}]", c));
             c += 1;
