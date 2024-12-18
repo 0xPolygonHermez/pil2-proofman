@@ -2,24 +2,21 @@ require "std_constants.pil";
 require "std_permutation.pil";
 require "std_lookup.pil";
 
-// One can use the following function to set the bus type for the entire std
-// set_std_bus_type(PIOP_BUS_SUM);
-
-airtemplate Air1(const int N = 2**4) {
+airtemplate ProdBus(const int N = 2**4) {
     col witness a,b;
 
     permutation_assumes(1, [a], bus_type: PIOP_BUS_PROD);
     permutation_proves(1, [b], bus_type: PIOP_BUS_PROD);
 }
 
-airtemplate Air2(const int N = 2**5) {
+airtemplate SumBus(const int N = 2**5) {
     col witness a,b;
 
     lookup_assumes(2, [a]);
     lookup_proves(2, [b]);
 }
 
-airtemplate Air3(const int N = 2**4) {
+airtemplate BothBuses(const int N = 2**4) {
     col witness a,b,c,d;
 
     permutation_assumes(3, [a], bus_type: PIOP_BUS_PROD);
@@ -30,7 +27,7 @@ airtemplate Air3(const int N = 2**4) {
 }
 
 airgroup Buses {
-    Air1();
-    Air2();
-    Air3();
+    ProdBus();
+    SumBus();
+    BothBuses();
 }

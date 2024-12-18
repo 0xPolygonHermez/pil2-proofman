@@ -51,6 +51,56 @@ mkdir -p ./pil2-components/test/std/connection/build/ \
 && node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/connection/build/provingKey -p ./pil2-components/test/std/connection/build/proofs
 
 ------------------------------------
+Diff Buses
+
+mkdir -p ./pil2-components/test/std/diff_buses/build/ \
+&& rm -rf pil2-components/test/diff_buses/build/proofs/ \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/diff_buses/diff_buses.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/diff_buses/build/diff_buses.pilout \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/diff_buses/build/diff_buses.pilout \
+     -b ./pil2-components/test/std/diff_buses/build \
+     -t ./pil2-stark/build/bctree \
+&& cargo run --bin proofman-cli pil-helpers \
+     --pilout ./pil2-components/test/std/diff_buses/build/diff_buses.pilout \
+     --path ./pil2-components/test/std/diff_buses/rs/src -o \
+&& cargo build \
+&& cargo run --bin proofman-cli verify-constraints \
+     --witness-lib ./target/debug/libdiff_buses.so \
+     --proving-key ./pil2-components/test/std/diff_buses/build/provingKey \
+&& cargo run --bin proofman-cli prove \
+     --witness-lib ./target/debug/libdiff_buses.so \
+     --proving-key ./pil2-components/test/std/diff_buses/build/provingKey \
+     --output-dir ./pil2-components/test/std/diff_buses/build/proofs \
+&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/diff_buses/build/provingKey -p ./pil2-components/test/std/diff_buses/build/proofs
+
+------------------------------------
+Direct Updates
+
+mkdir -p ./pil2-components/test/std/direct_update/build/ \
+&& rm -rf pil2-components/test/direct_update/build/proofs/ \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/direct_update/direct_update.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/direct_update/build/direct_update.pilout \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/direct_update/build/direct_update.pilout \
+     -b ./pil2-components/test/std/direct_update/build \
+     -t ./pil2-stark/build/bctree \
+&& cargo run --bin proofman-cli pil-helpers \
+     --pilout ./pil2-components/test/std/direct_update/build/direct_update.pilout \
+     --path ./pil2-components/test/std/direct_update/rs/src -o \
+&& cargo build \
+&& cargo run --bin proofman-cli verify-constraints \
+     --witness-lib ./target/debug/libdirect_update.so \
+     --proving-key ./pil2-components/test/std/direct_update/build/provingKey \
+&& cargo run --bin proofman-cli prove \
+     --witness-lib ./target/debug/libdirect_update.so \
+     --proving-key ./pil2-components/test/std/direct_update/build/provingKey \
+     --output-dir ./pil2-components/test/std/direct_update/build/proofs \
+&& node ../pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/direct_update/build/provingKey -p ./pil2-components/test/std/direct_update/build/proofs
+
+------------------------------------
 LOOKUP
 
 mkdir -p ./pil2-components/test/std/lookup/build/ \
@@ -130,12 +180,6 @@ SPECIAL
 
 mkdir -p ./pil2-components/test/std/special/build/ \
 && rm -rf pil2-components/test/special/build/proofs/ \
-&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/diff_buses.pil \
-     -I ./pil2-components/lib/std/pil \
-     -o ./pil2-components/test/std/special/build/diff_buses.pilout \
-&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/direct_update.pil \
-     -I ./pil2-components/lib/std/pil \
-     -o ./pil2-components/test/std/special/build/direct_update.pilout \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/expr_optimizations.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/expr_optimizations.pilout \
@@ -145,14 +189,6 @@ mkdir -p ./pil2-components/test/std/special/build/ \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/table.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/table.pilout \
-&& node ../pil2-proofman-js/src/main_setup.js \
-     -a ./pil2-components/test/std/special/build/diff_buses.pilout \
-     -b ./pil2-components/test/std/special/build \
-     -t ./pil2-stark/build/bctree \
-&& node ../pil2-proofman-js/src/main_setup.js \
-     -a ./pil2-components/test/std/special/build/direct_update.pilout \
-     -b ./pil2-components/test/std/special/build \
-     -t ./pil2-stark/build/bctree \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/expr_optimizations.pilout \
      -b ./pil2-components/test/std/special/build \

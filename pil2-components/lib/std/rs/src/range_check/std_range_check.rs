@@ -12,7 +12,8 @@ use proofman_common::{ExecutionCtx, ProofCtx, SetupCtx, StdMode, ModeName};
 use proofman_hints::{get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 
 use crate::{
-    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as_field, AirComponent, Range, SpecifiedRanges, U16Air, U8Air
+    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as_field, AirComponent,
+    Range, SpecifiedRanges, U16Air, U8Air,
 };
 
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
