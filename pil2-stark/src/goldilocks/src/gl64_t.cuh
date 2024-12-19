@@ -673,6 +673,48 @@ public:
         }
     }
 
+    public:
+
+    static __device__ __forceinline__ void copy_gpu( gl64_t *dst, const gl64_t *src, bool const_src){
+        int tid = threadIdx.x;
+        if (const_src) tid = 0;
+        dst[threadIdx.x] = src[tid];
+    }
+
+
+    static __device__ __forceinline__ void copy_gpu( gl64_t *dst, uint64_t stride_dst, const gl64_t *src, bool const_src){
+        int tid = threadIdx.x;
+        if (const_src) tid = 0;
+        dst[threadIdx.x*stride_dst] = src[tid];
+    }
+    
+    static __device__ __forceinline__ void op_gpu( uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
+    {
+        int tida = threadIdx.x;
+        if (const_a) tida = 0;
+        int tidb = threadIdx.x;
+        if(const_b) tidb = 0;
+
+        switch (op)
+        {
+        case 0:
+            c[threadIdx.x] = a[tida] + b[tidb];
+            break;
+        case 1:
+            c[threadIdx.x] = a[tida] - b[tidb];
+            break;
+        case 2:
+            c[threadIdx.x] = a[tida] * b[tidb];
+            break;
+        case 3:
+            c[threadIdx.x] = b[tida] - a[tidb];
+            break;
+        default:
+            assert(0);
+            break;
+        }
+    }
+
 };
 
 struct DeviceCommitBuffers {

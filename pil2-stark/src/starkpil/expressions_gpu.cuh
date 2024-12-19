@@ -4,16 +4,51 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "gl64_t.cuh"
+#include "goldilocks_cubic_extension.cuh"
 #include "omp.h"
 
-
+struct ParserParamsGPU
+{
+    uint32_t stage;
+    uint32_t expId;
+    uint32_t nTemp1;
+    uint32_t nTemp3;
+    uint32_t nOps;
+    uint32_t opsOffset;
+    uint32_t nArgs;
+    uint32_t argsOffset;
+    uint32_t constPolsOffset;
+    uint32_t cmPolsOffset;
+    uint32_t challengesOffset;
+    uint32_t publicsOffset;
+    uint32_t airgroupValuesOffset;
+    uint32_t airValuesOffset;
+    uint32_t firstRow;
+    uint32_t lastRow;
+    uint32_t destDim;
+    uint32_t destId;
+    bool imPol;
+};
+struct ParamsGPU {
+    ParserParamsGPU parserParams;
+    uint64_t dim;
+    uint64_t stage;
+    uint64_t stagePos;
+    uint64_t polsMapId;
+    uint64_t rowOffsetIndex;
+    bool inverse = false;
+    bool batch = true;
+    opType op;
+    uint64_t value;
+};
 struct DestGPU {
-    Goldilocks::Element *dest = nullptr;
+    Goldilocks::Element *dest = nullptr; //rick:this will disapear
+    Goldilocks::Element *dest_gpu = nullptr;
     uint32_t destDim = 0;
     uint64_t offset = 0;
     uint64_t dim = 1;
     uint32_t nParams;
-    Params* params;
+    ParamsGPU* params;
 };
 struct DeviceArguments {
     uint64_t N;
@@ -67,15 +102,22 @@ struct DeviceArguments {
     Goldilocks::Element** bufferT_;
     //destVals
     Goldilocks::Element*** destVals;
+    //tmps
+    Goldilocks::Element** tmp1;
+    Goldilocks::Element** tmp3;
 
 };
 void computeExpressions(DeviceArguments* d_deviceArgs, DeviceArguments* deviceArgs);
 void copyPolynomial(DeviceArguments* deviceArgs, Goldilocks::Element* destVals, bool inverse, bool batch, uint64_t dim, Goldilocks::Element* tmp);
 void multiplyPolynomials(DeviceArguments* deviceArgs, DestGPU &dest, Goldilocks::Element* destVals);
 void storePolynomial(DeviceArguments* deviceArgs, DestGPU* dests, uint32_t nDests,  Goldilocks::Element** destVals, uint64_t row);
-__global__ void allocateDestVals(DeviceArguments* d_deviceArgs);
-__global__ void setDestsParams(DestGPU* d_dests, Params* d_params, uint64_t iDests);
+__device__ void storePolynomial__(DeviceArguments* d_deviceArgs,  gl64_t** destVals, uint64_t row);
+__global__ void copyPolynomial_(DeviceArguments* d_deviceArgs, Goldilocks::Element* d_destVals, bool inverse, uint64_t dim, Goldilocks::Element* d_tmp);
+__device__ void copyPolynomial__(DeviceArguments* d_deviceArgs, gl64_t* d_destVals, bool inverse, uint64_t dim, gl64_t* d_tmp);
 __global__ void loadPolynomials_(DeviceArguments* d_deviceArgs, uint64_t row, uint32_t iBlock);
+__device__ void loadPolynomials__(DeviceArguments* d_deviceArgs, uint64_t row, uint32_t iBlock);
+__device__ void multiplyPolynomials__(DeviceArguments* deviceArgs, DestGPU &dest, gl64_t* destVals);
+__global__ void computeExpressions_(DeviceArguments* d_deviceArgs);
 
 
 class ExpressionsGPU : public ExpressionsCtx {
@@ -89,7 +131,7 @@ public:
     DeviceArguments deviceArgs;
     DeviceArguments* d_deviceArgs;
     
-    ExpressionsGPU(SetupCtx& setupCtx, uint64_t nrowsPack_ = 64, uint32_t nBlocks_ = 32) : ExpressionsCtx(setupCtx), nrowsPack(nrowsPack_), nBlocks(nBlocks_) {};
+    ExpressionsGPU(SetupCtx& setupCtx, uint64_t nrowsPack_ = 64, uint32_t nBlocks_ = 256) : ExpressionsCtx(setupCtx), nrowsPack(nrowsPack_), nBlocks(nBlocks_) {};
 
     void setBufferTInfo(uint64_t domainSize, StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> &dests) {
 
@@ -192,13 +234,42 @@ public:
         deviceArgs.nDests = dests.size();
         for(uint64_t i = 0; i < dests.size(); ++i) {
             deviceArgs.dests[i].dest = dests[i].dest;
+            deviceArgs.dests[i].dest_gpu = dests[i].dest_gpu;
             deviceArgs.dests[i].destDim = dests[i].destDim;
             deviceArgs.dests[i].offset = dests[i].offset;
             deviceArgs.dests[i].dim = dests[i].dim;
-            deviceArgs.dests[i].params = new Params[dests[i].params.size()];
             deviceArgs.dests[i].nParams = dests[i].params.size();
-            for(uint64_t j = 0; j < dests[i].params.size(); ++j) {
-                deviceArgs.dests[i].params[j] = dests[i].params[j];
+            deviceArgs.dests[i].params = new ParamsGPU[dests[i].params.size()];          
+
+            for(uint64_t j=0; j<deviceArgs.dests[i].nParams; ++j){
+                deviceArgs.dests[i].params[j].dim = dests[i].params[j].dim;
+                deviceArgs.dests[i].params[j].stage = dests[i].params[j].stage;
+                deviceArgs.dests[i].params[j].stagePos = dests[i].params[j].stagePos;
+                deviceArgs.dests[i].params[j].polsMapId = dests[i].params[j].polsMapId;
+                deviceArgs.dests[i].params[j].rowOffsetIndex = dests[i].params[j].rowOffsetIndex;
+                deviceArgs.dests[i].params[j].inverse = dests[i].params[j].inverse;
+                deviceArgs.dests[i].params[j].batch = dests[i].params[j].batch;
+                deviceArgs.dests[i].params[j].op = dests[i].params[j].op;
+                deviceArgs.dests[i].params[j].value = dests[i].params[j].value;
+                deviceArgs.dests[i].params[j].parserParams.stage = dests[i].params[j].parserParams.stage;
+                deviceArgs.dests[i].params[j].parserParams.expId = dests[i].params[j].parserParams.expId;
+                deviceArgs.dests[i].params[j].parserParams.nTemp1 = dests[i].params[j].parserParams.nTemp1;
+                deviceArgs.dests[i].params[j].parserParams.nTemp3 = dests[i].params[j].parserParams.nTemp3;
+                deviceArgs.dests[i].params[j].parserParams.nOps = dests[i].params[j].parserParams.nOps;
+                deviceArgs.dests[i].params[j].parserParams.opsOffset = dests[i].params[j].parserParams.opsOffset;
+                deviceArgs.dests[i].params[j].parserParams.nArgs = dests[i].params[j].parserParams.nArgs;
+                deviceArgs.dests[i].params[j].parserParams.argsOffset = dests[i].params[j].parserParams.argsOffset;
+                deviceArgs.dests[i].params[j].parserParams.constPolsOffset = dests[i].params[j].parserParams.constPolsOffset;
+                deviceArgs.dests[i].params[j].parserParams.cmPolsOffset = dests[i].params[j].parserParams.cmPolsOffset;
+                deviceArgs.dests[i].params[j].parserParams.challengesOffset = dests[i].params[j].parserParams.challengesOffset;
+                deviceArgs.dests[i].params[j].parserParams.publicsOffset = dests[i].params[j].parserParams.publicsOffset;
+                deviceArgs.dests[i].params[j].parserParams.airgroupValuesOffset = dests[i].params[j].parserParams.airgroupValuesOffset;
+                deviceArgs.dests[i].params[j].parserParams.airValuesOffset = dests[i].params[j].parserParams.airValuesOffset;
+                deviceArgs.dests[i].params[j].parserParams.firstRow = dests[i].params[j].parserParams.firstRow;
+                deviceArgs.dests[i].params[j].parserParams.lastRow = dests[i].params[j].parserParams.lastRow;
+                deviceArgs.dests[i].params[j].parserParams.destDim = dests[i].params[j].parserParams.destDim;
+                deviceArgs.dests[i].params[j].parserParams.destId = dests[i].params[j].parserParams.destId;
+                deviceArgs.dests[i].params[j].parserParams.imPol = dests[i].params[j].parserParams.imPol;
             }
         }
         //non polnomial arguments
@@ -902,14 +973,20 @@ public:
         loadDeviceArguments(params_gpu);
         time = omp_get_wtime() - time;
         std::cout << "rick cudaMalloc expressions time: " << time << std::endl;
-        computeExpressions(d_deviceArgs, &deviceArgs);
-    
+        time = omp_get_wtime();
+        dim3 nBlocks = deviceArgs.nBlocks;
+        dim3 nThreads = deviceArgs.nrowsPack;
+        computeExpressions_<<<nBlocks,nThreads>>>(d_deviceArgs);
+        for(uint32_t i = 0; i < deviceArgs.nDests; ++i) {
+            cudaMemcpy(dests[i].dest, deviceArgs.dests[i].dest_gpu, dests[i].destDim * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+        }
+        time = omp_get_wtime() - time;
+        std::cout << "despres de computeExpressions: " << time << std::endl;
+
     }
 
     void loadDeviceArguments(StepsParams& params_gpu) {
-        // Allocate memory for the struct on the device
-        cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
-
+        
         // Allocate memory for the pointers within the struct and copy data
         uint64_t* d_nextStrides;
         cudaMalloc(&d_nextStrides, deviceArgs.nOpenings * sizeof(uint64_t));
@@ -945,7 +1022,7 @@ public:
 
         // bufferT_
         deviceArgs.nBlocks = nBlocks;
-        deviceArgs.bufferSize = deviceArgs.nOpenings * deviceArgs.nCols * deviceArgs.nrowsPack;// this for GL elements are used just to separate local buffers and avoid collinsions into the same cache line
+        deviceArgs.bufferSize = deviceArgs.nOpenings * deviceArgs.nCols * deviceArgs.nrowsPack;
         Goldilocks::Element** bufferT_ = new Goldilocks::Element*[deviceArgs.nBlocks];
         for(uint64_t i = 0; i < deviceArgs.nBlocks; ++i) {
             cudaMalloc(&bufferT_[i], deviceArgs.bufferSize * sizeof(Goldilocks::Element));
@@ -955,27 +1032,68 @@ public:
         cudaMalloc(&d_bufferT_, deviceArgs.nBlocks * sizeof(Goldilocks::Element*)); 
         cudaMemcpy(d_bufferT_, deviceArgs.bufferT_, deviceArgs.nBlocks * sizeof(Goldilocks::Element*), cudaMemcpyHostToDevice);
 
-
         //Dests
-        DestGPU* d_dests; //rick: com alliberare aquest punter?
-        cudaMalloc(&d_dests, deviceArgs.nDests * sizeof(DestGPU));
-        cudaMemcpy(d_dests, deviceArgs.dests, deviceArgs.nDests * sizeof(DestGPU), cudaMemcpyHostToDevice);
-        Params** d_params = new Params*[deviceArgs.nDests];
-        for(uint32_t i = 0; i < deviceArgs.nDests; ++i) {
-            cudaMalloc(&d_params[i], deviceArgs.dests[i].nParams * sizeof(Params));
-            cudaMemcpy(d_params[i], deviceArgs.dests[i].params, deviceArgs.dests[i].nParams * sizeof(Params), cudaMemcpyHostToDevice);
+        DestGPU* dests = new DestGPU[deviceArgs.nDests];
+        for(int i=0; i<deviceArgs.nDests; ++i){
+            dests[i].dest = deviceArgs.dests[i].dest;
+            dests[i].dest_gpu = deviceArgs.dests[i].dest_gpu;
+            dests[i].destDim = deviceArgs.dests[i].destDim;
+            dests[i].offset = deviceArgs.dests[i].offset;
+            dests[i].dim = deviceArgs.dests[i].dim;
+            dests[i].nParams = deviceArgs.dests[i].nParams;
+            cudaMalloc(&dests[i].params, dests[i].nParams * sizeof(ParamsGPU));
+            cudaMemcpy(dests[i].params, deviceArgs.dests[i].params, dests[i].nParams * sizeof(ParamsGPU), cudaMemcpyHostToDevice);
         }
-
+        DestGPU* d_dests;
+        cudaMalloc(&d_dests, deviceArgs.nDests * sizeof(DestGPU));
+        cudaMemcpy(d_dests, dests, deviceArgs.nDests * sizeof(DestGPU), cudaMemcpyHostToDevice);
+        
         // destVals
         deviceArgs.destVals = new Goldilocks::Element**[deviceArgs.nBlocks];
+        Goldilocks3::Element*** d_destVals_in = new Goldilocks3::Element**[deviceArgs.nBlocks];
         for(int i=0; i<deviceArgs.nBlocks; i++) {
             deviceArgs.destVals[i] = new Goldilocks::Element*[deviceArgs.nDests];
+            cudaMalloc(&d_destVals_in[i], deviceArgs.nDests * sizeof(Goldilocks::Element*));
             for(uint64_t j = 0; j < deviceArgs.nDests; ++j) {
-                deviceArgs.destVals[i][j] = new Goldilocks::Element[deviceArgs.dests[j].nParams * FIELD_EXTENSION* nrowsPack]; 
+                cudaMalloc(&deviceArgs.destVals[i][j], deviceArgs.dests[j].nParams * FIELD_EXTENSION* nrowsPack * sizeof(Goldilocks::Element));
             }
+            cudaMemcpy(d_destVals_in[i], deviceArgs.destVals[i], deviceArgs.nDests * sizeof(Goldilocks::Element*), cudaMemcpyHostToDevice);
         }
+
+        //tmps
+        //find max nTemp1 and nTmp3
+        uint32_t max_nTemp1 = 0;
+        uint32_t max_nTemp3 = 0;
+        for(uint32_t i = 0; i < deviceArgs.nDests; ++i) {
+           for(uint32_t j=0; j<deviceArgs.dests[i].nParams; j++) {
+                if(deviceArgs.dests[i].params[j].parserParams.nTemp1 > max_nTemp1) {
+                     max_nTemp1 = deviceArgs.dests[i].params[j].parserParams.nTemp1;
+                }
+                if(deviceArgs.dests[i].params[j].parserParams.nTemp3 > max_nTemp3) {
+                     max_nTemp3 = deviceArgs.dests[i].params[j].parserParams.nTemp3;
+                }
+           }
+        }
+
+        Goldilocks::Element** tmp1 = new Goldilocks::Element*[deviceArgs.nBlocks];
+        Goldilocks::Element** tmp3 = new Goldilocks::Element*[deviceArgs.nBlocks];
+        for(uint64_t i = 0; i < deviceArgs.nBlocks; ++i) {
+            cudaMalloc(&tmp1[i], max_nTemp1*nrowsPack*sizeof(Goldilocks::Element));
+            cudaMalloc(&tmp3[i], max_nTemp3*FIELD_EXTENSION*nrowsPack*sizeof(Goldilocks::Element));
+        }        
+        deviceArgs.tmp1 = tmp1;
+        deviceArgs.tmp3 = tmp3;
+        Goldilocks::Element** d_tmp1;
+        Goldilocks::Element** d_tmp3;
+        cudaMalloc(&d_tmp1, deviceArgs.nBlocks * sizeof(Goldilocks::Element*));
+        cudaMemcpy(d_tmp1, deviceArgs.tmp1, deviceArgs.nBlocks * sizeof(Goldilocks::Element*), cudaMemcpyHostToDevice);
+        cudaMalloc(&d_tmp3, deviceArgs.nBlocks * sizeof(Goldilocks::Element*));
+        cudaMemcpy(d_tmp3, deviceArgs.tmp3, deviceArgs.nBlocks * sizeof(Goldilocks::Element*), cudaMemcpyHostToDevice);
+
+        // destVals
         Goldilocks::Element*** d_destVals;
         cudaMalloc(&d_destVals, deviceArgs.nBlocks * sizeof(Goldilocks::Element**));
+        cudaMemcpy(d_destVals, d_destVals_in, deviceArgs.nBlocks * sizeof(Goldilocks::Element**), cudaMemcpyHostToDevice);
 
         // non-polynomial arguments
         Goldilocks::Element* d_challenges;
@@ -1027,9 +1145,6 @@ public:
         h_deviceArgs.pols = params_gpu.pols;
         h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
         h_deviceArgs.dests = d_dests;
-        for(uint32_t iDest = 0; iDest < deviceArgs.nDests; ++iDest) {
-            setDestsParams<<<1,1>>>(d_dests, d_params[iDest], iDest);
-        }
         h_deviceArgs.challenges = d_challenges;
         h_deviceArgs.numbers = d_numbers;
         h_deviceArgs.publics = d_publics;
@@ -1040,14 +1155,17 @@ public:
         h_deviceArgs.args = d_args;
         h_deviceArgs.destVals = d_destVals;
         h_deviceArgs.bufferT_ = d_bufferT_;
-        
+        h_deviceArgs.tmp1 = d_tmp1;
+        h_deviceArgs.tmp3 = d_tmp3;
+
+        // Allocate memory for the struct on the device
+        cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
         // Copy the updated struct to the device
         cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice);
-        allocateDestVals<<<1,1>>>(d_deviceArgs);
-
     }
 
 };
+
     void copyPolynomial(DeviceArguments* deviceArgs, Goldilocks::Element* destVals, bool inverse, bool batch, uint64_t dim, Goldilocks::Element* tmp) {
         if(dim == 1) {
             if(inverse) {
@@ -1116,6 +1234,20 @@ public:
             }
         }
     }
+
+    __device__ void storePolynomial__(DeviceArguments* d_deviceArgs,  gl64_t** destVals, uint64_t row) {
+        for(uint64_t i = 0; i < d_deviceArgs->nDests; ++i) {
+            if(d_deviceArgs->dests[i].dim == 1) {
+                uint64_t offset = d_deviceArgs->dests[i].offset != 0 ? d_deviceArgs->dests[i].offset : 1;
+                gl64_t::copy_gpu((gl64_t*) &d_deviceArgs->dests[i].dest_gpu[row*offset], uint64_t(offset), &destVals[i][0], false);
+            } else {
+                uint64_t offset = d_deviceArgs->dests[i].offset != 0 ? d_deviceArgs->dests[i].offset : FIELD_EXTENSION;
+                gl64_t::copy_gpu( (gl64_t*) &d_deviceArgs->dests[i].dest_gpu[row*offset], uint64_t(offset), &destVals[i][0], false);
+                gl64_t::copy_gpu( (gl64_t*) &d_deviceArgs->dests[i].dest_gpu[row*offset + 1], uint64_t(offset), &destVals[i][d_deviceArgs->nrowsPack], false);
+                gl64_t::copy_gpu( (gl64_t*) &d_deviceArgs->dests[i].dest_gpu[row*offset + 2], uint64_t(offset), &destVals[i][2* d_deviceArgs->nrowsPack], false);
+            }
+        }
+    }
     
     void computeExpressions(DeviceArguments* d_deviceArgs, DeviceArguments* deviceArgs) {
 
@@ -1140,12 +1272,14 @@ public:
             uint64_t i = l * nrowsPack;
             uint32_t iBlock= omp_get_thread_num();
             Goldilocks::Element bufferT_[nOpenings*nCols*nrowsPack];
-            CHECKCUDAERR(cudaMemset(deviceArgs->bufferT_[iBlock], 0, deviceArgs->bufferSize * sizeof(Goldilocks::Element)));
+            //CHECKCUDAERR(cudaMemset(deviceArgs->bufferT_[iBlock], 0, deviceArgs->bufferSize * sizeof(Goldilocks::Element)));
             loadPolynomials_<<<1, nrowsPack >>>(d_deviceArgs, i, iBlock);
             CHECKCUDAERR(cudaMemcpy(bufferT_, deviceArgs->bufferT_[iBlock], deviceArgs->bufferSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-            Goldilocks::Element** destVals = deviceArgs->destVals[iBlock];
+            //Goldilocks::Element** destVals = deviceArgs->destVals[iBlock];
+            Goldilocks::Element **destVals = new Goldilocks::Element*[nDests];
 
             for(uint64_t j = 0; j < nDests; ++j) {
+                destVals[j] = new Goldilocks::Element[dests[j].nParams * FIELD_EXTENSION* nrowsPack];
                 for(uint64_t k = 0; k < dests[j].nParams; ++k) {
                     uint64_t i_args = 0;
 
@@ -1606,8 +1740,6 @@ public:
                     if (i_args != dests[j].params[k].parserParams.nArgs) std::cout << " " << i_args << " - " << dests[j].params[k].parserParams.nArgs << std::endl;
                     assert(i_args == dests[j].params[k].parserParams.nArgs);
 
-                    //rick: em baixo temp1 i temp3
-
                     if(dests[j].params[k].parserParams.destDim == 1) {
                         copyPolynomial(deviceArgs, &destVals[j][k*FIELD_EXTENSION*nrowsPack], dests[j].params[k].inverse, dests[j].params[k].batch, dests[j].params[k].parserParams.destDim, &tmp1[dests[j].params[k].parserParams.destId*nrowsPack]);
                     } else {
@@ -1617,25 +1749,49 @@ public:
 
                 if(dests[j].nParams == 2) {
                     multiplyPolynomials(deviceArgs, dests[j], destVals[j]);
+                    //rick: consegueixo resultats a dests
                 }
             }
             storePolynomial(deviceArgs,dests, nDests, destVals, i);
+
         }
 
     }
     
-    __global__ void setDestsParams(DestGPU* d_dests, Params* d_params, uint64_t iDest) {
-        d_dests[iDest].params = d_params;
-    }
-    __global__ void allocateDestVals(DeviceArguments* d_deviceArgs) {
-        for(int i=0; i<d_deviceArgs->nBlocks; i++) {
-            d_deviceArgs->destVals[i] = new Goldilocks::Element*[d_deviceArgs->nDests];
-            for(uint64_t j = 0; j < d_deviceArgs->nDests; ++j) {
-                d_deviceArgs->destVals[i][j] = new Goldilocks::Element[d_deviceArgs->dests[j].nParams * FIELD_EXTENSION* d_deviceArgs->nrowsPack]; 
+    __global__ void copyPolynomial_(DeviceArguments* d_deviceArgs, Goldilocks::Element* d_destVals, bool inverse, uint64_t dim, Goldilocks::Element* d_tmp){
+        copyPolynomial__(d_deviceArgs, (gl64_t*)d_destVals, inverse, dim, (gl64_t*)d_tmp);
+     }
+    __device__ void copyPolynomial__(DeviceArguments* d_deviceArgs, gl64_t* destVals, bool inverse, uint64_t dim, gl64_t* temp){
+        int idx = threadIdx.x;
+        if(dim == 1) {
+            if(inverse) {                
+                destVals[idx] = temp[idx].reciprocal();
+            } else {
+                destVals[idx] = temp[idx];
+            }
+        } else if(dim == FIELD_EXTENSION) {
+            if(inverse) {
+                Goldilocks3GPU::Element aux;
+                aux[0] = temp[idx];
+                aux[1] = temp[d_deviceArgs->nrowsPack + idx];
+                aux[2] = temp[2*d_deviceArgs->nrowsPack + idx];
+                Goldilocks3GPU::inv(aux, aux);
+                destVals[idx] = aux[0];
+                destVals[d_deviceArgs->nrowsPack + idx] = aux[1];
+                destVals[2*d_deviceArgs->nrowsPack + idx] = aux[2];
+            } else {
+                destVals[idx] = temp[idx];
+                destVals[d_deviceArgs->nrowsPack + idx] = temp[d_deviceArgs->nrowsPack + idx];
+                destVals[2*d_deviceArgs->nrowsPack + idx] = temp[2*d_deviceArgs->nrowsPack + idx];
             }
         }
-    }
+     }
     __global__ void loadPolynomials_(DeviceArguments* d_deviceArgs, uint64_t row, uint32_t iBlock){
+
+        loadPolynomials__(d_deviceArgs, row, iBlock);
+    }
+
+     __device__ void loadPolynomials__(DeviceArguments* d_deviceArgs, uint64_t row, uint32_t iBlock){
 
         uint64_t row_loc = threadIdx.x;
         uint64_t nOpenings = d_deviceArgs->nOpenings;
@@ -1659,6 +1815,7 @@ public:
         Goldilocks::Element* xDivXSub = d_deviceArgs->xDivXSub;
         Goldilocks::Element* d_bufferT_ = d_deviceArgs->bufferT_[iBlock];
 
+        
         for(uint64_t k = 0; k < constPolsSize;  ++k) {
             for(uint64_t o = 0; o < nOpenings; ++o) {
                 uint64_t l = (row + row_loc + nextStrides[o]) % domainSize;
@@ -1699,4 +1856,521 @@ public:
         }
     }
 
+    __device__ void multiplyPolynomials__(DeviceArguments* deviceArgs, DestGPU &dest, gl64_t* destVals) {
+        if(dest.dim == 1) {
+            gl64_t::op_gpu(2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION*deviceArgs->nrowsPack], false);
+        } else {
+            gl64_t vals[FIELD_EXTENSION*64]; //rick: corregir
+            if(dest.params[0].dim == FIELD_EXTENSION && dest.params[1].dim == FIELD_EXTENSION) {
+                Goldilocks3GPU::op_gpu( 2, &vals[0], &destVals[0], false,  &destVals[FIELD_EXTENSION*deviceArgs->nrowsPack], false);
+            } else if(dest.params[0].dim == FIELD_EXTENSION && dest.params[1].dim == 1) {
+                Goldilocks3GPU::op_31_gpu( 2, &vals[0], &destVals[0], false, &destVals[FIELD_EXTENSION*deviceArgs->nrowsPack], false);
+            } else {
+                Goldilocks3GPU::op_31_gpu( 2, &vals[0], &destVals[FIELD_EXTENSION*deviceArgs->nrowsPack], false, &destVals[0], false);
+            } 
+            gl64_t::copy_gpu(&destVals[0], &vals[0], false);
+            gl64_t::copy_gpu(&destVals[deviceArgs->nrowsPack], &vals[deviceArgs->nrowsPack], false);
+            gl64_t::copy_gpu(&destVals[2*deviceArgs->nrowsPack], &vals[2*deviceArgs->nrowsPack], false);
+        }
+    } 
+    __global__ void computeExpressions_(DeviceArguments* d_deviceArgs) {
+
+        int chunk_idx = blockIdx.x;
+        int pack_idx = threadIdx.x;
+        uint32_t iBlock= blockIdx.x;
+
+        gl64_t* challenges = (gl64_t*)d_deviceArgs->challenges;
+        gl64_t* numbers = (gl64_t*)d_deviceArgs->numbers;
+        gl64_t* publics = (gl64_t*)d_deviceArgs->publics;
+        gl64_t* evals = (gl64_t*)d_deviceArgs->evals;
+        gl64_t* airgroupValues = (gl64_t*)d_deviceArgs->airgroupValues;
+        gl64_t* airValues = (gl64_t*)d_deviceArgs->airValues;
+        uint64_t* nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
+        uint64_t domainSize = d_deviceArgs->domainSize;
+        uint64_t nrowsPack = d_deviceArgs->nrowsPack;
+        DestGPU* dests = d_deviceArgs->dests;
+        uint32_t nDests = d_deviceArgs->nDests;
+        uint64_t nchunks=domainSize/ nrowsPack;
+        gl64_t** destVals = (gl64_t**)d_deviceArgs->destVals[iBlock];
+        gl64_t* bufferT_ = (gl64_t*)d_deviceArgs->bufferT_[iBlock];
+        gl64_t* tmp1 = (gl64_t*)d_deviceArgs->tmp1[iBlock];
+        gl64_t* tmp3 = (gl64_t*)d_deviceArgs->tmp3[iBlock];
+
+        while(chunk_idx < nchunks){        
+            
+            uint64_t i = chunk_idx * nrowsPack;
+            loadPolynomials__(d_deviceArgs, i, iBlock);
+            for(uint64_t j = 0; j < nDests; ++j) {
+                for(uint64_t k = 0; k < dests[j].nParams; ++k) {
+                    uint64_t i_args = 0;
+
+                    if(dests[j].params[k].op == opType::cm || dests[j].params[k].op == opType::const_) {
+                        uint64_t openingPointIndex = dests[j].params[k].rowOffsetIndex;
+                        uint64_t buffPos = d_deviceArgs->ns*openingPointIndex + dests[j].params[k].stage;
+                        uint64_t stagePos = dests[j].params[k].stagePos;
+                        copyPolynomial__(d_deviceArgs, &destVals[j][k*FIELD_EXTENSION*nrowsPack], dests[j].params[k].inverse, dests[j].params[k].dim, &bufferT_[(nColsStagesAcc[buffPos] + stagePos)*nrowsPack]);
+                        continue;
+                    } else if(dests[j].params[k].op == opType::number) {
+                        gl64_t val(dests[j].params[k].value);
+                        if(dests[j].params[k].inverse) val = val.reciprocal();
+                        destVals[j][k*FIELD_EXTENSION*nrowsPack + pack_idx]= val;
+                        continue;
+                    }
+                    uint8_t* ops = &d_deviceArgs->ops[dests[j].params[k].parserParams.opsOffset];
+                    uint16_t* args = &d_deviceArgs->args[dests[j].params[k].parserParams.argsOffset];
+                    #if 1
+                    for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
+                        switch (ops[kk]) {
+                            case 0: {
+                                // COPY commit1 to tmp1
+                                gl64_t::copy_gpu( &tmp1[args[i_args] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], false);
+                                i_args += 3;
+                                break;
+                            }
+                            case 1: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: commit1
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack], false);
+                                i_args += 6;
+                                break;
+                            }
+                            case 2: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: tmp1
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &tmp1[args[i_args + 4] * nrowsPack],false);
+                                i_args += 5;
+                                break;
+                            }
+                            case 3: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: public
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &publics[args[i_args + 4]], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 4: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: number
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &numbers[args[i_args + 4]], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 5: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: airvalue1
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airValues[args[i_args + 4]*FIELD_EXTENSION], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 6: {
+                                // COPY tmp1 to tmp1
+                                gl64_t::copy_gpu( &tmp1[args[i_args] * nrowsPack], &tmp1[args[i_args + 1] * nrowsPack], false);
+                                i_args += 2;
+                                break;
+                            }
+                            case 7: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: tmp1
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &tmp1[args[i_args + 3] * nrowsPack], false);
+                                i_args += 4;
+                                break;
+                            }
+                            case 8: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: public
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &publics[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 9: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: number
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &numbers[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 10: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: airvalue1
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 11: {
+                                // COPY public to tmp1
+                                gl64_t::copy_gpu( &tmp1[args[i_args] * nrowsPack], &publics[args[i_args + 1]], true);
+                                i_args += 2;
+                                break;
+                            }
+                            case 12: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: public
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2]], true, &publics[args[i_args + 3]],true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 13: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: number
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2]], true, &numbers[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 14: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: airvalue1
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2]], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 15: {
+                                // COPY number to tmp1
+                                gl64_t::copy_gpu( &tmp1[args[i_args] * nrowsPack], &numbers[args[i_args + 1]], true);
+                                i_args += 2;
+                                break;
+                            }
+                            case 16: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: number
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &numbers[args[i_args + 2]], true, &numbers[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 17: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: airvalue1
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &numbers[args[i_args + 2]], true,  &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 18: {
+                                // COPY airvalue1 to tmp1
+                                gl64_t::copy_gpu( &tmp1[args[i_args] * nrowsPack], &airValues[args[i_args + 1]*FIELD_EXTENSION], true);
+                                i_args += 2;
+                                break;
+                            }
+                            case 19: {
+                                // OPERATION WITH DEST: tmp1 - SRC0: airvalue1 - SRC1: airvalue1
+                                gl64_t::op_gpu( args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 20: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: commit1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack], false);
+                                i_args += 6;
+                                break;
+                            }
+                            case 21: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: tmp1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &tmp1[args[i_args + 4] * nrowsPack], false);
+                                i_args += 5;
+                                break;
+                            }
+                            case 22: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: public
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &publics[args[i_args + 4]], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 23: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: number
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &numbers[args[i_args + 4]], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 24: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airvalue1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airValues[args[i_args + 4]*FIELD_EXTENSION], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 25: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: commit1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack],false);
+                                i_args += 5;
+                                break;
+                            }
+                            case 26: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: tmp1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION],false, &tmp1[args[i_args + 3] * nrowsPack], false);
+                                i_args += 4;
+                                break;
+                            }
+                            case 27: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: public
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION],false, &publics[args[i_args + 3]],true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 28: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: number
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &numbers[args[i_args + 3]],true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 29: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airvalue1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION],false, &airValues[args[i_args + 3]*FIELD_EXTENSION],true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 30: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: commit1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack],false);
+                                i_args += 5;
+                                break;
+                            }
+                            case 31: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: tmp1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &tmp1[args[i_args + 3] * nrowsPack],false);
+                                i_args += 4;
+                                break;
+                            }
+                            case 32: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: public
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true,  &publics[args[i_args + 3]],true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 33: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: number
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 34: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airvalue1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 35: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: commit1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
+                                i_args += 5;
+                                break;
+                            }
+                            case 36: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: tmp1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &tmp1[args[i_args + 3] * nrowsPack], false);
+                                i_args += 4;
+                                break;
+                            }
+                            case 37: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: public
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &publics[args[i_args + 3]],true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 38: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: number
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 39: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airvalue1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 40: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: commit1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
+                                i_args += 5;
+                                break;
+                            }
+                            case 41: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: tmp1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &tmp1[args[i_args + 3] * nrowsPack], false);
+                                i_args += 4;
+                                break;
+                            }
+                            case 42: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: public
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &publics[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 43: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: number
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 44: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: airvalue1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 45: {
+                                // COPY commit3 to tmp3
+                                Goldilocks3GPU::copy_gpu( &tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], false);
+                                i_args += 3;
+                                break;
+                            }
+                            case 46: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: commit3
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack], false);
+                                i_args += 6;
+                                break;
+                            }
+                            case 47: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: tmp3
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &tmp3[args[i_args + 4] * nrowsPack * FIELD_EXTENSION],false);
+                                i_args += 5;
+                                break;
+                            }
+                            case 48: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: challenge
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &challenges[args[i_args + 4]*FIELD_EXTENSION], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 49: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airgroupvalue
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airgroupValues[args[i_args + 4]*FIELD_EXTENSION], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 50: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airvalue3
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airValues[args[i_args + 4]*FIELD_EXTENSION], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 51: {
+                                // COPY tmp3 to tmp3
+                                Goldilocks3GPU::copy_gpu( &tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], false);
+                                i_args += 2;
+                                break;
+                            }
+                            case 52: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: tmp3
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &tmp3[args[i_args + 3] * nrowsPack * FIELD_EXTENSION], false);
+                                i_args += 4;
+                                break;
+                            }
+                            case 53: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: challenge
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &challenges[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 54: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airgroupvalue
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &airgroupValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 55: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airvalue3
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &airValues[args[i_args + 3]*FIELD_EXTENSION],true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 56: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: challenge
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &challenges[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 57: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airgroupvalue
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &airgroupValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 58: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airvalue3
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 59: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airgroupvalue
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &airgroupValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 60: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airvalue3
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack], LDBL_TRUE_MIN);
+                                i_args += 4;
+                                break;
+                            }
+                            case 61: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: airvalue3
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION], true, &airValues[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 62: {
+                                // COPY eval to tmp3
+                                Goldilocks3GPU::copy_gpu( &tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 1]*FIELD_EXTENSION], true);
+                                i_args += 2;
+                                break;
+                            }
+                            case 63: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: eval
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION], true, &evals[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 64: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: eval
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &evals[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 65: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: commit1
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
+                                i_args += 5;
+                                break;
+                            }
+                            case 66: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: eval
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &evals[args[i_args + 4]*FIELD_EXTENSION], true);
+                                i_args += 5;
+                                break;
+                            }
+                            case 67: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: eval
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION], true, &evals[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 68: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: public
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION], true, &publics[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 69: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: number
+                                Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
+                                i_args += 4;
+                                break;
+                            }
+                            case 70: {
+                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: eval
+                                Goldilocks3GPU::op_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION], true, &evals[args[i_args + 3]*FIELD_EXTENSION], true);
+                                i_args += 4;
+                                break;
+                            }
+                            default: {
+                                //std::cout << " Wrong operation!" << std::endl;
+                                //exit(1);
+                            }
+                        }
+                    }
+                    #endif
+                    //if (i_args != dests[j].params[k].parserParams.nArgs) std::cout << " " << i_args << " - " << dests[j].params[k].parserParams.nArgs << std::endl;
+                    //assert(i_args == dests[j].params[k].parserParams.nArgs); cudaError here
+
+                    if(dests[j].params[k].parserParams.destDim == 1) {
+                        copyPolynomial__(d_deviceArgs, &destVals[j][k*FIELD_EXTENSION*nrowsPack], dests[j].params[k].inverse, dests[j].params[k].parserParams.destDim, &tmp1[dests[j].params[k].parserParams.destId*nrowsPack]);
+                    } else {
+                        copyPolynomial__(d_deviceArgs, &destVals[j][k*FIELD_EXTENSION*nrowsPack], dests[j].params[k].inverse, dests[j].params[k].parserParams.destDim, &tmp3[dests[j].params[k].parserParams.destId*FIELD_EXTENSION*nrowsPack]);
+                    }
+                }
+
+                if(dests[j].nParams == 2) {
+                   multiplyPolynomials__(d_deviceArgs, dests[j], destVals[j]);
+                }
+                
+            }
+            storePolynomial__(d_deviceArgs,destVals, i);
+            chunk_idx+=gridDim.x;
+        }
+    }
 #endif

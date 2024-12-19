@@ -142,8 +142,11 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
 
     Dest numStruct(num, N*FIELD_EXTENSION, false);
+    cudaMalloc(&numStruct.dest_gpu, N*FIELD_EXTENSION*sizeof(Goldilocks::Element));
+    
     numStruct.addParams(setupCtx.expressionsBin.expressionsInfo[numFieldId]);
     Dest denStruct(den, N*FIELD_EXTENSION, false);
+    cudaMalloc(&denStruct.dest_gpu, N*FIELD_EXTENSION*sizeof(Goldilocks::Element));
     denStruct.addParams(setupCtx.expressionsBin.expressionsInfo[denFieldId], true);
     std::vector<Dest> dests = {numStruct, denStruct};
     //rick: fins aqui
