@@ -164,6 +164,8 @@ public:
 
     void setMapOffsets();
 
+    void addMemoryRecursive();
+
     /* Returns a polynomial specified by its ID */
     void getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended);
 };
