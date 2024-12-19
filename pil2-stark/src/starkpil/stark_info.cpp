@@ -274,7 +274,7 @@ void StarkInfo::addMemoryRecursive() {
     mapOffsets[std::make_pair("xDivXSubXi", true)] = offsetFRI;
     mapOffsets[std::make_pair("LEv", true)] = offsetFRI;
     offsetFRI += openingPoints.size() * NExtended * FIELD_EXTENSION;
-    if(offsetPolsFRI > mapTotalN) mapTotalN = offsetPolsFRI;
+    if(offsetFRI > mapTotalN) mapTotalN = offsetFRI;
 }
 
 void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended) {
