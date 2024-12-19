@@ -270,6 +270,7 @@ void StarkInfo::setMapOffsets() {
 }
 
 void StarkInfo::addMemoryRecursive() {
+    uint64_t NExtended = (1 << starkStruct.nBitsExt);
     uint64_t offsetFRI = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("xDivXSubXi", true)] = offsetFRI;
     mapOffsets[std::make_pair("LEv", true)] = offsetFRI;
