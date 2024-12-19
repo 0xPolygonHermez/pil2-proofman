@@ -10,6 +10,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     
     Starks<ElementType> starks(setupCtx, pConstTree);
 
+    setupCtx.starkInfo.addMemoryRecursive();
+    
     Goldilocks::Element *trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
 
 #ifdef __AVX512__

@@ -245,7 +245,7 @@ void StarkInfo::setMapOffsets() {
 
     mapTotalN = 0;
 
-    for(uint64_t stage = 2; stage <= nStages; stage++) {
+    for(uint64_t stage = nStages; stage >= 2; stage--) {
         mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
         mapTotalN += N * mapSectionsN["cm" + to_string(stage)];
     }
@@ -260,26 +260,21 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += NExtended * mapSectionsN["cm" + to_string(stage)];
     }
 
-    mapOffsets[std::make_pair("q", true)] = mapTotalN;
-    mapTotalN += NExtended * qDim;
+    mapOffsets[std::make_pair("f", true)] = mapTotalN;
+    mapTotalN += NExtended * FIELD_EXTENSION;
 
-    // Stage FRIPolynomial
-    uint64_t offsetPolsFRI = mapOffsets[std::make_pair("q", true)];
-    mapOffsets[std::make_pair("xDivXSubXi", true)] = offsetPolsFRI;
-    offsetPolsFRI += openingPoints.size() * NExtended * FIELD_EXTENSION;
-    
-    mapOffsets[std::make_pair("f", true)] = offsetPolsFRI;
-    offsetPolsFRI += NExtended * FIELD_EXTENSION;
+    mapOffsets[std::make_pair("q", true)] = mapOffsets[std::make_pair("f", true)];
 
+    mapOffsets[std::make_pair("evals", true)] = mapTotalN;
+    mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
+}
+
+void StarkInfo::addMemoryRecursive() {
+    uint64_t offsetFRI = mapOffsets[std::make_pair("f", true)];
+    mapOffsets[std::make_pair("xDivXSubXi", true)] = offsetFRI;
+    mapOffsets[std::make_pair("LEv", true)] = offsetFRI;
+    offsetFRI += openingPoints.size() * NExtended * FIELD_EXTENSION;
     if(offsetPolsFRI > mapTotalN) mapTotalN = offsetPolsFRI;
-
-    uint64_t offsetPolsEvals = mapOffsets[std::make_pair("q", true)];
-    mapOffsets[std::make_pair("LEv", true)] = offsetPolsEvals;
-    offsetPolsEvals += N * openingPoints.size() * FIELD_EXTENSION;
-    
-    mapOffsets[std::make_pair("evals", true)] = offsetPolsEvals;
-    offsetPolsEvals += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
-    if(offsetPolsEvals > mapTotalN) mapTotalN = offsetPolsEvals;
 }
 
 void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended) {

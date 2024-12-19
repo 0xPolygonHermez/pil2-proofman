@@ -2,7 +2,7 @@ use libloading::{Library, Symbol};
 use log::{info, trace};
 use p3_field::PrimeField;
 use stark::StarkProver;
-use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
+use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c, get_map_totaln_c};
 use std::fs;
 use std::error::Error;
 
@@ -70,7 +70,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mpi_rank = dctx.rank;
         drop(dctx);
         if mpi_rank == 0 {
-            Self::print_summary(pctx.clone());
+            Self::print_summary(pctx.clone(), setups.sctx.clone());
         }
 
         Self::initialize_fixed_pols(setups.clone(), pctx.clone());
@@ -646,17 +646,26 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         proves
     }
 
-    fn print_summary(pctx: Arc<ProofCtx<F>>) {
+    fn print_summary(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         let air_instances_repo = pctx.air_instance_repo.air_instances.read().unwrap();
         let air_instances_repo = &*air_instances_repo;
+
+        let mut air_info = HashMap::new();
 
         let mut air_instances = HashMap::new();
         for air_instance in air_instances_repo.iter() {
             let air_name = pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].clone().name;
             let air_group_name = pctx.global_info.air_groups[air_instance.airgroup_id].clone();
-            let air_instance = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
-            let air_instance = air_instance.entry(air_name).or_insert(0);
-            *air_instance += 1;
+            let air_instance_map = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
+            if !air_instance_map.contains_key(&air_name.clone()) {
+                let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+                let n_cols = setup.stark_info.map_sections_n.get("cm1").unwrap();
+                let n_bits = setup.stark_info.stark_struct.n_bits;
+                let total_mem = get_map_totaln_c(setup.p_setup.p_stark_info) as f64 * 8.0 / (1024.0 * 1024.0 * 1024.0);
+                air_info.insert(air_name.clone(), (n_cols, n_bits, total_mem));
+            }
+            let air_instance_map_key = air_instance_map.entry(air_name).or_insert(0);
+            *air_instance_map_key += 1;
         }
 
         let mut air_groups: Vec<_> = air_instances.keys().collect();
@@ -672,7 +681,17 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             info!("{}:       Air Group [{}]", Self::MY_NAME, air_group);
             for air_name in air_names {
                 let count = air_group_instances.get(air_name).unwrap();
-                info!("{}:       {}", Self::MY_NAME, format!("· {} x Air [{}]", count, air_name).bright_white().bold());
+                let (n_cols, n_bits, total_memory) = air_info.get(air_name).unwrap();
+                info!(
+                    "{}:       {}",
+                    Self::MY_NAME,
+                    format!(
+                        "· {} x Air [{}] ({} x 2^{}) ({:.2} GB each)",
+                        count, air_name, n_cols, n_bits, total_memory
+                    )
+                    .bright_white()
+                    .bold()
+                );
             }
         }
         info!("{}: --- PROOF INSTANCES SUMMARY ------------------------", Self::MY_NAME);
