@@ -7,7 +7,6 @@ edition = "2021"
 proofman-common = { path = "../common" }
 proofman-hints = { path = "../hints" }
 proofman-util = { path = "../util" }
-pilout = { path = "../pilout" }
 stark = { path = "../provers/stark" }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 transcript = { path = "../transcript" }
