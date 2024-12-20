@@ -9,17 +9,18 @@ use p3_field::PrimeField;
 use proofman::{get_hint_field_gc_constant_a, WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ProofCtx, SetupCtx, StdMode, ModeName};
 use proofman_hints::{
-    get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a, acc_mul_hint_fields,
-    update_airgroupvalue, get_hint_ids_by_name, mul_hint_fields, HintFieldOptions, HintFieldOutput, HintFieldValue,
-    HintFieldValuesVec,
+    get_hint_field, get_hint_field_a, acc_mul_hint_fields, update_airgroupvalue, get_hint_ids_by_name, mul_hint_fields,
+    HintFieldOptions, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
 };
 
 use crate::{
-    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as_field,
-    get_row_field_value, print_debug_info, update_debug_data, AirComponent, DebugData,
+    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_a_as_string,
+    get_hint_field_constant_as_field, get_hint_field_constant_as_string, get_row_field_value, print_debug_info,
+    update_debug_data, AirComponent, DebugData,
 };
 
 pub struct StdSum<F: PrimeField> {
+    pctx: Arc<ProofCtx<F>>,
     mode: StdMode,
     stage_wc: Option<Mutex<u32>>,
     debug_data: Option<DebugData<F>>,
@@ -42,6 +43,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
         // Initialize std_sum with the extracted data
         let mode = mode.expect("Mode must be provided");
         let std_sum = Arc::new(Self {
+            pctx: wcm.get_pctx(),
             mode: mode.clone(),
             stage_wc: match std_sum_users_id.is_empty() {
                 true => None,
@@ -77,7 +79,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
         // Process each debug hint
         for &hint in debug_data_hints.iter() {
             // Extract hint fields
-            let _name_piop = get_hint_field_constant::<F>(
+            let name_piop = get_hint_field_constant_as_string::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -86,7 +88,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            let _name_expr = get_hint_field_constant_a::<F>(
+            let name_expr = get_hint_field_constant_a_as_string::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -157,6 +159,8 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                 };
 
                 update_bus(
+                    &name_piop,
+                    &name_expr,
                     airgroup_id,
                     air_id,
                     instance_id,
@@ -189,6 +193,8 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                     };
 
                     update_bus(
+                        &name_piop,
+                        &name_expr,
                         airgroup_id,
                         air_id,
                         instance_id,
@@ -206,6 +212,8 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
 
         #[allow(clippy::too_many_arguments)]
         fn update_bus<F: PrimeField>(
+            name_piop: &String,
+            name_expr: &Vec<String>,
             airgroup_id: usize,
             air_id: usize,
             instance_id: usize,
@@ -236,6 +244,8 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
 
             update_debug_data(
                 debug_data,
+                name_piop,
+                name_expr,
                 opid,
                 expressions.get(row),
                 airgroup_id,
@@ -360,17 +370,20 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     }
                 }
             }
+
+            // TODO: Process each direct update to the product bus
         }
     }
 
     fn end_proof(&self) {
         // Print debug info if in debug mode
         if self.mode.name == ModeName::Debug {
+            let pctx = &self.pctx;
             let name = Self::MY_NAME;
             let max_values_to_print = self.mode.n_vals;
             let print_to_file = self.mode.print_to_file;
             let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-            print_debug_info(name, max_values_to_print, print_to_file, debug_data);
+            print_debug_info(pctx, name, max_values_to_print, print_to_file, debug_data);
         }
     }
 }

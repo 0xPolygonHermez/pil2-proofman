@@ -8,16 +8,18 @@ use p3_field::PrimeField;
 use proofman::{get_hint_field_gc_constant_a, WitnessComponent, WitnessManager};
 use proofman_common::{AirInstance, ExecutionCtx, ModeName, ProofCtx, SetupCtx, StdMode};
 use proofman_hints::{
-    get_hint_field, get_hint_field_a, get_hint_field_constant, get_hint_field_constant_a, acc_mul_hint_fields,
-    update_airgroupvalue, get_hint_ids_by_name, HintFieldOptions, HintFieldValue, HintFieldValuesVec,
+    get_hint_field, get_hint_field_a, acc_mul_hint_fields, update_airgroupvalue, get_hint_ids_by_name,
+    HintFieldOptions, HintFieldValue, HintFieldValuesVec,
 };
 
 use crate::{
-    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as_field,
-    get_row_field_value, print_debug_info, update_debug_data, AirComponent, DebugData,
+    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_a_as_string,
+    get_hint_field_constant_as_field, get_hint_field_constant_as_string, get_row_field_value, print_debug_info,
+    update_debug_data, AirComponent, DebugData,
 };
 
 pub struct StdProd<F: PrimeField> {
+    pctx: Arc<ProofCtx<F>>,
     mode: StdMode,
     stage_wc: Option<Mutex<u32>>,
     debug_data: Option<DebugData<F>>,
@@ -40,6 +42,7 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
         // Initialize std_prod with the extracted data
         let mode = mode.expect("Mode must be provided");
         let std_prod = Arc::new(Self {
+            pctx: wcm.get_pctx(),
             mode: mode.clone(),
             stage_wc: match std_prod_users_id.is_empty() {
                 true => None,
@@ -75,7 +78,7 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
         // Process each debug hint
         for &hint in debug_data_hints.iter() {
             // Extract hint fields
-            let _name_piop = get_hint_field_constant::<F>(
+            let name_piop = get_hint_field_constant_as_string::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -84,7 +87,7 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
                 HintFieldOptions::default(),
             );
 
-            let _name_expr = get_hint_field_constant_a::<F>(
+            let name_expr = get_hint_field_constant_a_as_string::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -111,24 +114,10 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
                 HintFieldOptions::default(),
             );
 
-            let proves = get_hint_field_constant_as_field::<F>(
-                sctx,
-                airgroup_id,
-                air_id,
-                hint as usize,
-                "proves",
-                HintFieldOptions::default(),
-            );
-            let proves = if proves.is_zero() {
-                false
-            } else if proves.is_one() {
-                true
-            } else {
-                log::error!("Proves hint must be either 0 or 1");
-                panic!();
-            };
+            let proves =
+                get_hint_field::<F>(sctx, pctx, air_instance, hint as usize, "proves", HintFieldOptions::default());
 
-            let selector: HintFieldValue<F> =
+            let sel: HintFieldValue<F> =
                 get_hint_field::<F>(sctx, pctx, air_instance, hint as usize, "selector", HintFieldOptions::default());
 
             let expressions = get_hint_field_a::<F>(
@@ -161,12 +150,14 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
             // If both the expresion and the mul are of degree zero, then simply update the bus once
             if deg_expr.is_zero() && deg_sel.is_zero() {
                 update_bus(
+                    &name_piop,
+                    &name_expr,
                     airgroup_id,
                     air_id,
                     instance_id,
                     opid,
-                    proves,
-                    &selector,
+                    &proves,
+                    &sel,
                     &expressions,
                     0,
                     debug_data,
@@ -177,12 +168,14 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
             else {
                 for j in 0..num_rows {
                     update_bus(
+                        &name_piop,
+                        &name_expr,
                         airgroup_id,
                         air_id,
                         instance_id,
                         opid,
-                        proves,
-                        &selector,
+                        &proves,
+                        &sel,
                         &expressions,
                         j,
                         debug_data,
@@ -193,24 +186,40 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
 
             #[allow(clippy::too_many_arguments)]
             fn update_bus<F: PrimeField>(
+                name_piop: &String,
+                name_expr: &Vec<String>,
                 airgroup_id: usize,
                 air_id: usize,
                 instance_id: usize,
                 opid: F,
-                proves: bool,
-                selector: &HintFieldValue<F>,
+                proves: &HintFieldValue<F>,
+                sel: &HintFieldValue<F>,
                 expressions: &HintFieldValuesVec<F>,
                 row: usize,
                 debug_data: &DebugData<F>,
                 is_global: bool,
             ) {
-                let selector = get_row_field_value(selector, row, "sel");
-                if selector.is_zero() {
+                let mut sel = get_row_field_value(sel, row, "sel");
+                if sel.is_zero() {
                     return;
                 }
 
+                let proves = match get_row_field_value(proves, row, "proves") {
+                    p if p.is_zero() || p == F::neg_one() => {
+                        // If it's an "assume", negate its value
+                        if p == F::neg_one() {
+                            sel = -sel;
+                        }
+                        false
+                    }
+                    p if p.is_one() => true,
+                    _ => panic!("Proves hint must be either 0, 1, or -1"),
+                };
+
                 update_debug_data(
                     debug_data,
+                    name_piop,
+                    name_expr,
                     opid,
                     expressions.get(row),
                     airgroup_id,
@@ -218,7 +227,7 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
                     instance_id,
                     row,
                     proves,
-                    F::one(),
+                    sel,
                     is_global,
                 );
             }
@@ -318,17 +327,20 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                     }
                 }
             }
+
+            // TODO: Process each direct update to the product bus
         }
     }
 
     fn end_proof(&self) {
         // Print debug info if in debug mode
         if self.mode.name == ModeName::Debug {
+            let pctx = &self.pctx;
             let name = Self::MY_NAME;
             let max_values_to_print = self.mode.n_vals;
             let print_to_file = self.mode.print_to_file;
             let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-            print_debug_info(name, max_values_to_print, print_to_file, debug_data);
+            print_debug_info(pctx, name, max_values_to_print, print_to_file, debug_data);
         }
     }
 }

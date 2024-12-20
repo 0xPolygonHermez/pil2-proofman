@@ -74,7 +74,7 @@ const int DEFAULT_CONNECTION_N = 0;
  * col witness a,b,c;
  * connection_init(opid, [a, b, c]);
  */
-function connection_init(const int opid, const expr cols[], int default_frame_size = DEFAULT_CONNECTION_N, const int bus_type = 0) {
+function connection_init(const int opid, const expr cols[], int default_frame_size = DEFAULT_CONNECTION_N, const int bus_type = PIOP_BUS_DEFAULT) {
     if (default_frame_size == DEFAULT_CONNECTION_N) default_frame_size = N;
 
     if (default_frame_size < 1) {
@@ -485,20 +485,6 @@ private function checkClosed() {
 }
 
 /**
- * TODO
- *
- * @param {int} opid - The (unique) identifier of the connection
- * @param {expr[]} cols - Array of columns to be connected
- * @param {expr[]} conn - Fixed columns indicating the connection
- * @example
- * col witness a,b,c;
- * col fixed S1,S2,S3;
- * // Compute S1, S2, S3...
- * connection(opid, [a, b, c], [S1, S2, S3]);
- * connection(opid, [a, b, c], [S1, S2, S3], N/2);
- */
-
-/**
  * Connects the columns `cols` with the fixed columns `CONN`.
  *
  * @param opid     The (unique) identifier of the connection
@@ -510,7 +496,7 @@ private function checkClosed() {
  * col fixed S1,S2,S3;
  * connection(opid, [a, b, c], [S1, S2, S3]);
  */
-function connection(const int opid, const expr cols[], const expr CONN[], const int bus_type = 0) {
+function connection(const int opid, const expr cols[], const expr CONN[], const int bus_type = PIOP_BUS_DEFAULT) {
     const int len = length(cols);
     if (len == 0) {
         error(`Connection #${opid} cannot be empty`);
