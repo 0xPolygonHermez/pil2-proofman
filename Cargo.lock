@@ -865,6 +865,9 @@ dependencies = [
 [[package]]
 name = "proofman-starks-lib-c"
 version = "0.1.0"
+dependencies = [
+ "log",
+]
 
 [[package]]
 name = "proofman-util"
