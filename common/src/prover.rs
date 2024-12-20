@@ -88,7 +88,7 @@ pub trait Prover<F: Field> {
     fn opening_stage(&mut self, opening_id: u32, setup_ctx: Arc<SetupCtx>, proof_ctx: Arc<ProofCtx<F>>)
         -> ProverStatus;
 
-    fn get_buff_helper_size(&self) -> usize;
+    fn get_buff_helper_size(&self, proof_ctx: Arc<ProofCtx<F>>) -> usize;
     fn get_proof(&self) -> *mut c_void;
     fn get_prover_info(&self) -> ProverInfo;
     fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>, output_dir: &str) -> *mut c_void;

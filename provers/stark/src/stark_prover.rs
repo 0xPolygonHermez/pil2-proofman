@@ -21,12 +21,6 @@ use p3_field::PrimeField64;
 use std::os::raw::c_void;
 use std::marker::PhantomData;
 
-#[repr(C)]
-pub struct VecU64Result {
-    pub n_elements: u64,
-    pub ids: *mut u64,
-}
-
 #[allow(dead_code)]
 pub struct StarkProver<F: Field> {
     prover_idx: usize,
@@ -226,6 +220,10 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn commit_stage(&mut self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>) -> ProverStatus {
         let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
 
+        if stage_id == self.num_stages() {
+            air_instance.clear_trace();
+        }
+
         let p_stark = self.p_stark;
         let p_proof = self.p_proof;
 
@@ -378,24 +376,12 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         compute_lev_c(self.p_stark, xi_challenge, proof_ctx.get_buff_helper_ptr());
     }
 
-    fn get_buff_helper_size(&self) -> usize {
-        let mut max_cols = 0;
-        for stage in 1..=Self::num_stages(self) + 1 {
-            let n_cols = *self.stark_info.map_sections_n.get(&format!("cm{}", stage)).unwrap() as usize;
-            if n_cols > max_cols {
-                max_cols = n_cols;
-            }
-        }
+    fn get_buff_helper_size(&self, _proof_ctx: Arc<ProofCtx<F>>) -> usize {
+        // if proof_ctx.options.verify_constraints {
 
-        let n_extended = (1 << self.stark_info.stark_struct.n_bits_ext) as usize;
-        let buff_size_stages = max_cols * n_extended;
-
-        let buff_size_xdivxsub = self.stark_info.opening_points.len() * 3 * n_extended;
-
-        match buff_size_stages > buff_size_xdivxsub {
-            true => buff_size_stages,
-            false => buff_size_xdivxsub,
-        }
+        // } else {
+        self.stark_info.get_buff_helper_size()
+        // }
     }
 
     fn calculate_hash(&self, values: Vec<F>) -> Vec<F> {

@@ -47,11 +47,6 @@ struct Hint
     std::vector<HintField> fields;
 };
 
-struct VecU64Result {
-    uint64_t nElements;
-    uint64_t* ids;
-};
-
 struct ParserParams
 {
     uint32_t stage = 0;
@@ -143,7 +138,9 @@ public:
 
     void loadGlobalBin(BinFileUtils::BinFile *globalBin);
 
-    VecU64Result getHintIdsByName(std::string name);
+    uint64_t getNumberHintIdsByName(std::string name);
+
+    void getHintIdsByName(uint64_t* hintIds, std::string name);
 };
 
 

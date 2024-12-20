@@ -264,8 +264,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
 
         let mut buff_helper_size = 0_usize;
+
         for prover in provers.iter_mut() {
-            let buff_helper_prover_size = prover.get_buff_helper_size();
+            let buff_helper_prover_size = prover.get_buff_helper_size(pctx.clone());
             if buff_helper_prover_size > buff_helper_size {
                 buff_helper_size = buff_helper_prover_size;
             }
@@ -659,10 +660,23 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let air_instance_map = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
             if !air_instance_map.contains_key(&air_name.clone()) {
                 let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
-                let n_cols = setup.stark_info.map_sections_n.get("cm1").unwrap();
                 let n_bits = setup.stark_info.stark_struct.n_bits;
-                let total_mem = get_map_totaln_c(setup.p_setup.p_stark_info) as f64 * 8.0 / (1024.0 * 1024.0 * 1024.0);
-                air_info.insert(air_name.clone(), (n_cols, n_bits, total_mem));
+                let memory_instance =
+                    get_map_totaln_c(setup.p_setup.p_stark_info) as f64 * 8.0 / (1024.0 * 1024.0 * 1024.0);
+                let memory_fixed = (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
+                    + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext)))
+                    as f64
+                    * 8.0
+                    / (1024.0 * 1024.0 * 1024.0);
+                let memory_helpers = setup.stark_info.get_buff_helper_size() as f64;
+                let total_cols: u64 = setup
+                    .stark_info
+                    .map_sections_n
+                    .iter()
+                    .filter(|(key, _)| *key != "const")
+                    .map(|(_, value)| *value)
+                    .sum();
+                air_info.insert(air_name.clone(), (n_bits, total_cols, memory_fixed, memory_helpers, memory_instance));
             }
             let air_instance_map_key = air_instance_map.entry(air_name).or_insert(0);
             *air_instance_map_key += 1;
@@ -673,7 +687,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         info!("{}: --- PROOF INSTANCES SUMMARY ------------------------", Self::MY_NAME);
         info!("{}:     ► {} Air instances found:", Self::MY_NAME, air_instances_repo.len());
-        for air_group in air_groups {
+        for air_group in air_groups.clone() {
             let air_group_instances = air_instances.get(air_group).unwrap();
             let mut air_names: Vec<_> = air_group_instances.keys().collect();
             air_names.sort();
@@ -681,20 +695,57 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             info!("{}:       Air Group [{}]", Self::MY_NAME, air_group);
             for air_name in air_names {
                 let count = air_group_instances.get(air_name).unwrap();
-                let (n_cols, n_bits, total_memory) = air_info.get(air_name).unwrap();
+                let (n_bits, total_cols, _, _, _) = air_info.get(air_name).unwrap();
+                info!(
+                    "{}:       {}",
+                    Self::MY_NAME,
+                    format!("· {} x Air [{}] ({} x 2^{})", count, air_name, total_cols, n_bits).bright_white().bold()
+                );
+            }
+        }
+        info!("{}: --- PROOF INSTANCES SUMMARY ------------------------", Self::MY_NAME);
+        info!("{}: --- PROVER MEMORY USAGE ------------------------", Self::MY_NAME);
+        info!("{}:     ► {} Air instances found:", Self::MY_NAME, air_instances_repo.len());
+        let mut total_memory = 0f64;
+        let mut memory_helper_size = 0f64;
+        for air_group in air_groups {
+            let air_group_instances = air_instances.get(air_group).unwrap();
+            let mut air_names: Vec<_> = air_group_instances.keys().collect();
+            air_names.sort();
+
+            for air_name in air_names {
+                let count = air_group_instances.get(air_name).unwrap();
+                let (_, _, memory_fixed, memory_helper_instance_size, memory_instance) =
+                    air_info.get(air_name).unwrap();
+                let total_memory_instance = memory_fixed + memory_instance * *count as f64;
+                total_memory += total_memory_instance;
+                if *memory_helper_instance_size > memory_helper_size {
+                    memory_helper_size = *memory_helper_instance_size;
+                }
                 info!(
                     "{}:       {}",
                     Self::MY_NAME,
                     format!(
-                        "· {} x Air [{}] ({} x 2^{}) ({:.2} GB each)",
-                        count, air_name, n_cols, n_bits, total_memory
+                        "· {}: {:.2} GB fixed cols | {:.2} GB per each of {} instance | Total {:.2} GB",
+                        air_name, memory_fixed, memory_instance, count, total_memory_instance
                     )
                     .bright_white()
                     .bold()
                 );
             }
         }
-        info!("{}: --- PROOF INSTANCES SUMMARY ------------------------", Self::MY_NAME);
+        memory_helper_size = memory_helper_size * 8.0 / (1024.0 * 1024.0 * 1024.0);
+        info!(
+            "{}:       {}",
+            Self::MY_NAME,
+            format!("Extra helper memory: {:.2} GB", memory_helper_size).bright_white().bold()
+        );
+        info!(
+            "{}:       {}",
+            Self::MY_NAME,
+            format!("Total prover memory required: {:.2} GB", total_memory).bright_white().bold()
+        );
+        info!("{}: --- PROVER MEMORY USAGE ------------------------", Self::MY_NAME);
     }
 
     fn check_paths(

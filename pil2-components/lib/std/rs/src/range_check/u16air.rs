@@ -126,12 +126,12 @@ impl<F: PrimeField> U16Air<F> {
 
     fn update_multiplicity(&self, drained_inputs: Vec<(F, F)>) {
         // TODO! Do it in parallel
+        let mut mul_column = self.mul_column.lock().unwrap();
         for (input, mul) in &drained_inputs {
             let value = input.as_canonical_biguint().to_usize().expect("Cannot convert to usize");
             // Note: to avoid non-expected panics, we perform a reduction to the value
             //       In debug mode, this is, in fact, checked before
             let index = value % NUM_ROWS;
-            let mut mul_column = self.mul_column.lock().unwrap();
             mul_column.add(index, *mul);
         }
     }

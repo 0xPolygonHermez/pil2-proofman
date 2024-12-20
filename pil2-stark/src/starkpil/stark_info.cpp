@@ -224,8 +224,7 @@ void StarkInfo::load(json j)
         mapSectionsN[it.key()] = it.value();
     }
 
-    setMapOffsets();
-    
+    setMapOffsets();   
 }
 
 void StarkInfo::setMapOffsets() {

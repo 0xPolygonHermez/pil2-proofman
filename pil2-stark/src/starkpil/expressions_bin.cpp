@@ -407,24 +407,24 @@ void ExpressionsBin::loadGlobalBin(BinFileUtils::BinFile *globalBin) {
 
 }
 
-
-VecU64Result ExpressionsBin::getHintIdsByName(std::string name) {
-    VecU64Result hintIds;
-
-    hintIds.nElements = 0;
-    for (uint64_t i = 0; i < hints.size(); ++i) {
-        if (hints[i].name == name) {
-            hintIds.nElements++;
-        }
-    }
-
+void ExpressionsBin::getHintIdsByName(uint64_t* hintIds, std::string name) {
     uint64_t c = 0;
-    hintIds.ids = new uint64_t[hintIds.nElements];
     for (uint64_t i = 0; i < hints.size(); ++i) {
         if (hints[i].name == name) {
-            hintIds.ids[c++] = i;
+            hintIds[c++] = i;
+        }
+    }
+}
+
+
+uint64_t ExpressionsBin::getNumberHintIdsByName(std::string name) {
+
+    uint64_t nHints = 0;
+    for (uint64_t i = 0; i < hints.size(); ++i) {
+        if (hints[i].name == name) {
+            nHints++;
         }
     }
 
-    return hintIds;
+    return nHints;
 }

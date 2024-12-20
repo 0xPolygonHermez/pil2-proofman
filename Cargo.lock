@@ -332,6 +332,7 @@ dependencies = [
  "pil-std-lib",
  "proofman-common",
  "proofman-macros",
+ "rayon",
  "serde",
  "serde_json",
  "witness",
@@ -851,6 +852,7 @@ dependencies = [
  "p3-field",
  "proofman-common",
  "proofman-starks-lib-c",
+ "proofman-util",
 ]
 
 [[package]]

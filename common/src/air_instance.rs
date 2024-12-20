@@ -257,4 +257,8 @@ impl<F: Field> AirInstance<F> {
         self.air_instance_id = Some(air_instance_id);
         self.idx = Some(idx);
     }
+
+    pub fn clear_trace(&mut self) {
+        self.trace = Vec::new();
+    }
 }

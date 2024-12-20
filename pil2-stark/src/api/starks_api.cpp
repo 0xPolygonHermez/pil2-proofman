@@ -165,12 +165,15 @@ void fri_proof_free(void *pFriProof)
 // SetupCtx
 // ========================================================================================
 
-void* get_hint_ids_by_name(void *p_expression_bin, char* hintName)
+uint64_t n_hints_by_name(void *p_expression_bin, char* hintName) {
+    ExpressionsBin *expressionsBin = (ExpressionsBin*)p_expression_bin;
+    return expressionsBin->getNumberHintIdsByName(string(hintName));
+}
+
+void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintName)
 {
     ExpressionsBin *expressionsBin = (ExpressionsBin*)p_expression_bin;
-
-    VecU64Result hintIds = expressionsBin->getHintIdsByName(string(hintName));
-    return new VecU64Result(hintIds);
+    expressionsBin->getHintIdsByName(hintIds, string(hintName));
 }
 
 // StarkInfo
@@ -261,10 +264,18 @@ void expressions_bin_free(void *pExpressionsBin)
 
 // Hints
 // ========================================================================================
-void *get_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char* hintFieldName, void* hintOptions) 
+void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions) 
 {
-    HintFieldValues hintFieldValues = getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
-    return new HintFieldValues(hintFieldValues);
+    getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
+}
+
+uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char* hintFieldName) {
+    return getHintFieldValues(*(SetupCtx *)pSetupCtx, hintId, string(hintFieldName));
+}
+
+void get_hint_field_sizes(void *pSetupCtx, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions)
+{
+    getHintFieldSizes(*(SetupCtx *)pSetupCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
 
 uint64_t mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2) 
@@ -272,18 +283,21 @@ uint64_t mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, ch
     return multiplyHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldName1), string(hintFieldName2), *(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2);
 }
 
-void *acc_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add) {
-    return new VecU64Result(accHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName), add));
+void acc_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add) {
+    accHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName), add);
 }
 
-void *acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add) {
-    return new VecU64Result(accMulHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add));
+void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add) {
+    accMulHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add);
 }
 
-void *update_airgroupvalue(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add) {
-    return new VecU64Result(updateAirgroupValue(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add));
+uint64_t update_airgroupvalue(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add) {
+    return updateAirgroupValue(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add);
 }
 
+uint64_t get_hint_id(void *pSetupCtx, uint64_t hintId, char * hintFieldName) {
+    return getHintId(*(SetupCtx *)pSetupCtx, hintId, string(hintFieldName));
+}
 
 uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hintId, char * hintFieldName) 
 {
@@ -516,13 +530,25 @@ void *verify_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, vo
     return constraintsInfo;
 }
 
-void *get_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *publics, void *challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression) 
+uint64_t get_hint_field_global_constraints_values(void* p_globalinfo_bin, uint64_t hintId, char* hintFieldName) {
+    return getHintFieldGlobalConstraintValues(*(ExpressionsBin*)p_globalinfo_bin, hintId, string(hintFieldName));
+}
+
+void get_hint_field_global_constraints_sizes(char* globalInfoFile, void* p_globalinfo_bin, void* hintFieldValues, uint64_t hintId, char *hintFieldName, bool print_expression)
 {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    HintFieldValues hintFieldValues = getHintFieldGlobalConstraint(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues, hintId, string(hintFieldName), print_expression);
-    return new HintFieldValues(hintFieldValues);
+    getHintFieldGlobalConstraintSizes(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (HintFieldInfo *)hintFieldValues, hintId, string(hintFieldName), print_expression);
+}
+
+
+void get_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void* hintFieldValues, void *publics, void *challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression) 
+{
+    json globalInfo;
+    file2json(globalInfoFile, globalInfo);
+
+    getHintFieldGlobalConstraint(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (HintFieldInfo *)hintFieldValues, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues, hintId, string(hintFieldName), print_expression);
 }
 
 uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *proofValues, void *values, uint64_t hintId, char *hintFieldName) 

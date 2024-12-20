@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 
 use proofman_common::{ProofCtx, SetupCtx};
-use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
+use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use crate::WitnessComponent;
 
 pub struct WitnessManager<F> {
@@ -36,11 +36,11 @@ impl<F> WitnessManager<F> {
     }
 
     pub fn execute(&self) {
-        timer_start_debug!(EXECUTE);
+        timer_start_info!(EXECUTE);
         for component in self.components.read().unwrap().iter() {
             component.execute(self.pctx.clone());
         }
-        timer_stop_and_log_debug!(EXECUTE);
+        timer_stop_and_log_info!(EXECUTE);
     }
 
     pub fn end_proof(&self) {
@@ -57,14 +57,14 @@ impl<F> WitnessManager<F> {
             self.pctx.global_info.n_challenges.len()
         );
 
-        timer_start_debug!(CALCULATING_WITNESS);
+        timer_start_info!(CALCULATING_WITNESS);
 
         // Call one time all unused components
         for component in self.components.read().unwrap().iter() {
             component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone());
         }
 
-        timer_stop_and_log_debug!(CALCULATING_WITNESS);
+        timer_stop_and_log_info!(CALCULATING_WITNESS);
     }
 
     pub fn get_pctx(&self) -> Arc<ProofCtx<F>> {

@@ -331,8 +331,119 @@ GlobalConstraintsResults * verifyGlobalConstraints(json& globalInfo, Expressions
     return constraintsInfo;
 }
 
+std::string getExpressionDebug(json& globalInfo, ExpressionsBin &globalConstraintsBin, uint64_t hintId, std::string hintFieldName, HintFieldValue hintFieldVal) {
+    std::string debug = "Hint name " + hintFieldName + " for hint id " + to_string(hintId) + " is ";
+    if (hintFieldVal.operand == opType::tmp) {
+        if(globalConstraintsBin.expressionsInfo[hintFieldVal.id].line != "") {
+            debug += "the expression with id: " + to_string(hintFieldVal.id) + " " + globalConstraintsBin.expressionsInfo[hintFieldVal.id].line;
+        }
+    } else if (hintFieldVal.operand == opType::public_) {
+        debug += "public input " + to_string(globalInfo["publicsMap"][hintFieldVal.id]["name"]);
+    } else if (hintFieldVal.operand == opType::number) {
+        debug += "number " + to_string(hintFieldVal.value);
+    } else if (hintFieldVal.operand == opType::airgroupvalue) {
+       debug += "airgroupvalue ";
+    } else if (hintFieldVal.operand == opType::proofvalue) {
+       debug += "proof value  " + to_string(globalInfo["proofValuesMap"][hintFieldVal.id]["name"]);
+    } else if (hintFieldVal.operand == opType::string_) {
+       debug += "string " + hintFieldVal.stringValue;
+    } else {
+        zklog.error("Unknown HintFieldType");
+        exitProcess();
+        exit(-1);
+    }
 
-HintFieldValues getHintFieldGlobalConstraint(json& globalInfo, ExpressionsBin &globalConstraintsBin, Goldilocks::Element* publicInputs, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, uint64_t hintId, std::string hintFieldName, bool print_expression) {
+    return debug;
+}
+
+uint64_t getHintFieldGlobalConstraintValues(ExpressionsBin &globalConstraintsBin, uint64_t hintId, std::string hintFieldName) {
+    if(globalConstraintsBin.hints.size() == 0) {
+        zklog.error("No hints were found.");
+        exitProcess();
+        exit(-1);
+    }
+
+    Hint hint = globalConstraintsBin.hints[hintId];
+    
+    auto hintField = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldName](const HintField& hintField) {
+        return hintField.name == hintFieldName;
+    });
+
+    if(hintField == hint.fields.end()) {
+        zklog.error("Hint field " + hintFieldName + " not found in hint " + hint.name + ".");
+        exitProcess();
+        exit(-1);
+    }
+
+    return hintField->values.size();
+}
+
+void getHintFieldGlobalConstraintSizes(json& globalInfo, ExpressionsBin &globalConstraintsBin,  HintFieldInfo *hintFieldValues,  uint64_t hintId, std::string hintFieldName, bool print_expression) {
+    if(globalConstraintsBin.hints.size() == 0) {
+        zklog.error("No hints were found.");
+        exitProcess();
+        exit(-1);
+    }
+
+    Hint hint = globalConstraintsBin.hints[hintId];
+    
+    auto hintField = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldName](const HintField& hintField) {
+        return hintField.name == hintFieldName;
+    });
+
+    if(hintField == hint.fields.end()) {
+        zklog.error("Hint field " + hintFieldName + " not found in hint " + hint.name + ".");
+        exitProcess();
+        exit(-1);
+    }
+
+    for(uint64_t i = 0; i < hintField->values.size(); ++i) {
+        HintFieldValue hintFieldVal = hintField->values[i];
+
+        if(print_expression) {
+            std::string expression_line = getExpressionDebug(globalInfo, globalConstraintsBin, hintId, hintFieldName, hintFieldVal);
+            hintFieldValues[i].expression_line_size = expression_line.size();
+        }
+
+        if (hintFieldVal.operand == opType::tmp) {
+            uint64_t dim = globalConstraintsBin.expressionsInfo[hintFieldVal.id].destDim;
+            hintFieldValues[i].fieldType = dim == 1 ? HintFieldType::Column : HintFieldType::ColumnExtended;
+            hintFieldValues[i].offset = dim;
+            hintFieldValues[i].size = dim;
+        } else if (hintFieldVal.operand == opType::public_) {
+            hintFieldValues[i].size = 1;
+            hintFieldValues[i].fieldType = HintFieldType::Field;
+            hintFieldValues[i].offset = 1;
+        } else if (hintFieldVal.operand == opType::number) {
+            hintFieldValues[i].size = 1;
+            hintFieldValues[i].fieldType = HintFieldType::Field;
+            hintFieldValues[i].offset = 1;
+        } else if (hintFieldVal.operand == opType::airgroupvalue) {
+            hintFieldValues[i].size = FIELD_EXTENSION;
+            hintFieldValues[i].fieldType = HintFieldType::FieldExtended;
+            hintFieldValues[i].offset = FIELD_EXTENSION;
+        } else if (hintFieldVal.operand == opType::proofvalue) {
+            uint64_t dim = globalInfo["proofValuesMap"][hintFieldVal.id]["stage"] == 1 ? 1 : FIELD_EXTENSION;
+            hintFieldValues[i].size = dim;
+            hintFieldValues[i].fieldType = dim == 1 ? HintFieldType::Field : HintFieldType::FieldExtended;
+            hintFieldValues[i].offset = FIELD_EXTENSION;
+        } else if (hintFieldVal.operand == opType::string_) {
+            hintFieldValues[i].fieldType = HintFieldType::String;
+            hintFieldValues[i].size = hintFieldVal.stringValue.size();
+            hintFieldValues[i].offset = 0;
+        } else {
+            zklog.error("Unknown HintFieldType");
+            exitProcess();
+            exit(-1);
+        }
+
+        hintFieldValues[i].matrix_size = hintFieldVal.pos.size();
+    }
+    
+    return;
+}
+
+void getHintFieldGlobalConstraint(json& globalInfo, ExpressionsBin &globalConstraintsBin, HintFieldInfo *hintFieldValues, Goldilocks::Element* publicInputs, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, uint64_t hintId, std::string hintFieldName, bool print_expression) {
    
 
     if(globalConstraintsBin.hints.size() == 0) {
@@ -353,81 +464,40 @@ HintFieldValues getHintFieldGlobalConstraint(json& globalInfo, ExpressionsBin &g
         exit(-1);
     }
 
-    HintFieldValues hintFieldValues;
-    hintFieldValues.nValues = hintField->values.size();
-    hintFieldValues.values = new HintFieldInfo[hintField->values.size()];
-
     for(uint64_t i = 0; i < hintField->values.size(); ++i) {
         HintFieldValue hintFieldVal = hintField->values[i];
        
-        HintFieldInfo hintFieldInfo;
+        HintFieldInfo hintFieldInfo = hintFieldValues[i];
 
         if(print_expression) {
-            cout << "--------------------------------------------------------" << endl;
-            cout << "Hint name " << hintFieldName << " for hint id " << hintId << " is ";
+            std::string expression_line = getExpressionDebug(globalInfo, globalConstraintsBin, hintId, hintFieldName, hintFieldVal);
+            hintFieldValues[i].expression_line_size = expression_line.size();
         }
+
         if (hintFieldVal.operand == opType::tmp) {
-            uint64_t dim = globalConstraintsBin.expressionsInfo[hintFieldVal.id].destDim;
-            hintFieldInfo.size = dim;
-            hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
-            hintFieldInfo.fieldType = dim == 1 ? HintFieldType::Column : HintFieldType::ColumnExtended;
-            hintFieldInfo.offset = dim;
-            if(print_expression && globalConstraintsBin.expressionsInfo[hintFieldVal.id].line != "") {
-                cout << "the expression with id: " << hintFieldVal.id << " " << globalConstraintsBin.expressionsInfo[hintFieldVal.id].line << endl;
-            }
-           
             calculateGlobalExpression(globalInfo, hintFieldInfo.values, publicInputs, challenges, proofValues, airgroupValues, globalConstraintsBin.expressionsBinArgsExpressions, globalConstraintsBin.expressionsInfo[hintFieldVal.id]);
         } else if (hintFieldVal.operand == opType::public_) {
-            hintFieldInfo.size = 1;
-            hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
             hintFieldInfo.values[0] = publicInputs[hintFieldVal.id];
-            hintFieldInfo.fieldType = HintFieldType::Field;
-            hintFieldInfo.offset = 1;
         } else if (hintFieldVal.operand == opType::number) {
-            hintFieldInfo.size = 1;
-            hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
             hintFieldInfo.values[0] = Goldilocks::fromU64(hintFieldVal.value);
-            hintFieldInfo.fieldType = HintFieldType::Field;
-            hintFieldInfo.offset = 1;
-            if(print_expression) cout << "number " << hintFieldVal.value << endl;
         } else if (hintFieldVal.operand == opType::airgroupvalue) {
-            hintFieldInfo.size = FIELD_EXTENSION;
-            hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
-            hintFieldInfo.fieldType = HintFieldType::FieldExtended;
-            hintFieldInfo.offset = FIELD_EXTENSION;
             std::memcpy(hintFieldInfo.values, &airgroupValues[hintFieldVal.dim][FIELD_EXTENSION*hintFieldVal.id], FIELD_EXTENSION * sizeof(Goldilocks::Element));
         } else if (hintFieldVal.operand == opType::proofvalue) {
-            uint64_t dim = globalInfo["proofValuesMap"][hintFieldVal.id]["stage"] == 1 ? 1 : FIELD_EXTENSION;
-            hintFieldInfo.size = dim;
-            hintFieldInfo.values = new Goldilocks::Element[hintFieldInfo.size];
-            hintFieldInfo.fieldType = dim == 1 ? HintFieldType::Field : HintFieldType::FieldExtended;
-            hintFieldInfo.offset = FIELD_EXTENSION;
             std::memcpy(hintFieldInfo.values, &proofValues[FIELD_EXTENSION*hintFieldVal.id], hintFieldInfo.size * sizeof(Goldilocks::Element));
         } else if (hintFieldVal.operand == opType::string_) {
-            hintFieldInfo.values = nullptr;
-            hintFieldInfo.fieldType = HintFieldType::String;
-            hintFieldInfo.size = hintFieldVal.stringValue.size();
-            hintFieldInfo.stringValue = new uint8_t[hintFieldVal.stringValue.size()];
             std::memcpy(hintFieldInfo.stringValue, hintFieldVal.stringValue.data(), hintFieldVal.stringValue.size());
-            hintFieldInfo.offset = 0;
-            if(print_expression) cout << "string " << hintFieldVal.stringValue << endl;
         } else {
             zklog.error("Unknown HintFieldType");
             exitProcess();
             exit(-1);
         }
 
-        if(print_expression) cout << "--------------------------------------------------------" << endl;
-
-        hintFieldInfo.matrix_size = hintFieldVal.pos.size();
-        hintFieldInfo.pos = new uint64_t[hintFieldInfo.matrix_size];
         for(uint64_t i = 0; i < hintFieldInfo.matrix_size; ++i) {
             hintFieldInfo.pos[i] =  hintFieldVal.pos[i];
         }
-        hintFieldValues.values[i] = hintFieldInfo;
     }
     
-    return hintFieldValues;
+    return;
 }
 
 

@@ -67,11 +67,17 @@ extern "C" {
     pub fn fri_proof_free(pFriProof: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z20get_hint_ids_by_namePvPc"]
+    #[link_name = "\u{1}_Z15n_hints_by_namePvPc"]
+    pub fn n_hints_by_name(p_expression_bin: *mut ::std::os::raw::c_void, hintName: *mut ::std::os::raw::c_char)
+        -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z20get_hint_ids_by_namePvPmPc"]
     pub fn get_hint_ids_by_name(
         p_expression_bin: *mut ::std::os::raw::c_void,
+        hintIds: *mut u64,
         hintName: *mut ::std::os::raw::c_char,
-    ) -> *mut ::std::os::raw::c_void;
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z14stark_info_newPc"]
@@ -135,14 +141,33 @@ extern "C" {
     pub fn expressions_bin_free(pExpressionsBin: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14get_hint_fieldPvS_mPcS_"]
+    #[link_name = "\u{1}_Z14get_hint_fieldPvS_S_mPcS_"]
     pub fn get_hint_field(
         pSetupCtx: *mut ::std::os::raw::c_void,
         stepsParams: *mut ::std::os::raw::c_void,
+        hintFieldValues: *mut ::std::os::raw::c_void,
         hintId: u64,
         hintFieldName: *mut ::std::os::raw::c_char,
         hintOptions: *mut ::std::os::raw::c_void,
-    ) -> *mut ::std::os::raw::c_void;
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z21get_hint_field_valuesPvmPc"]
+    pub fn get_hint_field_values(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        hintId: u64,
+        hintFieldName: *mut ::std::os::raw::c_char,
+    ) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z20get_hint_field_sizesPvS_mPcS_"]
+    pub fn get_hint_field_sizes(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        hintFieldValues: *mut ::std::os::raw::c_void,
+        hintId: u64,
+        hintFieldName: *mut ::std::os::raw::c_char,
+        hintOptions: *mut ::std::os::raw::c_void,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z15mul_hint_fieldsPvS_mPcS0_S0_S_S_"]
@@ -167,7 +192,7 @@ extern "C" {
         hintFieldNameAirgroupVal: *mut ::std::os::raw::c_char,
         hintFieldName: *mut ::std::os::raw::c_char,
         add: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z19acc_mul_hint_fieldsPvS_mPcS0_S0_S0_S_S_b"]
@@ -182,7 +207,7 @@ extern "C" {
         hintOptions1: *mut ::std::os::raw::c_void,
         hintOptions2: *mut ::std::os::raw::c_void,
         add: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z20update_airgroupvaluePvS_mPcS0_S0_S_S_b"]
@@ -196,7 +221,7 @@ extern "C" {
         hintOptions1: *mut ::std::os::raw::c_void,
         hintOptions2: *mut ::std::os::raw::c_void,
         add: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    ) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z14set_hint_fieldPvS_S_mPc"]
@@ -204,6 +229,14 @@ extern "C" {
         pSetupCtx: *mut ::std::os::raw::c_void,
         stepsParams: *mut ::std::os::raw::c_void,
         values: *mut ::std::os::raw::c_void,
+        hintId: u64,
+        hintFieldName: *mut ::std::os::raw::c_char,
+    ) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z11get_hint_idPvmPc"]
+    pub fn get_hint_id(
+        pSetupCtx: *mut ::std::os::raw::c_void,
         hintId: u64,
         hintFieldName: *mut ::std::os::raw::c_char,
     ) -> u64;
@@ -429,10 +462,30 @@ extern "C" {
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z33get_hint_field_global_constraintsPcPvS0_S0_S0_PS0_mS_b"]
+    #[link_name = "\u{1}_Z40get_hint_field_global_constraints_valuesPvmPc"]
+    pub fn get_hint_field_global_constraints_values(
+        p_globalinfo_bin: *mut ::std::os::raw::c_void,
+        hintId: u64,
+        hintFieldName: *mut ::std::os::raw::c_char,
+    ) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z39get_hint_field_global_constraints_sizesPcPvS0_mS_b"]
+    pub fn get_hint_field_global_constraints_sizes(
+        globalInfoFile: *mut ::std::os::raw::c_char,
+        p_globalinfo_bin: *mut ::std::os::raw::c_void,
+        hintFieldValues: *mut ::std::os::raw::c_void,
+        hintId: u64,
+        hintFieldName: *mut ::std::os::raw::c_char,
+        print_expression: bool,
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z33get_hint_field_global_constraintsPcPvS0_S0_S0_S0_PS0_mS_b"]
     pub fn get_hint_field_global_constraints(
         globalInfoFile: *mut ::std::os::raw::c_char,
-        globalBin: *mut ::std::os::raw::c_void,
+        p_globalinfo_bin: *mut ::std::os::raw::c_void,
+        hintFieldValues: *mut ::std::os::raw::c_void,
         publics: *mut ::std::os::raw::c_void,
         challenges: *mut ::std::os::raw::c_void,
         proofValues: *mut ::std::os::raw::c_void,
@@ -440,7 +493,7 @@ extern "C" {
         hintId: u64,
         hintFieldName: *mut ::std::os::raw::c_char,
         print_expression: bool,
-    ) -> *mut ::std::os::raw::c_void;
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z33set_hint_field_global_constraintsPcPvS0_S0_mS_"]

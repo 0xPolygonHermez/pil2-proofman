@@ -20,7 +20,8 @@
 
     // SetupCtx
     // ========================================================================================
-    void *get_hint_ids_by_name(void *p_expression_bin, char* hintName);
+    uint64_t n_hints_by_name(void *p_expression_bin, char* hintName);
+    void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintName);
 
     // Stark Info
     // ========================================================================================
@@ -48,12 +49,15 @@
 
     // Hints
     // ========================================================================================
-    void *get_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char* hintFieldName, void* hintOptions);
+    void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions);
+    uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char* hintFieldName);
+    void get_hint_field_sizes(void *pSetupCtx, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions);
     uint64_t mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2); 
-    void *acc_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add);
-    void *acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2,  void* hintOptions1, void *hintOptions2, bool add);
-    void *update_airgroupvalue(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add);
+    void acc_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add);
+    void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2,  void* hintOptions1, void *hintOptions2, bool add);
+    uint64_t update_airgroupvalue(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add);
     uint64_t set_hint_field(void *pSetupCtx, void* stepsParams, void *values, uint64_t hintId, char* hintFieldName);
+    uint64_t get_hint_id(void *pSetupCtx, uint64_t hintId, char * hintFieldName);
 
     // Starks
     // ========================================================================================
@@ -111,7 +115,9 @@
     // Global constraints
     // =================================================================================
     void *verify_global_constraints(char* globalInfoFile, void *globalBin, void *publics, void* challenges, void *proofValues, void **airgroupValues);
-    void *get_hint_field_global_constraints(char* globalInfoFile, void *globalBin, void *publics, void* challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression);
+    uint64_t get_hint_field_global_constraints_values(void* p_globalinfo_bin, uint64_t hintId, char* hintFieldName);
+    void get_hint_field_global_constraints_sizes(char* globalInfoFile, void* p_globalinfo_bin, void* hintFieldValues, uint64_t hintId, char *hintFieldName, bool print_expression);
+    void get_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void* hintFieldValues, void *publics, void *challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression);
     uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *proofValues, void *values, uint64_t hintId, char *hintFieldName);
     
     // Debug functions

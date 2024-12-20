@@ -221,4 +221,24 @@ impl StarkInfo {
     pub fn from_json(stark_info_json: &str) -> Self {
         serde_json::from_str(stark_info_json).expect("Failed to parse JSON file")
     }
+
+    pub fn get_buff_helper_size(&self) -> usize {
+        let mut max_cols = 0;
+        for stage in 1..=self.n_stages + 1 {
+            let n_cols = *self.map_sections_n.get(&format!("cm{}", stage)).unwrap() as usize;
+            if n_cols > max_cols {
+                max_cols = n_cols;
+            }
+        }
+
+        let n_extended = (1 << self.stark_struct.n_bits_ext) as usize;
+        let buff_size_stages = max_cols * n_extended;
+
+        let buff_size_xdivxsub = self.opening_points.len() * 3 * n_extended;
+
+        match buff_size_stages > buff_size_xdivxsub {
+            true => buff_size_stages,
+            false => buff_size_xdivxsub,
+        }
+    }
 }

@@ -4,12 +4,6 @@
 
 use ::std::os::raw::c_void;
 
-#[repr(C)]
-pub struct VecU64Result {
-    pub n_values: u64,
-    pub values: *mut u64,
-}
-
 #[cfg(feature = "no_lib_link")]
 use log::trace;
 
@@ -236,28 +230,64 @@ pub fn expressions_bin_free_c(p_expressions_bin: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_hint_ids_by_name_c(p_expressions_bin: *mut c_void, hint_name: &str) -> *mut c_void {
+pub fn n_hint_ids_by_name_c(p_expressions_bin: *mut c_void, hint_name: &str) -> u64 {
     let name = CString::new(hint_name).unwrap();
-    unsafe { get_hint_ids_by_name(p_expressions_bin, name.as_ptr() as *mut std::os::raw::c_char) }
+    unsafe { n_hints_by_name(p_expressions_bin, name.as_ptr() as *mut std::os::raw::c_char) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_hint_ids_by_name_c(p_expressions_bin: *mut c_void, hint_ids: *mut u64, hint_name: &str) {
+    let name = CString::new(hint_name).unwrap();
+    unsafe {
+        get_hint_ids_by_name(p_expressions_bin, hint_ids, name.as_ptr() as *mut std::os::raw::c_char);
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn get_hint_field_c(
     p_setup_ctx: *mut c_void,
     p_steps_params: *mut u8,
+    hint_field_values: *mut c_void,
     hint_id: u64,
     hint_field_name: &str,
     hint_options: *mut u8,
-) -> *mut c_void {
+) {
     let field_name = CString::new(hint_field_name).unwrap();
     unsafe {
         get_hint_field(
             p_setup_ctx,
             p_steps_params as *mut std::os::raw::c_void,
+            hint_field_values,
             hint_id,
             field_name.as_ptr() as *mut std::os::raw::c_char,
             hint_options as *mut std::os::raw::c_void,
         )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_hint_field_values_c(p_setup_ctx: *mut c_void, hint_id: u64, hint_field_name: &str) -> u64 {
+    let field_name = CString::new(hint_field_name).unwrap();
+    unsafe { get_hint_field_values(p_setup_ctx, hint_id, field_name.as_ptr() as *mut std::os::raw::c_char) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_hint_field_sizes_c(
+    p_setup_ctx: *mut c_void,
+    hint_field_values: *mut c_void,
+    hint_id: u64,
+    hint_field_name: &str,
+    hint_options: *mut u8,
+) {
+    let field_name = CString::new(hint_field_name).unwrap();
+    unsafe {
+        get_hint_field_sizes(
+            p_setup_ctx,
+            hint_field_values,
+            hint_id,
+            field_name.as_ptr() as *mut std::os::raw::c_char,
+            hint_options as *mut std::os::raw::c_void,
+        );
     }
 }
 
@@ -300,7 +330,7 @@ pub fn acc_hint_field_c(
     hint_field_airgroupvalue: &str,
     hint_field_name: &str,
     add: bool,
-) -> *mut c_void {
+) {
     let field_dest = CString::new(hint_field_dest).unwrap();
     let field_airgroupvalue = CString::new(hint_field_airgroupvalue).unwrap();
     let field_name = CString::new(hint_field_name).unwrap();
@@ -314,7 +344,7 @@ pub fn acc_hint_field_c(
             field_airgroupvalue.as_ptr() as *mut std::os::raw::c_char,
             field_name.as_ptr() as *mut std::os::raw::c_char,
             add,
-        )
+        );
     }
 }
 
@@ -331,7 +361,7 @@ pub fn acc_mul_hint_fields_c(
     hint_options1: *mut u8,
     hint_options2: *mut u8,
     add: bool,
-) -> *mut c_void {
+) {
     let field_dest = CString::new(hint_field_dest).unwrap();
     let field_airgroupvalue = CString::new(hint_field_airgroupvalue).unwrap();
     let field_name1 = CString::new(hint_field_name1).unwrap();
@@ -349,7 +379,7 @@ pub fn acc_mul_hint_fields_c(
             hint_options1 as *mut std::os::raw::c_void,
             hint_options2 as *mut std::os::raw::c_void,
             add,
-        )
+        );
     }
 }
 
@@ -365,7 +395,7 @@ pub fn update_airgroupvalue_c(
     hint_options1: *mut u8,
     hint_options2: *mut u8,
     add: bool,
-) -> *mut c_void {
+) -> u64 {
     let field_airgroupvalue = CString::new(hint_field_airgroupvalue).unwrap();
     let field_name1 = CString::new(hint_field_name1).unwrap();
     let field_name2: CString = CString::new(hint_field_name2).unwrap();
@@ -402,6 +432,14 @@ pub fn set_hint_field_c(
             hint_id,
             field_name.as_ptr() as *mut std::os::raw::c_char,
         )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_hint_field_id_c(p_setup_ctx: *mut c_void, hint_id: u64, hint_field_name: &str) -> u64 {
+    unsafe {
+        let field_name = CString::new(hint_field_name).unwrap();
+        get_hint_id(p_setup_ctx, hint_id, field_name.as_ptr() as *mut std::os::raw::c_char)
     }
 }
 
@@ -714,6 +752,7 @@ pub fn verify_global_constraints_c(
 pub fn get_hint_field_global_constraints_c(
     global_info_file: &str,
     p_global_constraints_bin: *mut c_void,
+    hint_field_values: *mut c_void,
     publics: *mut u8,
     challenges: *mut u8,
     proof_values: *mut u8,
@@ -721,7 +760,7 @@ pub fn get_hint_field_global_constraints_c(
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
-) -> *mut c_void {
+) {
     let field_name = CString::new(hint_field_name).unwrap();
 
     let global_info_file_name = CString::new(global_info_file).unwrap();
@@ -731,6 +770,7 @@ pub fn get_hint_field_global_constraints_c(
         get_hint_field_global_constraints(
             global_info_file_ptr,
             p_global_constraints_bin,
+            hint_field_values,
             publics as *mut std::os::raw::c_void,
             challenges as *mut std::os::raw::c_void,
             proof_values as *mut std::os::raw::c_void,
@@ -738,7 +778,49 @@ pub fn get_hint_field_global_constraints_c(
             hint_id,
             field_name.as_ptr() as *mut std::os::raw::c_char,
             print_expression,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_hint_field_global_constraints_values_c(
+    p_global_constraints_bin: *mut c_void,
+    hint_id: u64,
+    hint_field_name: &str,
+) -> u64 {
+    let field_name = CString::new(hint_field_name).unwrap();
+    unsafe {
+        get_hint_field_global_constraints_values(
+            p_global_constraints_bin,
+            hint_id,
+            field_name.as_ptr() as *mut std::os::raw::c_char,
         )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_hint_field_global_constraints_sizes_c(
+    global_info_file: &str,
+    p_global_constraints_bin: *mut c_void,
+    hint_field_values: *mut c_void,
+    hint_id: u64,
+    hint_field_name: &str,
+    print_expression: bool,
+) {
+    let field_name = CString::new(hint_field_name).unwrap();
+
+    let global_info_file_name = CString::new(global_info_file).unwrap();
+    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        get_hint_field_global_constraints_sizes(
+            global_info_file_ptr,
+            p_global_constraints_bin,
+            hint_field_values,
+            hint_id,
+            field_name.as_ptr() as *mut std::os::raw::c_char,
+            print_expression,
+        );
     }
 }
 
@@ -1106,21 +1188,43 @@ pub fn expressions_bin_new_c(_filename: &str, _global: bool) -> *mut c_void {
 pub fn expressions_bin_free_c(_p_expressions_bin: *mut c_void) {}
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_hint_ids_by_name_c(_p_expressions_bin: *mut c_void, _hint_name: &str) -> *mut c_void {
+pub fn n_hint_ids_by_name_c(_p_expressions_bin: *mut c_void, _hint_name: &str) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "n_hint_ids_by_name: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_hint_ids_by_name_c(_p_expressions_bin: *mut c_void, _hint_ids: *mut u64, _hint_name: &str) {
     trace!("{}: ··· {}", "ffi     ", "get_hint_ids_by_name: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_hint_field_c(
     _p_setup_ctx: *mut c_void,
     _p_steps_params: *mut u8,
+    _hint_field_values: *mut c_void,
     _hint_id: u64,
     _hint_field_name: &str,
     _hint_options: *mut u8,
-) -> *mut c_void {
+) {
     trace!("{}: ··· {}", "ffi     ", "get_hint_field: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_hint_field_sizes_c(
+    _p_setup_ctx: *mut c_void,
+    _hint_field_values: *mut c_void,
+    _hint_id: u64,
+    _hint_field_name: &str,
+    _hint_options: *mut u8,
+) {
+    trace!("{}: ··· {}", "ffi     ", "get_hint_field_sizes: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_hint_field_values_c(_p_setup_ctx: *mut c_void, _hint_id: u64, _hint_field_name: &str) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_hint_field: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1148,9 +1252,8 @@ pub fn acc_hint_field_c(
     _hint_field_airgroupvalue: &str,
     _hint_field_name: &str,
     _add: bool,
-) -> *mut c_void {
+) {
     trace!("{}: ··· {}", "ffi     ", "acc_hint_fields: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1166,9 +1269,8 @@ pub fn acc_mul_hint_fields_c(
     _hint_options1: *mut u8,
     _hint_options2: *mut u8,
     _add: bool,
-) -> *mut c_void {
+) {
     trace!("{}: ··· {}", "ffi     ", "acc_mul_hint_fields: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1183,9 +1285,9 @@ pub fn update_airgroupvalue_c(
     _hint_options1: *mut u8,
     _hint_options2: *mut u8,
     _add: bool,
-) -> *mut c_void {
+) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "update_airgroupvalue: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
+    10000
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1197,6 +1299,12 @@ pub fn set_hint_field_c(
     _hint_field_name: &str,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_hint_field: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_hint_field_id_c(_p_setup_ctx: *mut c_void, _hint_id: u64, _hint_field_name: &str) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_hint_field_id: This is a mock call because there is no linked library");
     0
 }
 
@@ -1437,6 +1545,7 @@ pub fn verify_global_constraints_c(
 pub fn get_hint_field_global_constraints_c(
     _global_info_file: &str,
     _p_global_constraints_bin: *mut c_void,
+    _hint_field_values: *mut c_void,
     _publics: *mut u8,
     _challenges: *mut u8,
     _proof_values: *mut u8,
@@ -1444,13 +1553,42 @@ pub fn get_hint_field_global_constraints_c(
     _hint_id: u64,
     _hint_field_name: &str,
     _print_expression: bool,
-) -> *mut c_void {
+) {
     trace!(
         "{}: ··· {}",
         "ffi     ",
         "get_hint_field_global_constraints: This is a mock call because there is no linked library"
     );
-    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_hint_field_global_constraints_values_c(
+    _p_global_constraints_bin: *mut c_void,
+    _hint_id: u64,
+    _hint_field_name: &str,
+) -> u64 {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_hint_field_global_constraints_values: This is a mock call because there is no linked library"
+    );
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_hint_field_global_constraints_sizes_c(
+    _global_info_file: &str,
+    _p_global_constraints_bin: *mut c_void,
+    _hint_field_values: *mut c_void,
+    _hint_id: u64,
+    _hint_field_name: &str,
+    _print_expression: bool,
+) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_hint_field_global_constraints_sizes: This is a mock call because there is no linked library"
+    );
 }
 
 #[cfg(feature = "no_lib_link")]
