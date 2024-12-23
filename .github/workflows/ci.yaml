@@ -148,6 +148,9 @@ jobs:
           repository: iden3/circom
           path: circom-repo
 
+      - name: Install MPI
+        run: sudo apt-get update && sudo apt-get install -y mpich
+
       - name: Build and install Circom
         working-directory: circom-repo
         run: |

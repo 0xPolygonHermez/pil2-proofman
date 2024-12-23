@@ -2,6 +2,7 @@ use std::process::exit;
 
 use clap::{Parser, Subcommand};
 mod commands;
+use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
 // use commands::new::NewCmd;
 use commands::prove::ProveCmd;
@@ -26,6 +27,7 @@ pub enum Commands {
     Prove(ProveCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
+    GetConstraints(GetConstraintsCmd),
 }
 
 fn main() {
@@ -48,6 +50,7 @@ fn main() {
         Commands::Prove(args) => args.run(),
         Commands::PilHelpers(args) => args.run(),
         Commands::VerifyConstraints(args) => args.run(),
+        Commands::GetConstraints(args) => args.run(),
     };
 
     if let Err(e) = result {
