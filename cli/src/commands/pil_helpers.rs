@@ -275,8 +275,11 @@ impl PilHelpersCmd {
                             if symbol.stage.unwrap() == 1 {
                                 air.columns.push(ColumnCtx { name: name.to_owned(), r#type });
                             } else {
-                                air.stages_columns[symbol.stage.unwrap() as usize - 2].stage_id = symbol.stage.unwrap() as usize;
-                                air.stages_columns[symbol.stage.unwrap() as usize - 2].columns.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
+                                air.stages_columns[symbol.stage.unwrap() as usize - 2].stage_id =
+                                    symbol.stage.unwrap() as usize;
+                                air.stages_columns[symbol.stage.unwrap() as usize - 2]
+                                    .columns
+                                    .push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
                             }
                         } else if symbol.r#type == SymbolType::AirValue as i32 {
                             if air.air_values.is_empty() {

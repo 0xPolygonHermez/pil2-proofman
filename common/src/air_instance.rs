@@ -201,8 +201,6 @@ impl<F: Field> AirInstance<F> {
             panic!("Stage must be 2 or higher");
         }
 
-        //TODO!
-
         Vec::new()
     }
 
