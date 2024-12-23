@@ -545,26 +545,17 @@ void verify_constraints(void *pSetupCtx, void* stepsParams, void* constraintsInf
 // =================================================================================
 uint64_t get_n_global_constraints(void* p_globalinfo_bin)
 {
-    auto globalConstraintsBin = *(ExpressionsBin*)p_globalinfo_bin;
-    return globalConstraintsBin.constraintsInfoDebug.size();
+    return getNumberGlobalConstraints(*(ExpressionsBin*)p_globalinfo_bin);
 }
 
 void get_global_constraints_lines_sizes(void* p_globalinfo_bin, uint64_t *constraintsLinesSizes)
 {
-    auto globalConstraintsBin = *(ExpressionsBin*)p_globalinfo_bin;
-    cout << "HOLA " << endl;
-    for(uint64_t i = 0; i < globalConstraintsBin.constraintsInfoDebug.size(); ++i) {
-        cout << globalConstraintsBin.constraintsInfoDebug[i].line << endl;
-        constraintsLinesSizes[i] = globalConstraintsBin.constraintsInfoDebug[i].line.size();
-    }
+    return getGlobalConstraintsLinesSizes(*(ExpressionsBin*)p_globalinfo_bin, constraintsLinesSizes);
 }
 
 void get_global_constraints_lines(void* p_globalinfo_bin, uint8_t **constraintsLines)
 {
-    auto globalConstraintsBin = *(ExpressionsBin*)p_globalinfo_bin;
-    for(uint64_t i = 0; i < globalConstraintsBin.constraintsInfoDebug.size(); ++i) {
-        std::memcpy(constraintsLines[i], globalConstraintsBin.constraintsInfoDebug[i].line.data(), globalConstraintsBin.constraintsInfoDebug[i].line.size());
-    }
+    return getGlobalConstraintsLines(*(ExpressionsBin*)p_globalinfo_bin, constraintsLines);
 }
 
 void verify_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo) {

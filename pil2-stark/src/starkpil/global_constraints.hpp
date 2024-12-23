@@ -299,7 +299,26 @@ void verifyGlobalConstraint(json& globalInfo, uint64_t constraintId, Goldilocks:
     }
 }
 
-  
+uint64_t getNumberGlobalConstraints(ExpressionsBin &globalConstraintsBin) {
+    std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
+    return globalConstraints.size();
+}
+
+void getGlobalConstraintsLinesSizes(ExpressionsBin &globalConstraintsBin, uint64_t* constraintsLinesSizes) {
+    std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
+    for(uint64_t i = 0; i <globalConstraints.size(); ++i) {
+        constraintsLinesSizes[i] = globalConstraintsBin.constraintsInfoDebug[i].line.size();
+    }
+}
+
+void getGlobalConstraintsLines(ExpressionsBin &globalConstraintsBin, uint8_t** constraintsLines) {
+    std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
+     for(uint64_t i = 0; i < globalConstraintsBin.constraintsInfoDebug.size(); ++i) {
+        std::memcpy(constraintsLines[i], globalConstraints[i].line.data(), globalConstraints[i].line.size());
+    }
+}
+   
+
 void verifyGlobalConstraints(json& globalInfo, ExpressionsBin &globalConstraintsBin, Goldilocks::Element* publicInputs, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, GlobalConstraintInfo *globalConstraintsInfo)
 {
     std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
