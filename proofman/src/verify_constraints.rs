@@ -66,12 +66,12 @@ pub fn verify_constraints_proof<F: Field>(
 
         let mut valid_constraints_prover = true;
         log::info!(
-            "{}:     ► Instance #{}: Air [{}:{}] {}",
+            "{}:     ► Instance #{} of {} (Airgroup {} - Air {})",
             MY_NAME,
-            air_instance_index,
+            air_instance.air_instance_id.unwrap(),
+            air_name,
             air_instance.airgroup_id,
             air_instance.air_id,
-            air_name,
         );
         for constraint in &constraints[air_instance_index] {
             let valid = if constraint.n_rows > 0 {
@@ -136,17 +136,25 @@ pub fn verify_constraints_proof<F: Field>(
             log::info!(
                 "{}: ··· {}",
                 MY_NAME,
-                format!("\u{2717} Not all constraints for Instance #{} were verified", air_instance_index,)
-                    .bright_red()
-                    .bold()
+                format!(
+                    "\u{2717} Not all constraints for Instance #{} of {} were verified",
+                    air_instance.air_instance_id.unwrap(),
+                    air_name
+                )
+                .bright_red()
+                .bold()
             );
         } else {
             log::info!(
                 "{}:     {}",
                 MY_NAME,
-                format!("\u{2713} All constraints for Instance #{} were verified", air_instance_index,)
-                    .bright_green()
-                    .bold()
+                format!(
+                    "\u{2713} All constraints for Instance #{} of {} were verified",
+                    air_instance.air_instance_id.unwrap(),
+                    air_name
+                )
+                .bright_green()
+                .bold()
             );
         }
 
