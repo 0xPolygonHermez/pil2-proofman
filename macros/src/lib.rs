@@ -111,6 +111,21 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 }
             }
 
+            pub fn from_vec(
+                mut external_buffer: Vec<#generics>,
+            ) -> Self {
+                let num_rows = Self::NUM_ROWS;
+                let buffer: Vec<#row_struct_name::<#generics>> = unsafe { std::mem::transmute(external_buffer) };
+                #trace_struct_name {
+                    buffer,
+                    num_rows,
+                    row_size: #row_struct_name::<#generics>::ROW_SIZE,
+                    airgroup_id: Self::AIRGROUP_ID,
+                    air_id: Self::AIR_ID,
+                    commit_id: #commit_id,
+                }
+            }
+
             pub fn num_rows(&self) -> usize {
                 self.num_rows
             }
@@ -370,6 +385,13 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
 
             fn deref(&self) -> &Self::Target {
                 &self.slice_values
+            }
+        }
+
+        impl<'a, #generics> std::fmt::Debug for #values_struct_name<'a, #generics>
+        where #generics: std::fmt::Debug {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+                std::fmt::Debug::fmt(&self.slice_values, f)
             }
         }
 

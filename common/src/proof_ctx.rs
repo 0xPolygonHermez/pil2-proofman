@@ -146,4 +146,45 @@ impl<F: Field> ProofCtx<F> {
         let guard = &self.buff_helper.values.read().unwrap();
         guard.as_ptr() as *mut u8
     }
+
+    pub fn get_air_instance_trace(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
+        let index = self.air_instance_repo.find_instance(airgroup_id, air_id, air_instance_id);
+        if let Some(index) = index {
+            return self.air_instance_repo.air_instances.read().unwrap()[index].get_trace();
+        } else {
+            panic!(
+                "Air Instance with id {} for airgroup {} and air {} not found",
+                air_instance_id, airgroup_id, air_id
+            );
+        }
+    }
+
+    pub fn get_air_instance_air_values(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
+        let index = self.air_instance_repo.find_instance(airgroup_id, air_id, air_instance_id);
+        if let Some(index) = index {
+            return self.air_instance_repo.air_instances.read().unwrap()[index].get_air_values();
+        } else {
+            panic!(
+                "Air Instance with id {} for airgroup {} and air {} not found",
+                air_instance_id, airgroup_id, air_id
+            );
+        }
+    }
+
+    pub fn get_air_instance_airgroup_values(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        air_instance_id: usize,
+    ) -> Vec<F> {
+        let index = self.air_instance_repo.find_instance(airgroup_id, air_id, air_instance_id);
+        if let Some(index) = index {
+            return self.air_instance_repo.air_instances.read().unwrap()[index].get_airgroup_values();
+        } else {
+            panic!(
+                "Air Instance with id {} for airgroup {} and air {} not found",
+                air_instance_id, airgroup_id, air_id
+            );
+        }
+    }
 }

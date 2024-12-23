@@ -11,6 +11,7 @@ struct ConstraintInfo {
     uint64_t stage;
     bool imPol;
     uint64_t nrows;
+    bool skip;
     ConstraintRowInfo rows[10];
 };
 
@@ -89,11 +90,16 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
     // TODO: REUSE MEMORY
     Goldilocks::Element* pBuffer = new Goldilocks::Element[setupCtx.expressionsBin.constraintsInfoDebug.size() * N * FIELD_EXTENSION];
 
+    std::vector<uint64_t> destToConstraintIndex;
+
     std::vector<Dest> dests;
     for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
-        Dest constraintDest(&pBuffer[i*FIELD_EXTENSION*N]);
-        constraintDest.addParams(setupCtx.expressionsBin.constraintsInfoDebug[i]);
-        dests.push_back(constraintDest);
+        if(!constraintsInfo[i].skip) {
+            Dest constraintDest(&pBuffer[i*FIELD_EXTENSION*N]);
+            constraintDest.addParams(setupCtx.expressionsBin.constraintsInfoDebug[i]);
+            dests.push_back(constraintDest);
+            destToConstraintIndex.push_back(i);
+        }
     }
 
 #ifdef __AVX512__
@@ -107,8 +113,9 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsConstraints, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
 
 #pragma omp parallel for
-    for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
-        verifyConstraint(setupCtx, dests[i].dest, i, constraintsInfo[i]);
+    for (uint64_t i = 0; i < dests.size(); i++) {
+        uint64_t constraintIndex = destToConstraintIndex[i];
+        verifyConstraint(setupCtx, dests[i].dest, constraintIndex, constraintsInfo[constraintIndex]);
     }
     
     delete[] pBuffer;

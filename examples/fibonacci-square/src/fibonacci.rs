@@ -7,7 +7,7 @@ use p3_field::PrimeField64;
 
 use crate::{
     FibonacciSquareRomTrace, BuildPublicValues, BuildProofValues, FibonacciSquareAirValues, FibonacciSquareTrace,
-    Module,
+    FibonacciSquareAirGroupValues, Module,
 };
 
 pub struct FibonacciSquare<F: PrimeField64> {
@@ -68,5 +68,20 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
             FromTrace::new(&mut trace).with_custom_traces(vec![&mut trace_rom]).with_air_values(&mut air_values),
         );
         add_air_instance::<F>(air_instance, pctx.clone());
+    }
+
+    fn debug(&self, pctx: Arc<ProofCtx<F>>) {
+        let trace = FibonacciSquareTrace::from_vec(pctx.get_air_instance_trace(0, 0, 0));
+        let air_values = FibonacciSquareAirValues::from_vec(pctx.get_air_instance_air_values(0, 0, 0));
+        let airgroup_values = FibonacciSquareAirGroupValues::from_vec(pctx.get_air_instance_airgroup_values(0, 0, 0));
+
+        let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
+        let proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());
+
+        log::info!("{}    First row 1: {:?}", Self::MY_NAME, trace[1]);
+        log::info!("{}    Air values: {:?}", Self::MY_NAME, air_values);
+        log::info!("{}    Airgroup values: {:?}", Self::MY_NAME, airgroup_values);
+        log::info!("{}    Publics: {:?}", Self::MY_NAME, publics);
+        log::info!("{}    Proof values: {:?}", Self::MY_NAME, proof_values);
     }
 }

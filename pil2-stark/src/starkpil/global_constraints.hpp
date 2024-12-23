@@ -9,6 +9,7 @@ struct GlobalConstraintInfo {
     uint64_t id;
     uint64_t dim;
     bool valid;
+    bool skip;
     uint64_t value[3];
 };
 
@@ -324,7 +325,9 @@ void verifyGlobalConstraints(json& globalInfo, ExpressionsBin &globalConstraints
     std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
 
     for(uint64_t i = 0; i < globalConstraints.size(); ++i) {
-        verifyGlobalConstraint(globalInfo, i, publicInputs, challenges, proofValues, airgroupValues, globalConstraintsBin.expressionsBinArgsConstraints, globalConstraints[i], globalConstraintsInfo[i]);
+        if(!globalConstraintsInfo[i].skip) {
+            verifyGlobalConstraint(globalInfo, i, publicInputs, challenges, proofValues, airgroupValues, globalConstraintsBin.expressionsBinArgsConstraints, globalConstraints[i], globalConstraintsInfo[i]);
+        }
     }
 }
 

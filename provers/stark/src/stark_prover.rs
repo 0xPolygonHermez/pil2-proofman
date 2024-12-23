@@ -109,6 +109,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         if n_airgroup_values > 0 && air_instance.airgroup_values.is_empty() {
             air_instance.init_airgroup_values(n_airgroup_values * Self::FIELD_EXTENSION);
         }
+
+        air_instance.set_prover_initialized();
     }
 
     fn free(&mut self) {

@@ -46,12 +46,24 @@ impl<F: Field> AirInstancesRepository<F> {
         air_instances.push(air_instance);
     }
 
+    pub fn get_air_instances(&self) -> Vec<usize> {
+        let air_instances = self.air_instances.read().unwrap();
+
+        let mut indices = Vec::new();
+        for (index, air_instance) in air_instances.iter().enumerate() {
+            if air_instance.prover_initialized {
+                indices.push(index);
+            }
+        }
+        indices
+    }
+
     pub fn find_airgroup_instances(&self, airgroup_id: usize) -> Vec<usize> {
         let air_instances = self.air_instances.read().unwrap();
 
         let mut indices = Vec::new();
         for (index, air_instance) in air_instances.iter().enumerate() {
-            if air_instance.airgroup_id == airgroup_id {
+            if air_instance.airgroup_id == airgroup_id && air_instance.prover_initialized {
                 indices.push(index);
             }
         }
@@ -63,12 +75,31 @@ impl<F: Field> AirInstancesRepository<F> {
 
         let mut indices = Vec::new();
         for (index, air_instance) in air_instances.iter().enumerate() {
-            if air_instance.airgroup_id == airgroup_id && air_instance.air_id == air_id {
+            if air_instance.airgroup_id == airgroup_id
+                && air_instance.air_id == air_id
+                && air_instance.prover_initialized
+            {
                 indices.push(index);
             }
         }
 
         indices
+    }
+
+    pub fn find_instance(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
+        let air_instances = self.air_instances.read().unwrap();
+
+        for (index, air_instance) in air_instances.iter().enumerate() {
+            if air_instance.airgroup_id == airgroup_id
+                && air_instance.air_id == air_id
+                && air_instance.air_instance_id.unwrap() == air_instance_id
+                && air_instance.prover_initialized
+            {
+                return Some(index);
+            }
+        }
+
+        None
     }
 
     // pub fn calculate_my_groups(&self) {

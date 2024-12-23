@@ -26,7 +26,7 @@ pub struct PilHelpersCmd {
     pub verbose: u8, // Using u8 to hold the number of `-v`
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct ProofCtx {
     project_name: String,
     num_stages: u32,
@@ -38,7 +38,7 @@ struct ProofCtx {
     publics: Vec<ValuesCtx>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct AirGroupsCtx {
     airgroup_id: usize,
     name: String,
@@ -46,33 +46,40 @@ struct AirGroupsCtx {
     airs: Vec<AirCtx>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct AirCtx {
     id: usize,
     name: String,
     num_rows: u32,
     columns: Vec<ColumnCtx>,
+    stages_columns: Vec<StageColumnCtx>,
     custom_columns: Vec<CustomCommitsCtx>,
     air_values: Vec<ValuesCtx>,
     airgroup_values: Vec<ValuesCtx>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct ValuesCtx {
     values: Vec<ColumnCtx>,
     values_u64: Vec<ColumnCtx>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct CustomCommitsCtx {
     name: String,
     commit_id: usize,
     custom_columns: Vec<ColumnCtx>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct ColumnCtx {
     name: String,
     r#type: String,
+}
+
+#[derive(Default, Clone, Debug, Serialize)]
+struct StageColumnCtx {
+    stage_id: usize,
+    columns: Vec<ColumnCtx>,
 }
 
 impl PilHelpersCmd {
@@ -128,6 +135,7 @@ impl PilHelpersCmd {
                         name: air.name.as_ref().unwrap().clone(),
                         num_rows: air.num_rows.unwrap(),
                         columns: Vec::new(),
+                        stages_columns: vec![StageColumnCtx::default(); pilout.num_challenges.len() - 1],
                         custom_columns: Vec::new(),
                         air_values: Vec::new(),
                         airgroup_values: Vec::new(),
@@ -236,7 +244,7 @@ impl PilHelpersCmd {
                             && ((symbol.air_id.is_some() && symbol.air_id.unwrap() == air_id as u32)
                                 || symbol.r#type == SymbolType::AirGroupValue as i32)
                             && symbol.stage.is_some()
-                            && ((symbol.r#type == SymbolType::WitnessCol as i32 && symbol.stage.unwrap() == 1)
+                            && ((symbol.r#type == SymbolType::WitnessCol as i32)
                                 || (symbol.r#type == SymbolType::AirValue as i32)
                                 || (symbol.r#type == SymbolType::AirGroupValue as i32)
                                 || (symbol.r#type == SymbolType::CustomCol as i32 && symbol.stage.unwrap() == 0))
@@ -264,7 +272,12 @@ impl PilHelpersCmd {
                                 })
                             };
                         if symbol.r#type == SymbolType::WitnessCol as i32 {
-                            air.columns.push(ColumnCtx { name: name.to_owned(), r#type });
+                            if symbol.stage.unwrap() == 1 {
+                                air.columns.push(ColumnCtx { name: name.to_owned(), r#type });
+                            } else {
+                                air.stages_columns[symbol.stage.unwrap() as usize - 2].stage_id = symbol.stage.unwrap() as usize;
+                                air.stages_columns[symbol.stage.unwrap() as usize - 2].columns.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
+                            }
                         } else if symbol.r#type == SymbolType::AirValue as i32 {
                             if air.air_values.is_empty() {
                                 air.air_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });

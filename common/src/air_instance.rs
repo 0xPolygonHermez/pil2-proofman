@@ -127,6 +127,7 @@ pub struct AirInstance<F> {
     pub airgroup_values: Vec<F>,
     pub airvalues: Vec<F>,
     pub evals: Vec<F>,
+    pub prover_initialized: bool,
 }
 
 impl<F: Field> AirInstance<F> {
@@ -153,6 +154,7 @@ impl<F: Field> AirInstance<F> {
             airgroup_values,
             airvalues,
             evals: Vec::new(),
+            prover_initialized: false,
         }
     }
 
@@ -190,6 +192,20 @@ impl<F: Field> AirInstance<F> {
         }
     }
 
+    pub fn get_trace(&self) -> Vec<F> {
+        self.trace.clone()
+    }
+
+    pub fn get_trace_stage(&self, stage: usize) -> Vec<F> {
+        if stage < 2 {
+            panic!("Stage must be 2 or higher");
+        }
+
+        //TODO!
+
+        Vec::new()
+    }
+
     pub fn get_trace_ptr(&self) -> *mut u8 {
         self.trace.as_ptr() as *mut u8
     }
@@ -200,6 +216,14 @@ impl<F: Field> AirInstance<F> {
 
     pub fn get_airgroup_values_ptr(&self) -> *mut u8 {
         self.airgroup_values.as_ptr() as *mut u8
+    }
+
+    pub fn get_air_values(&self) -> Vec<F> {
+        self.airvalues.clone()
+    }
+
+    pub fn get_airgroup_values(&self) -> Vec<F> {
+        self.airgroup_values.clone()
     }
 
     pub fn get_airvalues_ptr(&self) -> *mut u8 {
@@ -256,6 +280,10 @@ impl<F: Field> AirInstance<F> {
     pub fn set_air_instance_id(&mut self, air_instance_id: usize, idx: usize) {
         self.air_instance_id = Some(air_instance_id);
         self.idx = Some(idx);
+    }
+
+    pub fn set_prover_initialized(&mut self) {
+        self.prover_initialized = true;
     }
 
     pub fn clear_trace(&mut self) {

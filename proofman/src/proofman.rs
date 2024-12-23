@@ -119,6 +119,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         wcm.end_proof();
 
         if pctx.options.verify_constraints {
+            wcm.debug();
             return verify_constraints_proof(pctx.clone(), sctx.clone(), &mut provers);
         }
 
@@ -677,7 +678,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         info!("{}: ----------------------------------------------------------", Self::MY_NAME);
         info!(
             "{}",
-            format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", Self::MY_NAME).bright_white().bold()
+            format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", Self::MY_NAME)
+                .bright_white()
+                .bold()
         );
         let mut total_memory = 0f64;
         let mut memory_helper_size = 0f64;

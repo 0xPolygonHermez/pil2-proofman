@@ -4,6 +4,8 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+use std::fmt;
+
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
@@ -46,5 +48,9 @@ trace!({ air.name }{custom_commit.name}Trace<F> \{
 {{ endfor }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for air_values in air.air_values  }}
 values!({ air.name }AirValues<F> \{
 {{ for column in air_values.values }} { column.name }: { column.type },{{ endfor }}
+});
+{{ endfor }}{{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for air_groupvalues in air.airgroup_values  }}
+values!({ air.name }AirGroupValues<F> \{
+{{ for column in air_groupvalues.values }} { column.name }: { column.type },{{ endfor }}
 });
 {{ endfor }}{{ endfor }}{{ endfor }}

@@ -4,6 +4,8 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+use std::fmt;
+
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
@@ -66,4 +68,16 @@ trace!(FibonacciSquareRomTrace<F> {
 
 values!(FibonacciSquareAirValues<F> {
  fibo1: [F; 2], fibo3: FieldExtension<F>,
+});
+
+values!(FibonacciSquareAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(ModuleAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(U8AirAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
 });

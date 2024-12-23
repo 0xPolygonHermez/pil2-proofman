@@ -59,21 +59,29 @@ pub fn verify_constraints_proof<F: Field>(
     }
 
     let mut valid_constraints = true;
-    for (air_instance_index, air_instance) in pctx.air_instance_repo.air_instances.read().unwrap().iter().enumerate() {
-        let air_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
 
-        let constraints_lines = get_constraints_lines_str(sctx.clone(), air_instance.airgroup_id, air_instance.air_id);
+    for (idx, prover) in provers.iter().enumerate() {
+        let prover_info = prover.get_prover_info();
+        let (airgroup_id, air_id, air_instance_id) =
+            (prover_info.airgroup_id, prover_info.air_id, prover_info.instance_id);
+
+        let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+
+        let constraints_lines = get_constraints_lines_str(sctx.clone(), airgroup_id, air_id);
 
         let mut valid_constraints_prover = true;
         log::info!(
             "{}:     ► Instance #{} of {} (Airgroup {} - Air {})",
             MY_NAME,
-            air_instance.air_instance_id.unwrap(),
+            air_instance_id,
             air_name,
-            air_instance.airgroup_id,
-            air_instance.air_id,
+            airgroup_id,
+            air_id,
         );
-        for constraint in &constraints[air_instance_index] {
+        for constraint in &constraints[idx] {
+            if constraint.skip {
+                continue;
+            }
             let valid = if constraint.n_rows > 0 {
                 format!("has {} invalid rows", constraint.n_rows).bright_red()
             } else {
@@ -136,25 +144,17 @@ pub fn verify_constraints_proof<F: Field>(
             log::info!(
                 "{}: ··· {}",
                 MY_NAME,
-                format!(
-                    "\u{2717} Not all constraints for Instance #{} of {} were verified",
-                    air_instance.air_instance_id.unwrap(),
-                    air_name
-                )
-                .bright_red()
-                .bold()
+                format!("\u{2717} Not all constraints for Instance #{} of {} were verified", air_instance_id, air_name)
+                    .bright_red()
+                    .bold()
             );
         } else {
             log::info!(
                 "{}:     {}",
                 MY_NAME,
-                format!(
-                    "\u{2713} All constraints for Instance #{} of {} were verified",
-                    air_instance.air_instance_id.unwrap(),
-                    air_name
-                )
-                .bright_green()
-                .bold()
+                format!("\u{2713} All constraints for Instance #{} of {} were verified", air_instance_id, air_name)
+                    .bright_green()
+                    .bold()
             );
         }
 
@@ -170,6 +170,9 @@ pub fn verify_constraints_proof<F: Field>(
 
     for idx in 0..global_constraints.len() {
         let constraint = global_constraints[idx];
+        if constraint.skip {
+            continue;
+        }
         let line_str = &global_constraints_lines[idx];
 
         let valid = if !constraint.valid { "is invalid".bright_red() } else { "is valid".bright_green() };

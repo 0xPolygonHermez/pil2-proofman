@@ -22,6 +22,7 @@ pub struct ConstraintInfo {
     pub stage: u64,
     pub im_pol: bool,
     pub n_rows: u64,
+    pub skip: bool,
     pub rows: [ConstraintRowInfo; 10usize],
 }
 
@@ -31,6 +32,7 @@ pub struct GlobalConstraintInfo {
     pub id: u64,
     pub dim: u64,
     pub valid: bool,
+    pub skip: bool,
     pub value: [u64; 3usize],
 }
 

@@ -43,6 +43,12 @@ impl<F> WitnessManager<F> {
         timer_stop_and_log_info!(EXECUTE);
     }
 
+    pub fn debug(&self) {
+        for component in self.components.read().unwrap().iter() {
+            component.debug(self.pctx.clone());
+        }
+    }
+
     pub fn end_proof(&self) {
         for component in self.components.read().unwrap().iter() {
             component.end_proof();
