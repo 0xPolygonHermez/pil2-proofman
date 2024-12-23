@@ -15,11 +15,10 @@ pub struct ConstraintRowInfo {
     pub value: [u64; 3usize],
 }
 
-
 #[derive(Default, Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ConstraintInfo {
-pub id: u64,
+    pub id: u64,
     pub stage: u64,
     pub im_pol: bool,
     pub n_rows: u64,

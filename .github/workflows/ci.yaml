@@ -224,6 +224,18 @@ jobs:
       - name: Verify proof Fibonacci Square
         run: |
           node pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey -p examples/fibonacci-square/build/proofs -t vadcop_final
+
+      - name: Clean proof dir
+        run: |
+          rm -rf examples/fibonacci-square/build/proofs
+        
+      - name: Generate proof Fibonacci Square distributed
+        run: | 
+          mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=32 target/release/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
+
+      - name: Verify proof Fibonacci Square distributed
+        run: |
+          node pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey -p examples/fibonacci-square/build/proofs -t vadcop_final
   test-std:
     name: Test STD
     runs-on: ubuntu-latest

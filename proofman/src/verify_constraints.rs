@@ -6,8 +6,7 @@ use std::cmp;
 use std::sync::Arc;
 
 use proofman_common::{
-    get_constraints_lines_str, get_global_constraints_lines_str, GlobalConstraintInfo, ProofCtx, Prover,
-    SetupCtx,
+    get_constraints_lines_str, get_global_constraints_lines_str, GlobalConstraintInfo, ProofCtx, Prover, SetupCtx,
 };
 use std::os::raw::c_void;
 

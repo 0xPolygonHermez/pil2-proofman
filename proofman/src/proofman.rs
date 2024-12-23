@@ -451,66 +451,44 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             transcript.add_elements(proof_values_stage.as_ptr() as *mut u8, proof_values_stage.len());
         }
 
-        // TODO: ACTIVATE DCTX BACK
-        // let dctx = pctx.dctx.read().unwrap();
+        let dctx = pctx.dctx.read().unwrap();
 
-        // // calculate my roots
-        // let mut roots: Vec<u64> = vec![0; 4 * provers.len()];
-        // for (i, prover) in provers.iter_mut().enumerate() {
-        //     // Important we need the roots in u64 in order to distribute them
-        //     let values = prover.get_transcript_values_u64(stage as u64, pctx.clone());
-        //     if values.is_empty() {
-        //         panic!("No transcript values found for prover {}", i);
-        //     }
-        //     roots[i * 4..(i + 1) * 4].copy_from_slice(&values)
-        // }
-        // // get all roots
-        // let all_roots = dctx.distribute_roots(roots);
+        // calculate my roots
+        let mut roots: Vec<u64> = vec![0; 4 * provers.len()];
+        for (i, prover) in provers.iter_mut().enumerate() {
+            // Important we need the roots in u64 in order to distribute them
+            let values = prover.get_transcript_values_u64(stage as u64, pctx.clone());
+            if values.is_empty() {
+                panic!("No transcript values found for prover {}", i);
+            }
+            roots[i * 4..(i + 1) * 4].copy_from_slice(&values)
+        }
+        // get all roots
+        let all_roots = dctx.distribute_roots(roots);
 
-        // // add challenges to transcript in order
-        // for group_idxs in dctx.my_groups.iter() {
-        //     if verify_constraints {
-        //         let dummy_elements = [F::zero(), F::one(), F::two(), F::neg_one()];
-        //         transcript.add_elements(dummy_elements.as_ptr() as *mut c_void, 4);
-        //     } else {
-        //         let mut values = Vec::new();
-        //         for idx in group_idxs.iter() {
-        //             let value = vec![
-        //                 F::from_wrapped_u64(all_roots[*idx]),
-        //                 F::from_wrapped_u64(all_roots[*idx + 1]),
-        //                 F::from_wrapped_u64(all_roots[*idx + 2]),
-        //                 F::from_wrapped_u64(all_roots[*idx + 3]),
-        //             ];
-        //             values.push(value);
-        //         }
-        //         if !values.is_empty() {
-        //             let value = Self::hash_b_tree(&*provers[0], values);
-        //             transcript.add_elements(value.as_ptr() as *mut c_void, value.len());
-        //         }
-        //     }
-        // }
-        // drop(dctx);
-        let airgroups = pctx.global_info.air_groups.clone();
-        for (airgroup_id, _airgroup) in airgroups.iter().enumerate() {
+        // add challenges to transcript in order
+        for group_idxs in dctx.my_groups.iter() {
             if pctx.options.verify_constraints {
                 let dummy_elements = [F::zero(), F::one(), F::two(), F::neg_one()];
                 transcript.add_elements(dummy_elements.as_ptr() as *mut u8, 4);
             } else {
-                let airgroup_instances = pctx.air_instance_repo.find_airgroup_instances(airgroup_id);
-
-                if !airgroup_instances.is_empty() {
-                    let mut values = Vec::new();
-                    for prover_idx in airgroup_instances.iter() {
-                        let value = provers[*prover_idx].get_transcript_values(stage as u64, pctx.clone());
-                        values.push(value);
-                    }
-                    if !values.is_empty() {
-                        let value = Self::hash_b_tree(&*provers[airgroup_instances[0]], values);
-                        transcript.add_elements(value.as_ptr() as *mut u8, value.len());
-                    }
+                let mut values = Vec::new();
+                for idx in group_idxs.iter() {
+                    let value = vec![
+                        F::from_wrapped_u64(all_roots[*idx]),
+                        F::from_wrapped_u64(all_roots[*idx + 1]),
+                        F::from_wrapped_u64(all_roots[*idx + 2]),
+                        F::from_wrapped_u64(all_roots[*idx + 3]),
+                    ];
+                    values.push(value);
+                }
+                if !values.is_empty() {
+                    let value = Self::hash_b_tree(&*provers[0], values);
+                    transcript.add_elements(value.as_ptr() as *mut u8, value.len());
                 }
             }
         }
+        drop(dctx);
     }
 
     fn get_challenges(
@@ -531,23 +509,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     ) {
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
 
+        let dctx = pctx.dctx.read().unwrap();
+
         // Calculate evals
         timer_start_debug!(CALCULATING_EVALS);
         Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 2, provers, pctx.clone(), transcript);
-        // TODO: ACTIVATE DCTX BACK
-        // for group_idx in dctx.my_air_groups.iter() {
-        //     provers[group_idx[0]].calculate_lev(pctx.clone());
-        //     for idx in group_idx.iter() {
-        //         provers[*idx].opening_stage(1, sctx.clone(), pctx.clone());
-        //     }
-        // }
-        for airgroup_id in 0..pctx.global_info.air_groups.len() {
-            for air_id in 0..pctx.global_info.airs[airgroup_id].len() {
-                let instances = pctx.air_instance_repo.find_air_instances(airgroup_id, air_id);
-                for instance in instances {
-                    provers[instance].calculate_lev(pctx.clone());
-                    provers[instance].opening_stage(1, sctx.clone(), pctx.clone());
-                }
+        for group_idx in dctx.my_air_groups.iter() {
+            provers[group_idx[0]].calculate_lev(pctx.clone());
+            for idx in group_idx.iter() {
+                provers[*idx].opening_stage(1, sctx.clone(), pctx.clone());
             }
         }
 
@@ -558,20 +528,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 3, provers, pctx.clone(), transcript);
         info!("{}: Calculating FRI Polynomials", Self::MY_NAME);
         timer_start_debug!(CALCULATING_FRI_POLINOMIAL);
-        // TODO: ACTIVATE DCTX BACK
-        // for group_idx in dctx.my_air_groups.iter() {
-        //     provers[group_idx[0]].calculate_xdivxsub(pctx.clone());
-        //     for idx in group_idx.iter() {
-        //         provers[*idx].opening_stage(2, sctx.clone(), pctx.clone());
-        //     }
-        // }
-        for airgroup_id in 0..pctx.global_info.air_groups.len() {
-            for air_id in 0..pctx.global_info.airs[airgroup_id].len() {
-                let instances = pctx.air_instance_repo.find_air_instances(airgroup_id, air_id);
-                for instance in instances {
-                    provers[instance].calculate_xdivxsub(pctx.clone());
-                    provers[instance].opening_stage(2, sctx.clone(), pctx.clone());
-                }
+        for group_idx in dctx.my_air_groups.iter() {
+            provers[group_idx[0]].calculate_xdivxsub(pctx.clone());
+            for idx in group_idx.iter() {
+                provers[*idx].opening_stage(2, sctx.clone(), pctx.clone());
             }
         }
         timer_stop_and_log_debug!(CALCULATING_FRI_POLINOMIAL);
