@@ -148,8 +148,6 @@ jobs:
           repository: iden3/circom
           path: circom-repo
 
-      - name: Install MPI
-        run: sudo apt-get update && sudo apt-get install -y mpich
 
       - name: Build and install Circom
         working-directory: circom-repo
@@ -184,6 +182,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
+          sudo apt-get install -y openmpi-bin libopenmpi-dev
 
       - name: Install pil2-stark
         working-directory: pil2-stark
@@ -232,9 +231,12 @@ jobs:
         run: |
           rm -rf examples/fibonacci-square/build/proofs
         
+      - name: Cargo build distributed
+        run: RUST_BACKTRACE=1 cargo build --features distributed -v
+
       - name: Generate proof Fibonacci Square distributed
         run: | 
-          mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=32 target/release/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
+          mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=32 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
 
       - name: Verify proof Fibonacci Square distributed
         run: |

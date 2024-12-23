@@ -52,9 +52,8 @@ impl GetConstraintsCmd {
         let global_constraints_lines = get_global_constraints_lines_str(sctx.clone());
 
         log::info!("{}", format!("{}:     ► Global Constraints", Self::MY_NAME,).bright_white().bold());
-        for idx in 0..global_constraints_lines.len() {
-            let line_str = &global_constraints_lines[idx];
-            log::info!("{}:         · Global Constraint #{} -> {}", Self::MY_NAME, idx, line_str);
+        for (idx, line) in global_constraints_lines.iter().enumerate() {
+            log::info!("{}:         · Global Constraint #{} -> {}", Self::MY_NAME, idx, line);
         }
 
         Ok(())
