@@ -4,13 +4,13 @@ use p3_field::{Field, PrimeField};
 
 use witness::WitnessComponent;
 use proofman_common::{TraceInfo, AirInstance, ProofCtx, SetupCtx};
-use proofman_hints::{
-    get_hint_field_gc, get_hint_field, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue,
-};
+use proofman_hints::{get_hint_field, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue};
 use proofman_util::create_buffer_fast;
 use std::sync::atomic::Ordering;
 
-const PROVE_CHUNK_SIZE: usize = 1 << 12;
+use crate::AirComponent;
+
+const PROVE_CHUNK_SIZE: usize = 1 << 5;
 const NUM_ROWS: usize = 1 << 8;
 
 pub struct U8Air<F: Field> {
@@ -24,35 +24,17 @@ pub struct U8Air<F: Field> {
     mul_column: Mutex<HintFieldValue<F>>,
 }
 
-impl<F: PrimeField> U8Air<F> {
+impl<F: PrimeField> AirComponent<F> for U8Air<F> {
     const MY_NAME: &'static str = "U8Air   ";
 
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> Arc<Self> {
-        // Scan global hints to get the airgroup_id and air_id
-        let hint_global = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
-        let airgroup_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "airgroup_id", false);
-        let air_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "air_id", false);
-        let airgroup_id = match airgroup_id {
-            HintFieldValue::Field(value) => value
-                .as_canonical_biguint()
-                .to_usize()
-                .unwrap_or_else(|| panic!("Aigroup_id cannot be converted to usize: {}", value)),
-            _ => {
-                log::error!("Aigroup_id hint must be a field element");
-                panic!();
-            }
-        };
-        let air_id = match air_id {
-            HintFieldValue::Field(value) => value
-                .as_canonical_biguint()
-                .to_usize()
-                .unwrap_or_else(|| panic!("Air_id cannot be converted to usize: {}", value)),
-            _ => {
-                log::error!("Air_id hint must be a field element");
-                panic!();
-            }
-        };
-
+    fn new(
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx>,
+        airgroup_id: Option<usize>,
+        air_id: Option<usize>,
+    ) -> Arc<Self> {
+        let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
+        let air_id = air_id.expect("Air ID must be provided");
         Arc::new(Self {
             hint: AtomicU64::new(0),
             airgroup_id,
@@ -61,7 +43,9 @@ impl<F: PrimeField> U8Air<F> {
             mul_column: Mutex::new(HintFieldValue::Field(F::zero())),
         })
     }
+}
 
+impl<F: PrimeField> U8Air<F> {
     pub fn update_inputs(&self, value: F, multiplicity: F) {
         let mut inputs = self.inputs.lock().unwrap();
         inputs.push((value, multiplicity));
