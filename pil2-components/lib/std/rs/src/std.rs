@@ -6,7 +6,7 @@ use p3_field::PrimeField;
 use proofman_common::{ProofCtx, SetupCtx};
 use witness::WitnessManager;
 
-use crate::{StdProd, StdRangeCheck, RangeCheckAir, StdSum};
+use crate::{AirComponent, StdProd, StdRangeCheck, RangeCheckAir, StdSum};
 
 pub struct Std<F: PrimeField> {
     pub pctx: Arc<ProofCtx<F>>,
@@ -24,9 +24,9 @@ impl<F: PrimeField> Std<F> {
         log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
-        let std_prod = StdProd::new(std_mode.clone());
-        let std_sum = StdSum::new(std_mode.clone());
-        let range_check = StdRangeCheck::new(std_mode.clone(), wcm.get_pctx(), wcm.get_sctx());
+        let std_prod = StdProd::new(wcm.get_pctx(), wcm.get_sctx(), None, None);
+        let std_sum = StdSum::new(wcm.get_pctx(), wcm.get_sctx(), None, None);
+        let range_check = StdRangeCheck::new(wcm.get_pctx(), wcm.get_sctx());
 
         Self::register_std(wcm.clone(), std_prod.clone(), std_sum.clone(), range_check.clone());
 
@@ -57,12 +57,12 @@ impl<F: PrimeField> Std<F> {
         wcm.register_component(range_check.clone());
     }
 
-    /// Gets the range for the range check.
+    // Gets the range for the range check.
     pub fn get_range(&self, min: BigInt, max: BigInt, predefined: Option<bool>) -> usize {
         self.range_check.get_range(min, max, predefined)
     }
 
-    /// Processes the inputs for the range check.
+    // Processes the inputs for the range check.
     pub fn range_check(&self, val: F, multiplicity: F, id: usize) {
         self.range_check.assign_values(val, multiplicity, id);
     }
