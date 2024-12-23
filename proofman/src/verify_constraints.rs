@@ -1,11 +1,15 @@
 use p3_field::Field;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::verify_global_constraints_c;
+use proofman_starks_lib_c::{get_n_global_constraints_c, verify_global_constraints_c};
 use std::cmp;
 
 use std::sync::Arc;
 
-use proofman_common::{GlobalConstraintInfo, GlobalConstraintsResults, ProofCtx, Prover, SetupCtx};
+use proofman_common::{
+    get_constraints_lines_str, get_global_constraints_lines_str, GlobalConstraintInfo, ProofCtx, Prover,
+    SetupCtx,
+};
+use std::os::raw::c_void;
 
 use colored::*;
 
@@ -24,20 +28,20 @@ pub fn verify_global_constraints_proof<F: Field>(
         .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
         .collect();
 
-    let raw_ptr = verify_global_constraints_c(
+    let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
+    let mut global_constraints_info = vec![GlobalConstraintInfo::default(); n_global_constraints as usize];
+
+    verify_global_constraints_c(
         sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
         pctx.get_publics_ptr(),
         pctx.get_challenges_ptr(),
         pctx.get_proof_values_ptr(),
         airgroup_values_ptrs.as_mut_ptr() as *mut *mut u8,
+        global_constraints_info.as_mut_ptr() as *mut c_void,
     );
 
-    unsafe {
-        let constraints_result = Box::from_raw(raw_ptr as *mut GlobalConstraintsResults);
-        std::slice::from_raw_parts(constraints_result.constraints_info, constraints_result.n_constraints as usize)
-    }
-    .to_vec()
+    global_constraints_info
 }
 
 pub fn verify_constraints_proof<F: Field>(
@@ -58,6 +62,9 @@ pub fn verify_constraints_proof<F: Field>(
     let mut valid_constraints = true;
     for (air_instance_index, air_instance) in pctx.air_instance_repo.air_instances.read().unwrap().iter().enumerate() {
         let air_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
+
+        let constraints_lines = get_constraints_lines_str(sctx.clone(), air_instance.airgroup_id, air_instance.air_id);
+
         let mut valid_constraints_prover = true;
         log::info!(
             "{}:     ► Instance #{}: Air [{}:{}] {}",
@@ -68,8 +75,6 @@ pub fn verify_constraints_proof<F: Field>(
             air_name,
         );
         for constraint in &constraints[air_instance_index] {
-            let str_slice = unsafe { std::slice::from_raw_parts(constraint.line, constraint.line_size as usize) };
-            let line_str = std::str::from_utf8(str_slice).unwrap();
             let valid = if constraint.n_rows > 0 {
                 format!("has {} invalid rows", constraint.n_rows).bright_red()
             } else {
@@ -81,7 +86,7 @@ pub fn verify_constraints_proof<F: Field>(
                     MY_NAME,
                     constraint.stage,
                     valid,
-                    line_str
+                    constraints_lines[constraint.id as usize]
                 );
             } else if constraint.n_rows == 0 {
                 log::debug!(
@@ -90,7 +95,7 @@ pub fn verify_constraints_proof<F: Field>(
                     constraint.id,
                     constraint.stage,
                     valid,
-                    line_str
+                    constraints_lines[constraint.id as usize]
                 );
             } else {
                 log::info!(
@@ -99,7 +104,7 @@ pub fn verify_constraints_proof<F: Field>(
                     constraint.id,
                     constraint.stage,
                     valid,
-                    line_str
+                    constraints_lines[constraint.id as usize]
                 );
             }
             if constraint.n_rows > 0 {
@@ -153,9 +158,12 @@ pub fn verify_constraints_proof<F: Field>(
 
     let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone());
     let mut valid_global_constraints = true;
-    for constraint in &global_constraints {
-        let str_slice = unsafe { std::slice::from_raw_parts(constraint.line, constraint.line_size as usize) };
-        let line_str = std::str::from_utf8(str_slice).unwrap();
+
+    let global_constraints_lines = get_global_constraints_lines_str(sctx.clone());
+
+    for idx in 0..global_constraints.len() {
+        let constraint = global_constraints[idx];
+        let line_str = &global_constraints_lines[idx];
 
         let valid = if !constraint.valid { "is invalid".bright_red() } else { "is valid".bright_green() };
         if constraint.valid {

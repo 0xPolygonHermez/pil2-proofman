@@ -14,6 +14,7 @@ pub mod global_info;
 pub mod stark_info;
 pub mod utils;
 pub mod custom_commits;
+pub mod constraints;
 
 pub use air_instance::*;
 pub use air_instances_repository::*;
@@ -30,3 +31,4 @@ pub use publics::*;
 pub use utils::*;
 pub use distribution_ctx::*;
 pub use custom_commits::*;
+pub use constraints::*;

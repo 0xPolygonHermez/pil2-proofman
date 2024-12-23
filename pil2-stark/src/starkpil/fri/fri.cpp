@@ -86,7 +86,7 @@ void FRI<ElementType>::merkelize(uint64_t step, FRIProof<ElementType> &proof, Go
     treeFRI->merkelize();
     treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
 
-    delete aux;    
+    delete[] aux;    
 }
 
 template <typename ElementType>

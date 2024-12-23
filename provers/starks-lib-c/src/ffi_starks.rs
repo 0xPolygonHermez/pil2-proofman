@@ -719,8 +719,48 @@ pub fn get_permutations_c(p_transcript: *mut c_void, res: *mut u64, n: u64, n_bi
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn verify_constraints_c(p_setup: *mut c_void, p_steps_params: *mut u8) -> *mut c_void {
-    unsafe { verify_constraints(p_setup, p_steps_params as *mut std::os::raw::c_void) }
+pub fn get_n_constraints_c(p_setup: *mut c_void) -> u64 {
+    unsafe { get_n_constraints(p_setup) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_constraints_lines_sizes_c(p_setup: *mut c_void, constraints_sizes: *mut u64) {
+    unsafe {
+        get_constraints_lines_sizes(p_setup, constraints_sizes);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_constraints_lines_c(p_setup: *mut c_void, constraints_lines: *mut *mut u8) {
+    unsafe {
+        get_constraints_lines(p_setup, constraints_lines);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn verify_constraints_c(p_setup: *mut c_void, p_steps_params: *mut u8, constraints_info: *mut c_void) {
+    unsafe {
+        verify_constraints(p_setup, p_steps_params as *mut std::os::raw::c_void, constraints_info);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_n_global_constraints_c(p_global_constraints_bin: *mut c_void) -> u64 {
+    unsafe { get_n_global_constraints(p_global_constraints_bin) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_global_constraints_lines_sizes_c(p_global_constraints_bin: *mut c_void, global_constraints_sizes: *mut u64) {
+    unsafe {
+        get_global_constraints_lines_sizes(p_global_constraints_bin, global_constraints_sizes);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_global_constraints_lines_c(p_global_constraints_bin: *mut c_void, global_constraints_lines: *mut *mut u8) {
+    unsafe {
+        get_global_constraints_lines(p_global_constraints_bin, global_constraints_lines);
+    }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -731,7 +771,8 @@ pub fn verify_global_constraints_c(
     challenges: *mut u8,
     proof_values: *mut u8,
     airgroupvalues: *mut *mut u8,
-) -> *mut c_void {
+    global_constraints_info: *mut c_void,
+) {
     let global_info_file_name = CString::new(global_info_file).unwrap();
     let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
 
@@ -743,7 +784,8 @@ pub fn verify_global_constraints_c(
             challenges as *mut std::os::raw::c_void,
             proof_values as *mut std::os::raw::c_void,
             airgroupvalues as *mut *mut std::os::raw::c_void,
-        )
+            global_constraints_info,
+        );
     }
 }
 
@@ -1518,9 +1560,59 @@ pub fn get_permutations_c(_p_transcript: *mut c_void, _res: *mut u64, _n: u64, _
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn verify_constraints_c(_p_setup: *mut c_void, _p_steps_params: *mut u8) -> *mut c_void {
+pub fn get_n_constraints_c(_p_setup: *mut c_void) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_n_constraints: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_constraints_lines_sizes_c(_p_setup: *mut c_void, _constraints_sizes: *mut u64) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_constraints_lines_sizes: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_constraints_lines_c(_p_setup: *mut c_void, _constraints_lines: *mut *mut u8) {
+    trace!("{}: ··· {}", "ffi     ", "get_constraints_lines: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn verify_constraints_c(_p_setup: *mut c_void, _p_steps_params: *mut u8, _constraints_info: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "verify_constraints: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_n_global_constraints_c(_p_global_constraints_bin: *mut c_void) -> u64 {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_n_global_constraints: This is a mock call because there is no linked library"
+    );
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_global_constraints_lines_sizes_c(
+    _p_global_constraints_bin: *mut c_void,
+    _global_constraints_sizes: *mut u64,
+) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_global_constraints_lines_sizes: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_global_constraints_lines_c(_p_global_constraints_bin: *mut c_void, _global_constraints_lines: *mut *mut u8) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_global_constraints_lines: This is a mock call because there is no linked library"
+    );
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1531,13 +1623,13 @@ pub fn verify_global_constraints_c(
     _challenges: *mut u8,
     _proof_values: *mut u8,
     _airgroupvalues: *mut *mut u8,
-) -> *mut c_void {
+    _global_constraints_info: *mut c_void,
+) {
     trace!(
         "{}: ··· {}",
         "ffi     ",
         "verify_global_constraints: This is a mock call because there is no linked library"
     );
-    std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]

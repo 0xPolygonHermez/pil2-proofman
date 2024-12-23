@@ -6,8 +6,7 @@ use std::any::type_name;
 use std::sync::Arc;
 
 use proofman_common::{
-    ConstraintInfo, ConstraintsResults, ProofCtx, ProofType, Prover, ProverInfo, ProverStatus, StepsParams, SetupCtx,
-    StarkInfo,
+    ConstraintInfo, ProofCtx, ProofType, Prover, ProverInfo, ProverStatus, StepsParams, SetupCtx, StarkInfo,
 };
 use log::{debug, trace};
 use transcript::FFITranscript;
@@ -150,13 +149,15 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             custom_commits_extended: [std::ptr::null_mut(); 10],
         };
 
-        let raw_ptr = verify_constraints_c((&setup.p_setup).into(), (&steps_params).into());
+        let p_setup = (&setup.p_setup).into();
 
-        unsafe {
-            let constraints_result = Box::from_raw(raw_ptr as *mut ConstraintsResults);
-            std::slice::from_raw_parts(constraints_result.constraints_info, constraints_result.n_constraints as usize)
-        }
-        .to_vec()
+        let n_constraints = get_n_constraints_c(p_setup);
+
+        let mut constraints_info = vec![ConstraintInfo::default(); n_constraints as usize];
+
+        verify_constraints_c(p_setup, (&steps_params).into(), constraints_info.as_mut_ptr() as *mut c_void);
+
+        constraints_info
     }
 
     fn calculate_stage(&mut self, stage_id: u32, setup_ctx: Arc<SetupCtx>, proof_ctx: Arc<ProofCtx<F>>) {

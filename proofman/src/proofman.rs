@@ -19,7 +19,7 @@ use crate::{
     generate_vadcop_recursive2_proof, generate_recursivef_proof, generate_fflonk_snark_proof,
 };
 
-use proofman_common::{ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop};
+use proofman_common::{format_bytes, ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop};
 
 use std::os::raw::c_void;
 
@@ -661,14 +661,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             if !air_instance_map.contains_key(&air_name.clone()) {
                 let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
                 let n_bits = setup.stark_info.stark_struct.n_bits;
-                let memory_instance =
-                    get_map_totaln_c(setup.p_setup.p_stark_info) as f64 * 8.0 / (1024.0 * 1024.0 * 1024.0);
+                let memory_instance = get_map_totaln_c(setup.p_setup.p_stark_info) as f64 * 8.0;
                 let memory_fixed = (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
                     + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext)))
                     as f64
-                    * 8.0
-                    / (1024.0 * 1024.0 * 1024.0);
-                let memory_helpers = setup.stark_info.get_buff_helper_size() as f64;
+                    * 8.0;
+                let memory_helpers = setup.stark_info.get_buff_helper_size() as f64 * 8.0;
                 let total_cols: u64 = setup
                     .stark_info
                     .map_sections_n
@@ -726,24 +724,28 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     "{}:       {}",
                     Self::MY_NAME,
                     format!(
-                        "· {}: {:.2} GB fixed cols | {:.2} GB per each of {} instance | Total {:.2} GB",
-                        air_name, memory_fixed, memory_instance, count, total_memory_instance
+                        "· {}: {} fixed cols | {} per each of {} instance | Total {}",
+                        air_name,
+                        format_bytes(*memory_fixed),
+                        format_bytes(*memory_instance),
+                        count,
+                        format_bytes(total_memory_instance)
                     )
                     .bright_white()
                     .bold()
                 );
             }
         }
-        memory_helper_size = memory_helper_size * 8.0 / (1024.0 * 1024.0 * 1024.0);
+        total_memory += memory_helper_size;
         info!(
             "{}:       {}",
             Self::MY_NAME,
-            format!("Extra helper memory: {:.2} GB", memory_helper_size).bright_white().bold()
+            format!("Extra helper memory: {}", format_bytes(memory_helper_size)).bright_white().bold()
         );
         info!(
             "{}:       {}",
             Self::MY_NAME,
-            format!("Total prover memory required: {:.2} GB", total_memory).bright_white().bold()
+            format!("Total prover memory required: {}", format_bytes(total_memory)).bright_white().bold()
         );
         info!("{}: --- PROVER MEMORY USAGE ------------------------", Self::MY_NAME);
     }

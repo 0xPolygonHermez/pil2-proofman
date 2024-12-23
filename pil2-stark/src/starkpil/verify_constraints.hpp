@@ -10,15 +10,8 @@ struct ConstraintInfo {
     uint64_t id;
     uint64_t stage;
     bool imPol;
-    uint8_t* line;
-    uint64_t line_size;
     uint64_t nrows;
     ConstraintRowInfo rows[10];
-};
-
-struct ConstraintsResults {
-    uint64_t nConstraints;
-    ConstraintInfo* constraintInfo;
 };
 
 std::tuple<bool, ConstraintRowInfo> checkConstraint(Goldilocks::Element* dest, ParserParams& parserParams, uint64_t row) {
@@ -52,14 +45,10 @@ std::tuple<bool, ConstraintRowInfo> checkConstraint(Goldilocks::Element* dest, P
 }
 
 
-ConstraintInfo verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t constraintId) {        
-    ConstraintInfo constraintInfo;
+void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t constraintId, ConstraintInfo& constraintInfo) {        
     constraintInfo.id = constraintId;
     constraintInfo.stage = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].stage;
     constraintInfo.imPol = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].imPol;
-    constraintInfo.line = new uint8_t[setupCtx.expressionsBin.constraintsInfoDebug[constraintId].line.size()];
-    constraintInfo.line_size = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].line.size();
-    std::memcpy(constraintInfo.line, setupCtx.expressionsBin.constraintsInfoDebug[constraintId].line.data(), setupCtx.expressionsBin.constraintsInfoDebug[constraintId].line.size());
     constraintInfo.nrows = 0;
 
     uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
@@ -86,16 +75,10 @@ ConstraintInfo verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, u
             constraintInfo.rows[i] = constraintInvalidRows[i];
         }
     }
-
-    return constraintInfo;
 }
 
-ConstraintsResults *verifyConstraints(SetupCtx& setupCtx, StepsParams &params) {
+void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *constraintsInfo) {
     
-    ConstraintsResults *constraintsInfo = new ConstraintsResults();
-    constraintsInfo->nConstraints = setupCtx.expressionsBin.constraintsInfoDebug.size();
-    constraintsInfo->constraintInfo = new ConstraintInfo[constraintsInfo->nConstraints];
-
     uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
 
     uint64_t nPols = 0;
@@ -125,10 +108,8 @@ ConstraintsResults *verifyConstraints(SetupCtx& setupCtx, StepsParams &params) {
 
 #pragma omp parallel for
     for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
-        auto constraintInfo = verifyConstraint(setupCtx, dests[i].dest, i);
-        constraintsInfo->constraintInfo[i] = constraintInfo;
+        verifyConstraint(setupCtx, dests[i].dest, i, constraintsInfo[i]);
     }
     
-    delete pBuffer;
-    return constraintsInfo;
+    delete[] pBuffer;
 }

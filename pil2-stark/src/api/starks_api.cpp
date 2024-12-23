@@ -514,22 +514,66 @@ void get_permutations(void *pTranscript, uint64_t *res, uint64_t n, uint64_t nBi
 
 // Constraints
 // =================================================================================
-void *verify_constraints(void *pSetupCtx, void* stepsParams)
+uint64_t get_n_constraints(void *pSetupCtx)
 {
-    ConstraintsResults *constraintsInfo = verifyConstraints(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams);
-    return constraintsInfo;
+    auto setupCtx = *(SetupCtx *)pSetupCtx;
+    return setupCtx.expressionsBin.constraintsInfoDebug.size();
+}
+
+void get_constraints_lines_sizes(void* pSetupCtx, uint64_t *constraintsLinesSizes)
+{
+    auto setupCtx = *(SetupCtx *)pSetupCtx;
+    for(uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); ++i) {
+        constraintsLinesSizes[i] = setupCtx.expressionsBin.constraintsInfoDebug[i].line.size();
+    }
+}
+
+void get_constraints_lines(void* pSetupCtx, uint8_t **constraintsLines)
+{
+    auto setupCtx = *(SetupCtx *)pSetupCtx;
+    for(uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); ++i) {
+        std::memcpy(constraintsLines[i], setupCtx.expressionsBin.constraintsInfoDebug[i].line.data(), setupCtx.expressionsBin.constraintsInfoDebug[i].line.size());
+    }
+}
+
+void verify_constraints(void *pSetupCtx, void* stepsParams, void* constraintsInfo)
+{
+    verifyConstraints(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (ConstraintInfo *)constraintsInfo);
 }
 
 // Global Constraints
 // =================================================================================
-void *verify_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *publics, void *challenges, void *proofValues, void **airgroupValues) {
+uint64_t get_n_global_constraints(void* p_globalinfo_bin)
+{
+    auto globalConstraintsBin = *(ExpressionsBin*)p_globalinfo_bin;
+    return globalConstraintsBin.constraintsInfoDebug.size();
+}
+
+void get_global_constraints_lines_sizes(void* p_globalinfo_bin, uint64_t *constraintsLinesSizes)
+{
+    auto globalConstraintsBin = *(ExpressionsBin*)p_globalinfo_bin;
+    cout << "HOLA " << endl;
+    for(uint64_t i = 0; i < globalConstraintsBin.constraintsInfoDebug.size(); ++i) {
+        cout << globalConstraintsBin.constraintsInfoDebug[i].line << endl;
+        constraintsLinesSizes[i] = globalConstraintsBin.constraintsInfoDebug[i].line.size();
+    }
+}
+
+void get_global_constraints_lines(void* p_globalinfo_bin, uint8_t **constraintsLines)
+{
+    auto globalConstraintsBin = *(ExpressionsBin*)p_globalinfo_bin;
+    for(uint64_t i = 0; i < globalConstraintsBin.constraintsInfoDebug.size(); ++i) {
+        std::memcpy(constraintsLines[i], globalConstraintsBin.constraintsInfoDebug[i].line.data(), globalConstraintsBin.constraintsInfoDebug[i].line.size());
+    }
+}
+
+void verify_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *publics, void *challenges, void *proofValues, void **airgroupValues, void *globalConstraintsInfo) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    GlobalConstraintsResults *constraintsInfo = verifyGlobalConstraints(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues);
-    return constraintsInfo;
+    verifyGlobalConstraints(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues, (GlobalConstraintInfo *)globalConstraintsInfo);
 }
-
+ 
 uint64_t get_hint_field_global_constraints_values(void* p_globalinfo_bin, uint64_t hintId, char* hintFieldName) {
     return getHintFieldGlobalConstraintValues(*(ExpressionsBin*)p_globalinfo_bin, hintId, string(hintFieldName));
 }

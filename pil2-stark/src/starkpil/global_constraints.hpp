@@ -10,13 +10,6 @@ struct GlobalConstraintInfo {
     uint64_t dim;
     bool valid;
     uint64_t value[3];
-    uint8_t* line;
-    uint64_t line_size;
-};
-
-struct GlobalConstraintsResults {
-    uint64_t nConstraints;
-    GlobalConstraintInfo* constraintInfo;
 };
 
 void calculateGlobalExpression(json& globalInfo, Goldilocks::Element* dest, Goldilocks::Element* publics, Goldilocks::Element* challenges, Goldilocks::Element* proofValues_, Goldilocks::Element** airgroupValues, ParserArgs &parserArgs, ParserParams &parserParams) {
@@ -282,53 +275,38 @@ void calculateGlobalExpression(json& globalInfo, Goldilocks::Element* dest, Gold
 }
 
 
-GlobalConstraintInfo verifyGlobalConstraint(json& globalInfo, uint64_t constraintId, Goldilocks::Element* publics, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, ParserArgs &parserArgs, ParserParams &parserParams) {
+void verifyGlobalConstraint(json& globalInfo, uint64_t constraintId, Goldilocks::Element* publics, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, ParserArgs &parserArgs, ParserParams &parserParams, GlobalConstraintInfo& globalConstraintInfo) {
 
-    GlobalConstraintInfo constraintInfo;
-    constraintInfo.id = constraintId;
-    constraintInfo.valid = true;
-    constraintInfo.line = new uint8_t[parserParams.line.size()];
-    constraintInfo.line_size = parserParams.line.size();
-    std::memcpy(constraintInfo.line, parserParams.line.data(), parserParams.line.size());
+    globalConstraintInfo.id = constraintId;
+    globalConstraintInfo.valid = true;
 
     Goldilocks::Element dest[parserParams.destDim];
 
     calculateGlobalExpression(globalInfo, dest, publics, challenges, proofValues, airgroupValues, parserArgs, parserParams);
 
     if(parserParams.destDim == 1) {
-        constraintInfo.dim = parserParams.destDim;
-        constraintInfo.value[0] = Goldilocks::toU64(dest[0]);
-        constraintInfo.value[1] = 0;
-        constraintInfo.value[2] = 0;
-        if(constraintInfo.value[0] != 0) constraintInfo.valid = false;
+        globalConstraintInfo.dim = parserParams.destDim;
+        globalConstraintInfo.value[0] = Goldilocks::toU64(dest[0]);
+        globalConstraintInfo.value[1] = 0;
+        globalConstraintInfo.value[2] = 0;
+        if(globalConstraintInfo.value[0] != 0) globalConstraintInfo.valid = false;
     } else {
-        constraintInfo.dim = parserParams.destDim;
-        constraintInfo.value[0] = Goldilocks::toU64(dest[0]);
-        constraintInfo.value[1] = Goldilocks::toU64(dest[1]);
-        constraintInfo.value[2] = Goldilocks::toU64(dest[2]);
-        if(constraintInfo.value[0] != 0 || constraintInfo.value[1] != 0 || constraintInfo.value[2] != 0) constraintInfo.valid = false;
+        globalConstraintInfo.dim = parserParams.destDim;
+        globalConstraintInfo.value[0] = Goldilocks::toU64(dest[0]);
+        globalConstraintInfo.value[1] = Goldilocks::toU64(dest[1]);
+        globalConstraintInfo.value[2] = Goldilocks::toU64(dest[2]);
+        if(globalConstraintInfo.value[0] != 0 || globalConstraintInfo.value[1] != 0 || globalConstraintInfo.value[2] != 0) globalConstraintInfo.valid = false;
     }
-
-    return constraintInfo;
 }
 
   
-GlobalConstraintsResults * verifyGlobalConstraints(json& globalInfo, ExpressionsBin &globalConstraintsBin, Goldilocks::Element* publicInputs, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues)
+void verifyGlobalConstraints(json& globalInfo, ExpressionsBin &globalConstraintsBin, Goldilocks::Element* publicInputs, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, GlobalConstraintInfo *globalConstraintsInfo)
 {
+    std::vector<ParserParams> globalConstraints = globalConstraintsBin.constraintsInfoDebug;
 
-
-    std::vector<ParserParams> globalConstraintsInfo = globalConstraintsBin.constraintsInfoDebug;
-
-    GlobalConstraintsResults *constraintsInfo = new GlobalConstraintsResults();
-    constraintsInfo->nConstraints = globalConstraintsInfo.size();
-    constraintsInfo->constraintInfo = new GlobalConstraintInfo[constraintsInfo->nConstraints];
-
-    for(uint64_t i = 0; i < globalConstraintsInfo.size(); ++i) {
-        auto constraintInfo = verifyGlobalConstraint(globalInfo, i, publicInputs, challenges, proofValues, airgroupValues, globalConstraintsBin.expressionsBinArgsConstraints, globalConstraintsInfo[i]);
-        constraintsInfo->constraintInfo[i] = constraintInfo;
+    for(uint64_t i = 0; i < globalConstraints.size(); ++i) {
+        verifyGlobalConstraint(globalInfo, i, publicInputs, challenges, proofValues, airgroupValues, globalConstraintsBin.expressionsBinArgsConstraints, globalConstraints[i], globalConstraintsInfo[i]);
     }
-
-    return constraintsInfo;
 }
 
 std::string getExpressionDebug(json& globalInfo, ExpressionsBin &globalConstraintsBin, uint64_t hintId, std::string hintFieldName, HintFieldValue hintFieldVal) {

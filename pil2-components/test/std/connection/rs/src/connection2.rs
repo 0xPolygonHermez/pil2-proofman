@@ -10,8 +10,7 @@ use crate::Connection2Trace;
 
 pub struct Connection2;
 
-impl Connection2
-{
+impl Connection2 {
     const MY_NAME: &'static str = "Connct_2";
 
     pub fn new() -> Arc<Self> {

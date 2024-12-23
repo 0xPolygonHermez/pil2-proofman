@@ -1,7 +1,7 @@
 mod proofman;
-mod constraints;
+mod verify_constraints;
 mod recursion;
 
 pub use proofman::*;
-pub use constraints::*;
+pub use verify_constraints::*;
 pub use recursion::*;

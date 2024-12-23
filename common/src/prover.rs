@@ -4,6 +4,7 @@ use std::sync::Arc;
 use p3_field::Field;
 use transcript::FFITranscript;
 
+use crate::ConstraintInfo;
 use crate::ProofCtx;
 use crate::SetupCtx;
 
@@ -28,51 +29,6 @@ pub struct ProverInfo {
     pub air_id: usize,
     pub prover_idx: usize,
     pub instance_id: usize,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct ConstraintRowInfo {
-    pub row: u64,
-    pub dim: u64,
-    pub value: [u64; 3usize],
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct ConstraintInfo {
-    pub id: u64,
-    pub stage: u64,
-    pub im_pol: bool,
-    pub line: *mut u8,
-    pub line_size: u64,
-    pub n_rows: u64,
-    pub rows: [ConstraintRowInfo; 10usize],
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct ConstraintsResults {
-    pub n_constraints: u64,
-    pub constraints_info: *mut ConstraintInfo,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct GlobalConstraintInfo {
-    pub id: u64,
-    pub dim: u64,
-    pub valid: bool,
-    pub value: [u64; 3usize],
-    pub line: *mut u8,
-    pub line_size: u64,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub struct GlobalConstraintsResults {
-    pub n_constraints: u64,
-    pub constraints_info: *mut GlobalConstraintInfo,
 }
 
 pub trait Prover<F: Field> {

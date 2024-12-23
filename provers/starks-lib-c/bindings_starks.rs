@@ -444,14 +444,43 @@ extern "C" {
     pub fn get_permutations(pTranscript: *mut ::std::os::raw::c_void, res: *mut u64, n: u64, nBits: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z18verify_constraintsPvS_"]
+    #[link_name = "\u{1}_Z17get_n_constraintsPv"]
+    pub fn get_n_constraints(pSetupCtx: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z27get_constraints_lines_sizesPvPm"]
+    pub fn get_constraints_lines_sizes(pSetupCtx: *mut ::std::os::raw::c_void, constraintsLinesSizes: *mut u64);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z21get_constraints_linesPvPPh"]
+    pub fn get_constraints_lines(pSetupCtx: *mut ::std::os::raw::c_void, constraintsLines: *mut *mut u8);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z18verify_constraintsPvS_S_"]
     pub fn verify_constraints(
         pSetupCtx: *mut ::std::os::raw::c_void,
         stepsParams: *mut ::std::os::raw::c_void,
-    ) -> *mut ::std::os::raw::c_void;
+        constraintsInfo: *mut ::std::os::raw::c_void,
+    );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z25verify_global_constraintsPcPvS0_S0_S0_PS0_"]
+    #[link_name = "\u{1}_Z24get_n_global_constraintsPv"]
+    pub fn get_n_global_constraints(p_globalinfo_bin: *mut ::std::os::raw::c_void) -> u64;
+}
+
+extern "C" {
+    #[link_name = "\u{1}_Z34get_global_constraints_lines_sizesPvPm"]
+    pub fn get_global_constraints_lines_sizes(
+        p_globalinfo_bin: *mut ::std::os::raw::c_void,
+        constraintsLinesSizes: *mut u64,
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z28get_global_constraints_linesPvPPh"]
+    pub fn get_global_constraints_lines(p_globalinfo_bin: *mut ::std::os::raw::c_void, constraintsLines: *mut *mut u8);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z25verify_global_constraintsPcPvS0_S0_S0_PS0_S0_"]
     pub fn verify_global_constraints(
         globalInfoFile: *mut ::std::os::raw::c_char,
         globalBin: *mut ::std::os::raw::c_void,
@@ -459,7 +488,8 @@ extern "C" {
         challenges: *mut ::std::os::raw::c_void,
         proofValues: *mut ::std::os::raw::c_void,
         airgroupValues: *mut *mut ::std::os::raw::c_void,
-    ) -> *mut ::std::os::raw::c_void;
+        globalConstraintsInfo: *mut ::std::os::raw::c_void,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z40get_hint_field_global_constraints_valuesPvmPc"]

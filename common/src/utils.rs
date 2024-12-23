@@ -20,3 +20,18 @@ pub fn initialize_logger(verbose_mode: VerboseMode) {
         .init();
     set_log_level_c(verbose_mode.into());
 }
+
+pub fn format_bytes(mut num_bytes: f64) -> String {
+    let units = ["Bytes", "KB", "MB", "GB"];
+    let mut unit_index = 0;
+
+    while num_bytes >= 0.01 && unit_index < units.len() - 1 {
+        if num_bytes < 1024.0 {
+            break;
+        }
+        num_bytes /= 1024.0;
+        unit_index += 1;
+    }
+
+    format!("{:.2} {}", num_bytes, units[unit_index])
+}

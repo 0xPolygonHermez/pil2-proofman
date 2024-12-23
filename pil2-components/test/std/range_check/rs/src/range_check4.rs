@@ -23,7 +23,7 @@ where
     const MY_NAME: &'static str = "RngChck4";
 
     pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
-        Arc::new(Self { std_lib })    
+        Arc::new(Self { std_lib })
     }
 }
 
