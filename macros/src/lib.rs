@@ -70,7 +70,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             pub const AIR_ID: usize = #air_id;
 
             pub fn new() -> Self {
-                let num_rows = Self::NUM_ROWS;
+                #trace_struct_name::with_capacity(Self::NUM_ROWS)
+            }
+
+            pub fn with_capacity(num_rows: usize) -> Self {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
