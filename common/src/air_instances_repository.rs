@@ -30,7 +30,7 @@ impl<F: Field> AirInstancesRepository<F> {
         }
     }
 
-    pub fn add_air_instance(&self, mut air_instance: AirInstance<F>, global_idx: Option<usize>) {
+    pub fn add_air_instance(&self, mut air_instance: AirInstance<F>, global_idx: Option<usize>) -> usize {
         let mut air_instances = self.air_instances.write().unwrap();
         let n_air_instances = air_instances.len();
 
@@ -44,18 +44,7 @@ impl<F: Field> AirInstancesRepository<F> {
         }
         *instance_id += 1;
         air_instances.push(air_instance);
-    }
-
-    pub fn get_air_instances(&self) -> Vec<usize> {
-        let air_instances = self.air_instances.read().unwrap();
-
-        let mut indices = Vec::new();
-        for (index, air_instance) in air_instances.iter().enumerate() {
-            if air_instance.prover_initialized {
-                indices.push(index);
-            }
-        }
-        indices
+        air_instances.len() - 1
     }
 
     pub fn find_airgroup_instances(&self, airgroup_id: usize) -> Vec<usize> {
@@ -63,7 +52,7 @@ impl<F: Field> AirInstancesRepository<F> {
 
         let mut indices = Vec::new();
         for (index, air_instance) in air_instances.iter().enumerate() {
-            if air_instance.airgroup_id == airgroup_id && air_instance.prover_initialized {
+            if air_instance.airgroup_id == airgroup_id {
                 indices.push(index);
             }
         }
@@ -75,10 +64,7 @@ impl<F: Field> AirInstancesRepository<F> {
 
         let mut indices = Vec::new();
         for (index, air_instance) in air_instances.iter().enumerate() {
-            if air_instance.airgroup_id == airgroup_id
-                && air_instance.air_id == air_id
-                && air_instance.prover_initialized
-            {
+            if air_instance.airgroup_id == airgroup_id && air_instance.air_id == air_id {
                 indices.push(index);
             }
         }
@@ -93,7 +79,6 @@ impl<F: Field> AirInstancesRepository<F> {
             if air_instance.airgroup_id == airgroup_id
                 && air_instance.air_id == air_id
                 && air_instance.air_instance_id.unwrap() == air_instance_id
-                && air_instance.prover_initialized
             {
                 return Some(index);
             }

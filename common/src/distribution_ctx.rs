@@ -108,6 +108,15 @@ impl DistributionCtx {
     }
 
     #[inline]
+    pub fn find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+        if let Some(index) = self.instances.iter().position(|&(x, y)| x == airgroup_id && y == air_id) {
+            (true, index)
+        } else {
+            (false, 0)
+        }
+    }
+
+    #[inline]
     pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: usize) -> (bool, usize) {
         let mut is_mine = false;
         let owner = self.n_instances % self.n_processes as usize;
@@ -197,19 +206,21 @@ impl DistributionCtx {
         }
     }
 
+    pub fn distribute_airgroupvalues(&self, _airgroupvalues: &mut [u64], _owner: usize) {}
+
     pub fn distribute_multiplicity(&self, _multiplicity: &mut [u64], _owner: usize) {
         #[cfg(feature = "distributed")]
         {
             //assert that I can operate with u32
-            assert!(_multiplicity.len() < std::u32::MAX as usize);
+            assert!(_multiplicity.len() < u32::MAX as usize);
 
             if _owner != self.rank as usize {
                 //pack multiplicities in a sparce vector
                 let mut packed_multiplicity = Vec::new();
-                packed_multiplicity.push(0 as u32); //this will be the counter
+                packed_multiplicity.push(0u32); //this will be the counter
                 for (idx, &m) in _multiplicity.iter().enumerate() {
                     if m != 0 {
-                        assert!(m < std::u32::MAX as u64);
+                        assert!(m < u32::MAX as u64);
                         packed_multiplicity.push(idx as u32);
                         packed_multiplicity.push(m as u32);
                         packed_multiplicity[0] += 2;
@@ -238,7 +249,7 @@ impl DistributionCtx {
             // Ensure that each multiplicity vector can be operated with u32
             let mut buff_size = 0;
             for multiplicity in _multiplicities.iter() {
-                assert!(multiplicity.len() < std::u32::MAX as usize);
+                assert!(multiplicity.len() < u32::MAX as usize);
                 buff_size += multiplicity.len() + 1;
             }
 
@@ -249,7 +260,7 @@ impl DistributionCtx {
                 for (col_idx, multiplicity) in _multiplicities.iter().enumerate() {
                     for (idx, &m) in multiplicity.iter().enumerate() {
                         if m != 0 {
-                            assert!(m < std::u32::MAX as u64);
+                            assert!(m < u32::MAX as u64);
                             packed_multiplicities[col_idx] += 1;
                             packed_multiplicities.push(idx as u32);
                             packed_multiplicities.push(m as u32);

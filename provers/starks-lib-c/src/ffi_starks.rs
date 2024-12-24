@@ -1762,9 +1762,9 @@ pub fn join_zkin_final_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_serialized_proof_c(_zkin: *mut c_void, _size: *mut u64) -> *mut std::os::raw::c_char {
+pub fn get_serialized_proof_c(_zkin: *mut c_void) -> (*mut std::os::raw::c_char, u64) {
     trace!("{}: ··· {}", "ffi     ", "get_serialized_proof: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
+    (std::ptr::null_mut(), 0)
 }
 
 #[cfg(feature = "no_lib_link")]

@@ -255,6 +255,10 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
                     let air_instance = &mut air_instaces_vec[air_instance_id];
 
+                    if !air_instance.prover_initialized {
+                        continue;
+                    }
+
                     // Get the air associated with the air_instance
                     let airgroup_id = air_instance.airgroup_id;
                     let air_id = air_instance.air_id;

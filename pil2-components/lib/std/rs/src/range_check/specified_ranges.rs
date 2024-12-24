@@ -91,8 +91,6 @@ impl<F: PrimeField> SpecifiedRanges<F> {
 
         let mut dctx: std::sync::RwLockWriteGuard<'_, DistributionCtx> = pctx.dctx.write().unwrap();
 
-        let (is_mine, global_idx) = dctx.add_instance(self.airgroup_id, self.air_id, 1);
-
         let mut multiplicities = self
             .mul_columns
             .lock()
@@ -105,6 +103,15 @@ impl<F: PrimeField> SpecifiedRanges<F> {
                 _ => panic!("Multiplicities must be columns"),
             })
             .collect::<Vec<Vec<u64>>>();
+
+        let (instance_found, instance_idx) = dctx.find_instance(self.airgroup_id, self.air_id);
+
+        let (is_mine, global_idx) = if instance_found {
+            (dctx.is_my_instance(instance_idx), instance_idx)
+        } else {
+            dctx.add_instance(self.airgroup_id, self.air_id, 1)
+        };
+
         let owner = dctx.owner(global_idx);
 
         dctx.distribute_multiplicities(&mut multiplicities, owner);
@@ -116,14 +123,13 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             let air_instance_repo = &pctx.air_instance_repo;
             let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
             let air_instance_id = if !instance.is_empty() {
-                air_instance_repo.find_air_instances(self.airgroup_id, self.air_id)[0]
+                instance[0]
             } else {
                 let num_rows = pctx.global_info.airs[self.airgroup_id][self.air_id].num_rows;
                 let buffer_size = multiplicities.len() * num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
-                pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx));
-                pctx.air_instance_repo.air_instances.read().unwrap().len() - 1
+                pctx.air_instance_repo.add_air_instance(air_instance, Some(global_idx))
             };
             let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
             let air_instance = &mut air_instance_rw[air_instance_id];

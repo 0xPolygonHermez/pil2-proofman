@@ -88,6 +88,12 @@ impl<F: Field> ProofCtx<F> {
         dctx.distribute_multiplicity(multiplicity, owner);
     }
 
+    pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: &mut [u64], instance_idx: usize) {
+        let dctx = self.dctx.read().unwrap();
+        let owner = dctx.owner(instance_idx);
+        dctx.distribute_airgroupvalues(airgroup_values, owner);
+    }
+
     pub fn get_proof_values_ptr(&self) -> *mut u8 {
         let guard = &self.proof_values.values.read().unwrap();
         guard.as_ptr() as *mut u8

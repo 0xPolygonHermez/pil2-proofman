@@ -15,12 +15,11 @@ use colored::*;
 pub fn verify_global_constraints_proof<F: Field>(
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx>,
+    mut airgroupvalues: Vec<Vec<F>>,
 ) -> Vec<GlobalConstraintInfo> {
     const MY_NAME: &str = "GlCstVfy";
 
     log::info!("{}: --> Checking global constraints", MY_NAME);
-
-    let mut airgroupvalues = aggregate_airgroupvals(pctx.clone());
 
     let mut airgroup_values_ptrs: Vec<*mut F> = airgroupvalues
         .iter_mut() // Iterate mutably over the inner Vecs
@@ -163,51 +162,69 @@ pub fn verify_constraints_proof<F: Field>(
         }
     }
 
-    let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone());
-    let mut valid_global_constraints = true;
+    let dctx = pctx.dctx.read().unwrap();
 
-    let global_constraints_lines = get_global_constraints_lines_str(sctx.clone());
+    let airgroupvalues = aggregate_airgroupvals(pctx.clone());
 
-    for idx in 0..global_constraints.len() {
-        let constraint = global_constraints[idx];
-        if constraint.skip {
-            continue;
-        }
-        let line_str = &global_constraints_lines[idx];
+    if dctx.rank == 0 {
+        // TODO: Distribute airgroupvalues
 
-        let valid = if !constraint.valid { "is invalid".bright_red() } else { "is valid".bright_green() };
-        if constraint.valid {
-            log::debug!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
-        } else {
-            log::info!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
-        }
-        if !constraint.valid {
-            valid_global_constraints = false;
-            if constraint.dim == 1 {
-                log::info!("{}: ···        \u{2717} Failed with value: {}", MY_NAME, constraint.value[0]);
+        let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
+        let mut valid_global_constraints = true;
+
+        let global_constraints_lines = get_global_constraints_lines_str(sctx.clone());
+
+        for idx in 0..global_constraints.len() {
+            let constraint = global_constraints[idx];
+            if constraint.skip {
+                continue;
+            }
+            let line_str = &global_constraints_lines[idx];
+
+            let valid = if !constraint.valid { "is invalid".bright_red() } else { "is valid".bright_green() };
+            if constraint.valid {
+                log::debug!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
             } else {
-                log::info!(
-                    "{}: ···        \u{2717} Failed with value: [{}, {}, {}]",
-                    MY_NAME,
-                    constraint.value[0],
-                    constraint.value[1],
-                    constraint.value[2]
-                );
+                log::info!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
+            }
+            if !constraint.valid {
+                valid_global_constraints = false;
+                if constraint.dim == 1 {
+                    log::info!("{}: ···        \u{2717} Failed with value: {}", MY_NAME, constraint.value[0]);
+                } else {
+                    log::info!(
+                        "{}: ···        \u{2717} Failed with value: [{}, {}, {}]",
+                        MY_NAME,
+                        constraint.value[0],
+                        constraint.value[1],
+                        constraint.value[2]
+                    );
+                }
             }
         }
-    }
 
-    if valid_global_constraints {
-        log::info!(
-            "{}: ··· {}",
-            MY_NAME,
-            "\u{2713} All global constraints were successfully verified".bright_green().bold()
-        );
-    } else {
-        log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all global constraints were verified".bright_red().bold());
-    }
+        if valid_global_constraints {
+            log::info!(
+                "{}: ··· {}",
+                MY_NAME,
+                "\u{2713} All global constraints were successfully verified".bright_green().bold()
+            );
+        } else {
+            log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all global constraints were verified".bright_red().bold());
+        }
 
-    if valid_constraints && valid_global_constraints {
+        if valid_constraints && valid_global_constraints {
+            log::info!("{}: ··· {}", MY_NAME, "\u{2713} All constraints were verified".bright_green().bold());
+            Ok(())
+        } else {
+            log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all constraints were verified.".bright_red().bold());
+            Err(Box::new(std::io::Error::new(
+                // <-- Return a boxed error
+                std::io::ErrorKind::Other,
+                format!("{}: Not all constraints were verified.", MY_NAME),
+            )))
+        }
+    } else if valid_constraints {
         log::info!("{}: ··· {}", MY_NAME, "\u{2713} All constraints were verified".bright_green().bold());
         Ok(())
     } else {

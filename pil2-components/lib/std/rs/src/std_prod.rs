@@ -256,6 +256,10 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                     let air_instances_vec = &mut pctx.air_instance_repo.air_instances.write().unwrap();
                     let air_instance = &mut air_instances_vec[air_instance_id];
 
+                    if !air_instance.prover_initialized {
+                        continue;
+                    }
+
                     // Get the air associated with the air_instance
                     let airgroup_id = air_instance.airgroup_id;
                     let air_id = air_instance.air_id;

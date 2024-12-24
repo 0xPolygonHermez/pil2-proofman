@@ -623,6 +623,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut air_info = HashMap::new();
 
         let mut air_instances = HashMap::new();
+
         for (airgroup_id, air_id) in &dctx.instances {
             let air_name = pctx.global_info.airs[*airgroup_id][*air_id].clone().name;
             let air_group_name = pctx.global_info.air_groups[*airgroup_id].clone();
