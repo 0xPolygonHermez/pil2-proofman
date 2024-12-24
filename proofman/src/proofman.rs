@@ -3,7 +3,7 @@ use log::{info, trace};
 use p3_field::PrimeField;
 use stark::StarkProver;
 use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c, get_map_totaln_c};
-use std::fs;
+use std::fs::{self};
 use std::error::Error;
 
 use colored::*;
@@ -15,6 +15,7 @@ use transcript::FFITranscript;
 use witness::{WitnessLibInitFn, WitnessManager};
 
 use crate::{
+    _verify_proof,
     verify_constraints_proof, generate_vadcop_recursive1_proof, generate_vadcop_final_proof,
     generate_vadcop_recursive2_proof, generate_recursivef_proof, generate_fflonk_snark_proof,
 };
@@ -140,6 +141,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_PROOF);
 
         if !pctx.options.aggregation {
+            _verify_proof(&mut provers, pctx.clone(), sctx.clone());
             return Ok(());
         }
 

@@ -25,7 +25,7 @@
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char* filename);
+    void *stark_info_new(char* filename, bool verifier);
     uint64_t get_map_total_n(void *pStarkInfo);
     void stark_info_free(void *pStarkInfo);
 
@@ -44,7 +44,7 @@
 
     // Expressions Bin
     // ========================================================================================
-    void *expressions_bin_new(char* filename, bool global);
+    void *expressions_bin_new(char* filename, bool global, bool verifier);
     void expressions_bin_free(void *pExpressionsBin);
 
     // Hints
@@ -151,5 +151,10 @@
     // Util calls
     // =================================================================================
     void setLogLevel(uint64_t level);
+
+    // Stark Verify
+    // =================================================================================
+    bool stark_verify(void *fProof, void *pStarkInfo, void *pExpressionsBin, void *verkey, void *pPublics, void *pProofValues, void *challenges);
+
 
 #endif

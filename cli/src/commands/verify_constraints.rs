@@ -52,12 +52,12 @@ impl VerifyConstraintsCmd {
 
         let debug_info = if let Some(debug_value) = &self.debug {
             if debug_value.is_empty() || debug_value == "false" {
-                DebugInfo::new()
+                DebugInfo::default()
             } else {
                 json_to_debug_instances_map(debug_value.clone())
             }
         } else {
-            DebugInfo::new()
+            DebugInfo::default()
         };
 
         match self.field {
@@ -67,13 +67,7 @@ impl VerifyConstraintsCmd {
                 self.public_inputs.clone(),
                 self.proving_key.clone(),
                 PathBuf::new(),
-                ProofOptions::new(
-                    true,
-                    self.verbose.into(),
-                    false,
-                    false,
-                    debug_info
-                ),
+                ProofOptions::new(true, self.verbose.into(), false, false, debug_info),
             )?,
         };
 

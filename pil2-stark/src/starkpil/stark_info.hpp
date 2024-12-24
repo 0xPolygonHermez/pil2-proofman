@@ -154,13 +154,15 @@ public:
     // Precomputed
     std::map<std::pair<std::string, bool>, uint64_t> mapOffsets;
     
+    bool verify = false;
+
     uint64_t mapTotalN;
     
     /* Constructor */
-    StarkInfo(string file);
+    StarkInfo(string file, bool verify = false);
 
     /* Loads data from a json object */
-    void load (json j);
+    void load (json j, bool verify = false);
 
     void setMapOffsets();
 
