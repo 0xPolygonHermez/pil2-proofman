@@ -92,9 +92,7 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     treesGL[step - 1]->merkelize();
 #endif
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
-
 }
-
 template <typename ElementType>
 void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, uint64_t** d_tree, DeviceCommitBuffers* d_buffers)
 {   
@@ -102,18 +100,21 @@ void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_wi
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     std::string section = "cm" + to_string(step);  
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)];
-    uint64_t offset = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
-    
+
+    gl64_t *src = step == 1 ? d_witness : d_trace;
+    uint64_t offset_src = step == 1 ? 0 : setupCtx.starkInfo.mapOffsets[make_pair(section, false)];
+    gl64_t *dst = d_trace;
+    uint64_t offset_dst = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
     
     NTT_Goldilocks ntt(N);
-    
 
 #ifdef __USE_CUDA__
+
     // Aqui falta definir l'id de la device
     if (nCols > 0)
     {
         
-        ntt.LDE_MerkleTree_GPU_inplace(d_tree,d_trace,offset,d_witness, 0, N, NExtended, nCols, d_buffers);
+        ntt.LDE_MerkleTree_GPU_inplace(d_tree,dst,offset_dst,src, offset_src, N, NExtended, nCols, d_buffers);
        
         
     }
@@ -138,7 +139,7 @@ void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace,
 template <typename ElementType>
 void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_witness, gl64_t* d_trace, uint64_t** d_tree, DeviceCommitBuffers* d_buffers)
 {  
-    if (step == 1)
+    if (step <= setupCtx.starkInfo.nStages)
     {
         extendAndMerkelize_inplace(step, d_witness, d_trace, d_tree, d_buffers);
     } else {
@@ -408,18 +409,20 @@ void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams 
             destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
             
             dests.push_back(destStruct);
+            //break;
         }
     }
 
     if(dests.size() == 0) return;
+    //assert(dests.size() == 1);
 
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
-#else
+//#ifdef __AVX512__
+//    ExpressionsAvx512 expressionsCtx(setupCtx);
+//#elif defined(__AVX2__)
+//    ExpressionsAvx expressionsCtx(setupCtx);
+//#else
     ExpressionsPack expressionsCtx(setupCtx);
-#endif
+//#endif
 
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
 }

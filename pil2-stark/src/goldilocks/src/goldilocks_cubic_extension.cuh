@@ -453,6 +453,33 @@ public:
                     assert(0);
                     break;
             }
+        }else if(const_b){
+           switch (op)
+            {
+                case 0:
+                    c[threadIdx.x] = a[threadIdx.x] + b[0];
+                    c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
+                    c[2*blockDim.x + threadIdx.x] = a[2*blockDim.x + threadIdx.x];
+                    break;
+                case 1:
+                    c[threadIdx.x] = a[threadIdx.x] - b[0];
+                    c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
+                    c[2*blockDim.x + threadIdx.x] = a[2*blockDim.x + threadIdx.x];
+                    break;
+                case 2:
+                    c[threadIdx.x] = a[threadIdx.x] * b[0];
+                    c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] * b[0];
+                    c[2*blockDim.x + threadIdx.x] = a[2*blockDim.x + threadIdx.x] * b[0];
+                    break;
+                case 3:
+                    c[threadIdx.x] = b[0] - a[threadIdx.x];
+                    c[blockDim.x + threadIdx.x] = -a[blockDim.x + threadIdx.x];
+                    c[2*blockDim.x + threadIdx.x] = -a[2*blockDim.x + threadIdx.x];
+                    break;
+                default:
+                    assert(0);
+                    break;
+            }
         }else{
             switch (op)
             {

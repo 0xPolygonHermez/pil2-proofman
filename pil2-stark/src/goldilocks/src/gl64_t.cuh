@@ -707,7 +707,7 @@ public:
             c[threadIdx.x] = a[tida] * b[tidb];
             break;
         case 3:
-            c[threadIdx.x] = b[tida] - a[tidb];
+            c[threadIdx.x] = b[tidb] - a[tida];
             break;
         default:
             assert(0);

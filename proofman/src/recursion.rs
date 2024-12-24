@@ -26,6 +26,7 @@ pub struct MaxSizes {
     pub max_n: u64,
     pub max_n_ext: u64,
     pub max_wit_pols: u64,
+    pub max_ntt_pols: u64,
     pub max_const_pols: u64,
     pub max_n_publics: u64,
     pub max_trace_area: u64,
@@ -38,7 +39,8 @@ pub fn discover_max_sizes<F: Field>(
 ) -> MaxSizes {
     let mut max_n_bits = 0;
     let mut max_n_bits_ext = 0;
-    let max_wit_pols = 18;
+    let mut max_wit_pols = 0;
+    let mut max_ntt_pols: u64 = 0;
     let mut max_const_pols = 0;
     let mut max_n_publics = 0;
     let mut max_trace_area = 0;
@@ -47,6 +49,10 @@ pub fn discover_max_sizes<F: Field>(
     let mut update_max_values = |setup: &Setup| {
         max_n_bits = max_n_bits.max(setup.stark_info.stark_struct.n_bits);
         max_n_bits_ext = max_n_bits_ext.max(setup.stark_info.stark_struct.n_bits_ext);
+        max_wit_pols = max_wit_pols.max(setup.stark_info.map_sections_n["cm1"]);
+        max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm1"]);
+        max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm2"]);
+        max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm3"]); //rick: to be solved
         max_const_pols = max_const_pols.max(setup.stark_info.n_constants);
         max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
         max_trace_area = max_trace_area.max(get_map_totaln_c(setup.p_setup.p_stark_info));
@@ -78,6 +84,7 @@ pub fn discover_max_sizes<F: Field>(
         max_n: 1 << max_n_bits,
         max_n_ext: 1 << max_n_bits_ext,
         max_wit_pols,
+        max_ntt_pols: max_ntt_pols,
         max_const_pols,
         max_n_publics,
         max_trace_area,

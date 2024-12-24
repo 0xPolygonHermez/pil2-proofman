@@ -39,14 +39,11 @@ struct Params {
 struct Dest {
     Goldilocks::Element *dest = nullptr;
     Goldilocks::Element *dest_gpu = nullptr;
-    uint32_t destDim = 0;
     uint64_t offset = 0;
     uint64_t dim = 1;
     std::vector<Params> params;
 
     Dest(Goldilocks::Element *dest_, uint64_t offset_ = false) : dest(dest_), offset(offset_) {}
-
-    Dest(Goldilocks::Element *dest_, uint32_t destDim_, uint64_t offset_) : dest(dest_), destDim(destDim_), offset(offset_) {}
 
     void addParams(ParserParams& parserParams_, bool inverse_ = false, bool batch_ = true) {
         params.push_back(Params(parserParams_, inverse_, batch_));

@@ -2,6 +2,8 @@
 #define EXPRESSIONS_PACK_HPP
 #include "expressions_ctx.hpp"
 
+#define _ROW_DEBUG_ 9
+
 class ExpressionsPack : public ExpressionsCtx {
 public:
     uint64_t nrowsPack;
@@ -286,6 +288,11 @@ public:
         Goldilocks::Element* airgroupValues = params.airgroupValues;
         Goldilocks::Element* airValues = params.airValues;
 
+        uint32_t debug_block = _ROW_DEBUG_ / nrowsPack;
+        uint32_t debug_i = debug_block * nrowsPack;
+        uint32_t debug_pos = _ROW_DEBUG_ % nrowsPack;
+
+
     #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
             Goldilocks::Element bufferT_[nOpenings*nCols*nrowsPack];
@@ -317,8 +324,13 @@ public:
                     uint16_t* args = &parserArgs.args[dests[j].params[k].parserParams.argsOffset];
                     Goldilocks::Element tmp1[dests[j].params[k].parserParams.nTemp1*nrowsPack];
                     Goldilocks::Element tmp3[dests[j].params[k].parserParams.nTemp3*nrowsPack*FIELD_EXTENSION];
-
+                    if(i==debug_i && j==1){
+                        std::cout << "fuck CPU, dest: " << j <<" nops: "<< dests[j].params[k].parserParams.nOps<<std::endl;
+                     }
                     for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
+                        if(i==debug_i && j==1){                            
+                            std::cout<<" op: "<<uint32_t(ops[kk])<<std::endl;
+                        }
                         switch (ops[kk]) {
                             case 0: {
                                 // COPY commit1 to tmp1
@@ -751,6 +763,15 @@ public:
                                 exit(1);
                             }
                         }
+                        if(i==debug_i && j==1){
+                            if(ops[kk]<= 19){
+                                std::cout << tmp1[args[i_args + 1] * nrowsPack + debug_pos].fe << std::endl;
+                            } else {
+                                std::cout << tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION + debug_pos * FIELD_EXTENSION].fe << std::endl;
+                                std::cout << tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION + debug_pos * FIELD_EXTENSION + 1].fe << std::endl;
+                                std::cout << tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION + debug_pos * FIELD_EXTENSION + 2].fe << std::endl;
+                            }
+                        }
                     }
 
                     if (i_args != dests[j].params[k].parserParams.nArgs) std::cout << " " << i_args << " - " << dests[j].params[k].parserParams.nArgs << std::endl;
@@ -766,8 +787,19 @@ public:
                 if(dests[j].params.size() == 2) {
                     multiplyPolynomials(dests[j], destVals[j]);
                 }
+                /*if(i == _ROW_DEBUG_ && j == 0){
+                    std::cout << " Dest " << j << " value: " << destVals[j][0].fe << std::endl;
+                    std::cout << " Dest " << j << " value: " << destVals[j][1].fe << std::endl;
+                    std::cout << " Dest " << j << " value: " << destVals[j][2].fe << std::endl;
+                }*/
             }
             storePolynomial(dests, destVals, i);
+            /*uint64_t offset = dests[i].offset != 0 ? dests[i].offset : FIELD_EXTENSION;
+            if(_ROW_DEBUG_ == 0){
+                std::cout << " Dest " << i << " value: " << dests[0].dest[i*offset].fe << std::endl;
+                std::cout << " Dest " << i << " value: " << dests[0].dest[i*offset + 1].fe << std::endl;
+                std::cout << " Dest " << i << " value: " << dests[0].dest[i*offset + 2].fe << std::endl;
+            }*/
 
             for(uint64_t j = 0; j < dests.size(); ++j) {
                 delete destVals[j];

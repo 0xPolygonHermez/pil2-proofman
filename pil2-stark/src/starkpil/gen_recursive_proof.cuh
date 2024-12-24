@@ -7,10 +7,21 @@
 #include "gl64_t.cuh"
 #include "expressions_gpu.cuh"
 
+__global__ void insertTracePol(Goldilocks::Element* d_trace, uint64_t offset, uint64_t stride, Goldilocks::Element* d_pol, uint64_t dim, uint64_t N){
+    uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx < N){
+        if(dim == 1) d_trace[offset + idx * stride] = d_pol[idx];
+        else{
+            d_trace[offset + idx * stride] = d_pol[idx * dim ];
+            d_trace[offset + idx * stride + 1] = d_pol[idx * dim + 1];
+            d_trace[offset + idx * stride + 2] = d_pol[idx * dim + 2];
+        }
+    }
+}
 
 void offloadCommit(uint64_t step, MerkleTreeGL** treesGL, Goldilocks::Element *trace, gl64_t *d_trace, uint64_t* d_tree, FRIProof<Goldilocks::Element> &proof, SetupCtx& setupCtx){
 
-    uint64_t ncols = setupCtx.starkInfo.mapSectionsN["cm1"];
+    uint64_t ncols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)];
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     uint64_t size = NExtended * ncols * sizeof(Goldilocks::Element);
     uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended) * sizeof(uint64_t);
@@ -33,17 +44,13 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     Goldilocks::Element *trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
     CHECKCUDAERR(cudaMemset(d_buffers->d_trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
-    
-
-    TimerStart(SOLAPE1);
+    Goldilocks::Element* trace_debug = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN*2];
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo);
 
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     
     Starks<ElementType> starks(setupCtx, pConstTree);
-    //rick: aqui ja puc llençar el commit 1 no?
-
 
     ExpressionsGPU expressionsCtx(setupCtx);
 
@@ -102,10 +109,8 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 1) {
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
-            //rick: aqui un cudamemcpy dels challenge
         }
     }
-    TimerStopAndLog(SOLAPE1);
 
     //Allocate d_tree
     uint64_t** d_tree = new uint64_t*[1];
@@ -115,9 +120,16 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     offloadCommit(1, starks.treesGL, trace, d_buffers->d_trace, *d_tree, proof, setupCtx);
 
-    //sprint: baixar tot el que necessito per aplicar expressions
-    //rick: aqui em sincronitzo amb el llençament del commit 1
-    TimerStart(SOLAPE2);
+    ////////////
+    // rick: check if the traces are equal at this point
+    std::cout <<" CHECK TRACE 1" <<std::endl;
+    CHECKCUDAERR(cudaMemcpy(trace_debug, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    for(uint64_t i = 0; i < setupCtx.starkInfo.mapTotalN; ++i) {
+        if(trace_debug[i].fe != trace[i].fe) {
+            std::cout << "Error in trace" << std::endl;
+            exit(1);
+        }
+    }
 
     starks.addTranscript(transcript, &proof.proof.roots[0][0], nFieldElements);
     
@@ -127,7 +139,6 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
-            //rick: aqui un cudamemcpy dels challenge
         }
     }
 
@@ -141,19 +152,19 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
     uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
 
-    Dest numStruct(num, N*FIELD_EXTENSION, false);
+    Dest numStruct(num, false);
     cudaMalloc(&numStruct.dest_gpu, N*FIELD_EXTENSION*sizeof(Goldilocks::Element));
-    
     numStruct.addParams(setupCtx.expressionsBin.expressionsInfo[numFieldId]);
-    Dest denStruct(den, N*FIELD_EXTENSION, false);
+    
+    Dest denStruct(den, false);
     cudaMalloc(&denStruct.dest_gpu, N*FIELD_EXTENSION*sizeof(Goldilocks::Element));
     denStruct.addParams(setupCtx.expressionsBin.expressionsInfo[denFieldId], true);
     std::vector<Dest> dests = {numStruct, denStruct};
-    //rick: fins aqui
 
-    //rick: tot aixo va a la GPU
     double time = omp_get_wtime();
     expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
+
+    
 
     time = omp_get_wtime() - time;
     std::cout << "rick calculateExpressions time: " << time << std::endl;
@@ -165,32 +176,87 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         Goldilocks3::mul((Goldilocks3::Element *)res, (Goldilocks3::Element *)&num[(i - 1) * FIELD_EXTENSION], (Goldilocks3::Element *)&den[(i - 1) * FIELD_EXTENSION]);
         Goldilocks3::mul((Goldilocks3::Element *)&gprod[i * FIELD_EXTENSION], (Goldilocks3::Element *)&gprod[(i - 1) * FIELD_EXTENSION], (Goldilocks3::Element *)res);
     }
-    //rick fins aqui
 
-    //rick: aqui que fas, copiea a la traça?
+    Goldilocks::Element *d_grod;
+    cudaMalloc(&d_grod, N*FIELD_EXTENSION*sizeof(Goldilocks::Element));
+    cudaMemcpy(d_grod, gprod, N*FIELD_EXTENSION*sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+
     Polinomial gprodTransposedPol;
     setupCtx.starkInfo.getPolynomial(gprodTransposedPol, trace, "cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
-#pragma omp parallel for
+
+    uint64_t offset = setupCtx.starkInfo.getTraceOffset("cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
+    uint64_t nCols = setupCtx.starkInfo.getTraceNColsSection("cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
+
+    #pragma omp parallel for
     for(uint64_t j = 0; j < N; ++j) {
         std::memcpy(gprodTransposedPol[j], &gprod[j*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
     }
-    //rick
+    dim3 nThreads(256);
+    dim3 nBlocks((N + nThreads.x - 1) / nThreads.x);
+    insertTracePol<<<nBlocks, nThreads>>>((Goldilocks::Element*) d_buffers->d_trace, offset, nCols, d_grod, FIELD_EXTENSION, N);
     
     delete num;
     delete den;
     delete gprod;
 
+    ////////////
+    // rick: check if the traces are equal at this point
+    std::cout <<" CHECK TRACE 2" <<std::endl;
+    CHECKCUDAERR(cudaMemcpy(trace_debug, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    for(uint64_t i = 0; i < setupCtx.starkInfo.mapTotalN; ++i) {
+        if(trace_debug[i].fe != trace[i].fe) {
+            std::cout << "Error in trace" << std::endl;
+            exit(1);
+        }
+    }
+
     time = omp_get_wtime();
     TimerStart(CALCULATE_IM_POLS);
-    starks.calculateImPolsExpressions(2, params); // a la GPU
-    TimerStopAndLog(CALCULATE_IM_POLS);
+
+    std::vector<Dest> dests2;
+    for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
+        if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == 2) {
+            Goldilocks::Element* pols = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.trace : params.pols;
+            uint64_t offset_ = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(2), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos;
+            Dest destStruct(&pols[offset_], setupCtx.starkInfo.mapSectionsN["cm" + to_string(2)]);
+            destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
+            destStruct.dest_gpu = (Goldilocks::Element *)(d_buffers->d_trace + offset_);     
+            dests2.push_back(destStruct);
+        }
+    }
+
+    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests2, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
+    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests2, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
+
+     TimerStopAndLog(CALCULATE_IM_POLS);
     time = omp_get_wtime() - time;
     std::cout << "rick calculateImPolsExpressions time: " << time << std::endl;
-    TimerStopAndLog(SOLAPE2);
-
-
+        
+    cudaMemcpy(d_buffers->d_trace, trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+    ////////////
+    // rick: check if the traces are equal at this point
+    std::cout <<" CHECK TRACE 3" <<std::endl;
+    CHECKCUDAERR(cudaMemcpy(trace_debug, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    for(uint64_t i = 0; i < setupCtx.starkInfo.mapTotalN; ++i) {
+        if(trace_debug[i].fe != trace[i].fe) {
+            std::cout << "Error in trace" << std::endl;
+            exit(1);
+        }
+    }
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage(2, nullptr, params.pols, proof);
+    starks.commitStage_inplace(2, d_buffers->d_witness, d_buffers->d_trace, d_tree, d_buffers);
+    offloadCommit(2, starks.treesGL, trace, d_buffers->d_trace, *d_tree, proof, setupCtx);
+    
+    ////////////
+    // rick: check if the traces are equal at this point
+    std::cout <<" CHECK TRACE 4" <<std::endl;
+    CHECKCUDAERR(cudaMemcpy(trace_debug, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    for(uint64_t i = 0; i < setupCtx.starkInfo.mapTotalN; ++i) {
+        if(trace_debug[i].fe != trace[i].fe) {
+            std::cout << "Error in trace" << std::endl;
+            exit(1);
+        }
+    }
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], nFieldElements);
 
@@ -205,10 +271,40 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         }
     }
     time = omp_get_wtime();
-    expressionsCtx.calculateExpression(params, &params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
+    //expressionsCtx.calculateExpression(params, &params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
+    uint64_t domainSize;
+    uint64_t expressionId = setupCtx.starkInfo.cExpId;
+    if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId) {
+        setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
+        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    } else {
+        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    }
+    Dest destStruct(&params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]]);
+    destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
+    destStruct.dest_gpu = (Goldilocks::Element *)(d_buffers->d_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]);     
+    std::vector<Dest> dests3 = {destStruct};
+    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests3, domainSize);
+    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests3, domainSize);
     time = omp_get_wtime() - time;
     std::cout << "rick calculateExpression time: " << time << std::endl;
-
+    ////////////
+    // rick: check if the traces are equal at this point
+    std::cout <<" CHECK TRACE 5" <<std::endl;
+    CHECKCUDAERR(cudaMemcpy(trace_debug, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    for(uint64_t i = 0; i < setupCtx.starkInfo.mapTotalN; ++i) {
+        if(trace_debug[i].fe != trace[i].fe) {
+            std::cout << "Error in trace" << std::endl;
+            exit(1);
+        }
+    }
+    /*uint64_t offset_ = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
+    for(uint64_t i = 0; i < domainSize*FIELD_EXTENSION; ++i) {
+        if(trace_debug[offset_ + i].fe != trace[offset_ + i].fe) {
+            std::cout << "Error in trace, row: " << i << " " << trace_debug[offset_ + i].fe << " " << trace[offset_ + i].fe << std::endl;
+            exit(0);
+        }        
+    }*/
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.pols, proof);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);

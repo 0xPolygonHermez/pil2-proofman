@@ -9,6 +9,7 @@ struct MaxSizes {
         uint64_t maxN;
         uint64_t maxNExtended;
         uint64_t maxWitPols;
+        uint64_t maxNTTPols;
         uint64_t maxConstPols;
         uint64_t maxNPublics;
         uint64_t maxTraceArea;
@@ -60,7 +61,7 @@ void* gen_device_commit_buffers(void * maxSizes_) {
     CHECKCUDAERR(cudaMalloc(&buffers->d_forwardTwiddleFactors, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_inverseTwiddleFactors, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_r, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_ntt, maxSizes->maxNExtended * maxSizes->maxWitPols * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_ntt, maxSizes->maxNExtended * maxSizes->maxNTTPols * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_tree, maxSizes->maxNExtended * sizeof(uint64_t)));
     return (void *) buffers;
 }
