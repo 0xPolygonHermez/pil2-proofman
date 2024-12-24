@@ -29,6 +29,12 @@ pub fn verify_global_constraints_proof<F: Field>(
     let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
     let mut global_constraints_info = vec![GlobalConstraintInfo::default(); n_global_constraints as usize];
 
+    if !pctx.options.debug_info.debug_global_instances.is_empty() {
+        global_constraints_info.iter_mut().for_each(|constraint| constraint.skip = true);
+        for constraint_id in &pctx.options.debug_info.debug_global_instances {
+            global_constraints_info[*constraint_id].skip = false;
+        }
+    }
     verify_global_constraints_c(
         sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),
@@ -69,16 +75,16 @@ pub fn verify_constraints_proof<F: Field>(
         let constraints_lines = get_constraints_lines_str(sctx.clone(), airgroup_id, air_id);
 
         let mut valid_constraints_prover = true;
-        log::info!(
-            "{}:     ► Instance #{} of {} (Airgroup {} - Air {})",
-            MY_NAME,
-            air_instance_id,
-            air_name,
-            airgroup_id,
-            air_id,
-        );
+        log::info!("{}:     ► Instance #{} of {} [{}:{}]", MY_NAME, air_instance_id, air_name, airgroup_id, air_id,);
         for constraint in &constraints[idx] {
             if constraint.skip {
+                log::debug!(
+                    "{}:     · Skipping Constraint #{} (stage {}) -> {}",
+                    MY_NAME,
+                    constraint.id,
+                    constraint.stage,
+                    constraints_lines[constraint.id as usize]
+                );
                 continue;
             }
             let valid = if constraint.n_rows > 0 {
@@ -166,7 +172,7 @@ pub fn verify_constraints_proof<F: Field>(
 
     let airgroupvalues = aggregate_airgroupvals(pctx.clone());
 
-    if dctx.rank == 0 {
+    if dctx.rank == 0 && pctx.options.debug_info.debug_instances.is_empty() {
         // TODO: Distribute airgroupvalues
 
         let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
@@ -176,10 +182,12 @@ pub fn verify_constraints_proof<F: Field>(
 
         for idx in 0..global_constraints.len() {
             let constraint = global_constraints[idx];
+            let line_str = &global_constraints_lines[idx];
+
             if constraint.skip {
+                log::debug!("{}:     · Skipping Global Constraint #{} -> {}", MY_NAME, idx, line_str,);
                 continue;
             }
-            let line_str = &global_constraints_lines[idx];
 
             let valid = if !constraint.valid { "is invalid".bright_red() } else { "is valid".bright_green() };
             if constraint.valid {
@@ -224,15 +232,24 @@ pub fn verify_constraints_proof<F: Field>(
                 format!("{}: Not all constraints were verified.", MY_NAME),
             )))
         }
-    } else if valid_constraints {
-        log::info!("{}: ··· {}", MY_NAME, "\u{2713} All constraints were verified".bright_green().bold());
-        Ok(())
     } else {
-        log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all constraints were verified.".bright_red().bold());
-        Err(Box::new(std::io::Error::new(
-            // <-- Return a boxed error
-            std::io::ErrorKind::Other,
-            format!("{}: Not all constraints were verified.", MY_NAME),
-        )))
+        if !pctx.options.debug_info.debug_instances.is_empty() {
+            log::info!(
+                "{}: ··· {}",
+                MY_NAME,
+                "\u{2713} Skipping global constraints verification".bright_yellow().bold()
+            );
+        }
+        if valid_constraints {
+            log::info!("{}: ··· {}", MY_NAME, "\u{2713} All constraints were verified".bright_green().bold());
+            Ok(())
+        } else {
+            log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all constraints were verified.".bright_red().bold());
+            Err(Box::new(std::io::Error::new(
+                // <-- Return a boxed error
+                std::io::ErrorKind::Other,
+                format!("{}: Not all constraints were verified.", MY_NAME),
+            )))
+        }
     }
 }

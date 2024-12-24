@@ -20,7 +20,7 @@ impl<F: PrimeField> Std<F> {
     const MY_NAME: &'static str = "STD     ";
 
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let std_mode = wcm.get_pctx().options.std_mode.clone();
+        let std_mode = wcm.get_pctx().options.debug_info.std_mode.clone();
         log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components

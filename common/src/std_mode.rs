@@ -14,7 +14,7 @@ pub struct StdMode {
 
 impl StdMode {
     pub const fn new(name: ModeName, opids: Vec<u64>, n_vals: usize, print_to_file: bool) -> Self {
-        if n_vals == 0 {
+        if name.as_usize() != ModeName::Standard.as_usize() && n_vals == 0 {
             panic!("n_vals must be greater than 0");
         }
 
@@ -63,5 +63,11 @@ impl PartialEq for ModeName {
 impl PartialEq<ModeName> for usize {
     fn eq(&self, other: &ModeName) -> bool {
         *self == (*other as usize)
+    }
+}
+
+impl ModeName {
+    const fn as_usize(&self) -> usize {
+        *self as usize
     }
 }

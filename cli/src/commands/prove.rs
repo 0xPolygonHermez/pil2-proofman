@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{initialize_logger, StdMode, DEFAULT_PRINT_VALS};
+use proofman_common::{initialize_logger, json_to_debug_instances_map, DebugInfo};
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -51,17 +51,8 @@ pub struct ProveCmd {
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
 
-    #[clap(short = 'd', long, action = clap::ArgAction::Count)]
-    pub debug: u8,
-
-    #[clap(long)]
-    pub print: Option<usize>,
-
-    #[clap(long, action = clap::ArgAction::SetTrue)]
-    pub print_to_file: bool,
-
-    #[clap(long, action = clap::ArgAction::Append)]
-    pub opids: Option<Vec<String>>,
+    #[clap(short = 'd', long)]
+    pub debug: Option<String>,
 }
 
 impl ProveCmd {
@@ -77,25 +68,14 @@ impl ProveCmd {
 
         fs::create_dir_all(self.output_dir.join("proofs")).expect("Failed to create the proofs directory");
 
-        let std_mode: StdMode = if self.debug == 1 {
-            let op_ids = self.opids.as_ref().map_or_else(
-                Vec::new, // Provide an empty Vec<u64> if self.opids is None
-                |ids| {
-                    ids.iter()
-                        .flat_map(|id| {
-                            id.split(',')
-                                .map(|s| s.trim()) // Trim any surrounding whitespace
-                                .filter_map(|s| s.parse::<u64>().ok()) // Try parsing as u64
-                        })
-                        .collect::<Vec<u64>>() // Collect the entire iterator into a Vec<u64>
-                },
-            );
-
-            let n_values = self.print.unwrap_or(DEFAULT_PRINT_VALS);
-            let print_to_file = self.print_to_file;
-            StdMode::new(proofman_common::ModeName::Debug, op_ids, n_values, print_to_file)
+        let debug_info = if let Some(debug_value) = &self.debug {
+            if debug_value.is_empty() || debug_value == "false" {
+                DebugInfo::new()
+            } else {
+                json_to_debug_instances_map(debug_value.clone())
+            }
         } else {
-            self.debug.into()
+            DebugInfo::new()
         };
 
         match self.field {
@@ -105,7 +85,7 @@ impl ProveCmd {
                 self.public_inputs.clone(),
                 self.proving_key.clone(),
                 self.output_dir.clone(),
-                ProofOptions::new(false, self.verbose.into(), std_mode, self.aggregation, self.final_snark),
+                ProofOptions::new(false, self.verbose.into(), self.aggregation, self.final_snark, debug_info),
             )?,
         };
 

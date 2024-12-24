@@ -19,7 +19,9 @@ use crate::{
     generate_vadcop_recursive2_proof, generate_recursivef_proof, generate_fflonk_snark_proof,
 };
 
-use proofman_common::{format_bytes, ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop};
+use proofman_common::{
+    format_bytes, skip_prover_instance, ProofCtx, ProofOptions, ProofType, Prover, SetupCtx, SetupsVadcop,
+};
 
 use std::os::raw::c_void;
 
@@ -255,12 +257,22 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
             let air_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
             log::debug!("{}: Initializing prover for air instance {}", Self::MY_NAME, air_name);
+            let (skip, constraints_skip) = skip_prover_instance(
+                pctx.options.clone(),
+                air_instance.airgroup_id,
+                air_instance.air_id,
+                air_instance.air_instance_id.unwrap(),
+            );
+            if skip {
+                continue;
+            };
             let prover = Box::new(StarkProver::new(
                 sctx.clone(),
                 air_instance.airgroup_id,
                 air_instance.air_id,
                 air_instance.air_instance_id.unwrap(),
                 air_instance.idx.unwrap(),
+                constraints_skip,
             ));
 
             provers.push(prover);

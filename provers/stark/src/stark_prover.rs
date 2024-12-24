@@ -33,6 +33,7 @@ pub struct StarkProver<F: Field> {
     merkle_tree_arity: u64,
     merkle_tree_custom: bool,
     p_proof: *mut c_void,
+    constraints_to_check: Vec<usize>,
     _marker: PhantomData<F>, // Add PhantomData to track the type F
 }
 
@@ -42,7 +43,14 @@ impl<F: Field> StarkProver<F> {
     const HASH_SIZE: usize = 4;
     const FIELD_EXTENSION: usize = 3;
 
-    pub fn new(sctx: Arc<SetupCtx>, airgroup_id: usize, air_id: usize, instance_id: usize, prover_idx: usize) -> Self {
+    pub fn new(
+        sctx: Arc<SetupCtx>,
+        airgroup_id: usize,
+        air_id: usize,
+        instance_id: usize,
+        prover_idx: usize,
+        constraints_to_check: Vec<usize>,
+    ) -> Self {
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let p_stark = starks_new_c((&setup.p_setup).into(), setup.get_const_tree_ptr());
@@ -72,6 +80,7 @@ impl<F: Field> StarkProver<F> {
             n_field_elements,
             merkle_tree_arity,
             merkle_tree_custom,
+            constraints_to_check,
             _marker: PhantomData,
         }
     }
@@ -156,6 +165,13 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let n_constraints = get_n_constraints_c(p_setup);
 
         let mut constraints_info = vec![ConstraintInfo::default(); n_constraints as usize];
+
+        if !self.constraints_to_check.is_empty() {
+            constraints_info.iter_mut().for_each(|constraint| constraint.skip = true);
+            for constraint_id in &self.constraints_to_check {
+                constraints_info[*constraint_id].skip = false;
+            }
+        }
 
         verify_constraints_c(p_setup, (&steps_params).into(), constraints_info.as_mut_ptr() as *mut c_void);
 

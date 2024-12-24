@@ -1,9 +1,9 @@
-use std::sync::RwLock;
+use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{distribution_ctx::DistributionCtx, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
+use crate::{ModeName, distribution_ctx::DistributionCtx, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -21,24 +21,45 @@ impl<F> Default for Values<F> {
     }
 }
 
+pub type AirGroupMap = HashMap<usize, AirIdMap>;
+pub type AirIdMap = HashMap<usize, InstanceMap>;
+pub type InstanceMap = HashMap<usize, Vec<usize>>;
+
 #[derive(Clone)]
 pub struct ProofOptions {
     pub verify_constraints: bool,
     pub verbose_mode: VerboseMode,
-    pub std_mode: StdMode,
     pub aggregation: bool,
     pub final_snark: bool,
+    pub debug_info: DebugInfo,
+}
+
+#[derive(Clone)]
+pub struct DebugInfo {
+    pub debug_instances: AirGroupMap,
+    pub debug_global_instances: Vec<usize>,
+    pub std_mode: StdMode,
+}
+
+impl DebugInfo {
+    pub fn new() -> Self {
+        Self {
+            std_mode: StdMode::new(ModeName::Standard, Vec::new(), 0, false),
+            debug_instances: HashMap::new(),
+            debug_global_instances: Vec::new(),
+        }
+    }
 }
 
 impl ProofOptions {
     pub fn new(
         verify_constraints: bool,
         verbose_mode: VerboseMode,
-        std_mode: StdMode,
         aggregation: bool,
         final_snark: bool,
+        debug_info: DebugInfo,
     ) -> Self {
-        Self { verify_constraints, verbose_mode, std_mode, aggregation, final_snark }
+        Self { verify_constraints, verbose_mode, aggregation, final_snark, debug_info }
     }
 }
 
