@@ -99,7 +99,7 @@ void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_wi
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     std::string section = "cm" + to_string(step);  
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)];
+    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
 
     gl64_t *src = step == 1 ? d_witness : d_trace;
     uint64_t offset_src = step == 1 ? 0 : setupCtx.starkInfo.mapOffsets[make_pair(section, false)];
@@ -110,7 +110,6 @@ void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_wi
 
 #ifdef __USE_CUDA__
 
-    // Aqui falta definir l'id de la device
     if (nCols > 0)
     {
         
@@ -142,17 +141,10 @@ void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_witness, 
     if (step <= setupCtx.starkInfo.nStages)
     {
         extendAndMerkelize_inplace(step, d_witness, d_trace, d_tree, d_buffers);
-    } else {
-        assert(0);
-    }
-    /*else if (step <= setupCtx.starkInfo.nStages)
+    } else
     {
-        extendAndMerkelize(step, nullptr, trace, proof, pBuffHelper);
+        computeQ_inplace(step, d_trace, d_tree, d_buffers);
     }
-    else
-    {
-        computeQ(step, trace, proof, pBuffHelper);
-    }*/
 }
 
 template <typename ElementType>
@@ -200,6 +192,31 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
     
 }
+
+template <typename ElementType>
+void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_trace, uint64_t** d_tree, DeviceCommitBuffers* d_buffers)
+{
+
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    std::string section = "cm" + to_string(step);
+    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
+
+    uint64_t offset_cmQ = setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)];
+    uint64_t offset_q = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
+    uint64_t qDeg = setupCtx.starkInfo.qDeg;
+    uint64_t qDim = setupCtx.starkInfo.qDim;
+    NTT_Goldilocks nttExtended(NExtended);    
+
+#ifdef __USE_CUDA__
+
+    if (nCols > 0)
+    {
+        nttExtended.computeQ_inplace(d_tree, offset_cmQ, offset_q, qDeg, qDim, setupCtx.proverHelpers.S, N, NExtended, nCols, d_buffers);        
+    }
+#endif
+}
+
 
 template <typename ElementType>
 void Starks<ElementType>::computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv) {

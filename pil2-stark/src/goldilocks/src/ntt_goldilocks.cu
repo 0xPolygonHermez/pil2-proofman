@@ -4,6 +4,7 @@
 #include "gl64_t.cuh"
 #include "poseidon_goldilocks.hpp"
 #include "ntt_goldilocks.cuh"
+#include "goldilocks_cubic_extension.cuh"
 #include "omp.h"
 
 // CUDA Threads per Block
@@ -80,6 +81,86 @@ __global__ void transpose_opt(uint64_t *dst, uint64_t *src, uint32_t nblocks, ui
         *pdst = row[tid];
         __syncthreads();
     }
+}
+
+__global__ void applyS(gl64_t* d_cmQ, gl64_t* d_q, gl64_t* d_S, uint64_t N, uint64_t qDeg, uint64_t qDim){
+    
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= N)
+        return;
+
+    for (uint64_t p = 0; p < qDeg; p++)
+    {
+        for (uint64_t j = 0; j < qDim; j++)
+        {
+            Goldilocks3GPU::mul( (Goldilocks3GPU::Element &)d_cmQ[(i * qDeg + p) * FIELD_EXTENSION], 
+                                 (Goldilocks3GPU::Element &)d_q[(p * N + i) * FIELD_EXTENSION], 
+                                 d_S[p]);
+        }
+    }
+}
+
+void NTT_Goldilocks::computeQ_inplace(uint64_t ** d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers)
+{
+    gl64_t *d_q = d_buffers->d_trace + offset_q;
+    gl64_t *d_cmQ = d_buffers->d_trace + offset_cmQ;
+    gl64_t *d_S;
+    CHECKCUDAERR(cudaMalloc(&d_S, qDeg * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMemcpy(d_S, S, qDeg * sizeof(gl64_t), cudaMemcpyHostToDevice));    
+
+    double time = omp_get_wtime();
+    if (ncols == 0 || NExtended == 0)
+    {
+        return;
+    }
+
+    printf("*** In computeQ_inplace ...\n");
+
+    int gpu_id = 0;
+    CHECKCUDAERR(cudaSetDevice(gpu_id));
+    CHECKCUDAERR(cudaStreamCreate(&gpu_stream[gpu_id]));
+    CHECKCUDAERR(cudaMemset(d_buffers->d_forwardTwiddleFactors, 0, NExtended * sizeof(uint64_t)))
+    CHECKCUDAERR(cudaMemset(d_buffers->d_inverseTwiddleFactors, 0, NExtended * sizeof(uint64_t)));
+    double time1 = omp_get_wtime();
+    std::cout << "rick Time for cudaMalloc: " << time1 - time << std::endl;
+
+    time = time1;
+    // Init twiddle factors
+    int lg2ext = log2(NExtended);
+    init_twiddle_factors(d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2ext);
+    time1 = omp_get_wtime();
+    std::cout << "rick Time for init_twiddle_factors: " << time1 - time << std::endl;
+    time = time1;
+    // Intt
+    ntt_cuda(gpu_stream[gpu_id], d_q, d_buffers->d_r, d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2ext, qDim, true, false);
+    CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
+    time1 = omp_get_wtime();
+    std::cout << "rick Time for ntt_cuda: " << time1 - time << std::endl;
+
+    dim3 threads(128, 1, 1);
+    dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
+    applyS<<<blocks, threads>>>(d_cmQ, d_q, d_S, N, qDeg, qDim);
+    CHECKCUDAERR(cudaMemset(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t)));
+
+    //    nttExtended.NTT(cmQ, cmQ, NExtended, nCols);
+
+    time = time1;
+    ntt_cuda(gpu_stream[gpu_id], d_cmQ, d_buffers->d_r, d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2ext, ncols, false, false);
+    CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
+    time1 = omp_get_wtime();
+    std::cout << "rick Time for ntt_cuda: " << time1 - time << std::endl;
+
+    PoseidonGoldilocks::merkletree_cuda_gpudata_inplace(d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
+    CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
+    time1 = omp_get_wtime();
+    std::cout << "rick Time for merkletree_cuda_gpudata: " << time1 - time << std::endl;
+        
+    time = time1;
+    CHECKCUDAERR(cudaStreamDestroy(gpu_stream[gpu_id]));
+    time1 = omp_get_wtime();
+    std::cout << "rick Time for cudaStreamDestroy: " << time1 - time << std::endl;
+    time = time1;
+
 }
 
 void NTT_Goldilocks::LDE_MerkleTree_GPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer, u_int64_t nphase, bool buildMerkleTree)
@@ -212,57 +293,6 @@ void NTT_Goldilocks::offloadNTT(Goldilocks::Element *dst, gl64_t* d_src, uint64_
 
 void NTT_Goldilocks::offloadTree(Goldilocks::Element *dst, uint64_t *d_src, uint64_t size){
     CHECKCUDAERR(cudaMemcpy(dst, d_src, size * sizeof(uint64_t), cudaMemcpyDeviceToHost));
-}
-void NTT_Goldilocks::Q_GPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer, u_int64_t nphase, bool buildMerkleTree)
-{
-    if (ncols == 0 || size == 0)
-    {
-        return;
-    }
-
-    printf("*** In LDE_MerkleTree_GPU ...\n");
-
-    int gpu_id = 0;
-
-    uint64_t aux_size = ext_size * ncols;
-    CHECKCUDAERR(cudaSetDevice(gpu_id));
-    CHECKCUDAERR(cudaStreamCreate(&gpu_stream[gpu_id]));
-    CHECKCUDAERR(cudaMalloc(&gpu_a[gpu_id], aux_size * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&gpu_forward_twiddle_factors[gpu_id], ext_size * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&gpu_inverse_twiddle_factors[gpu_id], ext_size * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMalloc(&gpu_r_[gpu_id], ext_size * sizeof(uint64_t)));
-
-    int lg2 = log2(size);
-    int lg2ext = log2(ext_size);
-    init_twiddle_factors(gpu_forward_twiddle_factors[gpu_id], gpu_inverse_twiddle_factors[gpu_id], lg2);
-    init_twiddle_factors(gpu_forward_twiddle_factors[gpu_id], gpu_inverse_twiddle_factors[gpu_id], lg2ext);
-    init_r(gpu_r_[gpu_id], lg2);
-
-    CHECKCUDAERR(cudaMemcpyAsync(gpu_a[gpu_id], src, size * ncols * sizeof(gl64_t), cudaMemcpyHostToDevice, gpu_stream[gpu_id]));
-    CHECKCUDAERR(cudaMemsetAsync(gpu_a[gpu_id] + size * ncols, 0, size * ncols * sizeof(gl64_t), gpu_stream[gpu_id]));
-    ntt_cuda(gpu_stream[gpu_id], gpu_a[gpu_id], gpu_r_[gpu_id], gpu_forward_twiddle_factors[gpu_id], gpu_inverse_twiddle_factors[gpu_id], lg2, ncols, true, true);
-    ntt_cuda(gpu_stream[gpu_id], gpu_a[gpu_id], gpu_r_[gpu_id], gpu_forward_twiddle_factors[gpu_id], gpu_inverse_twiddle_factors[gpu_id], lg2ext, ncols, false, false);
-    CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
-
-    if (buildMerkleTree)
-    {
-        if (buffer != NULL)
-        {
-            CHECKCUDAERR(cudaMemcpyAsync(buffer, gpu_a[gpu_id], ext_size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToHost, gpu_stream[gpu_id]));
-        }
-        PoseidonGoldilocks::merkletree_cuda_gpudata(dst, (uint64_t *)gpu_a[gpu_id], ncols, ext_size);
-        CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
-    }
-    else
-    {
-        CHECKCUDAERR(cudaMemcpy(dst, gpu_a[gpu_id], ext_size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToHost));
-    }
-
-    CHECKCUDAERR(cudaStreamDestroy(gpu_stream[gpu_id]));
-    CHECKCUDAERR(cudaFree(gpu_a[gpu_id]));
-    CHECKCUDAERR(cudaFree(gpu_r_[gpu_id]));
-    CHECKCUDAERR(cudaFree(gpu_forward_twiddle_factors[gpu_id]));
-    CHECKCUDAERR(cudaFree(gpu_inverse_twiddle_factors[gpu_id]));
 }
 
 void NTT_Goldilocks::LDE_MerkleTree_MultiGPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer, u_int64_t nphase, bool buildMerkleTree)

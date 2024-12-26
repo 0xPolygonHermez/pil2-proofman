@@ -251,15 +251,18 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         }
     }*/
     ////////////
-    CHECKCUDAERR(cudaMemcpy(trace, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
-    starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.pols, proof);
+    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_trace, d_tree, d_buffers);
+    offloadCommit(setupCtx.starkInfo.nStages + 1, starks.treesGL, trace, d_buffers->d_trace, *d_tree, proof, setupCtx);
+
+
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], nFieldElements);
     TimerStopAndLog(STARK_STEP_Q);
 
     TimerStart(STARK_STEP_EVALS);
+    CHECKCUDAERR(cudaMemcpy(trace, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
 
     uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)

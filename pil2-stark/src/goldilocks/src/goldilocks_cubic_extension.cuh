@@ -31,7 +31,7 @@ __device__ __forceinline__ gl64_t neg_element(gl64_t x) {
 }
 
 // TODO: Review and optimize inv imlementation
-__device__ gl64_t inv_element(const gl64_t &in1)
+__device__ __forceinline__ gl64_t inv_element(const gl64_t &in1)
 {
     if (in1.is_zero())
     {
