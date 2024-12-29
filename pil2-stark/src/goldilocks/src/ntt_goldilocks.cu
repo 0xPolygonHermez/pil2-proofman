@@ -305,7 +305,7 @@ void  NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64
     printf("*** In LDE_MerkleTree_GPU ...\n");
 
     int gpu_id = 0;
-    uint64_t aux_size = size * ncols;
+    //uint64_t aux_size = size * ncols;
     CHECKCUDAERR(cudaSetDevice(gpu_id));
     CHECKCUDAERR(cudaStreamCreate(&gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaMemset(d_buffers->d_forwardTwiddleFactors, 0, size * sizeof(uint64_t)))

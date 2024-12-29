@@ -411,10 +411,10 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     } else {
         domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
     }
-    Dest destStruct(&params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]]);
-    destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
-    destStruct.dest_gpu = (Goldilocks::Element *)(d_buffers->d_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]);     
-    std::vector<Dest> dests3 = {destStruct};
+    Dest destStructq(&params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]]);
+    destStructq.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
+    destStructq.dest_gpu = (Goldilocks::Element *)(d_buffers->d_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]);     
+    std::vector<Dest> dests3 = {destStructq};
     expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests3, domainSize);
     time = omp_get_wtime() - time;
     std::cout << "rick calculateExpression time: " << time << std::endl;
@@ -467,7 +467,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     //////////
 
     starks.computeEvals(params ,LEv, proof);
-    evmap_inplace(params, LEv); // rick: pendent
+    //evmap_inplace(params, LEv); // rick: pendent
     //computeEvals_inplace(params, LEv, proof, d_buffers);
 
     time = omp_get_wtime();
@@ -505,20 +505,32 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
     params.xDivXSub = &trace[setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)]];
+    d_params.xDivXSub = (Goldilocks::Element *)(d_buffers->d_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)]);
     time = omp_get_wtime();
     calculateXDivXSub_inplace(setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)], xiChallenge, setupCtx, d_buffers);
     time = omp_get_wtime() - time;
     std::cout << "rick calculateXDivXSub time: " << time << std::endl;
+
+    expressionId = setupCtx.starkInfo.friExpId;
+    if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId) {
+        setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
+        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    } else {
+        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    }
+    Dest destStructf(&params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]]);
+    destStructf.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
+    destStructf.dest_gpu = (Goldilocks::Element *)(d_buffers->d_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
+    std::vector<Dest> destsf = {destStructf};
+    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsf, domainSize);
 
     ////////// copy trace downwards
     time = omp_get_wtime();
     CHECKCUDAERR(cudaMemcpy(trace, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
     time = omp_get_wtime() - time;
     std::cout << "rick copy trace time: " << time << std::endl;
-    //////////
 
 
-    starks.calculateFRIPolynomial(params);
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
@@ -573,12 +585,15 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     delete evals;
     delete airgroupValues;
     
+    time = omp_get_wtime();
     nlohmann::json jProof = proof.proof.proof2json();
     nlohmann::json zkin = proof2zkinStark(jProof, setupCtx.starkInfo);
 
     if(!proofFile.empty()) {
         json2file(jProof, proofFile);
     }
+    time = omp_get_wtime() - time;
+    std::cout << "rick proof2json time: " << time << std::endl;
 
     TimerStopAndLog(STARK_PROOF);
 

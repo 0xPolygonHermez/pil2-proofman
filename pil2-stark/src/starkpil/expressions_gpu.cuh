@@ -473,9 +473,9 @@ public:
         Goldilocks::Element* airgroupValues = params.airgroupValues;
         Goldilocks::Element* airValues = params.airValues;
         
-        //uint32_t debug_block = _ROW_DEBUG_ / nrowsPack;
-        //uint32_t debug_i = debug_block * nrowsPack;
-        //uint32_t debug_pos = _ROW_DEBUG_ % nrowsPack;
+        /*uint32_t debug_block = _ROW_DEBUG_ / nrowsPack;
+        uint32_t debug_i = debug_block * nrowsPack;
+        uint32_t debug_pos = _ROW_DEBUG_ % nrowsPack;*/
 
         uint64_t numIters=domainSize/ nrowsPack;
 
@@ -1209,6 +1209,7 @@ public:
         h_deviceArgs.evals = d_evals;
         h_deviceArgs.airgroupValues = d_airgroupValues;
         h_deviceArgs.airValues = d_airValues;
+        h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
         h_deviceArgs.ops = d_ops;
         h_deviceArgs.args = d_args;
         h_deviceArgs.destVals = d_destVals;
@@ -1848,7 +1849,7 @@ public:
         loadPolynomials__(d_deviceArgs, row, iBlock);
     }
 
-     __device__ void loadPolynomials__(DeviceArguments* d_deviceArgs, uint64_t row, uint32_t iBlock){
+    __device__ void loadPolynomials__(DeviceArguments* d_deviceArgs, uint64_t row, uint32_t iBlock){
 
         uint64_t row_loc = threadIdx.x;
         uint64_t nOpenings = d_deviceArgs->nOpenings;
@@ -1936,9 +1937,9 @@ public:
         int chunk_idx = blockIdx.x;
         int pack_idx = threadIdx.x;
         uint32_t iBlock= blockIdx.x;
-        //uint32_t debug_block = _ROW_DEBUG_ / d_deviceArgs->nrowsPack;
-        //uint32_t debug_i = debug_block * d_deviceArgs->nrowsPack;
-        //uint32_t debug_pos = _ROW_DEBUG_ % d_deviceArgs->nrowsPack;
+        /*uint32_t debug_block = _ROW_DEBUG_ / d_deviceArgs->nrowsPack;
+        uint32_t debug_i = debug_block * d_deviceArgs->nrowsPack;
+        uint32_t debug_pos = _ROW_DEBUG_ % d_deviceArgs->nrowsPack;*/
 
         gl64_t* challenges = (gl64_t*)d_deviceArgs->challenges;
         gl64_t* numbers = (gl64_t*)d_deviceArgs->numbers;
@@ -1980,13 +1981,13 @@ public:
                     uint16_t* args = &d_deviceArgs->args[dests[j].params[k].parserParams.argsOffset];
                     #if 1
                     /*if(i==debug_i && threadIdx.x == debug_pos && j == 0 ){
-                            printf("fuck idest gpu, dest: %llu nops: %d\n", j, dests[j].params[k].parserParams.nOps);           
+                            printf("fuck idest GPU, dest: %llu nops: %d\n", j, dests[j].params[k].parserParams.nOps);           
                     }*/
                     for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
                         /*if(i==debug_i && threadIdx.x == debug_pos && j == 0){
                             printf(" op: %d\n", uint32_t(ops[kk]));   
-                        }
-                        uint64_t i_args_ant = i_args;*/
+                        }*/
+                        uint64_t i_args_ant = i_args;
                         switch (ops[kk]) {
                             case 0: {
                                 // COPY commit1 to tmp1
