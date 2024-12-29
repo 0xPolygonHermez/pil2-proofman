@@ -23,7 +23,7 @@ void offloadCommit(uint64_t step, MerkleTreeGL** treesGL, Goldilocks::Element *t
 
     uint64_t ncols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)];
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    uint64_t size = NExtended * ncols * sizeof(Goldilocks::Element);
+    //uint64_t size = NExtended * ncols * sizeof(Goldilocks::Element);
     uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended) * sizeof(uint64_t);
     std::string section = "cm" + to_string(step);  
     uint64_t offset = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
@@ -37,6 +37,184 @@ void offloadCommit(uint64_t step, MerkleTreeGL** treesGL, Goldilocks::Element *t
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
 }
 
+__global__ void fillLEv(uint64_t LEv_offset, gl64_t * d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, gl64_t * d_trace, uint64_t N){
+    
+    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if(i < nOpeningPoints){
+        gl64_t w(1);
+        Goldilocks3GPU::Element xi;
+        Goldilocks3GPU::Element xiShifted;
+        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
+        gl64_t * LEv = (gl64_t *) d_trace + LEv_offset;
+        gl64_t W(W_);
+        gl64_t shift(shift_);
+        gl64_t invShift = shift.reciprocal();
+        for (uint64_t j = 0; j < openingAbs; ++j)
+        {
+            w *=  W;
+        }
+
+        if (d_openingPoints[i] < 0)
+        {
+            w = w.reciprocal();
+        }
+        Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), w);
+        Goldilocks3GPU::mul(xiShifted, xi, invShift);
+        Goldilocks3GPU::one((*(Goldilocks3GPU::Element *) &LEv[i * FIELD_EXTENSION]));
+        
+        for (uint64_t k = 1; k < N; k++)
+        {
+            Goldilocks3GPU::mul((*(Goldilocks3GPU::Element *) &LEv[(k*nOpeningPoints + i)*FIELD_EXTENSION]), (*(Goldilocks3GPU::Element *) &LEv[((k-1)*nOpeningPoints + i)*FIELD_EXTENSION]), xiShifted);
+        }
+    }
+}
+
+void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, uint64_t nBits, uint64_t nOpeningPoints,int64_t *openingPoints, DeviceCommitBuffers* d_buffers){
+
+    double time = omp_get_wtime();
+    uint64_t N = 1 << nBits;
+
+    gl64_t * d_xiChallenge;
+    int64_t * d_openingPoints;
+    cudaMalloc(&d_xiChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element));
+    cudaMemcpy(d_xiChallenge, xiChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_openingPoints, nOpeningPoints * sizeof(int64_t));
+    cudaMemcpy(d_openingPoints, openingPoints, nOpeningPoints * sizeof(int64_t), cudaMemcpyHostToDevice);
+
+    dim3 nThreads(32);
+    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x);
+    fillLEv<<<nBlocks, nThreads>>>(LEv_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, d_buffers->d_trace, N);
+    time = omp_get_wtime() - time;
+    std::cout << "LEv inplace: " << time << std::endl;
+    
+    time = omp_get_wtime();
+    NTT_Goldilocks ntt(N);
+    ntt.INTT_inplace(LEv_offset, N, FIELD_EXTENSION * nOpeningPoints, d_buffers);
+    time = omp_get_wtime() - time;
+    std::cout << "INTT: " << time << std::endl;
+
+}
+
+__global__ void calcXDivXSub(uint64_t xDivXSub_offset, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t * d_x, gl64_t * d_trace, uint64_t NExtended){
+    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t k = blockIdx.y * blockDim.y + threadIdx.y;
+    if(i < nOpeningPoints){
+        Goldilocks3GPU::Element xi;
+        gl64_t w(1);
+        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
+        gl64_t W(W_);
+        for (uint64_t j = 0; j < openingAbs; ++j)
+        {
+            w *=  W;
+        }
+        if (d_openingPoints[i] < 0)
+        {
+            w = w.reciprocal();
+        }
+        Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), w);
+
+        if( k< NExtended){
+            gl64_t * d_xDivXSub = (gl64_t *) (d_trace + xDivXSub_offset);
+            Goldilocks3GPU::Element * xDivXSubComp = (Goldilocks3GPU::Element *) &d_xDivXSub[(k + i * NExtended) * FIELD_EXTENSION];
+            Goldilocks3GPU::sub(*xDivXSubComp, d_x[k], xi);
+            Goldilocks3GPU::inv( xDivXSubComp, xDivXSubComp);
+            Goldilocks3GPU::mul(*xDivXSubComp, *xDivXSubComp, d_x[k]);
+       }
+    }
+
+
+    
+}
+
+void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xiChallenge, SetupCtx &setupCtx, DeviceCommitBuffers* d_buffers){
+
+    double time = omp_get_wtime();
+
+    uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
+    int64_t *openingPoints = setupCtx.starkInfo.openingPoints.data();
+    gl64_t *x = (gl64_t *) setupCtx.proverHelpers.x;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
+
+
+    gl64_t * d_xiChallenge;
+    int64_t * d_openingPoints;
+    cudaMalloc(&d_xiChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element));
+    cudaMemcpy(d_xiChallenge, xiChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_openingPoints, nOpeningPoints * sizeof(int64_t));
+    cudaMemcpy(d_openingPoints, openingPoints, nOpeningPoints * sizeof(int64_t), cudaMemcpyHostToDevice);
+    gl64_t * d_x;
+    cudaMalloc(&d_x, NExtended  * sizeof(Goldilocks::Element));
+    cudaMemcpy(d_x, x, NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+
+    dim3 nThreads(32, 32);
+    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (NExtended + nThreads.y - 1) / nThreads.y);
+    calcXDivXSub<<<nBlocks, nThreads>>>(xDivXSub_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, d_x, d_buffers->d_trace, NExtended);
+}
+
+
+void evmap_inplace(StepsParams& params, Goldilocks::Element *LEv){
+    /*uint64_t extendBits = setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits;
+    u_int64_t size_eval = setupCtx.starkInfo.evMap.size();
+
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+
+    int num_threads = omp_get_max_threads();
+    int size_thread = size_eval * FIELD_EXTENSION;
+    Goldilocks::Element *evals_acc = &params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("evals", true)]];
+    memset(&evals_acc[0], 0, num_threads * size_thread * sizeof(Goldilocks::Element));
+    
+    Polinomial *ordPols = new Polinomial[size_eval];
+
+    for (uint64_t i = 0; i < size_eval; i++)
+    {
+        EvMap ev = setupCtx.starkInfo.evMap[i];
+        string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom" : "fixed";
+        Goldilocks::Element *pols = type == "cm" ? params.pols : type == "custom" ? params.customCommits[ev.commitId] : &params.pConstPolsExtendedTreeAddress[2];
+        PolMap polInfo = type == "cm" ? setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id] : setupCtx.starkInfo.constPolsMap[ev.id];
+        setupCtx.starkInfo.getPolynomial(ordPols[i], pols, type, polInfo, true);
+    }
+
+#pragma omp parallel
+    {
+        int thread_idx = omp_get_thread_num();
+        Goldilocks::Element *evals_acc_thread = &evals_acc[thread_idx * size_thread];
+#pragma omp for
+        for (uint64_t k = 0; k < N; k++)
+        {
+            Goldilocks3::Element LEv_[setupCtx.starkInfo.openingPoints.size()];
+            for(uint64_t o = 0; o < setupCtx.starkInfo.openingPoints.size(); o++) {
+                uint64_t pos = (o + k*setupCtx.starkInfo.openingPoints.size()) * FIELD_EXTENSION;
+                LEv_[o][0] = LEv[pos];
+                LEv_[o][1] = LEv[pos + 1];
+                LEv_[o][2] = LEv[pos + 2];
+            }
+            uint64_t row = (k << extendBits);
+            for (uint64_t i = 0; i < size_eval; i++)
+            {
+                EvMap ev = setupCtx.starkInfo.evMap[i];
+                Goldilocks3::Element res;
+                if (ordPols[i].dim() == 1) {
+                    Goldilocks3::mul(res, LEv_[ev.openingPos], *ordPols[i][row]);
+                } else {
+                    Goldilocks3::mul(res, LEv_[ev.openingPos], (Goldilocks3::Element &)(*ordPols[i][row]));
+                }
+                Goldilocks3::add((Goldilocks3::Element &)(evals_acc_thread[i * FIELD_EXTENSION]), (Goldilocks3::Element &)(evals_acc_thread[i * FIELD_EXTENSION]), res);
+            }
+        }
+#pragma omp for // aixo ho fare amb trans threads com size evals
+        for (uint64_t i = 0; i < size_eval; ++i)
+        {
+            Goldilocks3::Element sum = { Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero() };
+            for (int k = 0; k < num_threads; ++k)
+            {
+                Goldilocks3::add(sum, sum, (Goldilocks3::Element &)(evals_acc[k * size_thread + i * FIELD_EXTENSION]));
+            }
+            std::memcpy((Goldilocks3::Element &)(params.evals[i * FIELD_EXTENSION]), sum, FIELD_EXTENSION * sizeof(Goldilocks::Element));
+        }
+    }
+    delete[] ordPols;*/
+}
 template <typename ElementType>
 void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, DeviceCommitBuffers* d_buffers) { 
 
@@ -253,16 +431,19 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     ////////////
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
+    time = omp_get_wtime();
     starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_trace, d_tree, d_buffers);
+    time = omp_get_wtime() - time;
+    std::cout << "rick Q_inplace time: " << time << std::endl;
+    time = omp_get_wtime();
     offloadCommit(setupCtx.starkInfo.nStages + 1, starks.treesGL, trace, d_buffers->d_trace, *d_tree, proof, setupCtx);
-
-
+    time = omp_get_wtime() - time;
+    std::cout << "rick Q_offloadCommit time: " << time << std::endl;
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], nFieldElements);
     TimerStopAndLog(STARK_STEP_Q);
 
     TimerStart(STARK_STEP_EVALS);
-    CHECKCUDAERR(cudaMemcpy(trace, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
 
     uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -276,9 +457,20 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
     Goldilocks::Element* LEv = &trace[setupCtx.starkInfo.mapOffsets[make_pair("LEv", true)]];
 
-    starks.computeLEv(xiChallenge, LEv);
-    starks.computeEvals(params ,LEv, proof);
+    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.mapOffsets[make_pair("LEv", true)], setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers);
 
+    ////////// copy trace downwards
+    time = omp_get_wtime();
+    CHECKCUDAERR(cudaMemcpy(trace, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    time = omp_get_wtime() - time;
+    std::cout << "rick copy trace time: " << time << std::endl;
+    //////////
+
+    starks.computeEvals(params ,LEv, proof);
+    evmap_inplace(params, LEv); // rick: pendent
+    //computeEvals_inplace(params, LEv, proof, d_buffers);
+
+    time = omp_get_wtime();
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         starks.addTranscriptGL(transcript, evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
     } else {
@@ -294,6 +486,8 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
         }
     }
+    time = omp_get_wtime() - time;
+    std::cout << "rick evals-challenges time: " << time << std::endl;
 
     TimerStopAndLog(STARK_STEP_EVALS);
 
@@ -302,9 +496,28 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     //--------------------------------
     TimerStart(STARK_STEP_FRI);
 
+    ////////// copy trace upwards
+    time = omp_get_wtime();
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    time = omp_get_wtime() - time;
+    std::cout << "rick copy trace time: " << time << std::endl;
+    //////////
+
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
     params.xDivXSub = &trace[setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)]];
-    starks.calculateXDivXSub(xiChallenge, params.xDivXSub);
+    time = omp_get_wtime();
+    calculateXDivXSub_inplace(setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)], xiChallenge, setupCtx, d_buffers);
+    time = omp_get_wtime() - time;
+    std::cout << "rick calculateXDivXSub time: " << time << std::endl;
+
+    ////////// copy trace downwards
+    time = omp_get_wtime();
+    CHECKCUDAERR(cudaMemcpy(trace, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    time = omp_get_wtime() - time;
+    std::cout << "rick copy trace time: " << time << std::endl;
+    //////////
+
+
     starks.calculateFRIPolynomial(params);
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 

@@ -221,14 +221,12 @@ void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_trace, uint6
 template <typename ElementType>
 void Starks<ElementType>::computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-        
-    Goldilocks::Element xis[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
-    Goldilocks::Element xisShifted[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
-
     Goldilocks::Element shift_inv = Goldilocks::inv(Goldilocks::shift());
     for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
     {
         Goldilocks::Element w = Goldilocks::one();
+        Goldilocks::Element xi[FIELD_EXTENSION];
+        Goldilocks::Element xisShifted[FIELD_EXTENSION];
         uint64_t openingAbs = setupCtx.starkInfo.openingPoints[i] < 0 ? -setupCtx.starkInfo.openingPoints[i] : setupCtx.starkInfo.openingPoints[i];
         for (uint64_t j = 0; j < openingAbs; ++j)
         {
@@ -240,19 +238,14 @@ void Starks<ElementType>::computeLEv(Goldilocks::Element *xiChallenge, Goldilock
             w = Goldilocks::inv(w);
         }
 
-        Goldilocks3::mul((Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]), (Goldilocks3::Element &)xiChallenge[0], w);
-        Goldilocks3::mul((Goldilocks3::Element &)(xisShifted[i * FIELD_EXTENSION]), (Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]), shift_inv);
+        Goldilocks3::mul((Goldilocks3::Element &)(Goldilocks3::Element &)xi[0], (Goldilocks3::Element &)xiChallenge[0], w);
+        Goldilocks3::mul((Goldilocks3::Element &)(xisShifted[0]), (Goldilocks3::Element &)(Goldilocks3::Element &)xi[0], shift_inv);
 
         Goldilocks3::one((Goldilocks3::Element &)LEv[i * FIELD_EXTENSION]);
-    }
 
-
-#pragma omp parallel for
-    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
-    {
         for (uint64_t k = 1; k < N; k++)
         {
-            Goldilocks3::mul((Goldilocks3::Element &)(LEv[(k*setupCtx.starkInfo.openingPoints.size() + i)*FIELD_EXTENSION]), (Goldilocks3::Element &)(LEv[((k-1)*setupCtx.starkInfo.openingPoints.size() + i)*FIELD_EXTENSION]), (Goldilocks3::Element &)(xisShifted[i * FIELD_EXTENSION]));
+            Goldilocks3::mul((Goldilocks3::Element &)(LEv[(k*setupCtx.starkInfo.openingPoints.size() + i)*FIELD_EXTENSION]), (Goldilocks3::Element &)(LEv[((k-1)*setupCtx.starkInfo.openingPoints.size() + i)*FIELD_EXTENSION]), (Goldilocks3::Element &)(xisShifted[0]));
         }
     }
     

@@ -7,7 +7,7 @@
 #include "goldilocks_cubic_extension.cuh"
 #include <omp.h>
 
-#define _ROW_DEBUG_ 0
+//#define _ROW_DEBUG_ 0
 
 struct ParserParamsGPU
 {
@@ -473,9 +473,9 @@ public:
         Goldilocks::Element* airgroupValues = params.airgroupValues;
         Goldilocks::Element* airValues = params.airValues;
         
-        uint32_t debug_block = _ROW_DEBUG_ / nrowsPack;
-        uint32_t debug_i = debug_block * nrowsPack;
-        uint32_t debug_pos = _ROW_DEBUG_ % nrowsPack;
+        //uint32_t debug_block = _ROW_DEBUG_ / nrowsPack;
+        //uint32_t debug_i = debug_block * nrowsPack;
+        //uint32_t debug_pos = _ROW_DEBUG_ % nrowsPack;
 
         uint64_t numIters=domainSize/ nrowsPack;
 
@@ -1936,9 +1936,9 @@ public:
         int chunk_idx = blockIdx.x;
         int pack_idx = threadIdx.x;
         uint32_t iBlock= blockIdx.x;
-        uint32_t debug_block = _ROW_DEBUG_ / d_deviceArgs->nrowsPack;
-        uint32_t debug_i = debug_block * d_deviceArgs->nrowsPack;
-        uint32_t debug_pos = _ROW_DEBUG_ % d_deviceArgs->nrowsPack;
+        //uint32_t debug_block = _ROW_DEBUG_ / d_deviceArgs->nrowsPack;
+        //uint32_t debug_i = debug_block * d_deviceArgs->nrowsPack;
+        //uint32_t debug_pos = _ROW_DEBUG_ % d_deviceArgs->nrowsPack;
 
         gl64_t* challenges = (gl64_t*)d_deviceArgs->challenges;
         gl64_t* numbers = (gl64_t*)d_deviceArgs->numbers;
