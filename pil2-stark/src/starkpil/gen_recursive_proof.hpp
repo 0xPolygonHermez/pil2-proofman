@@ -12,7 +12,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     setupCtx.starkInfo.addMemoryRecursive();
     
-    Goldilocks::Element *trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
+    Goldilocks::Element *aux_trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
 
 #ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
@@ -31,8 +31,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     
     vector<bool> airgroupValuesCalculated(setupCtx.starkInfo.airgroupValuesMap.size(), false);
     StepsParams params = {
-        witness,
-        trace,
+        trace: witness,
+        aux_trace,
         publicInputs : publicInputs,
         proofValues: nullptr,
         challenges : challenges,
@@ -41,6 +41,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         xDivXSub : nullptr,
         pConstPolsAddress: pConstPols,
         pConstPolsExtendedTreeAddress: pConstTree,
+        pCustomCommits:  {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
+        pCustomCommitsExtended:  {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
     };
 
     //--------------------------------

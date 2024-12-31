@@ -16,12 +16,23 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
         memcpy(&airgroupValues[i * FIELD_EXTENSION], fproof.proof.airgroupValues[i].data(), FIELD_EXTENSION * sizeof(Goldilocks::Element));
     }
 
+    Goldilocks::Element airValues[starkInfo.airValuesMap.size()  * FIELD_EXTENSION];
+    uint64_t c = 0;
+    for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); ++i) {
+        if(starkInfo.airValuesMap[i].stage == 1) {
+            airValues[c++] = fproof.proof.airValues[i][0];
+        } else {
+            memcpy(&airValues[c], fproof.proof.airValues[i].data(), FIELD_EXTENSION * sizeof(Goldilocks::Element));
+            c += 3;
+        }
+    }
+
     Goldilocks::Element challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size() + 1) * FIELD_EXTENSION];
+
     if(!challengesVadcop) {
         uint64_t c = 0;
         TranscriptGL transcript(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom);
         transcript.put(&verkey[0], 4);
-
         if(starkInfo.nPublics > 0) {
             if(!starkInfo.starkStruct.hashCommits) {
                 transcript.put(&publics[0], starkInfo.nPublics);
@@ -148,7 +159,7 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
         }
     }
 
-    Goldilocks::Element *trace = new Goldilocks::Element[starkInfo.mapSectionsN["cm1"]];
+    Goldilocks::Element *trace = new Goldilocks::Element[starkInfo.mapSectionsN["cm1"]*starkInfo.starkStruct.nQueries];
     Goldilocks::Element *aux_trace = new Goldilocks::Element[starkInfo.mapTotalN];
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         for(uint64_t i = 0; i < starkInfo.cmPolsMap.size(); ++i) {
@@ -166,6 +177,30 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
             }
         }
     }
+    
+    Goldilocks::Element *custom_commits[starkInfo.customCommits.size()];
+    for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
+        custom_commits[c] = new Goldilocks::Element[starkInfo.customCommitsMap[c].size() * starkInfo.starkStruct.nQueries];
+    }
+
+    for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
+        for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
+            for(uint64_t i = 0; i < starkInfo.customCommitsMap[c].size(); ++i) {
+                uint64_t stagePos = starkInfo.customCommitsMap[c][i].stagePos;
+                uint64_t offset = starkInfo.mapOffsets[std::make_pair(starkInfo.customCommits[c].name + "0", false)];
+                uint64_t nPols = starkInfo.mapSectionsN[starkInfo.customCommits[c].name + "0"];
+                Goldilocks::Element *pols = custom_commits[c];
+                if(starkInfo.customCommitsMap[c][i].dim == 1) {
+                    std::memcpy(&pols[offset + q*nPols + stagePos], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + c].v[stagePos].data(), sizeof(Goldilocks::Element));
+                } else {
+                    std::memcpy(&pols[offset + q*nPols + stagePos], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + c].v[stagePos].data(), sizeof(Goldilocks::Element));
+                    std::memcpy(&pols[offset + q*nPols + stagePos + 1], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + c].v[stagePos + 1].data(), sizeof(Goldilocks::Element));
+                    std::memcpy(&pols[offset + q*nPols + stagePos + 2], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + c].v[stagePos + 2].data(), sizeof(Goldilocks::Element));
+                }
+            }
+        }   
+    }
+
 
     StepsParams params = {
         trace : trace,
@@ -174,10 +209,17 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
         proofValues: proofValues,
         challenges : challenges,
         airgroupValues : airgroupValues,
+        airValues : airValues,
         evals : evals,
         xDivXSub : xDivXSub,
         pConstPolsAddress: constPolsVals,
+        pConstPolsExtendedTreeAddress: nullptr,
+        pCustomCommits: {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
     };
+
+    for (uint64_t i = 0; i < starkInfo.customCommits.size(); ++i) {
+        params.pCustomCommits[i] = custom_commits[i];
+    }
 
     bool isValid = true;
 
@@ -275,6 +317,21 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
         }
     }
 
+    for(uint64_t i = 0; i < starkInfo.customCommits.size(); ++i) {
+        zklog.trace("Verifying custom commit " + starkInfo.customCommits[i].name + " Merkle tree");
+        std::string section = starkInfo.customCommits[i].name + "0";
+        uint64_t nCols = starkInfo.mapSectionsN[section];
+        MerkleTreeGL tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
+        for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
+            bool res = tree.verifyGroupProof(&fproof.proof.roots[starkInfo.nStages + 1 + i][0], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + i].mp, friQueries[q], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + i].v);
+            if(!res) {
+                zklog.error("Custom Commit " + starkInfo.customCommits[i].name + " Merkle Tree verification failed");
+                isValid = false;
+                break;
+            }
+        }
+    }
+
 
     zklog.trace("Verifying FRI foldings Merkle Trees");
     for (uint64_t step=1; step< starkInfo.starkStruct.steps.size(); step++) {
@@ -328,6 +385,10 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
     delete xDivXSub;
     delete trace;
     delete aux_trace;
+
+    for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
+        delete[] custom_commits[c];
+    }
 
     return isValid;
 }

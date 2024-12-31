@@ -799,3 +799,6 @@ impl<F: Field> StarkProver<F> {
         );
     }
 }
+
+unsafe impl<F: Field> Send for StarkProver<F> {}
+unsafe impl<F: Field> Sync for StarkProver<F> {}

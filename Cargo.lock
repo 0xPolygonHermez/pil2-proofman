@@ -215,6 +215,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "connection"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "num-bigint",
+ "p3-field",
+ "p3-goldilocks",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "witness",
+]
+
+[[package]]
 name = "conv"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -494,6 +512,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
+name = "lookup"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "num-bigint",
+ "p3-field",
+ "p3-goldilocks",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "witness",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -711,6 +747,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "permutation"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "num-bigint",
+ "p3-field",
+ "p3-goldilocks",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "witness",
+]
+
+[[package]]
 name = "petgraph"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -801,6 +855,7 @@ dependencies = [
  "proofman-hints",
  "proofman-starks-lib-c",
  "proofman-util",
+ "rayon",
  "serde_json",
  "stark",
  "transcript",
@@ -968,6 +1023,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
+]
+
+[[package]]
+name = "range-check"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "num-bigint",
+ "num-traits",
+ "p3-field",
+ "p3-goldilocks",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "rand",
+ "witness",
 ]
 
 [[package]]

@@ -319,6 +319,8 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
     uint32_t nChallengesIdsExpressions = expressionsBin->readU32LE();
     uint32_t nPublicsIdsExpressions = expressionsBin->readU32LE();
     uint32_t nAirgroupValuesIdsExpressions = expressionsBin->readU32LE();
+    uint32_t nAirValuesIdsExpressions = expressionsBin->readU32LE();
+    uint64_t nCustomCommitsPolsIdsExpressions = expressionsBin->readU32LE();
 
     expressionsBinArgsExpressions.ops = new uint8_t[nOpsExpressions];
     expressionsBinArgsExpressions.args = new uint16_t[nArgsExpressions];
@@ -328,8 +330,11 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
     expressionsBinArgsExpressions.challengesIds = new uint16_t[nChallengesIdsExpressions];
     expressionsBinArgsExpressions.publicsIds = new uint16_t[nPublicsIdsExpressions];
     expressionsBinArgsExpressions.airgroupValuesIds = new uint16_t[nAirgroupValuesIdsExpressions];
+    expressionsBinArgsExpressions.airValuesIds = new uint16_t[nAirValuesIdsExpressions];
+    expressionsBinArgsExpressions.customCommitsPolsIds = new uint16_t[nCustomCommitsPolsIdsExpressions];
     expressionsBinArgsExpressions.nNumbers = nNumbersExpressions;
 
+    uint64_t nCustomCommits = expressionsBin->readU32LE();
     uint64_t nExpressions = expressionsBin->readU32LE();
 
     for(uint64_t i = 0; i < nExpressions; ++i) {
@@ -366,6 +371,18 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
         parserParamsExpression.nAirgroupValuesUsed = expressionsBin->readU32LE();
         parserParamsExpression.airgroupValuesOffset = expressionsBin->readU32LE();
 
+        parserParamsExpression.nAirValuesUsed = expressionsBin->readU32LE();
+        parserParamsExpression.airValuesOffset = expressionsBin->readU32LE();
+        
+        std::vector<uint32_t> nCustomCommitsPolsUsed(nCustomCommits);
+        std::vector<uint32_t> customCommitsOffset(nCustomCommits);
+        for(uint64_t j = 0; j < nCustomCommits; ++j) {
+            nCustomCommitsPolsUsed[j] = expressionsBin->readU32LE();
+            customCommitsOffset[j] = expressionsBin->readU32LE();
+        }
+        parserParamsExpression.nCustomCommitsPolsUsed = nCustomCommitsPolsUsed;
+        parserParamsExpression.customCommitsOffset = customCommitsOffset;
+
         parserParamsExpression.line = expressionsBin->readString();
 
         expressionsInfo[expId] = parserParamsExpression;
@@ -399,6 +416,14 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
 
     for(uint64_t j = 0; j < nAirgroupValuesIdsExpressions; ++j) {
         expressionsBinArgsExpressions.airgroupValuesIds[j] = expressionsBin->readU16LE();
+    }
+
+    for(uint64_t j = 0; j < nAirValuesIdsExpressions; ++j) {
+        expressionsBinArgsExpressions.airValuesIds[j] = expressionsBin->readU16LE();
+    }
+
+    for(uint64_t j = 0; j < nCustomCommitsPolsIdsExpressions; ++j) {
+        expressionsBinArgsExpressions.customCommitsPolsIds[j] = expressionsBin->readU16LE();
     }
 
     expressionsBin->endReadSection();

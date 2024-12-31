@@ -225,11 +225,17 @@ void StarkInfo::load(json j, bool verify_)
     }
 
     if(verify_) {
+        verify = verify_;
         mapTotalN = 0;
         mapOffsets[std::make_pair("const", false)] = 0;
         for(uint64_t stage = 1; stage <= nStages + 1; ++stage) {
             mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
             mapTotalN += mapSectionsN["cm" + to_string(stage)] * starkStruct.nQueries;
+        }
+        // Set offsets for custom commits
+        for(uint64_t i = 0; i < customCommits.size(); ++i) {
+            mapOffsets[std::make_pair(customCommits[i].name + "0", false)] = 0;
+            mapOffsets[std::make_pair(customCommits[i].name + "0", true)] = 0;
         }
     } else {
         setMapOffsets();

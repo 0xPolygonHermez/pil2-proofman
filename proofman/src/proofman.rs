@@ -15,7 +15,7 @@ use transcript::FFITranscript;
 use witness::{WitnessLibInitFn, WitnessManager};
 
 use crate::{
-    _verify_proof,
+    verify_proof,
     verify_constraints_proof, generate_vadcop_recursive1_proof, generate_vadcop_final_proof,
     generate_vadcop_recursive2_proof, generate_recursivef_proof, generate_fflonk_snark_proof,
 };
@@ -141,7 +141,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_PROOF);
 
         if !pctx.options.aggregation {
-            _verify_proof(&mut provers, pctx.clone(), sctx.clone());
+            verify_proof(&mut provers, pctx.clone(), sctx.clone());
+        }
+
+        Self::free_provers(&mut provers);
+
+        if !pctx.options.aggregation {
             return Ok(());
         }
 
@@ -613,7 +618,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut proves = Vec::new();
         for prover in provers.iter_mut() {
             proves.push(prover.get_zkin_proof(proof_ctx.clone(), output_dir));
-            prover.free();
         }
 
         let n_publics = proof_ctx.global_info.n_publics as u64;
@@ -631,6 +635,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         proves
     }
 
+    fn free_provers(
+        provers: &mut [Box<dyn Prover<F>>]
+    ) {
+        for prover in provers.iter_mut() {
+            prover.free();
+        }
+    }
+    
     fn print_global_summary(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         let dctx = pctx.dctx.read().unwrap();
 

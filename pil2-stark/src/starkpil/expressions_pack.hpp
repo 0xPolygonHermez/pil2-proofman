@@ -51,10 +51,9 @@ public:
         }
     }
 
-    inline void loadPolynomials(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> &dests, Goldilocks::Element *bufferT_, uint64_t row, uint64_t domainSize) {
+    inline void loadPolynomials(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> &dests, Goldilocks::Element *bufferT_, uint64_t row, uint64_t domainSize, bool domainExtended) {
         uint64_t nOpenings = setupCtx.starkInfo.verify ? 1 : setupCtx.starkInfo.openingPoints.size();
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
-        bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
 
         uint64_t extendBits = (setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits);
         int64_t extend = domainExtended ? (1 << extendBits) : 1;
@@ -287,7 +286,7 @@ public:
     void calculateExpressions(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize, bool compilation_time) override {
         uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
-        bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
+        bool domainExtended = !setupCtx.starkInfo.verify && domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
 
         uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].params[0].parserParams.destDim : 0;
         setBufferTInfo(domainExtended, expId);
@@ -394,7 +393,7 @@ public:
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
             Goldilocks::Element bufferT_[nOpenings*nCols*nrowsPack];
 
-            if(!compilation_time) loadPolynomials(params, parserArgs, dests, bufferT_, i, domainSize);
+            if(!compilation_time) loadPolynomials(params, parserArgs, dests, bufferT_, i, domainSize, domainExtended);
 
             Goldilocks::Element **destVals = new Goldilocks::Element*[dests.size()];
 
