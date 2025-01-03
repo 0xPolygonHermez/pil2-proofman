@@ -7,6 +7,43 @@
 #include "gl64_t.cuh"
 #include "expressions_gpu.cuh"
 
+
+Goldilocks::Element omegas_inv_[33] = {
+    0x1,
+    0xffffffff00000000,
+    0xfffeffff00000001,
+    0xfffffeff00000101,
+    0xffefffff00100001,
+    0xfbffffff04000001,
+    0xdfffffff20000001,
+    0x3fffbfffc0,
+    0x7f4949dce07bf05d,
+    0x4bd6bb172e15d48c,
+    0x38bc97652b54c741,
+    0x553a9b711648c890,
+    0x55da9bb68958caa,
+    0xa0a62f8f0bb8e2b6,
+    0x276fd7ae450aee4b,
+    0x7b687b64f5de658f,
+    0x7de5776cbda187e9,
+    0xd2199b156a6f3b06,
+    0xd01c8acd8ea0e8c0,
+    0x4f38b2439950a4cf,
+    0x5987c395dd5dfdcf,
+    0x46cf3d56125452b1,
+    0x909c4b1a44a69ccb,
+    0xc188678a32a54199,
+    0xf3650f9ddfcaffa8,
+    0xe8ef0e3e40a92655,
+    0x7c8abec072bb46a6,
+    0xe0bfc17d5c5a7a04,
+    0x4c6b8a5a0b79f23a,
+    0x6b4d20533ce584fe,
+    0xe5cceae468a70ec2,
+    0x8958579f296dac7a,
+    0x16d265893b5b7e85,
+};
+
 __global__ void insertTracePol(Goldilocks::Element* d_trace, uint64_t offset, uint64_t stride, Goldilocks::Element* d_pol, uint64_t dim, uint64_t N){
     uint64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if(idx < N){
@@ -18,6 +55,42 @@ __global__ void insertTracePol(Goldilocks::Element* d_trace, uint64_t offset, ui
         }
     }
 }
+
+__device__ __constant__ uint64_t domain_size_inverse_[33] = {
+    0x0000000000000001, // 1^{-1}
+    0x7fffffff80000001, // 2^{-1}
+    0xbfffffff40000001, // (1 << 2)^{-1}
+    0xdfffffff20000001, // (1 << 3)^{-1}
+    0xefffffff10000001,
+    0xf7ffffff08000001,
+    0xfbffffff04000001,
+    0xfdffffff02000001,
+    0xfeffffff01000001,
+    0xff7fffff00800001,
+    0xffbfffff00400001,
+    0xffdfffff00200001,
+    0xffefffff00100001,
+    0xfff7ffff00080001,
+    0xfffbffff00040001,
+    0xfffdffff00020001,
+    0xfffeffff00010001,
+    0xffff7fff00008001,
+    0xffffbfff00004001,
+    0xffffdfff00002001,
+    0xffffefff00001001,
+    0xfffff7ff00000801,
+    0xfffffbff00000401,
+    0xfffffdff00000201,
+    0xfffffeff00000101,
+    0xffffff7f00000081,
+    0xffffffbf00000041,
+    0xffffffdf00000021,
+    0xffffffef00000011,
+    0xfffffff700000009,
+    0xfffffffb00000005,
+    0xfffffffd00000003,
+    0xfffffffe00000002, // (1 << 32)^{-1}
+};
 
 void offloadCommit(uint64_t step, MerkleTreeGL** treesGL, Goldilocks::Element *trace, gl64_t *d_trace, uint64_t* d_tree, FRIProof<Goldilocks::Element> &proof, SetupCtx& setupCtx){
 
@@ -152,68 +225,200 @@ void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xi
     calcXDivXSub<<<nBlocks, nThreads>>>(xDivXSub_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, d_x, d_buffers->d_trace, NExtended);
 }
 
-
 void evmap_inplace(StepsParams& params, Goldilocks::Element *LEv){
-    /*uint64_t extendBits = setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits;
-    u_int64_t size_eval = setupCtx.starkInfo.evMap.size();
+}
 
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+__device__ void intt_tinny(gl64_t* data, uint32_t N, uint32_t logN, gl64_t* d_twiddles, uint32_t ncols)
+{
 
-    int num_threads = omp_get_max_threads();
-    int size_thread = size_eval * FIELD_EXTENSION;
-    Goldilocks::Element *evals_acc = &params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("evals", true)]];
-    memset(&evals_acc[0], 0, num_threads * size_thread * sizeof(Goldilocks::Element));
+    uint32_t halfN = N >> 1;
+    // Reverse permutation
+    for (uint32_t i = 0; i < N; i++)
+    {
+        uint32_t ibr = __brev(i) >> (32 - logN);
+        if (ibr > i)
+        {
+            gl64_t tmp;
+            for (uint32_t j = 0; j < ncols; j++)
+            {
+                tmp = data[i * ncols + j];
+                data[i * ncols + j] = data[ibr * ncols + j];
+                data[ibr * ncols + j] = tmp;
+            }
+        }
+    }
+    // Inverse NTT
+    for (uint32_t i = 0; i < logN; i++)
+    {
+        for (uint32_t j = 0; j < halfN; j++)
+        {
+            for (uint32_t col = 0; col < ncols; col++)
+            {
+                uint32_t half_group_size = 1 << i;
+                uint32_t group = j >> i;
+                uint32_t offset = j & (half_group_size - 1);
+                uint32_t index1 = (group << i + 1) + offset;
+                uint32_t index2 = index1 + half_group_size;
+                gl64_t factor = d_twiddles[offset * (N >> i + 1)];
+                gl64_t odd_sub = gl64_t((uint64_t)data[index2 * ncols + col]) * factor;
+                data[index2 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) - odd_sub;
+                data[index1 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) + odd_sub;
+            }
+        }
+    }
+    // Scale by N^{-1}
+    gl64_t factor = gl64_t(domain_size_inverse_[logN]);
+    for (uint32_t i = 0; i < N * ncols; i++)
+    {
+        data[i] = gl64_t((uint64_t)data[i]) * factor;
+    }
+}
+
+__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_ppar, gl64_t *d_twiddles, uint64_t shift_, uint64_t W_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits){
+
+    uint32_t polBits = prevBits;
+    uint64_t sizePol = 1 << polBits;
+    uint32_t foldedPolBits = currentBits;
+    uint64_t sizeFoldedPol = 1 << foldedPolBits; 
+    uint32_t ratio = sizePol/sizeFoldedPol;
+
+    int id = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if( id < sizeFoldedPol){
+
+        if (step == 0) return;
+        gl64_t shift(shift_);
+        gl64_t invShift = shift.reciprocal();
+        for (uint32_t j = 0; j < nBitsExt - prevBits; j++)
+        {
+            invShift *= invShift;
+        }
+        
+        gl64_t W(W_);
+        gl64_t invW = W.reciprocal();
+        // Evaluate the sinv value for the id current component
+        gl64_t sinv = invShift;
+        gl64_t base = invW;
+        uint32_t exponent = id;
+
+        while (exponent > 0) {
+            if (exponent % 2 == 1) {
+                sinv *= base;
+            }
+            base *= base;
+            exponent /= 2;
+        }
+
+        gl64_t* ppar = (gl64_t *) d_ppar + id * ratio * FIELD_EXTENSION;
+        for(int i = 0; i < ratio; i++){
+            int ind = i * FIELD_EXTENSION;
+            for(int k = 0; k < FIELD_EXTENSION; k++){
+                ppar[ind + k].set_val(friPol[(i*sizeFoldedPol + id) * FIELD_EXTENSION + k]);
+            }
+        }
+        intt_tinny(ppar, ratio, prevBits-currentBits, d_twiddles, FIELD_EXTENSION);
+        
+        // Multiply coefs by 1, shiftInv, shiftInv^2, shiftInv^3, ......
+        gl64_t r(1);
+        for (uint64_t i = 0; i < ratio; i++)
+        {   
+            Goldilocks3GPU::Element * component = (Goldilocks3GPU::Element *) &ppar[i * FIELD_EXTENSION];
+            Goldilocks3GPU::mul(*component, *component, r);
+            r *= sinv;
+        }
+        // evalPol
+        if( ratio == 0){
+            for(uint32_t i = 0; i < FIELD_EXTENSION; i++){
+                friPol[id * FIELD_EXTENSION + i].set_val(0);
+            }
+        } else {
+            for(uint32_t i = 0; i < FIELD_EXTENSION; i++){
+                friPol[id * FIELD_EXTENSION + i] = ppar[(ratio -1)*FIELD_EXTENSION + i];
+            }
+            for(int i = ratio - 2; i >= 0; i--){
+                Goldilocks3GPU::Element aux;
+                Goldilocks3GPU::mul(aux, *((Goldilocks3GPU::Element *) &friPol[id * FIELD_EXTENSION]), *((Goldilocks3GPU::Element *) &d_challenge[0]));
+                Goldilocks3GPU::add(*((Goldilocks3GPU::Element *) &friPol[id * FIELD_EXTENSION]), aux, *((Goldilocks3GPU::Element *) &ppar[i * FIELD_EXTENSION]));
+            }
+        }
+    }
+
+}
+
+void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, DeviceCommitBuffers* d_buffers){
     
-    Polinomial *ordPols = new Polinomial[size_eval];
+    gl64_t * d_friPol = (gl64_t *) (d_buffers->d_trace + friPol_offset);
+    gl64_t * d_challenge;
+    gl64_t * d_ppar;
+    gl64_t * d_twiddles;
+    uint32_t ratio = 1 << (prevBits - currentBits);
+    uint64_t halfRatio = ratio >> 1;
 
-    for (uint64_t i = 0; i < size_eval; i++)
-    {
-        EvMap ev = setupCtx.starkInfo.evMap[i];
-        string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom" : "fixed";
-        Goldilocks::Element *pols = type == "cm" ? params.pols : type == "custom" ? params.customCommits[ev.commitId] : &params.pConstPolsExtendedTreeAddress[2];
-        PolMap polInfo = type == "cm" ? setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id] : setupCtx.starkInfo.constPolsMap[ev.id];
-        setupCtx.starkInfo.getPolynomial(ordPols[i], pols, type, polInfo, true);
-    }
 
-#pragma omp parallel
+    uint64_t sizeFoldedPol = 1 << currentBits;
+
+    CHECKCUDAERR(cudaMalloc(&d_challenge, FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemcpy(d_challenge, challenge, sizeof(Goldilocks::Element) * FIELD_EXTENSION, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMalloc(&d_ppar, (1 << prevBits) * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&d_twiddles, halfRatio * sizeof(Goldilocks::Element)));
+
+    //Generate inverse twiddle factors
+    Goldilocks::Element* inv_twiddles= (Goldilocks::Element*) malloc(halfRatio * sizeof(Goldilocks::Element));
+    Goldilocks::Element omega_inv = omegas_inv_[prevBits-currentBits];
+    inv_twiddles[0] = Goldilocks::one();
+
+    for (uint32_t i = 1; i < halfRatio; i++)
     {
-        int thread_idx = omp_get_thread_num();
-        Goldilocks::Element *evals_acc_thread = &evals_acc[thread_idx * size_thread];
-#pragma omp for
-        for (uint64_t k = 0; k < N; k++)
-        {
-            Goldilocks3::Element LEv_[setupCtx.starkInfo.openingPoints.size()];
-            for(uint64_t o = 0; o < setupCtx.starkInfo.openingPoints.size(); o++) {
-                uint64_t pos = (o + k*setupCtx.starkInfo.openingPoints.size()) * FIELD_EXTENSION;
-                LEv_[o][0] = LEv[pos];
-                LEv_[o][1] = LEv[pos + 1];
-                LEv_[o][2] = LEv[pos + 2];
-            }
-            uint64_t row = (k << extendBits);
-            for (uint64_t i = 0; i < size_eval; i++)
-            {
-                EvMap ev = setupCtx.starkInfo.evMap[i];
-                Goldilocks3::Element res;
-                if (ordPols[i].dim() == 1) {
-                    Goldilocks3::mul(res, LEv_[ev.openingPos], *ordPols[i][row]);
-                } else {
-                    Goldilocks3::mul(res, LEv_[ev.openingPos], (Goldilocks3::Element &)(*ordPols[i][row]));
-                }
-                Goldilocks3::add((Goldilocks3::Element &)(evals_acc_thread[i * FIELD_EXTENSION]), (Goldilocks3::Element &)(evals_acc_thread[i * FIELD_EXTENSION]), res);
-            }
-        }
-#pragma omp for // aixo ho fare amb trans threads com size evals
-        for (uint64_t i = 0; i < size_eval; ++i)
-        {
-            Goldilocks3::Element sum = { Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero() };
-            for (int k = 0; k < num_threads; ++k)
-            {
-                Goldilocks3::add(sum, sum, (Goldilocks3::Element &)(evals_acc[k * size_thread + i * FIELD_EXTENSION]));
-            }
-            std::memcpy((Goldilocks3::Element &)(params.evals[i * FIELD_EXTENSION]), sum, FIELD_EXTENSION * sizeof(Goldilocks::Element));
+        inv_twiddles[i] = inv_twiddles[i - 1] * omega_inv;
+    }
+    CHECKCUDAERR(cudaMemcpy(d_twiddles, inv_twiddles, halfRatio * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    free(inv_twiddles);
+
+
+    dim3 nThreads(256);
+    dim3 nBlocks((sizeFoldedPol) + nThreads.x - 1 / nThreads.x);
+    fold<<<nBlocks, nThreads>>>(step, d_friPol, d_challenge, d_ppar, d_twiddles, Goldilocks::shift().fe,Goldilocks::w(prevBits).fe, nBitsExt, prevBits, currentBits);
+
+    cudaFree(d_challenge);
+    cudaFree(d_ppar);
+    cudaFree(d_twiddles);
+}
+
+
+__global__ void transposeFRI(gl64_t* d_aux, gl64_t *pol, uint64_t degree, uint64_t width){
+    uint64_t idx_x = blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t idx_y = blockIdx.y * blockDim.y + threadIdx.y;
+    uint64_t height = degree / width;
+    
+    if(idx_x < width && idx_y < height){
+        uint64_t fi = idx_y * width + idx_x;
+        uint64_t di = idx_x * height + idx_y;
+        for(uint64_t k = 0; k < FIELD_EXTENSION; k++){
+            d_aux[di * FIELD_EXTENSION + k] = pol[fi * FIELD_EXTENSION + k];
         }
     }
-    delete[] ordPols;*/
+}
+
+void merkelizeFRI_inplace(uint64_t step, FRIProof<Goldilocks::Element> &proof, gl64_t * pol, MerkleTreeGL* treeFRI, uint64_t currentBits, uint64_t nextBits)
+{
+    uint64_t pol2N = 1 << currentBits;
+    gl64_t *d_aux;
+    cudaMalloc(&d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element));
+
+    uint64_t width = 1 << nextBits;
+    uint64_t height = pol2N / width;
+    dim3 nThreads(32, 32);
+    dim3 nBlocks((width + nThreads.x - 1) / nThreads.x, (height + nThreads.y - 1) / nThreads.y);
+    transposeFRI<<<nBlocks, nThreads>>>(d_aux, (gl64_t *) pol, pol2N, width);
+    
+    cudaMemcpy(treeFRI->source, d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+
+    uint64_t** d_tree = new uint64_t*[1];
+    PoseidonGoldilocks::merkletree_cuda_gpudata_inplace(d_tree, (uint64_t *)d_aux, treeFRI->width, treeFRI->height);
+    uint64_t tree_size = treeFRI->getNumNodes(treeFRI->height) * sizeof(uint64_t);
+    CHECKCUDAERR(cudaMemcpy(treeFRI->get_nodes_ptr(), *d_tree, tree_size, cudaMemcpyDeviceToHost));
+    treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
+
 }
 template <typename ElementType>
 void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, DeviceCommitBuffers* d_buffers) { 
@@ -315,6 +520,8 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     //rick: tot aixo tambe ho puc posar sota del commit 1 no
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
     Goldilocks::Element *num = new Goldilocks::Element[N*FIELD_EXTENSION];
     Goldilocks::Element *den = new Goldilocks::Element[N*FIELD_EXTENSION];
     Goldilocks::Element *gprod = new Goldilocks::Element[N*FIELD_EXTENSION];
@@ -504,13 +711,19 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     //////////
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
-    params.xDivXSub = &trace[setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)]];
-    d_params.xDivXSub = (Goldilocks::Element *)(d_buffers->d_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)]);
+    uint64_t xDivXSub_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)];
+    params.xDivXSub = &trace[xDivXSub_offset];
+    d_params.xDivXSub = (Goldilocks::Element *)(d_buffers->d_trace + xDivXSub_offset);
     time = omp_get_wtime();
-    calculateXDivXSub_inplace(setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)], xiChallenge, setupCtx, d_buffers);
+    calculateXDivXSub_inplace(xDivXSub_offset, xiChallenge, setupCtx, d_buffers);
     time = omp_get_wtime() - time;
     std::cout << "rick calculateXDivXSub time: " << time << std::endl;
+    //Download xDivXSub
+    //CHECKCUDAERR(cudaMemcpy( d_params.xDivXSub, d_buffers->d_trace + xDivXSub_offset, NExtended * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
 
+    
+
+    // FRI exoressuibs
     expressionId = setupCtx.starkInfo.friExpId;
     if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId) {
         setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
@@ -524,32 +737,32 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     std::vector<Dest> destsf = {destStructf};
     expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsf, domainSize);
 
-    ////////// copy trace downwards
-    time = omp_get_wtime();
-    CHECKCUDAERR(cudaMemcpy(trace, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-    time = omp_get_wtime() - time;
-    std::cout << "rick copy trace time: " << time << std::endl;
-
 
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
-    Goldilocks::Element *friPol = &trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]];
+    uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
+    Goldilocks::Element *friPol = &trace[friPol_offset];
+    gl64_t *d_friPol = (gl64_t *) (d_buffers->d_trace + friPol_offset);
     
+    CHECKCUDAERR(cudaMemcpy(friPol, d_buffers->d_trace + friPol_offset, NExtended * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+        
     TimerStart(STARK_FRI_FOLDING);
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
     for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size(); step++)
     {   
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        FRI<Goldilocks::Element>::fold(step, friPol, challenge, nBitsExt, prevBits, currentBits);
+        fold_inplace(step, friPol_offset, challenge, nBitsExt, prevBits, currentBits, d_buffers);
+
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            FRI<Goldilocks::Element>::merkelize(step, proof, friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
+            merkelizeFRI_inplace(step, proof, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
             starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], nFieldElements);
         }
         else
         {
+            CHECKCUDAERR(cudaMemcpy(friPol, d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
                 starks.addTranscriptGL(transcript, friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
             } else {
@@ -562,25 +775,38 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         starks.getChallenge(transcript, *challenge);
     }
     TimerStopAndLog(STARK_FRI_FOLDING);
+
     TimerStart(STARK_FRI_QUERIES);
-
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
-
     TranscriptType transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
-
+    time = omp_get_wtime() - time;
+    
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
+    
+
+    ////////// copy trace downwards
+    time = omp_get_wtime();
+    CHECKCUDAERR(cudaMemcpy(trace, d_buffers->d_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    time = omp_get_wtime() - time;
+    std::cout << "rick copy trace time: " << time << std::endl;
+    //////////
     FRI<Goldilocks::Element>::proveQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees);
+
+    memset(trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element));
+    CHECKCUDAERR(cudaMemcpy(friPol, d_buffers->d_trace + friPol_offset, NExtended * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+   
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
         FRI<Goldilocks::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
     }
+
 
     FRI<ElementType>::setFinalPol(proof, friPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
     TimerStopAndLog(STARK_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);
-
+    
     delete challenges;
     delete evals;
     delete airgroupValues;

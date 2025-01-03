@@ -1987,7 +1987,7 @@ public:
                         /*if(i==debug_i && threadIdx.x == debug_pos && j == 0){
                             printf(" op: %d\n", uint32_t(ops[kk]));   
                         }*/
-                        uint64_t i_args_ant = i_args;
+                        //uint64_t i_args_ant = i_args;
                         switch (ops[kk]) {
                             case 0: {
                                 // COPY commit1 to tmp1
