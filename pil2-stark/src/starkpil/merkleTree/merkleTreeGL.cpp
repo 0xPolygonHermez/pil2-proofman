@@ -106,6 +106,15 @@ void MerkleTreeGL::getGroupProof(Goldilocks::Element *proof, uint64_t idx) {
     genMerkleProof(&proof[width], idx, 0, height * nFieldElements);
 }
 
+void MerkleTreeGL::getTraceProof(Goldilocks::Element *proof, uint64_t idx) {
+    assert(idx < height);
+
+    for (uint64_t i = 0; i < width; i++)
+    {
+        proof[i] = getElement(idx, i);
+    }
+}
+
 void MerkleTreeGL::genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint64_t offset, uint64_t n)
 {
     if (n <= nFieldElements) return;

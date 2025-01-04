@@ -219,7 +219,6 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU(Goldilocks::Element *dst, Goldilocks::El
     CHECKCUDAERR(cudaFree(gpu_inverse_twiddle_factors[gpu_id]));
 }
 
-
 void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(uint64_t ** d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, u_int64_t nphase, bool buildMerkleTree)
 {
     
@@ -290,8 +289,6 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(uint64_t ** d_tree, gl64_t* d_ds
     std::cout << "rick Time for cudaStreamDestroy: " << time1 - time << std::endl;
     time = time1;
 }
-
-
 
 void  NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers* d_buffers){
 

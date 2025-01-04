@@ -10,7 +10,6 @@ class MerkleTreeGL
 {
 private:
     Goldilocks::Element getElement(uint64_t idx, uint64_t subIdx);
-    void genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
     void calculateRootFromProof(Goldilocks::Element (&value)[4], std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, uint64_t offset);
 
 public:
@@ -25,6 +24,7 @@ public:
 
     Goldilocks::Element *nodes;
     Goldilocks::Element *source;
+    uint64_t souceTraceOffset = 0;
 
     bool isSourceAllocated = false;
     bool isNodesAllocated = false;
@@ -38,6 +38,13 @@ public:
     uint64_t getMerkleTreeWidth(); 
     uint64_t getMerkleProofSize(); 
     uint64_t getMerkleProofLength();
+    inline uint64_t getMerkleTreeNFieldElements() {
+        return nFieldElements;
+    }
+    inline uint64_t getMerkleTreeHeight() {
+        return height;
+    }
+
 
     uint64_t getNumNodes(uint64_t height);
     void getRoot(Goldilocks::Element *root);
@@ -46,6 +53,8 @@ public:
     void copyNodes(Goldilocks::Element *_nodes);
 
     void getGroupProof(Goldilocks::Element *proof, uint64_t idx);
+    void getTraceProof(Goldilocks::Element *proof, uint64_t idx);
+    void genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
     
     bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> &v);
 
@@ -56,5 +65,7 @@ public:
 
     void writeFile(std::string file);
 };
+
+
 
 #endif
