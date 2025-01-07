@@ -8,6 +8,11 @@
 #include "expressions_gpu.cuh"
 
 
+struct GPUTree{
+    gl64_t *nodes;
+    uint32_t nFieldElements;
+};
+
 Goldilocks::Element omegas_inv_[33] = {
     0x1,
     0xffffffff00000000,
@@ -94,21 +99,23 @@ __device__ __constant__ uint64_t domain_size_inverse_[33] = {
 
 void offloadCommit(uint64_t step, MerkleTreeGL** treesGL, Goldilocks::Element *trace, gl64_t *d_trace, uint64_t* d_tree, FRIProof<Goldilocks::Element> &proof, SetupCtx& setupCtx){
 
+    double time = omp_get_wtime();
     uint64_t ncols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)];
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    //uint64_t size = NExtended * ncols * sizeof(Goldilocks::Element);
-    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended) * sizeof(uint64_t);
+    uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
     std::string section = "cm" + to_string(step);  
     uint64_t offset = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
-    treesGL[step - 1]->setSource(trace + offset);
+    //treesGL[step - 1]->setSource(trace + offset);
     treesGL[step - 1]->souceTraceOffset=offset;
-    if(ncols > 0){
-        //CHECKCUDAERR(cudaMemcpy(trace + offset, d_trace + offset, size, cudaMemcpyDeviceToHost));
-        CHECKCUDAERR(cudaMemcpy(treesGL[step - 1]->get_nodes_ptr(), d_tree, tree_size, cudaMemcpyDeviceToHost));
-    }else{
-        treesGL[step - 1]->merkelize();
-    }
-    treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
+    time = omp_get_wtime() - time;
+    std::cout << "offloadPart1: " << time << std::endl;
+
+    time = omp_get_wtime();
+
+    uint32_t nFielsElements =  treesGL[step - 1]->getMerkleTreeNFieldElements();
+    CHECKCUDAERR(cudaMemcpy(&proof.proof.roots[step - 1][0], &d_tree[tree_size-nFielsElements], nFielsElements * sizeof(uint64_t), cudaMemcpyDeviceToHost));
+    time = omp_get_wtime() - time;
+    std::cout << "offloadPart3: " << time << std::endl;
 }
 
 __global__ void fillLEv(uint64_t LEv_offset, gl64_t * d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, gl64_t * d_trace, uint64_t N){
@@ -203,13 +210,11 @@ __global__ void calcXDivXSub(uint64_t xDivXSub_offset, gl64_t *d_xiChallenge, ui
 void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xiChallenge, SetupCtx &setupCtx, DeviceCommitBuffers* d_buffers){
 
     double time = omp_get_wtime();
-
     uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
     int64_t *openingPoints = setupCtx.starkInfo.openingPoints.data();
     gl64_t *x = (gl64_t *) setupCtx.proverHelpers.x;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
-
 
     gl64_t * d_xiChallenge;
     int64_t * d_openingPoints;
@@ -225,7 +230,6 @@ void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xi
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (NExtended + nThreads.y - 1) / nThreads.y);
     calcXDivXSub<<<nBlocks, nThreads>>>(xDivXSub_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, d_x, d_buffers->d_trace, NExtended);
 }
-
 
 struct EvalInfo {
     uint64_t type;  //0: cm, 1: custom, 2: fixed
@@ -521,17 +525,48 @@ __global__ void getTreeTracePols(gl64_t* d_treeTrace, uint64_t traceWidth, uint6
         d_buffer[idx_buffer] = d_treeTrace[idx_trace];
     }
 
-}  
+}
 
-void proveQueries_inplace(uint64_t* friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, uint64_t nTrees, DeviceCommitBuffers* d_buffers){
+__device__ void genMerkleProof_(gl64_t* nodes, gl64_t* proof, uint64_t idx, uint64_t offset, uint64_t n, uint64_t nFieldElements)
+{
+    if (n <= nFieldElements) return;
+    
+    uint64_t nextIdx = idx >> 1;
+    uint64_t si = (idx ^ 1) * nFieldElements;
 
-    uint64_t maxBuffSize = 0;
+    for(uint64_t i = 0; i < nFieldElements; i++){
+        proof[i].set_val(nodes[offset + si + i].get_val());
+    }
+
+    uint64_t nextN = ((n - 1) / 8 + 1) * nFieldElements;
+    genMerkleProof_(nodes, &proof[nFieldElements], nextIdx, offset + nextN * 2, nextN, nFieldElements);
+}
+
+__global__ void genMerkleProof(gl64_t* d_nodes, uint64_t sizeLeaves, uint64_t* d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements){
+    
+    uint64_t idx_query = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx_query < nQueries){
+        uint64_t row = d_friQueries[idx_query];
+        uint64_t idx_buffer = idx_query * bufferWidth + maxTreeWidth;
+        genMerkleProof_(d_nodes, &d_buffer[idx_buffer], row, 0, sizeLeaves, nFieldElements);
+    }
+
+}
+
+void proveQueries_inplace(uint64_t* friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, GPUTree *d_trees, uint64_t nTrees, DeviceCommitBuffers* d_buffers){
+
+    uint64_t maxTreeWidth = 0;
+    uint64_t maxProofSize = 0;
     for(uint64_t i = 0; i < nTrees; ++i) {
-        uint64_t buffSize = trees[i]->getMerkleTreeWidth() + trees[i]->getMerkleProofSize();
-        if(buffSize > maxBuffSize) {
-            maxBuffSize = buffSize;
+        if(trees[i]->getMerkleTreeWidth() > maxTreeWidth) {
+            maxTreeWidth = trees[i]->getMerkleTreeWidth();
+        }
+        if(trees[i]->getMerkleProofSize() > maxProofSize) {
+            maxProofSize = trees[i]->getMerkleProofSize();
         }
     }
+    uint64_t maxBuffSize = maxTreeWidth + maxProofSize;
+
     Goldilocks::Element *buff = new Goldilocks::Element[maxBuffSize*nQueries*nTrees];
     gl64_t *d_buff;
     CHECKCUDAERR(cudaMalloc(&d_buff, maxBuffSize * nQueries * nTrees * sizeof(Goldilocks::Element)));
@@ -546,28 +581,33 @@ void proveQueries_inplace(uint64_t* friQueries, uint64_t nQueries, FRIProof<Gold
         if(k < nTrees - 1){
             getTreeTracePols<<<nBlocks, nThreads>>>(d_buffers->d_trace + trees[k]->souceTraceOffset, trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_buff + k * nQueries * maxBuffSize, maxBuffSize);
         } else {
-            getTreeTracePols<<<nBlocks, nThreads>>>(&d_buffers->d_constTree[2], trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_buff + k * nQueries * maxBuffSize, maxBuffSize);
+            getTreeTracePols<<<nBlocks, nThreads>>>(&d_buffers->d_constTree[2], trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_buff + k * nQueries * maxBuffSize, maxBuffSize); //rick: this last should be done in the CPU
 
         }
     }
+
+   for (uint k = 0; k < nTrees-1; k++){
+        dim3 nthreads(64);
+        dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
+        genMerkleProof<<<nblocks, nthreads>>>(d_trees[k].nodes, trees[k]->getMerkleTreeHeight() * d_trees[k].nFieldElements, d_friQueries, nQueries, d_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, d_trees[k].nFieldElements);
+   
+   }
+
     CHECKCUDAERR(cudaMemcpy(buff, d_buff, maxBuffSize * nQueries * nTrees * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
     CHECKCUDAERR(cudaFree(d_buff));
-    CHECKCUDAERR(cudaFree(d_friQueries));
+    CHECKCUDAERR(cudaFree(d_friQueries));    
 
-    count =0;
-    for (uint k = 0; k < nTrees; k++){
-        for (uint64_t i = 0; i < nQueries; i++)
-        {
-            trees[k]->genMerkleProof(&buff[count*maxBuffSize] + trees[k]->getMerkleTreeWidth(), friQueries[i], 0, trees[k]->getMerkleTreeHeight() * trees[k]->getMerkleTreeNFieldElements());
-            ++count;
-
-        }
+    //the last path is done offline becose is ot the constantTree which is allready in the CPU
+    uint64_t aux_offset = (nTrees-1)*nQueries;
+    for (uint64_t i = 0; i < nQueries; i++)
+    {
+        trees[nTrees-1]->genMerkleProof(&buff[(aux_offset+i)*maxBuffSize] + maxTreeWidth, friQueries[i], 0, trees[nTrees-1]->getMerkleTreeHeight() * trees[nTrees-1]->getMerkleTreeNFieldElements());
     }
     count = 0;
     for (uint k = 0; k < nTrees; k++){
         for (uint64_t i = 0; i < nQueries; i++)
         {
-            MerkleProof<Goldilocks::Element> mkProof(trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleProofLength(), trees[k]->getNumSiblings(), &buff[count*maxBuffSize]);
+            MerkleProof<Goldilocks::Element> mkProof(trees[k]->getMerkleTreeWidth(), trees[k]->getMerkleProofLength(), trees[k]->getNumSiblings(), &buff[count*maxBuffSize], maxTreeWidth);
             fproof.proof.fri.trees.polQueries[i].push_back(mkProof);
             ++count;
         }
@@ -599,17 +639,32 @@ void proveQueries_inplace(uint64_t* friQueries, uint64_t nQueries, FRIProof<Gold
 template <typename ElementType>
 void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, DeviceCommitBuffers* d_buffers) { 
 
-    Goldilocks::Element *trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
-    CHECKCUDAERR(cudaMemset(d_buffers->d_trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
 
     TimerStart(STARK_PROOF);
+    double time0 = omp_get_wtime();
 
+    
+    Goldilocks::Element *trace = nullptr;
+    CHECKCUDAERR(cudaMemset(d_buffers->d_trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo);
 
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     
     Starks<ElementType> starks(setupCtx, pConstTree);
+    
+    // GPU tree-nodes
+    GPUTree *d_trees = new GPUTree[setupCtx.starkInfo.nStages + 2];
+    for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
+    {
+        std::string section = "cm" + to_string(i + 1);
+        uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
+        d_trees[i].nFieldElements = 4;
+        //uint64_t numNodes = NExtended * d_trees[i].nFieldElements + (NExtended - 1) * d_trees[i].nFieldElements;
+        //CHECKCUDAERR(cudaMalloc(&d_trees[i].nodes, numNodes * sizeof(gl64_t)));
+    }
 
     ExpressionsGPU expressionsCtx(setupCtx);
 
@@ -648,6 +703,8 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         pConstPolsExtendedTreeAddress: (Goldilocks::Element* ) d_buffers->d_constTree,
     };
 
+    double time = omp_get_wtime();
+    std::cout << "Rick fins PUNT1 " << time - time0 << std::endl;
     //--------------------------------
     // 0.- Add const root and publics to transcript
     //--------------------------------
@@ -665,6 +722,8 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         }
     }
     TimerStopAndLog(STARK_STEP_0);
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT2 " << time - time0 << std::endl;
 
     TimerStart(STARK_STEP_1);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
@@ -673,15 +732,17 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         }
     }
 
-    //Allocate d_tree
-    uint64_t** d_tree = new uint64_t*[1];
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage_inplace(1, d_buffers->d_witness, d_buffers->d_trace, d_tree, d_buffers);
+    starks.commitStage_inplace(1, d_buffers->d_witness, d_buffers->d_trace, (uint64_t**) (&d_trees[0].nodes), d_buffers);
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
-    
-    offloadCommit(1, starks.treesGL, trace, d_buffers->d_trace, *d_tree, proof, setupCtx);
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT3 " << time - time0 << std::endl;
+
+    offloadCommit(1, starks.treesGL, trace, d_buffers->d_trace, (uint64_t*) d_trees[0].nodes, proof, setupCtx);
     starks.addTranscript(transcript, &proof.proof.roots[0][0], nFieldElements);
-    
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT4 " << time - time0 << std::endl;
+
     TimerStopAndLog(STARK_STEP_1);
 
     TimerStart(STARK_STEP_2);
@@ -689,11 +750,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
         }
-    }
-
-    //rick: tot aixo tambe ho puc posar sota del commit 1 no
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    }    
 
     Goldilocks::Element *num = new Goldilocks::Element[N*FIELD_EXTENSION];
     Goldilocks::Element *den = new Goldilocks::Element[N*FIELD_EXTENSION];
@@ -712,7 +769,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     denStruct.addParams(setupCtx.expressionsBin.expressionsInfo[denFieldId], true);
     std::vector<Dest> dests = {numStruct, denStruct};
 
-    double time = omp_get_wtime();
+    time = omp_get_wtime();
     expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
 
     
@@ -744,6 +801,8 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     time = omp_get_wtime();
     TimerStart(CALCULATE_IM_POLS);
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT5 " << time - time0 << std::endl;
 
     std::vector<Dest> dests2;
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
@@ -764,8 +823,8 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     std::cout << "rick calculateImPolsExpressions time: " << time << std::endl;
         
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage_inplace(2, d_buffers->d_witness, d_buffers->d_trace, d_tree, d_buffers);
-    offloadCommit(2, starks.treesGL, trace, d_buffers->d_trace, *d_tree, proof, setupCtx);
+    starks.commitStage_inplace(2, d_buffers->d_witness, d_buffers->d_trace, (uint64_t**) (&d_trees[1].nodes), d_buffers);
+    offloadCommit(2, starks.treesGL, trace, d_buffers->d_trace, (uint64_t *) d_trees[1].nodes, proof, setupCtx);
 
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], nFieldElements);
@@ -786,9 +845,9 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     uint64_t expressionId = setupCtx.starkInfo.cExpId;
     if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId) {
         setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
-        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+        domainSize = NExtended;
     } else {
-        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        domainSize = N;
     }
     Dest destStructq(&params.pols[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]]);
     destStructq.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
@@ -800,11 +859,11 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     time = omp_get_wtime();
-    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_trace, d_tree, d_buffers);
+    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_trace, (uint64_t**) (&d_trees[setupCtx.starkInfo.nStages].nodes), d_buffers);
     time = omp_get_wtime() - time;
     std::cout << "rick Q_inplace time: " << time << std::endl;
     time = omp_get_wtime();
-    offloadCommit(setupCtx.starkInfo.nStages + 1, starks.treesGL, trace, d_buffers->d_trace, *d_tree, proof, setupCtx);
+    offloadCommit(setupCtx.starkInfo.nStages + 1, starks.treesGL, trace, d_buffers->d_trace, (uint64_t*) d_trees[setupCtx.starkInfo.nStages].nodes, proof, setupCtx);
     time = omp_get_wtime() - time;
     std::cout << "rick Q_offloadCommit time: " << time << std::endl;
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
@@ -862,14 +921,14 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
     uint64_t xDivXSub_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)];
-    params.xDivXSub = &trace[xDivXSub_offset];
+    //params.xDivXSub = &trace[xDivXSub_offset];
     d_params.xDivXSub = (Goldilocks::Element *)(d_buffers->d_trace + xDivXSub_offset);
     time = omp_get_wtime();
     calculateXDivXSub_inplace(xDivXSub_offset, xiChallenge, setupCtx, d_buffers);
     time = omp_get_wtime() - time;
     std::cout << "rick calculateXDivXSub time: " << time << std::endl;
 
-    // FRI exoressuibs
+    // FRI expressions
     expressionId = setupCtx.starkInfo.friExpId;
     if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId) {
         setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
@@ -888,11 +947,8 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
     uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-    Goldilocks::Element *friPol = &trace[friPol_offset];
     gl64_t *d_friPol = (gl64_t *) (d_buffers->d_trace + friPol_offset);
-    
-    CHECKCUDAERR(cudaMemcpy(friPol, d_buffers->d_trace + friPol_offset, NExtended * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-        
+
     TimerStart(STARK_FRI_FOLDING);
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
     Goldilocks::Element *foldedFRIPol = new Goldilocks::Element[(1 << setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION];
@@ -931,7 +987,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
     time = omp_get_wtime() - time;
     
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    proveQueries_inplace(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees, d_buffers);
+    proveQueries_inplace(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, d_trees, nTrees, d_buffers);
 
     /*proveFRIQueries_inplace(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx, proof, starks.treesFRI, d_buffers);*/ //Not run in the GPU at this point
    

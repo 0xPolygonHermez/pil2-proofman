@@ -42,6 +42,18 @@ public:
             std::memcpy(&mp[j][0], &mpCursor[j * numSiblings], numSiblings * sizeof(ElementType));
         }
     }
+    MerkleProof(uint64_t nLinears, uint64_t elementsTree, uint64_t numSiblings, void *pointer, uint64_t offsetTree) : v(nLinears, std::vector<Goldilocks::Element>(1, Goldilocks::zero())), mp(elementsTree, std::vector<ElementType>(numSiblings))
+    {
+        for (uint64_t i = 0; i < nLinears; i++)
+        {
+            std::memcpy(&v[i][0], &((Goldilocks::Element *)pointer)[i], sizeof(Goldilocks::Element));
+        }
+        ElementType *mpCursor = (ElementType *)&((Goldilocks::Element *)pointer)[offsetTree];
+        for (uint64_t j = 0; j < elementsTree; j++)
+        {
+            std::memcpy(&mp[j][0], &mpCursor[j * numSiblings], numSiblings * sizeof(ElementType));
+        }
+    }
 
     json merkleProof2json()
     {
