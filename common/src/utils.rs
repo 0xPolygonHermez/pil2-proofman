@@ -67,7 +67,7 @@ pub fn skip_prover_instance(
     (true, Vec::new())
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct StdDebugMode {
     #[serde(default)]
     opids: Option<Vec<u64>>,
@@ -77,7 +77,7 @@ struct StdDebugMode {
     print_to_file: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct DebugJson {
     #[serde(default)]
     constraints: Option<Vec<AirGroupJson>>,
@@ -87,7 +87,7 @@ struct DebugJson {
     std_mode: Option<StdDebugMode>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct AirGroupJson {
     #[serde(default)]
     airgroup_id: Option<usize>,
@@ -95,15 +95,15 @@ struct AirGroupJson {
     air_ids: Option<Vec<AirIdJson>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct AirIdJson {
     #[serde(default)]
     air_id: Option<usize>,
     #[serde(default)]
-    instances_ids: Option<Vec<InstanceJson>>,
+    instance_ids: Option<Vec<InstanceJson>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct InstanceJson {
     #[serde(default)]
     instance_id: Option<usize>,
@@ -131,7 +131,7 @@ pub fn json_to_debug_instances_map(json_path: String) -> DebugInfo {
                 for air_id in air_ids {
                     let mut instance_map: InstanceMap = HashMap::new();
 
-                    if let Some(instances) = air_id.instances_ids {
+                    if let Some(instances) = air_id.instance_ids {
                         for instance in instances {
                             let instance_constraints = instance.constraints.unwrap_or_default();
                             instance_map.insert(instance.instance_id.unwrap_or_default(), instance_constraints);
