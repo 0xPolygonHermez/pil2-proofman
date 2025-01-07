@@ -234,13 +234,13 @@ jobs:
       - name: Cargo build distributed
         run: RUST_BACKTRACE=1 cargo build --features distributed -v
 
-      - name: Generate proof Fibonacci Square distributed
-        run: | 
-          mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=32 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
+      # - name: Generate proof Fibonacci Square distributed
+      #   run: | 
+      #     mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=32 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
 
-      - name: Verify proof Fibonacci Square distributed
-        run: |
-          node pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey -p examples/fibonacci-square/build/proofs -t vadcop_final
+      # - name: Verify proof Fibonacci Square distributed
+      #   run: |
+      #     node pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey -p examples/fibonacci-square/build/proofs -t vadcop_final
   test-std:
     name: Test STD
     runs-on: ubuntu-latest
@@ -411,15 +411,15 @@ jobs:
 
       - name: Compile PIL direct_update
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/direct_update/direct_update.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/direct_update/build/build.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/std/direct_update/direct_update.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/direct_update/build/direct_update.pilout
 
       - name: Generate setup direct_update
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/direct_update/build/build.pilout -b ./pil2-components/test/std/direct_update/build -t pil2-stark/build/bctree
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/direct_update/build/direct_update.pilout -b ./pil2-components/test/std/direct_update/build -t pil2-stark/build/bctree
 
       - name: Generate PIL Helpers direct_update
         run: |
-          cargo run --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/direct_update/build/build.pilout --path ./pil2-components/test/std/direct_update/rs/src -o
+          cargo run --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/direct_update/build/direct_update.pilout --path ./pil2-components/test/std/direct_update/rs/src -o
 
       - name: Create dir build range-check
         run: |

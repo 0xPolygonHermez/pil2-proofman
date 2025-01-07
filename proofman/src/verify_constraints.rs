@@ -6,7 +6,8 @@ use std::cmp;
 use std::sync::Arc;
 
 use proofman_common::{
-    get_constraints_lines_str, get_global_constraints_lines_str, GlobalConstraintInfo, ProofCtx, Prover, SetupCtx,
+    get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, GlobalConstraintInfo, ProofCtx,
+    Prover, SetupCtx,
 };
 use std::os::raw::c_void;
 
@@ -65,6 +66,31 @@ pub fn verify_constraints_proof<F: Field>(
 
     let mut valid_constraints = true;
 
+    for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
+        let air_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
+        let (skip, _) = skip_prover_instance(
+            pctx.options.clone(),
+            air_instance.airgroup_id,
+            air_instance.air_id,
+            air_instance.air_instance_id.unwrap(),
+        );
+        if skip {
+            log::info!(
+                "{}",
+                format!(
+                    "{}: ··· \u{2713} Skipping Instance #{} of {} [{}:{}]",
+                    MY_NAME,
+                    air_instance.air_instance_id.unwrap(),
+                    air_name,
+                    air_instance.airgroup_id,
+                    air_instance.air_id
+                )
+                .bright_yellow()
+                .bold()
+            );
+        };
+    }
+
     for (idx, prover) in provers.iter().enumerate() {
         let prover_info = prover.get_prover_info();
         let (airgroup_id, air_id, air_instance_id) =
@@ -75,14 +101,17 @@ pub fn verify_constraints_proof<F: Field>(
         let constraints_lines = get_constraints_lines_str(sctx.clone(), airgroup_id, air_id);
 
         let mut valid_constraints_prover = true;
+        let skipping = "is skipped".bright_yellow();
+
         log::info!("{}:     ► Instance #{} of {} [{}:{}]", MY_NAME, air_instance_id, air_name, airgroup_id, air_id,);
         for constraint in &constraints[idx] {
             if constraint.skip {
                 log::debug!(
-                    "{}:     · Skipping Constraint #{} (stage {}) -> {}",
+                    "{}:     · Constraint #{} (stage {}) {} -> {}",
                     MY_NAME,
                     constraint.id,
                     constraint.stage,
+                    skipping,
                     constraints_lines[constraint.id as usize]
                 );
                 continue;
