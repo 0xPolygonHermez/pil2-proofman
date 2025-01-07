@@ -52,12 +52,12 @@ impl VerifyConstraintsCmd {
 
         let debug_info = if let Some(debug_value) = &self.debug {
             if debug_value.is_empty() || debug_value == "false" {
-                DebugInfo::new()
+                DebugInfo::default()
             } else {
                 json_to_debug_instances_map(debug_value.clone())
             }
         } else {
-            DebugInfo::new()
+            DebugInfo::default()
         };
 
         match self.field {

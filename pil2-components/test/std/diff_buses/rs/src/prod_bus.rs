@@ -10,8 +10,7 @@ use crate::ProdBusTrace;
 
 pub struct ProdBus;
 
-impl ProdBus
-{
+impl ProdBus {
     const MY_NAME: &'static str = "ProdBus ";
 
     pub fn new() -> Arc<Self> {
@@ -29,7 +28,6 @@ where
         let mut trace = ProdBusTrace::new();
         let num_rows = trace.num_rows();
 
-        
         log::debug!("{}: ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         for i in 0..num_rows {
