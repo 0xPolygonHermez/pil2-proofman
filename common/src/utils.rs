@@ -1,8 +1,9 @@
 use crate::{
-    AirGroupMap, AirIdMap, AirInstance, DebugInfo, InstanceMap, ModeName, ProofCtx, ProofOptions, StdMode, VerboseMode,
-    DEFAULT_PRINT_VALS,
+    AirGroupMap, AirIdMap, AirInstance, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, ProofOptions, StdMode,
+    VerboseMode, DEFAULT_PRINT_VALS,
 };
 use proofman_starks_lib_c::set_log_level_c;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::collections::HashMap;
 use p3_field::Field;
@@ -92,6 +93,8 @@ struct AirGroupJson {
     #[serde(default)]
     airgroup_id: Option<usize>,
     #[serde(default)]
+    airgroup: Option<String>,
+    #[serde(default)]
     air_ids: Option<Vec<AirIdJson>>,
 }
 
@@ -99,6 +102,8 @@ struct AirGroupJson {
 struct AirIdJson {
     #[serde(default)]
     air_id: Option<usize>,
+    #[serde(default)]
+    air: Option<String>,
     #[serde(default)]
     instance_ids: Option<Vec<InstanceJson>>,
 }
@@ -111,7 +116,14 @@ struct InstanceJson {
     constraints: Option<Vec<usize>>,
 }
 
-pub fn json_to_debug_instances_map(json_path: String) -> DebugInfo {
+pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String) -> DebugInfo {
+    // Check proving_key_path exists
+    if !proving_key_path.exists() {
+        panic!("Proving key folder not found at path: {:?}", proving_key_path);
+    }
+
+    let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
+
     // Read the file contents
     let debug_json = fs::read_to_string(&json_path).unwrap_or_else(|_| panic!("Failed to read file {}", json_path));
 
@@ -127,22 +139,58 @@ pub fn json_to_debug_instances_map(json_path: String) -> DebugInfo {
         for airgroup in constraints {
             let mut air_id_map: AirIdMap = HashMap::new();
 
+            if airgroup.airgroup.is_none() && airgroup.airgroup_id.is_none() {
+                panic!("Airgroup or airgroup_id must be defined in the JSON file");
+            }
+            if airgroup.airgroup.is_some() && airgroup.airgroup_id.is_some() {
+                panic!("Only airgroup or airgroup_id can be defined in the JSON file, not both");
+            }
+
+            let airgroup_id = if airgroup.airgroup_id.is_some() {
+                airgroup.airgroup_id.unwrap()
+            } else {
+                let airgroup_name = airgroup.airgroup.unwrap().to_string();
+                let airgroup_id = global_info.air_groups.iter().position(|x| x == &airgroup_name);
+                if airgroup_id.is_none() {
+                    panic!("Airgroup name {} not found in global_info.airgroups", airgroup_name);
+                }
+                airgroup_id.unwrap()
+            };
+
             if let Some(air_ids) = airgroup.air_ids {
-                for air_id in air_ids {
+                for air in air_ids {
+                    if air.air.is_none() && air.air_id.is_none() {
+                        panic!("Air or air_id must be defined in the JSON file");
+                    }
+                    if air.air.is_some() && air.air_id.is_some() {
+                        panic!("Only air or air_id can be defined in the JSON file, not both");
+                    }
+
+                    let air_id = if air.air_id.is_some() {
+                        air.air_id.unwrap()
+                    } else {
+                        let air_name = air.air.unwrap().to_string();
+                        let air_id = global_info.airs[airgroup_id].iter().position(|x| x.name == air_name);
+                        if air_id.is_none() {
+                            panic!("Airgroup name {} not found in global_info.airgroups", air_name);
+                        }
+                        air_id.unwrap()
+                    };
+
                     let mut instance_map: InstanceMap = HashMap::new();
 
-                    if let Some(instances) = air_id.instance_ids {
+                    if let Some(instances) = air.instance_ids {
                         for instance in instances {
                             let instance_constraints = instance.constraints.unwrap_or_default();
                             instance_map.insert(instance.instance_id.unwrap_or_default(), instance_constraints);
                         }
                     }
 
-                    air_id_map.insert(air_id.air_id.unwrap_or_default(), instance_map);
+                    air_id_map.insert(air_id, instance_map);
                 }
             }
 
-            airgroup_map.insert(airgroup.airgroup_id.unwrap_or_default(), air_id_map);
+            airgroup_map.insert(airgroup_id, air_id_map);
         }
     }
 

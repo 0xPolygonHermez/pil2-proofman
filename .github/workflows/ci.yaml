@@ -492,18 +492,6 @@ jobs:
         run: |
           node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/connection/build/provingKey -p ./pil2-components/test/std/connection/build
 
-      - name: Verify constraints diff_buses
-        run: |
-          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
-
-      - name: Generate proof diff_buses
-        run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey --output-dir ./pil2-components/test/std/diff_buses/build
-
-      - name: Verify proof diff_buses
-        run: |
-          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/diff_buses/build/provingKey -p ./pil2-components/test/std/diff_buses/build
-
       - name: Verify constraints direct_update
         run: |
           cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey
@@ -539,3 +527,15 @@ jobs:
       - name: Verify proof simple
         run: |
           node pil2-proofman-js/src/main_verify -k ./pil2-components/test/simple/build/provingKey -p ./pil2-components/test/simple/build
+
+      - name: Verify constraints diff_buses
+        run: |
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
+
+      - name: Generate proof diff_buses
+        run: |
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey --output-dir ./pil2-components/test/std/diff_buses/build
+
+      - name: Verify proof diff_buses
+        run: |
+          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/diff_buses/build/provingKey -p ./pil2-components/test/std/diff_buses/build

@@ -201,7 +201,9 @@ pub fn verify_constraints_proof<F: Field>(
 
     let airgroupvalues = aggregate_airgroupvals(pctx.clone());
 
-    if dctx.rank == 0 && pctx.options.debug_info.debug_instances.is_empty() {
+    let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
+        || !pctx.options.debug_info.debug_global_instances.is_empty();
+    if dctx.rank == 0 && check_global_constraints {
         // TODO: Distribute airgroupvalues
 
         let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
@@ -214,7 +216,13 @@ pub fn verify_constraints_proof<F: Field>(
             let line_str = &global_constraints_lines[idx];
 
             if constraint.skip {
-                log::debug!("{}:     · Skipping Global Constraint #{} -> {}", MY_NAME, idx, line_str,);
+                log::debug!(
+                    "{}:     · Global Constraint #{} {} -> {}",
+                    MY_NAME,
+                    idx,
+                    "is skipped".bright_yellow(),
+                    line_str,
+                );
                 continue;
             }
 
@@ -262,7 +270,7 @@ pub fn verify_constraints_proof<F: Field>(
             )))
         }
     } else {
-        if !pctx.options.debug_info.debug_instances.is_empty() {
+        if check_global_constraints {
             log::info!(
                 "{}: ··· {}",
                 MY_NAME,
