@@ -14,7 +14,7 @@ pub trait AirComponent<F> {
     fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>, airgroup_id: Option<usize>, air_id: Option<usize>)
         -> Arc<Self>;
 
-    fn debug(
+    fn debug_mode(
         &self,
         _pctx: &ProofCtx<F>,
         _sctx: &SetupCtx,

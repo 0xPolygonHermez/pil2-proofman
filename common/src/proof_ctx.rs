@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{ModeName, distribution_ctx::DistributionCtx, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
+use crate::{distribution_ctx::DistributionCtx, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -34,21 +34,11 @@ pub struct ProofOptions {
     pub debug_info: DebugInfo,
 }
 
-#[derive(Clone)]
+#[derive(Default, Clone)]
 pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,
     pub std_mode: StdMode,
-}
-
-impl DebugInfo {
-    pub fn new() -> Self {
-        Self {
-            std_mode: StdMode::new(ModeName::Standard, Vec::new(), 0, false),
-            debug_instances: HashMap::new(),
-            debug_global_instances: Vec::new(),
-        }
-    }
 }
 
 impl ProofOptions {
