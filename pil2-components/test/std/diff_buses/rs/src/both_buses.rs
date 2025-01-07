@@ -10,8 +10,7 @@ use crate::BothBusesTrace;
 
 pub struct BothBuses;
 
-impl BothBuses
-{
+impl BothBuses {
     const MY_NAME: &'static str = "BothBus ";
 
     pub fn new() -> Arc<Self> {
@@ -29,7 +28,6 @@ where
         let mut trace = BothBusesTrace::new();
         let num_rows = trace.num_rows();
 
-        
         log::debug!("{}: ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         for i in 0..num_rows {

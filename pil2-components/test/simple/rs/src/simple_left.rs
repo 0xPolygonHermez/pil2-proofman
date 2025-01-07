@@ -3,7 +3,7 @@ use std::sync::Arc;
 use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng};
 
 use crate::SimpleLeftTrace;

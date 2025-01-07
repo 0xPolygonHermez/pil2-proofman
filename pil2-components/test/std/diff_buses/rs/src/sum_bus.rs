@@ -9,8 +9,7 @@ use crate::SumBusTrace;
 
 pub struct SumBus;
 
-impl SumBus
-{
+impl SumBus {
     const MY_NAME: &'static str = "SumBus  ";
 
     pub fn new() -> Arc<Self> {
@@ -18,12 +17,11 @@ impl SumBus
     }
 }
 
-impl<F: PrimeField> WitnessComponent<F> for SumBus
-{
+impl<F: PrimeField> WitnessComponent<F> for SumBus {
     fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut trace = SumBusTrace::new();
         let num_rows = trace.num_rows();
-        
+
         log::debug!("{}: ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
         for i in 0..num_rows {

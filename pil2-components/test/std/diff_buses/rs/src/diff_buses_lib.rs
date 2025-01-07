@@ -7,7 +7,6 @@ use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
 use rand::{distributions::Standard, prelude::Distribution};
 
-
 use crate::{ProdBus, BothBuses, SumBus};
 
 witness_library!(WitnessLib, Goldilocks);

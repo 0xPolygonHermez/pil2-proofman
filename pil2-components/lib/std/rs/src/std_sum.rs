@@ -49,7 +49,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                     Some(Mutex::new(stage_wc))
                 }
             },
-            debug_data: if pctx.options.std_mode.name == ModeName::Debug {
+            debug_data: if pctx.options.debug_info.std_mode.name == ModeName::Debug {
                 Some(Mutex::new(HashMap::new()))
             } else {
                 None
@@ -57,7 +57,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
         })
     }
 
-    fn debug(
+    fn debug_mode(
         &self,
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx,
@@ -144,6 +144,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                         // If opids are specified, then only update the bus if the opid is in the list
                         if !pctx
                             .options
+                            .debug_info
                             .std_mode
                             .opids
                             .contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
@@ -179,6 +180,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                             // If opids are specified, then only update the bus if the opid is in the list
                             if !pctx
                                 .options
+                                .debug_info
                                 .std_mode
                                 .opids
                                 .contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
@@ -307,8 +309,8 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_debug_data");
 
                     // Debugging, if enabled
-                    if pctx.options.std_mode.name == ModeName::Debug {
-                        self.debug(&pctx, &sctx, air_instance, num_rows, debug_data_hints.clone());
+                    if pctx.options.debug_info.std_mode.name == ModeName::Debug {
+                        self.debug_mode(&pctx, &sctx, air_instance, num_rows, debug_data_hints.clone());
                     }
 
                     // Populate the im columns
@@ -370,11 +372,11 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
     fn end_proof(&self) {
         // Print debug info if in debug mode
-        if self.pctx.options.std_mode.name == ModeName::Debug {
+        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug {
             let pctx = &self.pctx;
             let name = Self::MY_NAME;
-            let max_values_to_print = pctx.options.std_mode.n_vals;
-            let print_to_file = pctx.options.std_mode.print_to_file;
+            let max_values_to_print = pctx.options.debug_info.std_mode.n_vals;
+            let print_to_file = pctx.options.debug_info.std_mode.print_to_file;
             let debug_data = self.debug_data.as_ref().expect("Debug data missing");
             print_debug_info(pctx, name, max_values_to_print, print_to_file, debug_data);
         }
