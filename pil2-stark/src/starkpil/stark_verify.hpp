@@ -2,28 +2,33 @@
 #include "stark_info.hpp"
 #include "merkleTreeGL.hpp"
 
-bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, ExpressionsBin& expressionsBin, Goldilocks::Element *verkey, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* challenges_) {
+bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsBin, Goldilocks::Element *verkey, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* challenges_) {
 
     uint64_t friQueries[starkInfo.starkStruct.nQueries];
 
     Goldilocks::Element evals[starkInfo.evMap.size()  * FIELD_EXTENSION];
     for(uint64_t i = 0; i < starkInfo.evMap.size(); ++i) {
-        memcpy(&evals[i * FIELD_EXTENSION], fproof.proof.evals[i].data(), FIELD_EXTENSION * sizeof(Goldilocks::Element));
+        for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
+            evals[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["evals"][i][j]);
+        }
     }
 
     Goldilocks::Element airgroupValues[starkInfo.airgroupValuesMap.size()  * FIELD_EXTENSION];
     for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size() ; ++i) {
-        memcpy(&airgroupValues[i * FIELD_EXTENSION], fproof.proof.airgroupValues[i].data(), FIELD_EXTENSION * sizeof(Goldilocks::Element));
+        for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
+            airgroupValues[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
+        }
     }
 
     Goldilocks::Element airValues[starkInfo.airValuesMap.size()  * FIELD_EXTENSION];
     uint64_t c = 0;
     for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); ++i) {
         if(starkInfo.airValuesMap[i].stage == 1) {
-            airValues[c++] = fproof.proof.airValues[i][0];
+            airValues[c++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
         } else {
-            memcpy(&airValues[c], fproof.proof.airValues[i].data(), FIELD_EXTENSION * sizeof(Goldilocks::Element));
-            c += 3;
+            airValues[c++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
+            airValues[c++] = Goldilocks::fromString(jproof["airvalues"][i][1]);
+            airValues[c++] = Goldilocks::fromString(jproof["airvalues"][i][2]);
         }
     }
 
@@ -51,7 +56,11 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
                 transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
                 c++;
             }
-            transcript.put(&fproof.proof.roots[s - 1][0], 4);
+            Goldilocks::Element root[4];
+            for(uint64_t i = 0; i < 4; ++i) {
+                root[i] = Goldilocks::fromString(jproof["root" + to_string(s)][i]);
+            }
+            transcript.put(&root[0], 4);
         }
 
         // Evals challenge
@@ -74,17 +83,22 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
         transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
         c++;
 
-
         for (uint64_t step=0; step<starkInfo.starkStruct.steps.size(); step++) {
             transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
             c++;
             if (step < starkInfo.starkStruct.steps.size() - 1) {
-                transcript.put(fproof.proof.fri.treesFRI[step].root.data(), 4);
+                Goldilocks::Element root[4];
+                for(uint64_t i = 0; i < 4; ++i) {
+                    root[i] = Goldilocks::fromString(jproof["s" + std::to_string(step + 1) + "_root"][i]);
+                }
+                transcript.put(&root[0], 4);
             } else {
                 uint64_t finalPolSize = (1<< starkInfo.starkStruct.steps[step].nBits);
                 Goldilocks::Element finalPol[finalPolSize * FIELD_EXTENSION];
                 for(uint64_t i = 0; i < finalPolSize; ++i) {
-                    memcpy(&finalPol[i * FIELD_EXTENSION], fproof.proof.fri.pol[i].data(), FIELD_EXTENSION * sizeof(Goldilocks::Element));
+                    for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
+                        finalPol[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["finalPol"][i][j]);
+                    }
                 }
 
                 if(!starkInfo.starkStruct.hashCommits) {
@@ -113,9 +127,10 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
     transcriptPermutation.getPermutations(friQueries, starkInfo.starkStruct.nQueries, starkInfo.starkStruct.steps[0].nBits);
 
     Goldilocks::Element constPolsVals[starkInfo.nConstants * starkInfo.starkStruct.nQueries];
+#pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         for(uint64_t i = 0; i < starkInfo.nConstants; ++i) {
-            constPolsVals[q*starkInfo.nConstants + i] = fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 1].v[i][0];
+            constPolsVals[q*starkInfo.nConstants + i] = Goldilocks::fromString(jproof["s0_valsC"][q][i]);
         }
     }
     
@@ -126,7 +141,6 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
         if(starkInfo.challengesMap[i].stage == starkInfo.nStages + 2) {
             if(starkInfo.challengesMap[i].stageId == 0) {
                 std::memcpy(&xiChallenge[0], &challenges[i*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
-                break;
             }
         }
     }
@@ -161,6 +175,7 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
 
     Goldilocks::Element *trace = new Goldilocks::Element[starkInfo.mapSectionsN["cm1"]*starkInfo.starkStruct.nQueries];
     Goldilocks::Element *aux_trace = new Goldilocks::Element[starkInfo.mapTotalN];
+#pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         for(uint64_t i = 0; i < starkInfo.cmPolsMap.size(); ++i) {
             uint64_t stage = starkInfo.cmPolsMap[i].stage;
@@ -169,11 +184,11 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
             uint64_t nPols = starkInfo.mapSectionsN["cm" + to_string(stage)];
             Goldilocks::Element *pols = stage == 1 ? trace : aux_trace;
             if(starkInfo.cmPolsMap[i].dim == 1) {
-                std::memcpy(&pols[offset + q*nPols + stagePos], fproof.proof.fri.trees.polQueries[q][stage - 1].v[stagePos].data(), sizeof(Goldilocks::Element));
+                pols[offset + q*nPols + stagePos] = Goldilocks::fromString(jproof["s0_vals" + to_string(stage)][q][stagePos]);
             } else {
-                std::memcpy(&pols[offset + q*nPols + stagePos], fproof.proof.fri.trees.polQueries[q][stage - 1].v[stagePos].data(), sizeof(Goldilocks::Element));
-                std::memcpy(&pols[offset + q*nPols + stagePos + 1], fproof.proof.fri.trees.polQueries[q][stage - 1].v[stagePos + 1].data(), sizeof(Goldilocks::Element));
-                std::memcpy(&pols[offset + q*nPols + stagePos + 2], fproof.proof.fri.trees.polQueries[q][stage - 1].v[stagePos + 2].data(), sizeof(Goldilocks::Element));
+                pols[offset + q*nPols + stagePos] = Goldilocks::fromString(jproof["s0_vals" + to_string(stage)][q][stagePos]);
+                pols[offset + q*nPols + stagePos + 1] = Goldilocks::fromString(jproof["s0_vals" + to_string(stage)][q][stagePos + 1]);
+                pols[offset + q*nPols + stagePos + 2] = Goldilocks::fromString(jproof["s0_vals" + to_string(stage)][q][stagePos + 2]);
             }
         }
     }
@@ -183,6 +198,7 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
         custom_commits[c] = new Goldilocks::Element[starkInfo.customCommitsMap[c].size() * starkInfo.starkStruct.nQueries];
     }
 
+#pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
             for(uint64_t i = 0; i < starkInfo.customCommitsMap[c].size(); ++i) {
@@ -191,11 +207,11 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
                 uint64_t nPols = starkInfo.mapSectionsN[starkInfo.customCommits[c].name + "0"];
                 Goldilocks::Element *pols = custom_commits[c];
                 if(starkInfo.customCommitsMap[c][i].dim == 1) {
-                    std::memcpy(&pols[offset + q*nPols + stagePos], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + c].v[stagePos].data(), sizeof(Goldilocks::Element));
+                    pols[offset + q*nPols + stagePos] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos]);
                 } else {
-                    std::memcpy(&pols[offset + q*nPols + stagePos], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + c].v[stagePos].data(), sizeof(Goldilocks::Element));
-                    std::memcpy(&pols[offset + q*nPols + stagePos + 1], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + c].v[stagePos + 1].data(), sizeof(Goldilocks::Element));
-                    std::memcpy(&pols[offset + q*nPols + stagePos + 2], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + c].v[stagePos + 2].data(), sizeof(Goldilocks::Element));
+                    pols[offset + q*nPols + stagePos] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos]);
+                    pols[offset + q*nPols + stagePos + 1] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos + 1]);
+                    pols[offset + q*nPols + stagePos + 2] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos + 2]);
                 }
             }
         }   
@@ -268,67 +284,135 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
     destQueries.addParams(setupCtx.expressionsBin.expressionsInfo[starkInfo.friExpId]);
     std::vector<Dest> destsQueries = {destQueries};
     expressionsPack.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsQueries, starkInfo.starkStruct.nQueries, false);
+    bool isValidFRIConsistency = true;
+#pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         uint64_t idx = friQueries[q] % (1 << starkInfo.starkStruct.steps[0].nBits);
         if(starkInfo.starkStruct.steps.size() > 1) {
             uint64_t nextNGroups = 1 << starkInfo.starkStruct.steps[1].nBits;
             uint64_t groupIdx = idx / nextNGroups;
-            if(!Goldilocks::isZero(fproof.proof.fri.treesFRI[0].polQueries[q][0].v[groupIdx * FIELD_EXTENSION][0] - buffQueries[q*FIELD_EXTENSION]) 
-                || !Goldilocks::isZero(fproof.proof.fri.treesFRI[0].polQueries[q][0].v[groupIdx * FIELD_EXTENSION + 1][0]  - buffQueries[q*FIELD_EXTENSION + 1]) 
-                || !Goldilocks::isZero(fproof.proof.fri.treesFRI[0].polQueries[q][0].v[groupIdx * FIELD_EXTENSION + 2][0]  - buffQueries[q*FIELD_EXTENSION + 2])) {
-                zklog.error("Verify FRI query consistency failed");
-                isValid = false;
-                break;
+            if(!Goldilocks::isZero(Goldilocks::fromString(jproof["s1_vals"][q][groupIdx * FIELD_EXTENSION]) - buffQueries[q*FIELD_EXTENSION]) 
+                || !Goldilocks::isZero(Goldilocks::fromString(jproof["s1_vals"][q][groupIdx * FIELD_EXTENSION + 1]) - buffQueries[q*FIELD_EXTENSION + 1]) 
+                || !Goldilocks::isZero(Goldilocks::fromString(jproof["s1_vals"][q][groupIdx * FIELD_EXTENSION + 2]) - buffQueries[q*FIELD_EXTENSION + 2])) {
+                isValidFRIConsistency = false;
             }
         } else {
-            if(!Goldilocks::isZero(fproof.proof.fri.pol[idx][0] - buffQueries[q*FIELD_EXTENSION]) 
-                || !Goldilocks::isZero(fproof.proof.fri.pol[idx][1] - buffQueries[q*FIELD_EXTENSION + 1]) 
-                || !Goldilocks::isZero(fproof.proof.fri.pol[idx][2] - buffQueries[q*FIELD_EXTENSION + 2])) {
-                zklog.error("Verify FRI query consistency failed");
-                isValid = false;
-                break;
+            if(!Goldilocks::isZero(Goldilocks::fromString(jproof["finalPol"][idx][0]) - buffQueries[q*FIELD_EXTENSION]) 
+                || !Goldilocks::isZero(Goldilocks::fromString(jproof["finalPol"][idx][1]) - buffQueries[q*FIELD_EXTENSION + 1]) 
+                || !Goldilocks::isZero(Goldilocks::fromString(jproof["finalPol"][idx][2]) - buffQueries[q*FIELD_EXTENSION + 2])) {
+                isValidFRIConsistency = false;
             }
         }
     }
+    if(!isValidFRIConsistency) {
+        isValid = false;
+        zklog.error("Verify FRI query consistency failed");
+    }
 
-    for(uint64_t i = 0; i < starkInfo.nStages + 1; ++i) {
-        zklog.trace("Verifying stage " +  to_string(i + 1) + " Merkle tree");
-        std::string section = "cm" + to_string(i + 1);
+    for(uint64_t s = 0; s < starkInfo.nStages + 1; ++s) {
+        zklog.trace("Verifying stage " +  to_string(s + 1) + " Merkle tree");
+        std::string section = "cm" + to_string(s + 1);
         uint64_t nCols = starkInfo.mapSectionsN[section];
         MerkleTreeGL tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
+        Goldilocks::Element root[4];
+        for(uint64_t j = 0; j < 4; ++j) {
+            root[j] = Goldilocks::fromString(jproof["root" + to_string(s + 1)][j]);
+        }
+        bool isValidStageMT = true;
+    #pragma omp parallel for
         for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
-            bool res = tree.verifyGroupProof(&fproof.proof.roots[i][0], fproof.proof.fri.trees.polQueries[q][i].mp, friQueries[q], fproof.proof.fri.trees.polQueries[q][i].v);
-            if(!res) {
-                zklog.error("Stage " + to_string(i + 1) + " Merkle Tree verification failed");
-                isValid = false;
-                break;
+            std::vector<Goldilocks::Element> values(nCols);
+            for (uint64_t i = 0; i < nCols; ++i) {
+                values[i] = Goldilocks::fromString(jproof["s0_vals" + to_string(s + 1)][q][i]);
             }
+
+            std::vector<std::vector<Goldilocks::Element>> siblings(
+                starkInfo.starkStruct.steps[0].nBits, 
+                std::vector<Goldilocks::Element>(4)
+            );
+
+            for (uint64_t i = 0; i < starkInfo.starkStruct.steps[0].nBits; ++i) {
+                for (uint64_t j = 0; j < 4; ++j) {
+                    siblings[i][j] = Goldilocks::fromString(jproof["s0_siblings" + to_string(s + 1)][q][i][j]);
+                }
+            }
+            bool res = tree.verifyGroupProof(root, siblings, friQueries[q], values);
+            if(!res) {
+                isValidStageMT = false;
+            }
+        }
+        if(!isValidStageMT) {
+            zklog.error("Stage " + to_string(s + 1) + " Merkle Tree verification failed");
+            isValid = false;
         }
     }
 
     zklog.trace("Verifying constant Merkle tree");
     MerkleTreeGL treeC(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, NULL, false);
+    bool isValidConstantMT = true;
+#pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
-        bool res = treeC.verifyGroupProof(verkey, fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 1].mp, friQueries[q], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 1].v);
+        std::vector<Goldilocks::Element> values(starkInfo.nConstants);
+        for (uint64_t i = 0; i < starkInfo.nConstants; ++i) {
+            values[i] = Goldilocks::fromString(jproof["s0_valsC"][q][i]);
+        }
+
+        std::vector<std::vector<Goldilocks::Element>> siblings(
+            starkInfo.starkStruct.steps[0].nBits, 
+            std::vector<Goldilocks::Element>(4)
+        );
+
+        for (uint64_t i = 0; i < starkInfo.starkStruct.steps[0].nBits; ++i) {
+            for (uint64_t j = 0; j < 4; ++j) {
+                siblings[i][j] = Goldilocks::fromString(jproof["s0_siblingsC"][q][i][j]);
+            }
+        }
+
+        bool res = treeC.verifyGroupProof(verkey, siblings, friQueries[q], values);
         if(!res) {
-            zklog.error("Constant Merkle Tree verification failed");
-            isValid = false;
-            break;
+            isValidConstantMT = false;
         }
     }
+    if(!isValidConstantMT) {
+        zklog.error("Constant Merkle Tree verification failed");
+        isValid = false;
+    }
 
-    for(uint64_t i = 0; i < starkInfo.customCommits.size(); ++i) {
-        zklog.trace("Verifying custom commit " + starkInfo.customCommits[i].name + " Merkle tree");
-        std::string section = starkInfo.customCommits[i].name + "0";
+    for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
+        zklog.trace("Verifying custom commit " + starkInfo.customCommits[c].name + " Merkle tree");
+        std::string section = starkInfo.customCommits[c].name + "0";
         uint64_t nCols = starkInfo.mapSectionsN[section];
         MerkleTreeGL tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
+        Goldilocks::Element root[4];
+        for(uint64_t j = 0; j < 4; ++j) {
+            root[j] = publics[starkInfo.customCommits[c].publicValues[j]];
+        }
+        bool isValidCustomCommitsMT = true;
+    #pragma omp parallel for
         for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
-            bool res = tree.verifyGroupProof(&fproof.proof.roots[starkInfo.nStages + 1 + i][0], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + i].mp, friQueries[q], fproof.proof.fri.trees.polQueries[q][starkInfo.nStages + 2 + i].v);
-            if(!res) {
-                zklog.error("Custom Commit " + starkInfo.customCommits[i].name + " Merkle Tree verification failed");
-                isValid = false;
-                break;
+            std::vector<Goldilocks::Element> values(nCols);
+            for (uint64_t i = 0; i < nCols; ++i) {
+                values[i] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][i]);
             }
+
+            std::vector<std::vector<Goldilocks::Element>> siblings(
+                starkInfo.starkStruct.steps[0].nBits, 
+                std::vector<Goldilocks::Element>(4)
+            );
+
+            for (uint64_t i = 0; i < starkInfo.starkStruct.steps[0].nBits; ++i) {
+                for (uint64_t j = 0; j < 4; ++j) {
+                    siblings[i][j] = Goldilocks::fromString(jproof["s0_siblings_" + starkInfo.customCommits[c].name + "_0"][q][i][j]);
+                }
+            }
+            bool res = tree.verifyGroupProof(root, siblings, friQueries[q], values);
+            if(!res) {
+                isValidCustomCommitsMT = false;
+            }
+        }
+        if(!isValidCustomCommitsMT) {
+            zklog.error("Custom Commit " + starkInfo.customCommits[c].name + " Merkle Tree verification failed");
+            isValid = false;
         }
     }
 
@@ -338,21 +422,53 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
         uint64_t nGroups = 1 << starkInfo.starkStruct.steps[step].nBits;
         uint64_t groupSize = (1 << starkInfo.starkStruct.steps[step - 1].nBits) / nGroups;
         MerkleTreeGL treeFRI(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION, NULL);
+        Goldilocks::Element root[4];
+        for(uint64_t j = 0; j < 4; ++j) {
+            root[j] = Goldilocks::fromString(jproof["s" + std::to_string(step) + "_root"][j]);
+        }
+
+        bool isValidFoldingMT = true;
+    #pragma omp parallel for
         for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
-            bool res = treeFRI.verifyGroupProof(fproof.proof.fri.treesFRI[step - 1].root.data(), fproof.proof.fri.treesFRI[step - 1].polQueries[q][0].mp, friQueries[q], fproof.proof.fri.treesFRI[step - 1].polQueries[q][0].v);
-            if(!res) {
-                zklog.error("Merkle tree FRI verification for FRI failed");
-                isValid = false;
-                break;
+            uint64_t n_values = (1 << (starkInfo.starkStruct.steps[step-1].nBits - starkInfo.starkStruct.steps[step].nBits))*FIELD_EXTENSION;
+            std::vector<Goldilocks::Element> values(n_values);
+            for (uint64_t i = 0; i < n_values; ++i) {
+                values[i] = Goldilocks::fromString(jproof["s" + std::to_string(step) + "_vals"][q][i]);
             }
+
+            std::vector<std::vector<Goldilocks::Element>> siblings(
+                starkInfo.starkStruct.steps[step].nBits, 
+                std::vector<Goldilocks::Element>(4)
+            );
+
+            for (uint64_t i = 0; i < starkInfo.starkStruct.steps[step].nBits; ++i) {
+                for (uint64_t j = 0; j < 4; ++j) {
+                    siblings[i][j] = Goldilocks::fromString(jproof["s" + std::to_string(step) + "_siblings"][q][i][j]);
+                }
+            }
+            bool res = treeFRI.verifyGroupProof(root, siblings, friQueries[q], values);
+            if(!res) {
+                isValidFoldingMT = false;
+            }
+        }
+        if(!isValidFoldingMT) {
+            zklog.error("FRI folding Merkle Tree verification failed");
+            isValid = false;
         }
     }
 
     zklog.trace("Verifying FRI foldings");
     for (uint64_t step=1; step < starkInfo.starkStruct.steps.size(); step++) {
+        bool isValidFolding = true;
+    #pragma omp parallel for
         for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
             uint64_t idx = friQueries[q] % (1 << starkInfo.starkStruct.steps[step].nBits);     
             Goldilocks::Element value[3];
+            uint64_t n_values = (1 << (starkInfo.starkStruct.steps[step-1].nBits - starkInfo.starkStruct.steps[step].nBits))*FIELD_EXTENSION;
+            std::vector<Goldilocks::Element> values(n_values);
+            for (uint64_t i = 0; i < n_values; ++i) {
+                values[i] = Goldilocks::fromString(jproof["s" + std::to_string(step) + "_vals"][q][i]);
+            }
             FRI<Goldilocks::Element>::verify_fold(
                 value,
                 step, 
@@ -361,24 +477,26 @@ bool starkVerify(FRIProof<Goldilocks::Element> &fproof, StarkInfo& starkInfo, Ex
                 starkInfo.starkStruct.steps[step - 1].nBits,
                 &challenges[(starkInfo.challengesMap.size() + step)*FIELD_EXTENSION],
                 idx,
-                fproof.proof.fri.treesFRI[step - 1].polQueries[q][0].v
+                values
             );
             if (step < starkInfo.starkStruct.steps.size() - 1) {
                 uint64_t groupIdx = idx / (1 << starkInfo.starkStruct.steps[step + 1].nBits);
                 for(uint64_t i = 0; i < FIELD_EXTENSION; ++i) {
-                    if(Goldilocks::toU64(value[i]) != Goldilocks::toU64(fproof.proof.fri.treesFRI[step].polQueries[q][0].v[groupIdx * FIELD_EXTENSION + i][0])) {
-                        isValid = false;
-                        break;
+                    if(!Goldilocks::isZero(value[i] - Goldilocks::fromString(jproof["s" + to_string(step + 1) + "_vals"][q][groupIdx * FIELD_EXTENSION + i]))) {
+                        isValidFolding = false;
                     }
                 }
             } else {
                 for(uint64_t i = 0; i < FIELD_EXTENSION; ++i) {
-                    if(Goldilocks::toU64(value[i]) != Goldilocks::toU64(fproof.proof.fri.pol[idx][i])) {
-                        isValid = false;
-                        break;
+                    if(!Goldilocks::isZero(value[i] - Goldilocks::fromString(jproof["finalPol"][idx][i]))) {
+                        isValidFolding = false;
                     }
                 }
             }
+        }
+        if(!isValidFolding) {
+            zklog.error("FRI folding verification failed");
+            isValid = false;
         }
     }
     

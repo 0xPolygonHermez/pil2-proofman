@@ -38,6 +38,7 @@ class CustomCommits
 public:
     std::string name;
     vector<uint32_t> stageWidths;
+    vector<uint32_t> publicValues;
 };
 
 class Boundary

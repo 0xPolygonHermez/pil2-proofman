@@ -641,6 +641,7 @@ public:
                             case 36: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: number
                                 Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &numbers_[args[i_args + 3]*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
                                 i_args += 4;
                                 break;
                             }
@@ -809,36 +810,42 @@ public:
                             case 64: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: commit3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack]);
+                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
                                 i_args += 6;
                                 break;
                             }
                             case 65: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: tmp3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &tmp3[args[i_args + 4] * nrowsPack * FIELD_EXTENSION]);
+                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
                                 i_args += 5;
                                 break;
                             }
                             case 66: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: challenge
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &challenges[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
                                 i_args += 5;
                                 break;
                             }
                             case 67: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airgroupvalue
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &airgroupValues[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
                                 i_args += 5;
                                 break;
                             }
                             case 68: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &airValues[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
                                 i_args += 5;
                                 break;
                             }
                             case 69: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: proofvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &proofValues[args[i_args + 4] * nrowsPack * FIELD_EXTENSION]);
+                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
                                 i_args += 5;
                                 break;
                             }
@@ -851,90 +858,119 @@ public:
                             case 71: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: tmp3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
                                 i_args += 4;
                                 break;
                             }
                             case 72: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: challenge
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 73: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airgroupvalue
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 74: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 75: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: proofvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 76: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: challenge
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &challenges[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 77: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airgroupvalue
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airgroupValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 78: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 79: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: proofvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 80: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airgroupvalue
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airgroupValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 81: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 82: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: proofvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 83: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: airvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &airValues[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 84: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: proofvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 85: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: proofvalue3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
@@ -947,48 +983,72 @@ public:
                             case 87: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: eval
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &evals[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 88: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: eval
+                                if(kk == 33) {
+                                    cout << " " << Goldilocks::toString(tmp3[args[i_args + 2] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 2] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 2] * FIELD_EXTENSION + 2]) << endl; 
+                                    cout << args[i_args] << endl;
+                                    cout << Goldilocks::toString(evals[args[i_args + 3]*FIELD_EXTENSION]) << " " << Goldilocks::toString(evals[args[i_args + 3]*FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(evals[args[i_args + 3]*FIELD_EXTENSION + 2]) << endl;
+                                }
+                                Goldilocks::Element tmp[3];
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                Goldilocks3::op_pack(1, args[i_args], tmp, &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 3]* nrowsPack * FIELD_EXTENSION]);
+                                                                cout << "TEST 1" << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+                                                                cout << "TEST 2" << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp[0]) << " " << Goldilocks::toString(tmp[1]) << " " << Goldilocks::toString(tmp[2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 89: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: commit1
                                 Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack]);
+                                                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 5;
                                 break;
                             }
                             case 90: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: eval
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &evals[args[i_args + 4]*FIELD_EXTENSION*nrowsPack]);
+                                                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 5;
                                 break;
                             }
                             case 91: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: eval
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &evals[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 92: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: public
                                 Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &publics[args[i_args + 3] * nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 93: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: number
                                 Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &numbers_[args[i_args + 3]*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }
                             case 94: {
                                 // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: eval
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2]*FIELD_EXTENSION*nrowsPack], &evals[args[i_args + 3]*FIELD_EXTENSION*nrowsPack]);
+                                                                cout << kk << " " << uint64_t(ops[kk]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(tmp3[args[i_args + 1] * FIELD_EXTENSION + 2]) << endl; 
+
                                 i_args += 4;
                                 break;
                             }

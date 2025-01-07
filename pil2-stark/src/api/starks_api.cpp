@@ -734,6 +734,8 @@ void setLogLevel(uint64_t level) {
 
 // Stark Verify
 // =================================================================================
-bool stark_verify(void *fProof, void *pStarkInfo, void *pExpressionsBin, void *verkey, void *pPublics, void *pProofValues, void *pChallenges) {
-    return starkVerify(*(FRIProof<Goldilocks::Element> *)fProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, (Goldilocks::Element *)verkey, (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, true, (Goldilocks::Element *)pChallenges);
+bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, void *verkey, void *pPublics, void *pProofValues, void *pChallenges) {
+    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
+    bool vadcop = challenges == nullptr ? false : true;
+    return starkVerify(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, (Goldilocks::Element *)verkey, (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
 }

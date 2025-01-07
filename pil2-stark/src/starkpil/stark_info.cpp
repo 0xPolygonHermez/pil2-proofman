@@ -64,6 +64,9 @@ void StarkInfo::load(json j, bool verify_)
     for(uint64_t i = 0; i < j["customCommits"].size(); i++) {
         CustomCommits c;
         c.name = j["customCommits"][i]["name"];
+        for(uint64_t k = 0; k < j["customCommits"][i]["publicValues"].size(); k++) {
+            c.publicValues.push_back(j["customCommits"][i]["publicValues"][k]["idx"]);
+        }
         for(uint64_t k = 0; k < j["customCommits"][i]["stageWidths"].size(); k++) {
             c.stageWidths.push_back(j["customCommits"][i]["stageWidths"][k]);
         }

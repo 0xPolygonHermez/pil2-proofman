@@ -3,6 +3,7 @@ use p3_field::Field;
 use proofman_starks_lib_c::{stark_info_new_c, expressions_bin_new_c, stark_verify_c};
 use std::fs::File;
 use std::io::Read;
+use std::path::PathBuf;
 
 use colored::*;
 
@@ -17,60 +18,90 @@ use std::os::raw::c_void;
 
 use crate::verify_global_constraints_proof;
 
-// This method is not ready to use!
 pub fn verify_proof<F: Field>(
+    p_proof: *mut c_void,
+    setup_path: PathBuf,
+    publics: Option<Vec<F>>,
+    proof_values: Option<Vec<F>>,
+    challenges: Option<Vec<F>>,
+) -> bool {
+    let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
+    let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
+    let verkey_path = setup_path.display().to_string() + ".verkey.json";
+
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true);
+    let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+
+    let mut contents = String::new();
+    let mut file = File::open(verkey_path).unwrap();
+
+    let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
+    let verkey_json: Vec<u64> = serde_json::from_str(&contents).unwrap();
+    let verkey: Vec<F> = verkey_json.into_iter().map(|element| F::from_canonical_u64(element)).collect();
+
+    let proof_challenges_ptr = match challenges {
+        Some(ref challenges) => challenges.as_ptr() as *mut u8,
+        None => std::ptr::null_mut(),
+    };
+
+    let publics_ptr = match publics {
+        Some(ref publics) => publics.as_ptr() as *mut u8,
+        None => std::ptr::null_mut(),
+    };
+
+    let proof_values_ptr = match proof_values {
+        Some(ref proof_values) => proof_values.as_ptr() as *mut u8,
+        None => std::ptr::null_mut(),
+    };
+
+    let is_valid = stark_verify_c(
+        p_proof,
+        p_stark_info,
+        p_expressions_bin,
+        verkey.as_ptr() as *mut c_void,
+        publics_ptr,
+        proof_values_ptr,
+        proof_challenges_ptr,
+    );
+
+    is_valid
+}
+
+pub fn verify_basic_proofs<F: Field>(
     provers: &mut [Box<dyn Prover<F>>],
+    proves: Vec<*mut c_void>,
     proof_ctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx>,
 ) -> bool {
     const MY_NAME: &str = "Verify  ";
-    timer_start_info!(VERIFYING_PROOF);
+    timer_start_info!(VERIFYING_BASIC_PROOFS);
     let mut is_valid = true;
 
-    for prover in provers.iter() {
-        let p_proof = prover.get_proof();
+    for (idx, prover) in provers.iter().enumerate() {
         let prover_info = prover.get_prover_info();
 
         let setup_path =
             proof_ctx.global_info.get_air_setup_path(prover_info.airgroup_id, prover_info.air_id, &ProofType::Basic);
 
-        let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-        let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
-
-        let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true);
-        let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
-
-        let air_name = &proof_ctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
-
-        let verkey_file = proof_ctx
-            .global_info
-            .get_air_setup_path(prover_info.airgroup_id, prover_info.air_id, &ProofType::Basic)
-            .with_extension("verkey.json");
-        let mut contents = String::new();
-        let mut file = File::open(verkey_file).unwrap();
-
-        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
-        let verkey_json: Vec<u64> = serde_json::from_str(&contents).unwrap();
-        let verkey: Vec<F> = verkey_json.into_iter().map(|element| F::from_canonical_u64(element)).collect();
-
         let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
         let proof_challenges = prover.get_proof_challenges(steps_fri, proof_ctx.get_challenges().to_vec());
 
-        let is_valid_proof = stark_verify_c(
-            p_proof,
-            p_stark_info,
-            p_expressions_bin,
-            verkey.as_ptr() as *mut c_void,
-            proof_ctx.get_publics_ptr(),
-            proof_ctx.get_proof_values_ptr(),
-            proof_challenges.as_ptr() as *mut u8,
+        let is_valid_proof = verify_proof(
+            proves[idx],
+            setup_path,
+            Some(proof_ctx.get_publics().clone()),
+            Some(proof_ctx.get_proof_values().clone()),
+            Some(proof_challenges),
         );
+
+        let air_name = &proof_ctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
+
         if !is_valid_proof {
             is_valid = false;
             log::info!(
                 "{}: ··· {}",
                 MY_NAME,
-                format!("\u{2717} Proof of {}: Instance #{} was verified", air_name, prover_info.instance_id,)
+                format!("\u{2717} Proof of {}: Instance #{} was not verified", air_name, prover_info.instance_id,)
                     .bright_red()
                     .bold()
             );
@@ -139,6 +170,6 @@ pub fn verify_proof<F: Field>(
         log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all proofs were verified.".bright_red().bold());
     }
 
-    timer_stop_and_log_info!(VERIFYING_PROOF);
-    is_valid
+    timer_stop_and_log_info!(VERIFYING_BASIC_PROOFS);
+    is_valid && valid_global_constraints
 }

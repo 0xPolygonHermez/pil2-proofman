@@ -15,9 +15,9 @@ use transcript::FFITranscript;
 use witness::{WitnessLibInitFn, WitnessManager};
 
 use crate::{
-    verify_proof,
-    verify_constraints_proof, generate_vadcop_recursive1_proof, generate_vadcop_final_proof,
-    generate_vadcop_recursive2_proof, generate_recursivef_proof, generate_fflonk_snark_proof,
+    verify_proof, verify_basic_proofs, verify_constraints_proof, generate_vadcop_recursive1_proof,
+    generate_vadcop_final_proof, generate_vadcop_recursive2_proof, generate_recursivef_proof,
+    generate_fflonk_snark_proof,
 };
 
 use proofman_common::{
@@ -140,14 +140,19 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_stop_and_log_info!(GENERATING_PROOF);
 
+        let mut valid_proofs = false;
         if !pctx.options.aggregation {
-            verify_proof(&mut provers, pctx.clone(), sctx.clone());
+            valid_proofs = verify_basic_proofs(&mut provers, proves_out.clone(), pctx.clone(), sctx.clone());
         }
 
         Self::free_provers(&mut provers);
 
         if !pctx.options.aggregation {
-            return Ok(());
+            if valid_proofs {
+                return Ok(());
+            } else {
+                return Err("Basic proofs were not verified".into());
+            }
         }
 
         log::info!("{}: ··· Generating aggregated proofs", Self::MY_NAME);
@@ -174,13 +179,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx.read().unwrap().barrier();
         if mpi_rank == 0 {
+            let setup_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
             timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
-            let final_proof = generate_vadcop_final_proof(
-                &pctx,
-                setups.setup_vadcop_final.as_ref().unwrap().clone(),
-                recursive2_proof,
-                output_dir_path.clone(),
-            )?;
+            let final_proof =
+                generate_vadcop_final_proof(&pctx, setup_final.clone(), recursive2_proof, output_dir_path.clone())?;
             timer_stop_and_log_info!(GENERATING_VADCOP_FINAL_PROOF);
             log::info!("{}: VadcopFinal proof generated successfully", Self::MY_NAME);
 
@@ -199,6 +201,28 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
                 let _ = generate_fflonk_snark_proof(&pctx, recursivef_proof, output_dir_path.clone());
                 timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
+            } else {
+                valid_proofs = verify_proof(
+                    final_proof,
+                    pctx.global_info.get_setup_path("vadcop_final"),
+                    Some(pctx.get_publics().clone()),
+                    None,
+                    None,
+                );
+                if !valid_proofs {
+                    log::info!(
+                        "{}: ··· {}",
+                        Self::MY_NAME,
+                        format!("\u{2717} Vadcop Final proof was not verified").bright_red().bold()
+                    );
+                    return Err("Vadcop Final proof was not verified".into());
+                } else {
+                    log::info!(
+                        "{}:     {}",
+                        Self::MY_NAME,
+                        format!("\u{2713} Vadcop Final proof was verified").bright_green().bold()
+                    );
+                }
             }
         }
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
@@ -635,14 +659,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         proves
     }
 
-    fn free_provers(
-        provers: &mut [Box<dyn Prover<F>>]
-    ) {
+    fn free_provers(provers: &mut [Box<dyn Prover<F>>]) {
         for prover in provers.iter_mut() {
             prover.free();
         }
     }
-    
+
     fn print_global_summary(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         let dctx = pctx.dctx.read().unwrap();
 
