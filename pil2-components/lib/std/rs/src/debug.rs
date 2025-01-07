@@ -257,33 +257,21 @@ pub fn print_debug_info<F: PrimeField>(
                 rows.iter().map(|x| x.to_string()).take(max_values_to_print).collect::<Vec<_>>().join(",");
 
             let truncated = rows.len() > max_values_to_print;
-            writeln!(
-                output,
-                "\t        - Airgroup: {} (id: {})",
-                airgroup_name, airgroup_id
-            ).expect("Write error");
-            writeln!(
-                output,
-                "\t          Air: {} (id: {})",
-                air_name, air_id
-            ).expect("Write error");
-            
-            writeln!(
-                output,
-                "\t          PIOP: {}",
-                piop_name
-            ).expect("Write error");
-            writeln!(
-                output,
-                "\t          Expression: {:?}",
-                expr_name
-            ).expect("Write error");
-            
+            writeln!(output, "\t        - Airgroup: {} (id: {})", airgroup_name, airgroup_id).expect("Write error");
+            writeln!(output, "\t          Air: {} (id: {})", air_name, air_id).expect("Write error");
+
+            writeln!(output, "\t          PIOP: {}", piop_name).expect("Write error");
+            writeln!(output, "\t          Expression: {:?}", expr_name).expect("Write error");
+
             writeln!(
                 output,
                 "\t          Instance ID: {} | Num: {} | Rows: [{}{}]",
-                instance_id, rows.len(), rows_display, if truncated { ",..." } else { "" }
-            ).expect("Write error");
+                instance_id,
+                rows.len(),
+                rows_display,
+                if truncated { ",..." } else { "" }
+            )
+            .expect("Write error");
         }
 
         writeln!(output, "\t    --------------------------------------------------").expect("Write error");
