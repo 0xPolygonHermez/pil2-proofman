@@ -20,6 +20,10 @@ impl StdMode {
 
         Self { name, opids, n_vals, print_to_file }
     }
+
+    pub fn new_debug() -> Self {
+        Self::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false)
+    }
 }
 
 impl From<u8> for StdMode {

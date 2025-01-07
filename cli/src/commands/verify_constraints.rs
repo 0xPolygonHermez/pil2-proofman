@@ -40,7 +40,7 @@ pub struct VerifyConstraintsCmd {
     pub verbose: u8, // Using u8 to hold the number of `-v`
 
     #[clap(short = 'd', long)]
-    pub debug: Option<String>,
+    pub debug: Option<Option<String>>,
 }
 
 impl VerifyConstraintsCmd {
@@ -50,14 +50,10 @@ impl VerifyConstraintsCmd {
 
         initialize_logger(self.verbose.into());
 
-        let debug_info = if let Some(debug_value) = &self.debug {
-            if debug_value.is_empty() || debug_value == "false" {
-                DebugInfo::default()
-            } else {
-                json_to_debug_instances_map(debug_value.clone())
-            }
-        } else {
-            DebugInfo::default()
+        let debug_info = match &self.debug {
+            None => DebugInfo::default(),
+            Some(None) => DebugInfo::new_debug(),
+            Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone()),
         };
 
         match self.field {

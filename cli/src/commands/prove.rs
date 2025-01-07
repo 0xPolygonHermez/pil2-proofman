@@ -52,7 +52,7 @@ pub struct ProveCmd {
     pub verbose: u8, // Using u8 to hold the number of `-v`
 
     #[clap(short = 'd', long)]
-    pub debug: Option<String>,
+    pub debug: Option<Option<String>>,
 }
 
 impl ProveCmd {
@@ -68,14 +68,10 @@ impl ProveCmd {
 
         fs::create_dir_all(self.output_dir.join("proofs")).expect("Failed to create the proofs directory");
 
-        let debug_info = if let Some(debug_value) = &self.debug {
-            if debug_value.is_empty() || debug_value == "false" {
-                DebugInfo::default()
-            } else {
-                json_to_debug_instances_map(debug_value.clone())
-            }
-        } else {
-            DebugInfo::default()
+        let debug_info = match &self.debug {
+            None => DebugInfo::default(),
+            Some(None) => DebugInfo::new_debug(),
+            Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone()),
         };
 
         match self.field {

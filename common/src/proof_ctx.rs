@@ -41,6 +41,11 @@ pub struct DebugInfo {
     pub std_mode: StdMode,
 }
 
+impl DebugInfo {
+    pub fn new_debug() -> Self {
+        Self { debug_instances: HashMap::new(), debug_global_instances: Vec::new(), std_mode: StdMode::new_debug() }
+    }
+}
 impl ProofOptions {
     pub fn new(
         verify_constraints: bool,

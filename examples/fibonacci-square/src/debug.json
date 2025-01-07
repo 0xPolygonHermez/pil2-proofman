@@ -1,4 +1,3 @@
 {
-    "global_constraints": [0],
-    "constraints": [{ "airgroup_id": 0, "air_ids": [ { "air_id": 0, "instance_ids": [ { "instance_id": 0, "constraints": [0] }] }] }]
+    "constraints": [{ "airgroup": "FibonacciSquare", "air_ids": [ { "air": "FibonacciSquare", "instance_ids": [ { "instance_id": 0, "constraints": [0, 2, 4] },  {"instance_id": 2 }] }, { "air": "Module"}] }]
 }
