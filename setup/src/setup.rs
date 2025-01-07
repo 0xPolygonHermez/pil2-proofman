@@ -5,7 +5,6 @@ use tracing::info;
 use std::path::{Path, PathBuf};
 use crate::cli::Config;
 
-// Library function
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let airout = AirOut::from_file(&config.airout.airout_filename).await?;
     let setup_options = SetupOptions {
@@ -95,8 +94,44 @@ pub async fn get_fixed_pols_pil2(
     Ok(())
 }
 
-pub fn generate_stark_struct(_settings: &AirSettings, _log2_rows: usize) -> StarkStruct {
-    StarkStruct { steps: vec![] }
+pub fn generate_stark_struct(settings: &AirSettings, n_bits: usize) -> StarkStruct {
+    // Extract or calculate parameters with defaults
+    let hash_commits = true; // Default to true as in JavaScript
+    let blowup_factor = 1; // Default value for blowupFactor
+    let mut n_queries = (128.0 / blowup_factor as f64).ceil() as usize;
+
+    if let Some(stark_struct) = &settings.stark_struct {
+        n_queries = stark_struct.steps.last().map_or(n_queries, |step| step.n_bits.max(n_queries));
+    }
+
+    // Default values for foldingFactor and finalDegree
+    let folding_factor = 4;
+    let final_degree = settings.final_degree.max(5);
+
+    // Determine `VerificationType`
+    let verification_hash_type = VerificationType::from_final_degree(final_degree);
+
+    // Initialize nBitsExt
+    let n_bits_ext = n_bits + blowup_factor;
+
+    // Initialize the StarkStruct
+    let mut stark_struct = StarkStruct {
+        n_bits,
+        n_bits_ext,
+        n_queries,
+        verification_hash_type,
+        hash_commits,
+        steps: vec![Step { n_bits: n_bits_ext }],
+    };
+
+    // Compute FRI steps
+    let mut fri_step_bits = n_bits_ext;
+    while fri_step_bits > final_degree {
+        fri_step_bits = (fri_step_bits - folding_factor).max(final_degree);
+        stark_struct.steps.push(Step { n_bits: fri_step_bits });
+    }
+
+    stark_struct
 }
 
 pub async fn stark_setup(
@@ -104,8 +139,7 @@ pub async fn stark_setup(
     _stark_struct: &StarkStruct,
     _setup_options: &SetupOptions,
 ) -> Result<StarkStruct, Box<dyn std::error::Error>> {
-    // Implement logic
-    Ok(StarkStruct { steps: vec![] })
+    todo!()
 }
 
 pub fn generate_fixed_cols(symbols: &[Symbol], _num_rows: usize) -> Vec<Symbol> {
@@ -160,7 +194,28 @@ pub struct AirSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VerificationType {
+    GL,
+    BN128,
+}
+
+impl VerificationType {
+    pub fn from_final_degree(final_degree: usize) -> Self {
+        if final_degree > 10 {
+            VerificationType::BN128
+        } else {
+            VerificationType::GL
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StarkStruct {
+    pub n_bits: usize,
+    pub n_bits_ext: usize,
+    pub n_queries: usize,
+    pub verification_hash_type: VerificationType,
+    pub hash_commits: bool,
     pub steps: Vec<Step>,
 }
 
