@@ -66,8 +66,6 @@ impl<F: PrimeField> U8Air<F> {
         // Perform the last update
         self.update_multiplicity(drained_inputs);
 
-        let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = pctx.dctx.write().unwrap();
-
         let mut multiplicity = match &*self.mul_column.lock().unwrap() {
             HintFieldValue::Column(values) => {
                 values.iter().map(|x| x.as_canonical_biguint().to_u64().unwrap()).collect::<Vec<u64>>()
@@ -75,16 +73,15 @@ impl<F: PrimeField> U8Air<F> {
             _ => panic!("Multiplicities must be a column"),
         };
 
-        let (instance_found, instance_idx) = dctx.find_instance(self.airgroup_id, self.air_id);
+        let (instance_found, instance_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
-        let (is_mine, global_id) = if instance_found {
-            (dctx.is_my_instance(instance_idx), instance_idx)
+        let (is_mine, global_idx) = if instance_found {
+            (pctx.dctx_is_my_instance(instance_idx), instance_idx)
         } else {
-            dctx.add_instance(self.airgroup_id, self.air_id, 1)
+            pctx.dctx_add_instance(self.airgroup_id, self.air_id, 1)
         };
 
-        let owner = dctx.owner(global_id);
-        dctx.distribute_multiplicity(&mut multiplicity, owner);
+        pctx.dctx_distribute_multiplicity(&mut multiplicity, global_idx);
 
         if is_mine {
             let air_instance_repo = &pctx.air_instance_repo;
@@ -96,7 +93,7 @@ impl<F: PrimeField> U8Air<F> {
                 let buffer_size = num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
-                pctx.air_instance_repo.add_air_instance(air_instance, Some(global_id))
+                pctx.add_air_instance(air_instance, global_idx)
             };
 
             let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
@@ -135,7 +132,7 @@ impl<F: PrimeField> U8Air<F> {
 impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
     fn start_proof(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         // Obtain info from the mul hints
-        let setup = sctx.get_setup(self.airgroup_id, self.air_id);
+    let setup = sctx.get_setup(self.airgroup_id, self.air_id);
         let u8air_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "u8air");
         if !u8air_hints.is_empty() {
             self.hint.store(u8air_hints[0], Ordering::Release);

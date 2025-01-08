@@ -45,6 +45,10 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
 
         let inputs = self.inputs.lock().unwrap();
 
+        let inputs_len = inputs.len();
+
+        let mut x_mods = Vec::new();
+
         for (i, input) in inputs.iter().enumerate() {
             let x = input.0;
             let q = x / module;
@@ -53,17 +57,20 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
             trace[i].x = F::from_canonical_u64(x);
             trace[i].q = F::from_canonical_u64(q);
             trace[i].x_mod = F::from_canonical_u64(x_mod);
-
-            // Check if x_mod is in the range
-            self.std_lib.range_check(F::from_canonical_u64(module - x_mod), F::one(), range);
-        }
-
-        // Trivial range check for the remaining rows
-        for _ in inputs.len()..trace.num_rows() {
-            self.std_lib.range_check(F::from_canonical_u64(module), F::one(), range);
+            x_mods.push(x_mod);
         }
 
         let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        add_air_instance::<F>(air_instance, pctx.clone());
+        let is_mine = add_air_instance::<F>(air_instance, pctx.clone());
+        if is_mine.is_some() {
+            for i in 0..x_mods.len() {
+                self.std_lib.range_check(F::from_canonical_u64(module - x_mods[i]), F::one(), range);
+            }
+
+            // Trivial range check for the remaining rows
+            for _ in inputs_len..trace.num_rows() {
+                self.std_lib.range_check(F::from_canonical_u64(module), F::one(), range);
+            }
+        }
     }
 }
