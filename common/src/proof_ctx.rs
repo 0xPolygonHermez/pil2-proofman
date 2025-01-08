@@ -94,9 +94,6 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) -> usize {
-        let dctx = self.dctx.read().unwrap();
-        println!("{} global idx and {:?} dctx", global_idx, dctx.my_instances);
-    
         self.air_instance_repo.add_air_instance(air_instance, global_idx)
     }
 
@@ -104,7 +101,7 @@ impl<F: Field> ProofCtx<F> {
         let dctx = self.dctx.read().unwrap();
         dctx.is_my_instance(instance_idx)
     }
-    
+
     pub fn dctx_find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
         let dctx = self.dctx.read().unwrap();
         dctx.find_instance(airgroup_id, air_id)

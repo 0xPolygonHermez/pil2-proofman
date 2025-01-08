@@ -132,7 +132,7 @@ impl<F: PrimeField> U8Air<F> {
 impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
     fn start_proof(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
         // Obtain info from the mul hints
-    let setup = sctx.get_setup(self.airgroup_id, self.air_id);
+        let setup = sctx.get_setup(self.airgroup_id, self.air_id);
         let u8air_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "u8air");
         if !u8air_hints.is_empty() {
             self.hint.store(u8air_hints[0], Ordering::Release);
