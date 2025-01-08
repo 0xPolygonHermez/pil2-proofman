@@ -16,15 +16,15 @@ use colored::*;
 pub fn verify_global_constraints_proof<F: Field>(
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx>,
-    mut airgroupvalues: Vec<Vec<F>>,
+    airgroupvalues: Vec<Vec<F>>,
 ) -> Vec<GlobalConstraintInfo> {
     const MY_NAME: &str = "GlCstVfy";
 
     log::info!("{}: --> Checking global constraints", MY_NAME);
 
     let mut airgroup_values_ptrs: Vec<*mut F> = airgroupvalues
-        .iter_mut() // Iterate mutably over the inner Vecs
-        .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
+        .iter() // Iterate mutably over the inner Vecs
+        .map(|inner_vec| inner_vec.as_ptr() as *mut F) // Get a raw pointer to each inner Vec
         .collect();
 
     let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
@@ -199,13 +199,13 @@ pub fn verify_constraints_proof<F: Field>(
 
     let dctx = pctx.dctx.read().unwrap();
 
-    let airgroupvalues = aggregate_airgroupvals(pctx.clone());
+    let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone());
 
     let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
         || !pctx.options.debug_info.debug_global_instances.is_empty();
-    if dctx.rank == 0 && check_global_constraints {
-        // TODO: Distribute airgroupvalues
 
+    let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+    if dctx.rank == 0 && check_global_constraints {        
         let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
         let mut valid_global_constraints = true;
 

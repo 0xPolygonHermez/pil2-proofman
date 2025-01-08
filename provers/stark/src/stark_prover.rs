@@ -278,6 +278,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             timer_stop_and_log_trace!(STARK_COMMIT_STAGE_, stage_id);
         } else {
             let n_custom_commits = self.stark_info.custom_commits.len();
+            let mut custom_publics = Vec::new();
             for commit_id in 0..n_custom_commits {
                 let custom_commits_stage = self.stark_info.custom_commits_map[commit_id]
                     .as_ref()
@@ -298,7 +299,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     );
                 }
 
-                let mut value = vec![F::zero(); self.n_field_elements];
+                let mut value = vec![Goldilocks::zero(); self.n_field_elements];
                 treesGL_get_root_c(
                     p_stark,
                     (self.stark_info.n_stages + 2 + commit_id as u32) as u64,
@@ -310,13 +311,12 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                         "Invalid public values size"
                     );
                     for (idx, val) in value.iter().enumerate() {
-                        proof_ctx.set_public_value(
-                            *val,
-                            self.stark_info.custom_commits[commit_id].public_values[idx].idx as usize,
-                        );
+                        custom_publics.push(self.stark_info.custom_commits[commit_id].public_values[idx].idx);
+                        custom_publics.push(val.as_canonical_u64());
                     }
                 }
             }
+            proof_ctx.dctx_distribute_publics(custom_publics);
         }
 
         if stage_id <= self.num_stages() + 1 {
@@ -542,6 +542,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             return;
         }
 
+        let mpi_rank = proof_ctx.dctx.read().unwrap().rank;
+
         if stage_id <= self.num_stages() + 3 {
             //num stages + 1 + evals + fri_pol (then starts fri folding...)
 
@@ -552,13 +554,15 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 if challenges_map[i].stage == stage_id as u64 {
                     let challenge = &challenges[i * Self::FIELD_EXTENSION];
                     transcript.get_challenge(challenge as *const F as *mut c_void);
-                    debug!(
-                        "{}: ··· Global challenge: [{}, {}, {}]",
-                        Self::MY_NAME,
-                        challenges[i * Self::FIELD_EXTENSION],
-                        challenges[i * Self::FIELD_EXTENSION + 1],
-                        challenges[i * Self::FIELD_EXTENSION + 2],
-                    );
+                    if mpi_rank == 0 {
+                        debug!(
+                            "{}: ··· Global challenge: [{}, {}, {}]",
+                            Self::MY_NAME,
+                            challenges[i * Self::FIELD_EXTENSION],
+                            challenges[i * Self::FIELD_EXTENSION + 1],
+                            challenges[i * Self::FIELD_EXTENSION + 2],
+                        );
+                    }
                 }
             }
         } else {
@@ -567,13 +571,15 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 
             challenges_guard.extend(std::iter::repeat(F::zero()).take(3));
             transcript.get_challenge(&(*challenges_guard)[challenges_guard.len() - 3] as *const F as *mut c_void);
-            debug!(
-                "{}: ··· Global challenge: [{}, {}, {}]",
-                Self::MY_NAME,
-                challenges_guard[challenges_guard.len() - 3],
-                challenges_guard[challenges_guard.len() - 2],
-                challenges_guard[challenges_guard.len() - 1],
-            );
+            if mpi_rank == 0 {
+                debug!(
+                    "{}: ··· Global challenge: [{}, {}, {}]",
+                    Self::MY_NAME,
+                    challenges_guard[challenges_guard.len() - 3],
+                    challenges_guard[challenges_guard.len() - 2],
+                    challenges_guard[challenges_guard.len() - 1],
+                );
+            }
         }
     }
 
