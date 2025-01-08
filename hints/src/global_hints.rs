@@ -54,12 +54,15 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>>
     }
 
     let mut airgroupvalues_u64: Vec<Vec<u64>> = Vec::new();
-    for (id,agg_types) in pctx.global_info.agg_types.iter().enumerate() {
+    for (id, agg_types) in pctx.global_info.agg_types.iter().enumerate() {
         let mut values = vec![0; agg_types.len() * FIELD_EXTENSION];
         for idx in 0..agg_types.len() {
-            values[idx * FIELD_EXTENSION] = airgroupvalues[id][idx * FIELD_EXTENSION].to_string().parse::<u64>().unwrap();
-            values[idx * FIELD_EXTENSION + 1] = airgroupvalues[id][idx * FIELD_EXTENSION + 1].to_string().parse::<u64>().unwrap();
-            values[idx * FIELD_EXTENSION + 2] = airgroupvalues[id][idx * FIELD_EXTENSION + 2].to_string().parse::<u64>().unwrap();
+            values[idx * FIELD_EXTENSION] =
+                airgroupvalues[id][idx * FIELD_EXTENSION].to_string().parse::<u64>().unwrap();
+            values[idx * FIELD_EXTENSION + 1] =
+                airgroupvalues[id][idx * FIELD_EXTENSION + 1].to_string().parse::<u64>().unwrap();
+            values[idx * FIELD_EXTENSION + 2] =
+                airgroupvalues[id][idx * FIELD_EXTENSION + 2].to_string().parse::<u64>().unwrap();
         }
         airgroupvalues_u64.push(values);
     }
