@@ -113,11 +113,8 @@ impl DistributionCtx {
 
     #[inline]
     pub fn find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
-        let indexes: Vec<_> = self.instances
-        .iter()
-        .enumerate()
-        .filter(|&(_, &(x, y))| x == airgroup_id && y == air_id)
-        .collect();
+        let indexes: Vec<_> =
+            self.instances.iter().enumerate().filter(|&(_, &(x, y))| x == airgroup_id && y == air_id).collect();
 
         if indexes.is_empty() {
             (false, 0)
@@ -218,13 +215,17 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_airgroupvalues<F: Field>(&self, airgroupvalues: Vec<Vec<u64>>, _global_info: &GlobalInfo) -> Vec<Vec<F>> {
+    pub fn distribute_airgroupvalues<F: Field>(
+        &self,
+        airgroupvalues: Vec<Vec<u64>>,
+        _global_info: &GlobalInfo,
+    ) -> Vec<Vec<F>> {
         #[cfg(feature = "distributed")]
         {
             let airgroupvalues_flatten: Vec<u64> = airgroupvalues.into_iter().flatten().collect();
             let mut gathered_data: Vec<u64> = vec![0; airgroupvalues_flatten.len() * self.n_processes as usize];
 
-            const FIELD_EXTENSION:usize = 3;
+            const FIELD_EXTENSION: usize = 3;
 
             self.world.all_gather_into(&airgroupvalues_flatten, &mut gathered_data);
 
@@ -244,58 +245,66 @@ impl DistributionCtx {
                 for (airgroup_id, agg_types) in _global_info.agg_types.iter().enumerate() {
                     for (idx, agg_type) in agg_types.iter().enumerate() {
                         if agg_type.agg_type == 0 {
-                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION] += F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
-                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION + 1] += F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
-                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION + 2] += F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] +=
+                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] +=
+                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] +=
+                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         } else {
-                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION] *= F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
-                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION + 1] *= F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
-                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION + 2] *= F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] *=
+                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] *=
+                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] *=
+                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         }
                         pos += FIELD_EXTENSION;
                     }
                 }
             }
             airgroupvalues_full
-           
         }
         #[cfg(not(feature = "distributed"))]
         {
-            airgroupvalues.into_iter().map(|inner_vec| { inner_vec.into_iter().map(|x| F::from_canonical_u64(x)).collect::<Vec<F>>() }).collect()
+            airgroupvalues
+                .into_iter()
+                .map(|inner_vec| inner_vec.into_iter().map(|x| F::from_canonical_u64(x)).collect::<Vec<F>>())
+                .collect()
         }
     }
 
     pub fn distribute_publics(&self, publics: Vec<u64>) -> Vec<u64> {
         #[cfg(feature = "distributed")]
         {
-       
-        let size = self.n_processes;
-        
-        let local_size = publics.len() as i32;
-        let mut sizes: Vec<i32> = vec![0; self.n_processes as usize];
-        self.world.all_gather_into(&local_size, &mut sizes);
+            let size = self.n_processes;
 
-        // Compute displacements and total size
-        let mut displacements: Vec<i32> = vec![0; size as usize];
-        for i in 1..size as usize {
-            displacements[i] = displacements[i - 1] + sizes[i - 1];
-        }
+            let local_size = publics.len() as i32;
+            let mut sizes: Vec<i32> = vec![0; self.n_processes as usize];
+            self.world.all_gather_into(&local_size, &mut sizes);
 
-        let total_size: i32 = sizes.iter().sum();
+            // Compute displacements and total size
+            let mut displacements: Vec<i32> = vec![0; size as usize];
+            for i in 1..size as usize {
+                displacements[i] = displacements[i - 1] + sizes[i - 1];
+            }
 
-        // Flattened buffer to receive all the data
-        let mut all_publics: Vec<u64> = vec![0; total_size as usize];
+            let total_size: i32 = sizes.iter().sum();
 
-        let publics_sizes = &sizes;
-        let publics_displacements = &displacements;
+            // Flattened buffer to receive all the data
+            let mut all_publics: Vec<u64> = vec![0; total_size as usize];
 
-        let mut partitioned_all_publics = PartitionMut::new(&mut all_publics, publics_sizes.as_slice(), publics_displacements.as_slice());
+            let publics_sizes = &sizes;
+            let publics_displacements = &displacements;
 
-        // Use all_gather_varcount_into to gather all data from all processes
-        self.world.all_gather_varcount_into(&publics, &mut partitioned_all_publics);
+            let mut partitioned_all_publics =
+                PartitionMut::new(&mut all_publics, publics_sizes.as_slice(), publics_displacements.as_slice());
 
-        // Each process will now have the same complete dataset
-        all_publics
+            // Use all_gather_varcount_into to gather all data from all processes
+            self.world.all_gather_varcount_into(&publics, &mut partitioned_all_publics);
+
+            // Each process will now have the same complete dataset
+            all_publics
         }
         #[cfg(not(feature = "distributed"))]
         {
@@ -444,7 +453,7 @@ impl DistributionCtx {
                                 group_proofs[idx] = Some(deserialize_zkin_proof_c(msg.as_mut_ptr()));
                             }
                         }
-                    } else if self.n_processes > 1{
+                    } else if self.n_processes > 1 {
                         for &idx in &[left_idx, right_idx] {
                             if group_proofs[idx].is_some() {
                                 let tag =

@@ -205,7 +205,7 @@ pub fn verify_constraints_proof<F: Field>(
         || !pctx.options.debug_info.debug_global_instances.is_empty();
 
     let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
-    if dctx.rank == 0 && check_global_constraints {        
+    if dctx.rank == 0 && check_global_constraints {
         let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
         let mut valid_global_constraints = true;
 

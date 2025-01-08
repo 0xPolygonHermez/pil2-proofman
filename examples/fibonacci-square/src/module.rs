@@ -63,8 +63,8 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
         let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
         let is_mine = add_air_instance::<F>(air_instance, pctx.clone());
         if is_mine.is_some() {
-            for i in 0..x_mods.len() {
-                self.std_lib.range_check(F::from_canonical_u64(module - x_mods[i]), F::one(), range);
+            for x_mod in x_mods.iter() {
+                self.std_lib.range_check(F::from_canonical_u64(module - x_mod), F::one(), range);
             }
 
             // Trivial range check for the remaining rows

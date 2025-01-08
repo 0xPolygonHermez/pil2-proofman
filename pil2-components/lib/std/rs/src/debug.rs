@@ -12,11 +12,13 @@ use proofman_hints::{format_vec, HintFieldOutput};
 
 pub type DebugData<F> = Mutex<HashMap<F, HashMap<Vec<HintFieldOutput<F>>, BusValue<F>>>>; // opid -> val -> BusValue
 
+#[derive(Debug)]
 pub struct BusValue<F> {
     shared_data: SharedData<F>, // Data shared across all airgroups, airs, and instances
     grouped_data: AirGroupMap,  // Data grouped by: airgroup_id -> air_id -> instance_id -> InstanceData
 }
 
+#[derive(Debug)]
 struct SharedData<F> {
     direct_was_called: bool,
     num_proves: F,
@@ -26,6 +28,7 @@ struct SharedData<F> {
 type AirGroupMap = HashMap<usize, AirMap>;
 type AirMap = HashMap<usize, AirData>;
 
+#[derive(Debug)]
 struct AirData {
     name_piop: String,
     name_expr: Vec<String>,
@@ -34,6 +37,7 @@ struct AirData {
 
 type InstanceMap = HashMap<usize, InstanceData>;
 
+#[derive(Debug)]
 struct InstanceData {
     row_proves: Vec<usize>,
     row_assumes: Vec<usize>,

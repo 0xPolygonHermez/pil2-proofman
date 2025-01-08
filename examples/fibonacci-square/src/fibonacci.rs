@@ -7,7 +7,7 @@ use p3_field::PrimeField64;
 
 use crate::{
     FibonacciSquareRomTrace, BuildPublicValues, BuildProofValues, FibonacciSquareAirValues, FibonacciSquareTrace,
-    Module
+    Module,
 };
 
 pub struct FibonacciSquare<F: PrimeField64> {
