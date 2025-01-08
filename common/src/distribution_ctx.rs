@@ -14,6 +14,10 @@ use std::collections::BTreeMap;
 use proofman_starks_lib_c::*;
 use std::ffi::c_void;
 
+use p3_field::Field;
+
+use crate::GlobalInfo;
+
 /// Represents the context of distributed computing
 pub struct DistributionCtx {
     pub rank: i32,
@@ -109,10 +113,18 @@ impl DistributionCtx {
 
     #[inline]
     pub fn find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
-        if let Some(index) = self.instances.iter().position(|&(x, y)| x == airgroup_id && y == air_id) {
-            (true, index)
-        } else {
+        let indexes: Vec<_> = self.instances
+        .iter()
+        .enumerate()
+        .filter(|&(_, &(x, y))| x == airgroup_id && y == air_id)
+        .collect();
+
+        if indexes.is_empty() {
             (false, 0)
+        } else if indexes.len() == 1 {
+            (true, self.instances.iter().position(|&(x, y)| x == airgroup_id && y == air_id).unwrap())
+        } else {
+            panic!("Multiple instances found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
         }
     }
 
@@ -206,7 +218,90 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_airgroupvalues(&self, _airgroupvalues: &mut [u64], _owner: usize) {}
+    pub fn distribute_airgroupvalues<F: Field>(&self, airgroupvalues: Vec<Vec<u64>>, _global_info: &GlobalInfo) -> Vec<Vec<F>> {
+        #[cfg(feature = "distributed")]
+        {
+            let airgroupvalues_flatten: Vec<u64> = airgroupvalues.into_iter().flatten().collect();
+            let mut gathered_data: Vec<u64> = vec![0; airgroupvalues_flatten.len() * self.n_processes as usize];
+
+            const FIELD_EXTENSION:usize = 3;
+
+            self.world.all_gather_into(&airgroupvalues_flatten, &mut gathered_data);
+
+            let mut airgroupvalues_full: Vec<Vec<F>> = Vec::new();
+            for agg_types in _global_info.agg_types.iter() {
+                let mut values = vec![F::zero(); agg_types.len() * FIELD_EXTENSION];
+                for (idx, agg_type) in agg_types.iter().enumerate() {
+                    if agg_type.agg_type == 1 {
+                        values[idx * FIELD_EXTENSION] = F::one();
+                    }
+                }
+                airgroupvalues_full.push(values);
+            }
+
+            for p in 0..self.n_processes as usize {
+                let mut pos = 0;
+                for (airgroup_id, agg_types) in _global_info.agg_types.iter().enumerate() {
+                    for (idx, agg_type) in agg_types.iter().enumerate() {
+                        if agg_type.agg_type == 0 {
+                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION] += F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
+                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION + 1] += F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
+                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION + 2] += F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                        } else {
+                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION] *= F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
+                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION + 1] *= F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
+                            airgroupvalues_full[airgroup_id][idx*FIELD_EXTENSION + 2] *= F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                        }
+                        pos += FIELD_EXTENSION;
+                    }
+                }
+            }
+            airgroupvalues_full
+           
+        }
+        #[cfg(not(feature = "distributed"))]
+        {
+            airgroupvalues.into_iter().map(|inner_vec| { inner_vec.into_iter().map(|x| F::from_canonical_u64(x)).collect::<Vec<F>>() }).collect()
+        }
+    }
+
+    pub fn distribute_publics(&self, publics: Vec<u64>) -> Vec<u64> {
+        #[cfg(feature = "distributed")]
+        {
+       
+        let size = self.n_processes;
+        
+        let local_size = publics.len() as i32;
+        let mut sizes: Vec<i32> = vec![0; self.n_processes as usize];
+        self.world.all_gather_into(&local_size, &mut sizes);
+
+        // Compute displacements and total size
+        let mut displacements: Vec<i32> = vec![0; size as usize];
+        for i in 1..size as usize {
+            displacements[i] = displacements[i - 1] + sizes[i - 1];
+        }
+
+        let total_size: i32 = sizes.iter().sum();
+
+        // Flattened buffer to receive all the data
+        let mut all_publics: Vec<u64> = vec![0; total_size as usize];
+
+        let publics_sizes = &sizes;
+        let publics_displacements = &displacements;
+
+        let mut partitioned_all_publics = PartitionMut::new(&mut all_publics, publics_sizes.as_slice(), publics_displacements.as_slice());
+
+        // Use all_gather_varcount_into to gather all data from all processes
+        self.world.all_gather_varcount_into(&publics, &mut partitioned_all_publics);
+
+        // Each process will now have the same complete dataset
+        all_publics
+        }
+        #[cfg(not(feature = "distributed"))]
+        {
+            publics
+        }
+    }
 
     pub fn distribute_multiplicity(&self, _multiplicity: &mut [u64], _owner: usize) {
         #[cfg(feature = "distributed")]
@@ -349,7 +444,7 @@ impl DistributionCtx {
                                 group_proofs[idx] = Some(deserialize_zkin_proof_c(msg.as_mut_ptr()));
                             }
                         }
-                    } else {
+                    } else if self.n_processes > 1{
                         for &idx in &[left_idx, right_idx] {
                             if group_proofs[idx].is_some() {
                                 let tag =

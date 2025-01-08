@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{SetupCtx, distribution_ctx::DistributionCtx, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
+use crate::{SetupCtx, distribution_ctx::DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -116,6 +116,23 @@ impl<F: Field> ProofCtx<F> {
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
+    
+    pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        println!("{} global idx and {:?} dctx", global_idx, dctx.my_instances);
+    
+        self.air_instance_repo.add_air_instance(air_instance, global_idx)
+    }
+
+    pub fn dctx_is_my_instance(&self, instance_idx: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_my_instance(instance_idx)
+    }
+    
+    pub fn dctx_find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.find_instance(airgroup_id, air_id)
+    }
 
     pub fn dctx_add_instance(&self, airgroup_id: usize, air_id: usize, weight: usize) -> (bool, usize) {
         let mut dctx = self.dctx.write().unwrap();
@@ -128,10 +145,23 @@ impl<F: Field> ProofCtx<F> {
         dctx.distribute_multiplicity(multiplicity, owner);
     }
 
-    pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: &mut [u64], instance_idx: usize) {
+    pub fn dctx_distribute_publics(&self, publics: Vec<u64>) {
+        let dctx = self.dctx.read().unwrap();
+        let publics_to_set = dctx.distribute_publics(publics);
+        for idx in (0..publics_to_set.len()).step_by(2) {
+            self.set_public_value(publics_to_set[idx + 1], publics_to_set[idx] as usize);
+        }
+    }
+
+    pub fn dctx_distribute_multiplicities(&self, multiplicities: &mut [Vec<u64>], instance_idx: usize) {
         let dctx = self.dctx.read().unwrap();
         let owner = dctx.owner(instance_idx);
-        dctx.distribute_airgroupvalues(airgroup_values, owner);
+        dctx.distribute_multiplicities(multiplicities, owner);
+    }
+
+    pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: Vec<Vec<u64>>) -> Vec<Vec<F>> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.distribute_airgroupvalues::<F>(airgroup_values, &self.global_info)
     }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {
@@ -139,8 +169,8 @@ impl<F: Field> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
-    pub fn set_public_value(&self, value: F, public_id: usize) {
-        self.public_inputs.values.write().unwrap()[public_id] = value;
+    pub fn set_public_value(&self, value: u64, public_id: usize) {
+        self.public_inputs.values.write().unwrap()[public_id] = F::from_canonical_u64(value);
     }
 
     pub fn get_publics(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
