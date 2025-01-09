@@ -27,8 +27,7 @@ pub enum ProofType {
 pub struct ProverInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
-    pub prover_idx: usize,
-    pub instance_id: usize,
+    pub air_instance_id: usize,
 }
 
 pub trait Prover<F: Field> {
@@ -39,6 +38,7 @@ pub trait Prover<F: Field> {
     fn get_challenges(&self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>, transcript: &FFITranscript);
     fn calculate_stage(&mut self, stage_id: u32, setup_ctx: Arc<SetupCtx>, proof_ctx: Arc<ProofCtx<F>>);
     fn commit_stage(&mut self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>) -> ProverStatus;
+    fn commit_custom_commits_stage(&mut self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>) -> Vec<u64>;
     fn calculate_xdivxsub(&mut self, proof_ctx: Arc<ProofCtx<F>>);
     fn calculate_lev(&mut self, proof_ctx: Arc<ProofCtx<F>>);
     fn opening_stage(&mut self, opening_id: u32, setup_ctx: Arc<SetupCtx>, proof_ctx: Arc<ProofCtx<F>>)

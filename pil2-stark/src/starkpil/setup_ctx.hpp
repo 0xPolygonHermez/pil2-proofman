@@ -153,11 +153,11 @@ class ProverHelpers {
     }
 
     ~ProverHelpers() {
-        if(zi != nullptr) delete zi;
-        if(S != nullptr) delete S;
-        if(x != nullptr) delete x;
-        if(x_n != nullptr) delete x_n;
-        if(x_2ns != nullptr) delete x_2ns;   
+        if(zi != nullptr) delete[] zi;
+        if(S != nullptr) delete[] S;
+        if(x != nullptr) delete[] x;
+        if(x_n != nullptr) delete[] x_n;
+        if(x_2ns != nullptr) delete[] x_2ns;   
     };
 };
 

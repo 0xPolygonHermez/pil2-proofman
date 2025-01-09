@@ -110,8 +110,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         std::memcpy(gprodTransposedPol[j], &gprod[j*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
     }
     
-    delete res;
-    delete gprod;
+    delete[] res;
+    delete[] gprod;
 
     TimerStart(CALCULATE_IM_POLS);
     starks.calculateImPolsExpressions(2, params);
@@ -235,8 +235,9 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     TimerStopAndLog(STARK_STEP_FRI);
 
-    delete challenges;
-    delete evals;
+    delete[] challenges;
+    delete[] evals;
+    delete[] trace;
 
     nlohmann::json jProof = proof.proof.proof2json();
     nlohmann::json zkin = proof2zkinStark(jProof, setupCtx.starkInfo);

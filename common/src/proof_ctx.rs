@@ -93,13 +93,23 @@ impl<F: Field> ProofCtx<F> {
         }
     }
 
-    pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) -> usize {
-        self.air_instance_repo.add_air_instance(air_instance, global_idx)
+    pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
+        self.air_instance_repo.add_air_instance(air_instance, global_idx);
     }
 
-    pub fn dctx_is_my_instance(&self, instance_idx: usize) -> bool {
+    pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
         let dctx = self.dctx.read().unwrap();
-        dctx.is_my_instance(instance_idx)
+        dctx.get_instance_info(global_idx)
+    }
+
+    pub fn dctx_is_my_instance(&self, global_idx: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_my_instance(global_idx)
+    }
+
+    pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.find_air_instance_id(global_idx)
     }
 
     pub fn dctx_find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
@@ -112,9 +122,9 @@ impl<F: Field> ProofCtx<F> {
         dctx.add_instance(airgroup_id, air_id, weight)
     }
 
-    pub fn dctx_distribute_multiplicity(&self, multiplicity: &mut [u64], instance_idx: usize) {
+    pub fn dctx_distribute_multiplicity(&self, multiplicity: &mut [u64], global_idx: usize) {
         let dctx = self.dctx.read().unwrap();
-        let owner = dctx.owner(instance_idx);
+        let owner = dctx.owner(global_idx);
         dctx.distribute_multiplicity(multiplicity, owner);
     }
 
@@ -126,9 +136,9 @@ impl<F: Field> ProofCtx<F> {
         }
     }
 
-    pub fn dctx_distribute_multiplicities(&self, multiplicities: &mut [Vec<u64>], instance_idx: usize) {
+    pub fn dctx_distribute_multiplicities(&self, multiplicities: &mut [Vec<u64>], global_idx: usize) {
         let dctx = self.dctx.read().unwrap();
-        let owner = dctx.owner(instance_idx);
+        let owner = dctx.owner(global_idx);
         dctx.distribute_multiplicities(multiplicities, owner);
     }
 
@@ -199,7 +209,7 @@ impl<F: Field> ProofCtx<F> {
     pub fn get_air_instance_trace(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
         let index = self.air_instance_repo.find_instance(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instance_repo.air_instances.read().unwrap()[index].get_trace();
+            return self.air_instance_repo.air_instances.read().unwrap().get(&index).unwrap().get_trace();
         } else {
             panic!(
                 "Air Instance with id {} for airgroup {} and air {} not found",
@@ -211,7 +221,7 @@ impl<F: Field> ProofCtx<F> {
     pub fn get_air_instance_air_values(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
         let index = self.air_instance_repo.find_instance(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instance_repo.air_instances.read().unwrap()[index].get_air_values();
+            return self.air_instance_repo.air_instances.read().unwrap().get(&index).unwrap().get_trace();
         } else {
             panic!(
                 "Air Instance with id {} for airgroup {} and air {} not found",
@@ -228,7 +238,7 @@ impl<F: Field> ProofCtx<F> {
     ) -> Vec<F> {
         let index = self.air_instance_repo.find_instance(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instance_repo.air_instances.read().unwrap()[index].get_airgroup_values();
+            return self.air_instance_repo.air_instances.read().unwrap().get(&index).unwrap().get_trace();
         } else {
             panic!(
                 "Air Instance with id {} for airgroup {} and air {} not found",

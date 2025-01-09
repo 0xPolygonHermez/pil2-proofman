@@ -10,7 +10,6 @@ use proofman_common::{
 };
 use log::{debug, trace};
 use transcript::FFITranscript;
-use proofman_util::{timer_start_trace, timer_stop_and_log_trace};
 use proofman_starks_lib_c::*;
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
@@ -22,10 +21,10 @@ use std::marker::PhantomData;
 
 #[allow(dead_code)]
 pub struct StarkProver<F: Field> {
-    prover_idx: usize,
+    global_idx: usize,
     air_id: usize,
     airgroup_id: usize,
-    instance_id: usize,
+    air_instance_id: usize,
     pub p_stark: *mut c_void,
     p_stark_info: *mut c_void,
     stark_info: StarkInfo,
@@ -47,8 +46,8 @@ impl<F: Field> StarkProver<F> {
         sctx: Arc<SetupCtx>,
         airgroup_id: usize,
         air_id: usize,
-        instance_id: usize,
-        prover_idx: usize,
+        air_instance_id: usize,
+        global_idx: usize,
         constraints_to_check: Vec<usize>,
     ) -> Self {
         let setup = sctx.get_setup(airgroup_id, air_id);
@@ -69,10 +68,10 @@ impl<F: Field> StarkProver<F> {
         let p_proof = fri_proof_new_c((&setup.p_setup).into());
 
         Self {
-            prover_idx,
+            global_idx,
             air_id,
             airgroup_id,
-            instance_id,
+            air_instance_id,
             p_stark_info,
             p_stark,
             p_proof,
@@ -88,7 +87,8 @@ impl<F: Field> StarkProver<F> {
 
 impl<F: Field> Prover<F> for StarkProver<F> {
     fn build(&mut self, proof_ctx: Arc<ProofCtx<F>>) {
-        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+        let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
         air_instance.init_aux_trace(get_map_totaln_c(self.p_stark_info) as usize);
         air_instance.init_evals(self.stark_info.ev_map.len() * Self::FIELD_EXTENSION);
 
@@ -140,7 +140,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn verify_constraints(&self, setup_ctx: Arc<SetupCtx>, proof_ctx: Arc<ProofCtx<F>>) -> Vec<ConstraintInfo> {
-        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+        let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
 
         let setup = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
@@ -179,7 +180,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn calculate_stage(&mut self, stage_id: u32, setup_ctx: Arc<SetupCtx>, proof_ctx: Arc<ProofCtx<F>>) {
-        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+        let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
 
         let setup = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
@@ -212,7 +214,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 debug!(
                     "{}: ··· Computing intermediate polynomials of instance {} of {}",
                     Self::MY_NAME,
-                    self.instance_id,
+                    self.air_instance_id,
                     air_name
                 );
 
@@ -229,7 +231,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             debug!(
                 "{}: ··· Computing Quotient Polynomial of instance {} of {}",
                 Self::MY_NAME,
-                self.instance_id,
+                self.air_instance_id,
                 air_name
             );
             calculate_quotient_polynomial_c(self.p_stark, (&steps_params).into());
@@ -237,7 +239,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn commit_stage(&mut self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>) -> ProverStatus {
-        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+        let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
 
         if stage_id == self.num_stages() {
             air_instance.clear_trace();
@@ -247,77 +250,30 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let p_proof = self.p_proof;
 
         let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
-        if stage_id >= 1 {
-            debug!(
-                "{}: ··· Committing prover {}: instance {} of {}",
-                Self::MY_NAME,
-                self.prover_idx,
-                self.instance_id,
-                air_name
-            );
+        debug!(
+            "{}: ··· Committing prover {}: instance {} of {}",
+            Self::MY_NAME,
+            self.global_idx,
+            self.air_instance_id,
+            air_name
+        );
 
-            timer_start_trace!(STARK_COMMIT_STAGE_, stage_id);
+        let witness = match stage_id == 1 {
+            true => air_instance.get_trace_ptr(),
+            false => std::ptr::null_mut(),
+        };
 
-            let witness = match stage_id == 1 {
-                true => air_instance.get_trace_ptr(),
-                false => std::ptr::null_mut(),
-            };
+        let element_type = if type_name::<F>() == type_name::<Goldilocks>() { 1 } else { 0 };
 
-            let element_type = if type_name::<F>() == type_name::<Goldilocks>() { 1 } else { 0 };
-
-            commit_stage_c(
-                p_stark,
-                element_type,
-                stage_id as u64,
-                witness,
-                air_instance.get_aux_trace_ptr(),
-                p_proof,
-                proof_ctx.get_buff_helper_ptr(),
-            );
-
-            timer_stop_and_log_trace!(STARK_COMMIT_STAGE_, stage_id);
-        } else {
-            let n_custom_commits = self.stark_info.custom_commits.len();
-            let mut custom_publics = Vec::new();
-            for commit_id in 0..n_custom_commits {
-                let custom_commits_stage = self.stark_info.custom_commits_map[commit_id]
-                    .as_ref()
-                    .expect("REASON")
-                    .iter()
-                    .any(|custom_commit| custom_commit.stage == stage_id as u64);
-
-                if custom_commits_stage {
-                    extend_and_merkelize_custom_commit_c(
-                        p_stark,
-                        commit_id as u64,
-                        stage_id as u64,
-                        air_instance.custom_commits[commit_id].as_ptr() as *mut u8,
-                        air_instance.custom_commits_extended[commit_id].as_ptr() as *mut u8,
-                        p_proof,
-                        proof_ctx.get_buff_helper_ptr(),
-                        "",
-                    );
-                }
-
-                let mut value = vec![Goldilocks::zero(); self.n_field_elements];
-                treesGL_get_root_c(
-                    p_stark,
-                    (self.stark_info.n_stages + 2 + commit_id as u32) as u64,
-                    value.as_mut_ptr() as *mut u8,
-                );
-                if !self.stark_info.custom_commits[commit_id].public_values.is_empty() {
-                    assert!(
-                        self.n_field_elements == self.stark_info.custom_commits[commit_id].public_values.len(),
-                        "Invalid public values size"
-                    );
-                    for (idx, val) in value.iter().enumerate() {
-                        custom_publics.push(self.stark_info.custom_commits[commit_id].public_values[idx].idx);
-                        custom_publics.push(val.as_canonical_u64());
-                    }
-                }
-            }
-            proof_ctx.dctx_distribute_publics(custom_publics);
-        }
+        commit_stage_c(
+            p_stark,
+            element_type,
+            stage_id as u64,
+            witness,
+            air_instance.get_aux_trace_ptr(),
+            p_proof,
+            proof_ctx.get_buff_helper_ptr(),
+        );
 
         if stage_id <= self.num_stages() + 1 {
             ProverStatus::CommitStage
@@ -346,7 +302,12 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 self.compute_fri_folding(step_index as u32, proof_ctx);
             } else {
                 let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
-                debug!("{}: ··· Skipping FRI folding of instance {} of {}", Self::MY_NAME, self.instance_id, air_name);
+                debug!(
+                    "{}: ··· Skipping FRI folding of instance {} of {}",
+                    Self::MY_NAME,
+                    self.air_instance_id,
+                    air_name
+                );
             }
         } else if opening_id == last_stage_id {
             self.compute_fri_queries(opening_id, proof_ctx);
@@ -359,6 +320,73 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         } else {
             ProverStatus::OpeningStage
         }
+    }
+
+    fn commit_custom_commits_stage(&mut self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>) -> Vec<u64> {
+        let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+        let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
+
+        if stage_id == self.num_stages() {
+            air_instance.clear_trace();
+        }
+
+        let p_stark = self.p_stark;
+        let p_proof = self.p_proof;
+
+        let n_custom_commits = self.stark_info.custom_commits.len();
+
+        if n_custom_commits == 0 {
+            return Vec::new();
+        }
+
+        let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
+        debug!(
+            "{}: ··· Committing custom commits for prover {}: instance {} of {}",
+            Self::MY_NAME,
+            self.global_idx,
+            self.air_instance_id,
+            air_name
+        );
+
+        let mut custom_publics = Vec::new();
+        for commit_id in 0..n_custom_commits {
+            let custom_commits_stage = self.stark_info.custom_commits_map[commit_id]
+                .as_ref()
+                .expect("REASON")
+                .iter()
+                .any(|custom_commit| custom_commit.stage == stage_id as u64);
+
+            if custom_commits_stage {
+                extend_and_merkelize_custom_commit_c(
+                    p_stark,
+                    commit_id as u64,
+                    stage_id as u64,
+                    air_instance.custom_commits[commit_id].as_ptr() as *mut u8,
+                    air_instance.custom_commits_extended[commit_id].as_ptr() as *mut u8,
+                    p_proof,
+                    proof_ctx.get_buff_helper_ptr(),
+                    "",
+                );
+            }
+
+            let mut value = vec![Goldilocks::zero(); self.n_field_elements];
+            treesGL_get_root_c(
+                p_stark,
+                (self.stark_info.n_stages + 2 + commit_id as u32) as u64,
+                value.as_mut_ptr() as *mut u8,
+            );
+            if !self.stark_info.custom_commits[commit_id].public_values.is_empty() {
+                assert!(
+                    self.n_field_elements == self.stark_info.custom_commits[commit_id].public_values.len(),
+                    "Invalid public values size"
+                );
+                for (idx, val) in value.iter().enumerate() {
+                    custom_publics.push(self.stark_info.custom_commits[commit_id].public_values[idx].idx);
+                    custom_publics.push(val.as_canonical_u64());
+                }
+            }
+        }
+        custom_publics
     }
 
     fn calculate_xdivxsub(&mut self, proof_ctx: Arc<ProofCtx<F>>) {
@@ -458,7 +486,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     "{}: ··· MerkleTree root for stage {} of instance {} of {} is: {:?}",
                     Self::MY_NAME,
                     stage,
-                    self.instance_id,
+                    self.air_instance_id,
                     air_name,
                     root,
                 );
@@ -466,7 +494,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     let index = if stage == 1 { self.n_field_elements + j } else { j };
                     values_hash[index] = root_value;
                 }
-                let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+                let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+                let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
                 let airvalues_map = self.stark_info.airvalues_map.as_ref().unwrap();
                 let mut p = 0;
                 let mut count = 0;
@@ -501,7 +530,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 treesGL_get_root_c(p_stark, stage - 1, value.as_mut_ptr() as *mut u8);
             }
         } else if stage == (Self::num_stages(self) + 2) as u64 {
-            let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+            let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+            let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
             calculate_hash_c(
                 p_stark,
                 value.as_mut_ptr() as *mut u8,
@@ -523,7 +553,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     let p_proof = self.p_proof;
                     fri_proof_get_tree_root_c(p_proof, value.as_mut_ptr() as *mut u8, step_index as u64);
                 } else {
-                    let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+                    let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+                    let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
                     let n_hash = (1 << (steps[n_steps].n_bits)) * Self::FIELD_EXTENSION as u64;
                     let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_aux_trace_ptr());
                     calculate_hash_c(p_stark, value.as_mut_ptr() as *mut u8, fri_pol as *mut u8, n_hash);
@@ -592,7 +623,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
         let proof_name =
-            format!("{}_{}", proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name, self.instance_id);
+            format!("{}_{}", proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name, self.air_instance_id);
 
         fri_proof_get_zkinproof_c(
             self.p_proof,
@@ -607,12 +638,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn get_prover_info(&self) -> ProverInfo {
-        ProverInfo {
-            airgroup_id: self.airgroup_id,
-            air_id: self.air_id,
-            prover_idx: self.prover_idx,
-            instance_id: self.instance_id,
-        }
+        ProverInfo { airgroup_id: self.airgroup_id, air_id: self.air_id, air_instance_id: self.air_instance_id }
     }
 
     fn get_proof_challenges(&self, global_steps: Vec<usize>, global_challenges: Vec<F>) -> Vec<F> {
@@ -643,8 +669,9 @@ impl<F: Field> Prover<F> for StarkProver<F> {
 impl<F: Field> StarkProver<F> {
     fn compute_evals(&mut self, _opening_id: u32, setup_ctx: Arc<SetupCtx>, proof_ctx: Arc<ProofCtx<F>>) {
         let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
-        debug!("{}: ··· Calculating evals of instance {} of {}", Self::MY_NAME, self.instance_id, air_name);
-        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        debug!("{}: ··· Calculating evals of instance {} of {}", Self::MY_NAME, self.air_instance_id, air_name);
+        let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+        let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
 
         let setup = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
@@ -672,8 +699,14 @@ impl<F: Field> StarkProver<F> {
 
     fn compute_fri_pol(&mut self, _opening_id: u32, setup_ctx: Arc<SetupCtx>, proof_ctx: Arc<ProofCtx<F>>) {
         let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
-        debug!("{}: ··· Calculating FRI polynomial of instance {} of {}", Self::MY_NAME, self.instance_id, air_name);
-        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        debug!(
+            "{}: ··· Calculating FRI polynomial of instance {} of {}",
+            Self::MY_NAME,
+            self.air_instance_id,
+            air_name
+        );
+        let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+        let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
 
         let setup = setup_ctx.get_setup(self.airgroup_id, self.air_id);
 
@@ -709,14 +742,20 @@ impl<F: Field> StarkProver<F> {
             debug!(
                 "{}: ··· Calculating final FRI polynomial of instance {} of {}",
                 Self::MY_NAME,
-                self.instance_id,
+                self.air_instance_id,
                 air_name
             );
         } else {
-            debug!("{}: ··· Calculating FRI folding of instance {} of {}", Self::MY_NAME, self.instance_id, air_name);
+            debug!(
+                "{}: ··· Calculating FRI folding of instance {} of {}",
+                Self::MY_NAME,
+                self.air_instance_id,
+                air_name
+            );
         }
 
-        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
+        let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
 
         let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_aux_trace_ptr());
 
@@ -755,7 +794,7 @@ impl<F: Field> StarkProver<F> {
         let n_queries = self.stark_info.stark_struct.n_queries;
         let steps = &self.stark_info.stark_struct.steps;
         let air_name = &proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name;
-        debug!("{}: ··· Calculating FRI queries of instance {} of {}", Self::MY_NAME, self.instance_id, air_name);
+        debug!("{}: ··· Calculating FRI queries of instance {} of {}", Self::MY_NAME, self.air_instance_id, air_name);
 
         let mut fri_queries = vec![u64::default(); n_queries as usize];
 
@@ -777,12 +816,13 @@ impl<F: Field> StarkProver<F> {
         trace!(
             "{}: ··· FRI queries of instance {} of {} are: {:?}",
             Self::MY_NAME,
-            self.instance_id,
+            self.air_instance_id,
             air_name,
             &fri_queries,
         );
 
-        let air_instance = &mut proof_ctx.air_instance_repo.air_instances.write().unwrap()[self.prover_idx];
+        let air_instances = proof_ctx.air_instance_repo.air_instances.read().unwrap();
+        let air_instance = air_instances.get(&self.global_idx).unwrap();
         let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_aux_trace_ptr());
 
         let n_trees = self.num_stages() + 2 + self.stark_info.custom_commits.len() as u32;
