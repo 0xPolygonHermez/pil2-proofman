@@ -361,7 +361,8 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                 }
             }
 
-            // TODO: Process each direct update to the product bus
+            // TODO: Process each direct update to the bus
+            // when airgroup hints are available
         }
     }
 
