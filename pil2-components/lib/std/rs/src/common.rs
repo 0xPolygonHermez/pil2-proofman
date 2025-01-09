@@ -19,6 +19,7 @@ pub trait AirComponent<F> {
         _pctx: &ProofCtx<F>,
         _sctx: &SetupCtx,
         _air_instance: &mut AirInstance<F>,
+        _air_instance_id: usize,
         _num_rows: usize,
         _debug_data_hints: Vec<u64>,
     ) {

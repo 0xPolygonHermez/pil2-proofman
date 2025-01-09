@@ -35,38 +35,34 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
-    for (prover_idx, air_instance) in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut().enumerate() {
-        let air_instance_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
+    let instances = pctx.dctx.read().unwrap().instances.clone();
+    let my_instances = pctx.dctx.read().unwrap().my_instances.clone();
 
+    for (idx, instance_id) in my_instances.iter().enumerate() {
+        let (airgroup_id, air_id) = instances[*instance_id];
+
+        let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+        let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
         let mut zkin;
 
-        if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) {
+        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
             timer_start_trace!(GENERATING_COMPRESSOR_PROOF);
 
-            let setup =
-                setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
+            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
             let p_setup: *mut c_void = (&setup.p_setup).into();
 
-            let setup_path = pctx.global_info.get_air_setup_path(
-                air_instance.airgroup_id,
-                air_instance.air_id,
-                &ProofType::Compressor,
-            );
+            let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Compressor);
 
-            let (buffer, publics) = generate_witness::<F>(&setup_path, setup, proofs[prover_idx], 18)?;
+            let (buffer, publics) = generate_witness::<F>(&setup_path, setup, proofs[idx], 18)?;
 
             log::info!(
                 "{}: {}",
                 MY_NAME,
-                format!(
-                    "··· Generating compressor proof for instance {} of {}",
-                    air_instance.air_instance_id.unwrap(),
-                    air_instance_name
-                )
+                format!("··· Generating compressor proof for instance {} of {}", air_instance_id, air_instance_name)
             );
 
             let output_file_path =
-                output_dir_path.join(format!("proofs/compressor_{}_{}.json", air_instance_name, prover_idx));
+                output_dir_path.join(format!("proofs/compressor_{}_{}.json", air_instance_name, instance_id));
 
             let proof_file = match save_proof {
                 true => output_file_path.to_string_lossy().into_owned(),
@@ -81,7 +77,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
                 publics.as_ptr() as *mut u8,
                 &proof_file,
                 global_info_file,
-                air_instance.airgroup_id as u64,
+                airgroup_id as u64,
                 true,
             );
 
@@ -90,40 +86,32 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
             log::info!("{}: ··· Compressor Proof generated.", MY_NAME);
             timer_stop_and_log_trace!(GENERATING_COMPRESSOR_PROOF);
         } else {
-            zkin = proofs[prover_idx];
+            zkin = proofs[idx];
         }
 
         timer_start_trace!(GENERATE_RECURSIVE1_PROOF);
 
-        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
+        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
         let p_setup: *mut c_void = (&setup.p_setup).into();
 
-        let recursive2_verkey = pctx
-            .global_info
-            .get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, &ProofType::Recursive2)
-            .display()
-            .to_string()
-            + ".verkey.json";
+        let recursive2_verkey =
+            pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive2).display().to_string()
+                + ".verkey.json";
 
         zkin = add_recursive2_verkey_c(zkin, recursive2_verkey.as_str());
 
-        let setup_path =
-            pctx.global_info.get_air_setup_path(air_instance.airgroup_id, air_instance.air_id, &ProofType::Recursive1);
+        let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1);
 
         let (buffer, publics) = generate_witness::<F>(&setup_path, setup, zkin, 18)?;
 
         log::info!(
             "{}: {}",
             MY_NAME,
-            format!(
-                "··· Generating recursive1 proof for instance {} of {}",
-                air_instance.air_instance_id.unwrap(),
-                air_instance_name
-            )
+            format!("··· Generating recursive1 proof for instance {} of {}", air_instance_id, air_instance_name)
         );
 
         let output_file_path =
-            output_dir_path.join(format!("proofs/recursive1_{}_{}.json", air_instance_name, prover_idx));
+            output_dir_path.join(format!("proofs/recursive1_{}_{}.json", air_instance_name, instance_id));
 
         let proof_file = match save_proof {
             true => output_file_path.to_string_lossy().into_owned(),
@@ -138,7 +126,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
             publics.as_ptr() as *mut u8,
             &proof_file,
             global_info_file,
-            air_instance.airgroup_id as u64,
+            airgroup_id as u64,
             true,
         );
         proofs_out.push(p_prove);

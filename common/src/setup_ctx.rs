@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use log::info;
 use proofman_starks_lib_c::expressions_bin_new_c;
-use proofman_util::{timer_start_debug, timer_stop_and_log_debug};
+use proofman_util::{timer_start_debug, timer_stop_and_log_debug, timer_start_info, timer_stop_and_log_info};
 
 use crate::GlobalInfo;
 use crate::Setup;
@@ -22,11 +22,11 @@ pub struct SetupsVadcop {
 impl SetupsVadcop {
     pub fn new(global_info: &GlobalInfo, aggregation: bool, final_snark: bool) -> Self {
         info!("Initializing setups");
-        timer_start_debug!(INITIALIZING_SETUP);
+        timer_start_info!(INITIALIZING_BASIC_SETUP);
         let sctx: SetupCtx = SetupCtx::new(global_info, &ProofType::Basic);
-        timer_stop_and_log_debug!(INITIALIZING_SETUP);
+        timer_stop_and_log_info!(INITIALIZING_BASIC_SETUP);
         if aggregation {
-            timer_start_debug!(INITIALIZING_SETUP_AGGREGATION);
+            timer_start_info!(INITIALIZING_AGGREGATION_SETUP);
             info!("Initializing setups aggregation");
 
             timer_start_debug!(INITIALIZING_SETUP_COMPRESSOR);
@@ -48,7 +48,7 @@ impl SetupsVadcop {
             info!(" ··· Initializing setups vadcop final");
             let setup_vadcop_final: Setup = Setup::new(global_info, 0, 0, &ProofType::VadcopFinal);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_VADCOP_FINAL);
-            timer_stop_and_log_debug!(INITIALIZING_SETUP_AGGREGATION);
+            timer_stop_and_log_info!(INITIALIZING_AGGREGATION_SETUP);
 
             let mut setup_recursivef = None;
             if final_snark {
@@ -93,7 +93,6 @@ unsafe impl Sync for SetupRepository {}
 
 impl SetupRepository {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
-        timer_start_debug!(INITIALIZE_SETUPS);
         let mut setups = HashMap::new();
 
         let global_bin = match setup_type == &ProofType::Basic {
@@ -118,8 +117,6 @@ impl SetupRepository {
         } else {
             setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type));
         }
-
-        timer_stop_and_log_debug!(INITIALIZE_SETUPS);
 
         Self { setups, global_bin, global_info_file }
     }

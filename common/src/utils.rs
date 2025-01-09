@@ -10,14 +10,12 @@ use p3_field::Field;
 use serde::Deserialize;
 use std::fs;
 
-pub fn add_air_instance<F: Field>(air_instance: AirInstance<F>, pctx: Arc<ProofCtx<F>>) -> Option<usize> {
+pub fn add_air_instance<F: Field>(air_instance: AirInstance<F>, pctx: Arc<ProofCtx<F>>) -> bool {
     let (is_mine, gid) = pctx.dctx.write().unwrap().add_instance(air_instance.airgroup_id, air_instance.air_id, 1);
-
     if is_mine {
-        return Some(pctx.add_air_instance(air_instance, gid));
+        pctx.add_air_instance(air_instance, gid);
     }
-
-    None
+    is_mine
 }
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
@@ -49,7 +47,7 @@ pub fn skip_prover_instance(
     options: ProofOptions,
     airgroup_id: usize,
     air_id: usize,
-    instance_id: usize,
+    air_instance_id: usize,
 ) -> (bool, Vec<usize>) {
     if options.debug_info.debug_instances.is_empty() {
         return (false, Vec::new());
@@ -59,7 +57,7 @@ pub fn skip_prover_instance(
         } else if let Some(air_id_map) = airgroup_id_map.get(&air_id) {
             if air_id_map.is_empty() {
                 return (false, Vec::new());
-            } else if let Some(instance_id_map) = air_id_map.get(&instance_id) {
+            } else if let Some(instance_id_map) = air_id_map.get(&air_instance_id) {
                 return (false, instance_id_map.clone());
             }
         }

@@ -62,13 +62,13 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx,
         air_instance: &mut AirInstance<F>,
+        air_instance_id: usize,
         num_rows: usize,
         debug_data_hints: Vec<u64>,
     ) {
         let debug_data = self.debug_data.as_ref().expect("Debug data missing");
         let airgroup_id = air_instance.airgroup_id;
         let air_id = air_instance.air_id;
-        let instance_id = air_instance.air_instance_id.unwrap_or_default();
 
         // Process each debug hint
         for &hint in debug_data_hints.iter() {
@@ -158,7 +158,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                     &name_expr,
                     airgroup_id,
                     air_id,
-                    instance_id,
+                    air_instance_id,
                     opid,
                     &proves,
                     &mul,
@@ -193,7 +193,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                         &name_expr,
                         airgroup_id,
                         air_id,
-                        instance_id,
+                        air_instance_id,
                         opid,
                         &proves,
                         &mul,
@@ -277,11 +277,11 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                 let air_id = extract_field_element_as_usize(&air_ids.values[i], "air_id");
 
                 // Get all air instances ids for this airgroup and air_id
-                let air_instance_ids = pctx.air_instance_repo.find_air_instances(airgroup_id, air_id);
-                for air_instance_id in air_instance_ids {
+                let global_instance_ids = pctx.air_instance_repo.find_air_instances(airgroup_id, air_id);
+                for global_instance_id in global_instance_ids {
                     // Retrieve all air instances
                     let air_instances = &mut pctx.air_instance_repo.air_instances.write().unwrap();
-                    let air_instance = &mut air_instances[air_instance_id];
+                    let air_instance = air_instances.get_mut(&global_instance_id).unwrap();
 
                     if !air_instance.prover_initialized {
                         continue;
@@ -305,7 +305,15 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
                     // Debugging, if enabled
                     if pctx.options.debug_info.std_mode.name == ModeName::Debug {
-                        self.debug_mode(&pctx, &sctx, air_instance, num_rows, debug_data_hints.clone());
+                        let air_instance_id = pctx.dctx_find_air_instance_id(global_instance_id);
+                        self.debug_mode(
+                            &pctx,
+                            &sctx,
+                            air_instance,
+                            air_instance_id,
+                            num_rows,
+                            debug_data_hints.clone(),
+                        );
                     }
 
                     // Populate the im columns

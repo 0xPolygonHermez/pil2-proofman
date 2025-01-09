@@ -24,7 +24,7 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>>
         airgroupvalues.push(values);
     }
 
-    for air_instance in pctx.air_instance_repo.air_instances.write().unwrap().iter() {
+    for (_, air_instance) in pctx.air_instance_repo.air_instances.write().unwrap().iter() {
         for (idx, agg_type) in pctx.global_info.agg_types[air_instance.airgroup_id].iter().enumerate() {
             let mut acc = ExtensionField {
                 value: [
