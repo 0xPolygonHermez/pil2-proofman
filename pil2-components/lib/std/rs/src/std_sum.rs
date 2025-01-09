@@ -142,12 +142,9 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                 let opid = match busid {
                     HintFieldValue::Field(opid) => {
                         // If opids are specified, then only update the bus if the opid is in the list
-                        if !pctx
-                            .options
-                            .debug_info
-                            .std_mode
-                            .opids
-                            .contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
+                        let opids = &pctx.options.debug_info.std_mode.opids;
+                        if !opids.is_empty()
+                            && !opids.contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
                         {
                             continue;
                         }
@@ -178,12 +175,10 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                     let opid = match busid.get(j) {
                         HintFieldOutput::Field(opid) => {
                             // If opids are specified, then only update the bus if the opid is in the list
-                            if !pctx
-                                .options
-                                .debug_info
-                                .std_mode
-                                .opids
-                                .contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
+                            let opids = &pctx.options.debug_info.std_mode.opids;
+                            if !opids.is_empty()
+                                && !opids
+                                    .contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
                             {
                                 continue;
                             }
