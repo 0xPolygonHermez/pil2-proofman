@@ -73,10 +73,10 @@ impl<F: PrimeField> U16Air<F> {
             _ => panic!("Multiplicities must be a column"),
         };
 
-        let (instance_found, instance_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+        let (instance_found, global_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
         let (is_mine, global_idx) = if instance_found {
-            (pctx.dctx_is_my_instance(instance_idx), instance_idx)
+            (pctx.dctx_is_my_instance(global_idx), global_idx)
         } else {
             pctx.dctx_add_instance(self.airgroup_id, self.air_id, 1)
         };
@@ -84,21 +84,17 @@ impl<F: PrimeField> U16Air<F> {
         pctx.dctx_distribute_multiplicity(&mut multiplicity, global_idx);
 
         if is_mine {
-            let air_instance_repo = &pctx.air_instance_repo;
-            let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
-            let air_instance_id = if !instance.is_empty() {
-                instance[0]
-            } else {
-                // create instance
+            let instance: Vec<usize> = pctx.air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
+            if instance.is_empty() {
                 let num_rows = pctx.global_info.airs[self.airgroup_id][self.air_id].num_rows;
                 let buffer_size = num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
-                pctx.add_air_instance(air_instance, global_idx)
+                pctx.add_air_instance(air_instance, global_idx);
             };
 
-            let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
-            let air_instance = &mut air_instance_rw[air_instance_id];
+            let mut air_instances = pctx.air_instance_repo.air_instances.write().unwrap();
+            let air_instance = air_instances.get_mut(&global_idx).unwrap();
 
             // copy multiplicitis back to mul_column
             let mul_column_2 =

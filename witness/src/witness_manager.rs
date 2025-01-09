@@ -30,9 +30,11 @@ impl<F> WitnessManager<F> {
     }
 
     pub fn start_proof(&self) {
+        timer_start_info!(START_PROOF);
         for component in self.components.read().unwrap().iter() {
             component.start_proof(self.pctx.clone(), self.sctx.clone());
         }
+        timer_stop_and_log_info!(START_PROOF);
     }
 
     pub fn execute(&self) {

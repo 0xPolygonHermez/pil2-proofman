@@ -102,13 +102,36 @@ impl DistributionCtx {
     }
 
     #[inline]
-    pub fn is_my_instance(&self, instance_idx: usize) -> bool {
-        self.owner(instance_idx) == self.rank as usize
+    pub fn is_my_instance(&self, global_idx: usize) -> bool {
+        self.owner(global_idx) == self.rank as usize
     }
 
     #[inline]
-    pub fn owner(&self, instance_idx: usize) -> usize {
-        self.instances_owner[instance_idx].0
+    pub fn owner(&self, global_idx: usize) -> usize {
+        self.instances_owner[global_idx].0
+    }
+
+    #[inline]
+    pub fn get_instance_info(&self, global_idx: usize) -> (usize, usize) {
+        self.instances[global_idx]
+    }
+
+    #[inline]
+    pub fn get_instance_idx(&self, global_idx: usize) -> usize {
+        self.my_instances.iter().position(|&x| x == global_idx).unwrap()
+    }
+
+    #[inline]
+    pub fn find_air_instance_id(&self, global_idx: usize) -> usize {
+        let mut air_instance_id = 0;
+        let (airgroup_id, air_id) = self.instances[global_idx];
+        for idx in 0..global_idx {
+            let (instance_airgroup_id, instance_air_id) = self.instances[idx];
+            if (instance_airgroup_id, instance_air_id) == (airgroup_id, air_id) {
+                air_instance_id += 1;
+            }
+        }
+        air_instance_id
     }
 
     #[inline]

@@ -14,9 +14,9 @@ public:
     void setBufferTInfo(bool domainExtended, int64_t expId) {
         uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
-        offsetsStages.resize(ns*nOpenings + 1);
-        nColsStages.resize(ns*nOpenings + 1);
-        nColsStagesAcc.resize(ns*nOpenings + 1);
+        offsetsStages = vector<uint64_t>(ns * nOpenings + 1, 0);
+        nColsStages = vector<uint64_t>(ns * nOpenings + 1, 0);
+        nColsStagesAcc = vector<uint64_t>(ns * nOpenings + 1, 0);
 
         nCols = setupCtx.starkInfo.nConstants;
 
@@ -1028,7 +1028,7 @@ public:
             storePolynomial(dests, destVals, i);
 
             for(uint64_t j = 0; j < dests.size(); ++j) {
-                delete destVals[j];
+                delete[] destVals[j];
             }
             delete[] destVals;
         }

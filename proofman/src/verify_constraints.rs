@@ -66,24 +66,19 @@ pub fn verify_constraints_proof<F: Field>(
 
     let mut valid_constraints = true;
 
-    for air_instance in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
-        let air_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
-        let (skip, _) = skip_prover_instance(
-            pctx.options.clone(),
-            air_instance.airgroup_id,
-            air_instance.air_id,
-            air_instance.air_instance_id.unwrap(),
-        );
+    let instances = pctx.dctx.read().unwrap().instances.clone();
+    let my_instances = pctx.dctx.read().unwrap().my_instances.clone();
+    for instance_id in my_instances.iter() {
+        let (airgroup_id, air_id) = instances[*instance_id];
+        let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+        let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
+        let (skip, _) = skip_prover_instance(pctx.options.clone(), airgroup_id, air_id, air_instance_id);
         if skip {
             log::info!(
                 "{}",
                 format!(
                     "{}: ··· \u{2713} Skipping Instance #{} of {} [{}:{}]",
-                    MY_NAME,
-                    air_instance.air_instance_id.unwrap(),
-                    air_name,
-                    air_instance.airgroup_id,
-                    air_instance.air_id
+                    MY_NAME, air_instance_id, air_name, airgroup_id, air_id
                 )
                 .bright_yellow()
                 .bold()
@@ -94,7 +89,7 @@ pub fn verify_constraints_proof<F: Field>(
     for (idx, prover) in provers.iter().enumerate() {
         let prover_info = prover.get_prover_info();
         let (airgroup_id, air_id, air_instance_id) =
-            (prover_info.airgroup_id, prover_info.air_id, prover_info.instance_id);
+            (prover_info.airgroup_id, prover_info.air_id, prover_info.air_instance_id);
 
         let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
