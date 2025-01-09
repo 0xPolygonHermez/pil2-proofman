@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
 use witness::WitnessComponent;
@@ -98,6 +99,18 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
                 "busid",
                 HintFieldOptions::default(),
             );
+
+            // If opids are specified, then only update the bus if the opid is in the list
+            if !pctx.options.debug_info.std_mode.opids.is_empty()
+                && !pctx
+                    .options
+                    .debug_info
+                    .std_mode
+                    .opids
+                    .contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
+            {
+                continue;
+            }
 
             let is_global = get_hint_field_constant_as_field::<F>(
                 sctx,
@@ -318,7 +331,8 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                 }
             }
 
-            // TODO: Process each direct update to the product bus
+            // TODO: Process each direct update to the bus
+            // when airgroup hints are available
         }
     }
 
