@@ -1,7 +1,7 @@
 name: CI Checks
 on:
   push:
-    branches: [main, develop, feature/minor_clean]
+    branches: [main, develop, feature/minor_clean, feature/merge-std-chang]
   pull_request:
 jobs:
   cargo-test:
