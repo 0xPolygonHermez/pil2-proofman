@@ -41,6 +41,12 @@ pub struct DebugInfo {
     pub std_mode: StdMode,
 }
 
+impl Default for DebugInfo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DebugInfo {
     pub fn new() -> Self {
         Self {
