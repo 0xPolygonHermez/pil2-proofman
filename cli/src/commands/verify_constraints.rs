@@ -67,13 +67,7 @@ impl VerifyConstraintsCmd {
                 self.public_inputs.clone(),
                 self.proving_key.clone(),
                 PathBuf::new(),
-                ProofOptions::new(
-                    true,
-                    self.verbose.into(),
-                    false,
-                    false,
-                    debug_info
-                ),
+                ProofOptions::new(true, self.verbose.into(), false, false, debug_info),
             )?,
         };
 
