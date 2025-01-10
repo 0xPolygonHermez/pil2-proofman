@@ -24,6 +24,7 @@ pub enum ProofType {
     RecursiveF,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct ProverInfo {
     pub airgroup_id: usize,
     pub air_id: usize,

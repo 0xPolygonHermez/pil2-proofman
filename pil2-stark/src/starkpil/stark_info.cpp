@@ -4,15 +4,15 @@
 #include "zklog.hpp"
 #include "exit_process.hpp"
 
-StarkInfo::StarkInfo(string file)
+StarkInfo::StarkInfo(string file, bool verify_)
 {
     // Load contents from json file
     json starkInfoJson;
     file2json(file, starkInfoJson);
-    load(starkInfoJson);
+    load(starkInfoJson, verify_);
 }
 
-void StarkInfo::load(json j)
+void StarkInfo::load(json j, bool verify_)
 {   
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
@@ -64,6 +64,9 @@ void StarkInfo::load(json j)
     for(uint64_t i = 0; i < j["customCommits"].size(); i++) {
         CustomCommits c;
         c.name = j["customCommits"][i]["name"];
+        for(uint64_t k = 0; k < j["customCommits"][i]["publicValues"].size(); k++) {
+            c.publicValues.push_back(j["customCommits"][i]["publicValues"][k]["idx"]);
+        }
         for(uint64_t k = 0; k < j["customCommits"][i]["stageWidths"].size(); k++) {
             c.stageWidths.push_back(j["customCommits"][i]["stageWidths"][k]);
         }
@@ -224,7 +227,22 @@ void StarkInfo::load(json j)
         mapSectionsN[it.key()] = it.value();
     }
 
-    setMapOffsets();   
+    if(verify_) {
+        verify = verify_;
+        mapTotalN = 0;
+        mapOffsets[std::make_pair("const", false)] = 0;
+        for(uint64_t stage = 1; stage <= nStages + 1; ++stage) {
+            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
+            mapTotalN += mapSectionsN["cm" + to_string(stage)] * starkStruct.nQueries;
+        }
+        // Set offsets for custom commits
+        for(uint64_t i = 0; i < customCommits.size(); ++i) {
+            mapOffsets[std::make_pair(customCommits[i].name + "0", false)] = 0;
+            mapOffsets[std::make_pair(customCommits[i].name + "0", true)] = 0;
+        }
+    } else {
+        setMapOffsets();
+    }
 }
 
 void StarkInfo::setMapOffsets() {

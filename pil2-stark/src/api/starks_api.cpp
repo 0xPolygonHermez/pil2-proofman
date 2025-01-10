@@ -8,6 +8,7 @@
 #include "logger.hpp"
 #include <filesystem>
 #include "setup_ctx.hpp"
+#include "stark_verify.hpp"
 #include "exec_file.hpp"
 #include "final_snark_proof.hpp"
 
@@ -178,9 +179,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename)
+void *stark_info_new(char *filename, bool verify)
 {
-    auto starkInfo = new StarkInfo(filename);
+    auto starkInfo = new StarkInfo(filename, verify);
 
     return starkInfo;
 }
@@ -250,9 +251,9 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
 // Expressions Bin
 // ========================================================================================
-void *expressions_bin_new(char* filename, bool global)
+void *expressions_bin_new(char* filename, bool global, bool verifier)
 {
-    auto expressionsBin = new ExpressionsBin(filename, global);
+    auto expressionsBin = new ExpressionsBin(filename, global, verifier);
 
     return expressionsBin;
 };
@@ -728,4 +729,13 @@ void setLogLevel(uint64_t level) {
     }
 
     Logger::getInstance(LOG_TYPE::CONSOLE)->updateLogLevel((LOG_LEVEL)new_level);
+}
+
+
+// Stark Verify
+// =================================================================================
+bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, void *verkey, void *pPublics, void *pProofValues, void *pChallenges) {
+    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
+    bool vadcop = challenges == nullptr ? false : true;
+    return starkVerify(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, (Goldilocks::Element *)verkey, (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
 }

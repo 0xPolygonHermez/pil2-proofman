@@ -196,6 +196,10 @@ impl<F: Field> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
+    pub fn get_challenges(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
+        self.challenges.values.write().unwrap()
+    }
+
     pub fn get_challenges_ptr(&self) -> *mut u8 {
         let guard = &self.challenges.values.read().unwrap();
         guard.as_ptr() as *mut u8
