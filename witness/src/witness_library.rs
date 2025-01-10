@@ -16,13 +16,6 @@ macro_rules! witness_library {
         // Define the struct
         pub struct $lib_name;
 
-        // Implement Default for the struct
-        impl Default for $lib_name {
-            fn default() -> Self {
-                $lib_name
-            }
-        }
-
         // Define the init_library function
         #[no_mangle]
         pub extern "Rust" fn init_library(
@@ -30,7 +23,7 @@ macro_rules! witness_library {
         ) -> Result<Box<dyn witness::WitnessLibrary<$field_type>>, Box<dyn std::error::Error>> {
             proofman_common::initialize_logger(verbose_mode);
 
-            Ok(Box::new($lib_name::default()))
+            Ok(Box::new($lib_name))
         }
     };
 }
