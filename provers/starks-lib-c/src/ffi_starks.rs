@@ -1081,20 +1081,23 @@ pub fn set_log_level_c(level: u64) {
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn stark_verify_c(
+    verkey: &str,
     p_proof: *mut c_void,
     p_stark_info: *mut c_void,
     p_expressions_bin: *mut c_void,
-    p_verkey: *mut c_void,
     p_publics: *mut u8,
     p_proof_values: *mut u8,
     p_challenges: *mut u8,
 ) -> bool {
+    let verkey_file = CString::new(verkey).unwrap();
+    let verkey_file_ptr = verkey_file.as_ptr() as *mut std::os::raw::c_char;
+
     unsafe {
         stark_verify(
             p_proof,
             p_stark_info,
             p_expressions_bin,
-            p_verkey,
+            verkey_file_ptr,
             p_publics as *mut c_void,
             p_proof_values as *mut c_void,
             p_challenges as *mut c_void,
@@ -1839,10 +1842,10 @@ pub fn set_log_level_c(_level: u64) {
 
 #[cfg(feature = "no_lib_link")]
 pub fn stark_verify_c(
+    _verkey: &str,
     _p_proof: *mut c_void,
     _p_stark_info: *mut c_void,
     _p_expressions_bin: *mut c_void,
-    _verkey: *mut c_void,
     _p_publics: *mut u8,
     _p_proof_values: *mut u8,
     _p_challenges: *mut u8,

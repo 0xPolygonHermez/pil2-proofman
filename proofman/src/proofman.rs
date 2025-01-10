@@ -212,9 +212,16 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let _ = generate_fflonk_snark_proof(&pctx, recursivef_proof, output_dir_path.clone());
                 timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
             } else {
+                let setup_path = pctx.global_info.get_setup_path("vadcop_final");
+                let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
+                let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
+                let verkey_path = setup_path.display().to_string() + ".verkey.json";
+
                 valid_proofs = verify_proof(
                     final_proof,
-                    pctx.global_info.get_setup_path("vadcop_final"),
+                    stark_info_path,
+                    expressions_bin_path,
+                    verkey_path,
                     Some(pctx.get_publics().clone()),
                     None,
                     None,

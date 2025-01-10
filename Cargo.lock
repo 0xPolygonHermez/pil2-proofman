@@ -822,8 +822,10 @@ dependencies = [
  "pilout",
  "proofman",
  "proofman-common",
+ "proofman-starks-lib-c",
  "proofman-util",
  "serde",
+ "serde_json",
  "tinytemplate",
 ]
 

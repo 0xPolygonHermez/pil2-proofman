@@ -734,8 +734,13 @@ void setLogLevel(uint64_t level) {
 
 // Stark Verify
 // =================================================================================
-bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, void *verkey, void *pPublics, void *pProofValues, void *pChallenges) {
+bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
     Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
     bool vadcop = challenges == nullptr ? false : true;
-    return starkVerify(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, (Goldilocks::Element *)verkey, (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    StarkInfo starkInfo = *((StarkInfo *)pStarkInfo);
+    if (starkInfo.starkStruct.verificationHashType == "GL") {
+        return starkVerify<Goldilocks::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    } else {
+        return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    }
 }

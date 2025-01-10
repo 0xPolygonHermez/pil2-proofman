@@ -1,9 +1,6 @@
 use p3_field::Field;
 
 use proofman_starks_lib_c::{stark_info_new_c, expressions_bin_new_c, stark_verify_c};
-use std::fs::File;
-use std::io::Read;
-use std::path::PathBuf;
 
 use colored::*;
 
@@ -20,24 +17,15 @@ use crate::verify_global_constraints_proof;
 
 pub fn verify_proof<F: Field>(
     p_proof: *mut c_void,
-    setup_path: PathBuf,
+    stark_info_path: String,
+    expressions_bin_path: String,
+    verkey_path: String,
     publics: Option<Vec<F>>,
     proof_values: Option<Vec<F>>,
     challenges: Option<Vec<F>>,
 ) -> bool {
-    let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-    let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
-    let verkey_path = setup_path.display().to_string() + ".verkey.json";
-
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
-
-    let mut contents = String::new();
-    let mut file = File::open(verkey_path).unwrap();
-
-    let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
-    let verkey_json: Vec<u64> = serde_json::from_str(&contents).unwrap();
-    let verkey: Vec<F> = verkey_json.into_iter().map(|element| F::from_canonical_u64(element)).collect();
 
     let proof_challenges_ptr = match challenges {
         Some(ref challenges) => challenges.as_ptr() as *mut u8,
@@ -55,10 +43,10 @@ pub fn verify_proof<F: Field>(
     };
 
     stark_verify_c(
+        &verkey_path,
         p_proof,
         p_stark_info,
         p_expressions_bin,
-        verkey.as_ptr() as *mut c_void,
         publics_ptr,
         proof_values_ptr,
         proof_challenges_ptr,
@@ -84,9 +72,15 @@ pub fn verify_basic_proofs<F: Field>(
         let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
         let proof_challenges = prover.get_proof_challenges(steps_fri, proof_ctx.get_challenges().to_vec());
 
+        let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
+        let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
+        let verkey_path = setup_path.display().to_string() + ".verkey.json";
+
         let is_valid_proof = verify_proof(
             proves[idx],
-            setup_path,
+            stark_info_path,
+            expressions_bin_path,
+            verkey_path,
             Some(proof_ctx.get_publics().clone()),
             Some(proof_ctx.get_proof_values().clone()),
             Some(proof_challenges),

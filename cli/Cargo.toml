@@ -10,6 +10,7 @@ pilout = { path = "../pilout" }
 proofman-util = { path = "../util" }
 proofman = { path = "../proofman" }
 proofman-common = { path = "../common" }
+proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 
 p3-goldilocks.workspace = true
 p3-field.workspace = true
@@ -20,4 +21,5 @@ clap = { version = "4.5.13", features = ["derive", "env"] }
 colored = "2"
 tinytemplate = "1.1"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.68"
 convert_case = "0.6"

@@ -637,12 +637,12 @@ extern "C" {
     pub fn setLogLevel(level: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z12stark_verifyPvS_S_S_S_S_S_"]
+    #[link_name = "\u{1}_Z12stark_verifyPvS_S_PcS_S_S_"]
     pub fn stark_verify(
-        fProof: *mut ::std::os::raw::c_void,
+        jProof: *mut ::std::os::raw::c_void,
         pStarkInfo: *mut ::std::os::raw::c_void,
         pExpressionsBin: *mut ::std::os::raw::c_void,
-        verkey: *mut ::std::os::raw::c_void,
+        verkey: *mut ::std::os::raw::c_char,
         pPublics: *mut ::std::os::raw::c_void,
         pProofValues: *mut ::std::os::raw::c_void,
         challenges: *mut ::std::os::raw::c_void,

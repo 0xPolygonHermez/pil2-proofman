@@ -257,6 +257,13 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
             zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
         }
-    }        
+    }
+
+    if(!proofFile.empty()) {
+        json2file(jProof, proofFile);
+        json2file(zkin, proofFile + ".zkin.json");
+    }
+    
+
     return (void *) new nlohmann::json(zkin);
 }
