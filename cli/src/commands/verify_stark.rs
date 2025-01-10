@@ -57,12 +57,7 @@ impl VerifyStark {
             let _ =
                 file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
             let verkey_json: Vec<u64> = serde_json::from_str(&contents).unwrap();
-            Some(
-                verkey_json
-                    .into_iter()
-                    .map(Goldilocks::from_canonical_u64)
-                    .collect::<Vec<Goldilocks>>(),
-            )
+            Some(verkey_json.into_iter().map(Goldilocks::from_canonical_u64).collect::<Vec<Goldilocks>>())
         } else {
             None
         };
@@ -74,13 +69,7 @@ impl VerifyStark {
             let _ =
                 file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
             let verkey_json: Vec<Vec<u64>> = serde_json::from_str(&contents).unwrap();
-            Some(
-                verkey_json
-                    .into_iter()
-                    .flatten()
-                    .map(Goldilocks::from_canonical_u64)
-                    .collect::<Vec<Goldilocks>>(),
-            )
+            Some(verkey_json.into_iter().flatten().map(Goldilocks::from_canonical_u64).collect::<Vec<Goldilocks>>())
         } else {
             None
         };
