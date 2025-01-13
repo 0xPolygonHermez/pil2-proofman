@@ -31,7 +31,7 @@
 
     // Prover Helpers
     // ========================================================================================
-    void *prover_helpers_new(void *pStarkInfo);
+    void *prover_helpers_new(void *pStarkInfo, bool pil1);
     void prover_helpers_free(void *pProverHelpers);
 
     // Const Pols
