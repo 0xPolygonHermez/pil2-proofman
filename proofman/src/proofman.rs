@@ -57,10 +57,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             options.verify_constraints,
         )?;
 
-        let pctx = Arc::new(ProofCtx::create_ctx(proving_key_path.clone(), options));
+        let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), options);
 
         let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
         let sctx: Arc<SetupCtx> = setups.sctx.clone();
+
+        pctx.set_weights(&sctx);
+
+        let pctx = Arc::new(pctx);
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path));
 
