@@ -147,8 +147,8 @@ pub fn stark_info_free_c(p_stark_info: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn prover_helpers_new_c(p_stark_info: *mut c_void) -> *mut c_void {
-    unsafe { prover_helpers_new(p_stark_info) }
+pub fn prover_helpers_new_c(p_stark_info: *mut c_void, pil1: bool) -> *mut c_void {
+    unsafe { prover_helpers_new(p_stark_info, pil1) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1207,7 +1207,7 @@ pub fn stark_info_free_c(_p_stark_info: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn prover_helpers_new_c(_p_stark_info: *mut c_void) -> *mut c_void {
+pub fn prover_helpers_new_c(_p_stark_info: *mut c_void, _pil1: bool) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "prover_helpers_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }

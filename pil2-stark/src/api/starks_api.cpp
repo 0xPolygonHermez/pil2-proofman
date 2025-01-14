@@ -199,8 +199,8 @@ void stark_info_free(void *pStarkInfo)
 
 // Prover Helpers
 // ========================================================================================
-void *prover_helpers_new(void *pStarkInfo) {
-    auto prover_helpers = new ProverHelpers(*(StarkInfo *)pStarkInfo);
+void *prover_helpers_new(void *pStarkInfo, bool pil1) {
+    auto prover_helpers = new ProverHelpers(*(StarkInfo *)pStarkInfo, pil1);
     return prover_helpers;
 }
 

@@ -102,7 +102,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 .unwrap() as usize;
 
             if air_instance.custom_commits[commit_id].is_empty() {
-                air_instance.init_custom_commit(commit_id, (1 << self.stark_info.stark_struct.n_bits_ext) * n_cols);
+                air_instance.init_custom_commit(commit_id, (1 << self.stark_info.stark_struct.n_bits) * n_cols);
             }
             air_instance
                 .init_custom_commit_extended(commit_id, (1 << self.stark_info.stark_struct.n_bits_ext) * n_cols);

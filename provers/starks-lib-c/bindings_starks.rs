@@ -92,8 +92,8 @@ extern "C" {
     pub fn stark_info_free(pStarkInfo: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z18prover_helpers_newPv"]
-    pub fn prover_helpers_new(pStarkInfo: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z18prover_helpers_newPvb"]
+    pub fn prover_helpers_new(pStarkInfo: *mut ::std::os::raw::c_void, pil1: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z19prover_helpers_freePv"]

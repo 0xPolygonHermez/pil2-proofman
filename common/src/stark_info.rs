@@ -223,13 +223,9 @@ impl StarkInfo {
     }
 
     pub fn get_buff_helper_size(&self) -> usize {
-        let mut max_cols = 0;
-        for stage in 1..=self.n_stages + 1 {
-            let n_cols = *self.map_sections_n.get(&format!("cm{}", stage)).unwrap() as usize;
-            if n_cols > max_cols {
-                max_cols = n_cols;
-            }
-        }
+        let max_cols: usize =
+            self.map_sections_n.iter().filter(|(key, _)| *key != "const").map(|(_, value)| *value).max().unwrap_or(0)
+                as usize; // In case the iterator is empty, provide a default value of 0
 
         let n_extended = (1 << self.stark_struct.n_bits_ext) as usize;
         let buff_size_stages = max_cols * n_extended;

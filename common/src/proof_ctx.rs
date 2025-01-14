@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{distribution_ctx::DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
+use crate::{SetupCtx, distribution_ctx::DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -67,6 +67,7 @@ pub struct ProofCtx<F> {
     pub global_info: GlobalInfo,
     pub air_instance_repo: AirInstancesRepository<F>,
     pub options: ProofOptions,
+    pub weights: HashMap<(usize, usize), u64>,
     pub dctx: RwLock<DistributionCtx>,
 }
 
@@ -81,6 +82,8 @@ impl<F: Field> ProofCtx<F> {
         let n_proof_values = global_info.proof_values_map.as_ref().unwrap().len();
         let n_challenges = 4 + global_info.n_challenges.iter().sum::<usize>();
 
+        let weights = HashMap::new();
+
         Self {
             global_info,
             public_inputs: Values::new(n_publics),
@@ -89,10 +92,31 @@ impl<F: Field> ProofCtx<F> {
             buff_helper: Values::default(),
             air_instance_repo: AirInstancesRepository::new(),
             dctx: RwLock::new(DistributionCtx::new()),
+            weights,
             options,
         }
     }
 
+    pub fn set_weights(&mut self, sctx: &SetupCtx) {
+        for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let setup = sctx.get_setup(airgroup_id, air_id);
+                let weight = (setup
+                    .stark_info
+                    .map_sections_n
+                    .iter()
+                    .filter(|(key, _)| *key != "const")
+                    .map(|(_, value)| *value)
+                    .sum::<u64>()) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                self.weights.insert((airgroup_id, air_id), weight);
+            }
+        }
+    }
+
+    pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
+        *self.weights.get(&(airgroup_id, air_id)).unwrap()
+    }
+    
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
         self.air_instance_repo.add_air_instance(air_instance, global_idx);
     }
