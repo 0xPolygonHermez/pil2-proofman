@@ -114,13 +114,13 @@ impl<F: Field> ProofCtx<F> {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id);
-                let weight = setup
+                let weight = (setup
                     .stark_info
                     .map_sections_n
                     .iter()
                     .filter(|(key, _)| *key != "const")
                     .map(|(_, value)| *value)
-                    .sum();
+                    .sum::<u64>()) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
