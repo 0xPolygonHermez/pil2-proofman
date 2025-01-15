@@ -353,10 +353,12 @@ public:
     
     uint64_t airId;
     uint64_t airgroupId;
+    uint64_t instanceId;
 
-    FRIProof(StarkInfo &starkInfo) : proof(starkInfo), publics(starkInfo.nPublics) {
+    FRIProof(StarkInfo &starkInfo, uint64_t _instanceId) : proof(starkInfo), publics(starkInfo.nPublics) {
         airId = starkInfo.airId;
         airgroupId = starkInfo.airgroupId;
+        instanceId = _instanceId;
     };
 };
 

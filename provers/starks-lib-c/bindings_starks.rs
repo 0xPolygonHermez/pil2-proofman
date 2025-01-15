@@ -23,8 +23,8 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z13fri_proof_newPv"]
-    pub fn fri_proof_new(pSetupCtx: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z13fri_proof_newPvm"]
+    pub fn fri_proof_new(pSetupCtx: *mut ::std::os::raw::c_void, instanceId: u64) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z23fri_proof_get_tree_rootPvS_m"]
@@ -46,18 +46,33 @@ extern "C" {
     pub fn fri_proof_set_airvalues(pFriProof: *mut ::std::os::raw::c_void, airValues: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z23fri_proof_get_zkinproofPvS_S_S_S_PcS0_S0_"]
+    #[link_name = "\u{1}_Z23fri_proof_get_zkinproofPvS_S_S_S_PcS0_"]
     pub fn fri_proof_get_zkinproof(
         pFriProof: *mut ::std::os::raw::c_void,
         pPublics: *mut ::std::os::raw::c_void,
         pChallenges: *mut ::std::os::raw::c_void,
         pProofValues: *mut ::std::os::raw::c_void,
         pStarkInfo: *mut ::std::os::raw::c_void,
-        proof_name: *mut ::std::os::raw::c_char,
         globalInfoFile: *mut ::std::os::raw::c_char,
         fileDir: *mut ::std::os::raw::c_char,
     ) -> *mut ::std::os::raw::c_void;
 }
+extern "C" {
+    #[link_name = "\u{1}_Z24fri_proof_get_zkinproofsmPPvS0_S0_S_S_S_PcS1_"]
+    pub fn fri_proof_get_zkinproofs(
+        nProofs: u64,
+        proofs: *mut *mut ::std::os::raw::c_void,
+        pFriProof: *mut *mut ::std::os::raw::c_void,
+        starkInfos: *mut *mut ::std::os::raw::c_void,
+        pPublics: *mut ::std::os::raw::c_void,
+        pProofValues: *mut ::std::os::raw::c_void,
+        pChallenges: *mut ::std::os::raw::c_void,
+        globalInfoFile: *mut ::std::os::raw::c_char,
+        fileDir: *mut ::std::os::raw::c_char,
+    );
+}
+
+
 extern "C" {
     #[link_name = "\u{1}_Z24fri_proof_free_zkinproofPv"]
     pub fn fri_proof_free_zkinproof(pZkinProof: *mut ::std::os::raw::c_void);
@@ -65,6 +80,14 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z14fri_proof_freePv"]
     pub fn fri_proof_free(pFriProof: *mut ::std::os::raw::c_void);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z11proofs_freemPPvS0_"]
+    pub fn proofs_free(
+        nProofs: u64,
+        pStarks: *mut *mut ::std::os::raw::c_void,
+        pFriProofs: *mut *mut ::std::os::raw::c_void,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z15n_hints_by_namePvPc"]

@@ -10,13 +10,16 @@
 
     // FRIProof
     // ========================================================================================
-    void *fri_proof_new(void *pSetupCtx);
+    void *fri_proof_new(void *pSetupCtx, uint64_t instanceId);
     void fri_proof_get_tree_root(void *pFriProof, void* root, uint64_t tree_index);
     void fri_proof_set_airgroupvalues(void *pFriProof, void *airgroupValues);
     void fri_proof_set_airvalues(void *pFriProof, void *airValues);
-    void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, void *pStarkInfo, char* proof_name, char* globalInfoFile, char *fileDir);
+    void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, void *pStarkInfo, char* globalInfoFile, char *fileDir);
+    void fri_proof_get_zkinproofs(uint64_t nProofs, void**proofs, void **pFriProofs, void **starkInfos, void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, char *fileDir);
     void fri_proof_free_zkinproof(void *pZkinProof);
     void fri_proof_free(void *pFriProof);
+
+    void proofs_free(uint64_t nProofs, void **pStarks, void **pFriProofs);
 
     // SetupCtx
     // ========================================================================================

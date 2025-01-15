@@ -71,10 +71,10 @@ void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir) 
 
 
 
-void *fri_proof_new(void *pSetupCtx)
+void *fri_proof_new(void *pSetupCtx, uint64_t instanceId)
 {
     SetupCtx setupCtx = *(SetupCtx *)pSetupCtx;
-    FRIProof<Goldilocks::Element> *friProof = new FRIProof<Goldilocks::Element>(setupCtx.starkInfo);
+    FRIProof<Goldilocks::Element> *friProof = new FRIProof<Goldilocks::Element>(setupCtx.starkInfo, instanceId);
 
     return friProof;
 }
@@ -100,7 +100,69 @@ void fri_proof_set_airvalues(void *pFriProof, void *airValues)
     FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
     friProof->proof.setAirValues((Goldilocks::Element *)airValues);
 }
-void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, void *pStarkInfo, char* proof_name, char* globalInfoFile, char *fileDir)
+
+void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs, void **starkInfos, void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, char *fileDir) {
+    json globalInfo;
+    file2json(globalInfoFile, globalInfo);
+
+    Goldilocks::Element *publics = (Goldilocks::Element *)pPublics;
+    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
+    Goldilocks::Element *proofValues = (Goldilocks::Element *)pProofValues;
+    
+    json j;
+    for (uint64_t i = 0; i < globalInfo["nPublics"]; i++)
+    {
+        j["publics"][i] = Goldilocks::toString(publics[i]);
+    }
+
+    uint64_t p = 0;
+    for (uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); i++)
+    {
+        if(globalInfo["proofValuesMap"][i]["stage"] == 1) {
+            j["proofvalues"][i][0] = Goldilocks::toString(proofValues[p++]);
+            j["proofvalues"][i][1] = "0";
+            j["proofvalues"][i][2] = "0";
+        } else {
+            j["proofvalues"][i][0] = Goldilocks::toString(proofValues[p++]);
+            j["proofvalues"][i][1] = Goldilocks::toString(proofValues[p++]);
+            j["proofvalues"][i][2] = Goldilocks::toString(proofValues[p++]);
+        }
+    }
+
+    j["challenges"] = challenges2zkin(globalInfo, challenges);
+
+#pragma omp parallel for
+    for(uint64_t i = 0; i < nProofs; ++i) {
+        FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProofs[i];
+        StarkInfo &starkInfo = *(StarkInfo *)starkInfos[i];
+        nlohmann::json jProof = friProof->proof.proof2json();
+        nlohmann::json zkin = proof2zkinStark(jProof, starkInfo);
+
+        zkin["publics"] = j["publics"];
+        zkin["proofvalues"] = j["proofvalues"];
+        zkin["challenges"] = j["challenges"]["challenges"];
+        zkin["challengesFRISteps"] = j["challenges"]["challengesFRISteps"];
+
+        std::string airName = globalInfo["airs"][friProof->airgroupId][friProof->airId]["name"];
+        std::string proofName = airName + "_" + std::to_string(friProof->instanceId);
+
+        if(!string(fileDir).empty()) {
+            if (!std::filesystem::exists(string(fileDir) + "/zkin")) {
+                std::filesystem::create_directory(string(fileDir) + "/zkin");
+            }
+            if (!std::filesystem::exists(string(fileDir) + "/proofs")) {
+                std::filesystem::create_directory(string(fileDir) + "/proofs");
+            }
+            json2file(jProof, string(fileDir) + "/proofs/proof_" + proofName + ".json");
+            json2file(zkin, string(fileDir) + "/zkin/proof_" + proofName + "_zkin.json");
+        }
+
+        proofs[i] = (void *) new nlohmann::json(zkin);
+    }
+}
+
+
+void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, void *pStarkInfo, char* globalInfoFile, char *fileDir)
 {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
@@ -137,6 +199,9 @@ void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges
     zkin["challenges"] = challengesJson["challenges"];
     zkin["challengesFRISteps"] = challengesJson["challengesFRISteps"];
 
+    std::string airName = globalInfo["airs"][friProof->airgroupId][friProof->airId]["name"];
+    std::string proofName = airName + "_" + std::to_string(friProof->instanceId);
+
     // Save output to file
     if(!string(fileDir).empty()) {
         if (!std::filesystem::exists(string(fileDir) + "/zkin")) {
@@ -145,8 +210,8 @@ void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges
         if (!std::filesystem::exists(string(fileDir) + "/proofs")) {
             std::filesystem::create_directory(string(fileDir) + "/proofs");
         }
-        json2file(jProof, string(fileDir) + "/proofs/proof_" + proof_name + ".json");
-        json2file(zkin, string(fileDir) + "/zkin/proof_" + proof_name + "_zkin.json");
+        json2file(jProof, string(fileDir) + "/proofs/proof_" + proofName + ".json");
+        json2file(zkin, string(fileDir) + "/zkin/proof_" + proofName + "_zkin.json");
     }
 
     return (void *) new nlohmann::json(zkin);    
@@ -161,6 +226,20 @@ void fri_proof_free(void *pFriProof)
     FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
     delete friProof;
 }
+
+void proofs_free(uint64_t nProofs, void **pStarks, void **pFriProofs) {
+
+    for (uint64_t i = 0; i < nProofs; ++i) {
+        std::thread([i, pStarks, pFriProofs]() {
+            FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProofs[i];
+            Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks[i];
+
+            delete friProof;
+            delete starks;
+        }).detach();
+    }
+}
+
 
 // SetupCtx
 // ========================================================================================

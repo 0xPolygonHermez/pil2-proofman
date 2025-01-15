@@ -2,7 +2,10 @@ use libloading::{Library, Symbol};
 use log::info;
 use p3_field::PrimeField;
 use stark::StarkProver;
-use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c, get_map_totaln_c};
+use proofman_starks_lib_c::{
+    free_provers_c, fri_proof_get_zkinproofs_c, get_map_totaln_c, save_challenges_c, save_proof_values_c,
+    save_publics_c,
+};
 use std::fs;
 use std::error::Error;
 
@@ -151,7 +154,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_PROOF);
 
         //Generate proves_out
-        let proves_out = Self::save_proofs(&mut provers, pctx.clone(), output_dir_path.to_string_lossy().as_ref());
+        let proves_out =
+            Self::get_proofs(&mut provers, pctx.clone(), sctx.clone(), output_dir_path.to_string_lossy().as_ref());
+
+        Self::free_provers(&mut provers);
 
         if !pctx.options.aggregation {
             return Ok(());
@@ -588,31 +594,74 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(CALCULATING_FRI);
     }
 
-    fn save_proofs(
+    fn get_proofs(
         provers: &mut [Box<dyn Prover<F>>],
         proof_ctx: Arc<ProofCtx<F>>,
+        setup_ctx: Arc<SetupCtx>,
         output_dir: &str,
     ) -> Vec<*mut c_void> {
-        timer_start_info!(SAVING_PROOFS);
-        let mut proves = Vec::new();
-        for prover in provers.iter_mut() {
-            proves.push(prover.get_zkin_proof(proof_ctx.clone(), output_dir));
-            prover.free();
-        }
+        timer_start_info!(GET_PROOFS);
+        let mut proofs = Vec::new();
+        let mut stark_infos = Vec::new();
 
-        let n_publics = proof_ctx.global_info.n_publics as u64;
+        for prover in provers.iter_mut() {
+            let proof = prover.get_proof();
+
+            let prover_info = prover.get_prover_info();
+
+            let setup = setup_ctx.get_setup(prover_info.airgroup_id, prover_info.air_id);
+            let stark_info = setup.p_setup.p_stark_info;
+
+            proofs.push(proof);
+            stark_infos.push(stark_info);
+        }
 
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
-        save_publics_c(n_publics, proof_ctx.get_publics_ptr(), output_dir);
+        let publics_ptr = proof_ctx.get_publics_ptr();
+        let proof_values_ptr = proof_ctx.get_proof_values_ptr();
+        let challenges_ptr = proof_ctx.get_challenges_ptr();
 
-        save_proof_values_c(proof_ctx.get_proof_values_ptr(), global_info_file, output_dir);
+        let proves = vec![std::ptr::null_mut(); proofs.len()];
 
-        save_challenges_c(proof_ctx.get_challenges_ptr(), global_info_file, output_dir);
+        fri_proof_get_zkinproofs_c(
+            proofs.len() as u64,
+            proves.as_ptr() as *mut *mut c_void,
+            proofs.as_ptr() as *mut *mut c_void,
+            stark_infos.as_ptr() as *mut *mut c_void,
+            publics_ptr,
+            proof_values_ptr,
+            challenges_ptr,
+            global_info_file,
+            output_dir,
+        );
 
-        timer_stop_and_log_info!(SAVING_PROOFS);
+        let n_publics = proof_ctx.global_info.n_publics as u64;
+
+        save_publics_c(n_publics, publics_ptr, output_dir);
+
+        save_proof_values_c(proof_values_ptr, global_info_file, output_dir);
+
+        save_challenges_c(challenges_ptr, global_info_file, output_dir);
+
+        timer_stop_and_log_info!(GET_PROOFS);
+
         proves
+    }
+
+    fn free_provers(provers: &mut [Box<dyn Prover<F>>]) {
+        let mut proofs = Vec::new();
+        let mut starks = Vec::new();
+
+        for prover in provers.iter_mut() {
+            proofs.push(prover.get_proof());
+            starks.push(prover.get_stark());
+        }
+
+        let n_proofs = provers.len() as u64;
+
+        free_provers_c(n_proofs, starks.as_ptr() as *mut *mut c_void, proofs.as_ptr() as *mut *mut c_void);
     }
 
     fn print_global_summary(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {

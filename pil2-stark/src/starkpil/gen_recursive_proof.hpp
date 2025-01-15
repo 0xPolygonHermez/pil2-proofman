@@ -4,7 +4,7 @@ template <typename ElementType>
 void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, bool vadcop) {
     TimerStart(STARK_PROOF);
 
-    FRIProof<ElementType> proof(setupCtx.starkInfo);
+    FRIProof<ElementType> proof(setupCtx.starkInfo, 0);
 
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     
