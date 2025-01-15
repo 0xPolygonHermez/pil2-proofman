@@ -79,7 +79,7 @@ impl<F: PrimeField> U16Air<F> {
         let (is_mine, global_idx) = if instance_found {
             (pctx.dctx_is_my_instance(global_idx), global_idx)
         } else {
-            pctx.dctx_add_instance(self.airgroup_id, self.air_id, 1)
+            pctx.dctx_add_instance(self.airgroup_id, self.air_id, pctx.get_weight(self.airgroup_id, self.air_id))
         };
 
         pctx.dctx_distribute_multiplicity(&mut multiplicity, global_idx);

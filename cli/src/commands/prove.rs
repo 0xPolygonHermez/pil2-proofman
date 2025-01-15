@@ -63,10 +63,20 @@ impl ProveCmd {
         initialize_logger(self.verbose.into());
 
         if Path::new(&self.output_dir.join("proofs")).exists() {
-            fs::remove_dir_all(self.output_dir.join("proofs")).expect("Failed to remove the proofs directory");
+            // In distributeds mode two different processes may enter here at the same time and try to remove the same directory
+            if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                panic!("Failed to remove the proofs directory: {:?}", e);
+            }
+}
         }
 
-        fs::create_dir_all(self.output_dir.join("proofs")).expect("Failed to create the proofs directory");
+        if let Err(e) = fs::create_dir_all(self.output_dir.join("proofs")) {
+            if e.kind() != std::io::ErrorKind::AlreadyExists {
+                // prevent collision in distributed mode
+                panic!("Failed to create the proofs directory: {:?}", e);
+            }
+        }
 
         let debug_info = match &self.debug {
             None => DebugInfo::default(),

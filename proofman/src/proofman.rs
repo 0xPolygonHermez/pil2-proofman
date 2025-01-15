@@ -75,6 +75,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         dctx.close(pctx.global_info.air_groups.len());
         let mpi_rank = dctx.rank;
         let n_processes = dctx.n_processes;
+        if n_processes > 1 {
+            let (average_weight, max_weight, min_weight, max_deviation) = dctx.load_balance_info();
+            log::info!("{}: Load balance. Average: {} max: {} min: {} deviation: {}", Self::MY_NAME, average_weight, max_weight, min_weight, max_deviation);
+        }
         drop(dctx);
 
         if mpi_rank == 0 {
