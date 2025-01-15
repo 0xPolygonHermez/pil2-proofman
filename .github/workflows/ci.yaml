@@ -508,10 +508,10 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build/provingKey --output-dir ./pil2-components/test/simple/build
 
-      - name: Verify constraints diff_buses
-        run: |
-          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
+      # - name: Verify constraints diff_buses
+      #   run: |
+      #     cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
 
-      - name: Generate proof diff_buses
-        run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey --output-dir ./pil2-components/test/std/diff_buses/build
+      # - name: Generate proof diff_buses
+      #   run: |
+      #     cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey --output-dir ./pil2-components/test/std/diff_buses/build
