@@ -14,8 +14,8 @@
     void fri_proof_get_tree_root(void *pFriProof, void* root, uint64_t tree_index);
     void fri_proof_set_airgroupvalues(void *pFriProof, void *airgroupValues);
     void fri_proof_set_airvalues(void *pFriProof, void *airValues);
-    void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, void *pStarkInfo, char* globalInfoFile, char *fileDir);
-    void fri_proof_get_zkinproofs(uint64_t nProofs, void**proofs, void **pFriProofs, void **starkInfos, void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, char *fileDir);
+    void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, char* globalInfoFile, char *fileDir);
+    void fri_proof_get_zkinproofs(uint64_t nProofs, void**proofs, void **pFriProofs, void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, char *fileDir);
     void fri_proof_free_zkinproof(void *pZkinProof);
     void fri_proof_free(void *pFriProof);
 
@@ -28,7 +28,7 @@
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char* filename);
+    void *stark_info_new(char* filename, bool verifier);
     uint64_t get_map_total_n(void *pStarkInfo);
     void stark_info_free(void *pStarkInfo);
 
@@ -47,7 +47,7 @@
 
     // Expressions Bin
     // ========================================================================================
-    void *expressions_bin_new(char* filename, bool global);
+    void *expressions_bin_new(char* filename, bool global, bool verifier);
     void expressions_bin_free(void *pExpressionsBin);
 
     // Hints
@@ -154,5 +154,10 @@
     // Util calls
     // =================================================================================
     void setLogLevel(uint64_t level);
+
+    // Stark Verify
+    // =================================================================================
+    bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
+
 
 #endif

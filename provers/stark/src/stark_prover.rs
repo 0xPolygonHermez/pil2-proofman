@@ -626,14 +626,18 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
+        let proof_dir = match &proof_ctx.options.debug_info.save_proofs_to_file {
+            true => output_dir,
+            false => "",
+        };
+
         fri_proof_get_zkinproof_c(
             self.p_proof,
             proof_ctx.get_publics_ptr(),
             proof_ctx.get_challenges_ptr(),
             proof_ctx.get_proof_values_ptr(),
-            self.p_stark_info,
             global_info_file,
-            output_dir,
+            proof_dir,
         )
     }
 
@@ -845,3 +849,6 @@ impl<F: Field> StarkProver<F> {
         );
     }
 }
+
+unsafe impl<F: Field> Send for StarkProver<F> {}
+unsafe impl<F: Field> Sync for StarkProver<F> {}

@@ -119,26 +119,15 @@ void MerkleTreeGL::genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint
     genMerkleProof(&proof[nFieldElements], nextIdx, offset + nextN * 2, nextN);
 }
 
-bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> &v) {
-    Goldilocks::Element value[4];
-    for(uint64_t i = 0; i < nFieldElements; ++i) {
-        value[i] = Goldilocks::zero();
-    }
-
-
-    std::vector<Goldilocks::Element> linearValues;
-
-    for(uint64_t i = 0; i < v.size(); ++i) {
-        for(uint64_t j = 0; j < v[i].size(); ++j) {
-            linearValues.push_back(v[i][j]);
-        }
-    }
-
-    PoseidonGoldilocks::linear_hash_seq(value, linearValues.data(), linearValues.size());
+bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v) {
+    Goldilocks::Element value[4] = { Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero(), Goldilocks::zero() };
+    
+    PoseidonGoldilocks::linear_hash_seq(value, v.data(), v.size());
 
     calculateRootFromProof(value, mp, idx, 0);
     for(uint64_t i = 0; i < 4; ++i) {
         if(Goldilocks::toU64(value[i]) != Goldilocks::toU64(root[i])) {
+            cout << Goldilocks::toU64(value[0]) << " " << Goldilocks::toU64(value[1]) << " " << Goldilocks::toU64(value[2]) << " " << Goldilocks::toU64(value[3]) << endl;
             return false;
         }
     }

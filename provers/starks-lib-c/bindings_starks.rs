@@ -46,24 +46,22 @@ extern "C" {
     pub fn fri_proof_set_airvalues(pFriProof: *mut ::std::os::raw::c_void, airValues: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z23fri_proof_get_zkinproofPvS_S_S_S_PcS0_"]
+    #[link_name = "\u{1}_Z23fri_proof_get_zkinproofPvS_S_S_PcS0_"]
     pub fn fri_proof_get_zkinproof(
         pFriProof: *mut ::std::os::raw::c_void,
         pPublics: *mut ::std::os::raw::c_void,
         pChallenges: *mut ::std::os::raw::c_void,
         pProofValues: *mut ::std::os::raw::c_void,
-        pStarkInfo: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
         fileDir: *mut ::std::os::raw::c_char,
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z24fri_proof_get_zkinproofsmPPvS0_S0_S_S_S_PcS1_"]
+    #[link_name = "\u{1}_Z24fri_proof_get_zkinproofsmPPvS0_S_S_S_PcS1_"]
     pub fn fri_proof_get_zkinproofs(
         nProofs: u64,
         proofs: *mut *mut ::std::os::raw::c_void,
-        pFriProof: *mut *mut ::std::os::raw::c_void,
-        starkInfos: *mut *mut ::std::os::raw::c_void,
+        pFriProofs: *mut *mut ::std::os::raw::c_void,
         pPublics: *mut ::std::os::raw::c_void,
         pProofValues: *mut ::std::os::raw::c_void,
         pChallenges: *mut ::std::os::raw::c_void,
@@ -71,8 +69,6 @@ extern "C" {
         fileDir: *mut ::std::os::raw::c_char,
     );
 }
-
-
 extern "C" {
     #[link_name = "\u{1}_Z24fri_proof_free_zkinproofPv"]
     pub fn fri_proof_free_zkinproof(pZkinProof: *mut ::std::os::raw::c_void);
@@ -103,8 +99,8 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPc"]
-    pub fn stark_info_new(filename: *mut ::std::os::raw::c_char) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z14stark_info_newPcb"]
+    pub fn stark_info_new(filename: *mut ::std::os::raw::c_char, verifier: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPv"]
@@ -156,8 +152,12 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19expressions_bin_newPcb"]
-    pub fn expressions_bin_new(filename: *mut ::std::os::raw::c_char, global: bool) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z19expressions_bin_newPcbb"]
+    pub fn expressions_bin_new(
+        filename: *mut ::std::os::raw::c_char,
+        global: bool,
+        verifier: bool,
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z20expressions_bin_freePv"]
@@ -490,7 +490,6 @@ extern "C" {
     #[link_name = "\u{1}_Z24get_n_global_constraintsPv"]
     pub fn get_n_global_constraints(p_globalinfo_bin: *mut ::std::os::raw::c_void) -> u64;
 }
-
 extern "C" {
     #[link_name = "\u{1}_Z34get_global_constraints_lines_sizesPvPm"]
     pub fn get_global_constraints_lines_sizes(
@@ -655,4 +654,16 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z11setLogLevelm"]
     pub fn setLogLevel(level: u64);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z12stark_verifyPvS_S_PcS_S_S_"]
+    pub fn stark_verify(
+        jProof: *mut ::std::os::raw::c_void,
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pExpressionsBin: *mut ::std::os::raw::c_void,
+        verkey: *mut ::std::os::raw::c_char,
+        pPublics: *mut ::std::os::raw::c_void,
+        pProofValues: *mut ::std::os::raw::c_void,
+        challenges: *mut ::std::os::raw::c_void,
+    ) -> bool;
 }

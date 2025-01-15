@@ -7,6 +7,7 @@ use commands::pil_helpers::PilHelpersCmd;
 // use commands::new::NewCmd;
 use commands::prove::ProveCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
+use commands::verify_stark::VerifyStark;
 // use commands::trace::{TraceSubcommands, TraceCmd};
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
 use proofman_util::cli::print_banner;
@@ -27,6 +28,7 @@ pub enum Commands {
     Prove(ProveCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
+    VerifyStark(VerifyStark),
     GetConstraints(GetConstraintsCmd),
 }
 
@@ -34,7 +36,6 @@ fn main() {
     print_banner(false);
 
     let cli = Cli::parse();
-
     let result = match &cli.command {
         Commands::Pilout(args) => match &args.pilout_commands {
             PiloutSubcommands::Inspect(args) => args.run(),
@@ -51,6 +52,7 @@ fn main() {
         Commands::PilHelpers(args) => args.run(),
         Commands::VerifyConstraints(args) => args.run(),
         Commands::GetConstraints(args) => args.run(),
+        Commands::VerifyStark(args) => args.run(),
     };
 
     if let Err(e) = result {

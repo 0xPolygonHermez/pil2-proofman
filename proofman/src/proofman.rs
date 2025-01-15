@@ -18,8 +18,9 @@ use transcript::FFITranscript;
 use witness::{WitnessLibInitFn, WitnessManager};
 
 use crate::{
-    verify_constraints_proof, generate_vadcop_recursive1_proof, generate_vadcop_final_proof,
-    generate_vadcop_recursive2_proof, generate_recursivef_proof, generate_fflonk_snark_proof,
+    verify_proof, verify_basic_proofs, verify_constraints_proof, generate_vadcop_recursive1_proof,
+    generate_vadcop_final_proof, generate_vadcop_recursive2_proof, generate_recursivef_proof,
+    generate_fflonk_snark_proof,
 };
 
 use proofman_common::{
@@ -154,21 +155,28 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_PROOF);
 
         //Generate proves_out
-        let proves_out =
-            Self::get_proofs(&mut provers, pctx.clone(), sctx.clone(), output_dir_path.to_string_lossy().as_ref());
+        let proves_out = Self::get_proofs(&mut provers, pctx.clone(), output_dir_path.to_string_lossy().as_ref());
+
+        let mut valid_proofs = false;
+        if !pctx.options.aggregation {
+            valid_proofs = verify_basic_proofs(&mut provers, proves_out.clone(), pctx.clone(), sctx.clone());
+        }
 
         Self::free_provers(&mut provers);
 
         if !pctx.options.aggregation {
-            return Ok(());
+            if valid_proofs {
+                return Ok(());
+            } else {
+                return Err("Basic proofs were not verified".into());
+            }
         }
 
         info!("{}: ··· Generating aggregated proofs", Self::MY_NAME);
-
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         let recursive1_proofs =
-            generate_vadcop_recursive1_proof(&pctx, setups.clone(), &proves_out, output_dir_path.clone(), false)?;
+            generate_vadcop_recursive1_proof(&pctx, setups.clone(), &proves_out, output_dir_path.clone())?;
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         info!("{}: Compressor and recursive1 proofs generated successfully", Self::MY_NAME);
 
@@ -180,20 +188,16 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             sctx_recursive2.as_ref().unwrap().clone(),
             &recursive1_proofs,
             output_dir_path.clone(),
-            false,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
         info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
 
         pctx.dctx.read().unwrap().barrier();
         if mpi_rank == 0 {
+            let setup_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
             timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
-            let final_proof = generate_vadcop_final_proof(
-                &pctx,
-                setups.setup_vadcop_final.as_ref().unwrap().clone(),
-                recursive2_proof,
-                output_dir_path.clone(),
-            )?;
+            let final_proof =
+                generate_vadcop_final_proof(&pctx, setup_final.clone(), recursive2_proof, output_dir_path.clone())?;
             timer_stop_and_log_info!(GENERATING_VADCOP_FINAL_PROOF);
             info!("{}: VadcopFinal proof generated successfully", Self::MY_NAME);
 
@@ -212,6 +216,37 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
                 let _ = generate_fflonk_snark_proof(&pctx, recursivef_proof, output_dir_path.clone());
                 timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
+            } else {
+                let setup_path = pctx.global_info.get_setup_path("vadcop_final");
+                let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
+                let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
+                let verkey_path = setup_path.display().to_string() + ".verkey.json";
+
+                timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
+                valid_proofs = verify_proof(
+                    final_proof,
+                    stark_info_path,
+                    expressions_bin_path,
+                    verkey_path,
+                    Some(pctx.get_publics().clone()),
+                    None,
+                    None,
+                );
+                timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
+                if !valid_proofs {
+                    log::info!(
+                        "{}: ··· {}",
+                        Self::MY_NAME,
+                        "\u{2717} Vadcop Final proof was not verified".bright_red().bold()
+                    );
+                    return Err("Vadcop Final proof was not verified".into());
+                } else {
+                    log::info!(
+                        "{}:     {}",
+                        Self::MY_NAME,
+                        "\u{2713} Vadcop Final proof was verified".bright_green().bold()
+                    );
+                }
             }
         }
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
@@ -597,23 +632,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     fn get_proofs(
         provers: &mut [Box<dyn Prover<F>>],
         proof_ctx: Arc<ProofCtx<F>>,
-        setup_ctx: Arc<SetupCtx>,
         output_dir: &str,
     ) -> Vec<*mut c_void> {
         timer_start_info!(GET_PROOFS);
         let mut proofs = Vec::new();
-        let mut stark_infos = Vec::new();
 
         for prover in provers.iter_mut() {
             let proof = prover.get_proof();
-
-            let prover_info = prover.get_prover_info();
-
-            let setup = setup_ctx.get_setup(prover_info.airgroup_id, prover_info.air_id);
-            let stark_info = setup.p_setup.p_stark_info;
-
             proofs.push(proof);
-            stark_infos.push(stark_info);
         }
 
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
@@ -625,27 +651,33 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let proves = vec![std::ptr::null_mut(); proofs.len()];
 
+        let proofs_dir = match proof_ctx.options.debug_info.save_proofs_to_file {
+            true => output_dir,
+            false => "",
+        };
+
         fri_proof_get_zkinproofs_c(
             proofs.len() as u64,
             proves.as_ptr() as *mut *mut c_void,
             proofs.as_ptr() as *mut *mut c_void,
-            stark_infos.as_ptr() as *mut *mut c_void,
             publics_ptr,
             proof_values_ptr,
             challenges_ptr,
             global_info_file,
-            output_dir,
+            proofs_dir,
         );
 
-        let n_publics = proof_ctx.global_info.n_publics as u64;
-
-        save_publics_c(n_publics, publics_ptr, output_dir);
-
-        save_proof_values_c(proof_values_ptr, global_info_file, output_dir);
-
-        save_challenges_c(challenges_ptr, global_info_file, output_dir);
-
         timer_stop_and_log_info!(GET_PROOFS);
+
+        if proof_ctx.options.debug_info.save_proofs_to_file {
+            let n_publics = proof_ctx.global_info.n_publics as u64;
+
+            save_publics_c(n_publics, proof_ctx.get_publics_ptr(), output_dir);
+
+            save_proof_values_c(proof_ctx.get_proof_values_ptr(), global_info_file, output_dir);
+
+            save_challenges_c(proof_ctx.get_challenges_ptr(), global_info_file, output_dir);
+        }
 
         proves
     }

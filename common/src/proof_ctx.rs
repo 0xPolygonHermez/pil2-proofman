@@ -41,11 +41,17 @@ pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,
     pub std_mode: StdMode,
+    pub save_proofs_to_file: bool,
 }
 
 impl DebugInfo {
     pub fn new_debug() -> Self {
-        Self { debug_instances: HashMap::new(), debug_global_instances: Vec::new(), std_mode: StdMode::new_debug() }
+        Self {
+            debug_instances: HashMap::new(),
+            debug_global_instances: Vec::new(),
+            std_mode: StdMode::new_debug(),
+            save_proofs_to_file: true,
+        }
     }
 }
 impl ProofOptions {
@@ -221,6 +227,10 @@ impl<F: Field> ProofCtx<F> {
     pub fn get_publics_ptr(&self) -> *mut u8 {
         let guard = &self.public_inputs.values.read().unwrap();
         guard.as_ptr() as *mut u8
+    }
+
+    pub fn get_challenges(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
+        self.challenges.values.write().unwrap()
     }
 
     pub fn get_challenges_ptr(&self) -> *mut u8 {

@@ -142,6 +142,64 @@ void MerkleTreeBN128::genMerkleProof(RawFr::Element *proof, uint64_t idx, uint64
     genMerkleProof(&proof[arity], nextIdx, offset + nextN * arity, nextN);
 }
 
+void MerkleTreeBN128::linearHash(RawFr::Element* result, Goldilocks::Element* values)
+{
+    if (width > 4)
+    {
+        uint64_t widthRawFrElements = ceil((double)width / FIELD_EXTENSION);
+        RawFr::Element buff[widthRawFrElements]; 
+
+        uint64_t nElementsGL = (width > FIELD_EXTENSION + 1) ? ceil((double)width / FIELD_EXTENSION) : 0;
+        for (uint64_t j = 0; j < nElementsGL; j++)
+        {
+            uint64_t pending = width - j * FIELD_EXTENSION;
+            uint64_t batch;
+            (pending >= FIELD_EXTENSION) ? batch = FIELD_EXTENSION : batch = pending;
+            for (uint64_t k = 0; k < batch; k++)
+            {
+                buff[j].v[k] = Goldilocks::toU64(values[j * FIELD_EXTENSION + k]);
+            }
+            RawFr::field.toMontgomery(buff[j], buff[j]);
+        }
+
+        uint pending = nElementsGL;
+        Poseidon_opt p;
+        std::vector<RawFr::Element> elements(arity + 1);
+        while (pending > 0)
+        {
+            std::memset(&elements[0], 0, (arity + 1) * sizeof(RawFr::Element));
+            if (pending >= arity)
+            {
+                std::memcpy(&elements[1], &buff[nElementsGL - pending], arity * sizeof(RawFr::Element));
+                std::memcpy(&elements[0], &result[0], sizeof(RawFr::Element));
+                p.hash(elements, &result[0]);
+                pending = pending - arity;
+            }
+            else if(custom) 
+            {
+                std::memcpy(&elements[1], &buff[nElementsGL - pending], pending * sizeof(RawFr::Element));
+                std::memcpy(&elements[0], &result[0], sizeof(RawFr::Element));
+                p.hash(elements, &result[0]);
+                pending = 0;
+            }
+            else
+            {
+                std::vector<RawFr::Element> elements_last(pending + 1);
+                std::memcpy(&elements_last[1], &buff[nElementsGL - pending], pending * sizeof(RawFr::Element));
+                std::memcpy(&elements_last[0], &result[0], sizeof(RawFr::Element));
+                p.hash(elements_last, &result[0]);
+                pending = 0;
+            }
+        } 
+    } else {
+        for (uint64_t k = 0; k < width; k++)
+        {
+            result[0].v[k] = Goldilocks::toU64(values[k]);
+        }
+        RawFr::field.toMontgomery(result[0], result[0]);
+    }
+}
+
 /*
  * LinearHash BN128
  */
@@ -217,6 +275,45 @@ void MerkleTreeBN128::linearHash()
         }
     }
 }
+
+void MerkleTreeBN128::calculateRootFromProof(RawFr::Element *value, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, uint64_t offset) {
+    if(offset == mp.size()) return;
+
+    uint64_t nBitsArity = std::ceil(std::log2(arity));
+
+    uint64_t currIdx = idx & (arity - 1);
+    uint64_t nextIdx = idx >> nBitsArity;
+
+    Poseidon_opt p;
+    std::vector<RawFr::Element> elements(arity + 1);
+    std::memset(&elements[0], 0, (arity + 1) * sizeof(RawFr::Element));
+
+    for(uint64_t i = 0; i < arity; ++i) {
+        std::memcpy(&elements[i], &mp[offset][i], sizeof(RawFr::Element));
+    }
+
+    std::memcpy(&elements[currIdx], &value[0], sizeof(RawFr::Element));
+    p.hash(elements, &value[0]);
+
+    calculateRootFromProof(value, mp, nextIdx, offset + 1);
+
+}
+
+
+bool MerkleTreeBN128::verifyGroupProof(RawFr::Element* root, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v) {
+    RawFr::Element value[1];
+    value[0] = RawFr::field.zero();
+
+    linearHash(value, v.data());
+
+    calculateRootFromProof(&value[0], mp, idx, 0);
+
+    if (RawFr::field.eq(root[0], value[0])) {
+        return false;
+    }
+    return true;
+}
+
 
 void MerkleTreeBN128::merkelize()
 {

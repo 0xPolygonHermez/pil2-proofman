@@ -12,7 +12,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     setupCtx.starkInfo.addMemoryRecursive();
     
-    Goldilocks::Element *trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
+    Goldilocks::Element *aux_trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
 
 #ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
@@ -31,8 +31,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     
     vector<bool> airgroupValuesCalculated(setupCtx.starkInfo.airgroupValuesMap.size(), false);
     StepsParams params = {
-        witness,
-        trace,
+        trace: witness,
+        aux_trace,
         publicInputs : publicInputs,
         proofValues: nullptr,
         challenges : challenges,
@@ -41,6 +41,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         xDivXSub : nullptr,
         pConstPolsAddress: pConstPols,
         pConstPolsExtendedTreeAddress: pConstTree,
+        pCustomCommits:  {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
+        pCustomCommitsExtended:  {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
     };
 
     //--------------------------------
@@ -237,16 +239,11 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     delete[] challenges;
     delete[] evals;
-    delete[] trace;
+    delete[] aux_trace;
 
-    nlohmann::json jProof = proof.proof.proof2json();
-    nlohmann::json zkin = proof2zkinStark(jProof, setupCtx.starkInfo);
-
-    if(!proofFile.empty()) {
-        json2file(jProof, proofFile);
-    }
-
-    TimerStopAndLog(STARK_PROOF);
+    nlohmann::json zkin = proof.proof.proof2json();
+    
+TimerStopAndLog(STARK_PROOF);
 
     if(vadcop) {
         zkin = publics2zkin(zkin, publicInputs, globalInfo, airgroupId);
@@ -255,6 +252,12 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
             zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
         }
-    }        
+    }
+
+    if(!proofFile.empty()) {
+        json2file(zkin, proofFile);
+    }
+    
+
     return (void *) new nlohmann::json(zkin);
 }

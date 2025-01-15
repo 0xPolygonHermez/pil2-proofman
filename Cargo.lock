@@ -800,6 +800,7 @@ dependencies = [
  "proofman-hints",
  "proofman-starks-lib-c",
  "proofman-util",
+ "rayon",
  "serde_json",
  "stark",
  "transcript",
@@ -820,8 +821,10 @@ dependencies = [
  "pilout",
  "proofman",
  "proofman-common",
+ "proofman-starks-lib-c",
  "proofman-util",
  "serde",
+ "serde_json",
  "tinytemplate",
 ]
 

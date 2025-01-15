@@ -8,6 +8,7 @@
 #include "logger.hpp"
 #include <filesystem>
 #include "setup_ctx.hpp"
+#include "stark_verify.hpp"
 #include "exec_file.hpp"
 #include "final_snark_proof.hpp"
 
@@ -101,7 +102,7 @@ void fri_proof_set_airvalues(void *pFriProof, void *airValues)
     friProof->proof.setAirValues((Goldilocks::Element *)airValues);
 }
 
-void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs, void **starkInfos, void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, char *fileDir) {
+void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs, void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, char *fileDir) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
@@ -134,9 +135,7 @@ void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs
 #pragma omp parallel for
     for(uint64_t i = 0; i < nProofs; ++i) {
         FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProofs[i];
-        StarkInfo &starkInfo = *(StarkInfo *)starkInfos[i];
-        nlohmann::json jProof = friProof->proof.proof2json();
-        nlohmann::json zkin = proof2zkinStark(jProof, starkInfo);
+        nlohmann::json zkin = friProof->proof.proof2json();
 
         zkin["publics"] = j["publics"];
         zkin["proofvalues"] = j["proofvalues"];
@@ -153,8 +152,7 @@ void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs
             if (!std::filesystem::exists(string(fileDir) + "/proofs")) {
                 std::filesystem::create_directory(string(fileDir) + "/proofs");
             }
-            json2file(jProof, string(fileDir) + "/proofs/proof_" + proofName + ".json");
-            json2file(zkin, string(fileDir) + "/zkin/proof_" + proofName + "_zkin.json");
+            json2file(zkin, string(fileDir) + "/proofs/proof_" + proofName + ".json");
         }
 
         proofs[i] = (void *) new nlohmann::json(zkin);
@@ -162,29 +160,27 @@ void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs
 }
 
 
-void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, void *pStarkInfo, char* globalInfoFile, char *fileDir)
+void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, char* globalInfoFile, char *fileDir)
 {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
     
-    auto starkInfo = *((StarkInfo *)pStarkInfo);
     FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
-    nlohmann::json jProof = friProof->proof.proof2json();
-    nlohmann::json zkin = proof2zkinStark(jProof, starkInfo);
+    nlohmann::json zkin = friProof->proof.proof2json();
 
     Goldilocks::Element *publics = (Goldilocks::Element *)pPublics;
     Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
     Goldilocks::Element *proofValues = (Goldilocks::Element *)pProofValues;
 
-    for (uint64_t i = 0; i < starkInfo.nPublics; i++)
+    for (uint64_t i = 0; i < globalInfo["nPublics"]; i++)
     {
         zkin["publics"][i] = Goldilocks::toString(publics[i]);
     }
 
     uint64_t p = 0;
-    for (uint64_t i = 0; i < starkInfo.proofValuesMap.size(); i++)
+    for (uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); i++)
     {
-        if(starkInfo.proofValuesMap[i].stage == 1) {
+        if(globalInfo["proofValuesMap"][i]["stage"] == 1) {
             zkin["proofvalues"][i][0] = Goldilocks::toString(proofValues[p++]);
             zkin["proofvalues"][i][1] = "0";
             zkin["proofvalues"][i][2] = "0";
@@ -204,18 +200,15 @@ void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges
 
     // Save output to file
     if(!string(fileDir).empty()) {
-        if (!std::filesystem::exists(string(fileDir) + "/zkin")) {
-            std::filesystem::create_directory(string(fileDir) + "/zkin");
-        }
         if (!std::filesystem::exists(string(fileDir) + "/proofs")) {
             std::filesystem::create_directory(string(fileDir) + "/proofs");
         }
-        json2file(jProof, string(fileDir) + "/proofs/proof_" + proofName + ".json");
-        json2file(zkin, string(fileDir) + "/zkin/proof_" + proofName + "_zkin.json");
+        json2file(zkin, string(fileDir) + "/proofs/proof_" + proofName + ".json");
     }
 
     return (void *) new nlohmann::json(zkin);    
 }
+
 void fri_proof_free_zkinproof(void *pZkinProof){
     nlohmann::json* zkin = (nlohmann::json*) pZkinProof;
     delete zkin;
@@ -257,9 +250,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename)
+void *stark_info_new(char *filename, bool verify)
 {
-    auto starkInfo = new StarkInfo(filename);
+    auto starkInfo = new StarkInfo(filename, verify);
 
     return starkInfo;
 }
@@ -329,9 +322,9 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
 // Expressions Bin
 // ========================================================================================
-void *expressions_bin_new(char* filename, bool global)
+void *expressions_bin_new(char* filename, bool global, bool verifier)
 {
-    auto expressionsBin = new ExpressionsBin(filename, global);
+    auto expressionsBin = new ExpressionsBin(filename, global, verifier);
 
     return expressionsBin;
 };
@@ -807,4 +800,18 @@ void setLogLevel(uint64_t level) {
     }
 
     Logger::getInstance(LOG_TYPE::CONSOLE)->updateLogLevel((LOG_LEVEL)new_level);
+}
+
+
+// Stark Verify
+// =================================================================================
+bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
+    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
+    bool vadcop = challenges == nullptr ? false : true;
+    StarkInfo starkInfo = *((StarkInfo *)pStarkInfo);
+    if (starkInfo.starkStruct.verificationHashType == "GL") {
+        return starkVerify<Goldilocks::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    } else {
+        return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    }
 }

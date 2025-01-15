@@ -21,7 +21,7 @@ libloading = "0.8.4"
 colored = "3"
 mpi = { version = "0.8.0", optional = true }
 serde_json = "1.0.68"
-
+rayon = "1.7"
 
 [features]
 default = []

@@ -47,7 +47,7 @@ public:
 
     void getGroupProof(Goldilocks::Element *proof, uint64_t idx);
     
-    bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<std::vector<Goldilocks::Element>> &v);
+    bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
 
     void merkelize();
 

@@ -77,9 +77,9 @@ impl Setup {
                 let stark_info_json = std::fs::read_to_string(&stark_info_path)
                     .unwrap_or_else(|_| panic!("Failed to read file {}", &stark_info_path));
                 let stark_info = StarkInfo::from_json(&stark_info_json);
-                let p_stark_info = stark_info_new_c(stark_info_path.as_str());
+                let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false);
                 let prover_buffer_size = get_map_totaln_c(p_stark_info);
-                let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false);
+                let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
                 let pil1 = &ProofType::Basic != setup_type;
                 let prover_helpers = prover_helpers_new_c(p_stark_info, pil1);
 

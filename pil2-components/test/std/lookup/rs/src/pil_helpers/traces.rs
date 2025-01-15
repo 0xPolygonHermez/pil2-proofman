@@ -4,6 +4,8 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+use std::fmt;
+
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
@@ -51,3 +53,27 @@ trace!(Lookup2_15Trace<F> {
 trace!(Lookup3Trace<F> {
  c1: F, d1: F, c2: F, d2: F, mul1: F, mul2: F,
 },  0, 5, 16384 );
+
+values!(Lookup0AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(Lookup1AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(Lookup2_12AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(Lookup2_13AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(Lookup2_15AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(Lookup3AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});

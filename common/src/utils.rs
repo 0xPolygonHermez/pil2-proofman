@@ -207,5 +207,10 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         )
     };
 
-    DebugInfo { debug_instances: airgroup_map.clone(), debug_global_instances: global_constraints, std_mode }
+    DebugInfo {
+        debug_instances: airgroup_map.clone(),
+        debug_global_instances: global_constraints,
+        std_mode,
+        save_proofs_to_file: true,
+    }
 }
