@@ -481,9 +481,9 @@ pub fn starks_free_c(p_stark: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn free_provers_c(n_proofs: u64, p_starks: *mut *mut c_void, p_proofs: *mut *mut c_void) {
+pub fn free_provers_c(n_proofs: u64, p_starks: *mut *mut c_void, p_proofs: *mut *mut c_void, background: bool) {
     unsafe {
-        proofs_free(n_proofs, p_starks, p_proofs);
+        proofs_free(n_proofs, p_starks, p_proofs, background);
     }
 }
 
@@ -1233,7 +1233,7 @@ pub fn fri_proof_free_c(_p_fri_proof: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn free_provers_c(_n_proofs: u64, _p_starks: *mut *mut c_void, _fri_proofs: *mut *mut c_void) {
+pub fn free_provers_c(_n_proofs: u64, _p_starks: *mut *mut c_void, _fri_proofs: *mut *mut c_void, _background: bool) {
     trace!("{}: ··· {}", "ffi     ", "proofs_free: This is a mock call because there is no linked library");
 }
 

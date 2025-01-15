@@ -78,11 +78,12 @@ extern "C" {
     pub fn fri_proof_free(pFriProof: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z11proofs_freemPPvS0_"]
+    #[link_name = "\u{1}_Z11proofs_freemPPvS0_b"]
     pub fn proofs_free(
         nProofs: u64,
         pStarks: *mut *mut ::std::os::raw::c_void,
         pFriProofs: *mut *mut ::std::os::raw::c_void,
+        background: bool,
     );
 }
 extern "C" {

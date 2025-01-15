@@ -274,6 +274,10 @@ impl<F: Field> AirInstance<F> {
     }
 
     pub fn clear_trace(&mut self) {
-        self.trace = Vec::new();
+        self.trace.clear();
+    }
+
+    pub fn clear_custom_commits_trace(&mut self) {
+        self.custom_commits.clear();
     }
 }

@@ -126,6 +126,14 @@ impl<F: Field> ProofCtx<F> {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
 
+    pub fn free_instances(&self) {
+        self.air_instance_repo.free();
+    }
+
+    pub fn free_traces(&self) {
+        self.air_instance_repo.free_traces();
+    }
+
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
         self.air_instance_repo.add_air_instance(air_instance, global_idx);
     }

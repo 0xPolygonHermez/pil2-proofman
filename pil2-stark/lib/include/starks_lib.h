@@ -19,7 +19,7 @@
     void fri_proof_free_zkinproof(void *pZkinProof);
     void fri_proof_free(void *pFriProof);
 
-    void proofs_free(uint64_t nProofs, void **pStarks, void **pFriProofs);
+    void proofs_free(uint64_t nProofs, void **pStarks, void **pFriProofs, bool background);
 
     // SetupCtx
     // ========================================================================================

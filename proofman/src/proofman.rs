@@ -58,6 +58,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             options.verify_constraints,
         )?;
 
+        timer_start_info!(PREPARING_PROOF);
         let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), options);
 
         let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
@@ -87,6 +88,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
 
         Self::initialize_fixed_pols(setups.clone(), pctx.clone(), true);
+
+        timer_stop_and_log_info!(PREPARING_PROOF);
 
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
@@ -143,6 +146,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             return verify_constraints_proof(pctx.clone(), sctx.clone(), &mut provers);
         }
 
+        let proof_ctx = pctx.clone();
+        std::thread::spawn(move || {
+            proof_ctx.free_traces();
+        });
+
         // Compute Quotient polynomial
         Self::get_challenges(num_commit_stages + 1, &mut provers, pctx.clone(), &transcript);
         Self::calculate_stage(num_commit_stages + 1, &mut provers, sctx.clone(), pctx.clone());
@@ -162,7 +170,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             valid_proofs = verify_basic_proofs(&mut provers, proves_out.clone(), pctx.clone(), sctx.clone());
         }
 
-        Self::free_provers(&mut provers);
+        Self::free_provers(&mut provers, pctx.clone());
 
         if !pctx.options.aggregation {
             if valid_proofs {
@@ -342,72 +350,88 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         if pctx.options.aggregation {
             info!("{}: Initializing setup fixed pols aggregation", Self::MY_NAME);
-            timer_start_info!(INITIALIZE_CONST_POLS_AGGREGATION);
 
-            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
-            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
             let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
             let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
 
-            timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
-            info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
-            let mut const_pols_calculated_compressor: HashMap<(usize, usize), bool> = HashMap::new();
+            let global_info_compressor = pctx.global_info.clone();
+            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
+            let instances_compressor = instances.clone();
+            let my_instances_compressor = my_instances.clone();
+            std::thread::spawn(move || {
+                info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
+                timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
+                let mut const_pols_calculated_compressor: HashMap<(usize, usize), bool> = HashMap::new();
 
-            for instance_id in my_instances.iter() {
-                let (airgroup_id, air_id) = instances[*instance_id];
-                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id)
-                    && !const_pols_calculated_compressor.contains_key(&(airgroup_id, air_id))
-                {
-                    let setup = sctx_compressor.get_setup(airgroup_id, air_id);
-                    setup.load_const_pols(&pctx.global_info, &ProofType::Compressor);
-                    setup.load_const_pols_tree(&pctx.global_info, &ProofType::Compressor, save_file);
-                    const_pols_calculated_compressor.insert((airgroup_id, air_id), true);
+                for instance_id in my_instances_compressor.iter() {
+                    let (airgroup_id, air_id) = instances_compressor[*instance_id];
+                    if global_info_compressor.get_air_has_compressor(airgroup_id, air_id)
+                        && !const_pols_calculated_compressor.contains_key(&(airgroup_id, air_id))
+                    {
+                        let setup = sctx_compressor.get_setup(airgroup_id, air_id);
+                        setup.load_const_pols(&global_info_compressor, &ProofType::Compressor);
+                        setup.load_const_pols_tree(&global_info_compressor, &ProofType::Compressor, save_file);
+                        const_pols_calculated_compressor.insert((airgroup_id, air_id), true);
+                    }
                 }
-            }
-            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
+                timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
+            });
 
-            timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
-            info!("{}: ··· Initializing setup fixed pols recursive1", Self::MY_NAME);
-            let mut const_pols_calculated_recursive1: HashMap<(usize, usize), bool> = HashMap::new();
-            for instance_id in my_instances.iter() {
-                let (airgroup_id, air_id) = instances[*instance_id];
-                const_pols_calculated_recursive1.entry((airgroup_id, air_id)).or_insert_with(|| {
-                    let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
-                    setup.load_const_pols(&pctx.global_info, &ProofType::Recursive1);
-                    setup.load_const_pols_tree(&pctx.global_info, &ProofType::Recursive1, save_file);
-                    true
-                });
-            }
-            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
+            let global_info_recursive1 = pctx.global_info.clone();
+            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
+            let instances_recursive1 = instances.clone();
+            let my_instances_recursive1 = my_instances.clone();
+            std::thread::spawn(move || {
+                timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
+                info!("{}: ··· Initializing setup fixed pols recursive1", Self::MY_NAME);
+                let mut const_pols_calculated_recursive1: HashMap<(usize, usize), bool> = HashMap::new();
+                for instance_id in my_instances_recursive1.iter() {
+                    let (airgroup_id, air_id) = instances_recursive1[*instance_id];
+                    const_pols_calculated_recursive1.entry((airgroup_id, air_id)).or_insert_with(|| {
+                        let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
+                        setup.load_const_pols(&global_info_recursive1, &ProofType::Recursive1);
+                        setup.load_const_pols_tree(&global_info_recursive1, &ProofType::Recursive1, save_file);
+                        true
+                    });
+                }
+                timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
+            });
 
-            timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
-            info!("{}: ··· Initializing setup fixed pols recursive2", Self::MY_NAME);
-            let n_airgroups = pctx.global_info.air_groups.len();
-            for airgroup in 0..n_airgroups {
-                let setup = sctx_recursive2.get_setup(airgroup, 0);
-                setup.load_const_pols(&pctx.global_info, &ProofType::Recursive2);
-                setup.load_const_pols_tree(&pctx.global_info, &ProofType::Recursive2, save_file);
-            }
-            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
+            let global_info_recursive2 = pctx.global_info.clone();
+            std::thread::spawn(move || {
+                timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
+                info!("{}: ··· Initializing setup fixed pols recursive2", Self::MY_NAME);
+                let n_airgroups = global_info_recursive2.air_groups.len();
+                for airgroup in 0..n_airgroups {
+                    let setup = sctx_recursive2.get_setup(airgroup, 0);
+                    setup.load_const_pols(&global_info_recursive2, &ProofType::Recursive2);
+                    setup.load_const_pols_tree(&global_info_recursive2, &ProofType::Recursive2, save_file);
+                }
+                timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
+            });
 
             let dctx = pctx.dctx.read().unwrap();
             if dctx.rank == 0 {
-                timer_start_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
-                info!("{}: ··· Initializing setup fixed pols vadcop final", Self::MY_NAME);
-                setup_vadcop_final.load_const_pols(&pctx.global_info, &ProofType::VadcopFinal);
-                setup_vadcop_final.load_const_pols_tree(&pctx.global_info, &ProofType::VadcopFinal, save_file);
-                timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
-
+                let global_info = pctx.global_info.clone();
+                std::thread::spawn(move || {
+                    timer_start_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
+                    info!("{}: ··· Initializing setup fixed pols vadcop final", Self::MY_NAME);
+                    setup_vadcop_final.load_const_pols(&global_info, &ProofType::VadcopFinal);
+                    setup_vadcop_final.load_const_pols_tree(&global_info, &ProofType::VadcopFinal, save_file);
+                    timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
+                });
                 if pctx.options.final_snark {
-                    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
-                    timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
-                    info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
-                    setup_recursivef.load_const_pols(&pctx.global_info, &ProofType::RecursiveF);
-                    setup_recursivef.load_const_pols_tree(&pctx.global_info, &ProofType::RecursiveF, save_file);
-                    timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+                    let global_info = pctx.global_info.clone();
+                    std::thread::spawn(move || {
+                        let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
+                        timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+                        info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
+                        setup_recursivef.load_const_pols(&global_info, &ProofType::RecursiveF);
+                        setup_recursivef.load_const_pols_tree(&global_info, &ProofType::RecursiveF, save_file);
+                        timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+                    });
                 }
             }
-            timer_stop_and_log_info!(INITIALIZE_CONST_POLS_AGGREGATION);
         }
     }
 
@@ -682,7 +706,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         proves
     }
 
-    fn free_provers(provers: &mut [Box<dyn Prover<F>>]) {
+    fn free_provers(provers: &mut [Box<dyn Prover<F>>], pctx: Arc<ProofCtx<F>>) {
         let mut proofs = Vec::new();
         let mut starks = Vec::new();
 
@@ -693,7 +717,20 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let n_proofs = provers.len() as u64;
 
-        free_provers_c(n_proofs, starks.as_ptr() as *mut *mut c_void, proofs.as_ptr() as *mut *mut c_void);
+        free_provers_c(
+            n_proofs,
+            starks.as_ptr() as *mut *mut c_void,
+            proofs.as_ptr() as *mut *mut c_void,
+            pctx.options.aggregation,
+        );
+
+        if pctx.options.aggregation {
+            std::thread::spawn(move || {
+                pctx.free_instances();
+            });
+        } else {
+            pctx.free_instances();
+        }
     }
 
     fn print_global_summary(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {

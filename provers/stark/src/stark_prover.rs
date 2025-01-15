@@ -242,10 +242,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
         let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
 
-        if stage_id == self.num_stages() {
-            air_instance.clear_trace();
-        }
-
         let p_stark = self.p_stark;
         let p_proof = self.p_proof;
 
@@ -325,10 +321,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn commit_custom_commits_stage(&mut self, stage_id: u32, proof_ctx: Arc<ProofCtx<F>>) -> Vec<u64> {
         let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
         let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
-
-        if stage_id == self.num_stages() {
-            air_instance.clear_trace();
-        }
 
         let p_stark = self.p_stark;
         let p_proof = self.p_proof;

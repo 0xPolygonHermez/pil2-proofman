@@ -220,16 +220,23 @@ void fri_proof_free(void *pFriProof)
     delete friProof;
 }
 
-void proofs_free(uint64_t nProofs, void **pStarks, void **pFriProofs) {
+void proofs_free(uint64_t nProofs, void **pStarks, void **pFriProofs, bool background) {
+    std::vector<std::thread> threads;
 
     for (uint64_t i = 0; i < nProofs; ++i) {
-        std::thread([i, pStarks, pFriProofs]() {
+        auto thread = std::thread([i, pStarks, pFriProofs]() {
             FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProofs[i];
             Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks[i];
 
             delete friProof;
             delete starks;
-        }).detach();
+        });
+        if(background) {
+            thread.detach();
+        } else {
+            thread.join();
+        }
+        
     }
 }
 
