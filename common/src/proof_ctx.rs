@@ -159,7 +159,7 @@ impl<F: Field> ProofCtx<F> {
         dctx.assign_instances();
     }
 
-    pub fn dctx_set_balance_distribution(&self, balance : bool) {
+    pub fn dctx_set_balance_distribution(&self, balance: bool) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.set_balande_distribution(balance);
     }

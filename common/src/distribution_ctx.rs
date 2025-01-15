@@ -182,7 +182,6 @@ impl DistributionCtx {
     }
 
     pub fn assign_instances(&mut self) {
-
         if self.balance_distribuiton {
             // Sort the unassigned instances by weight
             let mut unassigned_instances = Vec::new();
@@ -216,8 +215,7 @@ impl DistributionCtx {
                     self.my_instances.push(idx);
                 }
             }
-        }else{
-            
+        } else {
             for (idx, instance) in self.instances_owner.iter_mut().enumerate() {
                 let (ref mut owner, ref mut count, ref mut weight) = *instance;
                 if *owner == -1 {
@@ -231,23 +229,22 @@ impl DistributionCtx {
                     }
                 }
             }
-
-        }   
+        }
     }
 
     // Returns the maximum weight deviation from the average weight
     // This is calculated as the maximum weight divided by the average weight
-    pub fn load_balance_info(&self) -> ( f64, u64, u64, f64) {
+    pub fn load_balance_info(&self) -> (f64, u64, u64, f64) {
         let mut average_weight = 0.0;
-        let mut max_weight=0;
-        let mut min_weight= u64::MAX;
+        let mut max_weight = 0;
+        let mut min_weight = u64::MAX;
         for i in 0..self.n_processes as usize {
             average_weight += self.owners_weight[i] as f64;
-            if self.owners_weight[i]>max_weight {
-                max_weight=self.owners_weight[i];
+            if self.owners_weight[i] > max_weight {
+                max_weight = self.owners_weight[i];
             }
-            if self.owners_weight[i]<min_weight{
-                min_weight=self.owners_weight[i];
+            if self.owners_weight[i] < min_weight {
+                min_weight = self.owners_weight[i];
             }
         }
         average_weight /= self.n_processes as f64;

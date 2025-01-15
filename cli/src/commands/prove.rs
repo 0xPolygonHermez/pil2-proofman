@@ -65,10 +65,10 @@ impl ProveCmd {
         if Path::new(&self.output_dir.join("proofs")).exists() {
             // In distributeds mode two different processes may enter here at the same time and try to remove the same directory
             if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                panic!("Failed to remove the proofs directory: {:?}", e);
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    panic!("Failed to remove the proofs directory: {:?}", e);
+                }
             }
-}
         }
 
         if let Err(e) = fs::create_dir_all(self.output_dir.join("proofs")) {
