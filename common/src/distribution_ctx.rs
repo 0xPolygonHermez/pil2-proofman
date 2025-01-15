@@ -163,7 +163,7 @@ impl DistributionCtx {
         self.instances.push((airgroup_id, air_id));
         self.instances_owner.push((owner, self.owners_count[owner as usize] as usize, weight));
         self.owners_count[owner as usize] += 1;
-        self.owners_weight[owner as usize] += weight as u64;
+        self.owners_weight[owner as usize] += weight;
 
         if owner == self.rank {
             self.my_instances.push(self.n_instances);
@@ -481,11 +481,11 @@ impl DistributionCtx {
                         }
                     }
                 }
-                self.world.process_at_rank(_owner as i32).send(&packed_multiplicities[..]);
+                self.world.process_at_rank(_owner).send(&packed_multiplicities[..]);
             } else {
                 let mut packed_multiplicities: Vec<u32> = vec![0; buff_size * 2];
                 for i in 0..self.n_processes {
-                    if i != _owner as i32 {
+                    if i != _owner {
                         self.world.process_at_rank(i).receive_into(&mut packed_multiplicities);
 
                         // Read counters
