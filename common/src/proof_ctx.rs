@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{SetupCtx, distribution_ctx::DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
+use crate::{
+    SetupCtx, distribution_ctx::DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode,
+};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -107,7 +109,8 @@ impl<F: Field> ProofCtx<F> {
                     .iter()
                     .filter(|(key, _)| *key != "const")
                     .map(|(_, value)| *value)
-                    .sum::<u64>()) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                    .sum::<u64>())
+                    * (1 << (setup.stark_info.stark_struct.n_bits_ext));
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
@@ -116,7 +119,7 @@ impl<F: Field> ProofCtx<F> {
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
-    
+
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
         self.air_instance_repo.add_air_instance(air_instance, global_idx);
     }

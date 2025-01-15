@@ -65,7 +65,7 @@ impl<F: Field> StarkProver<F> {
 
         let p_stark_info = setup.p_setup.p_stark_info;
 
-        let p_proof = fri_proof_new_c((&setup.p_setup).into());
+        let p_proof = fri_proof_new_c((&setup.p_setup).into(), air_instance_id as u64);
 
         Self {
             global_idx,
@@ -618,12 +618,13 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         self.p_proof
     }
 
+    fn get_stark(&self) -> *mut c_void {
+        self.p_stark
+    }
+
     fn get_zkin_proof(&self, proof_ctx: Arc<ProofCtx<F>>, output_dir: &str) -> *mut c_void {
         let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
-
-        let proof_name =
-            format!("{}_{}", proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name, self.air_instance_id);
 
         fri_proof_get_zkinproof_c(
             self.p_proof,
@@ -631,7 +632,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             proof_ctx.get_challenges_ptr(),
             proof_ctx.get_proof_values_ptr(),
             self.p_stark_info,
-            &proof_name,
             global_info_file,
             output_dir,
         )

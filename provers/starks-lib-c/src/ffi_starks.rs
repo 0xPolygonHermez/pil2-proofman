@@ -55,8 +55,8 @@ pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn fri_proof_new_c(p_setup_ctx: *mut c_void) -> *mut c_void {
-    unsafe { fri_proof_new(p_setup_ctx) }
+pub fn fri_proof_new_c(p_setup_ctx: *mut c_void, instance_id: u64) -> *mut c_void {
+    unsafe { fri_proof_new(p_setup_ctx, instance_id) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -78,13 +78,46 @@ pub fn fri_proof_set_air_values_c(p_fri_proof: *mut c_void, p_air_values: *mut u
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
+pub fn fri_proof_get_zkinproofs_c(
+    n_proofs: u64,
+    proofs: *mut *mut c_void,
+    fri_proofs: *mut *mut c_void,
+    stark_infos: *mut *mut c_void,
+    p_publics: *mut u8,
+    p_proof_values: *mut u8,
+    p_challenges: *mut u8,
+    global_info_file: &str,
+    output_dir_file: &str,
+) {
+    let global_info_file_name = CString::new(global_info_file).unwrap();
+    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let file_dir = CString::new(output_dir_file).unwrap();
+    let file_ptr = file_dir.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        fri_proof_get_zkinproofs(
+            n_proofs,
+            proofs,
+            fri_proofs,
+            stark_infos,
+            p_publics as *mut std::os::raw::c_void,
+            p_proof_values as *mut std::os::raw::c_void,
+            p_challenges as *mut std::os::raw::c_void,
+            global_info_file_ptr,
+            file_ptr,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn fri_proof_get_zkinproof_c(
     p_fri_proof: *mut c_void,
     p_publics: *mut u8,
     p_challenges: *mut u8,
     p_proof_values: *mut u8,
     p_stark_info: *mut c_void,
-    proof_name: &str,
     global_info_file: &str,
     output_dir_file: &str,
 ) -> *mut c_void {
@@ -94,9 +127,6 @@ pub fn fri_proof_get_zkinproof_c(
     let file_dir = CString::new(output_dir_file).unwrap();
     let file_ptr = file_dir.as_ptr() as *mut std::os::raw::c_char;
 
-    let proof_name = CString::new(proof_name).unwrap();
-    let proof_name_ptr = proof_name.as_ptr() as *mut std::os::raw::c_char;
-
     unsafe {
         fri_proof_get_zkinproof(
             p_fri_proof,
@@ -104,7 +134,6 @@ pub fn fri_proof_get_zkinproof_c(
             p_challenges as *mut std::os::raw::c_void,
             p_proof_values as *mut std::os::raw::c_void,
             p_stark_info,
-            proof_name_ptr,
             global_info_file_ptr,
             file_ptr,
         )
@@ -452,6 +481,13 @@ pub fn starks_new_c(p_setup_ctx: *mut c_void, p_const_tree: *mut u8) -> *mut c_v
 pub fn starks_free_c(p_stark: *mut c_void) {
     unsafe {
         starks_free(p_stark);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn free_provers_c(n_proofs: u64, p_starks: *mut *mut c_void, p_proofs: *mut *mut c_void) {
+    unsafe {
+        proofs_free(n_proofs, p_starks, p_proofs);
     }
 }
 
@@ -1098,7 +1134,7 @@ pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _out
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn fri_proof_new_c(_p_setup_ctx: *mut c_void) -> *mut c_void {
+pub fn fri_proof_new_c(_p_setup_ctx: *mut c_void, _instance_id: u64) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "fri_proof_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -1129,13 +1165,32 @@ pub fn fri_proof_set_air_values_c(_p_fri_proof: *mut c_void, _p_params: *mut u8)
 
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
+pub fn fri_proof_get_zkinproofs_c(
+    _n_proofs: u64,
+    _proofs: *mut *mut c_void,
+    _fri_proofs: *mut *mut c_void,
+    _stark_infos: *mut *mut c_void,
+    _p_publics: *mut u8,
+    _p_proof_values: *mut u8,
+    _p_challenges: *mut u8,
+    _global_info_file: &str,
+    _output_dir_file: &str,
+) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "fri_proof_get_zkinproofs: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn fri_proof_get_zkinproof_c(
     _p_fri_proof: *mut c_void,
     _p_publics: *mut u8,
     _p_challenges: *mut u8,
     _p_proof_values: *mut u8,
     _p_stark_info: *mut c_void,
-    _proof_name: &str,
     _global_info_file: &str,
     _output_dir_file: &str,
 ) -> *mut c_void {
@@ -1155,6 +1210,11 @@ pub fn fri_proof_free_zkinproof_c(_p_fri_proof: *mut c_void) {
 #[cfg(feature = "no_lib_link")]
 pub fn fri_proof_free_c(_p_fri_proof: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "fri_proof_free: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn free_provers_c(_n_proofs: u64, _p_starks: *mut *mut c_void, _fri_proofs: *mut *mut c_void) {
+    trace!("{}: ··· {}", "ffi     ", "proofs_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
