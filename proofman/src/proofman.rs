@@ -69,7 +69,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let pctx = Arc::new(pctx);
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
-        
+
         timer_start_info!(GENERATING_WITNESS);
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path));
 
@@ -517,6 +517,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         transcript: &mut FFITranscript,
     ) {
         timer_start_debug!(CALCULATING_CHALLENGES);
+        if pctx.options.verify_constraints {
+            let dummy_elements = [F::zero(), F::one(), F::two(), F::neg_one()];
+            transcript.add_elements(dummy_elements.as_ptr() as *mut u8, 4);
+            return;
+        }
+
         if stage == 1 {
             transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
         }
@@ -543,24 +549,19 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         // add challenges to transcript in order
         for group_idxs in dctx.my_groups.iter() {
-            if pctx.options.verify_constraints {
-                let dummy_elements = [F::zero(), F::one(), F::two(), F::neg_one()];
-                transcript.add_elements(dummy_elements.as_ptr() as *mut u8, 4);
-            } else {
-                let mut values = Vec::new();
-                for idx in group_idxs.iter() {
-                    let value = vec![
-                        F::from_wrapped_u64(all_roots[*idx]),
-                        F::from_wrapped_u64(all_roots[*idx + 1]),
-                        F::from_wrapped_u64(all_roots[*idx + 2]),
-                        F::from_wrapped_u64(all_roots[*idx + 3]),
-                    ];
-                    values.push(value);
-                }
-                if !values.is_empty() {
-                    let value = Self::hash_b_tree(&*provers[0], values);
-                    transcript.add_elements(value.as_ptr() as *mut u8, value.len());
-                }
+            let mut values = Vec::new();
+            for idx in group_idxs.iter() {
+                let value = vec![
+                    F::from_wrapped_u64(all_roots[*idx]),
+                    F::from_wrapped_u64(all_roots[*idx + 1]),
+                    F::from_wrapped_u64(all_roots[*idx + 2]),
+                    F::from_wrapped_u64(all_roots[*idx + 3]),
+                ];
+                values.push(value);
+            }
+            if !values.is_empty() {
+                let value = Self::hash_b_tree(&*provers[0], values);
+                transcript.add_elements(value.as_ptr() as *mut u8, value.len());
             }
         }
         drop(dctx);
