@@ -638,7 +638,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             self.p_stark_info,
             &proof_name,
             global_info_file,
-            &proof_dir,
+            proof_dir,
         )
     }
 
