@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{SetupCtx, distribution_ctx::DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
+use crate::{
+    SetupCtx, distribution_ctx::DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode,
+};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -39,11 +41,17 @@ pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,
     pub std_mode: StdMode,
+    pub save_proofs_to_file: bool,
 }
 
 impl DebugInfo {
     pub fn new_debug() -> Self {
-        Self { debug_instances: HashMap::new(), debug_global_instances: Vec::new(), std_mode: StdMode::new_debug() }
+        Self {
+            debug_instances: HashMap::new(),
+            debug_global_instances: Vec::new(),
+            std_mode: StdMode::new_debug(),
+            save_proofs_to_file: true,
+        }
     }
 }
 impl ProofOptions {
@@ -107,7 +115,8 @@ impl<F: Field> ProofCtx<F> {
                     .iter()
                     .filter(|(key, _)| *key != "const")
                     .map(|(_, value)| *value)
-                    .sum::<u64>()) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                    .sum::<u64>())
+                    * (1 << (setup.stark_info.stark_struct.n_bits_ext));
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
@@ -116,7 +125,7 @@ impl<F: Field> ProofCtx<F> {
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
-    
+
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
         self.air_instance_repo.add_air_instance(air_instance, global_idx);
     }

@@ -108,8 +108,7 @@ void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges
     
     auto starkInfo = *((StarkInfo *)pStarkInfo);
     FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
-    nlohmann::json jProof = friProof->proof.proof2json();
-    nlohmann::json zkin = proof2zkinStark(jProof, starkInfo);
+    nlohmann::json zkin = friProof->proof.proof2json();
 
     Goldilocks::Element *publics = (Goldilocks::Element *)pPublics;
     Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
@@ -140,14 +139,10 @@ void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges
 
     // Save output to file
     if(!string(fileDir).empty()) {
-        if (!std::filesystem::exists(string(fileDir) + "/zkin")) {
-            std::filesystem::create_directory(string(fileDir) + "/zkin");
-        }
         if (!std::filesystem::exists(string(fileDir) + "/proofs")) {
             std::filesystem::create_directory(string(fileDir) + "/proofs");
         }
-        json2file(jProof, string(fileDir) + "/proofs/proof_" + proof_name + ".json");
-        json2file(zkin, string(fileDir) + "/zkin/proof_" + proof_name + "_zkin.json");
+        json2file(zkin, string(fileDir) + "/proofs/proof_" + proof_name + ".json");
     }
 
     return (void *) new nlohmann::json(zkin);    

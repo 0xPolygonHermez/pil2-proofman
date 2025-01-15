@@ -89,7 +89,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_start_info!(GENERATING_PROOF);
 
-
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
         Self::initialize_provers(sctx.clone(), &mut provers, pctx.clone());
 
@@ -174,7 +173,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         let recursive1_proofs =
-            generate_vadcop_recursive1_proof(&pctx, setups.clone(), &proves_out, output_dir_path.clone(), false)?;
+            generate_vadcop_recursive1_proof(&pctx, setups.clone(), &proves_out, output_dir_path.clone())?;
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         info!("{}: Compressor and recursive1 proofs generated successfully", Self::MY_NAME);
 
@@ -186,7 +185,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             sctx_recursive2.as_ref().unwrap().clone(),
             &recursive1_proofs,
             output_dir_path.clone(),
-            false,
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
         info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
@@ -637,16 +635,18 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             proves.push(prover.get_zkin_proof(proof_ctx.clone(), output_dir));
         }
 
-        let n_publics = proof_ctx.global_info.n_publics as u64;
+        if proof_ctx.options.debug_info.save_proofs_to_file {
+            let n_publics = proof_ctx.global_info.n_publics as u64;
 
-        let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-        let global_info_file: &str = global_info_path.to_str().unwrap();
+            let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
+            let global_info_file: &str = global_info_path.to_str().unwrap();
 
-        save_publics_c(n_publics, proof_ctx.get_publics_ptr(), output_dir);
+            save_publics_c(n_publics, proof_ctx.get_publics_ptr(), output_dir);
 
-        save_proof_values_c(proof_ctx.get_proof_values_ptr(), global_info_file, output_dir);
+            save_proof_values_c(proof_ctx.get_proof_values_ptr(), global_info_file, output_dir);
 
-        save_challenges_c(proof_ctx.get_challenges_ptr(), global_info_file, output_dir);
+            save_challenges_c(proof_ctx.get_challenges_ptr(), global_info_file, output_dir);
+        }
 
         timer_stop_and_log_info!(SAVING_PROOFS);
         proves

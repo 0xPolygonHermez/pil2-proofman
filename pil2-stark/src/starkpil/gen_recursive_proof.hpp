@@ -241,14 +241,9 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     delete[] evals;
     delete[] aux_trace;
 
-    nlohmann::json jProof = proof.proof.proof2json();
-    nlohmann::json zkin = proof2zkinStark(jProof, setupCtx.starkInfo);
-
-    if(!proofFile.empty()) {
-        json2file(jProof, proofFile);
-    }
-
-    TimerStopAndLog(STARK_PROOF);
+    nlohmann::json zkin = proof.proof.proof2json();
+    
+TimerStopAndLog(STARK_PROOF);
 
     if(vadcop) {
         zkin = publics2zkin(zkin, publicInputs, globalInfo, airgroupId);
@@ -260,8 +255,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
 
     if(!proofFile.empty()) {
-        json2file(jProof, proofFile);
-        json2file(zkin, proofFile + ".zkin.json");
+        json2file(zkin, proofFile);
     }
     
 

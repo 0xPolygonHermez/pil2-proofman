@@ -25,7 +25,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     setups: Arc<SetupsVadcop>,
     proofs: &[*mut c_void],
     output_dir_path: PathBuf,
-    save_proof: bool,
 ) -> Result<Vec<*mut c_void>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -64,7 +63,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
             let output_file_path =
                 output_dir_path.join(format!("proofs/compressor_{}_{}.json", air_instance_name, instance_id));
 
-            let proof_file = match save_proof {
+            let proof_file = match pctx.options.debug_info.save_proofs_to_file {
                 true => output_file_path.to_string_lossy().into_owned(),
                 false => String::from(""),
             };
@@ -113,7 +112,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
         let output_file_path =
             output_dir_path.join(format!("proofs/recursive1_{}_{}.json", air_instance_name, instance_id));
 
-        let proof_file = match save_proof {
+        let proof_file = match pctx.options.debug_info.save_proofs_to_file {
             true => output_file_path.to_string_lossy().into_owned(),
             false => String::from(""),
         };
@@ -145,7 +144,6 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
     sctx: Arc<SetupCtx>,
     proofs: &[*mut c_void],
     output_dir_path: PathBuf,
-    save_proof: bool,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -231,7 +229,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                         let (buffer, publics) = generate_witness::<F>(&setup_path, setup, zkin_recursive2_updated, 18)?;
 
                         timer_start_trace!(GENERATE_RECURSIVE2_PROOF);
-                        let proof_file = match save_proof {
+                        let proof_file = match pctx.options.debug_info.save_proofs_to_file {
                             true => output_dir_path
                                 .join(format!(
                                     "proofs/recursive2_{}_{}_{}.json",
@@ -333,6 +331,8 @@ pub fn generate_vadcop_final_proof<F: Field>(
 
     let (buffer, publics) = generate_witness::<F>(&setup_path, &setup, proof, 18)?;
 
+    let proof_file = output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().into_owned();
+
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
     // prove
@@ -342,7 +342,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
         setup.get_const_ptr(),
         setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
-        output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().as_ref(),
+        &proof_file,
         global_info_file,
         0,
         false,
@@ -371,6 +371,11 @@ pub fn generate_recursivef_proof<F: Field>(
 
     let (buffer, publics) = generate_witness::<F>(&setup_path, &setup, proof, 12)?;
 
+    let proof_file = match pctx.options.debug_info.save_proofs_to_file {
+        true => output_dir_path.join("proofs/recursivef.json").to_string_lossy().into_owned(),
+        false => String::from(""),
+    };
+
     log::info!("{}: ··· Generating recursiveF proof", MY_NAME);
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
@@ -380,7 +385,7 @@ pub fn generate_recursivef_proof<F: Field>(
         setup.get_const_ptr(),
         setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
-        output_dir_path.join("proofs/recursivef.json").to_string_lossy().as_ref(),
+        &proof_file,
         global_info_file,
         0,
         false,
@@ -430,13 +435,11 @@ pub fn generate_fflonk_snark_proof<F: Field>(
         timer_stop_and_log_trace!(CALCULATE_FINAL_WITNESS);
 
         timer_start_trace!(CALCULATE_FINAL_PROOF);
+        let proof_file = output_dir_path.join("proofs").to_string_lossy().into_owned();
+
         let zkey_filename = setup_path.display().to_string() + ".zkey";
         log::info!("{}: ··· Generating final snark proof", MY_NAME);
-        gen_final_snark_proof_c(
-            witness_ptr,
-            zkey_filename.as_str(),
-            output_dir_path.join("proofs").to_string_lossy().as_ref(),
-        );
+        gen_final_snark_proof_c(witness_ptr, zkey_filename.as_str(), &proof_file);
         timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
         log::info!("{}: ··· Final Snark Proof generated.", MY_NAME);
     }

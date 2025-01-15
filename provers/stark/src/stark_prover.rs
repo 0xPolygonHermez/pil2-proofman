@@ -625,6 +625,11 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let proof_name =
             format!("{}_{}", proof_ctx.global_info.airs[self.airgroup_id][self.air_id].name, self.air_instance_id);
 
+        let proof_dir = match &proof_ctx.options.debug_info.save_proofs_to_file {
+            true => output_dir,
+            false => "",
+        };
+
         fri_proof_get_zkinproof_c(
             self.p_proof,
             proof_ctx.get_publics_ptr(),
@@ -633,7 +638,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             self.p_stark_info,
             &proof_name,
             global_info_file,
-            output_dir,
+            &proof_dir,
         )
     }
 
