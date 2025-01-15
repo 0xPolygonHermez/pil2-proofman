@@ -26,8 +26,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     TranscriptType transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
-    Goldilocks::Element* evals = new Goldilocks::Element[setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION];
-    Goldilocks::Element* challenges = new Goldilocks::Element[setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION];
+    Goldilocks::Element evals[setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION];
+    Goldilocks::Element challenges[setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION];
     
     vector<bool> airgroupValuesCalculated(setupCtx.starkInfo.airgroupValuesMap.size(), false);
     StepsParams params = {
@@ -86,8 +86,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    Goldilocks::Element *res = new Goldilocks::Element[N*FIELD_EXTENSION];
-    Goldilocks::Element *gprod = new Goldilocks::Element[N*FIELD_EXTENSION];
+    Goldilocks::Element *res = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
+    Goldilocks::Element *gprod = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("q", true)] + N*FIELD_EXTENSION];
 
     uint64_t gprodFieldId = setupCtx.expressionsBin.hints[0].fields[0].values[0].id;
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
@@ -112,9 +112,6 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         std::memcpy(gprodTransposedPol[j], &gprod[j*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
     }
     
-    delete[] res;
-    delete[] gprod;
-
     TimerStart(CALCULATE_IM_POLS);
     starks.calculateImPolsExpressions(2, params);
     TimerStopAndLog(CALCULATE_IM_POLS);
@@ -237,10 +234,6 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     TimerStopAndLog(STARK_STEP_FRI);
 
-    delete[] challenges;
-    delete[] evals;
-    delete[] aux_trace;
-
     nlohmann::json zkin = proof.proof.proof2json();
     
 TimerStopAndLog(STARK_PROOF);
@@ -258,6 +251,7 @@ TimerStopAndLog(STARK_PROOF);
         json2file(zkin, proofFile);
     }
     
+    delete[] aux_trace;
 
     return (void *) new nlohmann::json(zkin);
 }

@@ -69,6 +69,7 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     
     Goldilocks::Element *pBuff = step == 1 ? trace : &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
     Goldilocks::Element *pBuffExtended = &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
+    ElementType *pBuffNodes = (ElementType *)(&aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)]]);
 
     NTT_Goldilocks ntt(N);
     if(pBuffHelper != nullptr) {
@@ -78,6 +79,7 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     }
     
     treesGL[step - 1]->setSource(pBuffExtended);
+    treesGL[step - 1]->setNodes(pBuffNodes);
     treesGL[step - 1]->merkelize();
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
 }
@@ -133,6 +135,7 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     }
 
     treesGL[step - 1]->setSource(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), true)]]);
+    treesGL[step - 1]->setNodes((ElementType *)(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("mt" + to_string(step), true)]]));
     treesGL[step - 1]->merkelize();
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
     
@@ -384,4 +387,14 @@ void Starks<ElementType>::calculateFRIPolynomial(StepsParams &params) {
     ExpressionsPack expressionsCtx(setupCtx);
 #endif
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.friExpId);
+
+    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
+        if(!initMemoryFRIMT) {
+            Goldilocks::Element *src = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)]];
+            treesFRI[step]->setSource(src);
+        }
+
+        ElementType *nodes = (ElementType *)(&params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)]]);
+        treesFRI[step]->setNodes(nodes);
+    }
 }

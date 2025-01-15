@@ -76,17 +76,11 @@ void FRI<ElementType>::fold(uint64_t step, Goldilocks::Element* pol, Goldilocks:
 
 template <typename ElementType>
 void FRI<ElementType>::merkelize(uint64_t step, FRIProof<ElementType> &proof, Goldilocks::Element* pol, MerkleTreeType* treeFRI, uint64_t currentBits, uint64_t nextBits) {
-    uint64_t pol2N = 1 << currentBits;
-
     // Re-org in groups
-    Goldilocks::Element *aux = new Goldilocks::Element[pol2N * FIELD_EXTENSION];
-    getTransposed(aux, pol, pol2N, nextBits);
+    getTransposed(treeFRI->source, pol, 1 << currentBits, nextBits);
 
-    treeFRI->copySource(aux);
     treeFRI->merkelize();
     treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
-
-    delete[] aux;    
 }
 
 template <typename ElementType>

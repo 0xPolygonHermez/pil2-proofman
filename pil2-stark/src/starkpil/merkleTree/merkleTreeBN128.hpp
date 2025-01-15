@@ -21,15 +21,15 @@ private:
 public:
     MerkleTreeBN128(){};
     MerkleTreeBN128(uint64_t arity, bool custom, Goldilocks::Element *tree);
-    MerkleTreeBN128(uint64_t arity, bool custom, uint64_t _height, uint64_t _width, Goldilocks::Element *source, bool allocate = true);
+    MerkleTreeBN128(uint64_t arity, bool custom, uint64_t _height, uint64_t _width, Goldilocks::Element *source, RawFr::Element *nodes, bool allocateSource = true, bool allocateNodes = true);
     ~MerkleTreeBN128();
 
     uint64_t numNodes;
     uint64_t height;
     uint64_t width;
 
-    RawFr::Element *nodes;
     Goldilocks::Element *source;
+    RawFr::Element *nodes;
 
     bool isSourceAllocated = false;
     bool isNodesAllocated = false;
@@ -48,6 +48,7 @@ public:
     void copySource(Goldilocks::Element *source);
     void setSource(Goldilocks::Element *source);
     void copyNodes(Goldilocks::Element *_nodes) {}; // This is wrong. Cannot be used
+    void setNodes(RawFr::Element *nodes);
 
     void getGroupProof(RawFr::Element *proof, uint64_t idx);
     

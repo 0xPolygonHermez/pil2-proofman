@@ -356,7 +356,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         zklog.trace("Verifying stage " +  to_string(s + 1) + " Merkle tree");
         std::string section = "cm" + to_string(s + 1);
         uint64_t nCols = starkInfo.mapSectionsN[section];
-        MerkleTreeType tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
+        MerkleTreeType tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols, NULL, NULL, false, false);
         ElementType root[nFieldElements];
         if(nFieldElements == 1) {
             root[0] = fromString<ElementType>(jproof["root" + to_string(s + 1)]);
@@ -400,7 +400,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
 
     zklog.trace("Verifying constant Merkle tree");
-    MerkleTreeType treeC(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, NULL, false);
+    MerkleTreeType treeC(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants, NULL, NULL, false, false);
     bool isValidConstantMT = true;
 // #pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
@@ -437,7 +437,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         zklog.trace("Verifying custom commit " + starkInfo.customCommits[c].name + " Merkle tree");
         std::string section = starkInfo.customCommits[c].name + "0";
         uint64_t nCols = starkInfo.mapSectionsN[section];
-        MerkleTreeType tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols, NULL, false);
+        MerkleTreeType tree(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, nCols, NULL, NULL, false, false);
         ElementType root[nFieldElements];
         for(uint64_t j = 0; j < nFieldElements; ++j) {
             root[j] = fromString<ElementType>(Goldilocks::toString(publics[starkInfo.customCommits[c].publicValues[j]]));
@@ -479,7 +479,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     for (uint64_t step=1; step< starkInfo.starkStruct.steps.size(); step++) {
         uint64_t nGroups = 1 << starkInfo.starkStruct.steps[step].nBits;
         uint64_t groupSize = (1 << starkInfo.starkStruct.steps[step - 1].nBits) / nGroups;
-        MerkleTreeType treeFRI(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION, NULL);
+        MerkleTreeType treeFRI(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION, NULL, NULL, false, false);
         ElementType root[nFieldElements];
         if (nFieldElements == 1) {
             root[0] = fromString<ElementType>(jproof["s" + std::to_string(step) + "_root"]);

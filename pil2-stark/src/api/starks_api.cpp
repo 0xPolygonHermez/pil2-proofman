@@ -388,7 +388,7 @@ uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hi
 
 void *starks_new(void *pSetupCtx, void* pConstTree)
 {
-    return new Starks<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, (Goldilocks::Element*) pConstTree);
+    return new Starks<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, (Goldilocks::Element*) pConstTree, false);
 }
 
 void starks_free(void *pStarks)
@@ -491,7 +491,7 @@ void calculate_hash(void *pStarks, void *pHhash, void *pBuffer, uint64_t nElemen
 // MerkleTree
 // =================================================================================
 void *merkle_tree_new(uint64_t height, uint64_t width, uint64_t arity, bool custom) {
-    MerkleTreeGL * mt =  new MerkleTreeGL(arity, custom, height, width, NULL);
+    MerkleTreeGL * mt =  new MerkleTreeGL(arity, custom, height, width, NULL, NULL);
     return mt;
 }
 

@@ -49,6 +49,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         output_dir_path: PathBuf,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(INITIALIZING_PROOFMAN);
         Self::check_paths(
             &witness_lib_path,
             &rom_path,
@@ -58,7 +59,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             options.verify_constraints,
         )?;
 
-        timer_start_info!(PREPARING_PROOF);
         let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), options);
 
         let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
@@ -68,10 +68,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let pctx = Arc::new(pctx);
 
+        timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
+        
+        timer_start_info!(GENERATING_WITNESS);
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path));
 
         Self::initialize_witness(witness_lib_path, wcm.clone())?;
         wcm.calculate_witness(1);
+
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone(), true);
 
         let mut dctx = pctx.dctx.write().unwrap();
         dctx.close(pctx.global_info.air_groups.len());
@@ -87,9 +92,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             Self::print_summary(pctx.clone(), setups.sctx.clone());
         }
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone(), true);
-
-        timer_stop_and_log_info!(PREPARING_PROOF);
+        timer_stop_and_log_info!(GENERATING_WITNESS);
 
         timer_start_info!(GENERATING_VADCOP_PROOF);
 

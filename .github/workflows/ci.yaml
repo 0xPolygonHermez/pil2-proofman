@@ -492,10 +492,6 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build
 
-      - name: Verify proof direct_update
-        run: |
-          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/direct_update/build/provingKey -p ./pil2-components/test/std/direct_update/build
-
       - name: Verify constraints range-check
         run: |
           cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey

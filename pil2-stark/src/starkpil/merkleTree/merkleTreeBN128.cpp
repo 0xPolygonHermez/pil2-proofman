@@ -3,20 +3,22 @@
 #include <algorithm> // std::max
 #include <cassert>
 
-MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width, Goldilocks::Element *_source, bool allocate) : height(_height), width(_width), source(_source)
+MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width, Goldilocks::Element *_source, RawFr::Element *_nodes, bool allocateSource, bool allocateNodes) : height(_height), width(_width), source(_source), nodes(_nodes)
 {
 
-    if (source == NULL && allocate)
+    if (source == NULL && allocateSource)
     {
         source = (Goldilocks::Element *)calloc(height * width, sizeof(Goldilocks::Element));
         isSourceAllocated = true;
     }
-
+    numNodes = getNumNodes(height);
+    if (nodes == NULL && allocateNodes)
+    {
+        nodes = (RawFr::Element *)calloc(numNodes, sizeof(RawFr::Element));
+        isNodesAllocated = true;
+    }
     arity = _arity;
     custom = _custom;
-    numNodes = getNumNodes(height);
-    nodes = (RawFr::Element *)calloc(numNodes, sizeof(RawFr::Element));
-    isNodesAllocated = true;
 }
 
 MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, Goldilocks::Element *tree)
@@ -103,6 +105,11 @@ void MerkleTreeBN128::setSource(Goldilocks::Element *_source)
     source = _source;
 }
 
+void MerkleTreeBN128::setNodes(RawFr::Element *_nodes)
+{
+    nodes = _nodes;
+}
+
 Goldilocks::Element MerkleTreeBN128::getElement(uint64_t idx, uint64_t subIdx)
 {
     assert((idx > 0) || (idx < width));
@@ -121,11 +128,7 @@ void MerkleTreeBN128::getGroupProof(RawFr::Element *proof, uint64_t idx)
     std::memcpy(proof, &v[0], width * sizeof(Goldilocks::Element));
     void *proofCursor = (uint8_t *)proof + width * sizeof(Goldilocks::Element);
 
-    RawFr::Element *mp = (RawFr::Element *)calloc(getMerkleProofSize(), 1);
-    genMerkleProof(mp, idx, 0, height);
-
-    std::memcpy(proofCursor, &mp[0], getMerkleProofSize());
-    free(mp);
+    genMerkleProof((RawFr::Element *)proofCursor, idx, 0, height);
 }
 
 void MerkleTreeBN128::genMerkleProof(RawFr::Element *proof, uint64_t idx, uint64_t offset, uint64_t n)

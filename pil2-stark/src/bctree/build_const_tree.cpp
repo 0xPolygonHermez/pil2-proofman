@@ -45,7 +45,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
     if (verificationHashType == "GL") {
         TimerStart(MERKELIZE_CONST_TREE);
         Goldilocks::Element root[4];
-        MerkleTreeGL mt(2, true, NExtended, nPols, pConstPolsExt);
+        MerkleTreeGL mt(2, true, NExtended, nPols, pConstPolsExt, NULL);
         mt.merkelize();
         mt.getRoot(root);
         TimerStopAndLog(MERKELIZE_CONST_TREE);
@@ -74,7 +74,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
         uint64_t merkleTreeArity = starkInfoJson["starkStruct"].contains("merkleTreeArity") ? starkInfoJson["starkStruct"]["merkleTreeArity"].get<uint64_t>() : 16;
         bool merkleTreeCustom = starkInfoJson["starkStruct"].contains("merkleTreeCustom") ? starkInfoJson["starkStruct"]["merkleTreeCustom"].get<bool>() : false;
 
-        MerkleTreeBN128 mt(merkleTreeArity, merkleTreeCustom, NExtended, nPols, pConstPolsExt);
+        MerkleTreeBN128 mt(merkleTreeArity, merkleTreeCustom, NExtended, nPols, pConstPolsExt, NULL);
         mt.merkelize();
         mt.getRoot(&rootC);
         TimerStopAndLog(MERKELIZE_CONST_TREE);

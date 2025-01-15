@@ -60,7 +60,7 @@ public:
         NTT_Goldilocks ntt(N);
         Goldilocks::Element *treeAddressGL = (Goldilocks::Element *)treeAddress;
         ntt.extendPol(&treeAddressGL[2], pConstPolsAddress, NExtended, N, starkInfo.nConstants);
-        MerkleTreeGL mt(2, true, NExtended, starkInfo.nConstants, &treeAddressGL[2]);
+        MerkleTreeGL mt(2, true, NExtended, starkInfo.nConstants, &treeAddressGL[2], NULL);
         mt.merkelize();
 
         treeAddressGL[0] = Goldilocks::fromU64(starkInfo.nConstants);  
@@ -80,7 +80,7 @@ public:
         NTT_Goldilocks ntt(N);
         Goldilocks::Element *treeAddressGL = (Goldilocks::Element *)treeAddress;
         ntt.extendPol(&treeAddressGL[2], pConstPolsAddress, NExtended, N, starkInfo.nConstants);
-        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants, &treeAddressGL[2]);
+        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants, &treeAddressGL[2], NULL);
         mt.merkelize();
 
         treeAddressGL[0] = Goldilocks::fromU64(starkInfo.nConstants);  

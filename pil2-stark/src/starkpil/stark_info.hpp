@@ -10,6 +10,7 @@
 #include "merklehash_goldilocks.hpp"
 #include "zklog.hpp"
 #include "exit_process.hpp"
+#include "fr.hpp"
 
 using json = nlohmann::json;
 using namespace std;
@@ -166,6 +167,8 @@ public:
     void load (json j, bool verify = false);
 
     void setMapOffsets();
+
+    uint64_t getNumNodesMT(uint64_t height);
 
     void addMemoryRecursive();
 
