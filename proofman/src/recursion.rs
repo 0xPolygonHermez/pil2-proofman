@@ -22,10 +22,10 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setups: Arc<SetupsVadcop>,
     proofs: &[*mut c_void],
-    circom_witness: &Vec<F>,
-    publics: &Vec<F>,
-    trace: &Vec<F>,
-    prover_buffer: &Vec<F>,
+    circom_witness: &[F],
+    publics: &[F],
+    trace: &[F],
+    prover_buffer: &[F],
     output_dir_path: PathBuf,
 ) -> Result<Vec<*mut c_void>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
@@ -143,10 +143,10 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
     pctx: &ProofCtx<F>,
     sctx: Arc<SetupCtx>,
     proofs: &[*mut c_void],
-    circom_witness: &Vec<F>,
-    publics: &Vec<F>,
-    trace: &Vec<F>,
-    prover_buffer: &Vec<F>,
+    circom_witness: &[F],
+    publics: &[F],
+    trace: &[F],
+    prover_buffer: &[F],
     output_dir_path: PathBuf,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
@@ -329,10 +329,10 @@ pub fn generate_vadcop_final_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setup: Arc<Setup>,
     proof: *mut c_void,
-    circom_witness: &Vec<F>,
-    publics: &Vec<F>,
-    trace: &Vec<F>,
-    prover_buffer: &Vec<F>,
+    circom_witness: &[F],
+    publics: &[F],
+    trace: &[F],
+    prover_buffer: &[F],
     output_dir_path: PathBuf,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
@@ -373,10 +373,10 @@ pub fn generate_recursivef_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setup: Arc<Setup>,
     proof: *mut c_void,
-    circom_witness: &Vec<F>,
-    publics: &Vec<F>,
-    trace: &Vec<F>,
-    prover_buffer: &Vec<F>,
+    circom_witness: &[F],
+    publics: &[F],
+    trace: &[F],
+    prover_buffer: &[F],
     output_dir_path: PathBuf,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "RecProof";
@@ -467,9 +467,9 @@ pub fn generate_fflonk_snark_proof<F: Field>(
 }
 
 fn generate_witness<F: Field>(
-    witness: &Vec<F>,
-    buffer: &Vec<F>,
-    publics: &Vec<F>,
+    witness: &[F],
+    buffer: &[F],
+    publics: &[F],
     setup_path: &Path,
     setup: &Setup,
     zkin: *mut c_void,
@@ -513,7 +513,7 @@ fn generate_witness<F: Field>(
         buffer.as_ptr() as *mut u8,
         publics.as_ptr() as *mut u8,
         size_witness,
-        1 << (setup.stark_info.stark_struct.n_bits) as u64,
+        1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
         n_cols as u64,
     );
@@ -534,7 +534,7 @@ pub fn get_buff_sizes<F: Field>(
     let instances = pctx.dctx.read().unwrap().instances.clone();
     let my_instances = pctx.dctx.read().unwrap().my_instances.clone();
 
-    for (_, instance_id) in my_instances.iter().enumerate() {
+    for instance_id in my_instances.iter() {
         let (airgroup_id, air_id) = instances[*instance_id];
 
         if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {

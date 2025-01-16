@@ -43,7 +43,7 @@ pub struct ProverHelpers<F: Field> {
     pub zi: Vec<F>,
     pub s: Vec<F>,
     pub x: Vec<F>,
-    pub x_n: Vec<F>, // For PIL1 compatibility
+    pub x_n: Vec<F>,   // For PIL1 compatibility
     pub x_2ns: Vec<F>, // For PIL1 compatibility
 }
 
@@ -63,13 +63,7 @@ impl<F: Field> ProverHelpers<F> {
         let zi = Self::compute_zerofier(n_bits, n_bits_ext, boundaries);
         let (x, s) = Self::compute_x(n_bits, n_bits_ext, q_deg);
 
-        Self {
-            zi,
-            s,
-            x,
-            x_n,
-            x_2ns,
-        }
+        Self { zi, s, x, x_n, x_2ns }
     }
 
     fn compute_zerofier(n_bits: u64, n_bits_ext: u64, boundaries: &[Boundary]) -> Vec<F> {
@@ -79,13 +73,20 @@ impl<F: Field> ProverHelpers<F> {
         let mut zi = create_buffer_fast(boundaries.len() * n_extended);
         Self::build_zerofier(&mut zi, n_bits, n_bits_ext);
 
-        for (i,boundary) in boundaries[1..].iter().enumerate() {
+        for (i, boundary) in boundaries[1..].iter().enumerate() {
             if boundary.name == "firstRow" {
                 Self::build_one_row_zerofier_inv(&mut zi, n_bits, n_bits_ext, i, 0);
             } else if boundary.name == "lastRow" {
                 Self::build_one_row_zerofier_inv(&mut zi, n_bits, n_bits_ext, i, n);
             } else if boundary.name == "everyFrame" {
-                Self::build_frame_zerofier_inv(&mut zi, n_bits, n_bits_ext, i, boundary.offset_min.unwrap() as usize, boundary.offset_max.unwrap() as usize);
+                Self::build_frame_zerofier_inv(
+                    &mut zi,
+                    n_bits,
+                    n_bits_ext,
+                    i,
+                    boundary.offset_min.unwrap() as usize,
+                    boundary.offset_max.unwrap() as usize,
+                );
             }
         }
         zi
@@ -98,12 +99,11 @@ impl<F: Field> ProverHelpers<F> {
         let mut x_n = create_buffer_fast(1 << n_bits);
         let mut x_2ns = create_buffer_fast(1 << n_bits_ext);
 
-        
         let mut xx = F::one();
         let w = F::from_canonical_u64(W[n_bits as usize]);
         for i in 0..n {
             x_n[i] = xx;
-            xx = xx * w;
+            xx *= w;
         }
 
         let mut xx_shift = F::generator();
@@ -127,7 +127,7 @@ impl<F: Field> ProverHelpers<F> {
         for k in 1..x.len() {
             x[k] = x[k - 1] * w;
         }
-        
+
         let mut s = create_buffer_fast(q_deg as usize);
         s[0] = F::one();
         let mut shift_inv = F::generator();
@@ -156,7 +156,7 @@ impl<F: Field> ProverHelpers<F> {
         for i in 0..extend {
             zi[i] = sn * w - F::one();
             zi[i] = zi[i].inverse();
-            w = w * w_val;
+            w *= w_val;
         }
 
         (extend..n_extended).into_iter().for_each(|i| {
@@ -171,7 +171,7 @@ impl<F: Field> ProverHelpers<F> {
 
         let w_val = F::from_canonical_u64(W[n_bits as usize]);
         for _ in 0..row_index {
-            root = root * w_val;
+            root *= w_val;
         }
 
         let mut w = F::one();
@@ -181,11 +181,18 @@ impl<F: Field> ProverHelpers<F> {
         for i in 0..n_extended {
             let x = (sn * w - root) * zi[i];
             zi[i + offset * n_extended] = x.inverse();
-            w = w * w_val_ext;
+            w *= w_val_ext;
         }
     }
 
-    fn build_frame_zerofier_inv(zi: &mut Vec<F>, n_bits: u64, n_bits_ext: u64, offset: usize, offset_min: usize, offset_max: usize) {
+    fn build_frame_zerofier_inv(
+        zi: &mut Vec<F>,
+        n_bits: u64,
+        n_bits_ext: u64,
+        offset: usize,
+        offset_min: usize,
+        offset_max: usize,
+    ) {
         let n_extended = 1 << n_bits_ext;
         let n = 1 << n_bits;
         let n_roots = offset_min + offset_max;
@@ -216,8 +223,7 @@ impl<F: Field> ProverHelpers<F> {
             for root in &roots {
                 zi[i + offset * n_extended] = zi[i + offset * n_extended] * (x - *root);
             }
-            w = w * w_val_ext;
+            w *= w_val_ext;
         }
     }
-
 }

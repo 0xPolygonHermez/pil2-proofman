@@ -3,15 +3,18 @@ use log::info;
 use p3_field::PrimeField;
 use stark::StarkProver;
 use proofman_starks_lib_c::{
-    free_provers_c, fri_proof_get_zkinproofs_c, save_challenges_c, save_proof_values_c,
-    save_publics_c,
+    free_provers_c, fri_proof_get_zkinproofs_c, save_challenges_c, save_proof_values_c, save_publics_c,
 };
 use std::fs;
 use std::error::Error;
 
 use colored::*;
 
-use std::{collections::{HashSet,HashMap}, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashSet, HashMap},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use transcript::FFITranscript;
 
@@ -185,12 +188,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         info!("{}: ··· Generating aggregated proofs", Self::MY_NAME);
 
-        let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(pctx.clone(), setups.clone())?;
+        let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
+            get_buff_sizes(pctx.clone(), setups.clone())?;
         let circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
         let publics: Vec<F> = create_buffer_fast(publics_size);
         let trace: Vec<F> = create_buffer_fast(trace_size);
         let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
-        
+
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         let recursive1_proofs = generate_vadcop_recursive1_proof(
@@ -384,7 +388,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             setup.load_const_pols_tree(&pctx.global_info, &ProofType::Basic, save_file);
         });
 
-
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
 
         if pctx.options.aggregation {
@@ -399,8 +402,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
 
             airs.iter().for_each(|&(airgroup_id, air_id)| {
-                if global_info.get_air_has_compressor(airgroup_id, air_id)
-                {
+                if global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id);
                     setup.load_const_pols(&global_info, &ProofType::Compressor);
                     setup.load_const_pols_tree(&global_info, &ProofType::Compressor, save_file);
