@@ -10,7 +10,7 @@ use proofman_hints::{
 use proofman_util::create_buffer_fast;
 use std::sync::atomic::Ordering;
 
-const PROVE_CHUNK_SIZE: usize = 1 << 5;
+const PROVE_CHUNK_SIZE: usize = 1 << 12;
 const NUM_ROWS: usize = 1 << 8;
 
 pub struct U8Air<F: Field> {

@@ -1,5 +1,4 @@
 use std::sync::{atomic::AtomicU64, Arc, Mutex};
-
 use num_traits::ToPrimitive;
 use p3_field::{Field, PrimeField};
 
@@ -12,7 +11,7 @@ use proofman_hints::{
 use proofman_util::create_buffer_fast;
 use std::sync::atomic::Ordering;
 
-const PROVE_CHUNK_SIZE: usize = 1 << 5;
+const PROVE_CHUNK_SIZE: usize = 1 << 12;
 const NUM_ROWS: usize = 1 << 16;
 
 pub struct U16Air<F: Field> {

@@ -14,7 +14,7 @@ use proofman_util::create_buffer_fast;
 
 use crate::Range;
 
-const PROVE_CHUNK_SIZE: usize = 1 << 5;
+const PROVE_CHUNK_SIZE: usize = 1 << 12;
 
 pub struct SpecifiedRanges<F: PrimeField> {
     // Parameters
