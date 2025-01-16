@@ -30,17 +30,17 @@ impl<F: Field> AirInstancesRepository<F> {
         }
     }
 
-    pub fn add_air_instance(&self, mut air_instance: AirInstance<F>, global_idx: Option<usize>) -> usize {
+    pub fn add_air_instance(&self, mut air_instance: AirInstance<F>, global_id: Option<usize>) -> usize {
         let mut air_instances = self.air_instances.write().unwrap();
         let n_air_instances = air_instances.len();
 
         let mut air_instances_counts = self.air_instances_counts.write().unwrap();
         let instance_id = air_instances_counts.entry((air_instance.airgroup_id, air_instance.air_id)).or_insert(0);
         air_instance.set_air_instance_id(*instance_id, n_air_instances);
-        if global_idx.is_some() {
-            air_instance.global_idx = global_idx;
+        if global_id.is_some() {
+            air_instance.global_id = global_id;
         } else {
-            air_instance.global_idx = Some(n_air_instances);
+            air_instance.global_id = Some(n_air_instances);
         }
         *instance_id += 1;
         air_instances.push(air_instance);

@@ -120,7 +120,8 @@ impl<F: Field> ProofCtx<F> {
                     .iter()
                     .filter(|(key, _)| *key != "const")
                     .map(|(_, value)| *value)
-                    .sum::<u64>()) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                    .sum::<u64>())
+                    * (1 << (setup.stark_info.stark_struct.n_bits_ext));
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
