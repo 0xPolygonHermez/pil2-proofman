@@ -89,7 +89,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn build(&mut self, proof_ctx: Arc<ProofCtx<F>>) {
         let mut air_instances = proof_ctx.air_instance_repo.air_instances.write().unwrap();
         let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
-        air_instance.init_aux_trace(get_map_totaln_c(self.p_stark_info) as usize);
+        air_instance.init_aux_trace(get_map_totaln_c(self.p_stark_info, false) as usize);
         air_instance.init_evals(self.stark_info.ev_map.len() * Self::FIELD_EXTENSION);
 
         let n_custom_commits = self.stark_info.custom_commits.len();
@@ -104,8 +104,11 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             if air_instance.custom_commits[commit_id].is_empty() {
                 air_instance.init_custom_commit(commit_id, (1 << self.stark_info.stark_struct.n_bits) * n_cols);
             }
+
+            let extended_size = (1 << self.stark_info.stark_struct.n_bits_ext) * n_cols;
+            let mt_nodes = (2*(1 << self.stark_info.stark_struct.n_bits_ext) - 1)*self.n_field_elements;
             air_instance
-                .init_custom_commit_extended(commit_id, (1 << self.stark_info.stark_struct.n_bits_ext) * n_cols);
+                .init_custom_commit_extended(commit_id, extended_size + mt_nodes);
         }
 
         let n_airgroup_values = self.stark_info.airgroupvalues_map.as_ref().unwrap().len();

@@ -277,6 +277,9 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += NExtended * mapSectionsN["cm" + to_string(stage)];
     }
 
+    // This is never used, just set to avoid invalid read
+    mapOffsets[std::make_pair("cm" + to_string(nStages + 1), false)] = 0;
+
     mapOffsets[std::make_pair("f", true)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
 

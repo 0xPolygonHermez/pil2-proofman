@@ -3,20 +3,10 @@
 #include <algorithm> // std::max
 #include <cassert>
 
-MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width, Goldilocks::Element *_source, RawFr::Element *_nodes, bool allocateSource, bool allocateNodes) : height(_height), width(_width), source(_source), nodes(_nodes)
+MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width) : height(_height), width(_width)
 {
 
-    if (source == NULL && allocateSource)
-    {
-        source = (Goldilocks::Element *)calloc(height * width, sizeof(Goldilocks::Element));
-        isSourceAllocated = true;
-    }
     numNodes = getNumNodes(height);
-    if (nodes == NULL && allocateNodes)
-    {
-        nodes = (RawFr::Element *)calloc(numNodes, sizeof(RawFr::Element));
-        isNodesAllocated = true;
-    }
     arity = _arity;
     custom = _custom;
 }
@@ -31,18 +21,6 @@ MerkleTreeBN128::MerkleTreeBN128(uint64_t _arity, bool _custom, Goldilocks::Elem
     numNodes = getNumNodes(height);
     
     nodes = (RawFr::Element *)&source[width * height];
-}
-
-MerkleTreeBN128::~MerkleTreeBN128()
-{
-    if (isNodesAllocated)
-    {
-        free(nodes);
-    }
-    if (isSourceAllocated)
-    {
-        free(source);
-    }
 }
 
 uint64_t MerkleTreeBN128::getNumSiblings() 
@@ -95,10 +73,6 @@ void MerkleTreeBN128::getRoot(RawFr::Element *root)
     std::memcpy(root, &nodes[numNodes - 1], sizeof(RawFr::Element));
 }
 
-void MerkleTreeBN128::copySource(Goldilocks::Element *_source)
-{
-    std::memcpy(source, _source, height * width * sizeof(Goldilocks::Element));
-}
 
 void MerkleTreeBN128::setSource(Goldilocks::Element *_source)
 {

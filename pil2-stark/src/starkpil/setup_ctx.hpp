@@ -45,7 +45,7 @@ class ProverHelpers {
         }
     }
 
-    ProverHelpers(StarkInfo& starkInfo, Goldilocks::Element* z) {        
+    ProverHelpers(StarkInfo& starkInfo, Goldilocks::Element* z) { 
         zi = new Goldilocks::Element[starkInfo.boundaries.size() * FIELD_EXTENSION];
 
         Goldilocks::Element one[3] = {Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
@@ -126,7 +126,7 @@ class ProverHelpers {
                 buildOneRowZerofierInv(nBits, nBitsExt, i, 0);
             } else if(boundary.name == "lastRow") {
                 buildOneRowZerofierInv(nBits, nBitsExt, i, N);
-            } else if(boundary.name == "everyRow") {
+            } else if(boundary.name == "everyFrame") {
                 buildFrameZerofierInv(nBits, nBitsExt, i, boundary.offsetMin, boundary.offsetMax);
             }
         }

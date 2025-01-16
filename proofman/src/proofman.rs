@@ -3,7 +3,7 @@ use log::info;
 use p3_field::PrimeField;
 use stark::StarkProver;
 use proofman_starks_lib_c::{
-    free_provers_c, fri_proof_get_zkinproofs_c, get_map_totaln_c, save_challenges_c, save_proof_values_c,
+    free_provers_c, fri_proof_get_zkinproofs_c, save_challenges_c, save_proof_values_c,
     save_publics_c,
 };
 use std::fs;
@@ -11,16 +11,16 @@ use std::error::Error;
 
 use colored::*;
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::{HashSet,HashMap}, path::PathBuf, sync::Arc};
 
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessManager};
 
 use crate::{
-    verify_proof, verify_basic_proofs, verify_constraints_proof, generate_vadcop_recursive1_proof,
-    generate_vadcop_final_proof, generate_vadcop_recursive2_proof, generate_recursivef_proof,
-    generate_fflonk_snark_proof,
+    generate_fflonk_snark_proof, generate_recursivef_proof, generate_vadcop_final_proof,
+    generate_vadcop_recursive1_proof, generate_vadcop_recursive2_proof, get_buff_sizes, verify_basic_proofs,
+    verify_constraints_proof, verify_proof,
 };
 
 use proofman_common::{
@@ -184,10 +184,25 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
 
         info!("{}: ··· Generating aggregated proofs", Self::MY_NAME);
+
+        let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(pctx.clone(), setups.clone())?;
+        let circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
+        let publics: Vec<F> = create_buffer_fast(publics_size);
+        let trace: Vec<F> = create_buffer_fast(trace_size);
+        let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
+        
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
-        let recursive1_proofs =
-            generate_vadcop_recursive1_proof(&pctx, setups.clone(), &proves_out, output_dir_path.clone())?;
+        let recursive1_proofs = generate_vadcop_recursive1_proof(
+            &pctx,
+            setups.clone(),
+            &proves_out,
+            &circom_witness,
+            &publics,
+            &trace,
+            &prover_buffer,
+            output_dir_path.clone(),
+        )?;
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         info!("{}: Compressor and recursive1 proofs generated successfully", Self::MY_NAME);
 
@@ -198,6 +213,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             &pctx,
             sctx_recursive2.as_ref().unwrap().clone(),
             &recursive1_proofs,
+            &circom_witness,
+            &publics,
+            &trace,
+            &prover_buffer,
             output_dir_path.clone(),
         )?;
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
@@ -207,8 +226,16 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         if mpi_rank == 0 {
             let setup_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
             timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
-            let final_proof =
-                generate_vadcop_final_proof(&pctx, setup_final.clone(), recursive2_proof, output_dir_path.clone())?;
+            let final_proof = generate_vadcop_final_proof(
+                &pctx,
+                setup_final.clone(),
+                recursive2_proof,
+                &circom_witness,
+                &publics,
+                &trace,
+                &prover_buffer,
+                output_dir_path.clone(),
+            )?;
             timer_stop_and_log_info!(GENERATING_VADCOP_FINAL_PROOF);
             info!("{}: VadcopFinal proof generated successfully", Self::MY_NAME);
 
@@ -220,6 +247,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     &pctx,
                     setups.setup_recursivef.as_ref().unwrap().clone(),
                     final_proof,
+                    &circom_witness,
+                    &publics,
+                    &trace,
+                    &prover_buffer,
                     output_dir_path.clone(),
                 )?;
                 timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
@@ -334,20 +365,25 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_info!(INITIALIZE_CONST_POLS);
 
-        let mut const_pols_calculated: HashMap<(usize, usize), bool> = HashMap::new();
-
         let instances = pctx.dctx.read().unwrap().instances.clone();
         let my_instances = pctx.dctx.read().unwrap().my_instances.clone();
 
+        let mut airs = Vec::new();
+        let mut seen = HashSet::new();
+
         for instance_id in my_instances.iter() {
             let (airgroup_id, air_id) = instances[*instance_id];
-            const_pols_calculated.entry((airgroup_id, air_id)).or_insert_with(|| {
-                let setup = setups.sctx.get_setup(airgroup_id, air_id);
-                setup.load_const_pols(&pctx.global_info, &ProofType::Basic);
-                setup.load_const_pols_tree(&pctx.global_info, &ProofType::Basic, save_file);
-                true
-            });
+            if seen.insert((airgroup_id, air_id)) {
+                airs.push((airgroup_id, air_id));
+            }
         }
+
+        airs.iter().for_each(|&(airgroup_id, air_id)| {
+            let setup = setups.sctx.get_setup(airgroup_id, air_id);
+            setup.load_const_pols(&pctx.global_info, &ProofType::Basic);
+            setup.load_const_pols_tree(&pctx.global_info, &ProofType::Basic, save_file);
+        });
+
 
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
 
@@ -361,34 +397,25 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
             info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
             timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
-            let mut const_pols_calculated_compressor: HashMap<(usize, usize), bool> = HashMap::new();
 
-            for instance_id in my_instances.iter() {
-                let (airgroup_id, air_id) = instances[*instance_id];
+            airs.iter().for_each(|&(airgroup_id, air_id)| {
                 if global_info.get_air_has_compressor(airgroup_id, air_id)
-                    && !const_pols_calculated_compressor.contains_key(&(airgroup_id, air_id))
                 {
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id);
                     setup.load_const_pols(&global_info, &ProofType::Compressor);
                     setup.load_const_pols_tree(&global_info, &ProofType::Compressor, save_file);
-                    const_pols_calculated_compressor.insert((airgroup_id, air_id), true);
                 }
-            }
+            });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
 
             let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
             timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
             info!("{}: ··· Initializing setup fixed pols recursive1", Self::MY_NAME);
-            let mut const_pols_calculated_recursive1: HashMap<(usize, usize), bool> = HashMap::new();
-            for instance_id in my_instances.iter() {
-                let (airgroup_id, air_id) = instances[*instance_id];
-                const_pols_calculated_recursive1.entry((airgroup_id, air_id)).or_insert_with(|| {
-                    let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
-                    setup.load_const_pols(&global_info, &ProofType::Recursive1);
-                    setup.load_const_pols_tree(&global_info, &ProofType::Recursive1, save_file);
-                    true
-                });
-            }
+            airs.iter().for_each(|&(airgroup_id, air_id)| {
+                let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
+                setup.load_const_pols(&global_info, &ProofType::Recursive1);
+                setup.load_const_pols_tree(&global_info, &ProofType::Recursive1, save_file);
+            });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
 
             let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
@@ -551,7 +578,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 transcript.add_elements(value.as_ptr() as *mut u8, value.len());
             }
         }
-        drop(dctx);
         timer_stop_and_log_debug!(CALCULATING_CHALLENGES);
     }
 
@@ -698,6 +724,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     }
 
     fn free_provers(provers: &mut [Box<dyn Prover<F>>], pctx: Arc<ProofCtx<F>>) {
+        timer_start_info!(FREE_PROVERS);
         let mut proofs = Vec::new();
         let mut starks = Vec::new();
 
@@ -722,6 +749,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         } else {
             pctx.free_instances();
         }
+
+        timer_stop_and_log_info!(FREE_PROVERS);
     }
 
     fn print_global_summary(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
@@ -738,7 +767,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             if !air_instance_map.contains_key(&air_name.clone()) {
                 let setup = sctx.get_setup(*airgroup_id, *air_id);
                 let n_bits = setup.stark_info.stark_struct.n_bits;
-                let memory_instance = get_map_totaln_c(setup.p_setup.p_stark_info) as f64 * 8.0;
+                let memory_instance = setup.prover_buffer_size as f64 * 8.0;
                 let memory_fixed = (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
                     + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext)))
                     as f64
@@ -855,7 +884,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             if !air_instance_map.contains_key(&air_name.clone()) {
                 let setup = sctx.get_setup(airgroup_id, air_id);
                 let n_bits = setup.stark_info.stark_struct.n_bits;
-                let memory_instance = get_map_totaln_c(setup.p_setup.p_stark_info) as f64 * 8.0;
+                let memory_instance = setup.prover_buffer_size as f64 * 8.0;
                 let memory_fixed = (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
                     + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext)))
                     as f64

@@ -18,12 +18,14 @@ type GetWitnessFunc =
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
-type GenWitnessResult<F> = Result<(Vec<F>, Vec<F>), Box<dyn std::error::Error>>;
-
 pub fn generate_vadcop_recursive1_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setups: Arc<SetupsVadcop>,
     proofs: &[*mut c_void],
+    circom_witness: &Vec<F>,
+    publics: &Vec<F>,
+    trace: &Vec<F>,
+    prover_buffer: &Vec<F>,
     output_dir_path: PathBuf,
 ) -> Result<Vec<*mut c_void>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
@@ -52,7 +54,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
             let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Compressor);
 
-            let (buffer, publics) = generate_witness::<F>(&setup_path, setup, proofs[idx], 18)?;
+            generate_witness::<F>(&circom_witness, &trace, &publics, &setup_path, setup, proofs[idx], 18)?;
 
             log::info!(
                 "{}: {}",
@@ -70,7 +72,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
             zkin = gen_recursive_proof_c(
                 p_setup,
-                buffer.as_ptr() as *mut u8,
+                trace.as_ptr() as *mut u8,
+                prover_buffer.as_ptr() as *mut u8,
                 setup.get_const_ptr(),
                 setup.get_const_tree_ptr(),
                 publics.as_ptr() as *mut u8,
@@ -80,8 +83,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
                 true,
             );
 
-            drop(buffer);
-            drop(publics);
             log::info!("{}: ··· Compressor Proof generated.", MY_NAME);
             timer_stop_and_log_trace!(GENERATING_COMPRESSOR_PROOF);
         } else {
@@ -101,7 +102,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
         let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1);
 
-        let (buffer, publics) = generate_witness::<F>(&setup_path, setup, zkin, 18)?;
+        generate_witness::<F>(&circom_witness, &trace, &publics, &setup_path, setup, zkin, 18)?;
 
         log::info!(
             "{}: {}",
@@ -119,7 +120,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
         let p_prove = gen_recursive_proof_c(
             p_setup,
-            buffer.as_ptr() as *mut u8,
+            trace.as_ptr() as *mut u8,
+            prover_buffer.as_ptr() as *mut u8,
             setup.get_const_ptr(),
             setup.get_const_tree_ptr(),
             publics.as_ptr() as *mut u8,
@@ -130,8 +132,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
         );
         proofs_out.push(p_prove);
 
-        drop(buffer);
-        drop(publics);
         log::info!("{}: ··· Recursive1 Proof generated.", MY_NAME);
         timer_stop_and_log_trace!(GENERATE_RECURSIVE1_PROOF);
     }
@@ -143,6 +143,10 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
     pctx: &ProofCtx<F>,
     sctx: Arc<SetupCtx>,
     proofs: &[*mut c_void],
+    circom_witness: &Vec<F>,
+    publics: &Vec<F>,
+    trace: &Vec<F>,
+    prover_buffer: &Vec<F>,
     output_dir_path: PathBuf,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
@@ -226,7 +230,15 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 
                         let setup_path = pctx.global_info.get_air_setup_path(airgroup, 0, &ProofType::Recursive2);
 
-                        let (buffer, publics) = generate_witness::<F>(&setup_path, setup, zkin_recursive2_updated, 18)?;
+                        generate_witness::<F>(
+                            &circom_witness,
+                            &trace,
+                            &publics,
+                            &setup_path,
+                            setup,
+                            zkin_recursive2_updated,
+                            18,
+                        )?;
 
                         timer_start_trace!(GENERATE_RECURSIVE2_PROOF);
                         let proof_file = match pctx.options.debug_info.save_proofs_to_file {
@@ -252,7 +264,8 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 
                         let zkin = gen_recursive_proof_c(
                             p_setup,
-                            buffer.as_ptr() as *mut u8,
+                            trace.as_ptr() as *mut u8,
+                            prover_buffer.as_ptr() as *mut u8,
                             setup.get_const_ptr(),
                             setup.get_const_tree_ptr(),
                             publics.as_ptr() as *mut u8,
@@ -264,8 +277,6 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 
                         airgroup_proofs[airgroup][j] = Some(zkin);
 
-                        drop(buffer);
-                        drop(publics);
                         timer_stop_and_log_trace!(GENERATE_RECURSIVE2_PROOF);
                         log::info!("{}: ··· Recursive 2 Proof generated.", MY_NAME);
                     }
@@ -318,6 +329,10 @@ pub fn generate_vadcop_final_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setup: Arc<Setup>,
     proof: *mut c_void,
+    circom_witness: &Vec<F>,
+    publics: &Vec<F>,
+    trace: &Vec<F>,
+    prover_buffer: &Vec<F>,
     output_dir_path: PathBuf,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
@@ -329,7 +344,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
 
     let setup_path = pctx.global_info.get_setup_path("vadcop_final");
 
-    let (buffer, publics) = generate_witness::<F>(&setup_path, &setup, proof, 18)?;
+    generate_witness::<F>(&circom_witness, &trace, &publics, &setup_path, &setup, proof, 18)?;
 
     let proof_file = output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().into_owned();
 
@@ -338,7 +353,8 @@ pub fn generate_vadcop_final_proof<F: Field>(
     // prove
     let p_prove = gen_recursive_proof_c(
         p_setup,
-        buffer.as_ptr() as *mut u8,
+        trace.as_ptr() as *mut u8,
+        prover_buffer.as_ptr() as *mut u8,
         setup.get_const_ptr(),
         setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
@@ -348,7 +364,6 @@ pub fn generate_vadcop_final_proof<F: Field>(
         false,
     );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
-    drop(buffer);
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);
 
     Ok(p_prove)
@@ -358,6 +373,10 @@ pub fn generate_recursivef_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setup: Arc<Setup>,
     proof: *mut c_void,
+    circom_witness: &Vec<F>,
+    publics: &Vec<F>,
+    trace: &Vec<F>,
+    prover_buffer: &Vec<F>,
     output_dir_path: PathBuf,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "RecProof";
@@ -369,7 +388,7 @@ pub fn generate_recursivef_proof<F: Field>(
 
     let setup_path = pctx.global_info.get_setup_path("recursivef");
 
-    let (buffer, publics) = generate_witness::<F>(&setup_path, &setup, proof, 12)?;
+    generate_witness::<F>(&circom_witness, &trace, &publics, &setup_path, &setup, proof, 12)?;
 
     let proof_file = match pctx.options.debug_info.save_proofs_to_file {
         true => output_dir_path.join("proofs/recursivef.json").to_string_lossy().into_owned(),
@@ -381,7 +400,8 @@ pub fn generate_recursivef_proof<F: Field>(
     // prove
     let p_prove = gen_recursive_proof_c(
         p_setup,
-        buffer.as_ptr() as *mut u8,
+        trace.as_ptr() as *mut u8,
+        prover_buffer.as_ptr() as *mut u8,
         setup.get_const_ptr(),
         setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
@@ -391,7 +411,6 @@ pub fn generate_recursivef_proof<F: Field>(
         false,
     );
     log::info!("{}: ··· RecursiveF Proof generated.", MY_NAME);
-    drop(buffer);
     timer_stop_and_log_trace!(GENERATE_RECURSIVEF_PROOF);
 
     Ok(p_prove)
@@ -446,15 +465,17 @@ pub fn generate_fflonk_snark_proof<F: Field>(
 
     Ok(())
 }
+
 fn generate_witness<F: Field>(
+    witness: &Vec<F>,
+    buffer: &Vec<F>,
+    publics: &Vec<F>,
     setup_path: &Path,
     setup: &Setup,
     zkin: *mut c_void,
     n_cols: usize,
-) -> GenWitnessResult<F> {
+) -> Result<(), Box<dyn std::error::Error>> {
     // Load the symbol (function) from the library
-    timer_start_trace!(CALCULATE_WITNESS);
-
     let rust_lib_filename = setup_path.display().to_string() + ".so";
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
@@ -479,41 +500,126 @@ fn generate_witness<F: Field>(
         get_size_witness()
     };
 
+    timer_start_trace!(CALCULATE_WITNESS);
+
+    unsafe {
+        let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
+        get_witness(zkin, dat_filename_ptr, witness.as_ptr() as *mut c_void, nmutex);
+    }
+
+    get_committed_pols_c(
+        witness.as_ptr() as *mut u8,
+        exec_filename_ptr,
+        buffer.as_ptr() as *mut u8,
+        publics.as_ptr() as *mut u8,
+        size_witness,
+        1 << (setup.stark_info.stark_struct.n_bits) as u64,
+        setup.stark_info.n_publics,
+        n_cols as u64,
+    );
+    timer_stop_and_log_trace!(CALCULATE_WITNESS);
+
+    Ok(())
+}
+
+pub fn get_buff_sizes<F: Field>(
+    pctx: Arc<ProofCtx<F>>,
+    setups: Arc<SetupsVadcop>,
+) -> Result<(usize, usize, usize, usize), Box<dyn std::error::Error>> {
+    let mut witness_size = 0;
+    let mut publics = 0;
+    let mut buffer = 0;
+    let mut prover_size = 0;
+
+    let instances = pctx.dctx.read().unwrap().instances.clone();
+    let my_instances = pctx.dctx.read().unwrap().my_instances.clone();
+
+    for (_, instance_id) in my_instances.iter().enumerate() {
+        let (airgroup_id, air_id) = instances[*instance_id];
+
+        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+            let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+            let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Compressor);
+            let sizes = get_size(&setup_path, setup_compressor, 18)?;
+            witness_size = witness_size.max(sizes.0);
+            publics = publics.max(sizes.1);
+            buffer = buffer.max(sizes.2);
+            prover_size = prover_size.max(setup_compressor.prover_buffer_size);
+        }
+
+        let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+        let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1);
+        let sizes = get_size(&setup_path, setup_recursive1, 18)?;
+        witness_size = witness_size.max(sizes.0);
+        publics = publics.max(sizes.1);
+        buffer = buffer.max(sizes.2);
+        prover_size = prover_size.max(setup_recursive1.prover_buffer_size);
+    }
+
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup in 0..n_airgroups {
+        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
+        let setup_path = pctx.global_info.get_air_setup_path(airgroup, 0, &ProofType::Recursive2);
+        let sizes = get_size(&setup_path, setup, 18)?;
+        witness_size = witness_size.max(sizes.0);
+        publics = publics.max(sizes.1);
+        buffer = buffer.max(sizes.2);
+        prover_size = prover_size.max(setup.prover_buffer_size);
+    }
+
+    let setup_final = &setups.setup_vadcop_final.clone().unwrap();
+    let setup_path = pctx.global_info.get_setup_path("vadcop_final");
+    let sizes = get_size(&setup_path, setup_final, 18)?;
+    witness_size = witness_size.max(sizes.0);
+    publics = publics.max(sizes.1);
+    buffer = buffer.max(sizes.2);
+    prover_size = prover_size.max(setup_final.prover_buffer_size);
+
+    if pctx.options.final_snark {
+        let setup_recursivef = &setups.setup_recursivef.clone().unwrap();
+        let setup_path = pctx.global_info.get_setup_path("recursivef");
+        let sizes = get_size(&setup_path, setup_recursivef, 12)?;
+        witness_size = witness_size.max(sizes.0);
+        publics = publics.max(sizes.1);
+        buffer = buffer.max(sizes.2);
+        prover_size = prover_size.max(setup_recursivef.prover_buffer_size);
+    }
+
+    Ok((witness_size, publics, buffer, prover_size as usize))
+}
+
+fn get_size(
+    setup_path: &Path,
+    setup: &Setup,
+    n_cols: usize,
+) -> Result<(usize, usize, usize), Box<dyn std::error::Error>> {
+    // Load the symbol (function) from the library
+    let rust_lib_filename = setup_path.display().to_string() + ".so";
+    let rust_lib_path = Path::new(rust_lib_filename.as_str());
+
+    if !rust_lib_path.exists() {
+        return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
+    }
+
+    let library: Library = unsafe { Library::new(rust_lib_path)? };
+
+    let exec_filename = setup_path.display().to_string() + ".exec";
+
+    let mut size_witness = unsafe {
+        let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
+        get_size_witness()
+    };
+
     let mut file = File::open(exec_filename)?; // Open the file
 
     let mut n_adds = [0u8; 8]; // Buffer for nAdds (u64 is 8 bytes)
     file.read_exact(&mut n_adds)?;
     let n_adds = u64::from_le_bytes(n_adds);
 
-    let witness: Vec<F> = create_buffer_fast((size_witness + n_adds) as usize);
-    let witness_ptr = witness.as_ptr() as *mut c_void;
-
-    unsafe {
-        let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-        get_witness(zkin, dat_filename_ptr, witness_ptr, nmutex);
-    }
-
-    let n = 1 << (setup.stark_info.stark_struct.n_bits);
-
-    let buffer = create_buffer_fast(n_cols * n);
-    let p_address = buffer.as_ptr() as *mut u8;
+    size_witness += n_adds;
 
     let n_publics = setup.stark_info.n_publics as usize;
-    let publics = create_buffer_fast(n_publics);
-    let p_publics = publics.as_ptr() as *mut u8;
+    let buffer_size = n_cols * (1 << (setup.stark_info.stark_struct.n_bits)) as usize;
 
-    get_committed_pols_c(
-        witness.as_ptr() as *mut u8,
-        exec_filename_ptr,
-        p_address,
-        p_publics,
-        size_witness,
-        n as u64,
-        n_publics as u64,
-        n_cols as u64,
-    );
-
-    timer_stop_and_log_trace!(CALCULATE_WITNESS);
-
-    Ok((buffer, publics))
+    Ok((size_witness as usize, n_publics, buffer_size))
 }

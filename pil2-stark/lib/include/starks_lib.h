@@ -29,7 +29,7 @@
     // Stark Info
     // ========================================================================================
     void *stark_info_new(char* filename, bool verifier);
-    uint64_t get_map_total_n(void *pStarkInfo);
+    uint64_t get_map_total_n(void *pStarkInfo, bool recursive);
     void stark_info_free(void *pStarkInfo);
 
     // Prover Helpers
@@ -87,12 +87,6 @@
 
     void calculate_hash(void *pStarks, void *pHhash, void *pBuffer, uint64_t nElements);
 
-    
-    // MerkleTree
-    // =================================================================================
-    void *merkle_tree_new(uint64_t height, uint64_t width, uint64_t arity, bool custom);
-    void merkle_tree_free(void *pMerkleTree);
-
     // FRI 
     // =================================================================================
 
@@ -135,7 +129,7 @@
 
     // Recursive proof
     // =================================================================================
-    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
+    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
     void *get_zkin_ptr(char *zkin_file);
     void *add_recursive2_verkey(void *pZkin, char* recursive2VerKeyFilename);
     void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPublics, void* pChallenges, void *zkin1, void *zkin2, void *starkInfoRecursive2);
@@ -159,5 +153,12 @@
     // =================================================================================
     bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
 
+    // Debug circom
+    // =================================================================================
+    void save_to_file(void *buffer, uint64_t bufferSize, void* publics, uint64_t publicsSize, char* name);
+    void read_from_file(void* buffer, uint64_t bufferSize, void* publics, uint64_t publicsSize, char* name);
 
+    void *create_buffer(uint64_t size);
+    void free_buffer(void *buffer);
+    
 #endif

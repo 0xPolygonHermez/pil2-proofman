@@ -1,7 +1,7 @@
 #include "starks.hpp"
 
 template <typename ElementType>
-void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, bool vadcop) {
+void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, bool vadcop) {
     TimerStart(STARK_PROOF);
 
     FRIProof<ElementType> proof(setupCtx.starkInfo, 0);
@@ -9,11 +9,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     
     Starks<ElementType> starks(setupCtx, pConstTree);
-
-    setupCtx.starkInfo.addMemoryRecursive();
     
-    Goldilocks::Element *aux_trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
-
 #ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
 #elif defined(__AVX2__)
@@ -29,7 +25,6 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     Goldilocks::Element evals[setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION];
     Goldilocks::Element challenges[setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION];
     
-    vector<bool> airgroupValuesCalculated(setupCtx.starkInfo.airgroupValuesMap.size(), false);
     StepsParams params = {
         trace: witness,
         aux_trace,
@@ -251,7 +246,5 @@ TimerStopAndLog(STARK_PROOF);
         json2file(zkin, proofFile);
     }
     
-    delete[] aux_trace;
-
     return (void *) new nlohmann::json(zkin);
 }

@@ -104,8 +104,8 @@ extern "C" {
     pub fn stark_info_new(filename: *mut ::std::os::raw::c_char, verifier: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15get_map_total_nPv"]
-    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+    #[link_name = "\u{1}_Z15get_map_total_nPvb"]
+    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void, recursive: bool) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z15stark_info_freePv"]
@@ -382,14 +382,6 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15merkle_tree_newmmmb"]
-    pub fn merkle_tree_new(height: u64, width: u64, arity: u64, custom: bool) -> *mut ::std::os::raw::c_void;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z16merkle_tree_freePv"]
-    pub fn merkle_tree_free(pMerkleTree: *mut ::std::os::raw::c_void);
-}
-extern "C" {
     #[link_name = "\u{1}_Z19compute_fri_foldingmPvS_mmm"]
     pub fn compute_fri_folding(
         step: u64,
@@ -564,12 +556,13 @@ extern "C" {
     pub fn print_row(pSetupCtx: *mut ::std::os::raw::c_void, buffer: *mut ::std::os::raw::c_void, stage: u64, row: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmS_S_S_S_S0_b"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmS_S_S_S_S_S0_b"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
         airgroupId: u64,
         witness: *mut ::std::os::raw::c_void,
+        aux_trace: *mut ::std::os::raw::c_void,
         pConstPols: *mut ::std::os::raw::c_void,
         pConstTree: *mut ::std::os::raw::c_void,
         pPublicInputs: *mut ::std::os::raw::c_void,
@@ -667,4 +660,32 @@ extern "C" {
         pProofValues: *mut ::std::os::raw::c_void,
         challenges: *mut ::std::os::raw::c_void,
     ) -> bool;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z12save_to_filePvmS_mPc"]
+    pub fn save_to_file(
+        buffer: *mut ::std::os::raw::c_void,
+        bufferSize: u64,
+        publics: *mut ::std::os::raw::c_void,
+        publicsSize: u64,
+        name: *mut ::std::os::raw::c_char,
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z14read_from_filePvmS_mPc"]
+    pub fn read_from_file(
+        buffer: *mut ::std::os::raw::c_void,
+        bufferSize: u64,
+        publics: *mut ::std::os::raw::c_void,
+        publicsSize: u64,
+        name: *mut ::std::os::raw::c_char,
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z13create_bufferm"]
+    pub fn create_buffer(size: u64) -> *mut ::std::os::raw::c_void;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z11free_bufferPv"]
+    pub fn free_buffer(buffer: *mut ::std::os::raw::c_void);
 }

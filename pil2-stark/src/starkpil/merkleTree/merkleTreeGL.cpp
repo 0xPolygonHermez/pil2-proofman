@@ -3,21 +3,9 @@
 #include <algorithm> // std::max
 
 
-MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width, Goldilocks::Element *_source, Goldilocks::Element *_nodes, bool allocateSource, bool allocateNodes) : height(_height), width(_width), source(_source), nodes(_nodes)
+MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width) : height(_height), width(_width)
 {
-
-    if (source == NULL && allocateSource)
-    {
-        source = (Goldilocks::Element *)calloc(height * width, sizeof(Goldilocks::Element));
-        isSourceAllocated = true;
-    }
-
     numNodes = getNumNodes(height);
-    if (nodes == NULL && allocateNodes)
-    {
-        nodes = (Goldilocks::Element *)calloc(numNodes, sizeof(Goldilocks::Element));
-        isNodesAllocated = true;
-    }
     arity = _arity;
     custom = _custom;
 };
@@ -31,21 +19,7 @@ MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, Goldilocks::Element *t
     custom = _custom;
     numNodes = getNumNodes(height);
     nodes = &tree[2 + height * width];
-    isNodesAllocated = false;
-    isSourceAllocated = false;
 };
-
-MerkleTreeGL::~MerkleTreeGL()
-{
-    if (isSourceAllocated)
-    {
-        free(source);
-    }
-    if (isNodesAllocated)
-    {
-        free(nodes);
-    }
-}
 
 uint64_t MerkleTreeGL::getNumSiblings() 
 {
@@ -78,10 +52,6 @@ void MerkleTreeGL::getRoot(Goldilocks::Element *root)
     std::memcpy(root, &nodes[numNodes - nFieldElements], nFieldElements * sizeof(Goldilocks::Element));
 }
 
-void MerkleTreeGL::copySource(Goldilocks::Element *_source)
-{
-    std::memcpy(source, _source, height * width * sizeof(Goldilocks::Element));
-}
 
 void MerkleTreeGL::setSource(Goldilocks::Element *_source)
 {
@@ -93,10 +63,6 @@ void MerkleTreeGL::setNodes(Goldilocks::Element *_nodes)
     nodes = _nodes;
 }
 
-void MerkleTreeGL::copyNodes(Goldilocks::Element *_nodes)
-{
-    std::memcpy(nodes, _nodes, numNodes * sizeof(Goldilocks::Element));
-}
 
 Goldilocks::Element MerkleTreeGL::getElement(uint64_t idx, uint64_t subIdx)
 {

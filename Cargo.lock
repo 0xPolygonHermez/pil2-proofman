@@ -840,6 +840,7 @@ dependencies = [
  "proofman-macros",
  "proofman-starks-lib-c",
  "proofman-util",
+ "rayon",
  "serde",
  "serde_derive",
  "serde_json",
