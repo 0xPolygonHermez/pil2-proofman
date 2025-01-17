@@ -82,7 +82,6 @@ pub fn fri_proof_get_zkinproofs_c(
     n_proofs: u64,
     proofs: *mut *mut c_void,
     fri_proofs: *mut *mut c_void,
-    stark_infos: *mut *mut c_void,
     p_publics: *mut u8,
     p_proof_values: *mut u8,
     p_challenges: *mut u8,
@@ -100,7 +99,6 @@ pub fn fri_proof_get_zkinproofs_c(
             n_proofs,
             proofs,
             fri_proofs,
-            stark_infos,
             p_publics as *mut std::os::raw::c_void,
             p_proof_values as *mut std::os::raw::c_void,
             p_challenges as *mut std::os::raw::c_void,
@@ -117,7 +115,6 @@ pub fn fri_proof_get_zkinproof_c(
     p_publics: *mut u8,
     p_challenges: *mut u8,
     p_proof_values: *mut u8,
-    p_stark_info: *mut c_void,
     global_info_file: &str,
     output_dir_file: &str,
 ) -> *mut c_void {
@@ -133,7 +130,6 @@ pub fn fri_proof_get_zkinproof_c(
             p_publics as *mut std::os::raw::c_void,
             p_challenges as *mut std::os::raw::c_void,
             p_proof_values as *mut std::os::raw::c_void,
-            p_stark_info,
             global_info_file_ptr,
             file_ptr,
         )
@@ -155,17 +151,17 @@ pub fn fri_proof_free_c(p_fri_proof: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn stark_info_new_c(filename: &str) -> *mut c_void {
+pub fn stark_info_new_c(filename: &str, verify: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char)
+        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, verify)
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_map_total_n(p_stark_info) }
+pub fn get_map_totaln_c(p_stark_info: *mut c_void, recursive: bool) -> u64 {
+    unsafe { get_map_total_n(p_stark_info, recursive) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -243,11 +239,11 @@ pub fn calculate_const_tree_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn expressions_bin_new_c(filename: &str, global: bool) -> *mut c_void {
+pub fn expressions_bin_new_c(filename: &str, global: bool, verify: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global)
+        expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global, verify)
     }
 }
 
@@ -485,21 +481,9 @@ pub fn starks_free_c(p_stark: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn free_provers_c(n_proofs: u64, p_starks: *mut *mut c_void, p_proofs: *mut *mut c_void) {
+pub fn free_provers_c(n_proofs: u64, p_starks: *mut *mut c_void, p_proofs: *mut *mut c_void, background: bool) {
     unsafe {
-        proofs_free(n_proofs, p_starks, p_proofs);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn merkle_tree_new_c(height: u64, width: u64, arity: u64, custom: bool) -> *mut c_void {
-    unsafe { merkle_tree_new(height, width, arity, custom) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn merkle_tree_free_c(merkle_tree: *mut c_void) {
-    unsafe {
-        merkle_tree_free(merkle_tree);
+        proofs_free(n_proofs, p_starks, p_proofs, background);
     }
 }
 
@@ -939,7 +923,8 @@ pub fn print_row_c(p_setup_ctx: *mut c_void, buffer: *mut u8, stage: u64, row: u
 #[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_c(
     p_setup_ctx: *mut c_void,
-    p_address: *mut u8,
+    p_witness: *mut u8,
+    p_aux_trace: *mut u8,
     p_const_pols: *mut u8,
     p_const_tree: *mut u8,
     p_public_inputs: *mut u8,
@@ -959,7 +944,8 @@ pub fn gen_recursive_proof_c(
             p_setup_ctx,
             global_info_file_ptr,
             airgroup_id,
-            p_address as *mut std::os::raw::c_void,
+            p_witness as *mut std::os::raw::c_void,
+            p_aux_trace as *mut std::os::raw::c_void,
             p_const_pols as *mut std::os::raw::c_void,
             p_const_tree as *mut std::os::raw::c_void,
             p_public_inputs as *mut std::os::raw::c_void,
@@ -1115,6 +1101,64 @@ pub fn set_log_level_c(level: u64) {
     }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn stark_verify_c(
+    verkey: &str,
+    p_proof: *mut c_void,
+    p_stark_info: *mut c_void,
+    p_expressions_bin: *mut c_void,
+    p_publics: *mut u8,
+    p_proof_values: *mut u8,
+    p_challenges: *mut u8,
+) -> bool {
+    let verkey_file = CString::new(verkey).unwrap();
+    let verkey_file_ptr = verkey_file.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        stark_verify(
+            p_proof,
+            p_stark_info,
+            p_expressions_bin,
+            verkey_file_ptr,
+            p_publics as *mut c_void,
+            p_proof_values as *mut c_void,
+            p_challenges as *mut c_void,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn save_file_c(p_buffer: *mut u8, buffer_size: u64, p_publics: *mut u8, publics_size: u64, file_name: &str) {
+    let file = CString::new(file_name).unwrap();
+    let file_ptr = file.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        save_to_file(p_buffer as *mut c_void, buffer_size, p_publics as *mut c_void, publics_size, file_ptr);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn read_from_file_c(p_buffer: *mut u8, buffer_size: u64, p_publics: *mut u8, publics_size: u64, file_name: &str) {
+    let file = CString::new(file_name).unwrap();
+    let file_ptr = file.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        read_from_file(p_buffer as *mut c_void, buffer_size, p_publics as *mut c_void, publics_size, file_ptr);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn create_buffer_c(size: u64) -> *mut c_void {
+    unsafe { create_buffer(size) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn free_buffer_c(buffer: *mut u8) {
+    unsafe {
+        free_buffer(buffer as *mut c_void);
+    }
+}
+
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -1169,7 +1213,6 @@ pub fn fri_proof_get_zkinproofs_c(
     _n_proofs: u64,
     _proofs: *mut *mut c_void,
     _fri_proofs: *mut *mut c_void,
-    _stark_infos: *mut *mut c_void,
     _p_publics: *mut u8,
     _p_proof_values: *mut u8,
     _p_challenges: *mut u8,
@@ -1190,7 +1233,6 @@ pub fn fri_proof_get_zkinproof_c(
     _p_publics: *mut u8,
     _p_challenges: *mut u8,
     _p_proof_values: *mut u8,
-    _p_stark_info: *mut c_void,
     _global_info_file: &str,
     _output_dir_file: &str,
 ) -> *mut c_void {
@@ -1213,18 +1255,18 @@ pub fn fri_proof_free_c(_p_fri_proof: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn free_provers_c(_n_proofs: u64, _p_starks: *mut *mut c_void, _fri_proofs: *mut *mut c_void) {
+pub fn free_provers_c(_n_proofs: u64, _p_starks: *mut *mut c_void, _fri_proofs: *mut *mut c_void, _background: bool) {
     trace!("{}: ··· {}", "ffi     ", "proofs_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn stark_info_new_c(_filename: &str) -> *mut c_void {
+pub fn stark_info_new_c(_filename: &str, _verify: bool) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
+pub fn get_map_totaln_c(_p_stark_info: *mut c_void, _recursive: bool) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
     100000000
 }
@@ -1282,7 +1324,7 @@ pub fn calculate_const_tree_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn expressions_bin_new_c(_filename: &str, _global: bool) -> *mut c_void {
+pub fn expressions_bin_new_c(_filename: &str, _global: bool, _verify: bool) -> *mut c_void {
     std::ptr::null_mut()
 }
 
@@ -1419,17 +1461,6 @@ pub fn starks_new_c(_p_setup: *mut c_void, _p_const_tree: *mut u8) -> *mut c_voi
 #[cfg(feature = "no_lib_link")]
 pub fn starks_free_c(_p_stark: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "starks_free: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn merkle_tree_new_c(_height: u64, _width: u64, _arity: u64, _custom: bool) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "merkle_tree_new: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn merkle_tree_free_c(_merkle_tree: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "merkle_tree_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1770,6 +1801,7 @@ pub fn print_row_c(_p_setup_ctx: *mut c_void, _buffer: *mut u8, _stage: u64, _ro
 pub fn gen_recursive_proof_c(
     _p_setup_ctx: *mut c_void,
     _p_address: *mut u8,
+    _p_aux_trace: *mut u8,
     _p_const_pols: *mut u8,
     _p_const_tree: *mut u8,
     _p_public_inputs: *mut u8,
@@ -1872,4 +1904,18 @@ pub fn gen_final_snark_proof_c(_circomWitnessFinal: *mut u8, _zkeyFile: &str, _o
 #[cfg(feature = "no_lib_link")]
 pub fn set_log_level_c(_level: u64) {
     trace!("{}: ··· {}", "ffi     ", "set_log_level: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn stark_verify_c(
+    _verkey: &str,
+    _p_proof: *mut c_void,
+    _p_stark_info: *mut c_void,
+    _p_expressions_bin: *mut c_void,
+    _p_publics: *mut u8,
+    _p_proof_values: *mut u8,
+    _p_challenges: *mut u8,
+) -> bool {
+    trace!("{}: ··· {}", "ffi     ", "stark_verify_c: This is a mock call because there is no linked library");
+    true
 }

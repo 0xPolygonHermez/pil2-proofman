@@ -15,6 +15,7 @@ pub mod stark_info;
 pub mod utils;
 pub mod custom_commits;
 pub mod constraints;
+pub mod prover_helpers;
 
 pub use air_instance::*;
 pub use air_instances_repository::*;
@@ -32,3 +33,4 @@ pub use utils::*;
 pub use distribution_ctx::*;
 pub use custom_commits::*;
 pub use constraints::*;
+pub use prover_helpers::*;

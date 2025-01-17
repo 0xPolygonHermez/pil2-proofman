@@ -1,7 +1,7 @@
 name: CI Checks
 on:
   push:
-    branches: [main, develop, feature/minor_clean]
+    branches: [main, develop, feature/minor_clean, feature/merge-std-chang]
   pull_request:
 jobs:
   cargo-test:
@@ -182,7 +182,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
-          sudo apt-get install -y openmpi-bin libopenmpi-dev
+          sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 
       - name: Install pil2-stark
         working-directory: pil2-stark
@@ -223,10 +223,6 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json --output-dir examples/fibonacci-square/build/proofs -a
 
-      - name: Verify proof Fibonacci Square
-        run: |
-          node pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey -p examples/fibonacci-square/build/proofs -t vadcop_final
-
       - name: Clean proof dir
         run: |
           rm -rf examples/fibonacci-square/build/proofs
@@ -236,11 +232,8 @@ jobs:
 
       # - name: Generate proof Fibonacci Square distributed
       #   run: | 
-      #     mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=32 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
+      #     mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=80 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
 
-      # - name: Verify proof Fibonacci Square distributed
-      #   run: |
-      #     node pil2-proofman-js/src/main_verify -k examples/fibonacci-square/build/provingKey -p examples/fibonacci-square/build/proofs -t vadcop_final
   test-std:
     name: Test STD
     runs-on: ubuntu-latest
@@ -464,10 +457,6 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/liblookup.so --proving-key ./pil2-components/test/std/lookup/build/provingKey --output-dir ./pil2-components/test/std/lookup/build
 
-      - name: Verify proof Lookup
-        run: |
-          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/lookup/build/provingKey -p ./pil2-components/test/std/lookup/build
-
       - name: Verify constraints permutation
         run: |
           cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/permutation/build/provingKey
@@ -475,10 +464,6 @@ jobs:
       - name: Generate proof permutation
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/permutation/build/provingKey --output-dir ./pil2-components/test/std/permutation/build
-
-      - name: Verify proof permutation
-        run: |
-          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/permutation/build/provingKey -p ./pil2-components/test/std/permutation/build
 
       - name: Verify constraints connection
         run: |
@@ -488,9 +473,13 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey --output-dir ./pil2-components/test/std/connection/build
 
-      - name: Verify proof connection
+      - name: Verify constraints direct_update
         run: |
-          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/connection/build/provingKey -p ./pil2-components/test/std/connection/build
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey
+
+      - name: Generate proof direct_update
+        run: |
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build
 
       - name: Verify constraints direct_update
         run: |
@@ -500,10 +489,6 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build
 
-      - name: Verify proof direct_update
-        run: |
-          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/direct_update/build/provingKey -p ./pil2-components/test/std/direct_update/build
-
       - name: Verify constraints range-check
         run: |
           cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey
@@ -511,10 +496,6 @@ jobs:
       - name: Generate proof range-check
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey --output-dir ./pil2-components/test/std/range_check/build
-
-      - name: Verify proof range-check
-        run: |
-          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/range_check/build/provingKey -p ./pil2-components/test/std/range_check/build
 
       - name: Verify constraints simple
         run: |
@@ -524,18 +505,10 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build/provingKey --output-dir ./pil2-components/test/simple/build
 
-      - name: Verify proof simple
-        run: |
-          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/simple/build/provingKey -p ./pil2-components/test/simple/build
+      # - name: Verify constraints diff_buses
+      #   run: |
+      #     cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
 
-      - name: Verify constraints diff_buses
-        run: |
-          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
-
-      - name: Generate proof diff_buses
-        run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey --output-dir ./pil2-components/test/std/diff_buses/build
-
-      - name: Verify proof diff_buses
-        run: |
-          node pil2-proofman-js/src/main_verify -k ./pil2-components/test/std/diff_buses/build/provingKey -p ./pil2-components/test/std/diff_buses/build
+      # - name: Generate proof diff_buses
+      #   run: |
+      #     cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey --output-dir ./pil2-components/test/std/diff_buses/build

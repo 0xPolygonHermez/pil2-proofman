@@ -3,9 +3,7 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{
-    SetupCtx, distribution_ctx::DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode,
-};
+use crate::{SetupCtx, DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -41,11 +39,17 @@ pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,
     pub std_mode: StdMode,
+    pub save_proofs_to_file: bool,
 }
 
 impl DebugInfo {
     pub fn new_debug() -> Self {
-        Self { debug_instances: HashMap::new(), debug_global_instances: Vec::new(), std_mode: StdMode::new_debug() }
+        Self {
+            debug_instances: HashMap::new(),
+            debug_global_instances: Vec::new(),
+            std_mode: StdMode::new_debug(),
+            save_proofs_to_file: true,
+        }
     }
 }
 impl ProofOptions {
@@ -120,8 +124,46 @@ impl<F: Field> ProofCtx<F> {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
 
+    pub fn free_instances(&self) {
+        self.air_instance_repo.free();
+    }
+
+    pub fn free_traces(&self) {
+        self.air_instance_repo.free_traces();
+    }
+
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
         self.air_instance_repo.add_air_instance(air_instance, global_idx);
+    }
+
+    pub fn dctx_get_rank(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.rank as usize
+    }
+
+    pub fn dctx_get_n_processes(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.n_processes as usize
+    }
+
+    pub fn dctx_get_instances(&self) -> Vec<(usize, usize)> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances.clone()
+    }
+
+    pub fn dctx_get_my_instances(&self) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.my_instances.clone()
+    }
+
+    pub fn dctx_get_my_groups(&self) -> Vec<Vec<usize>> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.my_groups.clone()
+    }
+
+    pub fn dctx_get_my_air_groups(&self) -> Vec<Vec<usize>> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.my_air_groups.clone()
     }
 
     pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
@@ -144,9 +186,34 @@ impl<F: Field> ProofCtx<F> {
         dctx.find_instance(airgroup_id, air_id)
     }
 
-    pub fn dctx_add_instance(&self, airgroup_id: usize, air_id: usize, weight: usize) -> (bool, usize) {
+    pub fn dctx_add_instance(&self, airgroup_id: usize, air_id: usize, weight: u64) -> (bool, usize) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.add_instance(airgroup_id, air_id, weight)
+    }
+
+    pub fn dctx_distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.distribute_roots(roots)
+    }
+
+    pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+    }
+
+    pub fn dctx_assign_instances(&self) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.assign_instances();
+    }
+
+    pub fn dctx_load_balance_info(&self) -> (f64, u64, u64, f64) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.load_balance_info()
+    }
+
+    pub fn dctx_set_balance_distribution(&self, balance: bool) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.set_balance_distribution(balance);
     }
 
     pub fn dctx_distribute_multiplicity(&self, multiplicity: &mut [u64], global_idx: usize) {
@@ -172,6 +239,11 @@ impl<F: Field> ProofCtx<F> {
     pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: Vec<Vec<u64>>) -> Vec<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
         dctx.distribute_airgroupvalues::<F>(airgroup_values, &self.global_info)
+    }
+
+    pub fn dctx_close(&self) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.close(self.global_info.air_groups.len());
     }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {
@@ -221,6 +293,10 @@ impl<F: Field> ProofCtx<F> {
     pub fn get_publics_ptr(&self) -> *mut u8 {
         let guard = &self.public_inputs.values.read().unwrap();
         guard.as_ptr() as *mut u8
+    }
+
+    pub fn get_challenges(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
+        self.challenges.values.write().unwrap()
     }
 
     pub fn get_challenges_ptr(&self) -> *mut u8 {

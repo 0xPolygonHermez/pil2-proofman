@@ -800,6 +800,7 @@ dependencies = [
  "proofman-hints",
  "proofman-starks-lib-c",
  "proofman-util",
+ "rayon",
  "serde_json",
  "stark",
  "transcript",
@@ -820,8 +821,10 @@ dependencies = [
  "pilout",
  "proofman",
  "proofman-common",
+ "proofman-starks-lib-c",
  "proofman-util",
  "serde",
+ "serde_json",
  "tinytemplate",
 ]
 
@@ -837,6 +840,7 @@ dependencies = [
  "proofman-macros",
  "proofman-starks-lib-c",
  "proofman-util",
+ "rayon",
  "serde",
  "serde_derive",
  "serde_json",
@@ -875,6 +879,7 @@ name = "proofman-util"
 version = "0.1.0"
 dependencies = [
  "colored",
+ "p3-field",
  "sysinfo",
 ]
 

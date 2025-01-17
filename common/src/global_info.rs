@@ -89,7 +89,7 @@ impl GlobalInfo {
 
         // Add the folder_path to the JSON object
         if let Some(obj) = global_info_value.as_object_mut() {
-            obj.insert("folder_path".to_string(), Value::String(folder_path.clone()));
+            obj.insert("folder_path".to_string(), Value::String(folder_path.to_string()));
         } else {
             panic!("JSON is not an object: {}", file_path);
         }
@@ -105,7 +105,7 @@ impl GlobalInfo {
     }
 
     pub fn get_proving_key_path(&self) -> PathBuf {
-        PathBuf::from(self.folder_path.clone())
+        PathBuf::from(self.folder_path.to_string())
     }
 
     pub fn get_setup_path(&self, template: &str) -> PathBuf {

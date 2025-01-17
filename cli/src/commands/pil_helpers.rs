@@ -124,15 +124,15 @@ impl PilHelpersCmd {
         for (airgroup_id, airgroup) in pilout.air_groups.iter().enumerate() {
             wcctxs.push(AirGroupsCtx {
                 airgroup_id,
-                name: airgroup.name.as_ref().unwrap().clone().to_case(Case::Pascal),
-                snake_name: airgroup.name.as_ref().unwrap().clone().to_case(Case::Snake).to_uppercase(),
+                name: airgroup.name.as_ref().unwrap().to_case(Case::Pascal),
+                snake_name: airgroup.name.as_ref().unwrap().to_case(Case::Snake).to_uppercase(),
                 airs: airgroup
                     .airs
                     .iter()
                     .enumerate()
                     .map(|(air_id, air)| AirCtx {
                         id: air_id,
-                        name: air.name.as_ref().unwrap().clone(),
+                        name: air.name.as_ref().unwrap().to_string(),
                         num_rows: air.num_rows.unwrap(),
                         columns: Vec::new(),
                         stages_columns: vec![StageColumnCtx::default(); pilout.num_challenges.len() - 1],
@@ -144,15 +144,14 @@ impl PilHelpersCmd {
             });
 
             // Prepare constants
-            constant_airgroups
-                .push((airgroup.name.as_ref().unwrap().clone().to_case(Case::Snake).to_uppercase(), airgroup_id));
+            constant_airgroups.push((airgroup.name.as_ref().unwrap().to_case(Case::Snake).to_uppercase(), airgroup_id));
 
             for (air_idx, air) in airgroup.airs.iter().enumerate() {
-                let air_name = air.name.as_ref().unwrap().clone().to_case(Case::Snake).to_uppercase();
+                let air_name = air.name.as_ref().unwrap().to_case(Case::Snake).to_uppercase();
                 let contains_key = constant_airs.iter().position(|(name, _, _, _)| name == &air_name);
 
                 let idx = contains_key.unwrap_or_else(|| {
-                    constant_airs.push((air_name.clone(), airgroup_id, Vec::new(), "".to_owned()));
+                    constant_airs.push((air_name, airgroup_id, Vec::new(), "".to_owned()));
                     constant_airs.len() - 1
                 });
 
@@ -228,7 +227,7 @@ impl PilHelpersCmd {
                     .iter()
                     .enumerate()
                     .map(|(index, commit)| CustomCommitsCtx {
-                        name: commit.name.clone().unwrap().to_case(Case::Pascal),
+                        name: commit.name.as_ref().unwrap().to_case(Case::Pascal),
                         commit_id: index,
                         custom_columns: Vec::new(),
                     })
@@ -305,7 +304,7 @@ impl PilHelpersCmd {
         }
 
         let context = ProofCtx {
-            project_name: pilout.name.clone().unwrap().to_case(Case::Pascal),
+            project_name: pilout.name.as_ref().unwrap().to_case(Case::Pascal),
             num_stages: pilout.num_stages(),
             pilout_filename: self.pilout.file_name().unwrap().to_str().unwrap().to_string(),
             air_groups: wcctxs,

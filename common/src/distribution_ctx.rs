@@ -28,8 +28,8 @@ pub struct DistributionCtx {
     pub world: mpi::topology::SimpleCommunicator,
     pub n_instances: usize,
     pub my_instances: Vec<usize>,
-    pub instances: Vec<(usize, usize)>,       //group_id, air_id
-    pub instances_owner: Vec<(usize, usize)>, //owner_rank, owner_instance_idx
+    pub instances: Vec<(usize, usize)>,          //group_id, air_id
+    pub instances_owner: Vec<(i32, usize, u64)>, //owner_rank, owner_instance_idx, weight
     pub owners_count: Vec<i32>,
     pub owners_weight: Vec<u64>,
     #[cfg(feature = "distributed")]
@@ -40,6 +40,7 @@ pub struct DistributionCtx {
     pub my_air_groups: Vec<Vec<usize>>,
     pub airgroup_instances: Vec<Vec<usize>>,
     pub glob2loc: Vec<Option<usize>>,
+    pub balance_distribution: bool,
 }
 
 impl DistributionCtx {
@@ -67,6 +68,7 @@ impl DistributionCtx {
                 my_air_groups: Vec::new(),
                 airgroup_instances: Vec::new(),
                 glob2loc: Vec::new(),
+                balance_distribution: true,
             }
         }
         #[cfg(not(feature = "distributed"))]
@@ -84,6 +86,7 @@ impl DistributionCtx {
                 my_air_groups: Vec::new(),
                 airgroup_instances: Vec::new(),
                 glob2loc: Vec::new(),
+                balance_distribution: false,
             }
         }
     }
@@ -103,11 +106,11 @@ impl DistributionCtx {
 
     #[inline]
     pub fn is_my_instance(&self, global_idx: usize) -> bool {
-        self.owner(global_idx) == self.rank as usize
+        self.owner(global_idx) == self.rank
     }
 
     #[inline]
-    pub fn owner(&self, global_idx: usize) -> usize {
+    pub fn owner(&self, global_idx: usize) -> i32 {
         self.instances_owner[global_idx].0
     }
 
@@ -119,6 +122,11 @@ impl DistributionCtx {
     #[inline]
     pub fn get_instance_idx(&self, global_idx: usize) -> usize {
         self.my_instances.iter().position(|&x| x == global_idx).unwrap()
+    }
+
+    #[inline]
+    pub fn set_balance_distribution(&mut self, balance: bool) {
+        self.balance_distribution = balance;
     }
 
     #[inline]
@@ -149,20 +157,99 @@ impl DistributionCtx {
     }
 
     #[inline]
-    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: usize) -> (bool, usize) {
+    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> (bool, usize) {
         let mut is_mine = false;
-        let owner = self.n_instances % self.n_processes as usize;
+        let owner = (self.n_instances % self.n_processes as usize) as i32;
         self.instances.push((airgroup_id, air_id));
-        self.instances_owner.push((owner, self.owners_count[owner] as usize));
-        self.owners_count[owner] += 1;
-        self.owners_weight[owner] += weight as u64;
+        self.instances_owner.push((owner, self.owners_count[owner as usize] as usize, weight));
+        self.owners_count[owner as usize] += 1;
+        self.owners_weight[owner as usize] += weight;
 
-        if owner == self.rank as usize {
+        if owner == self.rank {
             self.my_instances.push(self.n_instances);
             is_mine = true;
         }
         self.n_instances += 1;
         (is_mine, self.n_instances - 1)
+    }
+
+    #[inline]
+    pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        self.instances.push((airgroup_id, air_id));
+        self.instances_owner.push((-1, 0, weight));
+        self.n_instances += 1;
+        self.n_instances - 1
+    }
+
+    pub fn assign_instances(&mut self) {
+        if self.balance_distribution {
+            // Sort the unassigned instances by weight
+            let mut unassigned_instances = Vec::new();
+            for (idx, &(owner, _, weight)) in self.instances_owner.iter().enumerate() {
+                if owner == -1 {
+                    unassigned_instances.push((idx, weight));
+                }
+            }
+
+            // Sort the unassigned instances by weight
+            unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
+
+            // Distribute the unassigned instances to the process with minimum weight each time
+            // cost: O(n^2) may be optimized if needed
+            for (idx, _) in unassigned_instances {
+                let mut min_weight = u64::MAX;
+                let mut min_weight_idx = 0;
+                for (i, &weight) in self.owners_weight.iter().enumerate() {
+                    if weight < min_weight {
+                        min_weight = weight;
+                        min_weight_idx = i;
+                    } else if (min_weight == weight) && (self.owners_count[i] < self.owners_count[min_weight_idx]) {
+                        min_weight_idx = i;
+                    }
+                }
+                self.instances_owner[idx].0 = min_weight_idx as i32;
+                self.instances_owner[idx].1 = self.owners_count[min_weight_idx] as usize;
+                self.owners_count[min_weight_idx] += 1;
+                self.owners_weight[min_weight_idx] += self.instances_owner[idx].2;
+                if min_weight_idx == self.rank as usize {
+                    self.my_instances.push(idx);
+                }
+            }
+        } else {
+            for (idx, instance) in self.instances_owner.iter_mut().enumerate() {
+                let (ref mut owner, ref mut count, ref mut weight) = *instance;
+                if *owner == -1 {
+                    let new_owner = (idx % self.n_processes as usize) as i32;
+                    *owner = new_owner;
+                    *count = self.owners_count[new_owner as usize] as usize;
+                    self.owners_count[new_owner as usize] += 1;
+                    self.owners_weight[new_owner as usize] += *weight;
+                    if new_owner == self.rank {
+                        self.my_instances.push(idx);
+                    }
+                }
+            }
+        }
+    }
+
+    // Returns the maximum weight deviation from the average weight
+    // This is calculated as the maximum weight divided by the average weight
+    pub fn load_balance_info(&self) -> (f64, u64, u64, f64) {
+        let mut average_weight = 0.0;
+        let mut max_weight = 0;
+        let mut min_weight = u64::MAX;
+        for i in 0..self.n_processes as usize {
+            average_weight += self.owners_weight[i] as f64;
+            if self.owners_weight[i] > max_weight {
+                max_weight = self.owners_weight[i];
+            }
+            if self.owners_weight[i] < min_weight {
+                min_weight = self.owners_weight[i];
+            }
+        }
+        average_weight /= self.n_processes as f64;
+        let max_deviation = max_weight as f64 / average_weight;
+        (average_weight, max_weight, min_weight, max_deviation)
     }
 
     pub fn close(&mut self, n_airgroups: usize) {
@@ -182,8 +269,8 @@ impl DistributionCtx {
         // Populate the HashMap based on group_id and buffer positions
         for (idx, &(group_id, _)) in self.instances.iter().enumerate() {
             #[cfg(feature = "distributed")]
-            let pos_buffer =
-                self.roots_gatherv_displ[self.instances_owner[idx].0] as usize + self.instances_owner[idx].1 * 4;
+            let pos_buffer = self.roots_gatherv_displ[self.instances_owner[idx].0 as usize] as usize
+                + self.instances_owner[idx].1 * 4;
             #[cfg(not(feature = "distributed"))]
             let pos_buffer = idx * 4;
             group_indices.entry(group_id).or_default().push(pos_buffer);
@@ -335,13 +422,13 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_multiplicity(&self, _multiplicity: &mut [u64], _owner: usize) {
+    pub fn distribute_multiplicity(&self, _multiplicity: &mut [u64], _owner: i32) {
         #[cfg(feature = "distributed")]
         {
             //assert that I can operate with u32
             assert!(_multiplicity.len() < u32::MAX as usize);
 
-            if _owner != self.rank as usize {
+            if _owner != self.rank {
                 //pack multiplicities in a sparce vector
                 let mut packed_multiplicity = Vec::new();
                 packed_multiplicity.push(0u32); //this will be the counter
@@ -353,11 +440,11 @@ impl DistributionCtx {
                         packed_multiplicity[0] += 2;
                     }
                 }
-                self.world.process_at_rank(_owner as i32).send(&packed_multiplicity[..]);
+                self.world.process_at_rank(_owner).send(&packed_multiplicity[..]);
             } else {
                 let mut packed_multiplicity: Vec<u32> = vec![0; _multiplicity.len() * 2 + 1];
                 for i in 0..self.n_processes {
-                    if i != _owner as i32 {
+                    if i != _owner {
                         self.world.process_at_rank(i).receive_into(&mut packed_multiplicity);
                         for j in (1..packed_multiplicity[0]).step_by(2) {
                             let idx = packed_multiplicity[j as usize] as usize;
@@ -370,7 +457,7 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_multiplicities(&self, _multiplicities: &mut [Vec<u64>], _owner: usize) {
+    pub fn distribute_multiplicities(&self, _multiplicities: &mut [Vec<u64>], _owner: i32) {
         #[cfg(feature = "distributed")]
         {
             // Ensure that each multiplicity vector can be operated with u32
@@ -381,7 +468,7 @@ impl DistributionCtx {
             }
 
             let n_columns = _multiplicities.len();
-            if _owner != self.rank as usize {
+            if _owner != self.rank {
                 // Pack multiplicities in a sparse vector
                 let mut packed_multiplicities = vec![0u32; n_columns];
                 for (col_idx, multiplicity) in _multiplicities.iter().enumerate() {
@@ -394,11 +481,11 @@ impl DistributionCtx {
                         }
                     }
                 }
-                self.world.process_at_rank(_owner as i32).send(&packed_multiplicities[..]);
+                self.world.process_at_rank(_owner).send(&packed_multiplicities[..]);
             } else {
                 let mut packed_multiplicities: Vec<u32> = vec![0; buff_size * 2];
                 for i in 0..self.n_processes {
-                    if i != _owner as i32 {
+                    if i != _owner {
                         self.world.process_at_rank(i).receive_into(&mut packed_multiplicities);
 
                         // Read counters

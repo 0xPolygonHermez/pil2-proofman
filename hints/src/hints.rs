@@ -750,8 +750,8 @@ pub fn get_hint_ids_by_name(p_expressions_bin: *mut std::os::raw::c_void, name: 
 
 #[allow(clippy::too_many_arguments)]
 pub fn mul_hint_fields<F: Field + Field>(
-    setup_ctx: &SetupCtx,
-    proof_ctx: &ProofCtx<F>,
+    sctx: &SetupCtx,
+    pctx: &ProofCtx<F>,
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_dest: &str,
@@ -760,14 +760,14 @@ pub fn mul_hint_fields<F: Field + Field>(
     hint_field_name2: &str,
     options2: HintFieldOptions,
 ) -> u64 {
-    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
-        public_inputs: proof_ctx.get_publics_ptr(),
-        proof_values: proof_ctx.get_proof_values_ptr(),
-        challenges: proof_ctx.get_challenges_ptr(),
+        public_inputs: pctx.get_publics_ptr(),
+        proof_values: pctx.get_proof_values_ptr(),
+        challenges: pctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
         evals: air_instance.get_evals_ptr(),
@@ -792,8 +792,8 @@ pub fn mul_hint_fields<F: Field + Field>(
 
 #[allow(clippy::too_many_arguments)]
 pub fn acc_hint_field<F: Field>(
-    setup_ctx: &SetupCtx,
-    proof_ctx: &ProofCtx<F>,
+    sctx: &SetupCtx,
+    pctx: &ProofCtx<F>,
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_dest: &str,
@@ -801,14 +801,14 @@ pub fn acc_hint_field<F: Field>(
     hint_field_name: &str,
     add: bool,
 ) -> (u64, u64) {
-    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
-        public_inputs: proof_ctx.get_publics_ptr(),
-        proof_values: proof_ctx.get_proof_values_ptr(),
-        challenges: proof_ctx.get_challenges_ptr(),
+        public_inputs: pctx.get_publics_ptr(),
+        proof_values: pctx.get_proof_values_ptr(),
+        challenges: pctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
         evals: air_instance.get_evals_ptr(),
@@ -837,8 +837,8 @@ pub fn acc_hint_field<F: Field>(
 
 #[allow(clippy::too_many_arguments)]
 pub fn acc_mul_hint_fields<F: Field>(
-    setup_ctx: &SetupCtx,
-    proof_ctx: &ProofCtx<F>,
+    sctx: &SetupCtx,
+    pctx: &ProofCtx<F>,
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_dest: &str,
@@ -849,14 +849,14 @@ pub fn acc_mul_hint_fields<F: Field>(
     options2: HintFieldOptions,
     add: bool,
 ) -> (u64, u64) {
-    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
-        public_inputs: proof_ctx.get_publics_ptr(),
-        proof_values: proof_ctx.get_proof_values_ptr(),
-        challenges: proof_ctx.get_challenges_ptr(),
+        public_inputs: pctx.get_publics_ptr(),
+        proof_values: pctx.get_proof_values_ptr(),
+        challenges: pctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
         evals: air_instance.get_evals_ptr(),
@@ -888,8 +888,8 @@ pub fn acc_mul_hint_fields<F: Field>(
 
 #[allow(clippy::too_many_arguments)]
 pub fn update_airgroupvalue<F: Field>(
-    setup_ctx: &SetupCtx,
-    proof_ctx: &ProofCtx<F>,
+    sctx: &SetupCtx,
+    pctx: &ProofCtx<F>,
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_airgroupvalue: &str,
@@ -899,14 +899,14 @@ pub fn update_airgroupvalue<F: Field>(
     options2: HintFieldOptions,
     add: bool,
 ) -> u64 {
-    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
         trace: air_instance.get_trace_ptr(),
         aux_trace: air_instance.get_aux_trace_ptr(),
-        public_inputs: proof_ctx.get_publics_ptr(),
-        proof_values: proof_ctx.get_proof_values_ptr(),
-        challenges: proof_ctx.get_challenges_ptr(),
+        public_inputs: pctx.get_publics_ptr(),
+        proof_values: pctx.get_proof_values_ptr(),
+        challenges: pctx.get_challenges_ptr(),
         airgroup_values: air_instance.get_airgroup_values_ptr(),
         airvalues: air_instance.get_airvalues_ptr(),
         evals: air_instance.get_evals_ptr(),
@@ -932,8 +932,8 @@ pub fn update_airgroupvalue<F: Field>(
 
 #[allow(clippy::too_many_arguments)]
 fn get_hint_f<F: Field>(
-    setup_ctx: &SetupCtx,
-    proof_ctx: Option<&ProofCtx<F>>,
+    sctx: &SetupCtx,
+    pctx: Option<&ProofCtx<F>>,
     airgroup_id: usize,
     air_id: usize,
     air_instance: Option<&mut AirInstance<F>>,
@@ -941,15 +941,15 @@ fn get_hint_f<F: Field>(
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> Vec<HintFieldInfo<F>> {
-    let setup = setup_ctx.get_setup(airgroup_id, air_id);
+    let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = if let Some(air_instance) = air_instance {
         StepsParams {
             trace: air_instance.get_trace_ptr(),
             aux_trace: air_instance.get_aux_trace_ptr(),
-            public_inputs: proof_ctx.unwrap().get_publics_ptr(),
-            proof_values: proof_ctx.unwrap().get_proof_values_ptr(),
-            challenges: proof_ctx.unwrap().get_challenges_ptr(),
+            public_inputs: pctx.unwrap().get_publics_ptr(),
+            proof_values: pctx.unwrap().get_proof_values_ptr(),
+            challenges: pctx.unwrap().get_challenges_ptr(),
             airgroup_values: air_instance.get_airgroup_values_ptr(),
             airvalues: air_instance.get_airvalues_ptr(),
             evals: air_instance.get_evals_ptr(),
@@ -999,16 +999,16 @@ fn get_hint_f<F: Field>(
     hint_field_values
 }
 pub fn get_hint_field<F: Field>(
-    setup_ctx: &SetupCtx,
-    proof_ctx: &ProofCtx<F>,
+    sctx: &SetupCtx,
+    pctx: &ProofCtx<F>,
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> HintFieldValue<F> {
     let hint_info = get_hint_f(
-        setup_ctx,
-        Some(proof_ctx),
+        sctx,
+        Some(pctx),
         air_instance.airgroup_id,
         air_instance.air_id,
         Some(air_instance),
@@ -1029,16 +1029,16 @@ pub fn get_hint_field<F: Field>(
 }
 
 pub fn get_hint_field_a<F: Field>(
-    setup_ctx: &SetupCtx,
-    proof_ctx: &ProofCtx<F>,
+    sctx: &SetupCtx,
+    pctx: &ProofCtx<F>,
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> HintFieldValuesVec<F> {
     let hint_infos: Vec<HintFieldInfo<F>> = get_hint_f(
-        setup_ctx,
-        Some(proof_ctx),
+        sctx,
+        Some(pctx),
         air_instance.airgroup_id,
         air_instance.air_id,
         Some(air_instance),
@@ -1063,16 +1063,16 @@ pub fn get_hint_field_a<F: Field>(
 }
 
 pub fn get_hint_field_m<F: Field>(
-    setup_ctx: &SetupCtx,
-    proof_ctx: &ProofCtx<F>,
+    sctx: &SetupCtx,
+    pctx: &ProofCtx<F>,
     air_instance: &mut AirInstance<F>,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> HintFieldValues<F> {
     let hint_infos: Vec<HintFieldInfo<F>> = get_hint_f(
-        setup_ctx,
-        Some(proof_ctx),
+        sctx,
+        Some(pctx),
         air_instance.airgroup_id,
         air_instance.air_id,
         Some(air_instance),
@@ -1102,7 +1102,7 @@ pub fn get_hint_field_m<F: Field>(
 }
 
 pub fn get_hint_field_constant<F: Field>(
-    setup_ctx: &SetupCtx,
+    sctx: &SetupCtx,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -1112,7 +1112,7 @@ pub fn get_hint_field_constant<F: Field>(
     options.compilation_time = true;
 
     let hint_info: Vec<HintFieldInfo<F>> =
-        get_hint_f(setup_ctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
+        get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
 
     if hint_info[0].matrix_size != 0 {
         panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
@@ -1126,7 +1126,7 @@ pub fn get_hint_field_constant<F: Field>(
 }
 
 pub fn get_hint_field_constant_a<F: Field>(
-    setup_ctx: &SetupCtx,
+    sctx: &SetupCtx,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -1136,7 +1136,7 @@ pub fn get_hint_field_constant_a<F: Field>(
     options.compilation_time = true;
 
     let hint_infos: Vec<HintFieldInfo<F>> =
-        get_hint_f(setup_ctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
+        get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
@@ -1154,7 +1154,7 @@ pub fn get_hint_field_constant_a<F: Field>(
 }
 
 pub fn get_hint_field_constant_m<F: Field>(
-    setup_ctx: &SetupCtx,
+    sctx: &SetupCtx,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -1164,7 +1164,7 @@ pub fn get_hint_field_constant_m<F: Field>(
     options.compilation_time = true;
 
     let hint_infos: Vec<HintFieldInfo<F>> =
-        get_hint_f(setup_ctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
+        get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
@@ -1187,7 +1187,7 @@ pub fn get_hint_field_constant_m<F: Field>(
 }
 
 pub fn set_hint_field<F: Field>(
-    setup_ctx: &SetupCtx,
+    sctx: &SetupCtx,
     air_instance: &mut AirInstance<F>,
     hint_id: u64,
     hint_field_name: &str,
@@ -1209,7 +1209,7 @@ pub fn set_hint_field<F: Field>(
         custom_commits_extended: [std::ptr::null_mut(); 10],
     };
 
-    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let values_ptr: *mut u8 = match values {
         HintFieldValue::Column(vec) => vec.as_ptr() as *mut u8,
@@ -1221,7 +1221,7 @@ pub fn set_hint_field<F: Field>(
 }
 
 pub fn set_hint_field_val<F: Field>(
-    setup_ctx: &SetupCtx,
+    sctx: &SetupCtx,
     air_instance: &mut AirInstance<F>,
     hint_id: u64,
     hint_field_name: &str,
@@ -1243,7 +1243,7 @@ pub fn set_hint_field_val<F: Field>(
         custom_commits_extended: [std::ptr::null_mut(); 10],
     };
 
-    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let mut value_array: Vec<F> = Vec::new();
 
@@ -1263,8 +1263,8 @@ pub fn set_hint_field_val<F: Field>(
     set_hint_field_c((&setup.p_setup).into(), (&steps_params).into(), values_ptr, hint_id, hint_field_name);
 }
 
-pub fn print_row<F: Field>(setup_ctx: &SetupCtx, air_instance: &AirInstance<F>, stage: u64, row: u64) {
-    let setup = setup_ctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+pub fn print_row<F: Field>(sctx: &SetupCtx, air_instance: &AirInstance<F>, stage: u64, row: u64) {
+    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let buffer = match stage == 1 {
         true => air_instance.get_trace_ptr(),
