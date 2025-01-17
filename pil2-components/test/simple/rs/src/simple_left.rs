@@ -4,7 +4,7 @@ use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use p3_field::PrimeField64;
-use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom};
+use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng};
 
 use crate::SimpleLeftTrace;
 
@@ -32,8 +32,8 @@ where
 
         // Assumes
         for i in 0..num_rows {
-            trace[i].a = F::from_canonical_usize(i);
-            trace[i].b = F::from_canonical_usize(i);
+            trace[i].a = F::from_canonical_u64(rng.gen_range(0..=(1 << 63) - 1));
+            trace[i].b = F::from_canonical_u64(rng.gen_range(0..=(1 << 63) - 1));
 
             trace[i].e = F::from_canonical_u8(200);
             trace[i].f = F::from_canonical_u8(201);

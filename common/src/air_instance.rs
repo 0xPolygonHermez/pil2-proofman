@@ -113,13 +113,10 @@ impl<'a, F> FromTrace<'a, F> {
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AirInstance<F> {
     pub airgroup_id: usize,
     pub air_id: usize,
-    pub air_instance_id: Option<usize>,
-    pub idx: Option<usize>,
-    pub global_id: Option<usize>,
     pub trace: Vec<F>,
     pub aux_trace: Vec<F>,
     pub custom_commits: Vec<Vec<F>>,
@@ -144,9 +141,6 @@ impl<F: Field> AirInstance<F> {
         AirInstance {
             airgroup_id,
             air_id,
-            air_instance_id: None,
-            idx: None,
-            global_id: None,
             trace: trace_info.trace,
             aux_trace: Vec::new(),
             custom_commits,
@@ -275,16 +269,15 @@ impl<F: Field> AirInstance<F> {
         ptrs
     }
 
-    pub fn set_air_instance_id(&mut self, air_instance_id: usize, idx: usize) {
-        self.air_instance_id = Some(air_instance_id);
-        self.idx = Some(idx);
-    }
-
     pub fn set_prover_initialized(&mut self) {
         self.prover_initialized = true;
     }
 
     pub fn clear_trace(&mut self) {
-        self.trace = Vec::new();
+        self.trace.clear();
+    }
+
+    pub fn clear_custom_commits_trace(&mut self) {
+        self.custom_commits.clear();
     }
 }

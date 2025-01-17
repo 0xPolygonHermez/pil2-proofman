@@ -4,6 +4,8 @@ use proofman_common as common;
 pub use proofman_macros::trace;
 pub use proofman_macros::values;
 
+use std::fmt;
+
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
@@ -107,3 +109,51 @@ trace!(U8AirTrace<F> {
 trace!(SpecifiedRangesTrace<F> {
  mul: [F; 20],
 },  10, 0, 131072 );
+
+values!(RangeCheck3AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(RangeCheck2AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(RangeCheck1AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(RangeCheck4AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(U16AirAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(MultiRangeCheck1AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(MultiRangeCheck2AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(RangeCheckDynamic1AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(RangeCheckDynamic2AirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(RangeCheckMixAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(U8AirAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(SpecifiedRangesAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});

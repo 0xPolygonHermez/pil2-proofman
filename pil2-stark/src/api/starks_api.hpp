@@ -10,13 +10,16 @@
 
     // FRIProof
     // ========================================================================================
-    void *fri_proof_new(void *pSetupCtx);
+    void *fri_proof_new(void *pSetupCtx, uint64_t instanceId);
     void fri_proof_get_tree_root(void *pFriProof, void* root, uint64_t tree_index);
     void fri_proof_set_airgroupvalues(void *pFriProof, void *airgroupValues);
     void fri_proof_set_airvalues(void *pFriProof, void *airValues);
-    void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, void *pStarkInfo, char* proof_name, char* globalInfoFile, char *fileDir);
+    void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, char* globalInfoFile, char *fileDir);
+    void fri_proof_get_zkinproofs(uint64_t nProofs, void**proofs, void **pFriProofs, void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, char *fileDir);
     void fri_proof_free_zkinproof(void *pZkinProof);
     void fri_proof_free(void *pFriProof);
+
+    void proofs_free(uint64_t nProofs, void **pStarks, void **pFriProofs, bool background);
 
     // SetupCtx
     // ========================================================================================
@@ -25,13 +28,13 @@
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char* filename);
-    uint64_t get_map_total_n(void *pStarkInfo);
+    void *stark_info_new(char* filename, bool verifier);
+    uint64_t get_map_total_n(void *pStarkInfo, bool recursive);
     void stark_info_free(void *pStarkInfo);
 
     // Prover Helpers
     // ========================================================================================
-    void *prover_helpers_new(void *pStarkInfo);
+    void *prover_helpers_new(void *pStarkInfo, bool pil1);
     void prover_helpers_free(void *pProverHelpers);
 
     // Const Pols
@@ -44,7 +47,7 @@
 
     // Expressions Bin
     // ========================================================================================
-    void *expressions_bin_new(char* filename, bool global);
+    void *expressions_bin_new(char* filename, bool global, bool verifier);
     void expressions_bin_free(void *pExpressionsBin);
 
     // Hints
@@ -83,12 +86,6 @@
     void compute_evals(void *pStarks, void *params, void *LEv, void *pProof);
 
     void calculate_hash(void *pStarks, void *pHhash, void *pBuffer, uint64_t nElements);
-
-    
-    // MerkleTree
-    // =================================================================================
-    void *merkle_tree_new(uint64_t height, uint64_t width, uint64_t arity, bool custom);
-    void merkle_tree_free(void *pMerkleTree);
 
     // FRI 
     // =================================================================================
@@ -132,7 +129,7 @@
 
     // Recursive proof
     // =================================================================================
-    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
+    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
     void *get_zkin_ptr(char *zkin_file);
     void *add_recursive2_verkey(void *pZkin, char* recursive2VerKeyFilename);
     void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPublics, void* pChallenges, void *zkin1, void *zkin2, void *starkInfoRecursive2);
@@ -152,4 +149,16 @@
     // =================================================================================
     void setLogLevel(uint64_t level);
 
+    // Stark Verify
+    // =================================================================================
+    bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
+
+    // Debug circom
+    // =================================================================================
+    void save_to_file(void *buffer, uint64_t bufferSize, void* publics, uint64_t publicsSize, char* name);
+    void read_from_file(void* buffer, uint64_t bufferSize, void* publics, uint64_t publicsSize, char* name);
+
+    void *create_buffer(uint64_t size);
+    void free_buffer(void *buffer);
+    
 #endif

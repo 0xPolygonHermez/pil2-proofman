@@ -52,7 +52,7 @@ pub struct ProveCmd {
     pub verbose: u8, // Using u8 to hold the number of `-v`
 
     #[clap(short = 'd', long)]
-    pub debug: Option<String>,
+    pub debug: Option<Option<String>>,
 }
 
 impl ProveCmd {
@@ -63,19 +63,25 @@ impl ProveCmd {
         initialize_logger(self.verbose.into());
 
         if Path::new(&self.output_dir.join("proofs")).exists() {
-            fs::remove_dir_all(self.output_dir.join("proofs")).expect("Failed to remove the proofs directory");
+            // In distributed mode two different processes may enter here at the same time and try to remove the same directory
+            if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    panic!("Failed to remove the proofs directory: {:?}", e);
+                }
+            }
         }
 
-        fs::create_dir_all(self.output_dir.join("proofs")).expect("Failed to create the proofs directory");
-
-        let debug_info = if let Some(debug_value) = &self.debug {
-            if debug_value.is_empty() || debug_value == "false" {
-                DebugInfo::new()
-            } else {
-                json_to_debug_instances_map(debug_value.clone())
+        if let Err(e) = fs::create_dir_all(self.output_dir.join("proofs")) {
+            if e.kind() != std::io::ErrorKind::AlreadyExists {
+                // prevent collision in distributed mode
+                panic!("Failed to create the proofs directory: {:?}", e);
             }
-        } else {
-            DebugInfo::new()
+        }
+
+        let debug_info = match &self.debug {
+            None => DebugInfo::default(),
+            Some(None) => DebugInfo::new_debug(),
+            Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone()),
         };
 
         match self.field {

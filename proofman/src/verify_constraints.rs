@@ -6,7 +6,8 @@ use std::cmp;
 use std::sync::Arc;
 
 use proofman_common::{
-    get_constraints_lines_str, get_global_constraints_lines_str, GlobalConstraintInfo, ProofCtx, Prover, SetupCtx,
+    get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, GlobalConstraintInfo, ProofCtx,
+    Prover, SetupCtx,
 };
 use std::os::raw::c_void;
 
@@ -15,15 +16,15 @@ use colored::*;
 pub fn verify_global_constraints_proof<F: Field>(
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx>,
-    mut airgroupvalues: Vec<Vec<F>>,
+    airgroupvalues: Vec<Vec<F>>,
 ) -> Vec<GlobalConstraintInfo> {
     const MY_NAME: &str = "GlCstVfy";
 
     log::info!("{}: --> Checking global constraints", MY_NAME);
 
     let mut airgroup_values_ptrs: Vec<*mut F> = airgroupvalues
-        .iter_mut() // Iterate mutably over the inner Vecs
-        .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
+        .iter() // Iterate mutably over the inner Vecs
+        .map(|inner_vec| inner_vec.as_ptr() as *mut F) // Get a raw pointer to each inner Vec
         .collect();
 
     let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
@@ -65,24 +66,48 @@ pub fn verify_constraints_proof<F: Field>(
 
     let mut valid_constraints = true;
 
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
+
+    for instance_id in my_instances.iter() {
+        let (airgroup_id, air_id) = instances[*instance_id];
+        let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+        let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
+        let (skip, _) = skip_prover_instance(pctx.options.clone(), airgroup_id, air_id, air_instance_id);
+        if skip {
+            log::info!(
+                "{}",
+                format!(
+                    "{}: ··· \u{2713} Skipping Instance #{} of {} [{}:{}]",
+                    MY_NAME, air_instance_id, air_name, airgroup_id, air_id
+                )
+                .bright_yellow()
+                .bold()
+            );
+        };
+    }
+
     for (idx, prover) in provers.iter().enumerate() {
         let prover_info = prover.get_prover_info();
         let (airgroup_id, air_id, air_instance_id) =
-            (prover_info.airgroup_id, prover_info.air_id, prover_info.instance_id);
+            (prover_info.airgroup_id, prover_info.air_id, prover_info.air_instance_id);
 
         let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
         let constraints_lines = get_constraints_lines_str(sctx.clone(), airgroup_id, air_id);
 
         let mut valid_constraints_prover = true;
+        let skipping = "is skipped".bright_yellow();
+
         log::info!("{}:     ► Instance #{} of {} [{}:{}]", MY_NAME, air_instance_id, air_name, airgroup_id, air_id,);
         for constraint in &constraints[idx] {
             if constraint.skip {
                 log::debug!(
-                    "{}:     · Skipping Constraint #{} (stage {}) -> {}",
+                    "{}:     · Constraint #{} (stage {}) {} -> {}",
                     MY_NAME,
                     constraint.id,
                     constraint.stage,
+                    skipping,
                     constraints_lines[constraint.id as usize]
                 );
                 continue;
@@ -168,13 +193,13 @@ pub fn verify_constraints_proof<F: Field>(
         }
     }
 
-    let dctx = pctx.dctx.read().unwrap();
+    let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone());
 
-    let airgroupvalues = aggregate_airgroupvals(pctx.clone());
+    let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
+        || !pctx.options.debug_info.debug_global_instances.is_empty();
 
-    if dctx.rank == 0 && pctx.options.debug_info.debug_instances.is_empty() {
-        // TODO: Distribute airgroupvalues
-
+    let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+    if pctx.dctx_get_rank() == 0 && check_global_constraints {
         let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
         let mut valid_global_constraints = true;
 
@@ -185,7 +210,13 @@ pub fn verify_constraints_proof<F: Field>(
             let line_str = &global_constraints_lines[idx];
 
             if constraint.skip {
-                log::debug!("{}:     · Skipping Global Constraint #{} -> {}", MY_NAME, idx, line_str,);
+                log::debug!(
+                    "{}:     · Global Constraint #{} {} -> {}",
+                    MY_NAME,
+                    idx,
+                    "is skipped".bright_yellow(),
+                    line_str,
+                );
                 continue;
             }
 
@@ -233,7 +264,7 @@ pub fn verify_constraints_proof<F: Field>(
             )))
         }
     } else {
-        if !pctx.options.debug_info.debug_instances.is_empty() {
+        if check_global_constraints {
             log::info!(
                 "{}: ··· {}",
                 MY_NAME,

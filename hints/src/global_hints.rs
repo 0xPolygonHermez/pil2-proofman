@@ -10,7 +10,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use proofman_common::{ExtensionField, ProofCtx, SetupCtx};
 
-pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<F>> {
+pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>> {
     const FIELD_EXTENSION: usize = 3;
 
     let mut airgroupvalues: Vec<Vec<F>> = Vec::new();
@@ -24,7 +24,7 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<F>> {
         airgroupvalues.push(values);
     }
 
-    for air_instance in pctx.air_instance_repo.air_instances.write().unwrap().iter() {
+    for (_, air_instance) in pctx.air_instance_repo.air_instances.write().unwrap().iter() {
         for (idx, agg_type) in pctx.global_info.agg_types[air_instance.airgroup_id].iter().enumerate() {
             let mut acc = ExtensionField {
                 value: [
@@ -53,7 +53,21 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<F>> {
         }
     }
 
-    airgroupvalues
+    let mut airgroupvalues_u64: Vec<Vec<u64>> = Vec::new();
+    for (id, agg_types) in pctx.global_info.agg_types.iter().enumerate() {
+        let mut values = vec![0; agg_types.len() * FIELD_EXTENSION];
+        for idx in 0..agg_types.len() {
+            values[idx * FIELD_EXTENSION] =
+                airgroupvalues[id][idx * FIELD_EXTENSION].to_string().parse::<u64>().unwrap();
+            values[idx * FIELD_EXTENSION + 1] =
+                airgroupvalues[id][idx * FIELD_EXTENSION + 1].to_string().parse::<u64>().unwrap();
+            values[idx * FIELD_EXTENSION + 2] =
+                airgroupvalues[id][idx * FIELD_EXTENSION + 2].to_string().parse::<u64>().unwrap();
+        }
+        airgroupvalues_u64.push(values);
+    }
+
+    airgroupvalues_u64
 }
 
 fn get_global_hint_f<F: Field>(
@@ -93,7 +107,7 @@ fn get_global_hint_f<F: Field>(
     let proof_values = if let Some(ref pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
     let airgroup_values = if let Some(ref pctx) = pctx {
         let mut airgroupvals = aggregate_airgroupvals(pctx.clone());
-        let mut airgroup_values_ptrs: Vec<*mut F> = airgroupvals
+        let mut airgroup_values_ptrs: Vec<*mut u64> = airgroupvals
             .iter_mut() // Iterate mutably over the inner Vecs
             .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
             .collect();

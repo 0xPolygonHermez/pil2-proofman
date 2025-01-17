@@ -132,11 +132,13 @@ public:
     };
 
     /* Constructor */
-    ExpressionsBin(string file, bool globalBin = false);
+    ExpressionsBin(string file, bool globalBin = false, bool verifierBin = false);
 
     void loadExpressionsBin(BinFileUtils::BinFile *expressionsBin);
 
     void loadGlobalBin(BinFileUtils::BinFile *globalBin);
+
+    void loadVerifierBin(BinFileUtils::BinFile *verifierBin);
 
     uint64_t getNumberHintIdsByName(std::string name);
 

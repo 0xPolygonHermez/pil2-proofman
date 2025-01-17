@@ -47,9 +47,6 @@ std::tuple<bool, ConstraintRowInfo> checkConstraint(Goldilocks::Element* dest, P
 
 
 void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t constraintId, ConstraintInfo& constraintInfo) {        
-    constraintInfo.id = constraintId;
-    constraintInfo.stage = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].stage;
-    constraintInfo.imPol = setupCtx.expressionsBin.constraintsInfoDebug[constraintId].imPol;
     constraintInfo.nrows = 0;
 
     uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
@@ -94,6 +91,10 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
 
     std::vector<Dest> dests;
     for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
+        constraintsInfo[i].id = i;
+        constraintsInfo[i].stage = setupCtx.expressionsBin.constraintsInfoDebug[i].stage;
+        constraintsInfo[i].imPol = setupCtx.expressionsBin.constraintsInfoDebug[i].imPol;
+
         if(!constraintsInfo[i].skip) {
             Dest constraintDest(&pBuffer[i*FIELD_EXTENSION*N]);
             constraintDest.addParams(setupCtx.expressionsBin.constraintsInfoDebug[i]);

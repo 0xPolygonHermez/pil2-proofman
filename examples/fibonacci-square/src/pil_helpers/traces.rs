@@ -52,11 +52,11 @@ values!(BuildProofValues<F> {
  
 trace!(FibonacciSquareTrace<F> {
  a: F, b: F,
-},  0, 0, 1024 );
+},  0, 0, 262144 );
 
 trace!(ModuleTrace<F> {
  x: F, q: F, x_mod: F,
-},  0, 1, 1024 );
+},  0, 1, 16384 );
 
 trace!(U8AirTrace<F> {
  mul: F,
@@ -64,10 +64,14 @@ trace!(U8AirTrace<F> {
 
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
-}, 0, 0, 1024, 0 );
+}, 0, 0, 262144, 0 );
 
 values!(FibonacciSquareAirValues<F> {
  fibo1: [F; 2], fibo3: FieldExtension<F>,
+});
+
+values!(ModuleAirValues<F> {
+ last_segment: F,
 });
 
 values!(FibonacciSquareAirGroupValues<F> {

@@ -4,13 +4,13 @@ use p3_field::{Field, PrimeField};
 
 use witness::WitnessComponent;
 use proofman_common::{TraceInfo, AirInstance, ProofCtx, SetupCtx};
-use proofman_hints::{
-    get_hint_field_gc, get_hint_field, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue,
-};
+use proofman_hints::{get_hint_field, get_hint_ids_by_name, set_hint_field, HintFieldOptions, HintFieldValue};
 use proofman_util::create_buffer_fast;
 use std::sync::atomic::Ordering;
 
-const PROVE_CHUNK_SIZE: usize = 1 << 12;
+use crate::AirComponent;
+
+const PROVE_CHUNK_SIZE: usize = 1 << 5;
 const NUM_ROWS: usize = 1 << 8;
 
 pub struct U8Air<F: Field> {
@@ -24,35 +24,17 @@ pub struct U8Air<F: Field> {
     mul_column: Mutex<HintFieldValue<F>>,
 }
 
-impl<F: PrimeField> U8Air<F> {
+impl<F: PrimeField> AirComponent<F> for U8Air<F> {
     const MY_NAME: &'static str = "U8Air   ";
 
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> Arc<Self> {
-        // Scan global hints to get the airgroup_id and air_id
-        let hint_global = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
-        let airgroup_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "airgroup_id", false);
-        let air_id = get_hint_field_gc::<F>(pctx.clone(), sctx.clone(), hint_global[0], "air_id", false);
-        let airgroup_id = match airgroup_id {
-            HintFieldValue::Field(value) => value
-                .as_canonical_biguint()
-                .to_usize()
-                .unwrap_or_else(|| panic!("Aigroup_id cannot be converted to usize: {}", value)),
-            _ => {
-                log::error!("Aigroup_id hint must be a field element");
-                panic!();
-            }
-        };
-        let air_id = match air_id {
-            HintFieldValue::Field(value) => value
-                .as_canonical_biguint()
-                .to_usize()
-                .unwrap_or_else(|| panic!("Air_id cannot be converted to usize: {}", value)),
-            _ => {
-                log::error!("Air_id hint must be a field element");
-                panic!();
-            }
-        };
-
+    fn new(
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx>,
+        airgroup_id: Option<usize>,
+        air_id: Option<usize>,
+    ) -> Arc<Self> {
+        let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
+        let air_id = air_id.expect("Air ID must be provided");
         Arc::new(Self {
             hint: AtomicU64::new(0),
             airgroup_id,
@@ -61,7 +43,9 @@ impl<F: PrimeField> U8Air<F> {
             mul_column: Mutex::new(HintFieldValue::Field(F::zero())),
         })
     }
+}
 
+impl<F: PrimeField> U8Air<F> {
     pub fn update_inputs(&self, value: F, multiplicity: F) {
         let mut inputs = self.inputs.lock().unwrap();
         inputs.push((value, multiplicity));
@@ -82,8 +66,6 @@ impl<F: PrimeField> U8Air<F> {
         // Perform the last update
         self.update_multiplicity(drained_inputs);
 
-        let mut dctx: std::sync::RwLockWriteGuard<'_, proofman_common::DistributionCtx> = pctx.dctx.write().unwrap();
-
         let mut multiplicity = match &*self.mul_column.lock().unwrap() {
             HintFieldValue::Column(values) => {
                 values.iter().map(|x| x.as_canonical_biguint().to_u64().unwrap()).collect::<Vec<u64>>()
@@ -91,32 +73,28 @@ impl<F: PrimeField> U8Air<F> {
             _ => panic!("Multiplicities must be a column"),
         };
 
-        let (instance_found, instance_idx) = dctx.find_instance(self.airgroup_id, self.air_id);
+        let (instance_found, global_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
-        let (is_mine, global_id) = if instance_found {
-            (dctx.is_my_instance(instance_idx), instance_idx)
+        let (is_mine, global_idx) = if instance_found {
+            (pctx.dctx_is_my_instance(global_idx), global_idx)
         } else {
-            dctx.add_instance(self.airgroup_id, self.air_id, 1)
+            pctx.dctx_add_instance(self.airgroup_id, self.air_id, pctx.get_weight(self.airgroup_id, self.air_id))
         };
 
-        let owner = dctx.owner(global_id);
-        dctx.distribute_multiplicity(&mut multiplicity, owner);
+        pctx.dctx_distribute_multiplicity(&mut multiplicity, global_idx);
 
         if is_mine {
-            let air_instance_repo = &pctx.air_instance_repo;
-            let instance: Vec<usize> = air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
-            let air_instance_id = if !instance.is_empty() {
-                instance[0]
-            } else {
+            let instance: Vec<usize> = pctx.air_instance_repo.find_air_instances(self.airgroup_id, self.air_id);
+            if instance.is_empty() {
                 let num_rows = pctx.global_info.airs[self.airgroup_id][self.air_id].num_rows;
                 let buffer_size = num_rows;
                 let buffer: Vec<F> = create_buffer_fast(buffer_size);
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
-                pctx.air_instance_repo.add_air_instance(air_instance, Some(global_id))
+                pctx.add_air_instance(air_instance, global_idx);
             };
 
-            let mut air_instance_rw = air_instance_repo.air_instances.write().unwrap();
-            let air_instance = &mut air_instance_rw[air_instance_id];
+            let mut air_instances = pctx.air_instance_repo.air_instances.write().unwrap();
+            let air_instance = air_instances.get_mut(&global_idx).unwrap();
 
             // copy multiplicitis back to mul_column
             let mul_column_2 =

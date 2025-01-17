@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use colored::Colorize;
 use std::sync::Arc;
 
-use proofman_common::{get_global_constraints_lines_str, get_constraints_lines_str, GlobalInfo, SetupsVadcop, SetupCtx};
+use proofman_common::{get_global_constraints_lines_str, get_constraints_lines_str, GlobalInfo, SetupsVadcop};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -25,7 +25,6 @@ impl GetConstraintsCmd {
 
         let global_info = GlobalInfo::new(&self.proving_key);
         let setups = Arc::new(SetupsVadcop::new(&global_info, false, false));
-        let sctx: Arc<SetupCtx> = setups.sctx.clone();
 
         initialize_logger(proofman_common::VerboseMode::Info);
 
@@ -42,14 +41,15 @@ impl GetConstraintsCmd {
                     .bright_white()
                     .bold()
                 );
-                let constraints_lines: Vec<String> = get_constraints_lines_str(sctx.clone(), airgroup_id, air_id);
+                let constraints_lines: Vec<String> =
+                    get_constraints_lines_str(setups.sctx.clone(), airgroup_id, air_id);
                 for (idx, line) in constraints_lines.iter().enumerate() {
                     log::info!("{}:         · Constraint #{} : {}", Self::MY_NAME, idx, line);
                 }
             }
         }
 
-        let global_constraints_lines = get_global_constraints_lines_str(sctx.clone());
+        let global_constraints_lines = get_global_constraints_lines_str(setups.sctx.clone());
 
         log::info!("{}", format!("{}:     ► Global Constraints", Self::MY_NAME,).bright_white().bold());
         for (idx, line) in global_constraints_lines.iter().enumerate() {

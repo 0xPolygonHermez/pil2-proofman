@@ -472,7 +472,7 @@ fn calculate_field_slots(ty: &syn::Type) -> Result<usize> {
 
 // Helper to check if a type is a specific identifier
 fn is_ident(type_path: &syn::TypePath, name: &str) -> bool {
-    type_path.path.segments.last().map_or(false, |seg| seg.ident == name)
+    type_path.path.segments.last().is_some_and(|seg| seg.ident == name)
 }
 
 #[test]
