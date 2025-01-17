@@ -39,6 +39,21 @@ pub const W: [u64; 33] = [
     7277203076849721926,
 ];
 
+#[repr(C)]
+pub struct ProverHelpersC {
+    pub zi: *mut u8,
+    pub s: *mut u8,
+    pub x: *mut u8,
+    pub x_n: *mut u8,
+    pub x_2ns: *mut u8,
+}
+
+impl From<&ProverHelpersC> for *mut u8 {
+    fn from(prover_helpers: &ProverHelpersC) -> *mut u8 {
+        prover_helpers as *const ProverHelpersC as *mut u8
+    }
+}
+
 pub struct ProverHelpers<F: Field> {
     pub zi: Vec<F>,
     pub s: Vec<F>,
@@ -96,21 +111,21 @@ impl<F: Field> ProverHelpers<F> {
         let n = 1 << n_bits;
         let n_extended = 1 << n_bits_ext;
 
-        let mut x_n = create_buffer_fast(1 << n_bits);
-        let mut x_2ns = create_buffer_fast(1 << n_bits_ext);
+        let mut x_n = create_buffer_fast(n);
+        let mut x_2ns = create_buffer_fast(n_extended);
 
         let mut xx = F::one();
         let w = F::from_canonical_u64(W[n_bits as usize]);
-        for i in 0..n {
-            x_n[i] = xx;
+        for x in x_n.iter_mut() {
+            *x = xx;
             xx *= w;
         }
 
         let mut xx_shift = F::generator();
         let w = F::from_canonical_u64(W[n_bits_ext as usize]);
 
-        for i in 0..n_extended {
-            x_2ns[i] = xx_shift;
+        for x in x_2ns.iter_mut() {
+            *x = xx_shift;
             xx_shift *= w;
         }
 
@@ -140,7 +155,7 @@ impl<F: Field> ProverHelpers<F> {
         (x, s)
     }
 
-    fn build_zerofier(zi: &mut Vec<F>, n_bits: u64, n_bits_ext: u64) {
+    fn build_zerofier(zi: &mut [F], n_bits: u64, n_bits_ext: u64) {
         let n_extended = 1 << n_bits_ext;
         let extend_bits = n_bits_ext - n_bits;
         let extend = 1 << extend_bits;
@@ -153,19 +168,19 @@ impl<F: Field> ProverHelpers<F> {
         }
 
         let w_val = F::from_canonical_u64(W[n_bits as usize]);
-        for i in 0..extend {
-            zi[i] = sn * w - F::one();
-            zi[i] = zi[i].inverse();
+        for zi_val in zi.iter_mut().take(extend) {
+            *zi_val = sn * w - F::one();
+            *zi_val = zi_val.inverse();
             w *= w_val;
         }
 
-        (extend..n_extended).into_iter().for_each(|i| {
+        (extend..n_extended).for_each(|i| {
             let idx = i % extend;
-            zi[i] = zi[idx].clone();
+            zi[i] = zi[idx];
         });
     }
 
-    fn build_one_row_zerofier_inv(zi: &mut Vec<F>, n_bits: u64, n_bits_ext: u64, offset: usize, row_index: usize) {
+    fn build_one_row_zerofier_inv(zi: &mut [F], n_bits: u64, n_bits_ext: u64, offset: usize, row_index: usize) {
         let n_extended = 1 << n_bits_ext;
         let mut root = F::one();
 
@@ -186,7 +201,7 @@ impl<F: Field> ProverHelpers<F> {
     }
 
     fn build_frame_zerofier_inv(
-        zi: &mut Vec<F>,
+        zi: &mut [F],
         n_bits: u64,
         n_bits_ext: u64,
         offset: usize,
@@ -200,17 +215,17 @@ impl<F: Field> ProverHelpers<F> {
         let mut roots = vec![F::zero(); n_roots];
 
         let w_val = F::from_canonical_u64(W[n_bits as usize]);
-        for i in 0..offset_min {
-            roots[i] = F::one();
+        for (i, root) in roots.iter_mut().enumerate().take(offset_min) {
+            *root = F::one();
             for _ in 0..i {
-                roots[i] = roots[i] * w_val;
+                *root *= w_val;
             }
         }
 
         for i in 0..offset_max {
             roots[i + offset_min] = F::one();
             for _ in 0..(n - i - 1) {
-                roots[i + offset_min] = roots[i + offset_min] * w_val;
+                roots[i + offset_min] *= w_val;
             }
         }
 
@@ -219,9 +234,10 @@ impl<F: Field> ProverHelpers<F> {
 
         let w_val_ext = F::from_canonical_u64(W[n_bits_ext as usize]);
         for i in 0..n_extended {
+            zi[i + offset * n_extended] = F::one();
             let x = sn * w;
             for root in &roots {
-                zi[i + offset * n_extended] = zi[i + offset * n_extended] * (x - *root);
+                zi[i + offset * n_extended] *= x - *root;
             }
             w *= w_val_ext;
         }

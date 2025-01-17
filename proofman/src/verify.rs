@@ -56,7 +56,7 @@ pub fn verify_proof<F: Field>(
 pub fn verify_basic_proofs<F: Field>(
     provers: &mut [Box<dyn Prover<F>>],
     proves: Vec<*mut c_void>,
-    proof_ctx: Arc<ProofCtx<F>>,
+    pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx>,
 ) -> bool {
     const MY_NAME: &str = "Verify  ";
@@ -67,10 +67,10 @@ pub fn verify_basic_proofs<F: Field>(
         let prover_info = prover.get_prover_info();
 
         let setup_path =
-            proof_ctx.global_info.get_air_setup_path(prover_info.airgroup_id, prover_info.air_id, &ProofType::Basic);
+            pctx.global_info.get_air_setup_path(prover_info.airgroup_id, prover_info.air_id, &ProofType::Basic);
 
-        let steps_fri: Vec<usize> = proof_ctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
-        let proof_challenges = prover.get_proof_challenges(steps_fri, proof_ctx.get_challenges().to_vec());
+        let steps_fri: Vec<usize> = pctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
+        let proof_challenges = prover.get_proof_challenges(steps_fri, pctx.get_challenges().to_vec());
 
         let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
         let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
@@ -81,12 +81,12 @@ pub fn verify_basic_proofs<F: Field>(
             stark_info_path,
             expressions_bin_path,
             verkey_path,
-            Some(proof_ctx.get_publics().clone()),
-            Some(proof_ctx.get_proof_values().clone()),
+            Some(pctx.get_publics().clone()),
+            Some(pctx.get_proof_values().clone()),
             Some(proof_challenges),
         );
 
-        let air_name = &proof_ctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
+        let air_name = &pctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
 
         if !is_valid_proof {
             is_valid = false;
@@ -108,16 +108,16 @@ pub fn verify_basic_proofs<F: Field>(
         }
     }
 
-    let dctx = proof_ctx.dctx.read().unwrap();
+    let dctx = pctx.dctx.read().unwrap();
 
-    let check_global_constraints = proof_ctx.options.debug_info.debug_instances.is_empty()
-        || !proof_ctx.options.debug_info.debug_global_instances.is_empty();
+    let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
+        || !pctx.options.debug_info.debug_global_instances.is_empty();
 
-    let airgroupvalues_u64 = aggregate_airgroupvals(proof_ctx.clone());
+    let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone());
 
-    let airgroupvalues = proof_ctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+    let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
     if dctx.rank == 0 && check_global_constraints {
-        let global_constraints = verify_global_constraints_proof(proof_ctx.clone(), sctx.clone(), airgroupvalues);
+        let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
         let mut valid_global_constraints = true;
 
         let global_constraints_lines = get_global_constraints_lines_str(sctx.clone());

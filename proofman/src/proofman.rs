@@ -152,9 +152,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             return verify_constraints_proof(pctx.clone(), sctx.clone(), &mut provers);
         }
 
-        let proof_ctx = pctx.clone();
+        let pctx_ = pctx.clone();
         std::thread::spawn(move || {
-            proof_ctx.free_traces();
+            pctx_.free_traces();
         });
 
         // Compute Quotient polynomial
@@ -457,28 +457,28 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     pub fn calculate_stage(
         stage: u32,
         provers: &mut [Box<dyn Prover<F>>],
-        setup_ctx: Arc<SetupCtx>,
-        proof_ctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx>,
+        pctx: Arc<ProofCtx<F>>,
     ) {
-        if stage as usize == proof_ctx.global_info.n_challenges.len() + 1 {
+        if stage as usize == pctx.global_info.n_challenges.len() + 1 {
             info!("{}: Calculating Quotient Polynomials", Self::MY_NAME);
             timer_start_info!(CALCULATING_QUOTIENT_POLYNOMIAL);
             for prover in provers.iter_mut() {
-                prover.calculate_stage(stage, setup_ctx.clone(), proof_ctx.clone());
+                prover.calculate_stage(stage, sctx.clone(), pctx.clone());
             }
             timer_stop_and_log_info!(CALCULATING_QUOTIENT_POLYNOMIAL);
         } else {
             info!("{}: Calculating stage {}", Self::MY_NAME, stage);
             timer_start_info!(CALCULATING_STAGE);
             for prover in provers.iter_mut() {
-                prover.calculate_stage(stage, setup_ctx.clone(), proof_ctx.clone());
+                prover.calculate_stage(stage, sctx.clone(), pctx.clone());
             }
             timer_stop_and_log_info!(CALCULATING_STAGE);
         }
     }
 
-    pub fn commit_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], proof_ctx: Arc<ProofCtx<F>>) {
-        if stage as usize == proof_ctx.global_info.n_challenges.len() + 1 {
+    pub fn commit_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], pctx: Arc<ProofCtx<F>>) {
+        if stage as usize == pctx.global_info.n_challenges.len() + 1 {
             info!("{}: Committing stage Q", Self::MY_NAME);
         } else {
             info!("{}: Committing stage {}", Self::MY_NAME, stage);
@@ -486,7 +486,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_start_info!(COMMITING_STAGE);
         for prover in provers.iter_mut() {
-            prover.commit_stage(stage, proof_ctx.clone());
+            prover.commit_stage(stage, pctx.clone());
         }
         timer_stop_and_log_info!(COMMITING_STAGE);
     }
@@ -586,10 +586,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     fn get_challenges(
         stage: u32,
         provers: &mut [Box<dyn Prover<F>>],
-        proof_ctx: Arc<ProofCtx<F>>,
+        pctx: Arc<ProofCtx<F>>,
         transcript: &FFITranscript,
     ) {
-        provers[0].get_challenges(stage, proof_ctx, transcript); // Any prover can get the challenges which are common among them
+        provers[0].get_challenges(stage, pctx, transcript); // Any prover can get the challenges which are common among them
     }
 
     pub fn opening_stages(
@@ -672,11 +672,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(CALCULATING_FRI);
     }
 
-    fn get_proofs(
-        provers: &mut [Box<dyn Prover<F>>],
-        proof_ctx: Arc<ProofCtx<F>>,
-        output_dir: &str,
-    ) -> Vec<*mut c_void> {
+    fn get_proofs(provers: &mut [Box<dyn Prover<F>>], pctx: Arc<ProofCtx<F>>, output_dir: &str) -> Vec<*mut c_void> {
         timer_start_info!(GET_PROOFS);
         let mut proofs = Vec::new();
 
@@ -685,16 +681,16 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             proofs.push(proof);
         }
 
-        let global_info_path = proof_ctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
+        let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
 
-        let publics_ptr = proof_ctx.get_publics_ptr();
-        let proof_values_ptr = proof_ctx.get_proof_values_ptr();
-        let challenges_ptr = proof_ctx.get_challenges_ptr();
+        let publics_ptr = pctx.get_publics_ptr();
+        let proof_values_ptr = pctx.get_proof_values_ptr();
+        let challenges_ptr = pctx.get_challenges_ptr();
 
         let proves = vec![std::ptr::null_mut(); proofs.len()];
 
-        let proofs_dir = match proof_ctx.options.debug_info.save_proofs_to_file {
+        let proofs_dir = match pctx.options.debug_info.save_proofs_to_file {
             true => output_dir,
             false => "",
         };
@@ -712,14 +708,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_stop_and_log_info!(GET_PROOFS);
 
-        if proof_ctx.options.debug_info.save_proofs_to_file {
-            let n_publics = proof_ctx.global_info.n_publics as u64;
+        if pctx.options.debug_info.save_proofs_to_file {
+            let n_publics = pctx.global_info.n_publics as u64;
 
-            save_publics_c(n_publics, proof_ctx.get_publics_ptr(), output_dir);
+            save_publics_c(n_publics, pctx.get_publics_ptr(), output_dir);
 
-            save_proof_values_c(proof_ctx.get_proof_values_ptr(), global_info_file, output_dir);
+            save_proof_values_c(pctx.get_proof_values_ptr(), global_info_file, output_dir);
 
-            save_challenges_c(proof_ctx.get_challenges_ptr(), global_info_file, output_dir);
+            save_challenges_c(pctx.get_challenges_ptr(), global_info_file, output_dir);
         }
 
         proves

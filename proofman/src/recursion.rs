@@ -18,6 +18,7 @@ type GetWitnessFunc =
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_recursive1_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setups: Arc<SetupsVadcop>,
@@ -54,7 +55,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
             let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Compressor);
 
-            generate_witness::<F>(&circom_witness, &trace, &publics, &setup_path, setup, proofs[idx], 18)?;
+            generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, proofs[idx], 18)?;
 
             log::info!(
                 "{}: {}",
@@ -102,7 +103,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
         let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1);
 
-        generate_witness::<F>(&circom_witness, &trace, &publics, &setup_path, setup, zkin, 18)?;
+        generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, zkin, 18)?;
 
         log::info!(
             "{}: {}",
@@ -139,6 +140,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     Ok(proofs_out)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_recursive2_proof<F: Field>(
     pctx: &ProofCtx<F>,
     sctx: Arc<SetupCtx>,
@@ -231,9 +233,9 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                         let setup_path = pctx.global_info.get_air_setup_path(airgroup, 0, &ProofType::Recursive2);
 
                         generate_witness::<F>(
-                            &circom_witness,
-                            &trace,
-                            &publics,
+                            circom_witness,
+                            trace,
+                            publics,
                             &setup_path,
                             setup,
                             zkin_recursive2_updated,
@@ -325,6 +327,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
     Ok(zkin_final)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_final_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setup: Arc<Setup>,
@@ -344,7 +347,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
 
     let setup_path = pctx.global_info.get_setup_path("vadcop_final");
 
-    generate_witness::<F>(&circom_witness, &trace, &publics, &setup_path, &setup, proof, 18)?;
+    generate_witness::<F>(circom_witness, trace, publics, &setup_path, &setup, proof, 18)?;
 
     let proof_file = output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().into_owned();
 
@@ -369,6 +372,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
     Ok(p_prove)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_recursivef_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setup: Arc<Setup>,
@@ -388,7 +392,7 @@ pub fn generate_recursivef_proof<F: Field>(
 
     let setup_path = pctx.global_info.get_setup_path("recursivef");
 
-    generate_witness::<F>(&circom_witness, &trace, &publics, &setup_path, &setup, proof, 12)?;
+    generate_witness::<F>(circom_witness, trace, publics, &setup_path, &setup, proof, 12)?;
 
     let proof_file = match pctx.options.debug_info.save_proofs_to_file {
         true => output_dir_path.join("proofs/recursivef.json").to_string_lossy().into_owned(),

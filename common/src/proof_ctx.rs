@@ -3,9 +3,7 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 
-use crate::{
-    SetupCtx, distribution_ctx::DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode,
-};
+use crate::{SetupCtx, DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
