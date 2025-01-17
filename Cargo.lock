@@ -879,6 +879,7 @@ name = "proofman-util"
 version = "0.1.0"
 dependencies = [
  "colored",
+ "p3-field",
  "sysinfo",
 ]
 

@@ -11,7 +11,7 @@ use proofman_common::{ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 
 use std::os::raw::{c_void, c_char};
 
-use proofman_util::{create_buffer_fast, timer_start_trace, timer_stop_and_log_trace};
+use proofman_util::{create_buffer_fast_u8, timer_start_trace, timer_stop_and_log_trace};
 
 type GetWitnessFunc =
     unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64);
@@ -447,7 +447,7 @@ pub fn generate_fflonk_snark_proof<F: Field>(
         let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
         let size_witness = get_size_witness();
 
-        let witness: Vec<u8> = create_buffer_fast((size_witness * 32) as usize);
+        let witness = create_buffer_fast_u8((size_witness * 32) as usize);
         let witness_ptr = witness.as_ptr() as *mut u8;
 
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;

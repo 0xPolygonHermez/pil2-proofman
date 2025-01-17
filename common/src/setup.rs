@@ -8,7 +8,7 @@ use proofman_starks_lib_c::{
     load_const_tree_c, load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c,
     prover_helpers_free_c,
 };
-use proofman_util::create_buffer_fast;
+use proofman_util::create_buffer_fast_u8;
 
 use crate::GlobalInfo;
 use crate::ProofType;
@@ -118,7 +118,7 @@ impl Setup {
         let p_stark_info = self.p_setup.p_stark_info;
 
         let const_size = get_const_size_c(p_stark_info) as usize;
-        let const_pols: Vec<u8> = create_buffer_fast(const_size);
+        let const_pols = create_buffer_fast_u8(const_size);
 
         load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_size as u64);
         *self.const_pols.values.write().unwrap() = const_pols;
@@ -140,7 +140,7 @@ impl Setup {
 
         let const_tree_size = get_const_tree_size_c(p_stark_info) as usize;
 
-        let const_tree: Vec<u8> = create_buffer_fast(const_tree_size);
+        let const_tree = create_buffer_fast_u8(const_tree_size);
 
         if PathBuf::from(&const_pols_tree_path).exists() {
             load_const_tree_c(const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str(), const_tree_size as u64);
