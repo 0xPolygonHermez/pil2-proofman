@@ -13,6 +13,7 @@ void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
     Goldilocks::Element *pBuff = buffer;
     Goldilocks::Element *pBuffExtended = bufferExt;
+    ElementType *pBuffNodes = (ElementType *)(&bufferExt[NExtended * nCols]);
 
     NTT_Goldilocks ntt(N);
     if(pBuffHelper != nullptr) {
@@ -23,6 +24,7 @@ void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint
     
     uint64_t pos = setupCtx.starkInfo.nStages + 2 + commitId;
     treesGL[pos]->setSource(pBuffExtended);
+    treesGL[pos]->setNodes(pBuffNodes);
     treesGL[pos]->merkelize();
     treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
 
@@ -45,15 +47,18 @@ void Starks<ElementType>::loadCustomCommit(uint64_t commitId, uint64_t step, Gol
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
     Goldilocks::Element *pBuff = buffer;
     Goldilocks::Element *pBuffExtended = bufferExt;
+    ElementType *pBuffNodes = (ElementType *)(&bufferExt[NExtended * nCols]);
 
     uint64_t pos = setupCtx.starkInfo.nStages + 2 + commitId;
 
     Goldilocks::Element* tmpBuff = (Goldilocks::Element *)loadFileParallel(bufferFile, ((N + NExtended) * nCols + treesGL[pos]->getNumNodes(NExtended)) * sizeof(Goldilocks::Element));
     memcpy(pBuff, &tmpBuff[0], N * nCols * sizeof(Goldilocks::Element));
     memcpy(pBuffExtended, &tmpBuff[N * nCols], NExtended * nCols * sizeof(Goldilocks::Element));
+    ElementType *tmpBuffNodes = (ElementType *)(&tmpBuff[N * nCols + NExtended * nCols]);
+    memcpy(pBuffNodes, tmpBuffNodes, treesGL[pos]->numNodes * sizeof(ElementType));
 
     treesGL[pos]->setSource(pBuffExtended);
-    treesGL[pos]->copyNodes(&tmpBuff[(N + NExtended) * nCols]);
+    treesGL[pos]->setNodes(pBuffNodes);
     treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
 
 }
@@ -69,6 +74,7 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     
     Goldilocks::Element *pBuff = step == 1 ? trace : &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, false)]];
     Goldilocks::Element *pBuffExtended = &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair(section, true)]];
+    ElementType *pBuffNodes = (ElementType *)(&aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)]]);
 
     NTT_Goldilocks ntt(N);
     if(pBuffHelper != nullptr) {
@@ -78,6 +84,7 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     }
     
     treesGL[step - 1]->setSource(pBuffExtended);
+    treesGL[step - 1]->setNodes(pBuffNodes);
     treesGL[step - 1]->merkelize();
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
 }
@@ -133,6 +140,7 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     }
 
     treesGL[step - 1]->setSource(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), true)]]);
+    treesGL[step - 1]->setNodes((ElementType *)(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("mt" + to_string(step), true)]]));
     treesGL[step - 1]->merkelize();
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
     
@@ -384,4 +392,12 @@ void Starks<ElementType>::calculateFRIPolynomial(StepsParams &params) {
     ExpressionsPack expressionsCtx(setupCtx);
 #endif
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.friExpId);
+
+    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
+        Goldilocks::Element *src = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)]];
+        treesFRI[step]->setSource(src);
+
+        ElementType *nodes = (ElementType *)(&params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)]]);
+        treesFRI[step]->setNodes(nodes);
+    }
 }

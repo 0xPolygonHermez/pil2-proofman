@@ -24,6 +24,19 @@ impl<F: Field> AirInstancesRepository<F> {
         air_instances.insert(global_idx, air_instance);
     }
 
+    pub fn free(&self) {
+        let mut air_instances = self.air_instances.write().unwrap();
+        air_instances.clear();
+    }
+
+    pub fn free_traces(&self) {
+        let mut air_instances = self.air_instances.write().unwrap();
+        for (_, air_instance) in air_instances.iter_mut() {
+            air_instance.clear_trace();
+            air_instance.clear_custom_commits_trace();
+        }
+    }
+
     pub fn find_airgroup_instances(&self, airgroup_id: usize) -> Vec<usize> {
         let air_instances = self.air_instances.read().unwrap();
 

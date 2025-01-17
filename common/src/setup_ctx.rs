@@ -99,7 +99,7 @@ impl SetupRepository {
             true => {
                 let global_bin_path =
                     &global_info.get_proving_key_path().join("pilout.globalConstraints.bin").display().to_string();
-                Some(expressions_bin_new_c(global_bin_path.as_str(), true))
+                Some(expressions_bin_new_c(global_bin_path.as_str(), true, false))
             }
             false => None,
         };
@@ -128,18 +128,13 @@ impl SetupRepository {
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 pub struct SetupCtx {
-    global_info: GlobalInfo,
     setup_repository: SetupRepository,
     setup_type: ProofType,
 }
 
 impl SetupCtx {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
-        SetupCtx {
-            setup_repository: SetupRepository::new(global_info, setup_type),
-            global_info: global_info.clone(),
-            setup_type: setup_type.clone(),
-        }
+        SetupCtx { setup_repository: SetupRepository::new(global_info, setup_type), setup_type: setup_type.clone() }
     }
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> &Setup {

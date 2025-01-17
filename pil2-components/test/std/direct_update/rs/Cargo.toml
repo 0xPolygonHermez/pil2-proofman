@@ -21,8 +21,8 @@ rand.workspace = true
 num-bigint.workspace = true
 p3-goldilocks.workspace = true
 p3-field.workspace = true
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.68"
+serde.workspace = true
+serde_json.workspace = true
 
 [build-dependencies]
 proofman-cli.workspace = true
