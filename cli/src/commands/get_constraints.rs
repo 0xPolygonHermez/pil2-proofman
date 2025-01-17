@@ -41,7 +41,8 @@ impl GetConstraintsCmd {
                     .bright_white()
                     .bold()
                 );
-                let constraints_lines: Vec<String> = get_constraints_lines_str(setups.sctx.clone(), airgroup_id, air_id);
+                let constraints_lines: Vec<String> =
+                    get_constraints_lines_str(setups.sctx.clone(), airgroup_id, air_id);
                 for (idx, line) in constraints_lines.iter().enumerate() {
                     log::info!("{}:         · Constraint #{} : {}", Self::MY_NAME, idx, line);
                 }

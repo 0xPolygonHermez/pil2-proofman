@@ -134,10 +134,7 @@ pub struct SetupCtx {
 
 impl SetupCtx {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
-        SetupCtx {
-            setup_repository: SetupRepository::new(global_info, setup_type),
-            setup_type: setup_type.clone(),
-        }
+        SetupCtx { setup_repository: SetupRepository::new(global_info, setup_type), setup_type: setup_type.clone() }
     }
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> &Setup {

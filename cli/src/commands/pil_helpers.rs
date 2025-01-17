@@ -144,8 +144,7 @@ impl PilHelpersCmd {
             });
 
             // Prepare constants
-            constant_airgroups
-                .push((airgroup.name.as_ref().unwrap().to_case(Case::Snake).to_uppercase(), airgroup_id));
+            constant_airgroups.push((airgroup.name.as_ref().unwrap().to_case(Case::Snake).to_uppercase(), airgroup_id));
 
             for (air_idx, air) in airgroup.airs.iter().enumerate() {
                 let air_name = air.name.as_ref().unwrap().to_case(Case::Snake).to_uppercase();
