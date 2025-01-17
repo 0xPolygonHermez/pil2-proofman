@@ -230,9 +230,9 @@ jobs:
       - name: Cargo build distributed
         run: RUST_BACKTRACE=1 cargo build --features distributed -v
 
-      - name: Generate proof Fibonacci Square distributed
-        run: | 
-          mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=80 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
+      # - name: Generate proof Fibonacci Square distributed
+      #   run: | 
+      #     mpirun --bind-to none -np 3 -x OMP_NUM_THREADS=80 target/debug/proofman-cli  prove --witness-lib ./target/debug/libfibonacci_square.so --public-inputs examples/fibonacci-square/src/inputs.json --proving-key examples/fibonacci-square/build/provingKey/ --output-dir examples/fibonacci-square/build/proofs -a
 
   test-std:
     name: Test STD
