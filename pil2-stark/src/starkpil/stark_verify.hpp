@@ -402,7 +402,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     zklog.trace("Verifying constant Merkle tree");
     MerkleTreeType treeC(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, 1 << starkInfo.starkStruct.nBitsExt, starkInfo.nConstants);
     bool isValidConstantMT = true;
-// #pragma omp parallel for
+#pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         std::vector<Goldilocks::Element> values(starkInfo.nConstants);
         for (uint64_t i = 0; i < starkInfo.nConstants; ++i) {
