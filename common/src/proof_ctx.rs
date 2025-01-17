@@ -136,6 +136,36 @@ impl<F: Field> ProofCtx<F> {
         self.air_instance_repo.add_air_instance(air_instance, global_idx);
     }
 
+    pub fn dctx_get_rank(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.rank as usize
+    }
+
+    pub fn dctx_get_n_processes(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.n_processes as usize
+    }
+
+    pub fn dctx_get_instances(&self) -> Vec<(usize, usize)> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances.clone()
+    }
+
+    pub fn dctx_get_my_instances(&self) -> Vec<usize> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.my_instances.clone()
+    }
+
+    pub fn dctx_get_my_groups(&self) -> Vec<Vec<usize>> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.my_groups.clone()
+    }
+
+    pub fn dctx_get_my_air_groups(&self) -> Vec<Vec<usize>> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.my_air_groups.clone()
+    }
+
     pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_info(global_idx)
@@ -161,6 +191,11 @@ impl<F: Field> ProofCtx<F> {
         dctx.add_instance(airgroup_id, air_id, weight)
     }
 
+    pub fn dctx_distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.distribute_roots(roots)
+    }
+
     pub fn dctx_distribute_multiplicity(&self, multiplicity: &mut [u64], global_idx: usize) {
         let dctx = self.dctx.read().unwrap();
         let owner = dctx.owner(global_idx);
@@ -184,6 +219,11 @@ impl<F: Field> ProofCtx<F> {
     pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: Vec<Vec<u64>>) -> Vec<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
         dctx.distribute_airgroupvalues::<F>(airgroup_values, &self.global_info)
+    }
+
+    pub fn dctx_close(&self) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.close(self.global_info.air_groups.len());
     }
 
     pub fn get_proof_values_ptr(&self) -> *mut u8 {

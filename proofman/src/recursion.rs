@@ -23,7 +23,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setups: Arc<SetupsVadcop>,
     proofs: &[*mut c_void],
-    circom_witness: &[F],
+    circom_witness: &mut [F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
@@ -37,8 +37,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
-    let instances = pctx.dctx.read().unwrap().instances.clone();
-    let my_instances = pctx.dctx.read().unwrap().my_instances.clone();
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
 
     for (idx, instance_id) in my_instances.iter().enumerate() {
         let (airgroup_id, air_id) = instances[*instance_id];
@@ -145,7 +145,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
     pctx: &ProofCtx<F>,
     sctx: Arc<SetupCtx>,
     proofs: &[*mut c_void],
-    circom_witness: &[F],
+    circom_witness: &mut [F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
@@ -332,7 +332,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setup: Arc<Setup>,
     proof: *mut c_void,
-    circom_witness: &[F],
+    circom_witness: &mut [F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
@@ -377,7 +377,7 @@ pub fn generate_recursivef_proof<F: Field>(
     pctx: &ProofCtx<F>,
     setup: Arc<Setup>,
     proof: *mut c_void,
-    circom_witness: &[F],
+    circom_witness: &mut [F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
@@ -471,7 +471,7 @@ pub fn generate_fflonk_snark_proof<F: Field>(
 }
 
 fn generate_witness<F: Field>(
-    witness: &[F],
+    witness: &mut [F],
     buffer: &[F],
     publics: &[F],
     setup_path: &Path,
@@ -535,8 +535,8 @@ pub fn get_buff_sizes<F: Field>(
     let mut buffer = 0;
     let mut prover_size = 0;
 
-    let instances = pctx.dctx.read().unwrap().instances.clone();
-    let my_instances = pctx.dctx.read().unwrap().my_instances.clone();
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
 
     for instance_id in my_instances.iter() {
         let (airgroup_id, air_id) = instances[*instance_id];
@@ -571,7 +571,7 @@ pub fn get_buff_sizes<F: Field>(
         prover_size = prover_size.max(setup.prover_buffer_size);
     }
 
-    let setup_final = &setups.setup_vadcop_final.clone().unwrap();
+    let setup_final = setups.setup_vadcop_final.as_ref().unwrap();
     let setup_path = pctx.global_info.get_setup_path("vadcop_final");
     let sizes = get_size(&setup_path, setup_final, 18)?;
     witness_size = witness_size.max(sizes.0);
@@ -580,7 +580,7 @@ pub fn get_buff_sizes<F: Field>(
     prover_size = prover_size.max(setup_final.prover_buffer_size);
 
     if pctx.options.final_snark {
-        let setup_recursivef = &setups.setup_recursivef.clone().unwrap();
+        let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
         let setup_path = pctx.global_info.get_setup_path("recursivef");
         let sizes = get_size(&setup_path, setup_recursivef, 12)?;
         witness_size = witness_size.max(sizes.0);

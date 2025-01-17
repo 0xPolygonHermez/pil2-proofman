@@ -128,7 +128,6 @@ impl SetupRepository {
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 pub struct SetupCtx {
-    global_info: GlobalInfo,
     setup_repository: SetupRepository,
     setup_type: ProofType,
 }
@@ -137,7 +136,6 @@ impl SetupCtx {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
         SetupCtx {
             setup_repository: SetupRepository::new(global_info, setup_type),
-            global_info: global_info.clone(),
             setup_type: setup_type.clone(),
         }
     }

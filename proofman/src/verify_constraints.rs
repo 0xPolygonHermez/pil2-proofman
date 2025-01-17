@@ -66,8 +66,9 @@ pub fn verify_constraints_proof<F: Field>(
 
     let mut valid_constraints = true;
 
-    let instances = pctx.dctx.read().unwrap().instances.clone();
-    let my_instances = pctx.dctx.read().unwrap().my_instances.clone();
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
+
     for instance_id in my_instances.iter() {
         let (airgroup_id, air_id) = instances[*instance_id];
         let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
@@ -192,15 +193,13 @@ pub fn verify_constraints_proof<F: Field>(
         }
     }
 
-    let dctx = pctx.dctx.read().unwrap();
-
     let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone());
 
     let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
         || !pctx.options.debug_info.debug_global_instances.is_empty();
 
     let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
-    if dctx.rank == 0 && check_global_constraints {
+    if pctx.dctx_get_rank() == 0 && check_global_constraints {
         let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
         let mut valid_global_constraints = true;
 

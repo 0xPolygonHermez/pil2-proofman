@@ -108,15 +108,13 @@ pub fn verify_basic_proofs<F: Field>(
         }
     }
 
-    let dctx = pctx.dctx.read().unwrap();
-
     let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
         || !pctx.options.debug_info.debug_global_instances.is_empty();
 
     let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone());
 
     let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
-    if dctx.rank == 0 && check_global_constraints {
+    if pctx.dctx_get_rank() == 0 && check_global_constraints {
         let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
         let mut valid_global_constraints = true;
 

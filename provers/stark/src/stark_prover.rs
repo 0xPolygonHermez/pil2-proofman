@@ -561,7 +561,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             return;
         }
 
-        let mpi_rank = pctx.dctx.read().unwrap().rank;
+        let mpi_rank = pctx.dctx_get_rank();
 
         if stage_id <= self.num_stages() + 3 {
             //num stages + 1 + evals + fri_pol (then starts fri folding...)
