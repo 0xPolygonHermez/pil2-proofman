@@ -5,5 +5,5 @@ require "module.pil"
 // As they have a different trace length, we need to create multiple module instances
 airgroup FibonacciSquare {
     FibonacciSquare(N: 2**18);
-    Module(N: 2**10);
+    Module(N: 2**14);
 }
