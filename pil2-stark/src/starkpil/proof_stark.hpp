@@ -2,7 +2,6 @@
 #define PROOF
 
 #include "goldilocks_base_field.hpp"
-#include "poseidon_goldilocks.hpp"
 #include "stark_info.hpp"
 #include "fr.hpp"
 #include <vector>
