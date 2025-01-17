@@ -81,10 +81,22 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         Self::initialize_fixed_pols(setups.clone(), pctx.clone(), true);
 
-        pctx.dctx_close();
-
         let mpi_rank = pctx.dctx_get_rank();
         let n_processes = pctx.dctx_get_n_processes();
+
+        pctx.dctx_close();
+
+        if n_processes > 1 {
+            let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info();
+            log::info!(
+                "{}: Load balance. Average: {} max: {} min: {} deviation: {}",
+                Self::MY_NAME,
+                average_weight,
+                max_weight,
+                min_weight,
+                max_deviation
+            );
+        }
 
         if mpi_rank == 0 {
             Self::print_global_summary(pctx.clone(), setups.sctx.clone());

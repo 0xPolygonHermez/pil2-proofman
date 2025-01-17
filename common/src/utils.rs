@@ -11,7 +11,11 @@ use serde::Deserialize;
 use std::fs;
 
 pub fn add_air_instance<F: Field>(air_instance: AirInstance<F>, pctx: Arc<ProofCtx<F>>) -> bool {
-    let (is_mine, gid) = pctx.dctx.write().unwrap().add_instance(air_instance.airgroup_id, air_instance.air_id, 1);
+    let (is_mine, gid) = pctx.dctx.write().unwrap().add_instance(
+        air_instance.airgroup_id,
+        air_instance.air_id,
+        pctx.get_weight(air_instance.airgroup_id, air_instance.air_id),
+    );
     if is_mine {
         pctx.add_air_instance(air_instance, gid);
     }

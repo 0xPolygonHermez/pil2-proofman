@@ -132,7 +132,13 @@ void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs
 
     j["challenges"] = challenges2zkin(globalInfo, challenges);
 
-#pragma omp parallel for
+    if(!string(fileDir).empty()) {
+        if (!std::filesystem::exists(string(fileDir) + "/proofs")) {
+            std::filesystem::create_directory(string(fileDir) + "/proofs");
+        }
+    }
+
+    #pragma omp parallel for
     for(uint64_t i = 0; i < nProofs; ++i) {
         FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProofs[i];
         nlohmann::json zkin = friProof->proof.proof2json();
@@ -146,13 +152,7 @@ void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs
         std::string proofName = airName + "_" + std::to_string(friProof->instanceId);
 
         if(!string(fileDir).empty()) {
-            if (!std::filesystem::exists(string(fileDir) + "/zkin")) {
-                std::filesystem::create_directory(string(fileDir) + "/zkin");
-            }
-            if (!std::filesystem::exists(string(fileDir) + "/proofs")) {
-                std::filesystem::create_directory(string(fileDir) + "/proofs");
-            }
-            json2file(zkin, string(fileDir) + "/proofs/proof_" + proofName + ".json");
+            json2file(zkin, string(fileDir) + "/zkin/proof_" + proofName + "_zkin.json");
         }
 
         proofs[i] = (void *) new nlohmann::json(zkin);

@@ -186,7 +186,7 @@ impl<F: Field> ProofCtx<F> {
         dctx.find_instance(airgroup_id, air_id)
     }
 
-    pub fn dctx_add_instance(&self, airgroup_id: usize, air_id: usize, weight: usize) -> (bool, usize) {
+    pub fn dctx_add_instance(&self, airgroup_id: usize, air_id: usize, weight: u64) -> (bool, usize) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.add_instance(airgroup_id, air_id, weight)
     }
@@ -194,6 +194,26 @@ impl<F: Field> ProofCtx<F> {
     pub fn dctx_distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
         let dctx = self.dctx.read().unwrap();
         dctx.distribute_roots(roots)
+    }
+
+    pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+    }
+
+    pub fn dctx_assign_instances(&self) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.assign_instances();
+    }
+
+    pub fn dctx_load_balance_info(&self) -> (f64, u64, u64, f64) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.load_balance_info()
+    }
+
+    pub fn dctx_set_balance_distribution(&self, balance: bool) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.set_balance_distribution(balance);
     }
 
     pub fn dctx_distribute_multiplicity(&self, multiplicity: &mut [u64], global_idx: usize) {
