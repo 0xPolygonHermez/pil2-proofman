@@ -848,3 +848,11 @@ void free_buffer(void *buffer) {
     cout <<  (Goldilocks::Element *)buffer << endl;
     delete[] (Goldilocks::Element *)buffer;
 }
+
+uint64_t get_omp_max_threads(){
+    return omp_get_max_threads();
+}
+
+void set_omp_num_threads(uint64_t num_threads){
+    omp_set_num_threads(num_threads);
+}

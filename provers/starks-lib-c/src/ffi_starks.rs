@@ -1159,6 +1159,17 @@ pub fn free_buffer_c(buffer: *mut u8) {
     }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_omp_max_threads_c() -> u64 {
+    unsafe { get_omp_max_threads() }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_omp_num_threads_c(num_threads: u64) {
+    unsafe {
+        set_omp_num_threads(num_threads);
+    }
+}
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -1918,4 +1929,15 @@ pub fn stark_verify_c(
 ) -> bool {
     trace!("{}: ··· {}", "ffi     ", "stark_verify_c: This is a mock call because there is no linked library");
     true
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_omp_max_threads() -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_omp_max_threads: This is a mock call because there is no linked library");
+    1
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_omp_num_threads(num_threads: u64) {
+    trace!("{}: ··· {}", "ffi     ", "set_omp_num_threads: This is a mock call because there is no linked library");
 }

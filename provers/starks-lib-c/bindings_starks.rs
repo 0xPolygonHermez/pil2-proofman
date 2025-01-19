@@ -689,3 +689,12 @@ extern "C" {
     #[link_name = "\u{1}_Z11free_bufferPv"]
     pub fn free_buffer(buffer: *mut ::std::os::raw::c_void);
 }
+
+extern "C" {
+    #[link_name = "\u{1}_Z19get_omp_max_threadsv"]
+    pub fn get_omp_max_threads() -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z19set_omp_num_threadsm"]
+    pub fn set_omp_num_threads(num_threads: u64);
+}

@@ -136,6 +136,11 @@ impl<F: Field> ProofCtx<F> {
         self.air_instance_repo.add_air_instance(air_instance, global_idx);
     }
 
+    pub fn dctx_barrier(&self) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.barrier();
+    }
+
     pub fn dctx_get_rank(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
         dctx.rank as usize
