@@ -17,7 +17,7 @@ pub fn get_custom_commit_trace(
         step,
         buffer.as_ptr() as *mut u8,
         buffer_ext.as_ptr() as *mut u8,
-        fri_proof_new_c((&setup.p_setup).into(), 0),
+        fri_proof_new_c((&setup.p_setup).into(), 0, 0, 0),
         std::ptr::null_mut(),
         buffer_str,
     );

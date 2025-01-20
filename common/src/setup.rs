@@ -2,11 +2,10 @@ use std::os::raw::c_void;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-use proofman_starks_lib_c::get_map_totaln_c;
 use proofman_starks_lib_c::{
     get_const_tree_size_c, get_const_size_c, prover_helpers_new_c, expressions_bin_new_c, stark_info_new_c,
     load_const_tree_c, load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c,
-    prover_helpers_free_c,
+    prover_helpers_free_c, get_map_totaln_c,
 };
 use proofman_util::create_buffer_fast_u8;
 
@@ -136,15 +135,27 @@ impl Setup {
 
         let const_pols_tree_path = setup_path.display().to_string() + ".consttree";
 
+        let verkey_path = setup_path.display().to_string() + ".verkey.json";
+
         let p_stark_info = self.p_setup.p_stark_info;
 
         let const_tree_size = get_const_tree_size_c(p_stark_info) as usize;
 
         let const_tree = create_buffer_fast_u8(const_tree_size);
 
-        if PathBuf::from(&const_pols_tree_path).exists() {
-            load_const_tree_c(const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str(), const_tree_size as u64);
+        let valid_root = if PathBuf::from(&const_pols_tree_path).exists() {
+            load_const_tree_c(
+                p_stark_info,
+                const_tree.as_ptr() as *mut u8,
+                const_pols_tree_path.as_str(),
+                const_tree_size as u64,
+                verkey_path.as_str(),
+            )
         } else {
+            false
+        };
+
+        if !valid_root {
             let const_pols = self.const_pols.values.read().unwrap();
             let tree_filename = if save_file { const_pols_tree_path.as_str() } else { "" };
             calculate_const_tree_c(

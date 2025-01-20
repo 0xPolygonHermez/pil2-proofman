@@ -46,9 +46,6 @@ void StarkInfo::load(json j, bool verify_)
         starkStruct.steps.push_back(step);
     }
 
-    airId = j["airId"];
-    airgroupId = j["airgroupId"];
-
     nPublics = j["nPublics"];
     nConstants = j["nConstants"];
 

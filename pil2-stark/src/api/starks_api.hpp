@@ -10,7 +10,7 @@
 
     // FRIProof
     // ========================================================================================
-    void *fri_proof_new(void *pSetupCtx, uint64_t instanceId);
+    void *fri_proof_new(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId);
     void fri_proof_get_tree_root(void *pFriProof, void* root, uint64_t tree_index);
     void fri_proof_set_airgroupvalues(void *pFriProof, void *airgroupValues);
     void fri_proof_set_airvalues(void *pFriProof, void *airValues);
@@ -39,7 +39,7 @@
 
     // Const Pols
     // ========================================================================================
-    void load_const_tree(void *pConstTree, char *treeFilename, uint64_t constTreeSize);
+    bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char* verkeyFilename);
     void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize);
     uint64_t get_const_tree_size(void *pStarkInfo);
     uint64_t get_const_size(void *pStarkInfo);
@@ -68,7 +68,6 @@
     void starks_free(void *pStarks);
 
     void treesGL_get_root(void *pStarks, uint64_t index, void *root);
-    void treesGL_set_root(void *pStarks, uint64_t index, void *pProof);
 
     void calculate_xdivxsub(void *pStarks, void* xiChallenge, void *xDivXSub);
     void *get_fri_pol(void *pStarkInfo, void *buffer);
@@ -129,7 +128,7 @@
 
     // Recursive proof
     // =================================================================================
-    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
+    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
     void *get_zkin_ptr(char *zkin_file);
     void *add_recursive2_verkey(void *pZkin, char* recursive2VerKeyFilename);
     void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPublics, void* pChallenges, void *zkin1, void *zkin2, void *starkInfoRecursive2);

@@ -72,10 +72,10 @@ void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir) 
 
 
 
-void *fri_proof_new(void *pSetupCtx, uint64_t instanceId)
+void *fri_proof_new(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId)
 {
     SetupCtx setupCtx = *(SetupCtx *)pSetupCtx;
-    FRIProof<Goldilocks::Element> *friProof = new FRIProof<Goldilocks::Element>(setupCtx.starkInfo, instanceId);
+    FRIProof<Goldilocks::Element> *friProof = new FRIProof<Goldilocks::Element>(setupCtx.starkInfo, airgroupId, airId, instanceId);
 
     return friProof;
 }
@@ -147,11 +147,9 @@ void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs
         zkin["proofvalues"] = j["proofvalues"];
         zkin["challenges"] = j["challenges"]["challenges"];
         zkin["challengesFRISteps"] = j["challenges"]["challengesFRISteps"];
-
-        std::string airName = globalInfo["airs"][friProof->airgroupId][friProof->airId]["name"];
-        std::string proofName = airName + "_" + std::to_string(friProof->instanceId);
-
         if(!string(fileDir).empty()) {
+            std::string airName = globalInfo["airs"][friProof->airgroupId][friProof->airId]["name"];
+            std::string proofName = airName + "_" + std::to_string(friProof->instanceId);
             json2file(zkin, string(fileDir) + "/zkin/proof_" + proofName + "_zkin.json");
         }
 
@@ -285,9 +283,10 @@ void prover_helpers_free(void *pProverHelpers) {
 
 // Const Pols
 // ========================================================================================
-void load_const_tree(void *pConstTree, char *treeFilename, uint64_t constTreeSize) {
+bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char* verkeyFilename) {
     ConstTree constTree;
-    constTree.loadConstTree(pConstTree, treeFilename, constTreeSize);
+    auto starkInfo = *(StarkInfo *)pStarkInfo;
+    return constTree.loadConstTree(starkInfo, pConstTree, treeFilename, constTreeSize, verkeyFilename);
 };
 
 void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize) {
@@ -399,14 +398,6 @@ void treesGL_get_root(void *pStarks, uint64_t index, void *dst)
 
     starks->ffi_treesGL_get_root(index, (Goldilocks::Element *)dst);
 }
-
-void treesGL_set_root(void *pStarks, uint64_t index, void *pProof)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-
-    starks->ffi_treesGL_set_root(index, *(FRIProof<Goldilocks::Element> *)pProof);
-}
-
 
 void calculate_fri_polynomial(void *pStarks, void* stepsParams)
 {
@@ -666,15 +657,15 @@ void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row) {
 
 // Recursive proof
 // ================================================================================= 
-void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop) {
+void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
     auto setup = *(SetupCtx *)pSetupCtx;
     if(setup.starkInfo.starkStruct.verificationHashType == "GL") {
-        return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
+        return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
     } else {
-        return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), false);
+        return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId,  airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), false);
     }
 }
 

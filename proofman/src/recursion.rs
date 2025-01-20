@@ -81,6 +81,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
                 &proof_file,
                 global_info_file,
                 airgroup_id as u64,
+                air_id as u64,
+                air_instance_id as u64,
                 true,
             );
 
@@ -129,6 +131,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
             &proof_file,
             global_info_file,
             airgroup_id as u64,
+            air_id as u64,
+            air_instance_id as u64,
             true,
         );
         proofs_out.push(p_prove);
@@ -274,6 +278,8 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                             &proof_file,
                             global_info_file,
                             airgroup as u64,
+                            0,
+                            0,
                             true,
                         );
 
@@ -364,6 +370,8 @@ pub fn generate_vadcop_final_proof<F: Field>(
         &proof_file,
         global_info_file,
         0,
+        0,
+        0,
         false,
     );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
@@ -411,6 +419,8 @@ pub fn generate_recursivef_proof<F: Field>(
         publics.as_ptr() as *mut u8,
         &proof_file,
         global_info_file,
+        0,
+        0,
         0,
         false,
     );
