@@ -862,37 +862,37 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let setup = setups.sctx.get_setup(*airgroup_id, *air_id);
                 let n_bits = setup.stark_info.stark_struct.n_bits;
                 let memory_instance = setup.prover_buffer_size as f64 * 8.0;
-                let memory_fixed = (
-                    setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
+                let memory_fixed = (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
                     + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext))
                     + (1 << (setup.stark_info.stark_struct.n_bits_ext))
-                    + ((2 * (1 << (setup.stark_info.stark_struct.n_bits_ext)) - 1) * 4)
-                    )
+                    + ((2 * (1 << (setup.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
                     as f64
                     * 8.0;
-                let mut memory_fixed_aggregation = 0f64 * 8.0 as f64;
+                let mut memory_fixed_aggregation = 0f64 * 8.0;
                 if pctx.options.aggregation {
                     if pctx.global_info.get_air_has_compressor(*airgroup_id, *air_id) {
-                        let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(*airgroup_id, *air_id);
-                        memory_fixed_aggregation += (setup_compressor.stark_info.n_constants * (1 << (setup_compressor.stark_info.stark_struct.n_bits))
-                        + setup_compressor.stark_info.n_constants * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
-                        + (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
-                        + ((2 * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext)) - 1) * 4)
-                        )
-                        as f64
-                        * 8.0;
+                        let setup_compressor =
+                            setups.sctx_compressor.as_ref().unwrap().get_setup(*airgroup_id, *air_id);
+                        memory_fixed_aggregation += (setup_compressor.stark_info.n_constants
+                            * (1 << (setup_compressor.stark_info.stark_struct.n_bits))
+                            + setup_compressor.stark_info.n_constants
+                                * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
+                            + (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
+                            + ((2 * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
+                            as f64
+                            * 8.0;
                     }
 
                     let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(*airgroup_id, *air_id);
-                    memory_fixed_aggregation += (setup_recursive1.stark_info.n_constants * (1 << (setup_recursive1.stark_info.stark_struct.n_bits))
-                    + setup_recursive1.stark_info.n_constants * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
-                    + (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
-                    + ((2 * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext)) - 1) * 4)
-                    )
-                    as f64
-                    * 8.0;
+                    memory_fixed_aggregation += (setup_recursive1.stark_info.n_constants
+                        * (1 << (setup_recursive1.stark_info.stark_struct.n_bits))
+                        + setup_recursive1.stark_info.n_constants
+                            * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
+                        + (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
+                        + ((2 * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
+                        as f64
+                        * 8.0;
                 }
-
 
                 let memory_helpers = setup.stark_info.get_buff_helper_size() as f64 * 8.0;
                 let total_cols: u64 = setup
@@ -902,7 +902,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     .filter(|(key, _)| *key != "const")
                     .map(|(_, value)| *value)
                     .sum();
-                air_info.insert(air_name.clone(), (n_bits, total_cols, memory_fixed, memory_fixed_aggregation, memory_helpers, memory_instance));
+                air_info.insert(
+                    air_name.clone(),
+                    (n_bits, total_cols, memory_fixed, memory_fixed_aggregation, memory_helpers, memory_instance),
+                );
             }
             let air_instance_map_key = air_instance_map.entry(air_name).or_insert(0);
             *air_instance_map_key += 1;
@@ -930,7 +933,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let count = air_group_instances.get(air_name).unwrap();
                 let (n_bits, total_cols, cols_witness, _, _, _) = air_info.get(air_name).unwrap();
                 _total_cells += *total_cols as f64 * *count as f64 * (1 << *n_bits) as f64;
-                _total_cells_witness += *cols_witness as f64 * *count as f64 * (1 << *n_bits) as f64;
+                _total_cells_witness += *cols_witness * *count as f64 * (1 << *n_bits) as f64;
                 info!(
                     "{}:       {}",
                     Self::MY_NAME,
@@ -944,26 +947,22 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             format!("{}: --- TOTAL SETUP MEMORY USAGE ----------------------------", Self::MY_NAME)
                 .bright_white()
                 .bold()
-        );        let mut total_memory = 0f64;
+        );
+        let mut total_memory = 0f64;
         for air_group in air_groups.clone() {
             let air_group_instances = air_instances.get(air_group).unwrap();
             let mut air_names: Vec<_> = air_group_instances.keys().collect();
             air_names.sort();
 
             for air_name in air_names {
-                let (_, _, memory_fixed, memory_fixed_aggregation,_, _) =
-                    air_info.get(air_name).unwrap();
+                let (_, _, memory_fixed, memory_fixed_aggregation, _, _) = air_info.get(air_name).unwrap();
                 total_memory += memory_fixed;
-                
+
                 if !pctx.options.aggregation {
                     info!(
                         "{}:       {}",
                         Self::MY_NAME,
-                        format!(
-                            "· {}: {} fixed cols",
-                            air_name,
-                            format_bytes(*memory_fixed),
-                        )
+                        format!("· {}: {} fixed cols", air_name, format_bytes(*memory_fixed),)
                     );
                 } else {
                     total_memory += memory_fixed_aggregation;
@@ -1003,8 +1002,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             for air_name in air_names {
                 let count = air_group_instances.get(air_name).unwrap();
-                let (_, _, _, _, memory_helper_instance_size, memory_instance) =
-                    air_info.get(air_name).unwrap();
+                let (_, _, _, _, memory_helper_instance_size, memory_instance) = air_info.get(air_name).unwrap();
                 let total_memory_instance = memory_instance * *count as f64;
                 total_memory += total_memory_instance;
                 if *memory_helper_instance_size > memory_helper_size {
@@ -1052,37 +1050,36 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let setup = sctx.get_setup(airgroup_id, air_id);
                 let n_bits = setup.stark_info.stark_struct.n_bits;
                 let memory_instance = setup.prover_buffer_size as f64 * 8.0;
-                let memory_fixed = (
-                    setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
+                let memory_fixed = (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
                     + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext))
                     + (1 << (setup.stark_info.stark_struct.n_bits_ext))
-                    + ((2 * (1 << (setup.stark_info.stark_struct.n_bits_ext)) - 1) * 4)
-                    )
+                    + ((2 * (1 << (setup.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
                     as f64
                     * 8.0;
-                let mut memory_fixed_aggregation = 0f64 * 8.0 as f64;
+                let mut memory_fixed_aggregation = 0f64 * 8.0;
                 if pctx.options.aggregation {
                     if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                         let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                        memory_fixed_aggregation += (setup_compressor.stark_info.n_constants * (1 << (setup_compressor.stark_info.stark_struct.n_bits))
-                        + setup_compressor.stark_info.n_constants * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
-                        + (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
-                        + ((2 * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext)) - 1) * 4)
-                        )
-                        as f64
-                        * 8.0;
+                        memory_fixed_aggregation += (setup_compressor.stark_info.n_constants
+                            * (1 << (setup_compressor.stark_info.stark_struct.n_bits))
+                            + setup_compressor.stark_info.n_constants
+                                * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
+                            + (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
+                            + ((2 * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
+                            as f64
+                            * 8.0;
                     }
 
                     let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                    memory_fixed_aggregation += (setup_recursive1.stark_info.n_constants * (1 << (setup_recursive1.stark_info.stark_struct.n_bits))
-                    + setup_recursive1.stark_info.n_constants * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
-                    + (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
-                    + ((2 * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext)) - 1) * 4)
-                    )
-                    as f64
-                    * 8.0;
+                    memory_fixed_aggregation += (setup_recursive1.stark_info.n_constants
+                        * (1 << (setup_recursive1.stark_info.stark_struct.n_bits))
+                        + setup_recursive1.stark_info.n_constants
+                            * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
+                        + (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
+                        + ((2 * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
+                        as f64
+                        * 8.0;
                 }
-
 
                 let memory_helpers = setup.stark_info.get_buff_helper_size() as f64 * 8.0;
                 let total_cols: u64 = setup
@@ -1092,7 +1089,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     .filter(|(key, _)| *key != "const")
                     .map(|(_, value)| *value)
                     .sum();
-                air_info.insert(air_name.clone(), (n_bits, total_cols, memory_fixed, memory_fixed_aggregation, memory_helpers, memory_instance));
+                air_info.insert(
+                    air_name.clone(),
+                    (n_bits, total_cols, memory_fixed, memory_fixed_aggregation, memory_helpers, memory_instance),
+                );
             }
             let air_instance_map_key = air_instance_map.entry(air_name).or_insert(0);
             *air_instance_map_key += 1;
@@ -1129,19 +1129,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             air_names.sort();
 
             for air_name in air_names {
-                let (_, _, memory_fixed, memory_fixed_aggregation,_, _) =
-                    air_info.get(air_name).unwrap();
+                let (_, _, memory_fixed, memory_fixed_aggregation, _, _) = air_info.get(air_name).unwrap();
                 total_memory += memory_fixed;
-                
+
                 if !pctx.options.aggregation {
                     info!(
                         "{}:       {}",
                         Self::MY_NAME,
-                        format!(
-                            "· {}: {} fixed cols",
-                            air_name,
-                            format_bytes(*memory_fixed),
-                        )
+                        format!("· {}: {} fixed cols", air_name, format_bytes(*memory_fixed),)
                     );
                 } else {
                     total_memory += memory_fixed_aggregation;
@@ -1164,7 +1159,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 format!("Total setup memory required: {}", format_bytes(total_memory)).bright_white().bold()
             );
         }
-        
+
         info!("{}: ------------------------------------------------", Self::MY_NAME);
         info!("{}: --- PROVER MEMORY USAGE ------------------------", Self::MY_NAME);
         info!("{}:     ► {} Air instances found:", Self::MY_NAME, my_instances.len());
@@ -1177,8 +1172,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             for air_name in air_names {
                 let count = air_group_instances.get(air_name).unwrap();
-                let (_, _, _, _, memory_helper_instance_size, memory_instance) =
-                    air_info.get(air_name).unwrap();
+                let (_, _, _, _, memory_helper_instance_size, memory_instance) = air_info.get(air_name).unwrap();
                 let total_memory_instance = memory_instance * *count as f64;
                 total_memory += total_memory_instance;
                 if *memory_helper_instance_size > memory_helper_size {
