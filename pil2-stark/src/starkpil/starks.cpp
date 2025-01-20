@@ -339,12 +339,6 @@ void Starks<ElementType>::ffi_treesGL_get_root(uint64_t index, ElementType *dst)
 }
 
 template <typename ElementType>
-void Starks<ElementType>::ffi_treesGL_set_root(uint64_t index, FRIProof<ElementType> &proof)
-{
-    treesGL[index]->getRoot(&proof.proof.roots[index][0]);
-}
-
-template <typename ElementType>
 void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams &params) {
     std::vector<Dest> dests;
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {

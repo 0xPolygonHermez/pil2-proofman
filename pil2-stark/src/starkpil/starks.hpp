@@ -97,7 +97,6 @@ public:
 
     // Following function are created to be used by the ffi interface
     void ffi_treesGL_get_root(uint64_t index, ElementType *dst);
-    void ffi_treesGL_set_root(uint64_t index, FRIProof<ElementType> &proof);
 
     void evmap(StepsParams& params, Goldilocks::Element *LEv);
 };

@@ -103,6 +103,28 @@ impl<F: Field> ProofCtx<F> {
         }
     }
 
+    pub fn create_ctx_agg(
+        global_info: &GlobalInfo,
+        options: ProofOptions,
+        public_inputs: Vec<F>,
+        challenges: Vec<F>,
+        proof_values: Vec<F>,
+        dctx: DistributionCtx,
+        weights: HashMap<(usize, usize), u64>,
+    ) -> Self {
+        Self {
+            global_info: global_info.clone(),
+            public_inputs: Values { values: RwLock::new(public_inputs) },
+            proof_values: Values { values: RwLock::new(proof_values) },
+            challenges: Values { values: RwLock::new(challenges) },
+            buff_helper: Values::default(),
+            air_instance_repo: AirInstancesRepository::new(),
+            dctx: RwLock::new(dctx),
+            weights,
+            options,
+        }
+    }
+
     pub fn set_weights(&mut self, sctx: &SetupCtx) {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -139,6 +161,11 @@ impl<F: Field> ProofCtx<F> {
     pub fn dctx_barrier(&self) {
         let dctx = self.dctx.read().unwrap();
         dctx.barrier();
+    }
+
+    pub fn dctx_is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_min_rank_owner(airgroup_id, air_id)
     }
 
     pub fn dctx_get_rank(&self) -> usize {

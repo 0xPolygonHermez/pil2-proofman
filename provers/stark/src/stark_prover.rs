@@ -65,7 +65,8 @@ impl<F: Field> StarkProver<F> {
 
         let p_stark_info = setup.p_setup.p_stark_info;
 
-        let p_proof = fri_proof_new_c((&setup.p_setup).into(), air_instance_id as u64);
+        let p_proof =
+            fri_proof_new_c((&setup.p_setup).into(), airgroup_id as u64, air_id as u64, air_instance_id as u64);
 
         Self {
             global_idx,

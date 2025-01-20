@@ -99,8 +99,6 @@ public:
     uint64_t nStages;
     uint64_t nCustomCommits;
     uint64_t nFieldElements;
-    uint64_t airId;
-    uint64_t airgroupId;
     ElementType **roots;
     Fri<ElementType> fri;
     std::vector<std::vector<Goldilocks::Element>> evals;
@@ -119,8 +117,6 @@ public:
             nCustomCommits = starkInfo_.customCommits.size();
             roots = new ElementType*[nStages + nCustomCommits];
             nFieldElements = starkInfo_.starkStruct.verificationHashType == "GL" ? HASH_SIZE : 1;
-            airId = starkInfo_.airId;
-            airgroupId = starkInfo_.airgroupId;
             for(uint64_t i = 0; i < nStages + nCustomCommits; i++)
             {
                 roots[i] = new ElementType[nFieldElements];
@@ -334,15 +330,16 @@ public:
     Proofs<ElementType> proof;
     std::vector<ElementType> publics;
     
-    uint64_t airId;
     uint64_t airgroupId;
+    uint64_t airId;
     uint64_t instanceId;
 
-    FRIProof(StarkInfo &starkInfo, uint64_t _instanceId) : proof(starkInfo), publics(starkInfo.nPublics) {
-        airId = starkInfo.airId;
-        airgroupId = starkInfo.airgroupId;
-        instanceId = _instanceId;
-    };
+    FRIProof(StarkInfo &starkInfo, uint64_t _airgroupId, uint64_t _airId, uint64_t _instanceId) : 
+        proof(starkInfo), 
+        publics(starkInfo.nPublics),
+        airgroupId(_airgroupId),
+        airId(_airId),
+        instanceId(_instanceId) {};
 };
 
 #endif
