@@ -141,6 +141,11 @@ impl<F: Field> ProofCtx<F> {
         dctx.barrier();
     }
 
+    pub fn dctx_is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.is_min_rank_owner(airgroup_id, air_id)
+    }
+
     pub fn dctx_get_rank(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
         dctx.rank as usize

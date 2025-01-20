@@ -151,11 +151,18 @@ extern "C" {
     pub fn get_const_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z20calculate_const_treePvS_S_Pc"]
+    #[link_name = "\u{1}_Z20calculate_const_treePvS_S_"]
     pub fn calculate_const_tree(
         pStarkInfo: *mut ::std::os::raw::c_void,
         pConstPolsAddress: *mut ::std::os::raw::c_void,
         pConstTree: *mut ::std::os::raw::c_void,
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z16write_const_treePvS_Pc"]
+    pub fn write_const_tree(
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pConstTreeAddress: *mut ::std::os::raw::c_void,
         treeFilename: *mut ::std::os::raw::c_char,
     );
 }

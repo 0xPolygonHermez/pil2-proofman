@@ -1,11 +1,13 @@
 use std::os::raw::c_void;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::RwLock;
 
 use proofman_starks_lib_c::{
     get_const_tree_size_c, get_const_size_c, prover_helpers_new_c, expressions_bin_new_c, stark_info_new_c,
     load_const_tree_c, load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c,
-    prover_helpers_free_c, get_map_totaln_c,
+    prover_helpers_free_c, get_map_totaln_c, write_const_tree_c,
 };
 use proofman_util::create_buffer_fast_u8;
 
@@ -52,6 +54,10 @@ pub struct Setup {
     pub const_pols: Pols,
     pub const_tree: Pols,
     pub prover_buffer_size: u64,
+    pub write_const_tree: AtomicBool,
+    pub setup_path: PathBuf,
+    pub setup_type: ProofType,
+    pub air_name: String,
 }
 
 impl Setup {
@@ -93,6 +99,10 @@ impl Setup {
             const_pols: Pols::default(),
             const_tree: Pols::default(),
             prover_buffer_size,
+            write_const_tree: AtomicBool::new(false),
+            setup_path: setup_path.clone(),
+            setup_type: setup_type.clone(),
+            air_name: global_info.airs[airgroup_id][air_id].name.clone(),
         }
     }
 
@@ -102,17 +112,15 @@ impl Setup {
         prover_helpers_free_c(self.p_setup.p_prover_helpers);
     }
 
-    pub fn load_const_pols(&self, global_info: &GlobalInfo, setup_type: &ProofType) {
-        let setup_path = match setup_type {
-            ProofType::VadcopFinal => global_info.get_setup_path("vadcop_final"),
-            ProofType::RecursiveF => global_info.get_setup_path("recursivef"),
-            _ => global_info.get_air_setup_path(self.airgroup_id, self.air_id, setup_type),
-        };
+    pub fn load_const_pols(&self) {
+        log::debug!(
+            "{}   : ··· Loading const pols for AIR {} of type {:?}",
+            Self::MY_NAME,
+            self.air_name,
+            self.setup_type
+        );
 
-        let air_name = &global_info.airs[self.airgroup_id][self.air_id].name;
-        log::debug!("{}   : ··· Loading const pols for AIR {} of type {:?}", Self::MY_NAME, air_name, setup_type);
-
-        let const_pols_path = setup_path.display().to_string() + ".const";
+        let const_pols_path = self.setup_path.display().to_string() + ".const";
 
         let p_stark_info = self.p_setup.p_stark_info;
 
@@ -123,19 +131,17 @@ impl Setup {
         *self.const_pols.values.write().unwrap() = const_pols;
     }
 
-    pub fn load_const_pols_tree(&self, global_info: &GlobalInfo, setup_type: &ProofType, save_file: bool) {
-        let setup_path = match setup_type {
-            ProofType::VadcopFinal => global_info.get_setup_path("vadcop_final"),
-            ProofType::RecursiveF => global_info.get_setup_path("recursivef"),
-            _ => global_info.get_air_setup_path(self.airgroup_id, self.air_id, setup_type),
-        };
+    pub fn load_const_pols_tree(&self) {
+        log::debug!(
+            "{}   : ··· Loading const tree for AIR {} of type {:?}",
+            Self::MY_NAME,
+            self.air_name,
+            self.setup_type
+        );
 
-        let air_name = &global_info.airs[self.airgroup_id][self.air_id].name;
-        log::debug!("{}   : ··· Loading const tree for AIR {} of type {:?}", Self::MY_NAME, air_name, setup_type);
+        let const_pols_tree_path = self.setup_path.display().to_string() + ".consttree";
 
-        let const_pols_tree_path = setup_path.display().to_string() + ".consttree";
-
-        let verkey_path = setup_path.display().to_string() + ".verkey.json";
+        let verkey_path = self.setup_path.display().to_string() + ".verkey.json";
 
         let p_stark_info = self.p_setup.p_stark_info;
 
@@ -157,15 +163,27 @@ impl Setup {
 
         if !valid_root {
             let const_pols = self.const_pols.values.read().unwrap();
-            let tree_filename = if save_file { const_pols_tree_path.as_str() } else { "" };
-            calculate_const_tree_c(
-                p_stark_info,
-                (*const_pols).as_ptr() as *mut u8,
-                const_tree.as_ptr() as *mut u8,
-                tree_filename,
-            );
+            calculate_const_tree_c(p_stark_info, (*const_pols).as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8);
+            self.write_const_tree.store(true, Ordering::SeqCst)
         };
         *self.const_tree.values.write().unwrap() = const_tree;
+    }
+
+    pub fn to_write_tree(&self) -> bool {
+        self.write_const_tree.load(Ordering::SeqCst)
+    }
+
+    pub fn set_write_const_tree(&self, write: bool) {
+        self.write_const_tree.store(write, Ordering::SeqCst)
+    }
+
+    pub fn write_const_tree(&self) {
+        let const_pols_tree_path = self.setup_path.display().to_string() + ".consttree";
+
+        let p_stark_info = self.p_setup.p_stark_info;
+
+        let const_pols_tree = self.const_tree.values.read().unwrap();
+        write_const_tree_c(p_stark_info, (*const_pols_tree).as_ptr() as *mut u8, const_pols_tree_path.as_str());
     }
 
     pub fn get_const_ptr(&self) -> *mut u8 {

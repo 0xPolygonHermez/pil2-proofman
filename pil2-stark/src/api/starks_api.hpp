@@ -43,7 +43,8 @@
     void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize);
     uint64_t get_const_tree_size(void *pStarkInfo);
     uint64_t get_const_size(void *pStarkInfo);
-    void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree, char *treeFilename);
+    void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree);
+    void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename);
 
     // Expressions Bin
     // ========================================================================================

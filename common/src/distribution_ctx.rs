@@ -157,6 +157,22 @@ impl DistributionCtx {
     }
 
     #[inline]
+    pub fn is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
+        let mut min_owner = self.n_processes + 1;
+        for (idx, instance) in self.instances.iter().enumerate() {
+            if instance == &(airgroup_id, air_id) && self.instances_owner[idx].0 < min_owner {
+                min_owner = self.instances_owner[idx].0;
+            }
+        }
+
+        if min_owner == self.n_processes + 1 {
+            panic!("No instance found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
+        }
+
+        min_owner == self.rank
+    }
+
+    #[inline]
     pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> (bool, usize) {
         let mut is_mine = false;
         let owner = (self.n_instances % self.n_processes as usize) as i32;

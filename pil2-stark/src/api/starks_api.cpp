@@ -312,13 +312,23 @@ uint64_t get_const_size(void *pStarkInfo) {
 }
 
 
-void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress, char *treeFilename) {
+void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
     ConstTree constTree;
     auto starkInfo = *(StarkInfo *)pStarkInfo;
     if(starkInfo.starkStruct.verificationHashType == "GL") {
-        constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress, treeFilename);
+        constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
     } else {
-        constTree.calculateConstTreeBN128(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress, treeFilename);
+        constTree.calculateConstTreeBN128(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
+    }
+};
+
+void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename) {
+    ConstTree constTree;
+    auto starkInfo = *(StarkInfo *)pStarkInfo;
+    if(starkInfo.starkStruct.verificationHashType == "GL") {
+        constTree.writeConstTreeFileGL(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
+    } else {
+        constTree.writeConstTreeFileBN128(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
     }
 };
 
