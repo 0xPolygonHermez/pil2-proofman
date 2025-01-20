@@ -1953,6 +1953,6 @@ pub fn get_omp_max_threads() -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn set_omp_num_threads(num_threads: u64) {
+pub fn set_omp_num_threads(_num_threads: u64) {
     trace!("{}: ··· {}", "ffi     ", "set_omp_num_threads: This is a mock call because there is no linked library");
 }

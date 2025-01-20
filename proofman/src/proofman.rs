@@ -173,6 +173,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         std::thread::spawn(move || {
             pctx_.free_traces();
         });
+        std::thread::spawn(move || {
+            drop(wcm);
+        });
 
         // Compute Quotient polynomial
         Self::get_challenges(num_commit_stages + 1, &mut provers, pctx.clone(), &transcript);
@@ -204,10 +207,22 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
         }
 
+        // let pctx_aggregation: Arc<ProofCtx<F>> = Arc::new(ProofCtx::create_ctx_agg(
+        //     &pctx.global_info,
+        //     pctx.options.clone(),
+        //     pctx.get_publics().clone(),
+        //     pctx.get_challenges().clone(),
+        //     pctx.get_proof_values().clone(),
+        //     pctx.dctx.read().unwrap().clone(),
+        //     pctx.weights.clone(),
+        // ));
+
+        let pctx_aggregation = pctx.clone();
+
         info!("{}: ··· Generating aggregated proofs", Self::MY_NAME);
 
         let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
-            get_buff_sizes(pctx.clone(), setups.clone())?;
+            get_buff_sizes(pctx_aggregation.clone(), setups.clone())?;
         let mut circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
         let publics: Vec<F> = create_buffer_fast(publics_size);
         let trace: Vec<F> = create_buffer_fast(trace_size);
@@ -216,7 +231,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         let recursive1_proofs = generate_vadcop_recursive1_proof(
-            &pctx,
+            &pctx_aggregation,
             setups.clone(),
             &proves_out,
             &mut circom_witness,
@@ -228,11 +243,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         info!("{}: Compressor and recursive1 proofs generated successfully", Self::MY_NAME);
 
-        pctx.dctx.read().unwrap().barrier();
+        pctx_aggregation.dctx.read().unwrap().barrier();
         timer_start_info!(GENERATING_RECURSIVE2_PROOFS);
         let sctx_recursive2 = setups.sctx_recursive2.clone();
         let recursive2_proof = generate_vadcop_recursive2_proof(
-            &pctx,
+            &pctx_aggregation,
             sctx_recursive2.as_ref().unwrap().clone(),
             &recursive1_proofs,
             &mut circom_witness,
@@ -244,12 +259,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
         info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
 
-        pctx.dctx.read().unwrap().barrier();
+        pctx_aggregation.dctx.read().unwrap().barrier();
         if mpi_rank == 0 {
             let setup_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
             timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
             let final_proof = generate_vadcop_final_proof(
-                &pctx,
+                &pctx_aggregation,
                 setup_final.clone(),
                 recursive2_proof,
                 &mut circom_witness,
@@ -263,10 +278,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             timer_stop_and_log_info!(GENERATING_AGGREGATION_PROOFS);
 
-            if pctx.options.final_snark {
+            if pctx_aggregation.options.final_snark {
                 timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
                 let recursivef_proof = generate_recursivef_proof(
-                    &pctx,
+                    &pctx_aggregation,
                     setups.setup_recursivef.as_ref().unwrap().clone(),
                     final_proof,
                     &mut circom_witness,
@@ -278,10 +293,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
                 timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-                let _ = generate_fflonk_snark_proof(&pctx, recursivef_proof, output_dir_path.clone());
+                let _ = generate_fflonk_snark_proof(&pctx_aggregation, recursivef_proof, output_dir_path.clone());
                 timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
             } else {
-                let setup_path = pctx.global_info.get_setup_path("vadcop_final");
+                let setup_path = pctx_aggregation.global_info.get_setup_path("vadcop_final");
                 let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
                 let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
                 let verkey_path = setup_path.display().to_string() + ".verkey.json";
@@ -292,7 +307,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     stark_info_path,
                     expressions_bin_path,
                     verkey_path,
-                    Some(pctx.get_publics().clone()),
+                    Some(pctx_aggregation.get_publics().clone()),
                     None,
                     None,
                 );
@@ -313,10 +328,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 }
             }
         }
-        pctx.dctx_barrier();
+        pctx_aggregation.dctx_barrier();
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
         info!("{}: Proofs generated successfully", Self::MY_NAME);
-        pctx.dctx.read().unwrap().barrier();
+        pctx_aggregation.dctx.read().unwrap().barrier();
         Ok(())
     }
 
@@ -821,13 +836,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             pctx.options.aggregation,
         );
 
-        if pctx.options.aggregation {
-            std::thread::spawn(move || {
-                pctx.free_instances();
-            });
-        } else {
-            pctx.free_instances();
-        }
+        // if pctx.options.aggregation {
+        //     std::thread::spawn(move || {
+        //         pctx.free_instances();
+        //     });
+        // } else {
+        //     pctx.free_instances();
+        // }
 
         timer_stop_and_log_info!(FREE_PROVERS);
     }
@@ -847,8 +862,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let setup = sctx.get_setup(*airgroup_id, *air_id);
                 let n_bits = setup.stark_info.stark_struct.n_bits;
                 let memory_instance = setup.prover_buffer_size as f64 * 8.0;
-                let memory_fixed = (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
-                    + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext)))
+                let memory_fixed = (
+                    setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
+                    + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext))
+                    + (1 << (setup.stark_info.stark_struct.n_bits_ext))
+                    + ((2 * (1 << (setup.stark_info.stark_struct.n_bits_ext)) - 1) * 4)
+                    )
                     as f64
                     * 8.0;
                 let memory_helpers = setup.stark_info.get_buff_helper_size() as f64 * 8.0;
@@ -879,8 +898,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 .bold()
         );
         info!("{}:     ► {} Air instances found:", Self::MY_NAME, instances.len());
-        let mut total_cells = 0f64;
-        let mut total_cells_witness = 0f64;
+        let mut _total_cells = 0f64;
+        let mut _total_cells_witness = 0f64;
         for air_group in air_groups.clone() {
             let air_group_instances = air_instances.get(air_group).unwrap();
             let mut air_names: Vec<_> = air_group_instances.keys().collect();
@@ -890,8 +909,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             for air_name in air_names {
                 let count = air_group_instances.get(air_name).unwrap();
                 let (n_bits, total_cols, cols_witness, _, _, _) = air_info.get(air_name).unwrap();
-                total_cells += *total_cols as f64 * *count as f64 * (1 << *n_bits) as f64;
-                total_cells_witness += *cols_witness as f64 * *count as f64 * (1 << *n_bits) as f64;
+                _total_cells += *total_cols as f64 * *count as f64 * (1 << *n_bits) as f64;
+                _total_cells_witness += *cols_witness as f64 * *count as f64 * (1 << *n_bits) as f64;
                 info!(
                     "{}:       {}",
                     Self::MY_NAME,
@@ -899,7 +918,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 );
             }
         }
-        info!("{} TOTAL CELLS WITNESS: {} and TOTAL CELLS {}", Self::MY_NAME, total_cells_witness, total_cells);
         info!("{}: ----------------------------------------------------------", Self::MY_NAME);
         info!(
             "{}",
