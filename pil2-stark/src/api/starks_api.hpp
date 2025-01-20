@@ -160,5 +160,10 @@
 
     void *create_buffer(uint64_t size);
     void free_buffer(void *buffer);
+
+    // OMP
+    // =================================================================================
+    uint64_t get_omp_max_threads();
+    void set_omp_num_threads(uint64_t num_threads);
     
 #endif

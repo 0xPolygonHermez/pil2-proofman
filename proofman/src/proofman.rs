@@ -52,7 +52,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         output_dir_path: PathBuf,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        timer_start_info!(INITIALIZING_PROOFMAN);
+        timer_start_info!(INITIALIZING_PROOFMAN_1);
         Self::check_paths(
             &witness_lib_path,
             &rom_path,
@@ -71,13 +71,18 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let pctx = Arc::new(pctx);
 
-        timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
+        timer_stop_and_log_info!(INITIALIZING_PROOFMAN_1);
 
+        pctx.dctx_barrier();
         timer_start_info!(GENERATING_WITNESS);
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path));
 
         Self::initialize_witness(witness_lib_path, wcm.clone())?;
         wcm.calculate_witness(1);
+        
+        pctx.dctx_barrier();
+        timer_stop_and_log_info!(GENERATING_WITNESS);
+        timer_start_info!(INITIALIZING_PROOFMAN_2);
 
         Self::initialize_fixed_pols(setups.clone(), pctx.clone(), true);
 
@@ -105,9 +110,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         if n_processes > 1 {
             Self::print_summary(pctx.clone(), setups.sctx.clone());
         }
-
-        timer_stop_and_log_info!(GENERATING_WITNESS);
-
+        
+        pctx.dctx_barrier();
+        timer_stop_and_log_info!(INITIALIZING_PROOFMAN_2);
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOF);
@@ -176,7 +181,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         // Compute openings
         Self::opening_stages(&mut provers, pctx.clone(), sctx.clone(), &mut transcript);
-
+        
+        //pctx.dctx_barrier();
         timer_stop_and_log_info!(GENERATING_PROOF);
 
         //Generate proves_out
@@ -306,6 +312,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 }
             }
         }
+        pctx.dctx_barrier();
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
         info!("{}: Proofs generated successfully", Self::MY_NAME);
         pctx.dctx.read().unwrap().barrier();
