@@ -21,8 +21,8 @@ private:
 public:
     MerkleTreeBN128(){};
     MerkleTreeBN128(uint64_t arity, bool custom, Goldilocks::Element *tree);
-    MerkleTreeBN128(uint64_t arity, bool custom, uint64_t _height, uint64_t _width);
-    ~MerkleTreeBN128(){};
+    MerkleTreeBN128(uint64_t arity, bool custom, uint64_t _height, uint64_t _width, bool allocateSource = false, bool allocateNodes = false);
+    ~MerkleTreeBN128();
 
     uint64_t numNodes;
     uint64_t height;

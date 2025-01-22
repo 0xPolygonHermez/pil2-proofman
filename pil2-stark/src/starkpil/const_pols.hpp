@@ -16,42 +16,18 @@ class ConstTree {
 public:
     ConstTree () {};
 
-    uint64_t getNumNodes(StarkInfo& starkInfo) {
-        uint64_t merkleTreeArity = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : 2;
-        uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
-        uint n_tmp = NExtended;
-        uint64_t nextN = floor(((double)(n_tmp - 1) / merkleTreeArity) + 1);
-        uint64_t acc = nextN * merkleTreeArity;
-        while (n_tmp > 1)
-        {
-            // FIll with zeros if n nodes in the leve is not even
-            n_tmp = nextN;
-            nextN = floor((n_tmp - 1) / merkleTreeArity) + 1;
-            if (n_tmp > 1)
-            {
-                acc += nextN * merkleTreeArity;
-            }
-            else
-            {
-                acc += 1;
-            }
-        }
-
-        return acc;
-    }
-
     uint64_t getConstTreeSizeBytesBN128(StarkInfo& starkInfo)
     {   
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
-        uint64_t acc = getNumNodes(starkInfo);
-        return 16 + (NExtended * starkInfo.nConstants) * sizeof(Goldilocks::Element) + acc * sizeof(RawFr::Element);
+        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
+        return 16 + (NExtended * starkInfo.nConstants) * sizeof(Goldilocks::Element) + mt.numNodes * sizeof(RawFr::Element);
     }
 
     uint64_t getConstTreeSizeBytesGL(StarkInfo& starkInfo)
     {   
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
-        uint64_t acc = getNumNodes(starkInfo);
-        return (2 + (NExtended * starkInfo.nConstants) + acc * HASH_SIZE) * sizeof(Goldilocks::Element);
+        MerkleTreeGL mt(2, true, NExtended, starkInfo.nConstants);
+        return (2 + (NExtended * starkInfo.nConstants) + mt.numNodes) * sizeof(Goldilocks::Element);
     }
 
     void calculateConstTreeGL(StarkInfo& starkInfo, Goldilocks::Element *pConstPolsAddress, void *treeAddress) {
@@ -94,7 +70,7 @@ public:
 
     void writeConstTreeFileBN128(StarkInfo& starkInfo, void *treeAddress, std::string constTreeFile) {
         TimerStart(WRITING_TREE_FILE);
-        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)treeAddress);
+        MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)treeAddress);
         mt.writeFile(constTreeFile);
         TimerStopAndLog(WRITING_TREE_FILE);
     }
@@ -112,7 +88,7 @@ public:
             MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, (Goldilocks::Element *)constTreePols);
             RawFr::Element root[1];
             mt.getRoot(root);
-            if(RawFr::field.toString(root[0], 10) != verkeyJson[0]) {
+            if(RawFr::field.toString(root[0], 10) != verkeyJson) {
                 return false;
             }
         } else {

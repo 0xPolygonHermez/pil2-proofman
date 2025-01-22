@@ -219,8 +219,10 @@ bool loadFileParallel(void* buffer, const string &fileName, uint64_t size, bool 
         return false;
     }
     if ((uint64_t)sb.st_size != size) {
-        zklog.error("loadFileParallel() found size of file " + fileName + " to be " + to_string(sb.st_size) + " B instead of " + to_string(size) + " B");
-        if(exit) exitProcess();
+        if(exit) {
+            zklog.error("loadFileParallel() found size of file " + fileName + " to be " + to_string(sb.st_size) + " B instead of " + to_string(size) + " B");
+            exitProcess();
+        }
         return false;
     }
 
