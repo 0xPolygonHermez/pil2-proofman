@@ -282,12 +282,16 @@ public:
         }
 
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
-            j["s" + std::to_string(step) + "_root"] = json::array();
-            for(uint64_t i = 0; i < nFieldElements; i++) {
-                j["s" + std::to_string(step) + "_root"][i] = toString(fri.treesFRI[step - 1].root[i]);
+            if(nFieldElements == 1) {
+                j["s" + std::to_string(step) + "_root"] = toString(fri.treesFRI[step - 1].root[0]);
+            } else {
+                j["s" + std::to_string(step) + "_root"] = json::array();
+                for(uint64_t i = 0; i < nFieldElements; i++) {
+                    j["s" + std::to_string(step) + "_root"][i] = toString(fri.treesFRI[step - 1].root[i]);
+                }
+                j["s" + std::to_string(step) + "_vals"] = json::array();
+                j["s" + std::to_string(step) + "_siblings"] = json::array();
             }
-            j["s" + std::to_string(step) + "_vals"] = json::array();
-            j["s" + std::to_string(step) + "_siblings"] = json::array();
         }
 
         for(uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {

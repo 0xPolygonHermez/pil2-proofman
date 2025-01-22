@@ -3,11 +3,21 @@
 #include <algorithm> // std::max
 
 
-MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width) : height(_height), width(_width)
+MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, uint64_t _height, uint64_t _width, bool allocateSource, bool allocateNodes) : height(_height), width(_width)
 {
     numNodes = getNumNodes(height);
     arity = _arity;
     custom = _custom;
+
+    if(allocateSource) {
+        source = (Goldilocks::Element *)calloc(height * width, sizeof(Goldilocks::Element));
+        isSourceAllocated = true;
+    }
+
+    if(allocateNodes) {
+        nodes = (Goldilocks::Element *)calloc(numNodes, sizeof(Goldilocks::Element));
+        isNodesAllocated = true;
+    }
 };
 
 MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, Goldilocks::Element *tree)
@@ -20,6 +30,17 @@ MerkleTreeGL::MerkleTreeGL(uint64_t _arity, bool _custom, Goldilocks::Element *t
     numNodes = getNumNodes(height);
     nodes = &tree[2 + height * width];
 };
+
+MerkleTreeGL::~MerkleTreeGL()
+{
+    if(isSourceAllocated) {
+        free(source);
+    }
+    
+    if(isNodesAllocated) {
+        free(nodes);
+    }
+}
 
 uint64_t MerkleTreeGL::getNumSiblings() 
 {
@@ -55,11 +76,23 @@ void MerkleTreeGL::getRoot(Goldilocks::Element *root)
 
 void MerkleTreeGL::setSource(Goldilocks::Element *_source)
 {
+    if(isSourceAllocated) {
+        zklog.error("MerkleTreeGL: Source was allocated when initializing");
+        exitProcess();
+        exit(-1);
+    }
     source = _source;
 }
 
 void MerkleTreeGL::setNodes(Goldilocks::Element *_nodes)
 {
+    if(isNodesAllocated) {
+        if(isNodesAllocated) {
+        zklog.error("MerkleTreeGL: Nodes were allocated when initializing");
+        exitProcess();
+        exit(-1);
+    }
+    }
     nodes = _nodes;
 }
 

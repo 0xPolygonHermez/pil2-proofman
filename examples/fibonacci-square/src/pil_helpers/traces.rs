@@ -56,7 +56,7 @@ trace!(FibonacciSquareTrace<F> {
 
 trace!(ModuleTrace<F> {
  x: F, q: F, x_mod: F,
-},  0, 1, 16384 );
+},  0, 1, 65536 );
 
 trace!(U8AirTrace<F> {
  mul: F,
