@@ -36,8 +36,8 @@ pub struct FixedColsInfo<F: Field> {
 }
 
 impl<F: Field> FixedColsInfo<F> {
-    pub fn new(name: String, lengths: Option<Vec<u64>>, values: Vec<F>) -> Self {
-        FixedColsInfo { name, lengths: lengths.unwrap_or_default(), values }
+    pub fn new(name_: &str, lengths: Option<Vec<u64>>, values: Vec<F>) -> Self {
+        FixedColsInfo { name: name_.to_string(), lengths: lengths.unwrap_or_default(), values }
     }
 }
 
