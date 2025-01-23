@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 
-use proofman_common::{ProofCtx, SetupCtx};
+use proofman_common::{ModeName, ProofCtx, SetupCtx};
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use crate::WitnessComponent;
 
@@ -46,14 +46,10 @@ impl<F> WitnessManager<F> {
     }
 
     pub fn debug(&self) {
-        for component in self.components.read().unwrap().iter() {
-            component.debug(self.pctx.clone());
-        }
-    }
-
-    pub fn end_proof(&self) {
-        for component in self.components.read().unwrap().iter() {
-            component.end_proof();
+        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug {
+            for component in self.components.read().unwrap().iter() {
+                component.debug(self.pctx.clone(), self.sctx.clone());
+            }
         }
     }
 

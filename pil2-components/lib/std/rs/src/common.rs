@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use p3_field::PrimeField;
 use num_traits::ToPrimitive;
-use proofman_common::{AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{ProofCtx, SetupCtx};
 use proofman_hints::{
     get_hint_field_constant_gc, get_hint_field_constant, get_hint_field_constant_a, HintFieldOptions, HintFieldOutput,
     HintFieldValue,
@@ -13,17 +13,6 @@ pub trait AirComponent<F> {
 
     fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>, airgroup_id: Option<usize>, air_id: Option<usize>)
         -> Arc<Self>;
-
-    fn debug_mode(
-        &self,
-        _pctx: &ProofCtx<F>,
-        _sctx: &SetupCtx,
-        _air_instance: &mut AirInstance<F>,
-        _air_instance_id: usize,
-        _num_rows: usize,
-        _debug_data_hints: Vec<u64>,
-    ) {
-    }
 }
 
 // Helper to extract hint fields

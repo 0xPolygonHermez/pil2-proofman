@@ -936,7 +936,7 @@ fn get_hint_f<F: Field>(
     pctx: Option<&ProofCtx<F>>,
     airgroup_id: usize,
     air_id: usize,
-    air_instance: Option<&mut AirInstance<F>>,
+    air_instance: Option<&AirInstance<F>>,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
@@ -1001,7 +1001,7 @@ fn get_hint_f<F: Field>(
 pub fn get_hint_field<F: Field>(
     sctx: &SetupCtx,
     pctx: &ProofCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    air_instance: &AirInstance<F>,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
@@ -1031,7 +1031,7 @@ pub fn get_hint_field<F: Field>(
 pub fn get_hint_field_a<F: Field>(
     sctx: &SetupCtx,
     pctx: &ProofCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    air_instance: &AirInstance<F>,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
@@ -1065,7 +1065,7 @@ pub fn get_hint_field_a<F: Field>(
 pub fn get_hint_field_m<F: Field>(
     sctx: &SetupCtx,
     pctx: &ProofCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    air_instance: &AirInstance<F>,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,

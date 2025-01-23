@@ -7,9 +7,7 @@ pub trait WitnessComponent<F>: Send + Sync {
 
     fn execute(&self, _pctx: Arc<ProofCtx<F>>) {}
 
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>) {}
+    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx>) {}
 
     fn calculate_witness(&self, _stage: u32, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx>) {}
-
-    fn end_proof(&self) {}
 }

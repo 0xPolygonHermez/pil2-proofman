@@ -14,3 +14,4 @@ p3-goldilocks.workspace = true
 p3-field.workspace = true
 rayon.workspace = true
 witness.workspace = true
+colored.workspace = true

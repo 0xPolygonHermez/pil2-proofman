@@ -162,10 +162,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
         }
 
-        wcm.end_proof();
+        wcm.debug();
 
         if pctx.options.verify_constraints {
-            wcm.debug();
             return verify_constraints_proof(pctx.clone(), sctx.clone(), &mut provers);
         }
 

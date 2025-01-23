@@ -1,16 +1,23 @@
 use std::{
     collections::HashMap,
     fs::{self, File},
+    hash::{DefaultHasher, Hasher, Hash},
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
 };
 
 use p3_field::PrimeField;
 use proofman_common::ProofCtx;
 use proofman_hints::{format_vec, HintFieldOutput};
 
-pub type DebugData<F> = Mutex<HashMap<F, HashMap<Vec<HintFieldOutput<F>>, BusValue<F>>>>; // opid -> val -> BusValue
+use num_bigint::BigUint;
+use num_traits::Zero;
+
+use colored::*;
+
+pub type DebugData<F> = HashMap<F, HashMap<Vec<HintFieldOutput<F>>, BusValue<F>>>; // opid -> val -> BusValue
+
+pub type DebugDataFast<F> = HashMap<F, SharedDataFast>; // opid -> sharedDataFast
 
 #[derive(Debug)]
 pub struct BusValue<F> {
@@ -23,6 +30,14 @@ struct SharedData<F> {
     direct_was_called: bool,
     num_proves: F,
     num_assumes: F,
+}
+
+#[derive(Clone, Debug)]
+pub struct SharedDataFast {
+    pub num_proves: BigUint,
+    pub num_assumes: BigUint,
+    pub num_proves_global: Vec<BigUint>,
+    pub num_assumes_global: Vec<BigUint>,
 }
 
 type AirGroupMap = HashMap<usize, AirMap>;
@@ -44,8 +59,62 @@ struct InstanceData {
 }
 
 #[allow(clippy::too_many_arguments)]
+pub fn update_debug_data_fast<F: PrimeField>(
+    debug_data_fast: &mut DebugDataFast<F>,
+    opid: F,
+    val: Vec<HintFieldOutput<F>>,
+    proves: bool,
+    times: F,
+    is_global: bool,
+) {
+    let bus_opid_times = debug_data_fast.entry(opid).or_insert_with(|| SharedDataFast {
+        num_assumes_global: Vec::new(),
+        num_proves_global: Vec::new(),
+        num_proves: BigUint::zero(),
+        num_assumes: BigUint::zero(),
+    });
+
+    let mut values = Vec::new();
+    for value in val.iter() {
+        match value {
+            HintFieldOutput::Field(f) => values.push(*f),
+            HintFieldOutput::FieldExtended(ef) => {
+                values.push(ef.value[0]);
+                values.push(ef.value[1]);
+                values.push(ef.value[2]);
+            }
+        }
+    }
+
+    let mut hasher = DefaultHasher::new();
+    values.hash(&mut hasher);
+
+    let hash_value = BigUint::from(hasher.finish());
+
+    if is_global {
+        if proves {
+            // Check if bus op id times num proves global contains value
+            if bus_opid_times.num_proves_global.contains(&hash_value) {
+                return;
+            }
+            bus_opid_times.num_proves_global.push(hash_value * times.as_canonical_biguint());
+        } else {
+            if bus_opid_times.num_assumes_global.contains(&hash_value) {
+                return;
+            }
+            bus_opid_times.num_assumes_global.push(hash_value);
+        }
+    } else if proves {
+        bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
+    } else {
+        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {:?}.", times);
+        bus_opid_times.num_assumes += hash_value;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn update_debug_data<F: PrimeField>(
-    debug_data: &DebugData<F>,
+    debug_data: &mut DebugData<F>,
     name_piop: &str,
     name_expr: &[String],
     opid: F,
@@ -58,9 +127,7 @@ pub fn update_debug_data<F: PrimeField>(
     times: F,
     is_global: bool,
 ) {
-    let mut bus = debug_data.lock().expect("Bus values missing");
-
-    let bus_opid = bus.entry(opid).or_default();
+    let bus_opid = debug_data.entry(opid).or_default();
 
     let bus_val = bus_opid.entry(val).or_insert_with(|| BusValue {
         shared_data: SharedData { direct_was_called: false, num_proves: F::zero(), num_assumes: F::zero() },
@@ -99,18 +166,77 @@ pub fn update_debug_data<F: PrimeField>(
     }
 }
 
+pub fn check_invalid_opids<F: PrimeField>(
+    _pctx: &ProofCtx<F>,
+    name: &str,
+    debugs_data_fasts: &mut [DebugDataFast<F>],
+) -> Vec<F> {
+    let mut debug_data_fast = HashMap::new();
+
+    let mut global_assumes = Vec::new();
+    let mut global_proves = Vec::new();
+    for map in debugs_data_fasts {
+        for (opid, bus) in map.iter() {
+            if debug_data_fast.contains_key(opid) {
+                let bus_fast: &mut SharedDataFast = debug_data_fast.get_mut(opid).unwrap();
+                for assume_global in bus.num_assumes_global.iter() {
+                    if global_assumes.contains(assume_global) {
+                        continue;
+                    }
+                    global_assumes.push(assume_global.clone());
+                    bus_fast.num_assumes += assume_global;
+                }
+                for prove_global in bus.num_proves_global.iter() {
+                    if global_proves.contains(prove_global) {
+                        continue;
+                    }
+                    global_proves.push(prove_global.clone());
+                    bus_fast.num_proves += prove_global;
+                }
+
+                bus_fast.num_proves += bus.num_proves.clone();
+                bus_fast.num_assumes += bus.num_assumes.clone();
+            } else {
+                debug_data_fast.insert(*opid, bus.clone());
+            }
+        }
+    }
+
+    // TODO: SINCRONIZATION IN DISTRIBUTED MODE
+
+    let mut invalid_opids = Vec::new();
+
+    // Check if there are any invalid opids
+
+    for (opid, bus) in debug_data_fast.iter_mut() {
+        if bus.num_proves != bus.num_assumes {
+            invalid_opids.push(*opid);
+        }
+    }
+
+    if !invalid_opids.is_empty() {
+        log::error!(
+            "{}: ··· {}",
+            name,
+            format!("\u{2717} The following opids does not match {:?}", invalid_opids).bright_red().bold()
+        );
+    } else {
+        log::info!("{}: ··· {}", name, "\u{2713} All bus values match.".bright_green().bold());
+    }
+
+    invalid_opids
+}
 pub fn print_debug_info<F: PrimeField>(
     pctx: &ProofCtx<F>,
     name: &str,
     max_values_to_print: usize,
     print_to_file: bool,
-    debug_data: &DebugData<F>,
+    debug_data: &mut DebugData<F>,
 ) {
     let mut file_path = PathBuf::new();
     let mut output: Box<dyn Write> = Box::new(io::stdout());
     let mut there_are_errors = false;
-    let mut bus_vals = debug_data.lock().expect("Bus values missing");
-    for (opid, bus) in bus_vals.iter_mut() {
+    for (opid, bus) in debug_data.iter_mut() {
         if bus.iter().any(|(_, v)| v.shared_data.num_proves != v.shared_data.num_assumes) {
             if !there_are_errors {
                 // Print to a file if requested
@@ -202,6 +328,10 @@ pub fn print_debug_info<F: PrimeField>(
         if len_overproven > 0 {
             writeln!(output).expect("Write error");
         }
+    }
+
+    if !there_are_errors {
+        log::info!("{}: ··· {}", name, "\u{2713} All bus values match.".bright_green().bold());
     }
 
     fn print_diffs<F: PrimeField>(
