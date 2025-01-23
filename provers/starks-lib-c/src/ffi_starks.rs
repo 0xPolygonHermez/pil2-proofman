@@ -1171,7 +1171,14 @@ pub fn free_buffer_c(buffer: *mut u8) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn write_fixed_cols_bin_c(binfile: &str, airgroup: &str, air: &str, n: u64, n_fixed_pols: u64, fixed_pols_info: *mut c_void) {
+pub fn write_fixed_cols_bin_c(
+    binfile: &str,
+    airgroup: &str,
+    air: &str,
+    n: u64,
+    n_fixed_pols: u64,
+    fixed_pols_info: *mut c_void,
+) {
     let binfile_name = CString::new(binfile).unwrap();
     let binfile_name_ptr = binfile_name.as_ptr() as *mut std::os::raw::c_char;
 
@@ -1181,7 +1188,7 @@ pub fn write_fixed_cols_bin_c(binfile: &str, airgroup: &str, air: &str, n: u64, 
     let air_name = CString::new(air).unwrap();
     let air_name_ptr = air_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
-        write_fixed_cols_bin(binfile_name_ptr,airgroup_name_ptr, air_name_ptr, n, n_fixed_pols, fixed_pols_info);
+        write_fixed_cols_bin(binfile_name_ptr, airgroup_name_ptr, air_name_ptr, n, n_fixed_pols, fixed_pols_info);
     }
 }
 
@@ -1962,7 +1969,14 @@ pub fn stark_verify_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn write_fixed_cols_bin_c(_binfile: &str, _airgroup: &str, _air: &str, _n: u64, _n_fixed_pols: u64, _fixed_pols_info: *mut c_void) {
+pub fn write_fixed_cols_bin_c(
+    _binfile: &str,
+    _airgroup: &str,
+    _air: &str,
+    _n: u64,
+    _n_fixed_pols: u64,
+    _fixed_pols_info: *mut c_void,
+) {
     trace!("{}: ··· {}", "ffi     ", "write_fixed_cols_bi: This is a mock call because there is no linked library");
 }
 

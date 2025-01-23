@@ -37,11 +37,17 @@ pub struct FixedColsInfo<F: Field> {
 
 impl<F: Field> FixedColsInfo<F> {
     pub fn new(name: String, lengths: Option<Vec<u64>>, values: Vec<F>) -> Self {
-        FixedColsInfo { name, lengths: lengths.unwrap_or_else(Vec::new), values }
+        FixedColsInfo { name, lengths: lengths.unwrap_or_default(), values }
     }
 }
 
-pub fn write_fixed_cols_bin<F: Field>(bin_file: &str, airgroup_name: &str, air_name: &str, n: u64, fixed_cols: &mut Vec<FixedColsInfo<F>>) {
+pub fn write_fixed_cols_bin<F: Field>(
+    bin_file: &str,
+    airgroup_name: &str,
+    air_name: &str,
+    n: u64,
+    fixed_cols: &mut [FixedColsInfo<F>],
+) {
     let mut fixed_cols_info_c = FixedColsInfoC::<F>::from_fixed_cols_info_vec(fixed_cols);
     let fixed_cols_info_c_ptr = fixed_cols_info_c.as_mut_ptr() as *mut c_void;
     write_fixed_cols_bin_c(bin_file, airgroup_name, air_name, n, fixed_cols.len() as u64, fixed_cols_info_c_ptr);
