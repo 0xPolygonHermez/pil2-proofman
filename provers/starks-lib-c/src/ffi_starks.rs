@@ -1171,12 +1171,7 @@ pub fn free_buffer_c(buffer: *mut u8) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn write_fixed_cols_bin_c(
-    binfile: &str,
-    n: u64,
-    n_fixed_pols: u64,
-    fixed_pols_info: *mut c_void
-) { 
+pub fn write_fixed_cols_bin_c(binfile: &str, n: u64, n_fixed_pols: u64, fixed_pols_info: *mut c_void) {
     let binfile_name = CString::new(binfile).unwrap();
     let binfile_name_ptr = binfile_name.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
@@ -1961,15 +1956,9 @@ pub fn stark_verify_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn write_fixed_cols_bin_c(
-    _binfile: &str,
-    _n: u64,
-    _n_fixed_pols: u64,
-    _fixed_pols_info: *mut c_void
-) {    
+pub fn write_fixed_cols_bin_c(_binfile: &str, _n: u64, _n_fixed_pols: u64, _fixed_pols_info: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "write_fixed_cols_bi: This is a mock call because there is no linked library");
 }
-
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_omp_max_threads() -> u64 {
