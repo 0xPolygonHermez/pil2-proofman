@@ -703,6 +703,16 @@ extern "C" {
 }
 
 extern "C" {
+    #[link_name = "\u{1}_Z20write_fixed_pols_binPcmmPv"]
+    pub fn write_fixed_pols_bin(
+        binFile: *mut ::std::os::raw::c_char,
+        N: u64,
+        nFixedPols: u64,
+        fixedPolsInfo: *mut ::std::os::raw::c_void,
+    );
+}
+
+extern "C" {
     #[link_name = "\u{1}_Z19get_omp_max_threadsv"]
     pub fn get_omp_max_threads() -> u64;
 }

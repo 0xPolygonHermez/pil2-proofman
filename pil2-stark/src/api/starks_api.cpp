@@ -10,6 +10,7 @@
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
 #include "exec_file.hpp"
+#include "fixed_pols.hpp"
 #include "final_snark_proof.hpp"
 
 #include <nlohmann/json.hpp>
@@ -848,6 +849,12 @@ void *create_buffer(uint64_t size) {
 void free_buffer(void *buffer) {
     cout <<  (Goldilocks::Element *)buffer << endl;
     delete[] (Goldilocks::Element *)buffer;
+}
+
+// Fixed cols
+// =================================================================================
+void write_fixed_pols_bin(char* binFile, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo) {
+    writeFixedPolsBin(string(binFile), N, nFixedPols, (FixedPolsInfo *)fixedPolsInfo);
 }
 
 uint64_t get_omp_max_threads(){

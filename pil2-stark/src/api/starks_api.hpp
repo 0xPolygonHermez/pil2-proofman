@@ -161,6 +161,10 @@
     void *create_buffer(uint64_t size);
     void free_buffer(void *buffer);
 
+    // Fixed cols
+    // =================================================================================
+    void write_fixed_pols_bin(char* binFile, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo);
+    
     // OMP
     // =================================================================================
     uint64_t get_omp_max_threads();
