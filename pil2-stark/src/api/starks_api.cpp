@@ -10,7 +10,7 @@
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
 #include "exec_file.hpp"
-#include "fixed_pols.hpp"
+#include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 
 #include <nlohmann/json.hpp>
@@ -853,8 +853,8 @@ void free_buffer(void *buffer) {
 
 // Fixed cols
 // =================================================================================
-void write_fixed_pols_bin(char* binFile, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo) {
-    writeFixedPolsBin(string(binFile), N, nFixedPols, (FixedPolsInfo *)fixedPolsInfo);
+void write_fixed_cols_bin(char* binFile, char* airgroupName, char* airName, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo) {
+    writeFixedColsBin(string(binFile), string(airgroupName), string(airName), N, nFixedPols, (FixedPolsInfo *)fixedPolsInfo);
 }
 
 uint64_t get_omp_max_threads(){

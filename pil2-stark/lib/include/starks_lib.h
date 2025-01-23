@@ -163,7 +163,7 @@
 
     // Fixed cols
     // =================================================================================
-    void write_fixed_pols_bin(char* binFile, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo);
+    void write_fixed_cols_bin(char* binFile, char* airgroupName, char* airName, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo);
     
     // OMP
     // =================================================================================
