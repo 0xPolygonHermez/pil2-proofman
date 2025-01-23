@@ -143,8 +143,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn verify_constraints(&self, sctx: Arc<SetupCtx>, pctx: Arc<ProofCtx<F>>) -> Vec<ConstraintInfo> {
-        let mut air_instances = pctx.air_instance_repo.air_instances.write().unwrap();
-        let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
+        let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
+        let air_instance = air_instances.get(&self.global_idx).unwrap();
 
         let setup = sctx.get_setup(self.airgroup_id, self.air_id);
 
@@ -379,38 +379,12 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         custom_publics
     }
 
-    fn calculate_xdivxsub(&mut self, pctx: Arc<ProofCtx<F>>) {
-        let challenges_guard = pctx.challenges.values.read().unwrap();
-
-        let challenges_map = self.stark_info.challenges_map.as_ref().unwrap();
-
-        let mut xi_challenge_index: usize = 0;
-        for (i, challenge) in challenges_map.iter().enumerate() {
-            if challenge.stage == (Self::num_stages(self) + 2) as u64 && challenge.stage_id == 0_u64 {
-                xi_challenge_index = i;
-                break;
-            }
-        }
-
-        let xi_challenge = &(*challenges_guard)[xi_challenge_index * Self::FIELD_EXTENSION] as *const F as *mut c_void;
-        calculate_xdivxsub_c(self.p_stark, xi_challenge, pctx.get_buff_helper_ptr());
+    fn calculate_xdivxsub(&mut self, pctx: Arc<ProofCtx<F>>, challenge: Vec<F>) {
+        calculate_xdivxsub_c(self.p_stark, challenge.as_ptr() as *mut c_void, pctx.get_buff_helper_ptr());
     }
 
-    fn calculate_lev(&mut self, pctx: Arc<ProofCtx<F>>) {
-        let challenges_guard = pctx.challenges.values.read().unwrap();
-
-        let challenges_map = self.stark_info.challenges_map.as_ref().unwrap();
-
-        let mut xi_challenge_index: usize = 0;
-        for (i, challenge) in challenges_map.iter().enumerate() {
-            if challenge.stage == (Self::num_stages(self) + 2) as u64 && challenge.stage_id == 0_u64 {
-                xi_challenge_index = i;
-                break;
-            }
-        }
-
-        let xi_challenge = &(*challenges_guard)[xi_challenge_index * Self::FIELD_EXTENSION] as *const F as *mut c_void;
-        compute_lev_c(self.p_stark, xi_challenge, pctx.get_buff_helper_ptr());
+    fn calculate_lev(&mut self, pctx: Arc<ProofCtx<F>>, challenge: Vec<F>) {
+        compute_lev_c(self.p_stark, challenge.as_ptr() as *mut c_void, pctx.get_buff_helper_ptr());
     }
 
     fn get_buff_helper_size(&self, _proof_ctx: Arc<ProofCtx<F>>) -> usize {
@@ -483,8 +457,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     let index = if stage == 1 { self.n_field_elements + j } else { j };
                     values_hash[index] = root_value;
                 }
-                let mut air_instances = pctx.air_instance_repo.air_instances.write().unwrap();
-                let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
+                let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
+                let air_instance = air_instances.get(&self.global_idx).unwrap();
                 let airvalues_map = self.stark_info.airvalues_map.as_ref().unwrap();
                 let mut p = 0;
                 let mut count = 0;
@@ -519,8 +493,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 treesGL_get_root_c(p_stark, stage - 1, value.as_mut_ptr() as *mut u8);
             }
         } else if stage == (Self::num_stages(self) + 2) as u64 {
-            let mut air_instances = pctx.air_instance_repo.air_instances.write().unwrap();
-            let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
+            let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
+            let air_instance = air_instances.get(&self.global_idx).unwrap();
             calculate_hash_c(
                 p_stark,
                 value.as_mut_ptr() as *mut u8,
@@ -542,8 +516,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     let p_proof = self.p_proof;
                     fri_proof_get_tree_root_c(p_proof, value.as_mut_ptr() as *mut u8, step_index as u64);
                 } else {
-                    let mut air_instances = pctx.air_instance_repo.air_instances.write().unwrap();
-                    let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
+                    let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
+                    let air_instance = air_instances.get(&self.global_idx).unwrap();
                     let n_hash = (1 << (steps[n_steps].n_bits)) * Self::FIELD_EXTENSION as u64;
                     let fri_pol = get_fri_pol_c(self.p_stark_info, air_instance.get_aux_trace_ptr());
                     calculate_hash_c(p_stark, value.as_mut_ptr() as *mut u8, fri_pol as *mut u8, n_hash);
@@ -557,10 +531,12 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         value64
     }
 
-    fn get_challenges(&self, stage_id: u32, pctx: Arc<ProofCtx<F>>, transcript: &FFITranscript) {
+    fn get_challenges(&self, stage_id: u32, pctx: Arc<ProofCtx<F>>, transcript: &FFITranscript) -> Vec<Vec<F>> {
         if stage_id == 1 {
-            return;
+            return Vec::new();
         }
+
+        let mut challenges_calculated = Vec::new();
 
         let mpi_rank = pctx.dctx_get_rank();
 
@@ -583,6 +559,11 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                             challenges[i * Self::FIELD_EXTENSION + 2],
                         );
                     }
+                    challenges_calculated.push(vec![
+                        challenges[i * Self::FIELD_EXTENSION],
+                        challenges[i * Self::FIELD_EXTENSION + 1],
+                        challenges[i * Self::FIELD_EXTENSION + 2],
+                    ]);
                 }
             }
         } else {
@@ -600,7 +581,13 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                     challenges_guard[challenges_guard.len() - 1],
                 );
             }
+            challenges_calculated.push(vec![
+                challenges_guard[challenges_guard.len() - 3],
+                challenges_guard[challenges_guard.len() - 2],
+                challenges_guard[challenges_guard.len() - 1],
+            ]);
         }
+        challenges_calculated
     }
 
     fn get_proof(&self) -> *mut c_void {

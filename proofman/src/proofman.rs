@@ -686,8 +686,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         provers: &mut [Box<dyn Prover<F>>],
         pctx: Arc<ProofCtx<F>>,
         transcript: &FFITranscript,
-    ) {
-        provers[0].get_challenges(stage, pctx, transcript); // Any prover can get the challenges which are common among them
+    ) -> Vec<Vec<F>> {
+        provers[0].get_challenges(stage, pctx, transcript)
     }
 
     pub fn opening_stages(
@@ -701,9 +701,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         // Calculate evals
         timer_start_debug!(CALCULATING_EVALS);
-        Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 2, provers, pctx.clone(), transcript);
+        let challenges =
+            Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 2, provers, pctx.clone(), transcript);
+        let xi_challenge = challenges[0].clone();
         for group_idx in pctx.dctx_get_my_air_groups() {
-            provers[group_idx[0]].calculate_lev(pctx.clone());
+            provers[group_idx[0]].calculate_lev(pctx.clone(), xi_challenge.clone());
             for idx in group_idx.iter() {
                 provers[*idx].opening_stage(1, sctx.clone(), pctx.clone());
             }
@@ -717,7 +719,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         info!("{}: Calculating FRI Polynomials", Self::MY_NAME);
         timer_start_info!(CALCULATING_FRI_POLINOMIAL);
         for group_idx in pctx.dctx_get_my_air_groups().iter() {
-            provers[group_idx[0]].calculate_xdivxsub(pctx.clone());
+            provers[group_idx[0]].calculate_xdivxsub(pctx.clone(), xi_challenge.clone());
             for idx in group_idx.iter() {
                 provers[*idx].opening_stage(2, sctx.clone(), pctx.clone());
             }
