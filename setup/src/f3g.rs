@@ -25,6 +25,12 @@ pub struct F3g {
     pub roots: Vec<Vec<BigUint>>, // Cached roots for FFT
 }
 
+impl Default for F3g {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl F3g {
     pub fn new() -> Self {
         let p = BigUint::from_str_radix("FFFFFFFF00000001", 16).unwrap();
