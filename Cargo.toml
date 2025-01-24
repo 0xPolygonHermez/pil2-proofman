@@ -9,13 +9,16 @@ members = [
     "provers/stark",
     "provers/starks-lib-c",
     "transcript",
+    "witness",
     "util",
     "pil2-components/lib/std/rs",
-    #"pil2-components/test/std/range_check/rs",
-    #"pil2-components/test/std/lookup/rs",
-    #"pil2-components/test/std/connection/rs",
-    #"pil2-components/test/std/permutation/rs",
-    #"pil2-components/test/simple/rs",
+    # "pil2-components/test/std/direct_update/rs",
+    # "pil2-components/test/std/diff_buses/rs",
+    # "pil2-components/test/std/range_check/rs",
+    # "pil2-components/test/std/lookup/rs",
+    # "pil2-components/test/std/connection/rs",
+    # "pil2-components/test/std/permutation/rs",
+    # "pil2-components/test/simple/rs",
     # whoever re-enables this, it has to work out of
     # the box with `cargo check --workspace` or CI will
     # break and dev experience will be bad since repo
@@ -34,6 +37,8 @@ proofman-hints = { path = "hints", version = "0.1.0" }
 proofman-util = { path = "util", version = "0.1.0" }
 proofman-cli = { path = "cli", version = "0.1.0" }
 proofman-setup = { path = "setup", version = "0.1.0" }
+pil-std-lib = { path = "pil2-components/lib/std/rs", version = "0.1.0" }
+witness = { path = "witness", version = "0.1.0" }
 pilout = { path = "pilout", version = "0.1.0" }
 log = { version = "0.4", default-features = false }
 tracing = "0.1"
@@ -51,3 +56,5 @@ tokio = { version = "1", features = ["full"] }
 clap = "4.5" # clap likes to re-invent itself every few months
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
+serde_derive = "1.0.196"
+colored = "3"
