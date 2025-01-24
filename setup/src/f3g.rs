@@ -1,7 +1,7 @@
 use num_bigint::BigUint;
 use num_traits::{One, Zero, Num};
-use rand::Rng;
 
+/// Represents the base field and the field extension F3g.
 #[derive(Debug, Clone)]
 pub struct F3g {
     pub p: BigUint, // Prime modulus
@@ -18,19 +18,18 @@ pub struct F3g {
     pub n8: usize,
     pub n32: usize,
     pub n64: usize,
-    pub m: usize,
+    pub m: usize, // Field extension degree
     pub bit_length: u32,
-    pub sqrt_fn: Option<fn(&F3g, &BigUint) -> Option<BigUint>>, // Square root function
 }
 
-impl Default for F3g {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Represents elements in the F3g extension field (x^3 - x - 1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct F3gElement {
+    pub coeffs: [BigUint; 3], // Coefficients for x^0, x^1, x^2
 }
 
 impl F3g {
-    /// Constructor for the F3g field
+    /// Constructor for the F3g field.
     pub fn new() -> Self {
         let p = BigUint::from_str_radix("FFFFFFFF00000001", 16).unwrap();
         let one = BigUint::one();
@@ -43,37 +42,34 @@ impl F3g {
         let k = BigUint::from(12275445934081160404u64);
         let t = (&p - &one) >> 32;
 
-        // Calculate the bit length of the modulus
         let bit_length = p.bits() as u32;
 
-        Self {
-            p,
-            zero,
-            one,
-            nqr,
-            shift,
-            shift_inv,
-            half,
-            negone,
-            k,
-            s: 32,
-            t,
-            n8: 8,
-            n32: 2,
-            n64: 1,
-            m: 3,
-            bit_length,
-            sqrt_fn: None, // Initialize without a square root function
+        Self { p, zero, one, nqr, shift, shift_inv, half, negone, k, s: 32, t, n8: 8, n32: 2, n64: 1, m: 3, bit_length }
+    }
+
+    /// Modular addition for field elements.
+    pub fn add(&self, a: &F3gElement, b: &F3gElement) -> F3gElement {
+        F3gElement {
+            coeffs: [
+                (a.coeffs[0].clone() + b.coeffs[0].clone()) % &self.p,
+                (a.coeffs[1].clone() + b.coeffs[1].clone()) % &self.p,
+                (a.coeffs[2].clone() + b.coeffs[2].clone()) % &self.p,
+            ],
         }
     }
 
-    /// Modular addition
-    pub fn add(&self, a: &BigUint, b: &BigUint) -> BigUint {
-        (a + b) % &self.p
+    /// Modular subtraction for field elements.
+    pub fn sub(&self, a: &F3gElement, b: &F3gElement) -> F3gElement {
+        F3gElement {
+            coeffs: [
+                self.sub_scalar(&a.coeffs[0], &b.coeffs[0]),
+                self.sub_scalar(&a.coeffs[1], &b.coeffs[1]),
+                self.sub_scalar(&a.coeffs[2], &b.coeffs[2]),
+            ],
+        }
     }
 
-    /// Modular subtraction
-    pub fn sub(&self, a: &BigUint, b: &BigUint) -> BigUint {
+    fn sub_scalar(&self, a: &BigUint, b: &BigUint) -> BigUint {
         if a >= b {
             a - b
         } else {
@@ -81,8 +77,14 @@ impl F3g {
         }
     }
 
-    /// Modular negation
-    pub fn neg(&self, a: &BigUint) -> BigUint {
+    /// Modular negation for field elements.
+    pub fn neg(&self, a: &F3gElement) -> F3gElement {
+        F3gElement {
+            coeffs: [self.neg_scalar(&a.coeffs[0]), self.neg_scalar(&a.coeffs[1]), self.neg_scalar(&a.coeffs[2])],
+        }
+    }
+
+    fn neg_scalar(&self, a: &BigUint) -> BigUint {
         if a.is_zero() {
             a.clone()
         } else {
@@ -90,31 +92,32 @@ impl F3g {
         }
     }
 
-    /// Modular multiplication
-    pub fn mul(&self, a: &BigUint, b: &BigUint) -> BigUint {
-        (a * b) % &self.p
+    /// Modular multiplication for field elements.
+    pub fn mul(&self, a: &F3gElement, b: &F3gElement) -> F3gElement {
+        let p = &self.p;
+
+        let a0 = &a.coeffs[0];
+        let a1 = &a.coeffs[1];
+        let a2 = &a.coeffs[2];
+
+        let b0 = &b.coeffs[0];
+        let b1 = &b.coeffs[1];
+        let b2 = &b.coeffs[2];
+
+        let c0 = (a0 * b0 + a1 * b2 + a2 * b1) % p;
+        let c1 = (a0 * b1 + a1 * b0 + a2 * b2) % p;
+        let c2 = (a0 * b2 + a1 * b1 + a2 * b0) % p;
+
+        F3gElement { coeffs: [c0, c1, c2] }
     }
 
-    /// Modular division
-    pub fn div(&self, a: &BigUint, b: &BigUint) -> BigUint {
-        let inv_b = F3g::mod_inv(b, &self.p).expect("Division by zero");
-        self.mul(a, &inv_b)
+    /// Modular inversion for field elements.
+    pub fn inv(&self, a: &F3gElement) -> F3gElement {
+        // Use an appropriate inversion algorithm for extension fields.
+        unimplemented!()
     }
 
-    /// Modular exponentiation
-    pub fn exp(&self, base: &BigUint, exp: &BigUint) -> BigUint {
-        base.modpow(exp, &self.p)
-    }
-
-    /// Generate a random element in the field
-    pub fn random(&self) -> BigUint {
-        let mut rng = rand::thread_rng();
-        let mut bytes = vec![0u8; (self.bit_length / 8) as usize];
-        rng.fill(&mut bytes[..]);
-        BigUint::from_bytes_be(&bytes) % &self.p
-    }
-
-    /// Modular inversion using the Extended Euclidean Algorithm
+    /// Modular scalar inversion using the Extended Euclidean Algorithm.
     pub fn mod_inv(a: &BigUint, m: &BigUint) -> Option<BigUint> {
         let mut t = BigUint::zero();
         let mut new_t = BigUint::one();
@@ -140,23 +143,16 @@ impl F3g {
         }
         Some(t)
     }
+}
 
-    /// Square a number
-    pub fn square(&self, a: &BigUint) -> BigUint {
-        self.mul(a, a)
+impl F3gElement {
+    /// Create a zero element in the extension field.
+    pub fn zero() -> Self {
+        F3gElement { coeffs: [BigUint::zero(), BigUint::zero(), BigUint::zero()] }
     }
 
-    /// Compute the square root of a number if supported
-    pub fn sqrt(&self, a: &BigUint) -> Option<BigUint> {
-        if let Some(sqrt_fn) = self.sqrt_fn {
-            sqrt_fn(self, a)
-        } else {
-            None
-        }
-    }
-
-    /// Set the square root function based on the field configuration
-    pub fn set_sqrt_fn(&mut self, sqrt_fn: fn(&F3g, &BigUint) -> Option<BigUint>) {
-        self.sqrt_fn = Some(sqrt_fn);
+    /// Create a one element in the extension field.
+    pub fn one() -> Self {
+        F3gElement { coeffs: [BigUint::one(), BigUint::zero(), BigUint::zero()] }
     }
 }
