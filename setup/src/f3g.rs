@@ -1,75 +1,73 @@
 use num_bigint::BigUint;
-use num_traits::{One, Zero, Num};
+use num_traits::{Num, One, Zero};
+use rand::Rng;
 
-/// Represents the base field and the field extension F3g.
 #[derive(Debug, Clone)]
 pub struct F3g {
-    pub p: BigUint, // Prime modulus
+    pub p: BigUint,
     pub zero: BigUint,
     pub one: BigUint,
-    pub nqr: BigUint, // Non-quadratic residue
+    pub nqr: BigUint,
     pub shift: BigUint,
     pub shift_inv: BigUint,
     pub half: BigUint,
     pub negone: BigUint,
-    pub k: BigUint, // Generator of the multiplicative group
+    pub k: BigUint,
     pub s: u32,
     pub t: BigUint,
     pub n8: usize,
     pub n32: usize,
     pub n64: usize,
-    pub m: usize, // Field extension degree
+    pub m: usize,
     pub bit_length: u32,
 }
 
-/// Represents elements in the F3g extension field (x^3 - x - 1).
-#[derive(Debug, Clone, PartialEq)]
-pub struct F3gElement {
-    pub coeffs: [BigUint; 3], // Coefficients for x^0, x^1, x^2
-}
-
 impl F3g {
-    /// Constructor for the F3g field.
     pub fn new() -> Self {
         let p = BigUint::from_str_radix("FFFFFFFF00000001", 16).unwrap();
-        let one = BigUint::one();
         let zero = BigUint::zero();
+        let one = BigUint::one();
         let nqr = BigUint::from(7u64);
         let shift = BigUint::from(7u64);
-        let shift_inv = F3g::mod_inv(&shift, &p).unwrap();
+        let shift_inv = Self::mod_inv(&shift, &p).unwrap();
         let half = &p >> 1u32;
         let negone = &p - &one;
         let k = BigUint::from(12275445934081160404u64);
-        let t = (&p - &one) >> 32;
+        let s = 32;
+        let t = (&p - &one) >> s;
+        let n8 = 8;
+        let n32 = 2;
+        let n64 = 1;
+        let m = 3;
+        let bit_length = p.bits();
 
-        let bit_length = p.bits() as u32;
-
-        Self { p, zero, one, nqr, shift, shift_inv, half, negone, k, s: 32, t, n8: 8, n32: 2, n64: 1, m: 3, bit_length }
-    }
-
-    /// Modular addition for field elements.
-    pub fn add(&self, a: &F3gElement, b: &F3gElement) -> F3gElement {
-        F3gElement {
-            coeffs: [
-                (a.coeffs[0].clone() + b.coeffs[0].clone()) % &self.p,
-                (a.coeffs[1].clone() + b.coeffs[1].clone()) % &self.p,
-                (a.coeffs[2].clone() + b.coeffs[2].clone()) % &self.p,
-            ],
+        F3g {
+            p,
+            zero,
+            one,
+            nqr,
+            shift,
+            shift_inv,
+            half,
+            negone,
+            k,
+            s,
+            t,
+            n8,
+            n32,
+            n64,
+            m,
+            bit_length: bit_length as u32,
         }
     }
 
-    /// Modular subtraction for field elements.
-    pub fn sub(&self, a: &F3gElement, b: &F3gElement) -> F3gElement {
-        F3gElement {
-            coeffs: [
-                self.sub_scalar(&a.coeffs[0], &b.coeffs[0]),
-                self.sub_scalar(&a.coeffs[1], &b.coeffs[1]),
-                self.sub_scalar(&a.coeffs[2], &b.coeffs[2]),
-            ],
-        }
+    /// Adds two numbers in the field
+    pub fn add(&self, a: &BigUint, b: &BigUint) -> BigUint {
+        (a + b) % &self.p
     }
 
-    fn sub_scalar(&self, a: &BigUint, b: &BigUint) -> BigUint {
+    /// Subtracts two numbers in the field
+    pub fn sub(&self, a: &BigUint, b: &BigUint) -> BigUint {
         if a >= b {
             a - b
         } else {
@@ -77,14 +75,8 @@ impl F3g {
         }
     }
 
-    /// Modular negation for field elements.
-    pub fn neg(&self, a: &F3gElement) -> F3gElement {
-        F3gElement {
-            coeffs: [self.neg_scalar(&a.coeffs[0]), self.neg_scalar(&a.coeffs[1]), self.neg_scalar(&a.coeffs[2])],
-        }
-    }
-
-    fn neg_scalar(&self, a: &BigUint) -> BigUint {
+    /// Negates a number in the field
+    pub fn neg(&self, a: &BigUint) -> BigUint {
         if a.is_zero() {
             a.clone()
         } else {
@@ -92,33 +84,52 @@ impl F3g {
         }
     }
 
-    /// Modular multiplication for field elements.
-    pub fn mul(&self, a: &F3gElement, b: &F3gElement) -> F3gElement {
-        let p = &self.p;
-
-        let a0 = &a.coeffs[0];
-        let a1 = &a.coeffs[1];
-        let a2 = &a.coeffs[2];
-
-        let b0 = &b.coeffs[0];
-        let b1 = &b.coeffs[1];
-        let b2 = &b.coeffs[2];
-
-        let c0 = (a0 * b0 + a1 * b2 + a2 * b1) % p;
-        let c1 = (a0 * b1 + a1 * b0 + a2 * b2) % p;
-        let c2 = (a0 * b2 + a1 * b1 + a2 * b0) % p;
-
-        F3gElement { coeffs: [c0, c1, c2] }
+    /// Multiplies two numbers in the field
+    pub fn mul(&self, a: &BigUint, b: &BigUint) -> BigUint {
+        (a * b) % &self.p
     }
 
-    /// Modular inversion for field elements.
-    pub fn inv(&self, a: &F3gElement) -> F3gElement {
-        // Use an appropriate inversion algorithm for extension fields.
-        unimplemented!()
+    /// Squares a number in the field
+    pub fn square(&self, a: &BigUint) -> BigUint {
+        self.mul(a, a)
     }
 
-    /// Modular scalar inversion using the Extended Euclidean Algorithm.
-    pub fn mod_inv(a: &BigUint, m: &BigUint) -> Option<BigUint> {
+    /// Computes the modular inverse of a number in the field
+    pub fn inv(&self, a: &BigUint) -> BigUint {
+        a.modpow(&(&self.p - BigUint::from(2u64)), &self.p)
+    }
+
+    /// Divides two numbers in the field
+    pub fn div(&self, a: &BigUint, b: &BigUint) -> BigUint {
+        let b_inv = self.inv(b);
+        self.mul(a, &b_inv)
+    }
+
+    /// Checks if two numbers are equal in the field
+    pub fn eq(&self, a: &BigUint, b: &BigUint) -> bool {
+        a == b
+    }
+
+    /// Checks if a number is zero in the field
+    pub fn is_zero(&self, a: &BigUint) -> bool {
+        a.is_zero()
+    }
+
+    /// Exponentiates a number in the field
+    pub fn exp(&self, base: &BigUint, exp: &BigUint) -> BigUint {
+        base.modpow(exp, &self.p)
+    }
+
+    /// Generates a random element in the field
+    pub fn random(&self) -> BigUint {
+        let mut rng = rand::thread_rng();
+        let mut bytes = vec![0u8; (self.bit_length / 8) as usize];
+        rng.fill(&mut bytes[..]);
+        BigUint::from_bytes_be(&bytes) % &self.p
+    }
+
+    /// Computes the modular inverse using the Extended Euclidean Algorithm
+    fn mod_inv(a: &BigUint, m: &BigUint) -> Option<BigUint> {
         let mut t = BigUint::zero();
         let mut new_t = BigUint::one();
         let mut r = m.clone();
@@ -129,9 +140,9 @@ impl F3g {
             let tmp_r = r.clone();
             let tmp_t = t.clone();
             r = new_r.clone();
-            new_r = &tmp_r - &quotient * &new_r;
+            new_r = tmp_r - &quotient * &new_r;
             t = new_t.clone();
-            new_t = &tmp_t - &quotient * &new_t;
+            new_t = tmp_t - &quotient * &new_t;
         }
 
         if r > BigUint::one() {
@@ -143,16 +154,14 @@ impl F3g {
         }
         Some(t)
     }
-}
 
-impl F3gElement {
-    /// Create a zero element in the extension field.
-    pub fn zero() -> Self {
-        F3gElement { coeffs: [BigUint::zero(), BigUint::zero(), BigUint::zero()] }
+    /// Converts a number to a string in the specified base
+    pub fn to_string(&self, a: &BigUint, base: u32) -> String {
+        a.to_str_radix(base)
     }
 
-    /// Create a one element in the extension field.
-    pub fn one() -> Self {
-        F3gElement { coeffs: [BigUint::one(), BigUint::zero(), BigUint::zero()] }
+    /// Multiplies a number by a scalar in the field
+    pub fn mul_scalar(&self, a: &BigUint, scalar: u64) -> BigUint {
+        self.mul(a, &BigUint::from(scalar))
     }
 }
