@@ -12,3 +12,4 @@ serde.workspace = true
 num-bigint.workspace = true
 num-traits.workspace = true
 rand.workspace = true
+z3 = "0.12.1"
