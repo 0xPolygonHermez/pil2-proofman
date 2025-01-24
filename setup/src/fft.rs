@@ -1,87 +1,83 @@
+use crate::f3g::F3g;
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
-use std::collections::HashMap;
+use std::cmp;
 
-use crate::f3g::F3g;
-
+#[derive(Debug)]
 pub struct FFT {
-    pub w: Vec<BigUint>,                     // Roots of unity
-    pub wi: Vec<BigUint>,                    // Inverse roots of unity
-    pub roots: HashMap<usize, Vec<BigUint>>, // Cached roots for each level
-    pub field: F3g,                          // Field arithmetic
+    pub field: F3g,
+    pub w: Vec<BigUint>,
+    pub wi: Vec<BigUint>,
+    pub roots: Vec<Vec<BigUint>>,
 }
 
 impl FFT {
     pub fn new(field: F3g, w0: Option<BigUint>) -> Self {
-        let mut w = vec![BigUint::zero(); field.s as usize + 1];
-        let mut wi = vec![BigUint::zero(); field.s as usize + 1];
+        let mut fft = FFT {
+            field: field.clone(),
+            w: vec![BigUint::zero(); (field.s + 1) as usize],
+            wi: vec![BigUint::zero(); (field.s + 1) as usize],
+            roots: vec![vec![]; (field.s + 1) as usize],
+        };
 
         let mut nqr = field.one.clone();
         while field.exp(&nqr, &field.half) == field.one {
             nqr = field.add(&nqr, &field.one);
         }
 
-        let rem = field.t.clone();
-        let s = field.s as usize;
-
-        w[s] = field.exp(&nqr, &rem);
-        if let Some(ref w0) = w0 {
-            w[s] = w0.clone();
+        fft.w[field.s as usize] = field.exp(&nqr, &field.t);
+        if let Some(w0) = w0 {
+            fft.w[field.s as usize] = w0;
         }
-        wi[s] = field.inv(&w[s]);
+        fft.wi[field.s as usize] = field.inv(&fft.w[field.s as usize]);
 
-        for n in (0..s).rev() {
-            w[n] = field.square(&w[n + 1]);
-            wi[n] = field.square(&wi[n + 1]);
+        for n in (0..field.s as usize).rev() {
+            fft.w[n] = field.square(&fft.w[n + 1]);
+            fft.wi[n] = field.square(&fft.wi[n + 1]);
         }
 
-        let mut fft = FFT { w, wi, roots: HashMap::new(), field };
-        fft.set_roots(s.min(15));
+        fft.set_roots(cmp::min(field.s as usize, 15));
         fft
     }
 
     fn set_roots(&mut self, n: usize) {
         for i in (0..=n).rev() {
-            if self.roots.contains_key(&i) {
-                continue;
+            if self.roots[i].is_empty() {
+                let mut r = self.field.one.clone();
+                let nroots = 1 << i;
+                self.roots[i] = vec![BigUint::zero(); nroots];
+                for j in 0..nroots {
+                    self.roots[i][j] = r.clone();
+                    r = self.field.mul(&r, &self.w[i]);
+                }
             }
-
-            let mut r = self.field.one.clone();
-            let nroots = 1 << i;
-            let mut roots_i = Vec::with_capacity(nroots);
-            for _ in 0..nroots {
-                roots_i.push(r.clone());
-                r = self.field.mul(&r, &self.w[i]);
-            }
-            self.roots.insert(i, roots_i);
         }
     }
 
-    pub fn fft(&mut self, p: &[BigUint]) -> Vec<BigUint> {
-        let n = p.len();
-        if n <= 1 {
-            return p.to_vec();
+    pub fn fft(&mut self, p: &[BigUint]) -> Result<Vec<BigUint>, String> {
+        if p.is_empty() {
+            return Ok(vec![]);
+        }
+        if !p.len().is_power_of_two() {
+            return Err("Input size must be a power of 2".to_string());
         }
 
-        let bits = (n as f64).log2().ceil() as usize;
+        let bits = (p.len() as f64).log2().ceil() as usize;
         self.set_roots(bits);
 
-        if n != (1 << bits) {
-            panic!("Size must be a power of 2");
-        }
-
+        let n = 1 << bits;
         let mut buff = vec![BigUint::zero(); n];
-        for (i, &val) in p.iter().enumerate() {
-            let r = Self::rev(i, bits);
+        for (i, val) in p.iter().enumerate() {
+            let r = FFT::bit_reverse(i, bits);
             buff[r] = val.clone();
         }
 
         for s in 1..=bits {
             let m = 1 << s;
             let mdiv2 = m >> 1;
-            let winc = &self.roots[&s][1];
+            let winc = &self.roots[s][1];
             for k in (0..n).step_by(m) {
-                let mut w = BigUint::one();
+                let mut w = self.field.one.clone();
                 for j in 0..mdiv2 {
                     let t = self.field.mul(&w, &buff[k + j + mdiv2]);
                     let u = buff[k + j].clone();
@@ -92,29 +88,26 @@ impl FFT {
             }
         }
 
-        buff
+        Ok(buff)
     }
 
-    pub fn ifft(&mut self, p: &[BigUint]) -> Vec<BigUint> {
+    pub fn ifft(&mut self, p: &[BigUint]) -> Result<Vec<BigUint>, String> {
+        let q = self.fft(p)?;
         let n = p.len();
-        let q = self.fft(p);
-        let n_inv = self.field.inv(&BigUint::from(n));
-
-        let mut res = vec![BigUint::zero(); n];
+        let n_inv = self.field.inv(&BigUint::from(n as u64));
+        let mut res = vec![BigUint::zero(); q.len()];
         for i in 0..n {
             res[(n - i) % n] = self.field.mul(&q[i], &n_inv);
         }
-
-        res
+        Ok(res)
     }
 
-    fn rev(x: usize, n_bits: usize) -> usize {
-        let mut x = x as u32;
-        x = (x >> 1) & 0x55555555 | (x & 0x55555555) << 1;
-        x = (x >> 2) & 0x33333333 | (x & 0x33333333) << 2;
-        x = (x >> 4) & 0x0F0F0F0F | (x & 0x0F0F0F0F) << 4;
-        x = (x >> 8) & 0x00FF00FF | (x & 0x00FF00FF) << 8;
-        x = (x >> 16) | (x << 16);
-        (x as usize) >> (32 - n_bits)
+    fn bit_reverse(mut x: usize, n_bits: usize) -> usize {
+        let mut result = 0;
+        for _ in 0..n_bits {
+            result = (result << 1) | (x & 1);
+            x >>= 1;
+        }
+        result
     }
 }
