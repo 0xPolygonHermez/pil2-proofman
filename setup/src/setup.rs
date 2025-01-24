@@ -1,8 +1,13 @@
+use num_bigint::BigUint;
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use tokio::fs as async_fs;
 use tracing::info;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use crate::cli::Config;
 
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
@@ -67,8 +72,8 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
             stark_structs.push(stark_struct.clone());
 
-            let fixed_pols = generate_fixed_cols(&air.symbols, air.num_rows);
-            get_fixed_pols_pil2(&files_dir, air, &fixed_pols).await?;
+            let mut fixed_pols = generate_fixed_cols(&air.symbols, air.num_rows);
+            get_fixed_pols_pil2(&files_dir, air, &mut fixed_pols)?;
 
             let stark_setup_result = stark_setup(air, &stark_struct, &setup_options).await?;
             let json_output = serde_json::to_string_pretty(&stark_setup_result)?;
@@ -85,12 +90,45 @@ pub fn log2(num: usize) -> usize {
     (num as f64).log2().ceil() as usize
 }
 
-pub async fn get_fixed_pols_pil2(
-    _files_dir: &Path,
-    _air: &Air,
-    _fixed_pols: &[Symbol],
+pub fn get_fixed_pols_pil2(
+    files_dir: &Path,
+    air: &Air,
+    fixed_pols: &mut [Symbol],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Implement logic
+    for i in 0..fixed_pols.len() {
+        let def = &mut fixed_pols[i]; // Mutable borrow for this specific element
+        let id = def.id; // Equivalent to `def.id`
+        let deg = def.pol_deg; // Equivalent to `def.polDeg`
+
+        // Ensure `id` is within bounds
+        if id >= fixed_pols.len() {
+            return Err(format!("Invalid ID: {} exceeds fixed_pols length", id).into());
+        }
+
+        let fixed_cols = &air.symbols[i]; // Maps to `pil.fixedCols[i]`
+        let const_pol = &mut fixed_pols[id]; // Access the specific polynomial by `id`
+
+        // Ensure `const_pol.values` has enough space for degrees
+        if const_pol.values.len() < deg {
+            const_pol.values.resize(deg, 0);
+        }
+
+        // Process each degree
+        for j in 0..deg {
+            const_pol.values[j] = fixed_cols.values[j]; // Equivalent to `constPol[j] = buf2bint(fixedCols.values[j])`
+        }
+    }
+
+    // Save the fixed polynomials to a file
+    let output_file = files_dir.join(format!("{}.const", air.name));
+    let mut file = fs::File::create(output_file)?;
+
+    for pol in fixed_pols {
+        for value in &pol.values {
+            file.write_all(&value.to_le_bytes())?; // Serialize as bytes
+        }
+    }
+
     Ok(())
 }
 
@@ -173,9 +211,12 @@ pub struct Air {
     pub symbols: Vec<Symbol>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Symbol {
-    pub air_group_id: usize,
+    pub air_group_id: usize, // Existing field
+    pub id: usize,           // Unique identifier for the symbol (equivalent to `def.id`)
+    pub pol_deg: usize,      // Polynomial degree (equivalent to `def.polDeg`)
+    pub values: Vec<u128>,   // Container for polynomial values (equivalent to `constPol` in JavaScript)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
