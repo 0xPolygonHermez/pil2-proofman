@@ -23,6 +23,12 @@ pub struct F3g {
     pub sqrt_fn: Option<fn(&F3g, &BigUint) -> Option<BigUint>>, // Square root function
 }
 
+impl Default for F3g {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl F3g {
     /// Constructor for the F3g field
     pub fn new() -> Self {
