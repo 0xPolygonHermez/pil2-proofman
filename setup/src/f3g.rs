@@ -20,6 +20,9 @@ pub struct F3g {
     pub n64: usize,
     pub m: usize,
     pub bit_length: u32,
+    pub w: Vec<BigUint>,          // Precomputed roots of unity
+    pub wi: Vec<BigUint>,         // Precomputed inverse roots of unity
+    pub roots: Vec<Vec<BigUint>>, // Cached roots for FFT
 }
 
 impl F3g {
@@ -41,7 +44,7 @@ impl F3g {
         let m = 3;
         let bit_length = p.bits();
 
-        F3g {
+        let mut field = F3g {
             p,
             zero,
             one,
@@ -58,7 +61,13 @@ impl F3g {
             n64,
             m,
             bit_length: bit_length as u32,
-        }
+            w: Vec::new(),
+            wi: Vec::new(),
+            roots: Vec::new(),
+        };
+
+        field.compute_roots();
+        field
     }
 
     /// Adds two numbers in the field
@@ -128,6 +137,63 @@ impl F3g {
         BigUint::from_bytes_be(&bytes) % &self.p
     }
 
+    /// Multiplies a number by a scalar in the field
+    pub fn mul_scalar(&self, a: &BigUint, scalar: u64) -> BigUint {
+        self.mul(a, &BigUint::from(scalar))
+    }
+
+    /// Converts a number to a string in the specified base
+    pub fn to_string(&self, a: &BigUint, base: u32) -> String {
+        a.to_str_radix(base)
+    }
+
+    /// Computes precomputed roots of unity and their inverses
+    fn compute_roots(&mut self) {
+        let mut nqr = self.one.clone();
+        while self.exp(&nqr, &self.half) == self.one {
+            nqr = self.add(&nqr, &self.one);
+        }
+
+        self.w = vec![self.zero.clone(); (self.s + 1) as usize];
+        self.wi = vec![self.zero.clone(); (self.s + 1) as usize];
+
+        self.w[self.s as usize] = self.exp(&nqr, &self.t);
+        self.wi[self.s as usize] = self.inv(&self.w[self.s as usize]);
+
+        for i in (0..self.s).rev() {
+            self.w[i as usize] = self.square(&self.w[i as usize + 1]);
+            self.wi[i as usize] = self.square(&self.wi[i as usize + 1]);
+        }
+
+        self.roots = vec![vec![]; (self.s + 1) as usize];
+    }
+
+    /// Precomputes roots for FFT
+    pub fn set_roots(&mut self, n: usize) {
+        for i in (0..=n).rev() {
+            if self.roots[i].is_empty() {
+                let mut r = self.one.clone();
+                let nroots = 1 << i;
+                self.roots[i] = vec![self.zero.clone(); nroots];
+                for j in 0..nroots {
+                    self.roots[i][j] = r.clone();
+                    r = self.mul(&r, &self.w[i]);
+                }
+            }
+        }
+    }
+
+    /// Computes bit-reversed index
+    pub fn bit_reverse(x: usize, n_bits: usize) -> usize {
+        let mut x = x;
+        let mut result = 0;
+        for _ in 0..n_bits {
+            result = (result << 1) | (x & 1);
+            x >>= 1;
+        }
+        result
+    }
+
     /// Computes the modular inverse using the Extended Euclidean Algorithm
     fn mod_inv(a: &BigUint, m: &BigUint) -> Option<BigUint> {
         let mut t = BigUint::zero();
@@ -153,15 +219,5 @@ impl F3g {
             t += m;
         }
         Some(t)
-    }
-
-    /// Converts a number to a string in the specified base
-    pub fn to_string(&self, a: &BigUint, base: u32) -> String {
-        a.to_str_radix(base)
-    }
-
-    /// Multiplies a number by a scalar in the field
-    pub fn mul_scalar(&self, a: &BigUint, scalar: u64) -> BigUint {
-        self.mul(a, &BigUint::from(scalar))
     }
 }
