@@ -1,8 +1,8 @@
-use std::collections::{VecDeque};
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{Read, Write};
 use num_bigint::BigUint;
-use num_traits::{Zero};
+use num_traits::Zero;
 
 /// Represents a symbol in the computation process.
 #[derive(Debug, Clone)]

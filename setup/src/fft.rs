@@ -1,6 +1,6 @@
 use crate::f3g::F3g;
 use num_bigint::BigUint;
-use num_traits::{One, Zero};
+use num_traits::Zero;
 use std::cmp;
 
 #[derive(Debug)]
