@@ -39,22 +39,22 @@ impl<F: PrimeField> Std<F> {
         std_sum: Arc<StdSum<F>>,
         range_check: Arc<StdRangeCheck<F>>,
     ) {
-        wcm.register_component(std_prod.clone());
-        wcm.register_component(std_sum.clone());
+        wcm.register_component_std(std_prod.clone());
+        wcm.register_component_std(std_sum.clone());
 
         if range_check.u8air.is_some() {
-            wcm.register_component(range_check.u8air.clone().unwrap());
+            wcm.register_component_std(range_check.u8air.clone().unwrap());
         }
 
         if range_check.u16air.is_some() {
-            wcm.register_component(range_check.u16air.clone().unwrap());
+            wcm.register_component_std(range_check.u16air.clone().unwrap());
         }
 
         if range_check.specified_ranges.is_some() {
-            wcm.register_component(range_check.specified_ranges.clone().unwrap());
+            wcm.register_component_std(range_check.specified_ranges.clone().unwrap());
         }
 
-        wcm.register_component(range_check.clone());
+        wcm.register_component_std(range_check.clone());
     }
 
     // Gets the range for the range check.

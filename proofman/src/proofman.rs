@@ -76,21 +76,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path));
 
         Self::initialize_witness(witness_lib_path, wcm.clone())?;
-        wcm.calculate_witness(1);
-
         pctx.dctx_barrier();
-        timer_stop_and_log_info!(GENERATING_WITNESS);
-        timer_start_info!(INITIALIZING_PROOFMAN_2);
-
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
-        pctx.dctx_barrier();
-
-        Self::write_fixed_pols_tree(setups.clone(), pctx.clone());
 
         let mpi_rank = pctx.dctx_get_rank();
         let n_processes = pctx.dctx_get_n_processes();
-
-        pctx.dctx_close();
 
         if n_processes > 1 {
             let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info();
@@ -111,6 +100,22 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         if n_processes > 1 {
             Self::print_summary(pctx.clone(), setups.clone());
         }
+
+        pctx.dctx_assign_instances();
+
+        wcm.calculate_witness(1);
+
+        pctx.dctx_close();
+
+        pctx.dctx_barrier();
+
+        timer_stop_and_log_info!(GENERATING_WITNESS);
+        timer_start_info!(INITIALIZING_PROOFMAN_2);
+
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
+        pctx.dctx_barrier();
+
+        Self::write_fixed_pols_tree(setups.clone(), pctx.clone());
 
         pctx.dctx_barrier();
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN_2);

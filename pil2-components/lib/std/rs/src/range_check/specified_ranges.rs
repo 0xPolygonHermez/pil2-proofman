@@ -85,13 +85,8 @@ impl<F: PrimeField> SpecifiedRanges<F> {
             })
             .collect::<Vec<Vec<u64>>>();
 
-        let (instance_found, global_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
-
-        let (is_mine, global_idx) = if instance_found {
-            (pctx.dctx_is_my_instance(global_idx), global_idx)
-        } else {
-            pctx.dctx_add_instance(self.airgroup_id, self.air_id, pctx.get_weight(self.airgroup_id, self.air_id))
-        };
+        let (_, global_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+        let is_mine = pctx.dctx_is_my_instance(global_idx);
 
         pctx.dctx_distribute_multiplicities(&mut multiplicities, global_idx);
 
@@ -304,6 +299,18 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         };
 
         *self.num_rows.lock().unwrap() = num_rows.as_canonical_biguint().to_usize().unwrap();
+    }
+
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+        let (instance_found, _global_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+
+        if !instance_found {
+            pctx.dctx_add_instance_no_assign(
+                self.airgroup_id,
+                self.air_id,
+                pctx.get_weight(self.airgroup_id, self.air_id),
+            );
+        }
     }
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {

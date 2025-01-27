@@ -7,6 +7,7 @@ use crate::WitnessComponent;
 
 pub struct WitnessManager<F> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
+    components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx>,
     rom_path: Option<PathBuf>,
@@ -22,16 +23,30 @@ impl<F> WitnessManager<F> {
         rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
     ) -> Self {
-        WitnessManager { components: RwLock::new(Vec::new()), pctx, sctx, rom_path, public_inputs_path }
+        WitnessManager {
+            components: RwLock::new(Vec::new()),
+            components_std: RwLock::new(Vec::new()),
+            pctx,
+            sctx,
+            rom_path,
+            public_inputs_path,
+        }
     }
 
     pub fn register_component(&self, component: Arc<dyn WitnessComponent<F>>) {
         self.components.write().unwrap().push(component);
     }
 
+    pub fn register_component_std(&self, component: Arc<dyn WitnessComponent<F>>) {
+        self.components_std.write().unwrap().push(component);
+    }
+
     pub fn start_proof(&self) {
         timer_start_info!(START_PROOF);
         for component in self.components.read().unwrap().iter() {
+            component.start_proof(self.pctx.clone(), self.sctx.clone());
+        }
+        for component in self.components_std.read().unwrap().iter() {
             component.start_proof(self.pctx.clone(), self.sctx.clone());
         }
         timer_stop_and_log_info!(START_PROOF);
@@ -42,12 +57,18 @@ impl<F> WitnessManager<F> {
         for component in self.components.read().unwrap().iter() {
             component.execute(self.pctx.clone());
         }
+        for component in self.components_std.read().unwrap().iter() {
+            component.execute(self.pctx.clone());
+        }
         timer_stop_and_log_info!(EXECUTE);
     }
 
     pub fn debug(&self) {
         if self.pctx.options.debug_info.std_mode.name == ModeName::Debug {
             for component in self.components.read().unwrap().iter() {
+                component.debug(self.pctx.clone(), self.sctx.clone());
+            }
+            for component in self.components_std.read().unwrap().iter() {
                 component.debug(self.pctx.clone(), self.sctx.clone());
             }
         }
@@ -63,8 +84,11 @@ impl<F> WitnessManager<F> {
 
         timer_start_info!(CALCULATING_WITNESS);
 
-        // Call one time all unused components
         for component in self.components.read().unwrap().iter() {
+            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone());
+        }
+
+        for component in self.components_std.read().unwrap().iter() {
             component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone());
         }
 
