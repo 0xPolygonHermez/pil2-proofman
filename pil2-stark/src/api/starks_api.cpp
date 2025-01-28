@@ -150,7 +150,7 @@ void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs
         if(!string(fileDir).empty()) {
             std::string airName = globalInfo["airs"][friProof->airgroupId][friProof->airId]["name"];
             std::string proofName = airName + "_" + std::to_string(friProof->instanceId);
-            json2file(zkin, string(fileDir) + "/zkin/proof_" + proofName + "_zkin.json");
+            json2file(zkin, string(fileDir) + "/proofs/proof_" + proofName + "_zkin.json");
         }
 
         proofs[i] = (void *) new nlohmann::json(zkin);
