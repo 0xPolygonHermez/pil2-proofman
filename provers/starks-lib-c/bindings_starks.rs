@@ -703,6 +703,17 @@ extern "C" {
 }
 
 extern "C" {
+    #[link_name = "\u{1}_Z20write_fixed_cols_binPcS_S_mmPv"]
+    pub fn write_fixed_cols_bin(
+        binFile: *mut ::std::os::raw::c_char,
+        airgroupName: *mut ::std::os::raw::c_char,
+        airName: *mut ::std::os::raw::c_char,
+        N: u64,
+        nFixedPols: u64,
+        fixedPolsInfo: *mut ::std::os::raw::c_void,
+    );
+}
+extern "C" {
     #[link_name = "\u{1}_Z19get_omp_max_threadsv"]
     pub fn get_omp_max_threads() -> u64;
 }
