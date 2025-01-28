@@ -10,27 +10,28 @@ pub struct StdMode {
     pub opids: Vec<u64>,
     pub n_vals: usize,
     pub print_to_file: bool,
+    pub fast_mode: bool,
 }
 
 impl StdMode {
-    pub const fn new(name: ModeName, opids: Vec<u64>, n_vals: usize, print_to_file: bool) -> Self {
+    pub const fn new(name: ModeName, opids: Vec<u64>, n_vals: usize, print_to_file: bool, fast_mode: bool) -> Self {
         if name.as_usize() != ModeName::Standard.as_usize() && n_vals == 0 {
             panic!("n_vals must be greater than 0");
         }
 
-        Self { name, opids, n_vals, print_to_file }
+        Self { name, opids, n_vals, print_to_file, fast_mode }
     }
 
     pub fn new_debug() -> Self {
-        Self::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false)
+        Self::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true)
     }
 }
 
 impl From<u8> for StdMode {
     fn from(v: u8) -> Self {
         match v {
-            0 => StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false),
-            1 => StdMode::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false),
+            0 => StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false),
+            1 => StdMode::new(ModeName::Debug, Vec::new(), DEFAULT_PRINT_VALS, false, true),
             _ => panic!("Invalid mode"),
         }
     }
@@ -38,7 +39,7 @@ impl From<u8> for StdMode {
 
 impl Default for StdMode {
     fn default() -> Self {
-        StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false)
+        StdMode::new(ModeName::Standard, Vec::new(), DEFAULT_PRINT_VALS, false, false)
     }
 }
 

@@ -3,33 +3,36 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use rayon::prelude::*;
+
 use num_traits::ToPrimitive;
 use p3_field::PrimeField;
 
+use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
-use proofman_common::{AirInstance, ProofCtx, SetupCtx, ModeName};
+use proofman_common::{AirInstance, ProofCtx, SetupCtx};
 use proofman_hints::{
     get_hint_field_gc_constant_a, get_hint_field, get_hint_field_a, acc_mul_hint_fields, update_airgroupvalue,
     get_hint_ids_by_name, mul_hint_fields, HintFieldOptions, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
 };
 
 use crate::{
-    extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_a_as_string,
-    get_hint_field_constant_as_field, get_hint_field_constant_as_string, get_row_field_value, print_debug_info,
-    update_debug_data, AirComponent, DebugData,
+    check_invalid_opids, extract_field_element_as_usize, get_global_hint_field_constant_as,
+    get_hint_field_constant_a_as_string, get_hint_field_constant_as_field, get_hint_field_constant_as_string,
+    get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, AirComponent, DebugData,
+    DebugDataFast, SharedDataFast,
 };
 
 pub struct StdSum<F: PrimeField> {
-    pctx: Arc<ProofCtx<F>>,
     stage_wc: Option<Mutex<u32>>,
-    debug_data: Option<DebugData<F>>,
+    _phantom: std::marker::PhantomData<F>,
 }
 
 impl<F: PrimeField> AirComponent<F> for StdSum<F> {
     const MY_NAME: &'static str = "STD Sum ";
 
     fn new(
-        pctx: Arc<ProofCtx<F>>,
+        _pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx>,
         _airgroup_id: Option<usize>,
         _air_id: Option<usize>,
@@ -39,7 +42,6 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
 
         // Initialize std_sum with the extracted data
         Arc::new(Self {
-            pctx: pctx.clone(),
             stage_wc: match std_sum_users_id.is_empty() {
                 true => None,
                 false => {
@@ -49,24 +51,25 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                     Some(Mutex::new(stage_wc))
                 }
             },
-            debug_data: if pctx.options.debug_info.std_mode.name == ModeName::Debug {
-                Some(Mutex::new(HashMap::new()))
-            } else {
-                None
-            },
+            _phantom: std::marker::PhantomData,
         })
     }
+}
 
+impl<F: PrimeField> StdSum<F> {
+    #[allow(clippy::too_many_arguments)]
     fn debug_mode(
         &self,
         pctx: &ProofCtx<F>,
         sctx: &SetupCtx,
-        air_instance: &mut AirInstance<F>,
+        air_instance: &AirInstance<F>,
         air_instance_id: usize,
         num_rows: usize,
         debug_data_hints: Vec<u64>,
+        debug_data: &mut DebugData<F>,
+        debug_data_fast: &mut DebugDataFast<F>,
+        fast_mode: bool,
     ) {
-        let debug_data = self.debug_data.as_ref().expect("Debug data missing");
         let airgroup_id = air_instance.airgroup_id;
         let air_id = air_instance.air_id;
 
@@ -165,7 +168,9 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                     &expressions,
                     0,
                     debug_data,
+                    debug_data_fast,
                     is_global.is_one(),
+                    fast_mode,
                 );
             }
             // Otherwise, update the bus for each row
@@ -200,7 +205,9 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                         &expressions,
                         j,
                         debug_data,
+                        debug_data_fast,
                         false,
+                        fast_mode,
                     );
                 }
             }
@@ -218,8 +225,10 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
             mul: &HintFieldValue<F>,
             expressions: &HintFieldValuesVec<F>,
             row: usize,
-            debug_data: &DebugData<F>,
+            debug_data: &mut DebugData<F>,
+            debug_data_fast: &mut DebugDataFast<F>,
             is_global: bool,
+            fast_mode: bool,
         ) {
             let mut mul = get_row_field_value(mul, row, "mul");
             if mul.is_zero() {
@@ -238,20 +247,24 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                 _ => panic!("Proves hint must be either 0, 1, or -1"),
             };
 
-            update_debug_data(
-                debug_data,
-                name_piop,
-                name_expr,
-                opid,
-                expressions.get(row),
-                airgroup_id,
-                air_id,
-                instance_id,
-                row,
-                proves,
-                mul,
-                is_global,
-            );
+            if fast_mode {
+                update_debug_data_fast(debug_data_fast, opid, expressions.get(row), proves, mul, is_global);
+            } else {
+                update_debug_data(
+                    debug_data,
+                    name_piop,
+                    name_expr,
+                    opid,
+                    expressions.get(row),
+                    airgroup_id,
+                    air_id,
+                    instance_id,
+                    row,
+                    proves,
+                    mul,
+                    is_global,
+                );
+            }
         }
     }
 }
@@ -297,24 +310,8 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
                     log::debug!("{}: ··· Computing witness for AIR '{}' at stage {}", Self::MY_NAME, air_name, stage);
 
-                    let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
-
                     let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
                     let gsum_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_col");
-                    let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_debug_data");
-
-                    // Debugging, if enabled
-                    if pctx.options.debug_info.std_mode.name == ModeName::Debug {
-                        let air_instance_id = pctx.dctx_find_air_instance_id(global_instance_id);
-                        self.debug_mode(
-                            &pctx,
-                            &sctx,
-                            air_instance,
-                            air_instance_id,
-                            num_rows,
-                            debug_data_hints.clone(),
-                        );
-                    }
 
                     // Populate the im columns
                     for hint in im_hints {
@@ -374,15 +371,139 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
         }
     }
 
-    fn end_proof(&self) {
-        // Print debug info if in debug mode
-        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug {
-            let pctx = &self.pctx;
-            let name = Self::MY_NAME;
-            let max_values_to_print = pctx.options.debug_info.std_mode.n_vals;
-            let print_to_file = pctx.options.debug_info.std_mode.print_to_file;
-            let debug_data = self.debug_data.as_ref().expect("Debug data missing");
-            print_debug_info(pctx, name, max_values_to_print, print_to_file, debug_data);
+    fn debug(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+        timer_start_info!(DEBUG_MODE_SUM);
+        let std_sum_users_vec = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users");
+
+        if !std_sum_users_vec.is_empty() {
+            let std_sum_users = std_sum_users_vec[0];
+
+            let num_users = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), std_sum_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), std_sum_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), std_sum_users, "air_ids", false);
+
+            let fast_mode = pctx.options.debug_info.std_mode.fast_mode;
+
+            let mut debug_data = HashMap::new();
+
+            let mut debugs_data_fasts: Vec<HashMap<F, SharedDataFast>> = Vec::new();
+
+            let mut global_instance_ids = Vec::new();
+
+            for i in 0..num_users {
+                let airgroup_id = extract_field_element_as_usize(&airgroup_ids.values[i], "airgroup_id");
+                let air_id = extract_field_element_as_usize(&air_ids.values[i], "air_id");
+
+                // Get all air instances ids for this airgroup and air_id
+                let global_ids = pctx.air_instance_repo.find_air_instances(airgroup_id, air_id);
+
+                for global_instance_id in global_ids {
+                    // Retrieve all air instances
+                    let air_instances = &mut pctx.air_instance_repo.air_instances.read().unwrap();
+                    let air_instance = air_instances.get(&global_instance_id).unwrap();
+
+                    if air_instance.prover_initialized {
+                        global_instance_ids.push(global_instance_id);
+                    }
+                }
+            }
+
+            if fast_mode {
+                // Process each sum check user
+                debugs_data_fasts = global_instance_ids
+                    .par_iter()
+                    .map(|&global_instance_id| {
+                        let mut local_debug_data_fast = HashMap::new();
+
+                        // Retrieve all air instances
+                        let air_instances = &mut pctx.air_instance_repo.air_instances.read().unwrap();
+
+                        let air_instance = air_instances.get(&global_instance_id).unwrap();
+                        let air_instance_id = pctx.dctx_find_air_instance_id(global_instance_id);
+                        let air_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
+
+                        log::debug!(
+                            "{}: ··· Checking debug mode fast for instance_id {} of {}",
+                            Self::MY_NAME,
+                            air_instance_id,
+                            air_name
+                        );
+
+                        // Get the air associated with the air_instance
+                        let airgroup_id = air_instance.airgroup_id;
+                        let air_id = air_instance.air_id;
+
+                        let setup = sctx.get_setup(airgroup_id, air_id);
+                        let p_expressions_bin = setup.p_setup.p_expressions_bin;
+
+                        let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
+
+                        let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_debug_data");
+
+                        self.debug_mode(
+                            &pctx,
+                            &sctx,
+                            air_instance,
+                            air_instance_id,
+                            num_rows,
+                            debug_data_hints.clone(),
+                            &mut HashMap::new(),
+                            &mut local_debug_data_fast,
+                            true,
+                        );
+
+                        local_debug_data_fast
+                    })
+                    .collect();
+            } else {
+                // Process each sum check user
+                for global_instance_id in global_instance_ids {
+                    // Retrieve all air instances
+                    let air_instances = &mut pctx.air_instance_repo.air_instances.read().unwrap();
+                    let air_instance = air_instances.get(&global_instance_id).unwrap();
+                    let air_instance_id = pctx.dctx_find_air_instance_id(global_instance_id);
+                    let air_name = &pctx.global_info.airs[air_instance.airgroup_id][air_instance.air_id].name;
+
+                    log::debug!(
+                        "{}: ··· Checking debug mode for instance_id {} of {}",
+                        Self::MY_NAME,
+                        air_instance_id,
+                        air_name
+                    );
+
+                    // Get the air associated with the air_instance
+                    let airgroup_id = air_instance.airgroup_id;
+                    let air_id = air_instance.air_id;
+
+                    let setup = sctx.get_setup(airgroup_id, air_id);
+                    let p_expressions_bin = setup.p_setup.p_expressions_bin;
+
+                    let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
+
+                    let debug_data_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_debug_data");
+
+                    self.debug_mode(
+                        &pctx,
+                        &sctx,
+                        air_instance,
+                        air_instance_id,
+                        num_rows,
+                        debug_data_hints.clone(),
+                        &mut debug_data,
+                        &mut HashMap::new(),
+                        false,
+                    );
+                }
+            }
+
+            if fast_mode {
+                check_invalid_opids(&pctx, Self::MY_NAME, &mut debugs_data_fasts);
+            } else {
+                let max_values_to_print = pctx.options.debug_info.std_mode.n_vals;
+                let print_to_file = pctx.options.debug_info.std_mode.print_to_file;
+                print_debug_info(&pctx, Self::MY_NAME, max_values_to_print, print_to_file, &mut debug_data);
+            }
         }
+        timer_stop_and_log_info!(DEBUG_MODE_SUM);
     }
 }

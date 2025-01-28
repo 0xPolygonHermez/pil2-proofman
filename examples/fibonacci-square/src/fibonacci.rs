@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_common::{add_air_instance, AirInstance, FromTrace, ProofCtx};
+use proofman_common::{add_air_instance, AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::WitnessComponent;
 
 use p3_field::PrimeField64;
@@ -70,7 +70,7 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>) {
+    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx>) {
         // let trace = FibonacciSquareTrace::from_vec(pctx.get_air_instance_trace(0, 0, 0));
         // let air_values = FibonacciSquareAirValues::from_vec(pctx.get_air_instance_air_values(0, 0, 0));
         // let airgroup_values = FibonacciSquareAirGroupValues::from_vec(pctx.get_air_instance_airgroup_values(0, 0, 0));

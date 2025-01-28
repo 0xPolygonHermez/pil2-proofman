@@ -273,13 +273,13 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         let buffer = create_buffer_fast(buffer_size as usize);
 
         // Add a new air instance. Since Specified Ranges is a table, only this air instance is needed
-        let mut air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
+        let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
         let mut mul_columns_guard = self.mul_columns.lock().unwrap();
         for hint in hints_guard[1..].iter() {
             mul_columns_guard.push(get_hint_field::<F>(
                 &sctx,
                 &pctx,
-                &mut air_instance,
+                &air_instance,
                 hint.to_usize().unwrap(),
                 "reference",
                 HintFieldOptions::dest_with_zeros(),

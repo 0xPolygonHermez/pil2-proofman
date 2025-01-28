@@ -70,6 +70,9 @@ pub fn skip_prover_instance(
     (true, Vec::new())
 }
 
+fn default_fast_mode() -> bool {
+    true
+}
 #[derive(Debug, Default, Deserialize)]
 struct StdDebugMode {
     #[serde(default)]
@@ -78,6 +81,8 @@ struct StdDebugMode {
     n_print: Option<usize>,
     #[serde(default)]
     print_to_file: bool,
+    #[serde(default = "default_fast_mode")]
+    fast_mode: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,14 +205,18 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     let global_constraints = json.global_constraints.unwrap_or_default();
 
     let std_mode = if !airgroup_map.is_empty() {
-        StdMode::new(ModeName::Standard, Vec::new(), 0, false)
+        StdMode::new(ModeName::Standard, Vec::new(), 0, false, false)
     } else {
         let mode = json.std_mode.unwrap_or_default();
+        let fast_mode =
+            if mode.opids.is_some() && !mode.opids.as_ref().unwrap().is_empty() { false } else { mode.fast_mode };
+
         StdMode::new(
             ModeName::Debug,
             mode.opids.unwrap_or_default(),
             mode.n_print.unwrap_or(DEFAULT_PRINT_VALS),
             mode.print_to_file,
+            fast_mode,
         )
     };
 

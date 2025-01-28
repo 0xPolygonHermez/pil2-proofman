@@ -142,12 +142,12 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
         let buffer = create_buffer_fast(buffer_size);
 
         // Add a new air instance. Since U8Air is a table, only this air instance is needed
-        let mut air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
+        let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
 
         *self.mul_column.lock().unwrap() = get_hint_field::<F>(
             &sctx,
             &pctx,
-            &mut air_instance,
+            &air_instance,
             u8air_hints[0] as usize,
             "reference",
             HintFieldOptions::dest_with_zeros(),
