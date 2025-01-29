@@ -22,6 +22,7 @@ num-bigint.workspace = true
 p3-goldilocks.workspace = true
 p3-field.workspace = true
 serde.workspace = true
+serde_arrays.workspace = true
 serde_json.workspace = true
 
 [build-dependencies]
