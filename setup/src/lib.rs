@@ -6,6 +6,7 @@ pub mod add_intermediate_pols;
 pub mod helpers;
 pub mod gen_constraint_pol;
 pub mod utils;
+pub mod mapping;
 mod setup;
 
 pub use setup::*;

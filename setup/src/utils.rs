@@ -77,6 +77,90 @@ pub fn format_hints(
         .collect()
 }
 
+/// Prints a formatted expression from the given data.
+pub fn print_expressions(
+    res: &HashMap<String, Value>,
+    exp: &Value,
+    expressions: &[Value],
+    is_constraint: bool,
+) -> String {
+    match exp["op"].as_str() {
+        Some("exp") => {
+            if !exp.get("line").is_some() {
+                let id = exp["id"].as_u64().unwrap() as usize;
+                let line = print_expressions(res, &expressions[id], expressions, is_constraint);
+                return line;
+            }
+            exp["line"].as_str().unwrap_or("").to_string()
+        }
+        Some("add") | Some("mul") | Some("sub") => {
+            let lhs = print_expressions(res, &exp["values"][0], expressions, is_constraint);
+            let rhs = print_expressions(res, &exp["values"][1], expressions, is_constraint);
+            let op = match exp["op"].as_str().unwrap() {
+                "add" => " + ",
+                "sub" => " - ",
+                "mul" => " * ",
+                _ => unreachable!(),
+            };
+            format!("({lhs}{op}{rhs})")
+        }
+        Some("neg") => {
+            let value = print_expressions(res, &exp["values"][0], expressions, is_constraint);
+            format!("-{}", value)
+        }
+        Some("number") => exp["value"].as_str().unwrap_or("").to_string(),
+        Some("const") | Some("cm") | Some("custom") => {
+            let id = exp["id"].as_u64().unwrap() as usize;
+            let col = if exp["op"] == "const" {
+                &res["constPolsMap"][id]
+            } else if exp["op"] == "cm" {
+                &res["cmPolsMap"][id]
+            } else {
+                let commit_id = exp["commitId"].as_u64().unwrap() as usize;
+                &res["customCommitsMap"][commit_id][id]
+            };
+
+            let mut name = col["name"].as_str().unwrap_or("").to_string();
+
+            if let Some(lengths) = col.get("lengths").and_then(|l| l.as_array()) {
+                name.push_str(&lengths.iter().map(|len| format!("[{}]", len)).collect::<String>());
+            }
+
+            if col["imPol"].as_bool().unwrap_or(false) && !is_constraint {
+                let exp_id = col["expId"].as_u64().unwrap() as usize;
+                return print_expressions(res, &expressions[exp_id], expressions, false);
+            }
+
+            if let Some(row_offset) = exp.get("rowOffset").and_then(|v| v.as_i64()) {
+                if row_offset > 0 {
+                    name.push('\'');
+                    if row_offset > 1 {
+                        name.push_str(&row_offset.to_string());
+                    }
+                } else if row_offset < 0 {
+                    name = format!("'{}{}", row_offset.abs(), name);
+                }
+            }
+            name
+        }
+        Some("public") => {
+            res["publicsMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("airvalue") => {
+            res["airValuesMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("airgroupvalue") => {
+            res["airgroupValuesMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("challenge") => {
+            res["challengesMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("x") => "x".to_string(),
+        Some("Zi") => "zh".to_string(),
+        _ => panic!("Unknown op: {:?}", exp["op"]),
+    }
+}
+
 /// Recursively processes a hint field, extracting values and lengths.
 fn process_hint_field(
     hint_field: &Value,
