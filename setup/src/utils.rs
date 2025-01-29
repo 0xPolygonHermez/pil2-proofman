@@ -77,6 +77,32 @@ pub fn format_hints(
         .collect()
 }
 
+/// Formats constraints from `pilout`, mimicking the original JavaScript function.
+pub fn format_constraints(pilout: &Value) -> Vec<Value> {
+    let mut constraints = Vec::new();
+
+    if let Some(pilout_constraints) = pilout["constraints"].as_array() {
+        for constraint_obj in pilout_constraints {
+            if let Some((boundary, constraint_data)) = constraint_obj.as_object().unwrap().iter().next() {
+                let mut constraint = json!({
+                    "boundary": boundary,
+                    "e": constraint_data["expressionIdx"]["idx"],
+                    "line": constraint_data["debugLine"]
+                });
+
+                if boundary == "everyFrame" {
+                    constraint["offsetMin"] = constraint_data["offsetMin"].clone();
+                    constraint["offsetMax"] = constraint_data["offsetMax"].clone();
+                }
+
+                constraints.push(constraint);
+            }
+        }
+    }
+
+    constraints
+}
+
 /// Prints a formatted expression from the given data.
 pub fn print_expressions(
     res: &HashMap<String, Value>,
