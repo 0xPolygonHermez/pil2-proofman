@@ -1,9 +1,10 @@
 use crate::add_intermediate_pols::ExpressionOps;
 use crate::helpers::get_exp_dim;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Symbol {
     pub symbol_type: String, // "challenge", "fixed", "witness", "custom"
     pub name: String,
@@ -15,7 +16,7 @@ pub struct Symbol {
     pub commit_id: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Res {
     pub n_stages: usize,
     pub challenges_map: HashMap<usize, Symbol>,
@@ -24,7 +25,7 @@ pub struct Res {
     pub fri_exp_id: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub event_type: String, // "const", "cm", "custom"
     pub id: usize,

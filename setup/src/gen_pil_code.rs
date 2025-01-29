@@ -1,7 +1,103 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+use crate::fri_poly::generate_fri_polynomial;
 use crate::helpers::print_expressions;
+use crate::helpers::{add_info_expressions, add_info_expressions_symbols};
+use crate::gen_code::{
+    generate_constraint_polynomial_verifier_code, generate_constraints_debug_code, generate_expressions_code,
+};
+use crate::fri_poly::{Res, Symbol};
+
+pub fn generate_pil_code(
+    res: &mut Value,
+    symbols: &mut Vec<HashMap<String, Value>>,
+    constraints: &[Value],
+    expressions: &mut Vec<Value>,
+    hints: &[Value],
+    debug: bool,
+) -> HashMap<String, Value> {
+    let mut expressions_info = HashMap::new();
+    let mut verifier_info = json!({}); // Ensure it's a JSON object
+
+    for i in 0..expressions.len() {
+        add_info_expressions_symbols(symbols, expressions, i);
+    }
+
+    if !debug {
+        let symbols_as_values: Vec<Value> = symbols.iter().map(|s| json!(s)).collect();
+
+        generate_constraint_polynomial_verifier_code(res, &mut verifier_info, &symbols_as_values, expressions);
+
+        // Convert `res` into `Res` for `generate_fri_polynomial`
+        let mut res_struct: Res = serde_json::from_value(res.clone()).expect("Failed to deserialize res");
+
+        // Convert `symbols` to `Vec<Symbol>`
+        let mut symbols_struct: Vec<Symbol> =
+            symbols.iter().map(|s| serde_json::from_value(json!(s)).expect("Failed to deserialize symbol")).collect();
+
+        generate_fri_polynomial(&mut res_struct, &mut symbols_struct, expressions);
+
+        // Convert `Res` back to `Value`
+        *res = serde_json::to_value(res_struct).expect("Failed to serialize res back");
+
+        // Convert `symbols_struct` back to `Vec<HashMap<String, Value>>`
+        *symbols = symbols_struct
+            .iter()
+            .map(|s| serde_json::to_value(s).expect("Failed to serialize symbol"))
+            .map(|s| s.as_object().unwrap().clone().into_iter().collect())
+            .collect();
+
+        let fri_exp_id = res["friExpId"].as_u64().expect("Missing friExpId") as usize;
+        add_info_expressions(expressions, fri_exp_id);
+        add_info_expressions_symbols(symbols, expressions, fri_exp_id);
+    }
+
+    // Convert `res_map` to a HashMap
+    let mut res_hashmap: HashMap<String, Value> = res.as_object().unwrap().clone().into_iter().collect();
+    let hints_info = add_hints_info(&mut res_hashmap, expressions, hints, &mut HashMap::new());
+
+    // Convert back and update `res`
+    *res = json!(res_hashmap);
+    expressions_info.insert("hintsInfo".to_string(), json!(hints_info));
+
+    let symbols_as_values: Vec<Value> = symbols.iter().map(|s| json!(s)).collect();
+    let expressions_code = generate_expressions_code(res, &symbols_as_values, expressions);
+    expressions_info.insert("expressionsCode".to_string(), json!(expressions_code));
+
+    let fri_exp_id = res["friExpId"].as_u64().expect("Missing friExpId") as usize;
+    let mut query_verifier =
+        expressions_code.iter().find(|e| e["expId"] == json!(fri_exp_id)).cloned().expect("Query verifier not found");
+
+    let tmp_used = query_verifier["tmpUsed"].as_u64().expect("Missing tmpUsed");
+
+    let last_code_entry = query_verifier["code"]
+        .as_array_mut()
+        .expect("Invalid query verifier structure")
+        .last_mut()
+        .expect("Query verifier has no instructions");
+
+    last_code_entry["dest"] = json!({
+        "type": "tmp",
+        "id": tmp_used - 1,
+        "dim": 3
+    });
+
+    verifier_info["queryVerifier"] = json!(query_verifier);
+
+    let constraints_debug_code = generate_constraints_debug_code(res, &symbols_as_values, constraints, expressions);
+    expressions_info.insert("constraints".to_string(), json!(constraints_debug_code));
+
+    json!({
+        "expressionsInfo": expressions_info,
+        "verifierInfo": verifier_info
+    })
+    .as_object()
+    .expect("Expected object")
+    .clone()
+    .into_iter()
+    .collect()
+}
 
 /// Adds hints info, processing hint fields recursively.
 /// Flattens a JSON array recursively, ensuring deeply nested arrays are extracted properly.
