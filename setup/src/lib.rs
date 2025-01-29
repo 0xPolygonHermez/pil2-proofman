@@ -7,6 +7,7 @@ pub mod helpers;
 pub mod gen_constraint_pol;
 pub mod utils;
 pub mod mapping;
+pub mod gen_code;
 mod setup;
 
 pub use setup::*;
