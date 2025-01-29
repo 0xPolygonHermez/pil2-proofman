@@ -191,13 +191,13 @@ pub fn calculate_exp_deg(expressions: &[Value], exp: &Value, im_exps: &[usize]) 
 }
 
 /// Updates metadata for expressions.
-fn add_info_expressions(expressions: &mut [Value], expr: &Value) {
+pub fn add_info_expressions(expressions: &mut [Value], expr: &Value) {
     if let Some(degree) = expr["degree"].as_u64() {
         expressions.last_mut().unwrap()["degree"] = json!(degree);
     }
 }
 
 /// Gets the dimensionality of an expression.
-fn get_exp_dim(expressions: &[Value], exp_id: usize) -> usize {
+pub fn get_exp_dim(expressions: &[Value], exp_id: usize) -> usize {
     expressions[exp_id]["dim"].as_u64().unwrap_or(1) as usize
 }
