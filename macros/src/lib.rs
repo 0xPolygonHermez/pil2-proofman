@@ -318,7 +318,7 @@ fn values_impl(input: TokenStream2) -> Result<TokenStream2> {
 
     let row_struct = quote! {
         #[repr(C)]
-        #[derive(Debug, Clone, Copy, Default)]
+        #[derive(Debug, Clone, Copy)]
         pub struct #row_struct_name<#generics> {
             #(#field_definitions)*
         }

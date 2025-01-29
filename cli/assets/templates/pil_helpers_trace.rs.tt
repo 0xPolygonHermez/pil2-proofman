@@ -23,11 +23,20 @@ pub const { constant.0 }_AIR_IDS: &[usize] = &[{ constant.3 }];
 //PUBLICS
 use serde::Deserialize;
 use serde::Serialize;
-#[derive(Default, Debug, Serialize, Deserialize)]
+use serde_arrays;
+#[derive(Debug, Serialize, Deserialize)]
 pub struct {project_name}Publics \{
-    {{ for column in public_values.values_u64 }}#[serde(default)] 
+    {{ for column in public_values.values_u64 }}#[serde(with = "serde_arrays")] 
     pub {column.name}: {column.type},
     {{ endfor }}
+}
+
+impl Default for {project_name}Publics \{
+    fn default() -> Self \{
+        Self \{ {{ for column in public_values.values_default }} 
+            {column.name}: {column.type}, {{ endfor }}
+        }
+    }
 }
 
 values!({ project_name }PublicValues<F> \{

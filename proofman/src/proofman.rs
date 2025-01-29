@@ -46,6 +46,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         witness_lib_path: PathBuf,
         rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
+        input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
         options: ProofOptions,
@@ -55,6 +56,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             &witness_lib_path,
             &rom_path,
             &public_inputs_path,
+            &input_data_path,
             &proving_key_path,
             &output_dir_path,
             options.verify_constraints,
@@ -73,7 +75,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx_barrier();
         timer_start_info!(GENERATING_WITNESS);
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path));
+        let wcm =
+            Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path, input_data_path));
 
         Self::initialize_witness(witness_lib_path, wcm.clone())?;
         pctx.dctx_barrier();
@@ -1211,6 +1214,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         witness_lib_path: &PathBuf,
         rom_path: &Option<PathBuf>,
         public_inputs_path: &Option<PathBuf>,
+        input_data_path: &Option<PathBuf>,
         proving_key_path: &PathBuf,
         output_dir_path: &PathBuf,
         verify_constraints: bool,
@@ -1231,6 +1235,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         if let Some(publics_path) = public_inputs_path {
             if !publics_path.exists() {
                 return Err(format!("Public inputs file not found at path: {:?}", publics_path).into());
+            }
+        }
+
+        if let Some(input_path) = input_data_path {
+            if !input_path.exists() {
+                return Err(format!("Input data file not found at path: {:?}", input_path).into());
             }
         }
 

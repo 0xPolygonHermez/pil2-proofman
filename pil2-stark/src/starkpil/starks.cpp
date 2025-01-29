@@ -63,7 +63,7 @@ void Starks<ElementType>::loadCustomCommit(uint64_t commitId, uint64_t step, Gol
     if(setupCtx.starkInfo.starkStruct.verificationHashType == "GL") {
         Goldilocks::Element *pBuffNodesGL = &bufferExt[NExtended * nCols];
         ElementType *pBuffNodes = (ElementType *)pBuffNodesGL;
-        ElementType *tmpBuffNodes = (ElementType *)(&tmpBuff[N * nCols + NExtended * nCols]);
+        ElementType *tmpBuffNodes = (ElementType *)(&tmpBuff[(N + NExtended) * nCols]);
         memcpy(pBuffNodes, tmpBuffNodes, treesGL[pos]->numNodes * sizeof(ElementType));
         treesGL[pos]->setNodes(pBuffNodes);
     }

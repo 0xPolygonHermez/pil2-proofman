@@ -62,6 +62,7 @@ struct AirCtx {
 struct ValuesCtx {
     values: Vec<ColumnCtx>,
     values_u64: Vec<ColumnCtx>,
+    values_default: Vec<ColumnCtx>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -192,7 +193,11 @@ impl PilHelpersCmd {
                 };
                 if symbol.r#type == SymbolType::ProofValue as i32 {
                     if proof_values.is_empty() {
-                        proof_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
+                        proof_values.push(ValuesCtx {
+                            values: Vec::new(),
+                            values_u64: Vec::new(),
+                            values_default: Vec::new(),
+                        });
                     }
                     if symbol.stage == Some(1) {
                         proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
@@ -201,7 +206,11 @@ impl PilHelpersCmd {
                     }
                 } else {
                     if publics.is_empty() {
-                        publics.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
+                        publics.push(ValuesCtx {
+                            values: Vec::new(),
+                            values_u64: Vec::new(),
+                            values_default: Vec::new(),
+                        });
                     }
                     publics[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
                     let r#type_64 = if symbol.lengths.is_empty() {
@@ -215,6 +224,15 @@ impl PilHelpersCmd {
                             .fold("u64".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
                     };
                     publics[0].values_u64.push(ColumnCtx { name: name.to_owned(), r#type: r#type_64 });
+
+                    let default = "0".to_string();
+                    let r#type_default = if symbol.lengths.is_empty() {
+                        default // Case when lengths.len() == 0
+                    } else {
+                        // Start with "u64" and apply each length in reverse order
+                        symbol.lengths.iter().rev().fold(default, |acc, &length| format!("[{}; {}]", acc, length))
+                    };
+                    publics[0].values_default.push(ColumnCtx { name: name.to_owned(), r#type: r#type_default });
                 }
             });
 
@@ -282,7 +300,11 @@ impl PilHelpersCmd {
                             }
                         } else if symbol.r#type == SymbolType::AirValue as i32 {
                             if air.air_values.is_empty() {
-                                air.air_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
+                                air.air_values.push(ValuesCtx {
+                                    values: Vec::new(),
+                                    values_u64: Vec::new(),
+                                    values_default: Vec::new(),
+                                });
                             }
                             if symbol.stage == Some(1) {
                                 air.air_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
@@ -291,7 +313,11 @@ impl PilHelpersCmd {
                             }
                         } else if symbol.r#type == SymbolType::AirGroupValue as i32 {
                             if air.airgroup_values.is_empty() {
-                                air.airgroup_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
+                                air.airgroup_values.push(ValuesCtx {
+                                    values: Vec::new(),
+                                    values_u64: Vec::new(),
+                                    values_default: Vec::new(),
+                                });
                             }
                             air.airgroup_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
                         } else {

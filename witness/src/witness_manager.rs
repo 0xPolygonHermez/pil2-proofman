@@ -12,6 +12,7 @@ pub struct WitnessManager<F> {
     sctx: Arc<SetupCtx>,
     rom_path: Option<PathBuf>,
     public_inputs_path: Option<PathBuf>,
+    input_data_path: Option<PathBuf>,
 }
 
 impl<F> WitnessManager<F> {
@@ -22,6 +23,7 @@ impl<F> WitnessManager<F> {
         sctx: Arc<SetupCtx>,
         rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
+        input_data_path: Option<PathBuf>,
     ) -> Self {
         WitnessManager {
             components: RwLock::new(Vec::new()),
@@ -30,6 +32,7 @@ impl<F> WitnessManager<F> {
             sctx,
             rom_path,
             public_inputs_path,
+            input_data_path,
         }
     }
 
@@ -109,5 +112,9 @@ impl<F> WitnessManager<F> {
 
     pub fn get_public_inputs_path(&self) -> Option<PathBuf> {
         self.public_inputs_path.clone()
+    }
+
+    pub fn get_input_data_path(&self) -> Option<PathBuf> {
+        self.input_data_path.clone()
     }
 }
