@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+use crate::helpers::print_expressions;
+
 /// Processes a hint field value recursively, matching the JavaScript behavior.
 pub fn process_hint_field_value(
     values: &Value,
@@ -59,10 +61,4 @@ pub fn process_hint_field_value(
     }
 
     json!(processed_fields)
-}
-
-/// Dummy function to simulate `printExpressions`
-/// This should be implemented based on how expressions are printed in the PIL code.
-fn print_expressions(_res: &mut HashMap<String, Value>, _expr: &Value, _expressions: &Vec<Value>) -> Value {
-    json!("") // Placeholder: Replace with the actual implementation
 }
