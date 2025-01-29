@@ -1,5 +1,6 @@
 use crate::add_intermediate_pols::ExpressionOps;
 use crate::helpers::get_exp_dim;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -12,11 +13,6 @@ pub struct Symbol {
     pub id: usize,
     pub pol_id: Option<usize>,
     pub commit_id: Option<usize>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Expression {
-    // Define based on what ExpressionOps supports
 }
 
 #[derive(Debug, Clone)]
@@ -36,11 +32,14 @@ pub struct Event {
     pub prime: usize,
 }
 
-pub fn generate_fri_polynomial(res: &mut Res, symbols: &mut Vec<Symbol>, expressions: &mut Vec<Expression>) {
-    let e = ExpressionOps { stage: res.n_stages + 3, dim: 3 };
+/// **Expressions are stored as JSON `Value` objects**
+pub type Expression = Value;
 
+pub fn generate_fri_polynomial(res: &mut Res, symbols: &mut Vec<Symbol>, expressions: &mut Vec<Expression>) {
+    let e = ExpressionOps::new(res.n_stages + 3, 3);
     let stage = res.n_stages + 3;
 
+    // Create challenge symbols
     let vf1_id = symbols.iter().filter(|s| s.symbol_type == "challenge" && s.stage < stage).count();
     let vf2_id = vf1_id + 1;
 
@@ -77,6 +76,7 @@ pub fn generate_fri_polynomial(res: &mut Res, symbols: &mut Vec<Symbol>, express
 
     let mut fri_exps: HashMap<usize, Expression> = HashMap::new();
 
+    // Process events
     for ev in &res.ev_map {
         let symbol = match ev.event_type.as_str() {
             "const" => symbols.iter().find(|s| s.pol_id == Some(ev.id) && s.symbol_type == "fixed"),
@@ -89,7 +89,13 @@ pub fn generate_fri_polynomial(res: &mut Res, symbols: &mut Vec<Symbol>, express
 
         let symbol = symbol.expect("Symbol not found");
 
-        let expr = e.generate_expr(ev.event_type.as_str(), ev.id, 0, symbol.stage, symbol.dim, symbol.commit_id);
+        // **FIX:** Use dynamic dispatch for `generate_expr`
+        let expr = match ev.event_type.as_str() {
+            "const" => e.const_(ev.id, 0, symbol.stage, symbol.dim),
+            "cm" => e.cm(ev.id, 0, Some(symbol.stage), symbol.dim),
+            "custom" => e.custom(ev.id, 0, Some(symbol.stage), symbol.dim, symbol.commit_id.unwrap_or(0)),
+            _ => panic!("Invalid event type: {}", ev.event_type),
+        };
 
         fri_exps
             .entry(ev.prime)
@@ -115,6 +121,9 @@ pub fn generate_fri_polynomial(res: &mut Res, symbols: &mut Vec<Symbol>, express
     let fri_exp_id = expressions.len();
     res.fri_exp_id = fri_exp_id;
     expressions.push(fri_exp.expect("FRI Expression should not be None"));
-    expressions[fri_exp_id].dim = get_exp_dim(expressions, fri_exp_id);
-    expressions[fri_exp_id].stage = res.n_stages + 2;
+
+    // **FIX:** Ensure expressions are `Vec<Value>` for `get_exp_dim`
+    let dim = get_exp_dim(&expressions, fri_exp_id);
+    expressions[fri_exp_id]["dim"] = json!(dim);
+    expressions[fri_exp_id]["stage"] = json!(res.n_stages + 2);
 }
