@@ -3,13 +3,13 @@ use serde_json::Value;
 use tokio::fs as async_fs;
 use tracing::info;
 use std::{
-    fs,
-    io::Write,
+    collections::HashMap,
     path::{Path, PathBuf},
 };
 use crate::{
     cli::Config,
-    utils::log2,
+    get_pilout_info::get_fixed_pols_pil2,
+    utils::{log2, set_airout_info},
     witness_calculator::{generate_fixed_cols, Symbol},
 };
 
@@ -81,60 +81,85 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
             stark_structs.push(stark_struct.clone());
 
-            // **Fixed generate_fixed_cols function call**
-            let field_modulus = BigUint::from(1u32) << 256; // Placeholder modulus, replace as needed
+            // Generate Fixed Columns
+            let field_modulus = BigUint::from(1u32) << 256; // Placeholder modulus
             let mut fixed_pols = generate_fixed_cols(air.symbols.clone(), air.num_rows, field_modulus);
 
-            // **Fixed get_fixed_pols_pil2 function call**
-            get_fixed_pols_pil2(&files_dir, air, &mut fixed_pols.symbols)?;
+            // Get Fixed Polynomials for PIL2
+            let pil = serde_json::from_str::<HashMap<String, Value>>("{}").unwrap(); // Placeholder, replace with actual PIL data.
+            let mut const_pols: HashMap<String, Vec<Value>> = HashMap::new();
 
+            get_fixed_pols_pil2(files_dir.to_str().unwrap(), &pil, &mut const_pols)?;
+
+            // STARK Setup
             let stark_setup_result = stark_setup(air, &stark_struct, &setup_options).await?;
             let json_output = serde_json::to_string_pretty(&stark_setup_result)?;
 
             async_fs::write(files_dir.join(format!("{}.starkinfo.json", air.name)), json_output).await?;
+
+            // Compute Constant Tree
+            let const_tree_cmd = format!(
+                "{} -c {} -s {} -v {}",
+                setup_options.const_tree.display(),
+                files_dir.join(format!("{}.const", air.name)).display(),
+                files_dir.join(format!("{}.starkinfo.json", air.name)).display(),
+                files_dir.join(format!("{}.verkey.json", air.name)).display()
+            );
+
+            let output = tokio::process::Command::new("sh").arg("-c").arg(&const_tree_cmd).output().await?;
+
+            info!("Constant tree output: {}", String::from_utf8_lossy(&output.stdout));
+
+            let const_root = serde_json::from_str::<Value>(
+                &tokio::fs::read_to_string(files_dir.join(format!("{}.verkey.json", air.name))).await?,
+            )?;
+
+            // Compute Bin File
+            let bin_cmd = format!(
+                "{} -s {} -e {} -b {}",
+                setup_options.bin_file.display(),
+                files_dir.join(format!("{}.starkinfo.json", air.name)).display(),
+                files_dir.join(format!("{}.expressionsinfo.json", air.name)).display(),
+                files_dir.join(format!("{}.bin", air.name)).display()
+            );
+
+            let output = tokio::process::Command::new("sh").arg("-c").arg(&bin_cmd).output().await?;
+
+            info!("Bin file output: {}", String::from_utf8_lossy(&output.stdout));
+
+            setup[airgroup.airgroup_id].push(stark_struct);
         }
     }
 
-    Ok(())
-}
+    // Generate Final Recursive Setup
+    if config.setup.gen_aggregation_setup {
+        let airout_info = set_airout_info(&airout, &stark_structs).await?;
+        let global_info = airout_info.vadcop_info.clone();
+        let global_constraints = airout_info.global_constraints.clone();
 
-pub fn get_fixed_pols_pil2(
-    files_dir: &Path,
-    air: &Air,
-    fixed_pols: &mut [Symbol],
-) -> Result<(), Box<dyn std::error::Error>> {
-    for i in 0..fixed_pols.len() {
-        let def = &mut fixed_pols[i]; // Mutable borrow for this specific element
-        let id = def.id; // Equivalent to `def.id`
-        let deg = def.pol_deg; // Equivalent to `def.polDeg`
+        async_fs::write(
+            build_dir.as_ref().join("provingKey/pilout.globalInfo.json"),
+            serde_json::to_string_pretty(&global_info)?,
+        )
+        .await?;
 
-        // Ensure `id` is within bounds
-        if id >= fixed_pols.len() {
-            return Err(format!("Invalid ID: {} exceeds fixed_pols length", id).into());
-        }
+        async_fs::write(
+            build_dir.as_ref().join("provingKey/pilout.globalConstraints.json"),
+            serde_json::to_string_pretty(&global_constraints)?,
+        )
+        .await?;
 
-        let fixed_cols = &air.symbols[i]; // Maps to `pil.fixedCols[i]`
-        let const_pol = &mut fixed_pols[id]; // Access the specific polynomial by `id`
+        // Compute Global Bin File
+        let global_bin_cmd = format!(
+            "{} -g -e {} -b {}",
+            setup_options.bin_file.display(),
+            build_dir.as_ref().join("provingKey/pilout.globalConstraints.json").display(),
+            build_dir.as_ref().join("provingKey/pilout.globalConstraints.bin").display()
+        );
 
-        // Ensure `const_pol.values` has enough space for degrees
-        if const_pol.values.len() < deg {
-            const_pol.values.resize(deg, 0);
-        }
+        let output = tokio::process::Command::new("sh").arg("-c").arg(&global_bin_cmd).output().await?;
 
-        // Process each degree
-        for j in 0..deg {
-            const_pol.values[j] = fixed_cols.values[j]; // Equivalent to `constPol[j] = buf2bint(fixedCols.values[j])`
-        }
-    }
-
-    // Save the fixed polynomials to a file
-    let output_file = files_dir.join(format!("{}.const", air.name));
-    let mut file = fs::File::create(output_file)?;
-
-    for pol in fixed_pols {
-        for value in &pol.values {
-            file.write_all(&value.to_le_bytes())?; // Serialize as bytes
-        }
+        info!("Global bin file output: {}", String::from_utf8_lossy(&output.stdout));
     }
 
     Ok(())

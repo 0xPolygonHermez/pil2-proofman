@@ -1,5 +1,6 @@
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value, Map};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Enum representing Pilout types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -526,4 +527,208 @@ pub fn get_ks<F: Fn(f64, f64) -> f64>(fr_mul: F, n: usize, k: f64) -> Vec<f64> {
         ks.push(fr_mul(ks[i - 1], ks[0]));
     }
     ks
+}
+
+/// Represents metadata for an AIR system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AIRMetadata {
+    pub name: String,
+    pub num_rows: usize,
+}
+
+/// Represents an FRI step.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FRIStep {
+    pub n_bits: usize,
+}
+
+/// Represents a proof value mapping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofValue {
+    pub name: String,
+    pub id: usize,
+}
+
+/// Contains extracted AIR metadata and FRI settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VadcopInfo {
+    pub name: String,
+    pub airs: Vec<Vec<AIRMetadata>>,
+    pub air_groups: Vec<String>,
+    pub agg_types: Vec<Vec<Value>>, // Holds aggregated values per air group
+    pub steps_fri: Vec<FRIStep>,
+    pub n_publics: usize,
+    pub num_challenges: Vec<usize>,
+    pub num_proof_values: usize,
+    pub proof_values_map: Vec<ProofValue>,
+}
+
+/// Extracts metadata from the AIR system and STARK structures.
+/// This function replicates the `setAiroutInfo` logic from JavaScript.
+pub fn set_airout_info(airout: &HashMap<String, Value>, stark_structs: &[Value]) -> (VadcopInfo, Vec<Value>) {
+    let mut vadcop_info = VadcopInfo {
+        name: airout["name"].as_str().unwrap_or_default().to_string(),
+        airs: vec![vec![]; airout["airGroups"].as_array().map_or(0, |g| g.len())],
+        air_groups: vec![],
+        agg_types: vec![vec![]; airout["airGroups"].as_array().map_or(0, |g| g.len())],
+        steps_fri: vec![],
+        n_publics: airout["numPublicValues"].as_u64().unwrap_or(0) as usize,
+        num_challenges: airout["numChallenges"]
+            .as_array()
+            .map(|arr| arr.iter().map(|v| v.as_u64().unwrap_or(0) as usize).collect())
+            .unwrap_or_else(|| vec![0]),
+        num_proof_values: airout["numProofValues"].as_u64().unwrap_or(0) as usize,
+        proof_values_map: vec![],
+    };
+
+    if let Some(air_groups) = airout["airGroups"].as_array() {
+        for (i, airgroup) in air_groups.iter().enumerate() {
+            let airgroup_id = airgroup["airGroupId"].as_u64().unwrap_or(i as u64) as usize;
+            vadcop_info.agg_types[airgroup_id] =
+                airgroup["airGroupValues"].as_array().cloned().unwrap_or_else(|| vec![]);
+
+            vadcop_info.air_groups.push(airgroup["name"].as_str().unwrap_or("").to_string());
+
+            vadcop_info.airs[airgroup_id] = airgroup["airs"]
+                .as_array()
+                .unwrap_or(&vec![])
+                .iter()
+                .map(|air| AIRMetadata {
+                    name: air["name"].as_str().unwrap_or("").to_string(),
+                    num_rows: air["numRows"].as_u64().unwrap_or(0) as usize,
+                })
+                .collect();
+        }
+    }
+
+    // Extract the final step FRI from the first StarkStruct
+    let final_step = stark_structs
+        .first()
+        .and_then(|s| s["steps"].as_array()?.last())
+        .and_then(|s| s["nBits"].as_u64())
+        .unwrap_or_else(|| panic!("StarkStruct must contain at least one step")) as usize;
+
+    let mut steps_fri: HashSet<usize> = HashSet::new();
+
+    for stark_struct in stark_structs {
+        if let Some(steps) = stark_struct["steps"].as_array() {
+            for step in steps {
+                if let Some(n_bits) = step["nBits"].as_u64() {
+                    steps_fri.insert(n_bits as usize);
+                }
+            }
+        }
+        if stark_struct["steps"].as_array().and_then(|s| s.last()).and_then(|s| s["nBits"].as_u64()).map(|v| v as usize)
+            != Some(final_step)
+        {
+            panic!("All FRI steps for different air groups must end at the same nBits");
+        }
+    }
+
+    vadcop_info.steps_fri = steps_fri
+        .into_iter()
+        .sorted_by(|a, b| b.cmp(a)) // Sort in descending order
+        .map(|n_bits| FRIStep { n_bits })
+        .collect();
+
+    // Get proof values
+    if let Some(proof_values) = airout.get("proofValues").and_then(|p| p.as_array()) {
+        vadcop_info.proof_values_map = proof_values
+            .iter()
+            .map(|p| ProofValue {
+                name: p["name"].as_str().unwrap_or("").to_string(),
+                id: p["id"].as_u64().unwrap_or(0) as usize,
+            })
+            .collect();
+    }
+
+    // Extract global constraints
+    let global_constraints =
+        if airout.get("constraints").is_some() { get_global_constraints_info(airout, true) } else { vec![] };
+
+    (vadcop_info, global_constraints)
+}
+
+use crate::{gen_code::pil_code_gen, gen_pil_code::add_hints_info, helpers::add_info_expressions};
+
+use itertools::Itertools; // Needed for sorting
+
+/// Extracts global constraints information from a given pilout JSON structure.
+///
+/// # Arguments
+/// * `pilout` - A reference to the `pilout` JSON structure.
+/// * `save_symbols` - A boolean indicating whether to save symbols.
+///
+/// # Returns
+/// A `HashMap` containing `constraints` and `hints` extracted from pilout.
+pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols: bool) -> HashMap<String, Value> {
+    let mut constraints_code = Vec::new();
+    let mut hints_code = Vec::new();
+    let mut expressions = Vec::new();
+    let mut symbols = Vec::new();
+
+    // Check for constraints
+    if let Some(constraints) = pilout.get("constraints").and_then(|c| c.as_array()) {
+        let formatted_constraints: Vec<HashMap<String, Value>> = constraints
+            .iter()
+            .filter_map(|c| {
+                Some(HashMap::from([
+                    ("e".to_string(), json!(c["expressionIdx"]["idx"].as_u64()?)),
+                    ("boundary".to_string(), json!("finalProof")),
+                    ("line".to_string(), c["debugLine"].clone()),
+                ]))
+            })
+            .collect();
+
+        // Fetch formatted expressions and symbols
+        let expr_result = format_expressions(pilout, save_symbols, true);
+        expressions = expr_result["expressions"].as_array().unwrap_or(&vec![]).to_vec();
+
+        if save_symbols {
+            symbols = expr_result["symbols"].as_array().unwrap_or(&vec![]).to_vec();
+        } else {
+            symbols = format_symbols(pilout, true);
+        }
+
+        // Add expression info
+        for constraint in &formatted_constraints {
+            if let Some(e_idx) = constraint.get("e").and_then(|e| e.as_u64()) {
+                add_info_expressions(&mut expressions, e_idx as usize);
+            }
+        }
+
+        let mut ctx = HashMap::from([
+            ("calculated".to_string(), json!({})),
+            ("tmpUsed".to_string(), json!(0)),
+            ("code".to_string(), json!([])),
+            ("dom".to_string(), json!("n")),
+        ]);
+
+        // Generate constraint code
+        for constraint in &formatted_constraints {
+            if let Some(e_idx) = constraint.get("e").and_then(|e| e.as_u64()) {
+                pil_code_gen(&mut ctx, &symbols, &expressions, e_idx as usize, 0);
+                let mut code = build_code(&ctx);
+                ctx.insert("tmpUsed".to_string(), code["tmpUsed"].clone());
+                code["boundary"] = constraint["boundary"].clone();
+                code["line"] = constraint["line"].clone();
+                constraints_code.push(code);
+            }
+        }
+    }
+
+    // Handle global hints
+    if let Some(global_hints) = pilout.get("hints").and_then(|hints| hints.as_array()).map(|hints| {
+        hints
+            .iter()
+            .filter(|h| h.get("airId").is_none() && h.get("airgroupId").is_none())
+            .cloned()
+            .collect::<Vec<Value>>()
+    }) {
+        let hints = format_hints(pilout, &global_hints, &mut symbols, &mut expressions, save_symbols, true);
+        let mut res = HashMap::new();
+        hints_code = add_hints_info(&mut res, &mut expressions, &hints, &mut HashMap::new());
+    }
+
+    HashMap::from([("constraints".to_string(), json!(constraints_code)), ("hints".to_string(), json!(hints_code))])
 }

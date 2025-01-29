@@ -98,7 +98,7 @@ pub fn generate_expressions_code(res: &Value, symbols: &[Value], expressions: &[
 }
 
 /// Converts pilCodeGen logic to Rust
-fn pil_code_gen(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Value], exp_id: usize, prime: i64) {
+pub fn pil_code_gen(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Value], exp_id: usize, prime: i64) {
     if ctx.calculated.get(&exp_id).and_then(|c| c.get(&prime)).is_some() {
         return;
     }
@@ -160,7 +160,7 @@ fn eval_exp(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Value], 
 }
 
 /// Calculates dependencies recursively
-fn calculate_deps(
+pub fn calculate_deps(
     ctx: &mut CodeGenContext,
     symbols: &[Value],
     expressions: &[Value],
@@ -181,7 +181,7 @@ fn calculate_deps(
 }
 
 /// Fixes the mapping of computed polynomials
-fn fix_commit_pol(r: &mut Value, ctx: &mut CodeGenContext, symbols: &[Value]) {
+pub fn fix_commit_pol(r: &mut Value, ctx: &mut CodeGenContext, symbols: &[Value]) {
     if let Some(symbol) = symbols.iter().find(|s| {
         s["type"] == "witness"
             && s["expId"] == r["id"]
@@ -280,7 +280,7 @@ fn build_code(ctx: &mut CodeGenContext) -> Value {
     code
 }
 
-fn fix_expression(r: &mut Value, exp_map: &mut HashMap<i64, HashMap<usize, usize>>, tmp_used: &mut usize) {
+pub fn fix_expression(r: &mut Value, exp_map: &mut HashMap<i64, HashMap<usize, usize>>, tmp_used: &mut usize) {
     let prime = r["prime"].as_i64().unwrap_or(0);
     let entry = exp_map.entry(prime).or_default();
     let id = r["id"].as_u64().unwrap_or(0) as usize;
@@ -294,7 +294,7 @@ fn fix_expression(r: &mut Value, exp_map: &mut HashMap<i64, HashMap<usize, usize
     r["id"] = json!(entry[&id]);
 }
 
-fn fix_dimensions_verifier(ctx: &mut CodeGenContext) {
+pub fn fix_dimensions_verifier(ctx: &mut CodeGenContext) {
     let mut tmp_dim: HashMap<usize, usize> = HashMap::new();
 
     for code in &mut ctx.code {
@@ -320,7 +320,7 @@ fn fix_dimensions_verifier(ctx: &mut CodeGenContext) {
 }
 
 /// Helper function to determine the dimension of a reference
-fn get_dim(r: &Value, tmp_dim: &HashMap<usize, usize>) -> usize {
+pub fn get_dim(r: &Value, tmp_dim: &HashMap<usize, usize>) -> usize {
     let id = r["id"].as_u64().unwrap_or(0) as usize;
 
     if r["type"] == "tmp" {
@@ -332,7 +332,7 @@ fn get_dim(r: &Value, tmp_dim: &HashMap<usize, usize>) -> usize {
     }
 }
 
-fn fix_eval(r: &mut Value, ctx: &mut CodeGenContext) {
+pub fn fix_eval(r: &mut Value, ctx: &mut CodeGenContext) {
     let prime = r["prime"].as_i64().unwrap_or(0);
     let opening_pos = ctx.opening_points.iter().position(|&p| p == prime).unwrap_or(0);
 
