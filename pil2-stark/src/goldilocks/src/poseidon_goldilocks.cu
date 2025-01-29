@@ -926,6 +926,9 @@ void PoseidonGoldilocks::merkletree_cuda_gpudata(Goldilocks::Element *tree, uint
 
 void PoseidonGoldilocks::merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads, uint64_t dim)
 {
+    CHECKCUDAERR(cudaSetDevice(0));
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    double time0 = omp_get_wtime();
     if (num_rows == 0)
     {
         return;
@@ -944,7 +947,13 @@ void PoseidonGoldilocks::merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint
         actual_tpb = num_rows;
         actual_blks = 1;
     }
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    double time1 = omp_get_wtime();
+    std::cout << "          PUNT dins 1: " << time1 - time0 << std::endl;
     linear_hash_gpu<<<actual_blks, actual_tpb>>>(*d_tree, d_input, num_cols * dim, num_rows);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    double time2 = omp_get_wtime();
+    std::cout << "          PUNT dins 2: " << time2 - time1 << std::endl;
 
     // Build the merkle tree
     uint64_t pending = num_rows;
@@ -967,6 +976,9 @@ void PoseidonGoldilocks::merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint
         pending = pending / 2;
         nextN = floor((pending - 1) / 2) + 1;
     }
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    double time3 = omp_get_wtime();
+    std::cout << "          PUNT dins 3: " << time3 - time2 << std::endl;
 }
 
 void PoseidonGoldilocks::partial_hash_gpu(uint64_t *input, uint32_t num_cols, uint32_t num_rows, uint64_t *state)
