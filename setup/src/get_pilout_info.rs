@@ -35,25 +35,25 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
 
     res.insert("pilPower".to_string(), json!(pilout["numRows"].as_u64().map(|n| (n as f64).log2()).unwrap_or(0.0)));
 
-    let witness_symbols: Vec<&Value> = symbols
+    let witness_symbols = symbols
         .as_array()
         .unwrap()
         .iter()
         .filter(|s| s["type"] == "witness" && s["airId"] == res["airId"] && s["airgroupId"] == res["airgroupId"])
-        .collect();
+        .count();
 
-    let fixed_symbols: Vec<&Value> = symbols
+    let fixed_symbols = symbols
         .as_array()
         .unwrap()
         .iter()
         .filter(|s| s["type"] == "fixed" && s["airId"] == res["airId"] && s["airgroupId"] == res["airgroupId"])
-        .collect();
+        .count();
 
-    let public_symbols: Vec<&Value> = symbols.as_array().unwrap().iter().filter(|s| s["type"] == "public").collect();
+    let public_symbols = symbols.as_array().unwrap().iter().filter(|s| s["type"] == "public").count();
 
-    res.insert("nCommitments".to_string(), json!(witness_symbols.len()));
-    res.insert("nConstants".to_string(), json!(fixed_symbols.len()));
-    res.insert("nPublics".to_string(), json!(public_symbols.len()));
+    res.insert("nCommitments".to_string(), json!(witness_symbols));
+    res.insert("nConstants".to_string(), json!(fixed_symbols));
+    res.insert("nPublics".to_string(), json!(public_symbols));
     res.insert("airGroupValues".to_string(), air_group_values.clone());
 
     let num_challenges = pilout.get("numChallenges").and_then(|v| v.as_array());
@@ -63,7 +63,7 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
         json!(num_challenges.map(|v| v.len()).unwrap_or_else(|| {
             let max_stage =
                 symbols.as_array().unwrap().iter().map(|s| s["stage"].as_u64().unwrap_or(0)).max().unwrap_or(0);
-            max_stage as usize
+            (max_stage as usize) + 1 // Ensure `numChallenges.length` matches JavaScript logic
         })),
     );
 
@@ -81,27 +81,20 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
     let mut symbols_vec = symbols.as_array().unwrap().clone();
     let mut expressions_vec = expressions.as_array().unwrap().clone();
 
-    let hints = format_hints(
-        pilout,
-        air_hints.as_slice(), // ✅ FIXED: Convert `Vec<Value>` to `&[Value]`
-        &mut symbols_vec,
-        &mut expressions_vec,
-        save_symbols,
-        false,
-    );
+    let hints = format_hints(pilout, &air_hints, &mut symbols_vec, &mut expressions_vec, save_symbols, false);
 
     res.insert("customCommits".to_string(), pilout.get("customCommits").cloned().unwrap_or(json!([])));
 
     let mut custom_commits_map = vec![];
 
     if let Some(commits) = res.remove("customCommits").and_then(|v| v.as_array().cloned()) {
-        for (i, commit) in commits.iter().enumerate() {
+        for commit in commits.iter() {
             let mut commit_map = vec![];
             if let Some(stage_widths) = commit["stageWidths"].as_array() {
                 for (j, width) in stage_widths.iter().enumerate() {
                     if width.as_u64().unwrap_or(0) > 0 {
                         res.entry("mapSectionsN".to_string())
-                            .or_insert(json!(HashMap::<String, Value>::new()))
+                            .or_insert_with(|| json!(HashMap::<String, Value>::new()))
                             .as_object_mut()
                             .unwrap()
                             .insert(format!("{}{}", commit["name"], j), json!(0));
