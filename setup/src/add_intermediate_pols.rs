@@ -117,8 +117,12 @@ pub fn add_intermediate_polynomials(
 
     let vc = e.challenge("std_vc", stage, 3, 0, vc_id);
 
-    let max_deg_expr =
-        calculate_exp_deg(expressions, &expressions[res["cExpId"].as_u64().unwrap_or(0) as usize], im_exps);
+    let max_deg_expr = calculate_exp_deg(
+        expressions,
+        res["cExpId"].as_u64().unwrap_or(0) as usize,
+        im_exps,
+        false, // cache_values
+    );
 
     if max_deg_expr > q_deg + 1 {
         panic!(
@@ -128,7 +132,7 @@ pub fn add_intermediate_polynomials(
     }
 
     for &exp_id in im_exps {
-        let im_pol_deg = calculate_exp_deg(expressions, &expressions[exp_id], im_exps);
+        let im_pol_deg = calculate_exp_deg(expressions, exp_id, im_exps, false);
         if im_pol_deg > q_deg + 1 {
             panic!(
                 "Intermediate polynomial with id: {} has a higher degree ({}) than the maximum allowed degree ({})",
