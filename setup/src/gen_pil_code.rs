@@ -22,7 +22,8 @@ pub fn process_hint_field_value(
                 let processed_field = match op {
                     "exp" => {
                         let id = field["id"].as_u64().expect("Invalid id") as usize;
-                        expressions[id]["line"] = print_expressions(res, &expressions[id], expressions);
+                        let formatted_expr = print_expressions(res, &expressions[id], expressions, false);
+                        expressions[id]["line"] = json!(formatted_expr);
                         json!({
                             "op": "tmp",
                             "id": id,

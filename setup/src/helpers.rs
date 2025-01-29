@@ -1,6 +1,101 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+/// Prints a formatted expression recursively.
+pub fn print_expressions(
+    res: &HashMap<String, Value>,
+    exp: &Value,
+    expressions: &[Value],
+    is_constraint: bool,
+) -> String {
+    match exp.get("op").and_then(Value::as_str) {
+        Some("exp") => {
+            if exp.get("line").is_none() {
+                let id = exp["id"].as_u64().expect("Missing 'id' in exp") as usize;
+                let line = print_expressions(res, &expressions[id], expressions, is_constraint);
+                return line;
+            }
+            exp["line"].as_str().unwrap_or("").to_string()
+        }
+        Some("add") | Some("mul") | Some("sub") => {
+            let lhs = print_expressions(res, &exp["values"][0], expressions, is_constraint);
+            let rhs = print_expressions(res, &exp["values"][1], expressions, is_constraint);
+            let op = match exp["op"].as_str().unwrap() {
+                "add" => " + ",
+                "sub" => " - ",
+                "mul" => " * ",
+                _ => unreachable!(),
+            };
+            format!("({lhs}{op}{rhs})")
+        }
+        Some("neg") => {
+            let value = print_expressions(res, &exp["values"][0], expressions, is_constraint);
+            format!("-{}", value)
+        }
+        Some("number") => exp["value"].as_str().unwrap_or("").to_string(),
+        Some("const") | Some("cm") | Some("custom") => {
+            let id = exp["id"].as_u64().expect("Missing 'id' in exp") as usize;
+            let col = match exp["op"].as_str().unwrap() {
+                "const" => &res["constPolsMap"][id],
+                "cm" => &res["cmPolsMap"][id],
+                "custom" => {
+                    let commit_id = exp["commitId"].as_u64().expect("Missing 'commitId' in custom") as usize;
+                    &res["customCommitsMap"][commit_id][id]
+                }
+                _ => unreachable!(),
+            };
+
+            if col.get("imPol").and_then(Value::as_bool).unwrap_or(false) && !is_constraint {
+                let exp_id = col["expId"].as_u64().expect("Missing 'expId' in col") as usize;
+                return print_expressions(res, &expressions[exp_id], expressions, false);
+            }
+
+            let mut name = col["name"].as_str().unwrap_or("").to_string();
+            if let Some(lengths) = col.get("lengths").and_then(Value::as_array) {
+                name.push_str(&lengths.iter().map(|len| format!("[{}]", len)).collect::<String>());
+            }
+
+            if col.get("imPol").and_then(Value::as_bool).unwrap_or(false) {
+                let count = res["cmPolsMap"]
+                    .as_array()
+                    .unwrap_or(&vec![])
+                    .iter()
+                    .take(id)
+                    .filter(|w| w.get("imPol").and_then(Value::as_bool).unwrap_or(false))
+                    .count();
+                name.push_str(&count.to_string());
+            }
+
+            if let Some(row_offset) = exp.get("rowOffset").and_then(Value::as_i64) {
+                if row_offset > 0 {
+                    name.push('\'');
+                    if row_offset > 1 {
+                        name.push_str(&row_offset.to_string());
+                    }
+                } else if row_offset < 0 {
+                    name = format!("'{}{}", row_offset.abs(), name);
+                }
+            }
+            name
+        }
+        Some("public") => {
+            res["publicsMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("airvalue") => {
+            res["airValuesMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("airgroupvalue") => {
+            res["airgroupValuesMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("challenge") => {
+            res["challengesMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("x") => "x".to_string(),
+        Some("Zi") => "zh".to_string(),
+        _ => panic!("Unknown op: {:?}", exp["op"]),
+    }
+}
+
 /// Gets the dimensionality of an expression by its ID.
 pub fn get_exp_dim(expressions: &[Value], exp_id: usize) -> usize {
     fn _get_exp_dim(exp: &Value, expressions: &[Value]) -> usize {
