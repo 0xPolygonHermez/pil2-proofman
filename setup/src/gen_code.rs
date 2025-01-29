@@ -126,10 +126,7 @@ fn pil_code_gen(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Valu
 
     ctx.code.extend(code_ctx.code);
 
-    ctx.calculated
-        .entry(exp_id)
-        .or_default()
-        .insert(prime, json!({ "cm": false, "tmpId": code_ctx.tmp_used }));
+    ctx.calculated.entry(exp_id).or_default().insert(prime, json!({ "cm": false, "tmpId": code_ctx.tmp_used }));
 
     if code_ctx.tmp_used > ctx.tmp_used {
         ctx.tmp_used = code_ctx.tmp_used;

@@ -111,7 +111,7 @@ pub fn get_exp_dim(expressions: &[Value], exp_id: usize) -> usize {
                     .unwrap_or(1),
                 Some("exp") => {
                     let id = exp["id"].as_u64().unwrap_or(0) as usize;
-                    
+
                     _get_exp_dim(&expressions[id], expressions)
                 }
                 Some("cm") | Some("custom") => exp.get("dim").and_then(|d| d.as_u64()).unwrap_or(1) as usize,

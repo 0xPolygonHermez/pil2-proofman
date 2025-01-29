@@ -66,7 +66,8 @@ pub fn map(
                     if let Some(base_field) = im_pols_info.get_mut("baseField").and_then(Value::as_array_mut) {
                         base_field.push(Value::String(im_pol_expression));
                     }
-                } else if let Some(extended_field) = im_pols_info.get_mut("extendedField").and_then(Value::as_array_mut) {
+                } else if let Some(extended_field) = im_pols_info.get_mut("extendedField").and_then(Value::as_array_mut)
+                {
                     extended_field.push(Value::String(im_pol_expression));
                 }
             }
