@@ -3,6 +3,64 @@ use std::collections::HashMap;
 
 use crate::helpers::print_expressions;
 
+/// Adds hints info, processing hint fields recursively.
+/// Flattens a JSON array recursively, ensuring deeply nested arrays are extracted properly.
+fn flatten_json_array(value: &Value) -> Vec<Value> {
+    if let Some(arr) = value.as_array() {
+        arr.iter()
+            .flat_map(|v| flatten_json_array(v)) // Recursively flatten arrays
+            .collect()
+    } else {
+        vec![value.clone()]
+    }
+}
+
+/// Adds hints info, processing hint fields recursively.
+pub fn add_hints_info(
+    res: &mut HashMap<String, Value>,
+    expressions: &mut Vec<Value>,
+    hints: &[Value],
+    global: &mut HashMap<String, Value>,
+) -> Vec<Value> {
+    let mut hints_info = Vec::new();
+
+    for hint in hints {
+        let mut hint_fields = Vec::new();
+
+        if let Some(fields) = hint["fields"].as_array() {
+            for field in fields {
+                let processed_values = process_hint_field_value(&field["values"], res, expressions, global, vec![]);
+                let flattened_values = flatten_json_array(&processed_values); // ✅ Fix: Flatten manually
+
+                let mut hint_field = json!({
+                    "name": field["name"],
+                    "values": flattened_values
+                });
+
+                // Ensure `pos: []` if `lengths` is missing
+                if field.get("lengths").is_none() {
+                    if let Some(values) = hint_field["values"].as_array_mut() {
+                        if let Some(first_value) = values.get_mut(0) {
+                            first_value["pos"] = json!([]);
+                        }
+                    }
+                }
+
+                hint_fields.push(hint_field);
+            }
+        }
+
+        hints_info.push(json!({
+            "name": hint["name"],
+            "fields": hint_fields
+        }));
+    }
+
+    res.remove("hints");
+
+    hints_info
+}
+
 /// Processes a hint field value recursively, matching the JavaScript behavior.
 pub fn process_hint_field_value(
     values: &Value,
