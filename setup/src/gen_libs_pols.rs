@@ -1,7 +1,8 @@
 // use crate::{
 //     add_intermediate_pols::ExpressionOps,
-//     helpers::get_exp_dim,
+//     grand_product_utils::{grand_product_connection, init_challenges_connection},
 //     grand_productp_lookup::{grand_product_plookup, init_challenges_plookup},
+//     helpers::get_exp_dim,
 // };
 // use serde_json::{json, Value};
 // use std::collections::HashMap;
