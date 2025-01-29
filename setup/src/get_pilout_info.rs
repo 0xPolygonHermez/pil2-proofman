@@ -122,3 +122,45 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
     .map(|(k, v)| (k.clone(), v.clone())) // Convert `serde_json::Map` to `HashMap<String, Value>`
     .collect()
 }
+
+use crate::utils::buf2bint;
+use std::fs;
+use std::path::Path;
+
+/// Processes fixed polynomials from PIL2 and saves them to a file.
+pub fn get_fixed_pols_pil2(
+    files_dir: &str,
+    pil: &HashMap<String, Value>,
+    cnst_pols: &mut HashMap<String, Vec<Value>>,
+) -> std::io::Result<()> {
+    // Clone the def_array to avoid immutable + mutable borrow conflict
+    let def_array = cnst_pols.get("$$defArray").and_then(|arr| Some(arr.clone())).unwrap_or_default();
+
+    for def in &def_array {
+        let id = def["id"].as_u64().expect("Missing `id` in def array");
+        let deg = def["polDeg"].as_u64().expect("Missing `polDeg` in def array") as usize;
+
+        let fixed_cols = pil
+            .get("fixedCols")
+            .and_then(|cols| cols.as_array())
+            .expect("Missing `fixedCols` in PIL2 file")
+            .get(id as usize)
+            .expect("Invalid fixed column index");
+
+        if let Some(values) = fixed_cols.get("values").and_then(|v| v.as_array()) {
+            let const_pol = cnst_pols.entry(id.to_string()).or_insert_with(|| vec![json!(0); deg]);
+
+            for (j, value) in values.iter().enumerate().take(deg) {
+                const_pol[j] = json!(buf2bint(value));
+            }
+        }
+    }
+
+    let pil_name = pil["name"].as_str().expect("Missing `name` in PIL file");
+    let file_path = Path::new(files_dir).join(format!("{}.const", pil_name));
+
+    let json_data = serde_json::to_string_pretty(&cnst_pols)?;
+    fs::write(file_path, json_data)?;
+
+    Ok(())
+}
