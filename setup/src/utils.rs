@@ -50,30 +50,27 @@ pub fn format_expressions(pilout: &HashMap<String, Value>, save_symbols: bool, g
     result.into_iter().collect()
 }
 
-/// Formats the symbols in the `pilout`, filtering and transforming them accordingly.
+/// Formats the symbols in `pilout`, filtering and transforming them accordingly.
 pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Value> {
-    let v = vec![];
-    let pil_symbols = pilout.get("symbols").and_then(|s| s.as_array()).unwrap_or(&v);
-
+    let empty_vec = Vec::new();
+    let pil_symbols = pilout.get("symbols").and_then(|s| s.as_array()).unwrap_or(&empty_vec);
     let mut symbols = Vec::new();
 
     for s in pil_symbols {
         let s_type = s["type"].as_u64().expect("Missing type field");
 
-        match s_type {
-            10 => {
-                // CUSTOM_COL
-                let stage = s["stage"].as_u64().unwrap_or(0);
-                if stage != 0 {
-                    panic!("Invalid stage {} for a custom commit", stage);
-                }
+        if s_type == 10 {
+            let stage = s["stage"].as_u64().unwrap_or(0);
+            if stage != 0 {
+                panic!("Invalid stage {} for a custom commit", stage);
             }
-            _ => {}
         }
 
         if matches!(s_type, 1 | 3 | 10) {
-            // FIXED_COL, WITNESS_COL, CUSTOM_COL
-            let dim = if [0, 1].contains(&s["stage"].as_u64().unwrap_or(0)) { 1 } else { 3 };
+            let dim = match s["stage"].as_u64().unwrap_or(0) {
+                0 | 1 => 1,
+                _ => 3,
+            };
 
             let type_str = match s_type {
                 1 => "fixed",
@@ -81,7 +78,7 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 _ => "witness",
             };
 
-            let previous_pols: Vec<&Value> = pil_symbols
+            let previous_pols = pil_symbols
                 .iter()
                 .filter(|si| {
                     si["type"] == s["type"]
@@ -92,19 +89,15 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                                 && si["id"].as_u64().unwrap_or(0) < s["id"].as_u64().unwrap_or(0)))
                         && (s_type != 10 || s["commitId"] == si["commitId"])
                 })
-                .collect();
+                .collect::<Vec<_>>();
 
             let mut pol_id = 0;
             for pol in &previous_pols {
                 if pol.get("dim").is_none() {
                     pol_id += 1;
                 } else {
-                    pol_id += pol["lengths"]
-                        .as_array()
-                        .unwrap_or(&vec![])
-                        .iter()
-                        .map(|l| l.as_u64().unwrap_or(1))
-                        .product::<u64>() as usize;
+                    let lengths = pol["lengths"].as_array().unwrap_or(&empty_vec);
+                    pol_id += lengths.iter().map(|l| l.as_u64().unwrap_or(1)).product::<u64>() as usize;
                 }
             }
 
@@ -131,23 +124,13 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 symbols.extend(multi_array_symbols);
             }
         } else if s_type == 4 {
-            // PROOF_VALUE
             symbols.push(json!({
                 "name": s["name"],
                 "type": "proofValue",
                 "id": s["id"]
             }));
         } else if s_type == 8 {
-            // CHALLENGE
-            let id = pil_symbols
-                .iter()
-                .filter(|si| {
-                    si["type"].as_u64() == Some(8)
-                        && (si["stage"].as_u64().unwrap_or(0) < s["stage"].as_u64().unwrap_or(0)
-                            || (si["stage"] == s["stage"]
-                                && si["id"].as_u64().unwrap_or(0) < s["id"].as_u64().unwrap_or(0)))
-                })
-                .count();
+            let id = pil_symbols.iter().filter(|si| si["type"].as_u64() == Some(8)).count();
 
             symbols.push(json!({
                 "name": s["name"],
@@ -158,7 +141,6 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 "dim": 3
             }));
         } else if s_type == 6 {
-            // PUBLIC_VALUE
             if !s.get("dim").is_some() {
                 symbols.push(json!({
                     "name": s["name"],
@@ -181,7 +163,6 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 symbols.extend(multi_array_symbols);
             }
         } else if s_type == 5 {
-            // AIRGROUP_VALUE
             let mut airgroup_value = json!({
                 "name": s["name"],
                 "type": "airgroupvalue",
@@ -200,7 +181,6 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
             }
             symbols.push(airgroup_value);
         } else if s_type == 9 {
-            // AIR_VALUE
             let mut air_value = json!({
                 "name": s["name"],
                 "type": "airvalue",
@@ -218,7 +198,6 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                     }
                 }
             }
-
             symbols.push(air_value);
         } else {
             panic!("Invalid type {}", s_type);
