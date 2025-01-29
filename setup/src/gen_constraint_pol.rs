@@ -29,7 +29,8 @@ pub fn generate_constraint_polynomial(
         ("id".to_string(), json!(vc_id)),
     ]));
 
-    let vc = e.challenge("std_vc", 0, vc_id);
+    // FIX: Corrected `challenge` method call (added `dim` and `stage_id`)
+    let vc = e.challenge("std_vc", stage, 3, 0, vc_id);
 
     // Retrieve and store cExpId before modifying res
     let c_exp_id = expressions.len();
@@ -48,7 +49,12 @@ pub fn generate_constraint_polynomial(
             panic!("Boundary {} not supported", boundary);
         }
 
-        let mut expr = e.exp(constraint["e"].as_u64().unwrap_or(0) as usize, 0);
+        // FIX: Removed the incorrect call to `e.exp` (no `exp` method exists)
+        let mut expr = json!({
+            "op": "exp",
+            "e": constraint["e"].as_u64().unwrap_or(0) as usize,
+            "stage": 0
+        });
 
         // Handle boundary-specific logic
         if boundary == "everyFrame" {
@@ -107,8 +113,8 @@ pub fn generate_constraint_polynomial(
         ("id".to_string(), json!(xi_id)),
     ]));
 
-    // Calculate the initial constraint degree
-    let initial_q_degree = calculate_exp_deg(expressions, &expressions[c_exp_id], &[]);
+    // FIX: Corrected `calculate_exp_deg` (pass `c_exp_id`, not `&expressions[c_exp_id]`)
+    let initial_q_degree = calculate_exp_deg(expressions, c_exp_id, &[], false);
 
     println!("The maximum constraint degree is {} (without intermediate polynomials)", initial_q_degree);
 }
