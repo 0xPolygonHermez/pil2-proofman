@@ -19,44 +19,28 @@ pub fn generate_libs_polynomials(
     pil.insert("nCm2".to_string(), json!(0));
     pil.insert("nCm3".to_string(), json!(0));
 
-    let mut pil_libs = Vec::new();
+    let airgroup_id = res["airgroupId"].as_u64().unwrap();
+    let air_id = res["airId"].as_u64().unwrap();
+
+    let mut challenge_sets: Vec<Vec<Value>> = Vec::new();
 
     if pil.get("plookupIdentities").map_or(false, |v| !v.as_array().unwrap().is_empty()) {
-        grand_product_plookup(pil, symbols, hints, res["airgroupId"].as_u64().unwrap(), res["airId"].as_u64().unwrap());
-
-        let challenges = init_challenges_plookup();
-        pil_libs.push(challenges);
+        grand_product_plookup(pil, symbols, hints, airgroup_id, air_id);
+        challenge_sets.push(init_challenges_plookup());
     }
 
     if pil.get("permutationIdentities").map_or(false, |v| !v.as_array().unwrap().is_empty()) {
-        grand_product_permutation(
-            pil,
-            symbols,
-            hints,
-            res["airgroupId"].as_u64().unwrap(),
-            res["airId"].as_u64().unwrap(),
-        );
-
-        let challenges = init_challenges_permutation();
-        pil_libs.push(challenges);
+        grand_product_permutation(pil, symbols, hints, airgroup_id, air_id);
+        challenge_sets.push(init_challenges_permutation());
     }
 
     if pil.get("connectionIdentities").map_or(false, |v| !v.as_array().unwrap().is_empty()) {
-        grand_product_connection(
-            pil,
-            symbols,
-            hints,
-            res["airgroupId"].as_u64().unwrap(),
-            res["airId"].as_u64().unwrap(),
-            fr_mul,
-            k,
-        );
-
-        let challenges = init_challenges_connection();
-        pil_libs.push(challenges);
+        grand_product_connection(pil, symbols, hints, airgroup_id, air_id, fr_mul, k);
+        challenge_sets.push(init_challenges_connection());
     }
 
-    for challenges in pil_libs {
+    // Process challenge sets
+    for challenges in challenge_sets {
         calculate_challenges(symbols, &challenges);
     }
 }
