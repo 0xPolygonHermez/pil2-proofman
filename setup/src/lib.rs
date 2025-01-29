@@ -8,6 +8,7 @@ pub mod gen_constraint_pol;
 pub mod utils;
 pub mod mapping;
 pub mod gen_code;
+pub mod fri_poly;
 mod setup;
 
 pub use setup::*;

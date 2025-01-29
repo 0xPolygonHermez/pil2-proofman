@@ -1,66 +1,93 @@
-use serde_json::{json, Value};
 use std::collections::HashMap;
+use serde_json::{json, Value};
+
+use crate::helpers::get_exp_dim;
 
 /// Struct for managing expressions and operations
+#[derive(Debug, Clone)]
 pub struct ExpressionOps {
     pub stage: usize,
     pub dim: usize,
 }
 
 impl ExpressionOps {
-    /// Creates a new `ExpressionOps` instance with the default stage and dimension.
+    /// Creates a new `ExpressionOps` instance with the given stage and dimension.
     pub fn new(stage: usize, dim: usize) -> Self {
         Self { stage, dim }
     }
 
-    /// Creates an exponential operation
-    pub fn exp(&self, id: usize, value: usize) -> Value {
-        json!({
-            "op": "exp",
-            "id": id,
-            "value": value,
-            "stage": self.stage
-        })
-    }
-
-    /// Creates a `Zi` operation for a given boundary
-    pub fn zi(&self, boundary_id: usize) -> Value {
-        json!({
-            "op": "Zi",
-            "boundary": boundary_id,
-            "stage": self.stage
-        })
-    }
-
-    pub fn cm(&self, id: usize, value: usize) -> Value {
-        json!({
-            "op": "cm",
-            "id": id,
-            "value": value,
-            "stage": self.stage,
-            "dim": self.dim
-        })
-    }
-
     /// Adds two expressions together
-    pub fn add(&self, lhs: Value, rhs: Value) -> Value {
-        json!({ "op": "add", "values": [lhs, rhs] })
+    pub fn add(&self, a: Value, b: Value) -> Value {
+        if a.is_null() {
+            return b;
+        }
+        if b.is_null() {
+            return a;
+        }
+        json!({ "op": "add", "values": [a, b] })
+    }
+
+    /// Subtracts one expression from another
+    pub fn sub(&self, a: Value, b: Value) -> Value {
+        if a.is_null() {
+            return b;
+        }
+        if b.is_null() {
+            return a;
+        }
+        json!({ "op": "sub", "values": [a, b] })
     }
 
     /// Multiplies two expressions
-    pub fn mul(&self, lhs: Value, rhs: Value) -> Value {
-        json!({ "op": "mul", "values": [lhs, rhs] })
+    pub fn mul(&self, a: Value, b: Value) -> Value {
+        if a.is_null() {
+            return b;
+        }
+        if b.is_null() {
+            return a;
+        }
+        json!({ "op": "mul", "values": [a, b] })
     }
 
     /// Creates a challenge expression
-    pub fn challenge(&self, name: &str, stage_id: usize, id: usize) -> Value {
+    pub fn challenge(&self, name: &str, stage: usize, dim: usize, stage_id: usize, id: usize) -> Value {
         json!({
             "op": "challenge",
             "name": name,
-            "stage": self.stage,
-            "dim": self.dim,
             "stageId": stage_id,
+            "id": id,
+            "stage": stage,
+            "dim": dim,
+            "expDeg": 0  // Set expDeg = 0 as in JS
+        })
+    }
+
+    /// Creates an `xDivXSubXi` operation
+    pub fn x_div_x_sub_xi(&self, opening: usize, id: usize) -> Value {
+        json!({
+            "op": "xDivXSubXi",
+            "opening": opening,
             "id": id
+        })
+    }
+
+    /// Creates a `Zi` operation
+    pub fn zi(&self, boundary_id: usize) -> Value {
+        json!({
+            "op": "Zi",
+            "boundaryId": boundary_id
+        })
+    }
+
+    /// Creates a column memory (cm) operation
+    pub fn cm(&self, id: usize, row_offset: usize, stage: Option<usize>, dim: usize) -> Value {
+        let stage = stage.expect(&format!("Stage not defined for cm {}", id));
+        json!({
+            "op": "cm",
+            "id": id,
+            "stage": stage,
+            "dim": dim,
+            "rowOffset": row_offset
         })
     }
 }
@@ -88,16 +115,8 @@ pub fn add_intermediate_polynomials(
         .filter(|s| s.get("type") == Some(&json!("challenge")) && s["stage"].as_u64().unwrap_or(0) < stage as u64)
         .count();
 
-    symbols.push(HashMap::from([
-        ("type".to_string(), json!("challenge")),
-        ("name".to_string(), json!("std_vc")),
-        ("stage".to_string(), json!(stage)),
-        ("dim".to_string(), json!(3)),
-        ("stageId".to_string(), json!(0)),
-        ("id".to_string(), json!(vc_id)),
-    ]));
+    let vc = e.challenge("std_vc", stage, 3, 0, vc_id);
 
-    let vc = e.challenge("std_vc", 0, vc_id);
     let max_deg_expr =
         calculate_exp_deg(expressions, &expressions[res["cExpId"].as_u64().unwrap_or(0) as usize], im_exps);
 
@@ -121,7 +140,11 @@ pub fn add_intermediate_polynomials(
     }
 
     for &exp_id in im_exps {
-        let stage_im = res["nStages"].as_u64().unwrap_or(0) as usize;
+        let stage_im = res
+            .get("imPolsStages")
+            .map(|_| expressions[exp_id]["stage"].as_u64().unwrap_or(0) as usize)
+            .unwrap_or(res["nStages"].as_u64().unwrap_or(0) as usize);
+
         let stage_id = symbols
             .iter()
             .filter(|s| s.get("type") == Some(&json!("witness")) && s["stage"] == json!(stage_im))
@@ -142,14 +165,13 @@ pub fn add_intermediate_polynomials(
             ("airgroupId".to_string(), res["airgroupId"].clone()),
         ]));
 
-        expressions[exp_id]["imPol"] = json!(true);
-        expressions[exp_id]["polId"] = json!(res["nCommitments"].as_u64().unwrap_or(0) as usize);
-        expressions[exp_id]["stage"] = json!(stage_im);
-
-        let intermediate_expr =
-            e.add(e.cm(res["nCommitments"].as_u64().unwrap_or(0) as usize, 0), expressions[exp_id].clone());
+        let intermediate_expr = e.sub(
+            e.cm(res["nCommitments"].as_u64().unwrap_or(0) as usize, 0, Some(stage_im), dim),
+            expressions[exp_id].clone(),
+        );
 
         expressions.push(intermediate_expr.clone());
+
         constraints.push(json!({
             "e": expressions.len() - 1,
             "boundary": "everyRow",
@@ -157,47 +179,106 @@ pub fn add_intermediate_polynomials(
             "stage": expressions[exp_id]["stage"]
         }));
 
-        let updated_expr = e.add(
+        expressions[res["cExpId"].as_u64().unwrap_or(0) as usize] = e.add(
             e.mul(vc.clone(), expressions[res["cExpId"].as_u64().unwrap_or(0) as usize].clone()),
             intermediate_expr,
         );
+    }
 
-        expressions[res["cExpId"].as_u64().unwrap_or(0) as usize] = updated_expr;
+    let every_row_index = res["boundaries"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .position(|b| b["name"] == json!("everyRow"))
+        .unwrap_or_else(|| panic!("Boundary 'everyRow' not found"));
+
+    expressions[res["cExpId"].as_u64().unwrap_or(0) as usize] =
+        e.mul(expressions[res["cExpId"].as_u64().unwrap_or(0) as usize].clone(), e.zi(every_row_index));
+
+    res.insert("qDim".to_string(), json!(get_exp_dim(expressions, res["cExpId"].as_u64().unwrap_or(0) as usize)));
+
+    for i in 0..res["qDeg"].as_u64().unwrap_or(0) as usize {
+        let index = res["nCommitments"].as_u64().unwrap_or(0) as usize;
+        res.insert("nCommitments".to_string(), json!(index + 1));
+
+        symbols.push(HashMap::from([
+            ("type".to_string(), json!("witness")),
+            ("name".to_string(), json!(format!("Q{}", i))),
+            ("polId".to_string(), json!(index)),
+            ("stage".to_string(), json!(stage)),
+            ("dim".to_string(), json!(res["qDim"])),
+        ]));
+
+        expressions.push(e.cm(index, 0, Some(stage), res["qDim"].as_u64().unwrap_or(0) as usize));
     }
 }
 
 /// Calculates the maximum degree of an expression.
-pub fn calculate_exp_deg(expressions: &[Value], exp: &Value, im_exps: &[usize]) -> usize {
-    match exp.get("op").and_then(|v| v.as_str()) {
+pub fn calculate_exp_deg(
+    expressions: &mut [Value], // Mutable reference to store degrees
+    exp_id: usize,             // Instead of &Value, pass the index
+    im_exps: &[usize],
+    cache_values: bool,
+) -> usize {
+    // Borrow exp separately
+    let exp = expressions.get(exp_id).expect("Invalid exp_id index").clone();
+
+    if cache_values {
+        if let Some(degree) = exp.get("degree_").and_then(|v| v.as_u64()) {
+            return degree as usize;
+        }
+    }
+
+    let deg = match exp.get("op").and_then(|v| v.as_str()) {
         Some("exp") => {
-            if im_exps.contains(&(exp["id"].as_u64().unwrap_or(0) as usize)) {
+            let id = exp.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if im_exps.contains(&id) {
                 1
             } else {
-                calculate_exp_deg(expressions, &expressions[exp["id"].as_u64().unwrap_or(0) as usize], im_exps)
+                calculate_exp_deg(expressions, id, im_exps, cache_values)
             }
         }
-        Some("mul") => {
-            let lhs = calculate_exp_deg(expressions, &exp["values"][0], im_exps);
-            let rhs = calculate_exp_deg(expressions, &exp["values"][1], im_exps);
-            lhs + rhs
+        Some("x") | Some("const") | Some("cm") | Some("custom") => 1,
+        Some("Zi") => {
+            if exp.get("boundary") == Some(&json!("everyRow")) {
+                0
+            } else {
+                1
+            }
         }
-        Some("add") | Some("sub") => {
-            let lhs = calculate_exp_deg(expressions, &exp["values"][0], im_exps);
-            let rhs = calculate_exp_deg(expressions, &exp["values"][1], im_exps);
-            usize::max(lhs, rhs)
+        Some("number")
+        | Some("public")
+        | Some("challenge")
+        | Some("eval")
+        | Some("airgroupvalue")
+        | Some("airvalue") => 0,
+        Some("neg") => exp.get("values").and_then(|v| v.as_array()).and_then(|values| values.get(0)).map_or(0, |v| {
+            let id = v.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            calculate_exp_deg(expressions, id, im_exps, cache_values)
+        }),
+        Some("add") | Some("sub") | Some("mul") => {
+            let blank = vec![];
+            let values = exp.get("values").and_then(|v| v.as_array()).unwrap_or(&blank);
+            if values.len() < 2 {
+                return 0;
+            }
+            let lhs_id = values[0].get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let rhs_id = values[1].get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+
+            let lhs_deg = calculate_exp_deg(expressions, lhs_id, im_exps, cache_values);
+            let rhs_deg = calculate_exp_deg(expressions, rhs_id, im_exps, cache_values);
+            if exp["op"] == "mul" {
+                lhs_deg + rhs_deg
+            } else {
+                lhs_deg.max(rhs_deg)
+            }
         }
-        _ => 0,
-    }
-}
+        _ => panic!("Exp op not defined: {:?}", exp),
+    };
 
-/// Updates metadata for expressions.
-pub fn add_info_expressions(expressions: &mut [Value], expr: &Value) {
-    if let Some(degree) = expr["degree"].as_u64() {
-        expressions.last_mut().unwrap()["degree"] = json!(degree);
+    if cache_values {
+        expressions[exp_id]["degree_"] = json!(deg);
     }
-}
 
-/// Gets the dimensionality of an expression.
-pub fn get_exp_dim(expressions: &[Value], exp_id: usize) -> usize {
-    expressions[exp_id]["dim"].as_u64().unwrap_or(1) as usize
+    deg
 }
