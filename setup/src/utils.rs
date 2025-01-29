@@ -50,6 +50,217 @@ pub fn format_expressions(pilout: &HashMap<String, Value>, save_symbols: bool, g
     result.into_iter().collect()
 }
 
+/// Formats the symbols in the `pilout`, filtering and transforming them accordingly.
+pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Value> {
+    let v = vec![];
+    let pil_symbols = pilout.get("symbols").and_then(|s| s.as_array()).unwrap_or(&v);
+
+    let mut symbols = Vec::new();
+
+    for s in pil_symbols {
+        let s_type = s["type"].as_u64().expect("Missing type field");
+
+        match s_type {
+            10 => {
+                // CUSTOM_COL
+                let stage = s["stage"].as_u64().unwrap_or(0);
+                if stage != 0 {
+                    panic!("Invalid stage {} for a custom commit", stage);
+                }
+            }
+            _ => {}
+        }
+
+        if matches!(s_type, 1 | 3 | 10) {
+            // FIXED_COL, WITNESS_COL, CUSTOM_COL
+            let dim = if [0, 1].contains(&s["stage"].as_u64().unwrap_or(0)) { 1 } else { 3 };
+
+            let type_str = match s_type {
+                1 => "fixed",
+                10 => "custom",
+                _ => "witness",
+            };
+
+            let previous_pols: Vec<&Value> = pil_symbols
+                .iter()
+                .filter(|si| {
+                    si["type"] == s["type"]
+                        && si["airId"] == s["airId"]
+                        && si["airGroupId"] == s["airGroupId"]
+                        && (si["stage"].as_u64().unwrap_or(0) < s["stage"].as_u64().unwrap_or(0)
+                            || (si["stage"] == s["stage"]
+                                && si["id"].as_u64().unwrap_or(0) < s["id"].as_u64().unwrap_or(0)))
+                        && (s_type != 10 || s["commitId"] == si["commitId"])
+                })
+                .collect();
+
+            let mut pol_id = 0;
+            for pol in &previous_pols {
+                if pol.get("dim").is_none() {
+                    pol_id += 1;
+                } else {
+                    pol_id += pol["lengths"]
+                        .as_array()
+                        .unwrap_or(&vec![])
+                        .iter()
+                        .map(|l| l.as_u64().unwrap_or(1))
+                        .product::<u64>() as usize;
+                }
+            }
+
+            if !s.get("dim").is_some() {
+                let stage_id = s["id"].as_u64().unwrap_or(0) as usize;
+                let mut symbol = json!({
+                    "name": s["name"],
+                    "stage": s["stage"],
+                    "type": type_str,
+                    "polId": pol_id,
+                    "stageId": stage_id,
+                    "dim": dim,
+                    "airId": s["airId"],
+                    "airgroupId": s["airGroupId"],
+                });
+
+                if s_type == 10 {
+                    symbol["commitId"] = s["commitId"].clone();
+                }
+                symbols.push(symbol);
+            } else {
+                let mut multi_array_symbols = Vec::new();
+                generate_multi_array_symbols(&mut multi_array_symbols, &vec![], s, type_str, dim, pol_id, 0);
+                symbols.extend(multi_array_symbols);
+            }
+        } else if s_type == 4 {
+            // PROOF_VALUE
+            symbols.push(json!({
+                "name": s["name"],
+                "type": "proofValue",
+                "id": s["id"]
+            }));
+        } else if s_type == 8 {
+            // CHALLENGE
+            let id = pil_symbols
+                .iter()
+                .filter(|si| {
+                    si["type"].as_u64() == Some(8)
+                        && (si["stage"].as_u64().unwrap_or(0) < s["stage"].as_u64().unwrap_or(0)
+                            || (si["stage"] == s["stage"]
+                                && si["id"].as_u64().unwrap_or(0) < s["id"].as_u64().unwrap_or(0)))
+                })
+                .count();
+
+            symbols.push(json!({
+                "name": s["name"],
+                "type": "challenge",
+                "stageId": s["id"],
+                "id": id,
+                "stage": s["stage"],
+                "dim": 3
+            }));
+        } else if s_type == 6 {
+            // PUBLIC_VALUE
+            if !s.get("dim").is_some() {
+                symbols.push(json!({
+                    "name": s["name"],
+                    "stage": 1,
+                    "type": "public",
+                    "dim": 1,
+                    "id": s["id"]
+                }));
+            } else {
+                let mut multi_array_symbols = Vec::new();
+                generate_multi_array_symbols(
+                    &mut multi_array_symbols,
+                    &vec![],
+                    s,
+                    "public",
+                    1,
+                    s["id"].as_u64().unwrap_or(0) as usize,
+                    0,
+                );
+                symbols.extend(multi_array_symbols);
+            }
+        } else if s_type == 5 {
+            // AIRGROUP_VALUE
+            let mut airgroup_value = json!({
+                "name": s["name"],
+                "type": "airgroupvalue",
+                "id": s["id"],
+                "airgroupId": s["airGroupId"],
+                "dim": 3
+            });
+
+            if !global {
+                let id = s["id"].as_u64().unwrap_or(0) as usize;
+                if let Some(airgroup_values) = pilout["airGroupValues"].as_array() {
+                    if id < airgroup_values.len() {
+                        airgroup_value["stage"] = airgroup_values[id]["stage"].clone();
+                    }
+                }
+            }
+            symbols.push(airgroup_value);
+        } else if s_type == 9 {
+            // AIR_VALUE
+            let mut air_value = json!({
+                "name": s["name"],
+                "type": "airvalue",
+                "id": s["id"],
+                "airgroupId": s["airGroupId"]
+            });
+
+            if !global {
+                let id = s["id"].as_u64().unwrap_or(0) as usize;
+                if let Some(air_values) = pilout["airValues"].as_array() {
+                    if id < air_values.len() {
+                        let stage = air_values[id]["stage"].as_u64().unwrap_or(1);
+                        air_value["stage"] = json!(stage);
+                        air_value["dim"] = json!(if stage != 1 { 3 } else { 1 });
+                    }
+                }
+            }
+
+            symbols.push(air_value);
+        } else {
+            panic!("Invalid type {}", s_type);
+        }
+    }
+
+    symbols
+}
+
+/// Generates multi-dimensional array symbols for pilout processing.
+fn generate_multi_array_symbols(
+    output: &mut Vec<Value>,
+    current_indices: &[usize],
+    s: &Value,
+    type_str: &str,
+    dim: usize,
+    pol_id: usize,
+    depth: usize,
+) {
+    let v = vec![];
+    let lengths = s["lengths"].as_array().unwrap_or(&v);
+    if depth == lengths.len() {
+        output.push(json!({
+            "name": s["name"],
+            "stage": s["stage"],
+            "type": type_str,
+            "polId": pol_id,
+            "stageId": s["id"],
+            "dim": dim,
+            "airId": s["airId"],
+            "airgroupId": s["airGroupId"]
+        }));
+        return;
+    }
+
+    for i in 0..lengths[depth].as_u64().unwrap_or(1) {
+        let mut new_indices = current_indices.to_vec();
+        new_indices.push(i as usize);
+        generate_multi_array_symbols(output, &new_indices, s, type_str, dim, pol_id, depth + 1);
+    }
+}
+
 /// Formats raw hints by processing fields recursively.
 pub fn format_hints(
     pilout: &HashMap<String, Value>,
@@ -188,7 +399,7 @@ pub fn print_expressions(
 }
 
 /// Recursively processes a hint field, extracting values and lengths.
-fn process_hint_field(
+pub fn process_hint_field(
     hint_field: &Value,
     pilout: &HashMap<String, Value>,
     symbols: &mut Vec<Value>,
@@ -229,7 +440,7 @@ fn process_hint_field(
 }
 
 /// Formats an individual expression from Pilout.
-fn format_expression(
+pub fn format_expression(
     exp: &Value,
     pilout: &HashMap<String, Value>,
     symbols: &mut Vec<Value>,
@@ -281,7 +492,7 @@ fn format_expression(
 }
 
 /// Converts a buffer to a big integer.
-fn buf2bint(buf: &Value) -> u128 {
+pub fn buf2bint(buf: &Value) -> u128 {
     let empty_vec = Vec::new(); // Store the empty vector to extend its lifetime
     let buf_bytes = buf.as_array().unwrap_or(&empty_vec);
 
@@ -294,7 +505,7 @@ fn buf2bint(buf: &Value) -> u128 {
 }
 
 /// Adds a symbol to the list of symbols.
-fn add_symbol(pilout: &HashMap<String, Value>, symbols: &mut Vec<Value>, exp: &Value) {
+pub fn add_symbol(pilout: &HashMap<String, Value>, symbols: &mut Vec<Value>, exp: &Value) {
     let name = format!("{}.{}", pilout["name"].as_str().unwrap_or("unknown"), exp["op"].as_str().unwrap_or("unknown"));
     symbols.push(json!({
         "name": name,
