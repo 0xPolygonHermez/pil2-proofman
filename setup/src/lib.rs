@@ -11,6 +11,7 @@ pub mod gen_code;
 pub mod fri_poly;
 pub mod gen_pil_code;
 pub mod pil_info;
+pub mod prepare_pil;
 mod setup;
 
 pub use setup::*;

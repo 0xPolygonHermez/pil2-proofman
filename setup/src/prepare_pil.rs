@@ -1,0 +1,119 @@
+// use crate::{gen_constraint_pol::generate_constraint_polynomial, helpers::add_info_expressions};
+// use serde_json::{json, Value};
+// use std::collections::{HashMap, HashSet};
+
+// /// Prepares the PIL (Polynomial Identity Language) structure.
+// /// Mirrors the original JavaScript implementation.
+// pub fn prepare_pil(
+//     f: &Value,
+//     pil: &Value,
+//     stark_struct: &Value,
+//     pil2: bool,
+//     options: &HashMap<String, Value>,
+// ) -> HashMap<String, Value> {
+//     let mut res = HashMap::new();
+//     res.insert("name".to_string(), pil["name"].clone());
+//     res.insert("imPolsStages".to_string(), options.get("imPolsStages").unwrap_or(&json!(false)).clone());
+
+//     // Initialize mappings
+//     res.insert("cmPolsMap".to_string(), json!([]));
+//     res.insert("constPolsMap".to_string(), json!([]));
+//     res.insert("challengesMap".to_string(), json!([]));
+//     res.insert("publicsMap".to_string(), json!([]));
+//     res.insert("airgroupValuesMap".to_string(), json!([]));
+//     res.insert("airValuesMap".to_string(), json!([]));
+//     res.insert("pil2".to_string(), json!(pil2));
+
+//     let mut map_sections_n = HashMap::new();
+//     map_sections_n.insert("const".to_string(), json!(0));
+
+//     let (mut expressions, mut symbols, mut constraints, mut hints);
+
+//     // Ensure all expressions have `stage = 1`
+//     for exp in pil["expressions"].as_array().unwrap() {
+//         exp["stage"] = json!(1);
+//     }
+
+//     if pil2 {
+//         let pil_info = get_pilout_info(&res, pil);
+//         expressions = pil_info["expressions"].clone();
+//         symbols = pil_info["symbols"].clone();
+//         hints = pil_info["hints"].clone();
+//         constraints = pil_info["constraints"].clone();
+//     } else {
+//         let pil1_info = generate_pil1_polynomials(f, &res, pil, options);
+//         expressions = pil1_info["expressions"].clone();
+//         symbols = pil1_info["symbols"].clone();
+//         hints = pil1_info["hints"].clone();
+//         constraints = pil1_info["constraints"].clone();
+//     }
+
+//     // Set up section counts
+//     for s in 1..=res["nStages"].as_u64().unwrap() + 1 {
+//         map_sections_n.insert(format!("cm{}", s), json!(0));
+//     }
+
+//     // Handle stark struct consistency checks
+//     if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap() {
+//         res.insert("starkStruct".to_string(), stark_struct.clone());
+
+//         if stark_struct["nBits"] != res["pilPower"] {
+//             panic!(
+//                 "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",
+//                 pil["airId"], pil["airgroupId"], stark_struct["nBits"], res["pilPower"]
+//             );
+//         }
+
+//         if stark_struct["nBitsExt"] != stark_struct["steps"][0]["nBits"] {
+//             panic!(
+//                 "starkStruct.nBitsExt and first step of starkStruct have a mismatch (nBitsExt:{} pil:{})",
+//                 stark_struct["nBitsExt"], stark_struct["steps"][0]["nBits"]
+//             );
+//         }
+//     } else {
+//         res.insert("starkStruct".to_string(), json!({ "nBits": res["pilPower"] }));
+//     }
+
+//     // Process constraints
+//     for constraint in constraints.as_array().unwrap() {
+//         let constraint_exp_id = constraint["e"].as_u64().unwrap() as usize;
+//         add_info_expressions(&mut expressions, constraint_exp_id);
+//         constraint["stage"] = expressions[constraint_exp_id]["stage"].clone();
+//     }
+
+//     // Process expressions
+//     for exp in expressions.as_array().unwrap() {
+//         if exp.get("symbols").is_none() {
+//             add_info_expressions(&mut expressions, exp.clone());
+//         }
+//     }
+
+//     res.insert("boundaries".to_string(), json!([{ "name": "everyRow" }]));
+
+//     // Collect unique opening points
+//     let mut opening_points: HashSet<Value> = HashSet::new();
+//     for constraint in constraints.as_array().unwrap() {
+//         let constraint_exp_id = constraint["e"].as_u64().unwrap() as usize;
+//         if let Some(offsets) = expressions[constraint_exp_id]["rowsOffsets"].as_array() {
+//             opening_points.extend(offsets.iter().cloned());
+//         }
+//     }
+
+//     let mut opening_points_vec: Vec<Value> = opening_points.into_iter().collect();
+//     opening_points_vec.sort();
+//     res.insert("openingPoints".to_string(), json!(opening_points_vec));
+
+//     // Generate constraint polynomial
+//     generate_constraint_polynomial(&mut res, &expressions, &symbols, &constraints);
+
+//     json!({
+//         "res": res,
+//         "expressions": expressions,
+//         "constraints": constraints,
+//         "symbols": symbols,
+//         "hints": hints
+//     })
+//     .as_object()
+//     .unwrap()
+//     .clone()
+// }
