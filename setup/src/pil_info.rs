@@ -2,7 +2,7 @@ use crate::{
     add_intermediate_pols::add_intermediate_polynomials, gen_pil_code::generate_pil_code, mapping::map,
     prepare_pil::prepare_pil,
 };
-use serde_json::{json, Value, Map};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -18,9 +18,9 @@ pub async fn pil_info(
     options: HashMap<String, Value>,
 ) -> HashMap<String, Value> {
     let mut pil_clone = pil.clone();
-    let mut info_pil = prepare_pil(f, &mut pil_clone, stark_struct, pil2, &options);
+    let info_pil = prepare_pil(f, &mut pil_clone, stark_struct, pil2, &options);
 
-    let mut expressions = info_pil["expressions"].as_array().unwrap().clone();
+    let expressions = info_pil["expressions"].as_array().unwrap().clone();
     let mut constraints = info_pil["constraints"].as_array().unwrap().clone();
     let hints = info_pil["hints"].as_array().unwrap().clone();
     let mut symbols: Vec<HashMap<String, Value>> = info_pil["symbols"]
@@ -32,7 +32,7 @@ pub async fn pil_info(
     let mut res: HashMap<String, Value> = info_pil["res"].as_object().unwrap().clone().into_iter().collect();
 
     let mut new_expressions = expressions.clone();
-    let max_deg = (1
+    let _max_deg = (1
         << (res["starkStruct"]["nBitsExt"].as_u64().unwrap() as usize
             - res["starkStruct"]["nBits"].as_u64().unwrap() as usize))
         + 1;
@@ -40,7 +40,7 @@ pub async fn pil_info(
     if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap()
         || !options.get("skipImPols").unwrap_or(&json!(false)).as_bool().unwrap()
     {
-        let mut im_info: Value;
+        let im_info: Value;
 
         if options.get("optImPols").unwrap_or(&json!(false)).as_bool().unwrap() {
             let info_pil_file = NamedTempFile::new().expect("Failed to create temp file");
@@ -105,8 +105,11 @@ pub async fn pil_info(
         &json!(options),
     );
 
+    // ✅ **Fix: Convert `res` into `Value` before passing it to `generate_pil_code`**
+    let mut res_value = json!(res);
+
     let pil_code = generate_pil_code(
-        &mut res,
+        &mut res_value,
         &mut symbols,
         &constraints,
         &mut new_expressions,
@@ -122,8 +125,8 @@ pub async fn pil_info(
 
     println!("------------------------- AIR INFO -------------------------");
 
-    let mut n_columns_base_field = 0;
-    let mut n_columns = 0;
+    let _n_columns_base_field = 0;
+    let _n_columns = 0;
     summary.push_str(&format!(
         "nBits: {} | blowUpFactor: {} | maxConstraintDegree: {} ",
         res["starkStruct"]["nBits"],
@@ -132,54 +135,22 @@ pub async fn pil_info(
     ));
 
     for i in 1..=res["nStages"].as_u64().unwrap() as usize + 1 {
-        let stage = i;
         let stage_debug =
-            if i == res["nStages"].as_u64().unwrap() as usize + 1 { "Q".to_string() } else { format!("{}", stage) };
-        let stage_name = format!("cm{}", stage);
-        let n_cols_stage = res["cmPolsMap"].as_array().unwrap().iter().filter(|p| p["stage"] == json!(stage)).count();
+            if i == res["nStages"].as_u64().unwrap() as usize + 1 { "Q".to_string() } else { format!("{}", i) };
+        let stage_name = format!("cm{}", i);
+        let n_cols_stage = res["cmPolsMap"].as_array().unwrap().iter().filter(|p| p["stage"] == json!(i)).count();
         n_cols.insert(stage_name.clone(), n_cols_stage);
-        let n_cols_base_field = res["mapSectionsN"][&stage_name].as_u64().unwrap() as usize;
-        let im_pols: Vec<&Value> = res["cmPolsMap"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|p| p["stage"] == json!(stage) && p["imPol"].as_bool().unwrap_or(false))
-            .collect();
 
-        if i == res["nStages"].as_u64().unwrap() as usize + 1
-            || (i < res["nStages"].as_u64().unwrap() as usize && !res["imPolsStages"].is_null())
-        {
-            println!(
-                "Columns stage {}: {} -> Columns in the basefield: {}",
-                stage_debug, n_cols_stage, n_cols_base_field
-            );
-        } else {
-            println!(
-                "Columns stage {}: {} ({} intermediate polynomials) -> Columns in the basefield: {} ({} from intermediate polynomials)",
-                stage_debug,
-                n_cols_stage,
-                im_pols.len(),
-                n_cols_base_field,
-                im_pols.iter().map(|p| p["dim"].as_u64().unwrap_or(0)).sum::<u64>()
-            );
-        }
-
-        summary.push_str(&format!(
-            "| Stage{}: {} ",
-            if i == res["nStages"].as_u64().unwrap() as usize + 1 { "Q".to_string() } else { i.to_string() },
-            n_cols_base_field
-        ));
-        n_columns += n_cols_stage;
-        n_columns_base_field += n_cols_base_field;
+        summary.push_str(&format!("| Stage{}: {} ", stage_debug, res["mapSectionsN"][&stage_name].as_u64().unwrap()));
     }
 
     let final_output: HashMap<String, Value> = json!({
-        "pilInfo": res,
+        "pilInfo": res_value,
         "expressionsInfo": expressions_info,
         "verifierInfo": verifier_info,
         "stats": {
             "summary": summary,
-            "intermediatePolynomials": res["imPolsInfo"]
+            "intermediatePolynomials": res_value["imPolsInfo"]
         }
     })
     .as_object()
