@@ -24,11 +24,11 @@ pub fn prepare_pil(
     res.insert("airValuesMap".to_string(), json!([]));
     res.insert("pil2".to_string(), json!(pil2));
 
-    let mut map_sections_n = HashMap::new();
-    map_sections_n.insert("const".to_string(), json!(0));
+    res.insert("mapSectionsN".to_string(), json!({ "const": 0 }));
+    res.insert("pilPower".to_string(), pil["pilPower"].clone());
 
     let mut expressions;
-    let mut symbols;
+    let symbols;
     let mut constraints;
     let hints;
 
@@ -39,8 +39,10 @@ pub fn prepare_pil(
     }
 
     if pil2 {
-        let mut pil_hashmap: HashMap<String, Value> = serde_json::from_value(pil.clone()).unwrap();
-        let pil_info = get_pilout_info(&mut res, &mut pil_hashmap);
+        let pil_map: HashMap<String, Value> =
+            pil.as_object().unwrap().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+        let pil_info = get_pilout_info(&mut res, &pil_map);
         expressions = pil_info["expressions"].clone();
         symbols = pil_info["symbols"].clone();
         hints = pil_info["hints"].clone();
@@ -54,8 +56,10 @@ pub fn prepare_pil(
     }
 
     let n_stages = res.get("nStages").and_then(|v| v.as_u64()).unwrap_or(0);
-    for s in 1..=n_stages + 1 {
-        map_sections_n.insert(format!("cm{}", s), json!(0));
+    if let Some(map_sections) = res.get_mut("mapSectionsN").and_then(|v| v.as_object_mut()) {
+        for s in 1..=n_stages + 1 {
+            map_sections.insert(format!("cm{}", s), json!(0));
+        }
     }
 
     if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap() {
@@ -120,20 +124,23 @@ pub fn prepare_pil(
     }
 
     let mut opening_points_vec: Vec<i64> = opening_points.into_iter().collect();
-    opening_points_vec.sort();
+    opening_points_vec.sort_unstable();
     res.insert("openingPoints".to_string(), json!(opening_points_vec));
 
-    if let (Some(expressions_array), Some(symbols_array)) = (expressions.as_array_mut(), symbols.as_array_mut()) {
-        let mut parsed_symbols: Vec<HashMap<String, Value>> =
-            symbols_array.iter_mut().map(|s| serde_json::from_value(s.clone()).unwrap()).collect();
+    // **Fix: Convert `symbols` from `Vec<Value>` to `Vec<HashMap<String, Value>>`**
+    let symbols_vec: Vec<HashMap<String, Value>> = symbols
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_object().unwrap().iter().map(|(k, v)| (k.clone(), v.clone())).collect::<HashMap<String, Value>>())
+        .collect();
 
-        generate_constraint_polynomial(
-            &mut res,
-            expressions_array,
-            &mut parsed_symbols,
-            constraints.as_array().unwrap(),
-        );
-    }
+    generate_constraint_polynomial(
+        &mut res,
+        expressions.as_array_mut().unwrap(),
+        &mut symbols_vec.clone(),
+        constraints.as_array().unwrap(),
+    );
 
     serde_json::from_value(json!({
         "res": res,
