@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 /// Context struct for handling expression transformation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct CodeGenContext {
     stage: usize,
     calculated: HashMap<usize, HashMap<i64, Value>>,
@@ -346,4 +346,180 @@ fn fix_eval(r: &mut Value, ctx: &mut CodeGenContext) {
         r["type"] = json!("eval");
         r["dim"] = json!(3);
     }
+}
+
+/// Generates debugging code for constraints
+pub fn generate_constraints_debug_code(
+    res: &Value,
+    symbols: &[Value],
+    constraints: &[Value],
+    expressions: &[Value],
+) -> Vec<Value> {
+    let mut constraints_code = Vec::new();
+
+    for j in 0..constraints.len() {
+        let constraint = &constraints[j];
+        let mut ctx = CodeGenContext {
+            stage: constraint["stage"].as_u64().unwrap_or(0) as usize,
+            calculated: HashMap::new(),
+            symbols_used: Vec::new(),
+            tmp_used: 0,
+            code: Vec::new(),
+            dom: "n".to_string(),
+            air_id: res["airId"].clone(),
+            airgroup_id: res["airgroupId"].clone(),
+            ..Default::default()
+        };
+
+        let expr = &expressions[constraint["e"].as_u64().unwrap_or(0) as usize];
+
+        if let Some(symbols) = expr["symbols"].as_array() {
+            for symbol_used in symbols {
+                if !ctx.symbols_used.iter().any(|s| {
+                    s["op"] == symbol_used["op"] && s["stage"] == symbol_used["stage"] && s["id"] == symbol_used["id"]
+                }) {
+                    ctx.symbols_used.push(symbol_used.clone());
+                }
+            }
+        }
+
+        pil_code_gen(&mut ctx, symbols, expressions, constraint["e"].as_u64().unwrap_or(0) as usize, 0);
+        let mut constraint_code = build_code(&mut ctx);
+
+        constraint_code["boundary"] = constraint["boundary"].clone();
+        constraint_code["line"] = constraint["line"].clone();
+        constraint_code["imPol"] = json!(constraint["imPol"].as_bool().unwrap_or(false) as u8);
+        constraint_code["stage"] = json!(if constraint["stage"].as_u64().unwrap_or(0) == 0 {
+            1
+        } else {
+            constraint["stage"].as_u64().unwrap_or(0)
+        });
+
+        if constraint["boundary"] == json!("everyFrame") {
+            constraint_code["offsetMin"] = constraint["offsetMin"].clone();
+            constraint_code["offsetMax"] = constraint["offsetMax"].clone();
+        }
+
+        constraints_code.push(constraint_code);
+    }
+
+    constraints_code
+}
+
+/// Generates constraint polynomial verifier code
+pub fn generate_constraint_polynomial_verifier_code(
+    res: &mut Value,
+    verifier_info: &mut Value,
+    symbols: &[Value],
+    expressions: &[Value],
+) {
+    let mut ctx = CodeGenContext {
+        stage: res["nStages"].as_u64().unwrap_or(0) as usize + 1,
+        calculated: HashMap::new(),
+        tmp_used: 0,
+        code: Vec::new(),
+        ev_map: Vec::new(),
+        dom: "n".to_string(),
+        air_id: res["airId"].clone(),
+        airgroup_id: res["airgroupId"].clone(),
+        opening_points: res["openingPoints"].as_array().unwrap_or(&vec![]).iter().filter_map(|v| v.as_i64()).collect(),
+        symbols_used: Vec::new(),
+        verifier_evaluations: true,
+        ..Default::default()
+    };
+
+    for symbol in symbols {
+        if symbol["imPol"].as_bool().unwrap_or(false) {
+            let exp_id = symbol["expId"].as_u64().unwrap_or(0) as usize;
+            ctx.calculated.entry(exp_id).or_insert_with(HashMap::new);
+            for &opening_point in &ctx.opening_points {
+                ctx.calculated.get_mut(&exp_id).unwrap().insert(opening_point, json!({ "cm": true }));
+            }
+        }
+    }
+
+    if let Some(exp_symbols) = expressions[res["cExpId"].as_u64().unwrap_or(0) as usize]["symbols"].as_array() {
+        for symbol_used in exp_symbols {
+            if !ctx.symbols_used.iter().any(|s| {
+                s["op"] == symbol_used["op"] && s["stage"] == symbol_used["stage"] && s["id"] == symbol_used["id"]
+            }) {
+                ctx.symbols_used.push(symbol_used.clone());
+            }
+
+            if ["cm", "const", "custom"].contains(&symbol_used["op"].as_str().unwrap_or("")) {
+                if let Some(rows_offsets) = symbol_used["rowsOffsets"].as_array() {
+                    for row_offset in rows_offsets {
+                        let prime = row_offset.as_i64().unwrap_or(0);
+                        let opening_pos = res["openingPoints"]
+                            .as_array()
+                            .unwrap_or(&vec![])
+                            .iter()
+                            .position(|p| p == row_offset)
+                            .unwrap_or(0);
+
+                        let mut rf = json!({
+                            "type": symbol_used["op"],
+                            "id": symbol_used["id"],
+                            "prime": prime,
+                            "openingPos": opening_pos
+                        });
+
+                        if symbol_used["op"] == json!("custom") {
+                            rf["commitId"] = symbol_used["commitId"].clone();
+                        }
+
+                        ctx.ev_map.push(rf);
+                    }
+                }
+            }
+        }
+    }
+
+    let q_index = res["cmPolsMap"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .position(|p| p["stage"] == json!(res["nStages"].as_u64().unwrap_or(0) + 1) && p["stageId"] == json!(0))
+        .unwrap_or(0);
+
+    let opening_pos =
+        res["openingPoints"].as_array().unwrap_or(&vec![]).iter().position(|p| p == &json!(0)).unwrap_or(0);
+
+    for i in 0..res["qDeg"].as_u64().unwrap_or(0) {
+        ctx.ev_map.push(json!({
+            "type": "cm",
+            "id": q_index + i as usize,
+            "prime": 0,
+            "openingPos": opening_pos
+        }));
+    }
+
+    let mut type_order = HashMap::from([("cm".to_string(), 0), ("const".to_string(), 1)]);
+
+    for (i, _) in res["customCommits"].as_array().unwrap_or(&vec![]).iter().enumerate() {
+        type_order.insert(format!("custom{}", i), i + 2);
+    }
+
+    ctx.ev_map.sort_by(|a, b| {
+        let a_type = a["type"].as_str().unwrap_or("");
+        let b_type = b["type"].as_str().unwrap_or("");
+
+        let a_order = type_order.get(a_type).copied().unwrap_or(usize::MAX);
+        let b_order = type_order.get(b_type).copied().unwrap_or(usize::MAX);
+
+        if a_order != b_order {
+            b_order.cmp(&a_order)
+        } else if a["id"].as_u64().unwrap_or(0) != b["id"].as_u64().unwrap_or(0) {
+            a["id"].as_u64().unwrap_or(0).cmp(&b["id"].as_u64().unwrap_or(0))
+        } else {
+            a["prime"].as_i64().unwrap_or(0).cmp(&b["prime"].as_i64().unwrap_or(0))
+        }
+    });
+
+    pil_code_gen(&mut ctx, symbols, expressions, res["cExpId"].as_u64().unwrap_or(0) as usize, 0);
+    let mut verifier_code = build_code(&mut ctx);
+
+    verifier_code["line"] = json!("");
+    verifier_info["qVerifier"] = verifier_code;
+    res["evMap"] = json!(ctx.ev_map);
 }
