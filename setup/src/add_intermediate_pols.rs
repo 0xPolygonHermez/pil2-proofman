@@ -49,6 +49,41 @@ impl ExpressionOps {
         json!({ "op": "mul", "values": [a, b] })
     }
 
+    /// Creates an exponential (`exp`) operation
+    pub fn exp(&self, id: usize, row_offset: usize, stage: usize) -> Value {
+        json!({
+            "op": "exp",
+            "id": id,
+            "rowOffset": row_offset,
+            "stage": stage
+        })
+    }
+
+    /// Creates a column memory (cm) operation
+    pub fn cm(&self, id: usize, row_offset: usize, stage: Option<usize>, dim: usize) -> Value {
+        let stage = stage.expect(&format!("Stage not defined for cm {}", id));
+        json!({
+            "op": "cm",
+            "id": id,
+            "stage": stage,
+            "dim": dim,
+            "rowOffset": row_offset
+        })
+    }
+
+    /// Creates a custom operation
+    pub fn custom(&self, id: usize, row_offset: usize, stage: Option<usize>, dim: usize, commit_id: usize) -> Value {
+        let stage = stage.expect(&format!("Stage not defined for custom {}", id));
+        json!({
+            "op": "custom",
+            "id": id,
+            "stage": stage,
+            "dim": dim,
+            "rowOffset": row_offset,
+            "commitId": commit_id
+        })
+    }
+
     /// Creates a challenge expression
     pub fn challenge(&self, name: &str, stage: usize, dim: usize, stage_id: usize, id: usize) -> Value {
         json!({
@@ -57,8 +92,56 @@ impl ExpressionOps {
             "stageId": stage_id,
             "id": id,
             "stage": stage,
+            "dim": dim
+        })
+    }
+
+    /// Creates a `q` operation
+    pub fn q(&self, q_dim: usize) -> Value {
+        json!({
+            "op": "q",
+            "id": 0,
+            "dim": q_dim
+        })
+    }
+
+    /// Creates an `f` operation
+    pub fn f(&self) -> Value {
+        json!({
+            "op": "f",
+            "id": 0,
+            "dim": 3
+        })
+    }
+
+    /// Creates a `const` operation
+    pub fn const_(&self, id: usize, row_offset: usize, stage: usize, dim: usize) -> Value {
+        if stage != 0 {
+            panic!("Const must be declared in stage 0");
+        }
+        json!({
+            "op": "const",
+            "id": id,
+            "rowOffset": row_offset,
             "dim": dim,
-            "expDeg": 0  // Set expDeg = 0 as in JS
+            "stage": stage
+        })
+    }
+
+    /// Creates a `number` operation
+    pub fn number(&self, n: f64) -> Value {
+        json!({
+            "op": "number",
+            "value": n.to_string()
+        })
+    }
+
+    /// Creates an `eval` operation
+    pub fn eval(&self, id: usize, dim: usize) -> Value {
+        json!({
+            "op": "eval",
+            "id": id,
+            "dim": dim
         })
     }
 
@@ -79,15 +162,10 @@ impl ExpressionOps {
         })
     }
 
-    /// Creates a column memory (cm) operation
-    pub fn cm(&self, id: usize, row_offset: usize, stage: Option<usize>, dim: usize) -> Value {
-        let stage = stage.expect(&format!("Stage not defined for cm {}", id));
+    /// Creates an `x` operation
+    pub fn x(&self) -> Value {
         json!({
-            "op": "cm",
-            "id": id,
-            "stage": stage,
-            "dim": dim,
-            "rowOffset": row_offset
+            "op": "x"
         })
     }
 }
