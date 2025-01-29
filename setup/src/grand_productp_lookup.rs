@@ -49,6 +49,8 @@ pub fn grand_product_plookup(
     let expressions = pil.get("expressions").cloned().unwrap_or(json!([]));
     let mut expressions_array = expressions.as_array().unwrap().clone();
     let mut n_commitments = pil.get("nCommitments").and_then(|v| v.as_u64()).unwrap_or(0);
+    let mut n_cm2 = pil.get("nCm2").and_then(|v| v.as_u64()).unwrap_or(0);
+    let mut n_cm3 = pil.get("nCm3").and_then(|v| v.as_u64()).unwrap_or(0);
 
     if let Some(identity_list) = plookup_identities.as_array() {
         for (i, pi) in identity_list.iter().enumerate() {
@@ -78,43 +80,7 @@ pub fn grand_product_plookup(
             expressions_array.push(t_exp_val);
             let t_dim = get_exp_dim(&expressions_array, pu_ctx["tExpId"].as_u64().unwrap() as usize);
 
-            if let Some(exp) = expressions_array.get_mut(pu_ctx["tExpId"].as_u64().unwrap() as usize) {
-                exp.as_object_mut().unwrap().insert("deg".to_string(), json!(t_dim));
-            }
-
-            // ✅ Add fExp (same logic as tExp)
-            let mut f_exp = None;
-            if let Some(f) = pi.get("f").and_then(|f| f.as_array()) {
-                for exp in f {
-                    let e_exp = e.exp(exp.as_u64().unwrap() as usize, 0, stage1);
-                    f_exp =
-                        Some(if let Some(f_exp) = f_exp { e.add(e.mul(f_exp, alpha.clone()), e_exp) } else { e_exp });
-                }
-            }
-
-            if let Some(sel_f) = pi.get("selF") {
-                let sel_f = sel_f.as_u64().unwrap() as usize;
-                f_exp = Some(e.mul(
-                    e.sub(f_exp.unwrap(), e.exp(pu_ctx["tExpId"].as_u64().unwrap() as usize, 0, stage1)),
-                    e.exp(sel_f, 0, stage1),
-                ));
-                f_exp = Some(e.add(f_exp.unwrap(), e.exp(pu_ctx["tExpId"].as_u64().unwrap() as usize, 0, stage1)));
-            }
-
-            pu_ctx.insert("fExpId", json!(expressions_array.len()));
-
-            let mut f_exp_val = json!(f_exp.unwrap());
-            f_exp_val.as_object_mut().unwrap().insert("keep".to_string(), json!(true));
-            f_exp_val.as_object_mut().unwrap().insert("stage".to_string(), json!(stage1));
-
-            expressions_array.push(f_exp_val);
-            let f_dim = get_exp_dim(&expressions_array, pu_ctx["fExpId"].as_u64().unwrap() as usize);
-
-            if let Some(exp) = expressions_array.get_mut(pu_ctx["fExpId"].as_u64().unwrap() as usize) {
-                exp.as_object_mut().unwrap().insert("deg".to_string(), json!(f_dim));
-            }
-
-            // ✅ Add Witness Commitments
+            // ✅ Witness Commitments
             pu_ctx.insert("h1Id", json!(n_commitments));
             n_commitments += 1;
             pu_ctx.insert("h2Id", json!(n_commitments));
@@ -122,13 +88,41 @@ pub fn grand_product_plookup(
             pu_ctx.insert("zId", json!(n_commitments));
             n_commitments += 1;
 
-            symbols.push(json!({"type": "witness", "name": format!("Plookup{}.h1", i), "polId": pu_ctx["h1Id"], "stage": stage1, "dim": t_dim.max(f_dim), "airId": air_id, "airgroupId": airgroup_id}));
-            symbols.push(json!({"type": "witness", "name": format!("Plookup{}.h2", i), "polId": pu_ctx["h2Id"], "stage": stage1, "dim": t_dim.max(f_dim), "airId": air_id, "airgroupId": airgroup_id}));
-            symbols.push(json!({"type": "witness", "name": format!("Plookup{}.z", i), "polId": pu_ctx["zId"], "stage": stage2, "dim": t_dim.max(f_dim), "airId": air_id, "airgroupId": airgroup_id}));
+            let mut h1 = e.cm(pu_ctx["h1Id"].as_u64().unwrap() as usize, 0, Some(stage1), t_dim);
+            let mut h2 = e.cm(pu_ctx["h2Id"].as_u64().unwrap() as usize, 0, Some(stage1), t_dim);
+            let mut z = e.cm(pu_ctx["zId"].as_u64().unwrap() as usize, 0, Some(stage2), dim);
+
+            h1.as_object_mut().unwrap().insert("stageId".to_string(), json!(n_cm2));
+            h2.as_object_mut().unwrap().insert("stageId".to_string(), json!(n_cm2));
+            z.as_object_mut().unwrap().insert("stageId".to_string(), json!(n_cm3));
+
+            n_cm2 += 1;
+            n_cm3 += 1;
+
+            // ✅ Constraint `c1`
+            let c1 = e.mul(
+                e.const_(pil["references"]["Global.L1"]["id"].as_u64().unwrap() as usize, 0, 0, 1),
+                e.sub(z.clone(), e.number(1.0)),
+            );
+            expressions_array.push(c1);
+            let c1_id = expressions_array.len() - 1;
+            expressions_array[c1_id].as_object_mut().unwrap().insert("deg".to_string(), json!(2));
+
+            // ✅ Constraint `c2`
+            let zp = e.cm(pu_ctx["zId"].as_u64().unwrap() as usize, 1, Some(stage2), dim);
+            let c2 = e.sub(
+                e.mul(zp, e.exp(pu_ctx["tExpId"].as_u64().unwrap() as usize, 0, stage2)),
+                e.mul(z.clone(), e.exp(pu_ctx["tExpId"].as_u64().unwrap() as usize, 0, stage2)),
+            );
+            expressions_array.push(c2);
+            let c2_id = expressions_array.len() - 1;
+            expressions_array[c2_id].as_object_mut().unwrap().insert("deg".to_string(), json!(2));
+
+            hints.push(json!({"name": "h1h2", "fields": [{"name": "referenceH1", "values": [h1]}, {"name": "referenceH2", "values": [h2]}]}));
+            hints.push(json!({"name": "gprod", "fields": [{"name": "reference", "values": [z]}]}));
         }
     }
 
-    // ✅ Update `pil`
     pil.insert("expressions".to_string(), json!(expressions_array));
     pil.insert("nCommitments".to_string(), json!(n_commitments));
 }
