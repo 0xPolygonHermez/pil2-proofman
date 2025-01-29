@@ -1,21 +1,21 @@
-use crate::utils::{format_expressions, format_constraints, format_symbols, format_hints, buf2bint};
+use crate::utils::{format_expressions, format_constraints, format_symbols, format_hints};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
 /// Extracts and processes PIL information from `pilout`, mirroring JavaScript logic.
-pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &Value) -> HashMap<String, Value> {
+pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String, Value>) -> HashMap<String, Value> {
     res.insert("airId".to_string(), pilout["airId"].clone());
     res.insert("airgroupId".to_string(), pilout["airGroupId"].clone());
 
-    let constraints = format_constraints(pilout);
+    let constraints = format_constraints(&json!(pilout));
 
-    let save_symbols = pilout.get("symbols").is_none();
-    let (mut expressions, mut symbols) = if save_symbols {
-        let e = format_expressions(pilout, true);
+    let save_symbols = !pilout.contains_key("symbols");
+    let (expressions, mut symbols) = if save_symbols {
+        let e = format_expressions(pilout, true, false);
         (e["expressions"].clone(), e["symbols"].clone())
     } else {
-        let e = format_expressions(pilout, false);
-        (e["expressions"].clone(), format_symbols(pilout))
+        let e = format_expressions(pilout, false, false);
+        (e["expressions"].clone(), json!(format_symbols(pilout, false)))
     };
 
     // Filter symbols
@@ -78,19 +78,30 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &Value) -> Hash
         })
         .unwrap_or_else(Vec::new);
 
-    let hints = format_hints(pilout, &json!(air_hints), &symbols, &expressions, save_symbols);
+    let mut symbols_vec = symbols.as_array().unwrap().clone();
+    let mut expressions_vec = expressions.as_array().unwrap().clone();
 
-    res.insert("customCommits".to_string(), pilout["customCommits"].clone().unwrap_or(json!([])));
+    let hints = format_hints(
+        pilout,
+        air_hints.as_slice(), // ✅ FIXED: Convert `Vec<Value>` to `&[Value]`
+        &mut symbols_vec,
+        &mut expressions_vec,
+        save_symbols,
+        false,
+    );
+
+    res.insert("customCommits".to_string(), pilout.get("customCommits").cloned().unwrap_or(json!([])));
+
     let mut custom_commits_map = vec![];
 
-    if let Some(commits) = res["customCommits"].as_array() {
+    if let Some(commits) = res.remove("customCommits").and_then(|v| v.as_array().cloned()) {
         for (i, commit) in commits.iter().enumerate() {
             let mut commit_map = vec![];
             if let Some(stage_widths) = commit["stageWidths"].as_array() {
                 for (j, width) in stage_widths.iter().enumerate() {
                     if width.as_u64().unwrap_or(0) > 0 {
                         res.entry("mapSectionsN".to_string())
-                            .or_insert(json!(HashMap::new()))
+                            .or_insert(json!(HashMap::<String, Value>::new()))
                             .as_object_mut()
                             .unwrap()
                             .insert(format!("{}{}", commit["name"], j), json!(0));
@@ -100,6 +111,7 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &Value) -> Hash
             }
             custom_commits_map.push(json!(commit_map));
         }
+        res.insert("customCommits".to_string(), json!(commits)); // Put it back after processing
     }
 
     res.insert("customCommitsMap".to_string(), json!(custom_commits_map));
@@ -113,4 +125,7 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &Value) -> Hash
     .as_object()
     .unwrap()
     .clone()
+    .into_iter()
+    .map(|(k, v)| (k.clone(), v.clone())) // Convert `serde_json::Map` to `HashMap<String, Value>`
+    .collect()
 }
