@@ -15,6 +15,7 @@ pub mod prepare_pil;
 pub mod get_pilout_info;
 pub mod gen_pil1_pols;
 pub mod grand_productp_lookup;
+pub mod gen_libs_pols;
 mod setup;
 
 pub use setup::*;
