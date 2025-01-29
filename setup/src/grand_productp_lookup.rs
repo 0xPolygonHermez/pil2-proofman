@@ -21,8 +21,8 @@ pub fn grand_product_plookup(
     pil: &mut HashMap<String, Value>,
     symbols: &mut Vec<Value>,
     hints: &mut Vec<Value>,
-    airgroup_id: u64,
-    air_id: u64,
+    _airgroup_id: u64, // Unused but kept for API consistency
+    _air_id: u64,      // Unused but kept for API consistency
 ) {
     let stage1 = 2;
     let stage2 = 3;
@@ -42,8 +42,8 @@ pub fn grand_product_plookup(
 
     let alpha = find_challenge("std_alpha");
     let beta = find_challenge("std_beta");
-    let gamma = find_challenge("std_gamma");
-    let delta = find_challenge("std_delta");
+    let _gamma = find_challenge("std_gamma"); // Unused in JS, marking it as `_`
+    let _delta = find_challenge("std_delta"); // Unused in JS, marking it as `_`
 
     let plookup_identities = pil.get("plookupIdentities").cloned().unwrap_or(json!([]));
     let expressions = pil.get("expressions").cloned().unwrap_or(json!([]));
@@ -53,7 +53,7 @@ pub fn grand_product_plookup(
     let mut n_cm3 = pil.get("nCm3").and_then(|v| v.as_u64()).unwrap_or(0);
 
     if let Some(identity_list) = plookup_identities.as_array() {
-        for (i, pi) in identity_list.iter().enumerate() {
+        for (_i, pi) in identity_list.iter().enumerate() {
             let mut pu_ctx = HashMap::new();
             let mut t_exp = None;
 
