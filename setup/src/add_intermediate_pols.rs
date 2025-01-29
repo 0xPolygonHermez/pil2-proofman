@@ -61,7 +61,7 @@ impl ExpressionOps {
 
     /// Creates a column memory (cm) operation
     pub fn cm(&self, id: usize, row_offset: usize, stage: Option<usize>, dim: usize) -> Value {
-        let stage = stage.expect(&format!("Stage not defined for cm {}", id));
+        let stage = stage.unwrap_or_else(|| panic!("Stage not defined for cm {}", id));
         json!({
             "op": "cm",
             "id": id,
@@ -73,7 +73,7 @@ impl ExpressionOps {
 
     /// Creates a custom operation
     pub fn custom(&self, id: usize, row_offset: usize, stage: Option<usize>, dim: usize, commit_id: usize) -> Value {
-        let stage = stage.expect(&format!("Stage not defined for custom {}", id));
+        let stage = stage.unwrap_or_else(|| panic!("Stage not defined for custom {}", id));
         json!({
             "op": "custom",
             "id": id,
@@ -334,7 +334,7 @@ pub fn calculate_exp_deg(
         | Some("eval")
         | Some("airgroupvalue")
         | Some("airvalue") => 0,
-        Some("neg") => exp.get("values").and_then(|v| v.as_array()).and_then(|values| values.get(0)).map_or(0, |v| {
+        Some("neg") => exp.get("values").and_then(|v| v.as_array()).and_then(|values| values.first()).map_or(0, |v| {
             let id = v.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             calculate_exp_deg(expressions, id, im_exps, cache_values)
         }),

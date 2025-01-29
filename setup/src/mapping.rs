@@ -66,10 +66,8 @@ pub fn map(
                     if let Some(base_field) = im_pols_info.get_mut("baseField").and_then(Value::as_array_mut) {
                         base_field.push(Value::String(im_pol_expression));
                     }
-                } else {
-                    if let Some(extended_field) = im_pols_info.get_mut("extendedField").and_then(Value::as_array_mut) {
-                        extended_field.push(Value::String(im_pol_expression));
-                    }
+                } else if let Some(extended_field) = im_pols_info.get_mut("extendedField").and_then(Value::as_array_mut) {
+                    extended_field.push(Value::String(im_pol_expression));
                 }
             }
         }
@@ -180,7 +178,7 @@ fn set_stage_info_symbols(res: &mut HashMap<String, Value>, symbols: &[Value]) {
             } else {
                 let commit_id = symbol["commitId"].as_u64().unwrap();
                 res.get_mut("customCommitsMap")
-                    .and_then(|m| m.get_mut(&commit_id.to_string()))
+                    .and_then(|m| m.get_mut(commit_id.to_string()))
                     .and_then(Value::as_array_mut)
             };
 

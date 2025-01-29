@@ -86,7 +86,7 @@ pub fn print_expressions(
 ) -> String {
     match exp["op"].as_str() {
         Some("exp") => {
-            if !exp.get("line").is_some() {
+            if exp.get("line").is_none() {
                 let id = exp["id"].as_u64().unwrap() as usize;
                 let line = print_expressions(res, &expressions[id], expressions, is_constraint);
                 return line;
@@ -179,7 +179,7 @@ fn process_hint_field(
 
         let values: Vec<Value> = fields.iter().map(|(v, _)| v.clone()).collect();
         let mut lengths = Vec::new();
-        if let Some(first_len) = fields.get(0).and_then(|(_, l)| l.clone()) {
+        if let Some(first_len) = fields.first().and_then(|(_, l)| l.clone()) {
             lengths.push(first_len.len());
             lengths.extend(first_len);
         }

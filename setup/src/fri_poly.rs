@@ -124,7 +124,7 @@ pub fn generate_fri_polynomial(res: &mut Res, symbols: &mut Vec<Symbol>, express
     expressions.push(fri_exp.expect("FRI Expression should not be None"));
 
     // **FIX:** Ensure expressions are `Vec<Value>` for `get_exp_dim`
-    let dim = get_exp_dim(&expressions, fri_exp_id);
+    let dim = get_exp_dim(expressions, fri_exp_id);
     expressions[fri_exp_id]["dim"] = json!(dim);
     expressions[fri_exp_id]["stage"] = json!(res.n_stages + 2);
 }

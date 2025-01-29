@@ -128,7 +128,7 @@ fn pil_code_gen(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Valu
 
     ctx.calculated
         .entry(exp_id)
-        .or_insert_with(HashMap::new)
+        .or_default()
         .insert(prime, json!({ "cm": false, "tmpId": code_ctx.tmp_used }));
 
     if code_ctx.tmp_used > ctx.tmp_used {
@@ -285,11 +285,11 @@ fn build_code(ctx: &mut CodeGenContext) -> Value {
 
 fn fix_expression(r: &mut Value, exp_map: &mut HashMap<i64, HashMap<usize, usize>>, tmp_used: &mut usize) {
     let prime = r["prime"].as_i64().unwrap_or(0);
-    let entry = exp_map.entry(prime).or_insert_with(HashMap::new);
+    let entry = exp_map.entry(prime).or_default();
     let id = r["id"].as_u64().unwrap_or(0) as usize;
 
-    if !entry.contains_key(&id) {
-        entry.insert(id, *tmp_used);
+    if let std::collections::hash_map::Entry::Vacant(e) = entry.entry(id) {
+        e.insert(*tmp_used);
         *tmp_used += 1;
     }
 
@@ -431,7 +431,7 @@ pub fn generate_constraint_polynomial_verifier_code(
     for symbol in symbols {
         if symbol["imPol"].as_bool().unwrap_or(false) {
             let exp_id = symbol["expId"].as_u64().unwrap_or(0) as usize;
-            ctx.calculated.entry(exp_id).or_insert_with(HashMap::new);
+            ctx.calculated.entry(exp_id).or_default();
             for &opening_point in &ctx.opening_points {
                 ctx.calculated.get_mut(&exp_id).unwrap().insert(opening_point, json!({ "cm": true }));
             }

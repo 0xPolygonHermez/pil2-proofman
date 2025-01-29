@@ -104,7 +104,7 @@ pub fn generate_pil_code(
 fn flatten_json_array(value: &Value) -> Vec<Value> {
     if let Some(arr) = value.as_array() {
         arr.iter()
-            .flat_map(|v| flatten_json_array(v)) // Recursively flatten arrays
+            .flat_map(flatten_json_array) // Recursively flatten arrays
             .collect()
     } else {
         vec![value.clone()]
