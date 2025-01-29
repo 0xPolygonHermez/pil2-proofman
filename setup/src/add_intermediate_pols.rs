@@ -2,45 +2,65 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 /// Struct for managing expressions and operations
-pub struct ExpressionOps;
+pub struct ExpressionOps {
+    pub stage: usize,
+    pub dim: usize,
+}
 
 impl ExpressionOps {
-    pub fn new() -> Self {
-        Self
+    /// Creates a new `ExpressionOps` instance with the default stage and dimension.
+    pub fn new(stage: usize, dim: usize) -> Self {
+        Self { stage, dim }
     }
 
-    pub fn challenge(&self, _name: &str, _stage: usize, _dim: usize, _value: u32, _id: usize) -> Value {
+    /// Creates an exponential operation
+    pub fn exp(&self, id: usize, value: usize) -> Value {
         json!({
-            "op": "challenge",
-            "stage": _stage,
-            "dim": _dim,
-            "value": _value,
-            "id": _id
+            "op": "exp",
+            "id": id,
+            "value": value,
+            "stage": self.stage
         })
     }
 
+    /// Creates a `Zi` operation for a given boundary
+    pub fn zi(&self, boundary_id: usize) -> Value {
+        json!({
+            "op": "Zi",
+            "boundary": boundary_id,
+            "stage": self.stage
+        })
+    }
+
+    pub fn cm(&self, id: usize, value: usize) -> Value {
+        json!({
+            "op": "cm",
+            "id": id,
+            "value": value,
+            "stage": self.stage,
+            "dim": self.dim
+        })
+    }
+
+    /// Adds two expressions together
     pub fn add(&self, lhs: Value, rhs: Value) -> Value {
         json!({ "op": "add", "values": [lhs, rhs] })
     }
 
+    /// Multiplies two expressions
     pub fn mul(&self, lhs: Value, rhs: Value) -> Value {
         json!({ "op": "mul", "values": [lhs, rhs] })
     }
 
-    pub fn cm(&self, id: usize, _value: usize, _stage: usize, _dim: usize) -> Value {
+    /// Creates a challenge expression
+    pub fn challenge(&self, name: &str, stage_id: usize, id: usize) -> Value {
         json!({
-            "op": "cm",
-            "id": id,
-            "value": _value,
-            "stage": _stage,
-            "dim": _dim
-        })
-    }
-
-    pub fn zi(&self, boundary_index: usize) -> Value {
-        json!({
-            "op": "Zi",
-            "boundary": boundary_index
+            "op": "challenge",
+            "name": name,
+            "stage": self.stage,
+            "dim": self.dim,
+            "stageId": stage_id,
+            "id": id
         })
     }
 }
@@ -54,7 +74,8 @@ pub fn add_intermediate_polynomials(
     im_exps: &[usize],
     q_deg: usize,
 ) {
-    let e = ExpressionOps::new();
+    let stage = res["nStages"].as_u64().unwrap_or(0) as usize + 1;
+    let e = ExpressionOps::new(stage, 3);
 
     println!("--------------------- SELECTED DEGREE ----------------------");
     println!("Constraints maximum degree: {}", q_deg + 1);
@@ -62,22 +83,28 @@ pub fn add_intermediate_polynomials(
 
     res.insert("qDeg".to_string(), json!(q_deg));
 
-    let stage = res["nStages"].as_u64().unwrap_or(0) as usize + 1;
-
     let vc_id = symbols
         .iter()
         .filter(|s| s.get("type") == Some(&json!("challenge")) && s["stage"].as_u64().unwrap_or(0) < stage as u64)
         .count();
 
-    let vc = e.challenge("std_vc", stage, 3, 0, vc_id);
+    symbols.push(HashMap::from([
+        ("type".to_string(), json!("challenge")),
+        ("name".to_string(), json!("std_vc")),
+        ("stage".to_string(), json!(stage)),
+        ("dim".to_string(), json!(3)),
+        ("stageId".to_string(), json!(0)),
+        ("id".to_string(), json!(vc_id)),
+    ]));
+
+    let vc = e.challenge("std_vc", 0, vc_id);
     let max_deg_expr =
         calculate_exp_deg(expressions, &expressions[res["cExpId"].as_u64().unwrap_or(0) as usize], im_exps);
 
     if max_deg_expr > q_deg + 1 {
         panic!(
             "The maximum degree of the constraint expression has a higher degree ({}) than the maximum allowed degree ({})",
-            max_deg_expr,
-            q_deg + 1
+            max_deg_expr, q_deg + 1
         );
     }
 
@@ -94,11 +121,7 @@ pub fn add_intermediate_polynomials(
     }
 
     for &exp_id in im_exps {
-        let stage_im = res
-            .get("imPolsStages")
-            .map(|_| expressions[exp_id]["stage"].as_u64().unwrap_or(0) as usize)
-            .unwrap_or(res["nStages"].as_u64().unwrap_or(0) as usize);
-
+        let stage_im = res["nStages"].as_u64().unwrap_or(0) as usize;
         let stage_id = symbols
             .iter()
             .filter(|s| s.get("type") == Some(&json!("witness")) && s["stage"] == json!(stage_im))
@@ -123,17 +146,10 @@ pub fn add_intermediate_polynomials(
         expressions[exp_id]["polId"] = json!(res["nCommitments"].as_u64().unwrap_or(0) as usize);
         expressions[exp_id]["stage"] = json!(stage_im);
 
-        let intermediate_expr = json!({
-            "op": "sub",
-            "values": [
-                e.cm(res["nCommitments"].as_u64().unwrap_or(0) as usize, 0, stage_im, dim),
-                expressions[exp_id].clone()
-            ]
-        });
+        let intermediate_expr =
+            e.add(e.cm(res["nCommitments"].as_u64().unwrap_or(0) as usize, 0), expressions[exp_id].clone());
 
         expressions.push(intermediate_expr.clone());
-        add_info_expressions(expressions, &intermediate_expr);
-
         constraints.push(json!({
             "e": expressions.len() - 1,
             "boundary": "everyRow",
@@ -147,39 +163,6 @@ pub fn add_intermediate_polynomials(
         );
 
         expressions[res["cExpId"].as_u64().unwrap_or(0) as usize] = updated_expr;
-    }
-
-    let final_expr = e.mul(
-        expressions[res["cExpId"].as_u64().unwrap_or(0) as usize].clone(),
-        e.zi(res["boundaries"]
-            .as_array()
-            .unwrap_or(&vec![])
-            .iter()
-            .position(|b| b["name"] == json!("everyRow"))
-            .unwrap_or(0)),
-    );
-
-    expressions[res["cExpId"].as_u64().unwrap_or(0) as usize] = final_expr;
-    expressions[res["cExpId"].as_u64().unwrap_or(0) as usize]["stage"] =
-        json!(res["nStages"].as_u64().unwrap_or(0) + 1);
-
-    let c_exp_dim = get_exp_dim(expressions, res["cExpId"].as_u64().unwrap_or(0) as usize);
-    expressions[res["cExpId"].as_u64().unwrap_or(0) as usize]["dim"] = json!(c_exp_dim);
-
-    res.insert("qDim".to_string(), json!(c_exp_dim));
-
-    for i in 0..q_deg {
-        let index = res["nCommitments"].as_u64().unwrap_or(0) as usize + i;
-        symbols.push(HashMap::from([
-            ("type".to_string(), json!("witness")),
-            ("name".to_string(), json!(format!("Q{}", i))),
-            ("polId".to_string(), json!(index)),
-            ("stage".to_string(), json!(stage)),
-            ("dim".to_string(), json!(res["qDim"])),
-            ("airId".to_string(), res["airId"].clone()),
-            ("airgroupId".to_string(), res["airgroupId"].clone()),
-        ]));
-        e.cm(index, 0, stage, c_exp_dim);
     }
 }
 
