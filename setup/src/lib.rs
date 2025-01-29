@@ -9,6 +9,7 @@ pub mod utils;
 pub mod mapping;
 pub mod gen_code;
 pub mod fri_poly;
+pub mod gen_pil_code;
 mod setup;
 
 pub use setup::*;
