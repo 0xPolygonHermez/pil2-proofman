@@ -5,11 +5,9 @@ use crate::{
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
-/// Prepares the PIL (Polynomial Identity Language) structure.
-/// Mirrors the original JavaScript implementation.
 pub fn prepare_pil(
-    f: fn(f64, f64) -> f64, // Field multiplication function
-    pil: &Value,
+    f: fn(f64, f64) -> f64,
+    pil: &mut Value,
     stark_struct: &Value,
     pil2: bool,
     options: &HashMap<String, Value>,
@@ -18,7 +16,6 @@ pub fn prepare_pil(
     res.insert("name".to_string(), pil["name"].clone());
     res.insert("imPolsStages".to_string(), options.get("imPolsStages").unwrap_or(&json!(false)).clone());
 
-    // Initialize mappings
     res.insert("cmPolsMap".to_string(), json!([]));
     res.insert("constPolsMap".to_string(), json!([]));
     res.insert("challengesMap".to_string(), json!([]));
@@ -33,18 +30,17 @@ pub fn prepare_pil(
     let mut expressions;
     let mut symbols;
     let mut constraints;
-    let hints; // Removed `mut`, since it's not modified
+    let hints;
 
-    // Ensure all expressions have `stage = 1`
-    let mut pil_expressions = pil["expressions"].as_array().unwrap().clone();
-    for exp in &mut pil_expressions {
-        exp["stage"] = json!(1);
+    if let Some(expressions_array) = pil["expressions"].as_array_mut() {
+        for exp in expressions_array.iter_mut() {
+            exp["stage"] = json!(1);
+        }
     }
 
     if pil2 {
         let mut pil_hashmap: HashMap<String, Value> = serde_json::from_value(pil.clone()).unwrap();
-        let mut res_mut = res.clone();
-        let pil_info = get_pilout_info(&mut res_mut, &mut pil_hashmap);
+        let pil_info = get_pilout_info(&mut res, &mut pil_hashmap);
         expressions = pil_info["expressions"].clone();
         symbols = pil_info["symbols"].clone();
         hints = pil_info["hints"].clone();
@@ -57,14 +53,11 @@ pub fn prepare_pil(
         constraints = pil1_info["constraints"].clone();
     }
 
-    // Set up section counts
-    if let Some(n_stages) = res.get("nStages").and_then(|v| v.as_u64()) {
-        for s in 1..=n_stages + 1 {
-            map_sections_n.insert(format!("cm{}", s), json!(0));
-        }
+    let n_stages = res.get("nStages").and_then(|v| v.as_u64()).unwrap_or(0);
+    for s in 1..=n_stages + 1 {
+        map_sections_n.insert(format!("cm{}", s), json!(0));
     }
 
-    // Handle stark struct consistency checks
     if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap() {
         res.insert("starkStruct".to_string(), stark_struct.clone());
 
@@ -85,7 +78,6 @@ pub fn prepare_pil(
         res.insert("starkStruct".to_string(), json!({ "nBits": res["pilPower"] }));
     }
 
-    // Process constraints
     if let Some(constraints_array) = constraints.as_array_mut() {
         for constraint in constraints_array.iter_mut() {
             let constraint_exp_id = constraint["e"].as_u64().unwrap() as usize;
@@ -96,7 +88,6 @@ pub fn prepare_pil(
         }
     }
 
-    // **Fix Borrowing Issue in expressions Processing**
     let mut missing_symbol_indices = Vec::new();
     if let Some(expressions_array) = expressions.as_array() {
         for (index, exp) in expressions_array.iter().enumerate() {
@@ -114,10 +105,9 @@ pub fn prepare_pil(
 
     res.insert("boundaries".to_string(), json!([{ "name": "everyRow" }]));
 
-    // Collect unique opening points
     let mut opening_points: HashSet<i64> = HashSet::new();
     if let Some(constraints_array) = constraints.as_array() {
-        for constraint in constraints_array.iter() {
+        for constraint in constraints_array {
             let constraint_exp_id = constraint["e"].as_u64().unwrap() as usize;
             if let Some(offsets) = expressions[constraint_exp_id]["rowsOffsets"].as_array() {
                 for offset in offsets.iter() {
@@ -133,7 +123,6 @@ pub fn prepare_pil(
     opening_points_vec.sort();
     res.insert("openingPoints".to_string(), json!(opening_points_vec));
 
-    // **Fixed `generate_constraint_polynomial` Call**
     if let (Some(expressions_array), Some(symbols_array)) = (expressions.as_array_mut(), symbols.as_array_mut()) {
         let mut parsed_symbols: Vec<HashMap<String, Value>> =
             symbols_array.iter_mut().map(|s| serde_json::from_value(s.clone()).unwrap()).collect();
