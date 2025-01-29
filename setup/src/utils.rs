@@ -492,3 +492,38 @@ pub fn add_symbol(pilout: &HashMap<String, Value>, symbols: &mut Vec<Value>, exp
         "id": exp["id"]
     }));
 }
+
+/// Computes log2 of a given value using bitwise operations, similar to the JS implementation.
+pub fn log2(mut v: u32) -> u32 {
+    let mut r = 0;
+    if (v & 0xFFFF0000) != 0 {
+        v &= 0xFFFF0000;
+        r |= 16;
+    }
+    if (v & 0xFF00FF00) != 0 {
+        v &= 0xFF00FF00;
+        r |= 8;
+    }
+    if (v & 0xF0F0F0F0) != 0 {
+        v &= 0xF0F0F0F0;
+        r |= 4;
+    }
+    if (v & 0xCCCCCCCC) != 0 {
+        v &= 0xCCCCCCCC;
+        r |= 2;
+    }
+    if (v & 0xAAAAAAAA) != 0 {
+        r |= 1;
+    }
+    r
+}
+
+/// Computes a sequence of `ks` values based on field multiplication.
+/// `Fr` is a struct that implements field arithmetic with a multiplication method `mul()`.
+pub fn get_ks<F: Fn(f64, f64) -> f64>(fr_mul: F, n: usize, k: f64) -> Vec<f64> {
+    let mut ks = vec![k];
+    for i in 1..n {
+        ks.push(fr_mul(ks[i - 1], ks[0]));
+    }
+    ks
+}
