@@ -20,7 +20,7 @@ pub fn init_challenges_plookup() -> Vec<Value> {
 pub fn grand_product_plookup(
     pil: &mut HashMap<String, Value>,
     symbols: &mut Vec<Value>,
-    _hints: &mut Vec<Value>, // Hints are currently unused, remove warning
+    hints: &mut Vec<Value>,
     airgroup_id: u64,
     air_id: u64,
 ) {
@@ -42,11 +42,12 @@ pub fn grand_product_plookup(
 
     let alpha = find_challenge("std_alpha");
     let beta = find_challenge("std_beta");
+    let gamma = find_challenge("std_gamma");
+    let delta = find_challenge("std_delta");
 
-    // ✅ FIX: Clone the values before modifying pil
     let plookup_identities = pil.get("plookupIdentities").cloned().unwrap_or(json!([]));
     let expressions = pil.get("expressions").cloned().unwrap_or(json!([]));
-    let mut expressions_array = expressions.as_array().unwrap().clone(); // Convert to Vec<Value>
+    let mut expressions_array = expressions.as_array().unwrap().clone();
     let mut n_commitments = pil.get("nCommitments").and_then(|v| v.as_u64()).unwrap_or(0);
 
     if let Some(identity_list) = plookup_identities.as_array() {
@@ -81,7 +82,39 @@ pub fn grand_product_plookup(
                 exp.as_object_mut().unwrap().insert("deg".to_string(), json!(t_dim));
             }
 
-            // ✅ FIX: Increment n_commitments manually and update later
+            // ✅ Add fExp (same logic as tExp)
+            let mut f_exp = None;
+            if let Some(f) = pi.get("f").and_then(|f| f.as_array()) {
+                for exp in f {
+                    let e_exp = e.exp(exp.as_u64().unwrap() as usize, 0, stage1);
+                    f_exp =
+                        Some(if let Some(f_exp) = f_exp { e.add(e.mul(f_exp, alpha.clone()), e_exp) } else { e_exp });
+                }
+            }
+
+            if let Some(sel_f) = pi.get("selF") {
+                let sel_f = sel_f.as_u64().unwrap() as usize;
+                f_exp = Some(e.mul(
+                    e.sub(f_exp.unwrap(), e.exp(pu_ctx["tExpId"].as_u64().unwrap() as usize, 0, stage1)),
+                    e.exp(sel_f, 0, stage1),
+                ));
+                f_exp = Some(e.add(f_exp.unwrap(), e.exp(pu_ctx["tExpId"].as_u64().unwrap() as usize, 0, stage1)));
+            }
+
+            pu_ctx.insert("fExpId", json!(expressions_array.len()));
+
+            let mut f_exp_val = json!(f_exp.unwrap());
+            f_exp_val.as_object_mut().unwrap().insert("keep".to_string(), json!(true));
+            f_exp_val.as_object_mut().unwrap().insert("stage".to_string(), json!(stage1));
+
+            expressions_array.push(f_exp_val);
+            let f_dim = get_exp_dim(&expressions_array, pu_ctx["fExpId"].as_u64().unwrap() as usize);
+
+            if let Some(exp) = expressions_array.get_mut(pu_ctx["fExpId"].as_u64().unwrap() as usize) {
+                exp.as_object_mut().unwrap().insert("deg".to_string(), json!(f_dim));
+            }
+
+            // ✅ Add Witness Commitments
             pu_ctx.insert("h1Id", json!(n_commitments));
             n_commitments += 1;
             pu_ctx.insert("h2Id", json!(n_commitments));
@@ -89,13 +122,13 @@ pub fn grand_product_plookup(
             pu_ctx.insert("zId", json!(n_commitments));
             n_commitments += 1;
 
-            symbols.push(json!({"type": "witness", "name": format!("Plookup{}.h1", i), "polId": pu_ctx["h1Id"], "stage": stage1, "dim": t_dim, "airId": air_id, "airgroupId": airgroup_id}));
-            symbols.push(json!({"type": "witness", "name": format!("Plookup{}.h2", i), "polId": pu_ctx["h2Id"], "stage": stage1, "dim": t_dim, "airId": air_id, "airgroupId": airgroup_id}));
-            symbols.push(json!({"type": "witness", "name": format!("Plookup{}.z", i), "polId": pu_ctx["zId"], "stage": stage2, "dim": t_dim, "airId": air_id, "airgroupId": airgroup_id}));
+            symbols.push(json!({"type": "witness", "name": format!("Plookup{}.h1", i), "polId": pu_ctx["h1Id"], "stage": stage1, "dim": t_dim.max(f_dim), "airId": air_id, "airgroupId": airgroup_id}));
+            symbols.push(json!({"type": "witness", "name": format!("Plookup{}.h2", i), "polId": pu_ctx["h2Id"], "stage": stage1, "dim": t_dim.max(f_dim), "airId": air_id, "airgroupId": airgroup_id}));
+            symbols.push(json!({"type": "witness", "name": format!("Plookup{}.z", i), "polId": pu_ctx["zId"], "stage": stage2, "dim": t_dim.max(f_dim), "airId": air_id, "airgroupId": airgroup_id}));
         }
     }
 
-    // ✅ FIX: Now update `pil` safely after the loop
+    // ✅ Update `pil`
     pil.insert("expressions".to_string(), json!(expressions_array));
     pil.insert("nCommitments".to_string(), json!(n_commitments));
 }
