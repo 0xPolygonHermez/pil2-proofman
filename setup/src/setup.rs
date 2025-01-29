@@ -7,8 +7,14 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use crate::cli::Config;
+use crate::{
+    cli::Config,
+    witness_calculator::{generate_fixed_cols, Symbol},
+};
 
+use num_bigint::BigUint;
+
+/// Computes the setup for STARK proofs based on configuration
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let airout = AirOut::from_file(&config.airout.airout_filename).await?;
     let setup_options = SetupOptions {
@@ -21,9 +27,9 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
     let mut setup: Vec<Vec<StarkStruct>> = vec![];
     let mut stark_structs = vec![];
-
     let mut min_final_degree = 5;
 
+    // Determine minimum final degree across all air groups
     for airgroup in &airout.air_groups {
         for air in &airgroup.airs {
             let settings = config
@@ -71,8 +77,12 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
             stark_structs.push(stark_struct.clone());
 
-            let mut fixed_pols = generate_fixed_cols(&air.symbols, air.num_rows);
-            get_fixed_pols_pil2(&files_dir, air, &mut fixed_pols)?;
+            // **Fixed generate_fixed_cols function call**
+            let field_modulus = BigUint::from(1u32) << 256; // Placeholder modulus, replace as needed
+            let mut fixed_pols = generate_fixed_cols(air.symbols.clone(), air.num_rows, field_modulus);
+
+            // **Fixed get_fixed_pols_pil2 function call**
+            get_fixed_pols_pil2(&files_dir, air, &mut fixed_pols.symbols)?;
 
             let stark_setup_result = stark_setup(air, &stark_struct, &setup_options).await?;
             let json_output = serde_json::to_string_pretty(&stark_setup_result)?;
@@ -179,10 +189,6 @@ pub async fn stark_setup(
     todo!()
 }
 
-pub fn generate_fixed_cols(symbols: &[Symbol], _num_rows: usize) -> Vec<Symbol> {
-    symbols.to_vec()
-}
-
 impl AirOut {
     pub async fn from_file(filename: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let content = async_fs::read_to_string(filename).await?;
@@ -208,14 +214,6 @@ pub struct Air {
     pub air_id: usize,
     pub num_rows: usize,
     pub symbols: Vec<Symbol>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Symbol {
-    pub air_group_id: usize, // Existing field
-    pub id: usize,           // Unique identifier for the symbol (equivalent to `def.id`)
-    pub pol_deg: usize,      // Polynomial degree (equivalent to `def.polDeg`)
-    pub values: Vec<u128>,   // Container for polynomial values (equivalent to `constPol` in JavaScript)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

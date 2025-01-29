@@ -3,14 +3,21 @@ use std::fs::File;
 use std::io::{Read, Write};
 use num_bigint::BigUint;
 use num_traits::Zero;
+use serde::{Deserialize, Serialize};
 
-/// Represents a symbol in the computation process.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Symbol {
-    pub name: String,
-    pub id: usize,
-    pub stage: usize,
-    pub lengths: Vec<usize>,
+    pub name: String,              // Name of the symbol
+    pub id: usize,                 // Unique identifier
+    pub stage: usize,              // Stage of the symbol in computation
+    pub dim: usize,                // Dimension of the symbol (default 1)
+    pub air_group_id: usize,       // AIR Group ID (equivalent to `stage_id`)
+    pub pol_deg: Option<usize>,    // Polynomial degree (optional)
+    pub values: Option<Vec<u128>>, // Polynomial values (used for "fixed" symbols)
+    pub symbol_type: String,       // "challenge", "fixed", "witness", "custom"
+    pub pol_id: Option<usize>,     // ID of polynomial (if applicable)
+    pub commit_id: Option<usize>,  // Commitment ID (if applicable)
+    pub lengths: Vec<usize>,       // Lengths of polynomials (replaces `Vec<u128>` for generality)
 }
 
 /// Generates multi-array indexes recursively.
@@ -18,21 +25,35 @@ pub fn generate_multi_array_indexes(
     symbols: &mut Vec<Symbol>,
     name: &str,
     lengths: &[usize],
-    mut pol_id: usize,
+    pol_id: usize,
     stage: usize,
     indexes: Vec<usize>,
 ) -> usize {
     if indexes.len() == lengths.len() {
-        symbols.push(Symbol { name: name.to_string(), id: pol_id, stage, lengths: indexes });
+        symbols.push(Symbol {
+            name: name.to_string(),
+            lengths: indexes.clone(),
+            id: pol_id,
+            stage,
+            dim: 1,          // Default dimension
+            air_group_id: 0, // Default value, update as needed
+            pol_deg: None,
+            values: None,
+            symbol_type: "witness".to_string(), // Default type, update as needed
+            pol_id: Some(pol_id),
+            commit_id: None,
+        });
         return pol_id + 1;
     }
 
+    let mut current_pol_id = pol_id;
     for i in 0..lengths[indexes.len()] {
-        pol_id =
-            generate_multi_array_indexes(symbols, name, lengths, pol_id, stage, [indexes.clone(), vec![i]].concat());
+        let mut new_indexes = indexes.clone();
+        new_indexes.push(i);
+        current_pol_id = generate_multi_array_indexes(symbols, name, lengths, current_pol_id, stage, new_indexes);
     }
 
-    pol_id
+    current_pol_id
 }
 
 /// Represents the columnar data structure used in PIL computations.

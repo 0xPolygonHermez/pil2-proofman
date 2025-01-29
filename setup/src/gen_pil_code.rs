@@ -7,7 +7,8 @@ use crate::helpers::{add_info_expressions, add_info_expressions_symbols};
 use crate::gen_code::{
     generate_constraint_polynomial_verifier_code, generate_constraints_debug_code, generate_expressions_code,
 };
-use crate::fri_poly::{Res, Symbol};
+use crate::fri_poly::Res;
+use crate::witness_calculator::Symbol;
 
 pub fn generate_pil_code(
     res: &mut Value,

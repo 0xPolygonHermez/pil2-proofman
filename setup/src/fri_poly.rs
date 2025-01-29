@@ -1,20 +1,8 @@
-use crate::add_intermediate_pols::ExpressionOps;
+use crate::{add_intermediate_pols::ExpressionOps, witness_calculator::Symbol};
 use crate::helpers::get_exp_dim;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Symbol {
-    pub symbol_type: String, // "challenge", "fixed", "witness", "custom"
-    pub name: String,
-    pub stage: usize,
-    pub dim: usize,
-    pub stage_id: usize,
-    pub id: usize,
-    pub pol_id: Option<usize>,
-    pub commit_id: Option<usize>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Res {
@@ -45,25 +33,31 @@ pub fn generate_fri_polynomial(res: &mut Res, symbols: &mut Vec<Symbol>, express
     let vf2_id = vf1_id + 1;
 
     let vf1_symbol = Symbol {
-        symbol_type: "challenge".to_string(),
         name: "std_vf1".to_string(),
-        stage,
-        dim: 3,
-        stage_id: 0,
         id: vf1_id,
+        stage,
+        symbol_type: "challenge".to_string(),
+        dim: 3,
+        air_group_id: 0, // Default value, update as needed
         pol_id: None,
+        pol_deg: None,
         commit_id: None,
+        lengths: vec![],
+        values: None,
     };
 
     let vf2_symbol = Symbol {
-        symbol_type: "challenge".to_string(),
         name: "std_vf2".to_string(),
-        stage,
-        dim: 3,
-        stage_id: 1,
         id: vf2_id,
+        stage,
+        symbol_type: "challenge".to_string(),
+        dim: 3,
+        air_group_id: 0, // Default value, update as needed
         pol_id: None,
+        pol_deg: None,
         commit_id: None,
+        lengths: vec![],
+        values: None,
     };
 
     symbols.push(vf1_symbol.clone());
