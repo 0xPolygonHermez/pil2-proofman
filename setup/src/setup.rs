@@ -9,6 +9,7 @@ use std::{
 };
 use crate::{
     cli::Config,
+    utils::log2,
     witness_calculator::{generate_fixed_cols, Symbol},
 };
 
@@ -39,10 +40,12 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or(AirSettings { stark_struct: None, final_degree: min_final_degree });
 
+            let air_num_rows: u32 = air.num_rows.try_into().unwrap();
+
             min_final_degree = if let Some(stark_struct) = &settings.stark_struct {
                 stark_struct.steps.last().map_or(min_final_degree, |step| step.n_bits)
             } else {
-                min_final_degree.min(log2(air.num_rows) + 1)
+                min_final_degree.min((log2(air_num_rows) + 1).try_into().unwrap())
             };
         }
     }
@@ -69,11 +72,12 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
             async_fs::create_dir_all(&files_dir).await?;
 
+            let air_num_rows: u32 = air.num_rows.try_into().unwrap();
             let stark_struct = settings
                 .stark_struct
                 .as_ref()
                 .cloned()
-                .unwrap_or_else(|| generate_stark_struct(&settings, log2(air.num_rows)));
+                .unwrap_or_else(|| generate_stark_struct(&settings, log2(air_num_rows).try_into().unwrap()));
 
             stark_structs.push(stark_struct.clone());
 
@@ -92,11 +96,6 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
     }
 
     Ok(())
-}
-
-// Public Helper Functions
-pub fn log2(num: usize) -> usize {
-    (num as f64).log2().ceil() as usize
 }
 
 pub fn get_fixed_pols_pil2(
