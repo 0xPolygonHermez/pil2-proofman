@@ -18,6 +18,6 @@ pub mod grand_productp_lookup;
 pub mod gen_libs_pols;
 pub mod grand_product_utils;
 pub mod grand_product_permutation_utils;
-mod setup;
+pub mod setup;
 
 pub use setup::*;

@@ -6,6 +6,9 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+
+use num_bigint::BigUint;
+
 use crate::{
     cli::Config,
     get_pilout_info::get_fixed_pols_pil2,
@@ -13,9 +16,6 @@ use crate::{
     witness_calculator::{generate_fixed_cols, Symbol},
 };
 
-use num_bigint::BigUint;
-
-/// Computes the setup for STARK proofs based on configuration
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     let airout = AirOut::from_file(&config.airout.airout_filename).await?;
     let setup_options = SetupOptions {
@@ -133,9 +133,7 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
     // Generate Final Recursive Setup
     if config.setup.gen_aggregation_setup {
-        let airout_info = set_airout_info(&airout, &stark_structs).await?;
-        let global_info = airout_info.vadcop_info.clone();
-        let global_constraints = airout_info.global_constraints.clone();
+        let (global_info, global_constraints) = set_airout_info(&airout, &stark_structs);
 
         async_fs::write(
             build_dir.as_ref().join("provingKey/pilout.globalInfo.json"),

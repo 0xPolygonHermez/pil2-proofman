@@ -623,7 +623,7 @@ use crate::{
     gen_code::{build_code, pil_code_gen, CodeGenContext},
     gen_pil_code::add_hints_info,
     helpers::add_info_expressions,
-    AirOut, StarkStruct,
+    setup::{AirOut, StarkStruct},
 };
 
 use itertools::Itertools; // Needed for sorting
