@@ -221,7 +221,7 @@ pub fn fix_commit_pol(r: &mut Value, ctx: &mut CodeGenContext, symbols: &[Value]
 }
 
 /// Builds the final code representation from context
-fn build_code(ctx: &mut CodeGenContext) -> Value {
+pub fn build_code(ctx: &mut CodeGenContext) -> Value {
     // Extract exp_map and tmp_used to avoid multiple mutable borrows
     let mut exp_map = std::mem::take(&mut ctx.exp_map);
     let mut tmp_used = ctx.tmp_used;

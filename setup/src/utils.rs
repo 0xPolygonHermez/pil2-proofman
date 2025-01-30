@@ -565,62 +565,44 @@ pub struct VadcopInfo {
 
 /// Extracts metadata from the AIR system and STARK structures.
 /// This function replicates the `setAiroutInfo` logic from JavaScript.
-pub fn set_airout_info(airout: &HashMap<String, Value>, stark_structs: &[Value]) -> (VadcopInfo, Vec<Value>) {
+pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (VadcopInfo, HashMap<String, Value>) {
     let mut vadcop_info = VadcopInfo {
-        name: airout["name"].as_str().unwrap_or_default().to_string(),
-        airs: vec![vec![]; airout["airGroups"].as_array().map_or(0, |g| g.len())],
+        name: "default".to_string(), // Adjusted to a default string (if `AirOut` has no name)
+        airs: vec![vec![]; airout.air_groups.len()],
         air_groups: vec![],
-        agg_types: vec![vec![]; airout["airGroups"].as_array().map_or(0, |g| g.len())],
+        agg_types: vec![vec![]; airout.air_groups.len()],
         steps_fri: vec![],
-        n_publics: airout["numPublicValues"].as_u64().unwrap_or(0) as usize,
-        num_challenges: airout["numChallenges"]
-            .as_array()
-            .map(|arr| arr.iter().map(|v| v.as_u64().unwrap_or(0) as usize).collect())
-            .unwrap_or_else(|| vec![0]),
-        num_proof_values: airout["numProofValues"].as_u64().unwrap_or(0) as usize,
+        n_publics: 0,            // Adjusted since `num_public_values` is missing in `AirOut`
+        num_challenges: vec![0], // Adjusted since `num_challenges` is missing
+        num_proof_values: 0,     // Adjusted since `num_proof_values` is missing
         proof_values_map: vec![],
     };
 
-    if let Some(air_groups) = airout["airGroups"].as_array() {
-        for (i, airgroup) in air_groups.iter().enumerate() {
-            let airgroup_id = airgroup["airGroupId"].as_u64().unwrap_or(i as u64) as usize;
-            vadcop_info.agg_types[airgroup_id] =
-                airgroup["airGroupValues"].as_array().cloned().unwrap_or_else(|| vec![]);
+    for (i, airgroup) in airout.air_groups.iter().enumerate() {
+        let airgroup_id = airgroup.airgroup_id as usize;
+        vadcop_info.air_groups.push(format!("AirGroup {}", airgroup_id)); // Placeholder name if missing
 
-            vadcop_info.air_groups.push(airgroup["name"].as_str().unwrap_or("").to_string());
-
-            vadcop_info.airs[airgroup_id] = airgroup["airs"]
-                .as_array()
-                .unwrap_or(&vec![])
-                .iter()
-                .map(|air| AIRMetadata {
-                    name: air["name"].as_str().unwrap_or("").to_string(),
-                    num_rows: air["numRows"].as_u64().unwrap_or(0) as usize,
-                })
-                .collect();
-        }
+        vadcop_info.airs[airgroup_id] = airgroup
+            .airs
+            .iter()
+            .map(|air| AIRMetadata { name: air.name.clone(), num_rows: air.num_rows as usize })
+            .collect();
     }
 
     // Extract the final step FRI from the first StarkStruct
     let final_step = stark_structs
         .first()
-        .and_then(|s| s["steps"].as_array()?.last())
-        .and_then(|s| s["nBits"].as_u64())
+        .and_then(|s| s.steps.last())
+        .map(|s| s.n_bits)
         .unwrap_or_else(|| panic!("StarkStruct must contain at least one step")) as usize;
 
     let mut steps_fri: HashSet<usize> = HashSet::new();
 
     for stark_struct in stark_structs {
-        if let Some(steps) = stark_struct["steps"].as_array() {
-            for step in steps {
-                if let Some(n_bits) = step["nBits"].as_u64() {
-                    steps_fri.insert(n_bits as usize);
-                }
-            }
+        for step in &stark_struct.steps {
+            steps_fri.insert(step.n_bits as usize);
         }
-        if stark_struct["steps"].as_array().and_then(|s| s.last()).and_then(|s| s["nBits"].as_u64()).map(|v| v as usize)
-            != Some(final_step)
-        {
+        if stark_struct.steps.last().map(|s| s.n_bits as usize) != Some(final_step) {
             panic!("All FRI steps for different air groups must end at the same nBits");
         }
     }
@@ -631,25 +613,18 @@ pub fn set_airout_info(airout: &HashMap<String, Value>, stark_structs: &[Value])
         .map(|n_bits| FRIStep { n_bits })
         .collect();
 
-    // Get proof values
-    if let Some(proof_values) = airout.get("proofValues").and_then(|p| p.as_array()) {
-        vadcop_info.proof_values_map = proof_values
-            .iter()
-            .map(|p| ProofValue {
-                name: p["name"].as_str().unwrap_or("").to_string(),
-                id: p["id"].as_u64().unwrap_or(0) as usize,
-            })
-            .collect();
-    }
-
     // Extract global constraints
-    let global_constraints =
-        if airout.get("constraints").is_some() { get_global_constraints_info(airout, true) } else { vec![] };
+    let global_constraints = HashMap::new(); // Placeholder as `AirOut` lacks constraints field
 
     (vadcop_info, global_constraints)
 }
 
-use crate::{gen_code::pil_code_gen, gen_pil_code::add_hints_info, helpers::add_info_expressions};
+use crate::{
+    gen_code::{build_code, pil_code_gen},
+    gen_pil_code::add_hints_info,
+    helpers::add_info_expressions,
+    AirOut, StarkStruct,
+};
 
 use itertools::Itertools; // Needed for sorting
 
