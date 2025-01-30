@@ -20,7 +20,7 @@ pub fn init_challenges_plookup() -> Vec<Value> {
 pub fn grand_product_plookup(
     pil: &mut HashMap<String, Value>,
     symbols: &mut [Value],
-    hints: &mut [Value],
+    hints: &mut Vec<Value>,
     _airgroup_id: u64, // Unused but kept for API consistency
     _air_id: u64,      // Unused but kept for API consistency
 ) {
