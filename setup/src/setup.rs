@@ -1,3 +1,4 @@
+use num_traits::ToPrimitive;
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use tokio::fs as async_fs;
@@ -11,7 +12,9 @@ use num_bigint::BigUint;
 
 use crate::{
     cli::Config,
+    f3g::F3g,
     get_pilout_info::get_fixed_pols_pil2,
+    pil_info::pil_info,
     utils::{log2, set_airout_info},
     witness_calculator::{generate_fixed_cols, Symbol},
 };
@@ -205,12 +208,47 @@ pub fn generate_stark_struct(settings: &AirSettings, n_bits: usize) -> StarkStru
     stark_struct
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StarkSetupResult {
+    pub stark_info: Value,
+    pub expressions_info: Value,
+    pub verifier_info: Value,
+    pub stats: Value,
+}
+
 pub async fn stark_setup(
-    _air: &Air,
-    _stark_struct: &StarkStruct,
-    _setup_options: &SetupOptions,
-) -> Result<StarkStruct, Box<dyn std::error::Error>> {
-    todo!()
+    air: &Air,
+    stark_struct: &StarkStruct,
+    setup_options: &SetupOptions,
+) -> Result<StarkSetupResult, Box<dyn std::error::Error>> {
+    // Instantiate the field element class
+    let f3g = F3g::new();
+
+    // Check if pil2 mode is enabled
+    let pil2 = setup_options.settings.get("pil2").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    // Convert `air` to JSON format for processing
+    let air_json: Value = serde_json::to_value(air)?;
+
+    // Convert setup_options to a HashMap<String, Value> for compatibility with pil_info
+    let options_map: HashMap<String, Value> = serde_json::from_value(serde_json::to_value(setup_options)?)?;
+
+    // Call `pil_info` equivalent to JS `pilInfo`
+    let pil_result = pil_info(
+        |a, b| f3g.mul(&BigUint::from(a as u64), &BigUint::from(b as u64)).to_f64().unwrap_or(0.0),
+        &air_json,
+        pil2,
+        &serde_json::to_value(stark_struct)?,
+        options_map,
+    )
+    .await;
+
+    Ok(StarkSetupResult {
+        stark_info: pil_result["pilInfo"].clone(),
+        expressions_info: pil_result["expressionsInfo"].clone(),
+        verifier_info: pil_result["verifierInfo"].clone(),
+        stats: pil_result["stats"].clone(),
+    })
 }
 
 impl AirOut {
