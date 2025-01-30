@@ -254,21 +254,14 @@ fn eval_exp(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Value], 
 }
 
 /// Calculates dependencies recursively
-pub fn calculate_deps(
-    ctx: &mut CodeGenContext,
-    symbols: &[Value],
-    expressions: &[Value],
-    exp: &Value,
-    prime: i64,
-    exp_id: usize,
-) {
+pub fn calculate_deps(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Value], exp: &Value, prime: i64) {
     if exp["op"] == "exp" {
         let p = exp["rowOffset"].as_i64().unwrap_or(prime);
         pil_code_gen(ctx, symbols, expressions, exp["id"].as_u64().unwrap_or(0) as usize, p);
     } else if ["add", "sub", "mul"].contains(&exp["op"].as_str().unwrap_or("")) {
         if let Some(values) = exp["values"].as_array() {
             for v in values {
-                calculate_deps(ctx, symbols, expressions, v, prime, exp_id);
+                calculate_deps(ctx, symbols, expressions, v, prime);
             }
         }
     }
