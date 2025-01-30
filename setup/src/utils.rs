@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value, Map};
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -352,13 +353,17 @@ pub fn print_expressions(
             }
 
             if let Some(row_offset) = exp.get("rowOffset").and_then(|v| v.as_i64()) {
-                if row_offset > 0 {
-                    name.push('\'');
-                    if row_offset > 1 {
-                        name.push_str(&row_offset.to_string());
+                match row_offset.cmp(&0) {
+                    Ordering::Greater => {
+                        name.push('\'');
+                        if row_offset > 1 {
+                            name.push_str(&row_offset.to_string());
+                        }
                     }
-                } else if row_offset < 0 {
-                    name = format!("'{}{}", row_offset.abs(), name);
+                    Ordering::Less => {
+                        name = format!("'{}{}", row_offset.abs(), name);
+                    }
+                    Ordering::Equal => {} // Do nothing for zero
                 }
             }
             name
