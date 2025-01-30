@@ -104,7 +104,7 @@ pub fn pil_code_gen(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[
     }
 
     let exp = &expressions[exp_id];
-    calculate_deps(ctx, symbols, expressions, exp, prime, exp_id);
+    calculate_deps(ctx, symbols, expressions, exp, prime);
 
     let mut code_ctx = CodeGenContext { exp_map: HashMap::new(), ..ctx.clone() };
 
