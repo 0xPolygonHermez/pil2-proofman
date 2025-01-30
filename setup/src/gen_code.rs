@@ -261,6 +261,7 @@ pub fn calculate_deps(
     exp: &Value,
     prime: i64,
     exp_id: usize,
+    ev_map: &mut Value,
 ) {
     if exp["op"] == "exp" {
         let p = exp["rowOffset"].as_i64().unwrap_or(prime);
@@ -268,7 +269,7 @@ pub fn calculate_deps(
     } else if ["add", "sub", "mul"].contains(&exp["op"].as_str().unwrap_or("")) {
         if let Some(values) = exp["values"].as_array() {
             for v in values {
-                calculate_deps(ctx, symbols, expressions, v, prime, exp_id);
+                calculate_deps(ctx, symbols, expressions, v, prime, exp_id, ev_map);
             }
         }
     }
