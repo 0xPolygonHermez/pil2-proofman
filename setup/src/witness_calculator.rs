@@ -1,9 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{Read, Write};
 use num_bigint::BigUint;
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Symbol {
@@ -70,6 +71,26 @@ impl ColsPil2 {
         let n_cols = symbols.len();
         let buffer = vec![BigUint::zero(); degree * n_cols];
         Self { symbols, n: degree, n_cols, buffer, field_mod }
+    }
+
+    /// Converts `ColsPil2` into a `HashMap<String, Vec<Value>>` where column names are based on symbols.
+    pub fn to_hashmap(&self) -> HashMap<String, Vec<Value>> {
+        let mut map = HashMap::new();
+
+        // Ensure buffer is correctly grouped into columns
+        for (i, symbol) in self.symbols.iter().enumerate() {
+            let key = symbol.name.clone(); // Use actual symbol names instead of "col_{}"
+
+            let values: Vec<Value> = self
+                .buffer
+                .chunks(self.n_cols) // Group buffer values into columns
+                .map(|chunk| serde_json::to_value(chunk[i].clone()).unwrap()) // Extract the i-th element for this column
+                .collect();
+
+            map.insert(key, values);
+        }
+
+        map
     }
 
     /// Sets a value in the multi-dimensional array structure.

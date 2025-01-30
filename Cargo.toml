@@ -48,7 +48,7 @@ p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "c3d754ef77b9
 bytes = "1.7"
 prost = "0.13"
 rand = "0.8"
-num-bigint = "0.4"
+num-bigint = { version = "0.4", features = ["serde"] }
 prost-build = "0.13"
 num-traits = "0.2"
 rayon = "1"

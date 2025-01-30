@@ -83,13 +83,12 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
             // Generate Fixed Columns
             let field_modulus = BigUint::from(1u32) << 256; // Placeholder modulus
-            let mut fixed_pols = generate_fixed_cols(air.symbols.clone(), air.num_rows, field_modulus);
+            let fixed_pols = generate_fixed_cols(air.symbols.clone(), air.num_rows, field_modulus);
 
-            // Get Fixed Polynomials for PIL2
-            let pil = serde_json::from_str::<HashMap<String, Value>>("{}").unwrap(); // Placeholder, replace with actual PIL data.
-            let mut const_pols: HashMap<String, Vec<Value>> = HashMap::new();
+            let air_json: HashMap<String, Value> = serde_json::from_value(serde_json::to_value(air)?)?;
+            let mut fixed_pols_map = fixed_pols.to_hashmap();
 
-            get_fixed_pols_pil2(files_dir.to_str().unwrap(), &pil, &mut const_pols)?;
+            get_fixed_pols_pil2(files_dir.to_str().unwrap(), &air_json, &mut fixed_pols_map)?;
 
             // STARK Setup
             let stark_setup_result = stark_setup(air, &stark_struct, &setup_options).await?;
@@ -113,6 +112,8 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
             let const_root = serde_json::from_str::<Value>(
                 &tokio::fs::read_to_string(files_dir.join(format!("{}.verkey.json", air.name))).await?,
             )?;
+
+            setup[airgroup.airgroup_id][air.air_id].const_root = Some(const_root.clone());
 
             // Compute Bin File
             let bin_cmd = format!(
@@ -190,6 +191,7 @@ pub fn generate_stark_struct(settings: &AirSettings, n_bits: usize) -> StarkStru
         n_queries,
         verification_hash_type,
         hash_commits,
+        const_root: None,
         steps: vec![Step { n_bits: n_bits_ext }],
     };
 
@@ -277,6 +279,7 @@ pub struct StarkStruct {
     pub verification_hash_type: VerificationType,
     pub hash_commits: bool,
     pub steps: Vec<Step>,
+    pub const_root: Option<Value>, // Add this field to store const_root
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
