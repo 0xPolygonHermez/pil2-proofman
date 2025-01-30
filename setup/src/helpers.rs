@@ -71,13 +71,17 @@ pub fn print_expressions(
             }
 
             if let Some(row_offset) = exp.get("rowOffset").and_then(Value::as_i64) {
-                if row_offset > 0 {
-                    name.push('\'');
-                    if row_offset > 1 {
-                        name.push_str(&row_offset.to_string());
+                match row_offset.cmp(&0) {
+                    std::cmp::Ordering::Greater => {
+                        name.push('\'');
+                        if row_offset > 1 {
+                            name.push_str(&row_offset.to_string());
+                        }
                     }
-                } else if row_offset < 0 {
-                    name = format!("'{}{}", row_offset.abs(), name);
+                    std::cmp::Ordering::Less => {
+                        name = format!("'{}{}", row_offset.abs(), name);
+                    }
+                    std::cmp::Ordering::Equal => {} // Do nothing when row_offset == 0
                 }
             }
             name
