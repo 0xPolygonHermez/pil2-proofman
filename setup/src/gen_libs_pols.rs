@@ -29,7 +29,7 @@ pub fn generate_libs_polynomials(
         challenge_sets.push(init_challenges_plookup());
     }
 
-    if pil.get("permutationIdentities").map_or(false, |v| !v.as_array().unwrap().is_empty()) {
+    if pil.get("permutationIdentities").is_some_and(|v| !v.as_array().unwrap().is_empty()) {
         grand_product_permutation(pil, symbols, hints, airgroup_id, air_id);
         challenge_sets.push(init_challenges_permutation());
     }
