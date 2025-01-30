@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value, Map};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 
 /// Enum representing Pilout types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -339,8 +340,10 @@ pub fn print_expressions(
 
             let mut name = col["name"].as_str().unwrap_or("").to_string();
 
-            if let Some(lengths) = col.get("lengths").and_then(|l| l.as_array()) {
-                name.push_str(&lengths.iter().map(|len| format!("[{}]", len)).collect::<String>());
+            if let Some(lengths) = col.get("lengths").and_then(Value::as_array) {
+                lengths.iter().for_each(|len| {
+                    write!(name, "[{}]", len).unwrap();
+                });
             }
 
             if col["imPol"].as_bool().unwrap_or(false) && !is_constraint {
@@ -582,11 +585,8 @@ pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (Vadco
         let airgroup_id = airgroup.airgroup_id;
         vadcop_info.air_groups.push(format!("AirGroup {}", airgroup_id)); // Placeholder name if missing
 
-        vadcop_info.airs[airgroup_id] = airgroup
-            .airs
-            .iter()
-            .map(|air| AIRMetadata { name: air.name.clone(), num_rows: air.num_rows })
-            .collect();
+        vadcop_info.airs[airgroup_id] =
+            airgroup.airs.iter().map(|air| AIRMetadata { name: air.name.clone(), num_rows: air.num_rows }).collect();
     }
 
     // Extract the final step FRI from the first StarkStruct
