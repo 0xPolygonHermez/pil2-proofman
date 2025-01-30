@@ -441,8 +441,7 @@ pub fn generate_constraints_debug_code(
 ) -> Vec<Value> {
     let mut constraints_code = Vec::new();
 
-    for j in 0..constraints.len() {
-        let constraint = &constraints[j];
+    for constraint in constraints {
         let mut ctx = CodeGenContext {
             stage: constraint["stage"].as_u64().unwrap_or(0) as usize,
             calculated: HashMap::new(),
