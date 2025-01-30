@@ -135,6 +135,8 @@ pub fn pil_code_gen(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[
 
 /// Evaluates an expression recursively
 fn eval_exp(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Value], exp: &Value, prime: i64) -> Value {
+    let prime = exp.get("rowOffset").and_then(Value::as_i64).unwrap_or(prime);
+
     match exp["op"].as_str().unwrap_or("") {
         "add" | "sub" | "mul" => {
             let values: Vec<Value> = exp["values"]
@@ -151,11 +153,103 @@ fn eval_exp(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Value], 
             ctx.code.push(json!({ "op": exp["op"], "dest": r, "src": values }));
             r
         }
+        "cm" | "const" | "custom" => {
+            let mut r = json!({
+                "type": exp["op"],
+                "id": exp["id"],
+                "prime": prime,
+                "dim": exp["dim"]
+            });
+
+            if exp["op"] == "custom" {
+                r["commitId"] = exp["commitId"].clone();
+            }
+            if ctx.verifier_evaluations {
+                fix_eval(&mut r, ctx);
+            }
+            r
+        }
+        "exp" => {
+            if let Some(op) = expressions.get(exp["id"].as_u64().unwrap_or(0) as usize).and_then(|e| e["op"].as_str()) {
+                if ["cm", "const", "custom"].contains(&op) {
+                    let expr = &expressions[exp["id"].as_u64().unwrap_or(0) as usize];
+                    let mut r = json!({
+                        "type": expr["op"],
+                        "id": expr["id"],
+                        "prime": prime,
+                        "dim": expr["dim"]
+                    });
+
+                    if expr["op"] == "custom" {
+                        r["commitId"] = expr["commitId"].clone();
+                    }
+                    if ctx.verifier_evaluations {
+                        fix_eval(&mut r, ctx);
+                    }
+                    return r;
+                }
+            }
+
+            let mut r = json!({
+                "type": "exp",
+                "expId": exp["id"],
+                "id": exp["id"],
+                "prime": prime,
+                "dim": exp["dim"]
+            });
+
+            fix_commit_pol(&mut r, ctx, symbols);
+            r
+        }
+        "challenge" => json!({
+            "type": "challenge",
+            "id": exp["id"],
+            "stageId": exp["stageId"],
+            "dim": exp["dim"],
+            "stage": exp["stage"]
+        }),
+        "public" => json!({
+            "type": "public",
+            "id": exp["id"],
+            "dim": 1
+        }),
+        "proofvalue" => json!({
+            "type": "proofvalue",
+            "id": exp["id"],
+            "dim": 3
+        }),
         "number" => {
-            let num = exp["value"].as_str().unwrap_or("0").parse::<i64>().unwrap_or(0);
+            let num = exp["value"].as_str().unwrap_or("0").parse::<i128>().unwrap_or(0);
+            let num = if num < 0 { num + 0xFFFFFFFF00000001 } else { num };
             json!({ "type": "number", "value": num.to_string(), "dim": 1 })
         }
-        _ => json!(null),
+        "eval" => json!({
+            "type": "eval",
+            "id": exp["id"],
+            "dim": exp["dim"]
+        }),
+        "airgroupvalue" | "airvalue" => json!({
+            "type": exp["op"],
+            "id": exp["id"],
+            "dim": exp["dim"],
+            "airgroupId": exp["airgroupId"]
+        }),
+        "xDivXSubXi" => json!({
+            "type": "xDivXSubXi",
+            "id": exp["id"],
+            "opening": exp["opening"],
+            "dim": 3
+        }),
+        "Zi" => json!({
+            "type": "Zi",
+            "boundaryId": exp["boundaryId"],
+            "dim": 1
+        }),
+        "x" => json!({
+            "type": "x",
+            "dim": 1
+        }),
+        _ => panic!("Invalid op: {}", exp["op"]),
     }
 }
 
