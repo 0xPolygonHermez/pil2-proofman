@@ -19,8 +19,8 @@ pub fn init_challenges_plookup() -> Vec<Value> {
 /// Implements the Grand Product Argument for Plookup.
 pub fn grand_product_plookup(
     pil: &mut HashMap<String, Value>,
-    symbols: &mut Vec<Value>,
-    hints: &mut Vec<Value>,
+    symbols: &mut [Value],
+    hints: &mut [Value],
     _airgroup_id: u64, // Unused but kept for API consistency
     _air_id: u64,      // Unused but kept for API consistency
 ) {
