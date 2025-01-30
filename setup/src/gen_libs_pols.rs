@@ -34,7 +34,7 @@ pub fn generate_libs_polynomials(
         challenge_sets.push(init_challenges_permutation());
     }
 
-    if pil.get("connectionIdentities").map_or(false, |v| !v.as_array().unwrap().is_empty()) {
+    if pil.get("connectionIdentities").is_some_and(|v| !v.as_array().unwrap().is_empty()) {
         grand_product_connection(pil, symbols, hints, airgroup_id, air_id, fr_mul, k);
         challenge_sets.push(init_challenges_connection());
     }
