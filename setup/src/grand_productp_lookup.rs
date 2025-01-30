@@ -53,7 +53,7 @@ pub fn grand_product_plookup(
     let mut n_cm3 = pil.get("nCm3").and_then(|v| v.as_u64()).unwrap_or(0);
 
     if let Some(identity_list) = plookup_identities.as_array() {
-        for (_i, pi) in identity_list.iter().enumerate() {
+        for pi in identity_list.iter() {
             let mut pu_ctx = HashMap::new();
             let mut t_exp = None;
 

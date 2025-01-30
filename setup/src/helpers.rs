@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fmt::Write;
 
 /// Prints a formatted expression recursively.
 pub fn print_expressions(
@@ -52,7 +53,10 @@ pub fn print_expressions(
 
             let mut name = col["name"].as_str().unwrap_or("").to_string();
             if let Some(lengths) = col.get("lengths").and_then(Value::as_array) {
-                name.push_str(&lengths.iter().map(|len| format!("[{}]", len)).collect::<String>());
+                lengths.iter().fold(&mut name, |name, len| {
+                    let _ = write!(name, "[{}]", len);
+                    name
+                });
             }
 
             if col.get("imPol").and_then(Value::as_bool).unwrap_or(false) {

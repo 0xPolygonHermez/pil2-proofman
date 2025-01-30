@@ -102,7 +102,7 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 }
             }
 
-            if !s.get("dim").is_some() {
+            if s.get("dim").is_none() {
                 let stage_id = s["id"].as_u64().unwrap_or(0) as usize;
                 let mut symbol = json!({
                     "name": s["name"],
@@ -121,7 +121,7 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 symbols.push(symbol);
             } else {
                 let mut multi_array_symbols = Vec::new();
-                generate_multi_array_symbols(&mut multi_array_symbols, &vec![], s, type_str, dim, pol_id, 0);
+                generate_multi_array_symbols(&mut multi_array_symbols, &[], s, type_str, dim, pol_id, 0);
                 symbols.extend(multi_array_symbols);
             }
         } else if s_type == 4 {
@@ -142,7 +142,7 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 "dim": 3
             }));
         } else if s_type == 6 {
-            if !s.get("dim").is_some() {
+            if s.get("dim").is_none() {
                 symbols.push(json!({
                     "name": s["name"],
                     "stage": 1,
@@ -154,7 +154,7 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 let mut multi_array_symbols = Vec::new();
                 generate_multi_array_symbols(
                     &mut multi_array_symbols,
-                    &vec![],
+                    &[],
                     s,
                     "public",
                     1,
@@ -578,14 +578,14 @@ pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (Vadco
         proof_values_map: vec![],
     };
 
-    for (_, airgroup) in airout.air_groups.iter().enumerate() {
-        let airgroup_id = airgroup.airgroup_id as usize;
+    for airgroup in airout.air_groups.iter() {
+        let airgroup_id = airgroup.airgroup_id;
         vadcop_info.air_groups.push(format!("AirGroup {}", airgroup_id)); // Placeholder name if missing
 
         vadcop_info.airs[airgroup_id] = airgroup
             .airs
             .iter()
-            .map(|air| AIRMetadata { name: air.name.clone(), num_rows: air.num_rows as usize })
+            .map(|air| AIRMetadata { name: air.name.clone(), num_rows: air.num_rows })
             .collect();
     }
 
@@ -594,15 +594,15 @@ pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (Vadco
         .first()
         .and_then(|s| s.steps.last())
         .map(|s| s.n_bits)
-        .unwrap_or_else(|| panic!("StarkStruct must contain at least one step")) as usize;
+        .unwrap_or_else(|| panic!("StarkStruct must contain at least one step"));
 
     let mut steps_fri: HashSet<usize> = HashSet::new();
 
     for stark_struct in stark_structs {
         for step in &stark_struct.steps {
-            steps_fri.insert(step.n_bits as usize);
+            steps_fri.insert(step.n_bits);
         }
-        if stark_struct.steps.last().map(|s| s.n_bits as usize) != Some(final_step) {
+        if stark_struct.steps.last().map(|s| s.n_bits) != Some(final_step) {
             panic!("All FRI steps for different air groups must end at the same nBits");
         }
     }

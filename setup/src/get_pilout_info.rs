@@ -76,7 +76,7 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
                 .cloned()
                 .collect::<Vec<Value>>()
         })
-        .unwrap_or_else(Vec::new);
+        .unwrap_or_default();
 
     let mut symbols_vec = symbols.as_array().unwrap().clone();
     let mut expressions_vec = expressions.as_array().unwrap().clone();
@@ -134,7 +134,7 @@ pub fn get_fixed_pols_pil2(
     cnst_pols: &mut HashMap<String, Vec<Value>>,
 ) -> std::io::Result<()> {
     // Clone the def_array to avoid immutable + mutable borrow conflict
-    let def_array = cnst_pols.get("$$defArray").and_then(|arr| Some(arr.clone())).unwrap_or_default();
+    let def_array = cnst_pols.get("$$defArray").cloned().unwrap_or_default();
 
     for def in &def_array {
         let id = def["id"].as_u64().expect("Missing `id` in def array");
