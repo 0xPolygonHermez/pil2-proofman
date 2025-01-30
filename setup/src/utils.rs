@@ -578,7 +578,7 @@ pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (Vadco
         proof_values_map: vec![],
     };
 
-    for (i, airgroup) in airout.air_groups.iter().enumerate() {
+    for (_, airgroup) in airout.air_groups.iter().enumerate() {
         let airgroup_id = airgroup.airgroup_id as usize;
         vadcop_info.air_groups.push(format!("AirGroup {}", airgroup_id)); // Placeholder name if missing
 
@@ -620,7 +620,7 @@ pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (Vadco
 }
 
 use crate::{
-    gen_code::{build_code, pil_code_gen},
+    gen_code::{build_code, pil_code_gen, CodeGenContext},
     gen_pil_code::add_hints_info,
     helpers::add_info_expressions,
     AirOut, StarkStruct,
@@ -628,7 +628,8 @@ use crate::{
 
 use itertools::Itertools; // Needed for sorting
 
-/// Extracts global constraints information from a given pilout JSON structure.
+/// Extracts global constraints information from a given `pilout` JSON structure.
+/// This function replicates the `getGlobalConstraintsInfo` logic from JavaScript.
 ///
 /// # Arguments
 /// * `pilout` - A reference to the `pilout` JSON structure.
@@ -672,19 +673,27 @@ pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols
             }
         }
 
-        let mut ctx = HashMap::from([
-            ("calculated".to_string(), json!({})),
-            ("tmpUsed".to_string(), json!(0)),
-            ("code".to_string(), json!([])),
-            ("dom".to_string(), json!("n")),
-        ]);
+        let mut ctx = CodeGenContext {
+            stage: 0,
+            calculated: HashMap::new(),
+            symbols_used: Vec::new(),
+            tmp_used: 0,
+            code: Vec::new(),
+            dom: "n".to_string(),
+            air_id: json!(null),
+            airgroup_id: json!(null),
+            opening_points: Vec::new(),
+            verifier_evaluations: false,
+            ev_map: Vec::new(),
+            exp_map: HashMap::new(),
+        };
 
         // Generate constraint code
         for constraint in &formatted_constraints {
             if let Some(e_idx) = constraint.get("e").and_then(|e| e.as_u64()) {
                 pil_code_gen(&mut ctx, &symbols, &expressions, e_idx as usize, 0);
-                let mut code = build_code(&ctx);
-                ctx.insert("tmpUsed".to_string(), code["tmpUsed"].clone());
+                let mut code = build_code(&mut ctx);
+                ctx.tmp_used = code["tmpUsed"].as_u64().unwrap_or(0) as usize;
                 code["boundary"] = constraint["boundary"].clone();
                 code["line"] = constraint["line"].clone();
                 constraints_code.push(code);
@@ -693,7 +702,7 @@ pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols
     }
 
     // Handle global hints
-    if let Some(global_hints) = pilout.get("hints").and_then(|hints| hints.as_array()).map(|hints| {
+    if let Some(global_hints) = pilout.get("hints").and_then(|h| h.as_array()).map(|hints| {
         hints
             .iter()
             .filter(|h| h.get("airId").is_none() && h.get("airgroupId").is_none())

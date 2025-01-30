@@ -3,19 +3,19 @@ use std::collections::HashMap;
 
 /// Context struct for handling expression transformation
 #[derive(Debug, Clone, Default)]
-struct CodeGenContext {
-    stage: usize,
-    calculated: HashMap<usize, HashMap<i64, Value>>,
-    symbols_used: Vec<Value>,
-    tmp_used: usize,
-    code: Vec<Value>,
-    dom: String,
-    air_id: Value,
-    airgroup_id: Value,
-    opening_points: Vec<i64>,
-    verifier_evaluations: bool,
-    ev_map: Vec<Value>,
-    exp_map: HashMap<i64, HashMap<usize, usize>>, // Tracks expression remapping
+pub struct CodeGenContext {
+    pub stage: usize,
+    pub calculated: HashMap<usize, HashMap<i64, Value>>,
+    pub symbols_used: Vec<Value>,
+    pub tmp_used: usize,
+    pub code: Vec<Value>,
+    pub dom: String,
+    pub air_id: Value,
+    pub airgroup_id: Value,
+    pub opening_points: Vec<i64>,
+    pub verifier_evaluations: bool,
+    pub ev_map: Vec<Value>,
+    pub exp_map: HashMap<i64, HashMap<usize, usize>>, // Tracks expression remapping
 }
 
 /// Generates expressions code while keeping structure as close as possible to the original JS implementation.
