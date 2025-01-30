@@ -216,14 +216,18 @@ pub struct StarkSetupResult {
     pub stats: Value,
 }
 
+/// Helper function for field multiplication
+fn multiply_f64(a: f64, b: f64) -> f64 {
+    let f3g = F3g::new(); // Instantiate inside the function to avoid captures
+    let result = f3g.mul(&BigUint::from(a as u64), &BigUint::from(b as u64));
+    result.to_f64().unwrap_or(0.0) // Convert BigUint to f64 safely
+}
+
 pub async fn stark_setup(
     air: &Air,
     stark_struct: &StarkStruct,
     setup_options: &SetupOptions,
 ) -> Result<StarkSetupResult, Box<dyn std::error::Error>> {
-    // Instantiate the field element class
-    let f3g = F3g::new();
-
     // Check if pil2 mode is enabled
     let pil2 = setup_options.settings.get("pil2").and_then(|v| v.as_bool()).unwrap_or(false);
 
@@ -233,9 +237,9 @@ pub async fn stark_setup(
     // Convert setup_options to a HashMap<String, Value> for compatibility with pil_info
     let options_map: HashMap<String, Value> = serde_json::from_value(serde_json::to_value(setup_options)?)?;
 
-    // Call `pil_info` equivalent to JS `pilInfo`
+    // Call `pil_info`, using the function pointer `multiply_f64`
     let pil_result = pil_info(
-        |a, b| f3g.mul(&BigUint::from(a as u64), &BigUint::from(b as u64)).to_f64().unwrap_or(0.0),
+        multiply_f64, // Pass the function pointer
         &air_json,
         pil2,
         &serde_json::to_value(stark_struct)?,
