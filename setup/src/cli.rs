@@ -4,10 +4,12 @@ use std::path::PathBuf;
 use serde_json::Value;
 use clap::{Arg, Command};
 use tokio::fs::read_to_string;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Config {
     pub airout: AiroutConfig,
     pub setup: SetupConfig,
+    pub build_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -111,5 +113,6 @@ pub async fn parse_cli() -> Config {
             bin_file,
             stdlib: matches.get_one::<PathBuf>("stdlib").cloned(),
         },
+        build_dir,
     }
 }
