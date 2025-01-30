@@ -24,7 +24,7 @@ pub fn generate_libs_polynomials(
 
     let mut challenge_sets: Vec<Vec<Value>> = Vec::new();
 
-    if pil.get("plookupIdentities").map_or(false, |v| !v.as_array().unwrap().is_empty()) {
+    if pil.get("plookupIdentities").is_some_and(|v| !v.as_array().unwrap().is_empty()) {
         grand_product_plookup(pil, symbols, hints, airgroup_id, air_id);
         challenge_sets.push(init_challenges_plookup());
     }
