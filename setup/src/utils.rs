@@ -716,7 +716,7 @@ pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols
     }) {
         let hints = format_hints(pilout, &global_hints, &mut symbols, &mut expressions, save_symbols, true);
         let mut res = HashMap::new();
-        hints_code = add_hints_info(&mut res, &mut expressions, &hints, &mut HashMap::new());
+        hints_code = add_hints_info(&mut res, &mut expressions, &hints);
     }
 
     HashMap::from([("constraints".to_string(), json!(constraints_code)), ("hints".to_string(), json!(hints_code))])
