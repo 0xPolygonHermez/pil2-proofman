@@ -56,7 +56,7 @@ pub fn generate_pil_code(
 
     // Convert `res_map` to a HashMap
     let mut res_hashmap: HashMap<String, Value> = res.as_object().unwrap().clone().into_iter().collect();
-    let hints_info = add_hints_info(&mut res_hashmap, expressions, hints, &mut HashMap::new());
+    let hints_info = add_hints_info(&mut res_hashmap, expressions, hints);
 
     // Convert back and update `res`
     *res = json!(res_hashmap);
@@ -113,12 +113,7 @@ fn flatten_json_array(value: &Value) -> Vec<Value> {
 }
 
 /// Adds hints info, processing hint fields recursively.
-pub fn add_hints_info(
-    res: &mut HashMap<String, Value>,
-    expressions: &mut Vec<Value>,
-    hints: &[Value],
-    global: &mut HashMap<String, Value>,
-) -> Vec<Value> {
+pub fn add_hints_info(res: &mut HashMap<String, Value>, expressions: &mut Vec<Value>, hints: &[Value]) -> Vec<Value> {
     let mut hints_info = Vec::new();
 
     for hint in hints {
@@ -126,7 +121,7 @@ pub fn add_hints_info(
 
         if let Some(fields) = hint["fields"].as_array() {
             for field in fields {
-                let processed_values = process_hint_field_value(&field["values"], res, expressions, global, vec![]);
+                let processed_values = process_hint_field_value(&field["values"], res, expressions, vec![]);
                 let flattened_values = flatten_json_array(&processed_values); // ✅ Fix: Flatten manually
 
                 let mut hint_field = json!({
@@ -163,7 +158,6 @@ pub fn process_hint_field_value(
     values: &Value,
     res: &mut HashMap<String, Value>,
     expressions: &mut Vec<Value>,
-    global: &mut HashMap<String, Value>,
     pos: Vec<usize>,
 ) -> Value {
     let mut processed_fields = Vec::new();
@@ -174,7 +168,7 @@ pub fn process_hint_field_value(
             current_pos.push(j);
 
             if field.is_array() {
-                processed_fields.push(process_hint_field_value(field, res, expressions, global, current_pos));
+                processed_fields.push(process_hint_field_value(field, res, expressions, current_pos));
             } else if let Some(op) = field.get("op").and_then(|v| v.as_str()) {
                 let processed_field = match op {
                     "exp" => {
