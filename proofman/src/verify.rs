@@ -6,7 +6,7 @@ use colored::*;
 
 use std::sync::Arc;
 
-use proofman_common::{ProofCtx, ProofType, Prover, SetupCtx, get_global_constraints_lines_str};
+use proofman_common::{ProofCtx, ProofType, SetupCtx, get_global_constraints_lines_str};
 
 use proofman_hints::aggregate_airgroupvals;
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
@@ -22,13 +22,13 @@ pub fn verify_proof<F: Field>(
     verkey_path: String,
     publics: Option<Vec<F>>,
     proof_values: Option<Vec<F>>,
-    challenges: Option<Vec<F>>,
+    global_challenge: Option<Vec<F>>,
 ) -> bool {
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
-    let proof_challenges_ptr = match challenges {
-        Some(ref challenges) => challenges.as_ptr() as *mut u8,
+    let global_challenge_ptr = match global_challenge {
+        Some(ref global_challenge) => global_challenge.as_ptr() as *mut u8,
         None => std::ptr::null_mut(),
     };
 
@@ -49,51 +49,46 @@ pub fn verify_proof<F: Field>(
         p_expressions_bin,
         publics_ptr,
         proof_values_ptr,
-        proof_challenges_ptr,
+        global_challenge_ptr,
     )
 }
 
-pub fn verify_basic_proofs<F: Field>(
-    provers: &mut [Box<dyn Prover<F>>],
-    proves: Vec<*mut c_void>,
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
-) -> bool {
+pub fn verify_basic_proofs<F: Field>(proofs: Vec<*mut c_void>, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> bool {
     const MY_NAME: &str = "Verify  ";
     timer_start_info!(VERIFYING_BASIC_PROOFS);
     let mut is_valid = true;
 
-    for (idx, prover) in provers.iter().enumerate() {
-        let prover_info = prover.get_prover_info();
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
 
-        let setup_path =
-            pctx.global_info.get_air_setup_path(prover_info.airgroup_id, prover_info.air_id, &ProofType::Basic);
+    for (idx, instance_id) in my_instances.iter().enumerate() {
+        let (airgroup_id, air_id) = instances[*instance_id];
+        let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
 
-        let steps_fri: Vec<usize> = pctx.global_info.steps_fri.iter().map(|step| step.n_bits).collect();
-        let proof_challenges = prover.get_proof_challenges(steps_fri, pctx.get_challenges().to_vec());
+        let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);
 
         let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
         let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
         let verkey_path = setup_path.display().to_string() + ".verkey.json";
 
         let is_valid_proof = verify_proof(
-            proves[idx],
+            proofs[idx],
             stark_info_path,
             expressions_bin_path,
             verkey_path,
             Some(pctx.get_publics().clone()),
             Some(pctx.get_proof_values().clone()),
-            Some(proof_challenges),
+            Some(pctx.get_global_challenge().clone()),
         );
 
-        let air_name = &pctx.global_info.airs[prover_info.airgroup_id][prover_info.air_id].name;
+        let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
         if !is_valid_proof {
             is_valid = false;
             log::info!(
                 "{}: ··· {}",
                 MY_NAME,
-                format!("\u{2717} Proof of {}: Instance #{} was not verified", air_name, prover_info.air_instance_id,)
+                format!("\u{2717} Proof of {}: Instance #{} was not verified", air_name, air_instance_id,)
                     .bright_red()
                     .bold()
             );
@@ -101,7 +96,7 @@ pub fn verify_basic_proofs<F: Field>(
             log::info!(
                 "{}:     {}",
                 MY_NAME,
-                format!("\u{2713} Proof of {}: Instance #{} was verified", air_name, prover_info.air_instance_id,)
+                format!("\u{2713} Proof of {}: Instance #{} was verified", air_name, air_instance_id,)
                     .bright_green()
                     .bold()
             );

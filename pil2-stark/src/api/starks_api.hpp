@@ -75,7 +75,7 @@
 
     void calculate_fri_polynomial(void *pStarks, void* stepsParams);
     void calculate_quotient_polynomial(void *pStarks, void* stepsParams);
-    void calculate_impols_expressions(void *pStarks, uint64_t step, void* stepsParams);
+    void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams);
 
     void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, void *pBuffHelper, char *treeFile);
     void load_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, char *treeFile);
@@ -85,7 +85,8 @@
     void compute_lev(void *pStarks, void *xiChallenge, void* LEv);
     void compute_evals(void *pStarks, void *params, void *LEv, void *pProof);
 
-    void calculate_hash(void *pStarks, void *pHhash, void *pBuffer, uint64_t nElements);
+    void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace);
+    void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements);
 
     // FRI 
     // =================================================================================
@@ -98,11 +99,11 @@
 
     // Transcript
     // =================================================================================
-    void *transcript_new(uint32_t elementType, uint64_t arity, bool custom);
+    void *transcript_new(uint64_t arity, bool custom);
     void transcript_add(void *pTranscript, void *pInput, uint64_t size);
     void transcript_add_polinomial(void *pTranscript, void *pPolinomial);
-    void transcript_free(void *pTranscript, uint32_t elementType);
-    void get_challenge(void *pStarks, void *pTranscript, void *pElement);
+    void transcript_free(void *pTranscript);
+    void get_challenge(void *pTranscript, void *pElement);
     void get_permutations(void *pTranscript, uint64_t *res, uint64_t n, uint64_t nBits);
 
     // Constraints
@@ -126,6 +127,10 @@
     // Debug functions
     // =================================================================================
     void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row);
+    
+    // Gen proof
+    // =================================================================================
+    void *gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, char *proofFile);
 
     // Recursive proof
     // =================================================================================

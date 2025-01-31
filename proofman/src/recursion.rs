@@ -6,17 +6,139 @@ use std::sync::Arc;
 use proofman_starks_lib_c::*;
 use std::path::{Path, PathBuf};
 use std::io::Read;
+use log::info;
+
+use colored::*;
 
 use proofman_common::{ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 
 use std::os::raw::{c_void, c_char};
 
-use proofman_util::{create_buffer_fast_u8, timer_start_trace, timer_stop_and_log_trace};
+use proofman_util::{
+    create_buffer_fast, create_buffer_fast_u8, timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace,
+    timer_start_trace,
+};
+
+use crate::verify_proof;
 
 type GetWitnessFunc =
     unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64);
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
+
+pub fn aggregate_proofs<F: Field>(
+    name: &str,
+    pctx_aggregation: Arc<ProofCtx<F>>,
+    setups: Arc<SetupsVadcop<F>>,
+    proofs: Vec<*mut c_void>,
+    output_dir_path: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    info!("{}: ··· Generating aggregated proofs", name);
+
+    let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
+        get_buff_sizes(pctx_aggregation.clone(), setups.clone())?;
+    let mut circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
+    let publics: Vec<F> = create_buffer_fast(publics_size);
+    let trace: Vec<F> = create_buffer_fast(trace_size);
+    let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
+
+    timer_start_info!(GENERATING_AGGREGATION_PROOFS);
+    timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
+    let recursive1_proofs = generate_vadcop_recursive1_proof(
+        &pctx_aggregation,
+        setups.clone(),
+        &proofs,
+        &mut circom_witness,
+        &publics,
+        &trace,
+        &prover_buffer,
+        output_dir_path.clone(),
+    )?;
+    timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
+    info!("{}: Compressor and recursive1 proofs generated successfully", name);
+
+    pctx_aggregation.dctx.read().unwrap().barrier();
+    timer_start_info!(GENERATING_RECURSIVE2_PROOFS);
+    let sctx_recursive2 = setups.sctx_recursive2.clone();
+    let recursive2_proof = generate_vadcop_recursive2_proof(
+        &pctx_aggregation,
+        sctx_recursive2.as_ref().unwrap().clone(),
+        &recursive1_proofs,
+        &mut circom_witness,
+        &publics,
+        &trace,
+        &prover_buffer,
+        output_dir_path.clone(),
+    )?;
+    timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
+    info!("{}: Recursive2 proofs generated successfully", name);
+
+    pctx_aggregation.dctx.read().unwrap().barrier();
+    if pctx_aggregation.dctx_get_rank() == 0 {
+        let setup_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
+        timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
+        let final_proof = generate_vadcop_final_proof(
+            &pctx_aggregation,
+            setup_final.clone(),
+            recursive2_proof,
+            &mut circom_witness,
+            &publics,
+            &trace,
+            &prover_buffer,
+            output_dir_path.clone(),
+        )?;
+        timer_stop_and_log_info!(GENERATING_VADCOP_FINAL_PROOF);
+        info!("{}: VadcopFinal proof generated successfully", name);
+
+        timer_stop_and_log_info!(GENERATING_AGGREGATION_PROOFS);
+
+        if pctx_aggregation.options.final_snark {
+            timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
+            let recursivef_proof = generate_recursivef_proof(
+                &pctx_aggregation,
+                setups.setup_recursivef.as_ref().unwrap().clone(),
+                final_proof,
+                &mut circom_witness,
+                &publics,
+                &trace,
+                &prover_buffer,
+                output_dir_path.clone(),
+            )?;
+            timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
+
+            timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
+            let _ = generate_fflonk_snark_proof(&pctx_aggregation, recursivef_proof, output_dir_path.clone());
+            timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
+        } else {
+            let setup_path = pctx_aggregation.global_info.get_setup_path("vadcop_final");
+            let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
+            let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
+            let verkey_path = setup_path.display().to_string() + ".verkey.json";
+
+            timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
+            let valid_proofs = verify_proof(
+                final_proof,
+                stark_info_path,
+                expressions_bin_path,
+                verkey_path,
+                Some(pctx_aggregation.get_publics().clone()),
+                None,
+                None,
+            );
+            timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
+            if !valid_proofs {
+                log::info!("{}: ··· {}", name, "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
+                return Err("Vadcop Final proof was not verified".into());
+            } else {
+                log::info!("{}:     {}", name, "\u{2713} Vadcop Final proof was verified".bright_green().bold());
+            }
+        }
+    }
+    pctx_aggregation.dctx_barrier();
+    info!("{}: Proofs generated successfully", name);
+    pctx_aggregation.dctx.read().unwrap().barrier();
+    Ok(())
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_recursive1_proof<F: Field>(
@@ -78,7 +200,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
                 setup.get_const_ptr(),
                 setup.get_const_tree_ptr(),
                 publics.as_ptr() as *mut u8,
-                &proof_file,
+                &output_file_path.to_string_lossy().into_owned(),
                 global_info_file,
                 airgroup_id as u64,
                 air_id as u64,
@@ -128,7 +250,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
             setup.get_const_ptr(),
             setup.get_const_tree_ptr(),
             publics.as_ptr() as *mut u8,
-            &proof_file,
+            &output_file_path.to_string_lossy().into_owned(),
             global_info_file,
             airgroup_id as u64,
             air_id as u64,
@@ -218,7 +340,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                         let zkin_recursive2 = join_zkin_recursive2_c(
                             airgroup as u64,
                             pctx.get_publics_ptr(),
-                            pctx.get_challenges_ptr(),
+                            pctx.get_global_challenge_ptr(),
                             global_info_file,
                             airgroup_proofs[airgroup][j].unwrap(),
                             airgroup_proofs[airgroup][j + 1].unwrap(),
@@ -275,7 +397,15 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                             setup.get_const_ptr(),
                             setup.get_const_tree_ptr(),
                             publics.as_ptr() as *mut u8,
-                            &proof_file,
+                            &output_dir_path
+                            .join(format!(
+                                "proofs/recursive2_{}_{}_{}.json",
+                                pctx.global_info.air_groups[airgroup],
+                                j,
+                                j + 1
+                            ))
+                            .to_string_lossy()
+                            .into_owned(),
                             global_info_file,
                             airgroup as u64,
                             0,
@@ -287,6 +417,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 
                         timer_stop_and_log_trace!(GENERATE_RECURSIVE2_PROOF);
                         log::info!("{}: ··· Recursive 2 Proof generated.", MY_NAME);
+                        panic!();
                     }
                 }
                 alive = (alive + 1) / 2;
@@ -323,7 +454,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
         zkin_final = join_zkin_final_c(
             pctx.get_publics_ptr(),
             pctx.get_proof_values_ptr(),
-            pctx.get_challenges_ptr(),
+            pctx.get_global_challenge_ptr(),
             global_info_file,
             proofs_recursive2_ptr,
             stark_infos_recursive2_ptr,
