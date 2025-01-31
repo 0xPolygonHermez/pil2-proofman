@@ -52,6 +52,7 @@ struct AirCtx {
     name: String,
     num_rows: u32,
     columns: Vec<ColumnCtx>,
+    fixed: Vec<ColumnCtx>,
     stages_columns: Vec<StageColumnCtx>,
     custom_columns: Vec<CustomCommitsCtx>,
     air_values: Vec<ValuesCtx>,
@@ -61,7 +62,8 @@ struct AirCtx {
 #[derive(Clone, Debug, Serialize)]
 struct ValuesCtx {
     values: Vec<ColumnCtx>,
-    values_u64: Vec<ColumnCtx>,
+    values_u64: Vec<Column64Ctx>,
+    values_default: Vec<ColumnCtx>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -73,6 +75,13 @@ struct CustomCommitsCtx {
 #[derive(Clone, Debug, Serialize)]
 struct ColumnCtx {
     name: String,
+    r#type: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct Column64Ctx {
+    name: String,
+    array: bool,
     r#type: String,
 }
 
@@ -135,6 +144,7 @@ impl PilHelpersCmd {
                         name: air.name.as_ref().unwrap().to_string(),
                         num_rows: air.num_rows.unwrap(),
                         columns: Vec::new(),
+                        fixed: Vec::new(),
                         stages_columns: vec![StageColumnCtx::default(); pilout.num_challenges.len() - 1],
                         custom_columns: Vec::new(),
                         air_values: Vec::new(),
@@ -192,7 +202,11 @@ impl PilHelpersCmd {
                 };
                 if symbol.r#type == SymbolType::ProofValue as i32 {
                     if proof_values.is_empty() {
-                        proof_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
+                        proof_values.push(ValuesCtx {
+                            values: Vec::new(),
+                            values_u64: Vec::new(),
+                            values_default: Vec::new(),
+                        });
                     }
                     if symbol.stage == Some(1) {
                         proof_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
@@ -201,7 +215,11 @@ impl PilHelpersCmd {
                     }
                 } else {
                     if publics.is_empty() {
-                        publics.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
+                        publics.push(ValuesCtx {
+                            values: Vec::new(),
+                            values_u64: Vec::new(),
+                            values_default: Vec::new(),
+                        });
                     }
                     publics[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
                     let r#type_64 = if symbol.lengths.is_empty() {
@@ -214,7 +232,20 @@ impl PilHelpersCmd {
                             .rev()
                             .fold("u64".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
                     };
-                    publics[0].values_u64.push(ColumnCtx { name: name.to_owned(), r#type: r#type_64 });
+                    publics[0].values_u64.push(Column64Ctx {
+                        name: name.to_owned(),
+                        r#type: r#type_64,
+                        array: !symbol.lengths.is_empty(),
+                    });
+
+                    let default = "0".to_string();
+                    let r#type_default = if symbol.lengths.is_empty() {
+                        default // Case when lengths.len() == 0
+                    } else {
+                        // Start with "u64" and apply each length in reverse order
+                        symbol.lengths.iter().rev().fold(default, |acc, &length| format!("[{}; {}]", acc, length))
+                    };
+                    publics[0].values_default.push(ColumnCtx { name: name.to_owned(), r#type: r#type_default });
                 }
             });
 
@@ -244,6 +275,7 @@ impl PilHelpersCmd {
                                 || symbol.r#type == SymbolType::AirGroupValue as i32)
                             && symbol.stage.is_some()
                             && ((symbol.r#type == SymbolType::WitnessCol as i32)
+                                || (symbol.r#type == SymbolType::FixedCol as i32)
                                 || (symbol.r#type == SymbolType::AirValue as i32)
                                 || (symbol.r#type == SymbolType::AirGroupValue as i32)
                                 || (symbol.r#type == SymbolType::CustomCol as i32 && symbol.stage.unwrap() == 0))
@@ -280,9 +312,15 @@ impl PilHelpersCmd {
                                     .columns
                                     .push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
                             }
+                        } else if symbol.r#type == SymbolType::FixedCol as i32 {
+                            air.fixed.push(ColumnCtx { name: name.to_owned(), r#type });
                         } else if symbol.r#type == SymbolType::AirValue as i32 {
                             if air.air_values.is_empty() {
-                                air.air_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
+                                air.air_values.push(ValuesCtx {
+                                    values: Vec::new(),
+                                    values_u64: Vec::new(),
+                                    values_default: Vec::new(),
+                                });
                             }
                             if symbol.stage == Some(1) {
                                 air.air_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type });
@@ -291,7 +329,11 @@ impl PilHelpersCmd {
                             }
                         } else if symbol.r#type == SymbolType::AirGroupValue as i32 {
                             if air.airgroup_values.is_empty() {
-                                air.airgroup_values.push(ValuesCtx { values: Vec::new(), values_u64: Vec::new() });
+                                air.airgroup_values.push(ValuesCtx {
+                                    values: Vec::new(),
+                                    values_u64: Vec::new(),
+                                    values_default: Vec::new(),
+                                });
                             }
                             air.airgroup_values[0].values.push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
                         } else {

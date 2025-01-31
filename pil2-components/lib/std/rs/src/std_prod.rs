@@ -33,7 +33,7 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
 
     fn new(
         _pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx>,
+        sctx: Arc<SetupCtx<F>>,
         _airgroup_id: Option<usize>,
         _air_id: Option<usize>,
     ) -> Arc<Self> {
@@ -62,7 +62,7 @@ impl<F: PrimeField> StdProd<F> {
     fn debug_mode(
         &self,
         pctx: &ProofCtx<F>,
-        sctx: &SetupCtx,
+        sctx: &SetupCtx<F>,
         air_instance: &AirInstance<F>,
         air_instance_id: usize,
         num_rows: usize,
@@ -257,7 +257,7 @@ impl<F: PrimeField> StdProd<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         let stage_wc = self.stage_wc.as_ref();
         if stage_wc.is_none() {
             return;
@@ -342,7 +342,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
         }
     }
 
-    fn debug(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn debug(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         timer_start_info!(DEBUG_MODE_PROD);
 
         let std_prod_users_vec = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");

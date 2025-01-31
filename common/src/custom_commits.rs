@@ -6,7 +6,7 @@ use crate::Setup;
 pub fn get_custom_commit_trace(
     commit_id: u64,
     step: u64,
-    setup: &Setup,
+    setup: &Setup<Goldilocks>,
     buffer: Vec<Goldilocks>,
     buffer_ext: Vec<Goldilocks>,
     buffer_str: &str,

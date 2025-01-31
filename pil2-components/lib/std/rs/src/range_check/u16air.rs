@@ -29,7 +29,7 @@ impl<F: PrimeField> AirComponent<F> for U16Air<F> {
 
     fn new(
         _pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx>,
+        _sctx: Arc<SetupCtx<F>>,
         airgroup_id: Option<usize>,
         air_id: Option<usize>,
     ) -> Arc<Self> {
@@ -59,7 +59,7 @@ impl<F: PrimeField> U16Air<F> {
         }
     }
 
-    pub fn drain_inputs(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    pub fn drain_inputs(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         let mut inputs = self.inputs.lock().unwrap();
         let drained_inputs = inputs.drain(..).collect();
 
@@ -123,7 +123,7 @@ impl<F: PrimeField> U16Air<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
-    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         // Obtain info from the mul hints
         let setup = sctx.get_setup(self.airgroup_id, self.air_id);
         let u16air_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "u16air");
@@ -162,7 +162,7 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
         }
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         if stage == 1 {
             Self::drain_inputs(self, pctx, sctx);
         }

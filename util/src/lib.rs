@@ -1,10 +1,9 @@
 pub mod cli;
 pub mod timer_macro;
 
-use p3_field::Field;
 use std::mem::MaybeUninit;
 
-pub fn create_buffer_fast<F: Field>(buffer_size: usize) -> Vec<F> {
+pub fn create_buffer_fast<F>(buffer_size: usize) -> Vec<F> {
     let mut buffer: Vec<MaybeUninit<F>> = Vec::with_capacity(buffer_size);
     unsafe {
         buffer.set_len(buffer_size);

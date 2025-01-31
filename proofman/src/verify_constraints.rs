@@ -15,7 +15,7 @@ use colored::*;
 
 pub fn verify_global_constraints_proof<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     airgroupvalues: Vec<Vec<F>>,
 ) -> Vec<GlobalConstraintInfo> {
     const MY_NAME: &str = "GlCstVfy";
@@ -51,7 +51,7 @@ pub fn verify_global_constraints_proof<F: Field>(
 
 pub fn verify_constraints_proof<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     provers: &mut [Box<dyn Prover<F>>],
 ) -> Result<(), Box<dyn std::error::Error>> {
     const MY_NAME: &str = "CstrVrfy";

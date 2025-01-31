@@ -5,23 +5,25 @@ use proofman_common::{ModeName, ProofCtx, SetupCtx};
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use crate::WitnessComponent;
 
-pub struct WitnessManager<F> {
+pub struct WitnessManager<F: Clone> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     rom_path: Option<PathBuf>,
     public_inputs_path: Option<PathBuf>,
+    input_data_path: Option<PathBuf>,
 }
 
-impl<F> WitnessManager<F> {
+impl<F: Clone> WitnessManager<F> {
     const MY_NAME: &'static str = "WCMnager";
 
     pub fn new(
         pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx>,
+        sctx: Arc<SetupCtx<F>>,
         rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
+        input_data_path: Option<PathBuf>,
     ) -> Self {
         WitnessManager {
             components: RwLock::new(Vec::new()),
@@ -30,6 +32,7 @@ impl<F> WitnessManager<F> {
             sctx,
             rom_path,
             public_inputs_path,
+            input_data_path,
         }
     }
 
@@ -99,7 +102,7 @@ impl<F> WitnessManager<F> {
         self.pctx.clone()
     }
 
-    pub fn get_sctx(&self) -> Arc<SetupCtx> {
+    pub fn get_sctx(&self) -> Arc<SetupCtx<F>> {
         self.sctx.clone()
     }
 
@@ -109,5 +112,9 @@ impl<F> WitnessManager<F> {
 
     pub fn get_public_inputs_path(&self) -> Option<PathBuf> {
         self.public_inputs_path.clone()
+    }
+
+    pub fn get_input_data_path(&self) -> Option<PathBuf> {
+        self.input_data_path.clone()
     }
 }

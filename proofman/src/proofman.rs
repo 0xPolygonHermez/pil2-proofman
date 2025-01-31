@@ -46,6 +46,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         witness_lib_path: PathBuf,
         rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
+        input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
         options: ProofOptions,
@@ -55,6 +56,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             &witness_lib_path,
             &rom_path,
             &public_inputs_path,
+            &input_data_path,
             &proving_key_path,
             &output_dir_path,
             options.verify_constraints,
@@ -62,8 +64,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), options);
 
-        let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
-        let sctx: Arc<SetupCtx> = setups.sctx.clone();
+        let setups =
+            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
+        let sctx: Arc<SetupCtx<F>> = setups.sctx.clone();
 
         pctx.set_weights(&sctx);
 
@@ -73,7 +76,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx_barrier();
         timer_start_info!(GENERATING_WITNESS);
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path));
+        let wcm =
+            Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path, input_data_path));
 
         Self::initialize_witness(witness_lib_path, wcm.clone())?;
         pctx.dctx_barrier();
@@ -103,6 +107,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx_assign_instances();
 
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
+        pctx.dctx_barrier();
+
         wcm.calculate_witness(1);
 
         pctx.dctx_close();
@@ -112,9 +119,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_WITNESS);
         timer_start_info!(INITIALIZING_PROOFMAN_2);
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
+        Self::initialize_fixed_pols_tree(setups.clone(), pctx.clone());
         pctx.dctx_barrier();
-
         Self::write_fixed_pols_tree(setups.clone(), pctx.clone());
 
         pctx.dctx_barrier();
@@ -360,7 +366,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Ok(())
     }
 
-    fn initialize_provers(sctx: Arc<SetupCtx>, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: Arc<ProofCtx<F>>) {
+    fn initialize_provers(sctx: Arc<SetupCtx<F>>, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: Arc<ProofCtx<F>>) {
         timer_start_debug!(INITIALIZE_PROVERS);
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -403,7 +409,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);
     }
 
-    fn initialize_fixed_pols(setups: Arc<SetupsVadcop>, pctx: Arc<ProofCtx<F>>) {
+    fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_info!(INITIALIZE_CONST_POLS);
 
@@ -423,7 +429,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         airs.iter().for_each(|&(airgroup_id, air_id)| {
             let setup = setups.sctx.get_setup(airgroup_id, air_id);
             setup.load_const_pols();
-            setup.load_const_pols_tree();
         });
 
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
@@ -443,7 +448,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 if global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id);
                     setup.load_const_pols();
-                    setup.load_const_pols_tree();
                 }
             });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
@@ -454,7 +458,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             airs.iter().for_each(|&(airgroup_id, air_id)| {
                 let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
                 setup.load_const_pols();
-                setup.load_const_pols_tree();
             });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
 
@@ -465,7 +468,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             for airgroup in 0..n_airgroups {
                 let setup = sctx_recursive2.get_setup(airgroup, 0);
                 setup.load_const_pols();
-                setup.load_const_pols_tree();
             }
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
 
@@ -474,7 +476,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_start_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
                 info!("{}: ··· Initializing setup fixed pols vadcop final", Self::MY_NAME);
                 setup_vadcop_final.load_const_pols();
-                setup_vadcop_final.load_const_pols_tree();
                 timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
 
                 if pctx.options.final_snark {
@@ -482,6 +483,86 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
                     info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
                     setup_recursivef.load_const_pols();
+                    timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+                }
+            }
+            timer_stop_and_log_info!(INITIALIZE_CONST_POLS_AGGREGATION);
+        }
+    }
+
+    fn initialize_fixed_pols_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
+        info!("{}: Initializing setup fixed pols", Self::MY_NAME);
+        timer_start_info!(INITIALIZE_CONST_POLS);
+
+        let instances = pctx.dctx_get_instances();
+        let my_instances = pctx.dctx_get_my_instances();
+
+        let mut airs = Vec::new();
+        let mut seen = HashSet::new();
+
+        for instance_id in my_instances.iter() {
+            let (airgroup_id, air_id) = instances[*instance_id];
+            if seen.insert((airgroup_id, air_id)) {
+                airs.push((airgroup_id, air_id));
+            }
+        }
+
+        airs.iter().for_each(|&(airgroup_id, air_id)| {
+            let setup = setups.sctx.get_setup(airgroup_id, air_id);
+            setup.load_const_pols_tree();
+        });
+
+        timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
+
+        if pctx.options.aggregation {
+            timer_start_info!(INITIALIZE_CONST_POLS_AGGREGATION);
+
+            info!("{}: Initializing setup fixed pols aggregation", Self::MY_NAME);
+
+            let global_info = pctx.global_info.clone();
+
+            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
+            info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
+            timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
+
+            airs.iter().for_each(|&(airgroup_id, air_id)| {
+                if global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    let setup = sctx_compressor.get_setup(airgroup_id, air_id);
+                    setup.load_const_pols_tree();
+                }
+            });
+            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
+
+            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
+            timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
+            info!("{}: ··· Initializing setup fixed pols recursive1", Self::MY_NAME);
+            airs.iter().for_each(|&(airgroup_id, air_id)| {
+                let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
+                setup.load_const_pols_tree();
+            });
+            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
+
+            let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
+            timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
+            info!("{}: ··· Initializing setup fixed pols recursive2", Self::MY_NAME);
+            let n_airgroups = global_info.air_groups.len();
+            for airgroup in 0..n_airgroups {
+                let setup = sctx_recursive2.get_setup(airgroup, 0);
+                setup.load_const_pols_tree();
+            }
+            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
+
+            if pctx.dctx_get_rank() == 0 {
+                let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
+                timer_start_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
+                info!("{}: ··· Initializing setup fixed pols vadcop final", Self::MY_NAME);
+                setup_vadcop_final.load_const_pols_tree();
+                timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
+
+                if pctx.options.final_snark {
+                    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
+                    timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+                    info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
                     setup_recursivef.load_const_pols_tree();
                     timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
                 }
@@ -490,7 +571,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
     }
 
-    fn write_fixed_pols_tree(setups: Arc<SetupsVadcop>, pctx: Arc<ProofCtx<F>>) {
+    fn write_fixed_pols_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
         timer_start_info!(WRITE_CONST_TREE);
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -561,7 +642,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     pub fn calculate_stage(
         stage: u32,
         provers: &mut [Box<dyn Prover<F>>],
-        sctx: Arc<SetupCtx>,
+        sctx: Arc<SetupCtx<F>>,
         pctx: Arc<ProofCtx<F>>,
     ) {
         if stage as usize == pctx.global_info.n_challenges.len() + 1 {
@@ -697,7 +778,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     pub fn opening_stages(
         provers: &mut [Box<dyn Prover<F>>],
         pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx>,
+        sctx: Arc<SetupCtx<F>>,
 
         transcript: &mut FFITranscript,
     ) {
@@ -853,7 +934,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(FREE_PROVERS);
     }
 
-    fn print_global_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop>) {
+    fn print_global_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
         let mut air_info = HashMap::new();
 
         let mut air_instances = HashMap::new();
@@ -1037,7 +1118,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         info!("{}: ----------------------------------------------------------", Self::MY_NAME);
     }
 
-    fn print_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop>) {
+    fn print_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
         let mut air_info = HashMap::new();
 
         let mut air_instances = HashMap::new();
@@ -1211,6 +1292,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         witness_lib_path: &PathBuf,
         rom_path: &Option<PathBuf>,
         public_inputs_path: &Option<PathBuf>,
+        input_data_path: &Option<PathBuf>,
         proving_key_path: &PathBuf,
         output_dir_path: &PathBuf,
         verify_constraints: bool,
@@ -1231,6 +1313,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         if let Some(publics_path) = public_inputs_path {
             if !publics_path.exists() {
                 return Err(format!("Public inputs file not found at path: {:?}", publics_path).into());
+            }
+        }
+
+        if let Some(input_path) = input_data_path {
+            if !input_path.exists() {
+                return Err(format!("Input data file not found at path: {:?}", input_path).into());
             }
         }
 

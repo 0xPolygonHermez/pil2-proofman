@@ -10,7 +10,7 @@ use crate::{AirComponent, StdProd, StdRangeCheck, RangeCheckAir, StdSum};
 
 pub struct Std<F: PrimeField> {
     pub pctx: Arc<ProofCtx<F>>,
-    pub sctx: Arc<SetupCtx>,
+    pub sctx: Arc<SetupCtx<F>>,
     pub range_check: Arc<StdRangeCheck<F>>,
     pub std_prod: Arc<StdProd<F>>,
     pub std_sum: Arc<StdSum<F>>,

@@ -16,18 +16,18 @@ class ConstTree {
 public:
     ConstTree () {};
 
-    uint64_t getConstTreeSizeBytesBN128(StarkInfo& starkInfo)
+    uint64_t getConstTreeSizeBN128(StarkInfo& starkInfo)
     {   
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
         MerkleTreeBN128 mt(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom, NExtended, starkInfo.nConstants);
-        return 16 + (NExtended * starkInfo.nConstants) * sizeof(Goldilocks::Element) + mt.numNodes * sizeof(RawFr::Element);
+        return 2 + (NExtended * starkInfo.nConstants) + mt.numNodes * (sizeof(RawFr::Element) / sizeof(Goldilocks::Element));
     }
 
-    uint64_t getConstTreeSizeBytesGL(StarkInfo& starkInfo)
+    uint64_t getConstTreeSizeGL(StarkInfo& starkInfo)
     {   
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
         MerkleTreeGL mt(2, true, NExtended, starkInfo.nConstants);
-        return (2 + (NExtended * starkInfo.nConstants) + mt.numNodes) * sizeof(Goldilocks::Element);
+        return (2 + (NExtended * starkInfo.nConstants) + mt.numNodes);
     }
 
     void calculateConstTreeGL(StarkInfo& starkInfo, Goldilocks::Element *pConstPolsAddress, void *treeAddress) {
