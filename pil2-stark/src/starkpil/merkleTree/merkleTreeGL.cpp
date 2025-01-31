@@ -135,7 +135,6 @@ bool MerkleTreeGL::verifyGroupProof(Goldilocks::Element* root, std::vector<std::
     calculateRootFromProof(value, mp, idx, 0);
     for(uint64_t i = 0; i < 4; ++i) {
         if(Goldilocks::toU64(value[i]) != Goldilocks::toU64(root[i])) {
-            cout << Goldilocks::toU64(value[0]) << " " << Goldilocks::toU64(value[1]) << " " << Goldilocks::toU64(value[2]) << " " << Goldilocks::toU64(value[3]) << endl;
             return false;
         }
     }
@@ -172,7 +171,8 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
 void MerkleTreeGL::merkelize()
 {
 #ifdef __AVX512__
-    Poseidon2Goldilocks::merkletree_avx512(nodes, source, width, height);
+    // Poseidon2Goldilocks::merkletree_avx512(nodes, source, width, height); // AVX512 is not supported yet
+    Poseidon2Goldilocks::merkletree_avx(nodes, source, width, height);
 #elif defined(__AVX2__)
     Poseidon2Goldilocks::merkletree_avx(nodes, source, width, height);
 #else
