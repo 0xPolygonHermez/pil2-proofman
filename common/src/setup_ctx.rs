@@ -152,9 +152,9 @@ impl<F: Clone> SetupCtx<F> {
         }
     }
 
-    pub fn get_fixed(&self, airgroup_id: usize, air_id: usize) -> Vec<F> {
+    pub fn get_fixed_slice(&self, airgroup_id: usize, air_id: usize) -> &[F] {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
-            Some(setup) => (*setup.const_pols.values.read().unwrap()).clone(),
+            Some(setup) => setup.const_pols.as_slice(),
             None => {
                 // Handle the error case as needed
                 log::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
