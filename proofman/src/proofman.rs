@@ -15,7 +15,7 @@ use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessManager};
 
-use crate::{verify_basic_proofs, verify_constraints_proof, check_paths, print_summary_info, aggregate_proofs};
+use crate::{verify_basic_proofs, verify_constraints_proof, check_paths, print_summary_info, aggregate_proofs, get_buff_sizes, generate_vadcop_recursive1_proof};
 
 use proofman_common::{
     skip_prover_instance, StepsParams, ProofCtx, ProofType, ProofOptions, Prover, SetupCtx, SetupsVadcop,
@@ -129,7 +129,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         wcm.calculate_witness(1);
 
-        Self::initialize_fixed_pols_tree(setups.clone(), pctx.clone());
+        Self::initialize_fixed_tree(setups.clone(), pctx.clone());
         pctx.dctx_barrier();
 
         pctx.dctx_close();
@@ -175,7 +175,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
         }
 
-        println!("{:?} PUBLICS AND PROOF VALUES {:?}", pctx.get_publics().clone(), proof_values_stage, );
 
         let global_challenge = vec![F::zero(); 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
@@ -237,6 +236,18 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
 
+        let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
+            let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
+            get_buff_sizes(pctx.clone(), setups.clone())?;
+            let circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
+            let publics: Vec<F> = create_buffer_fast(publics_size);
+            let trace: Vec<F> = create_buffer_fast(trace_size);
+            let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
+            (circom_witness, publics, trace, prover_buffer)
+        } else {
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        };
+
         let mut proofs = Vec::new();
         for instance_id in my_instances.iter() {
             let (airgroup_id, air_id) = instances[*instance_id];
@@ -246,6 +257,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
             let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
+            timer_start_info!(GENERATING_RECURSIVE_PROOF);
             timer_start_info!(GENERATING_PROOF);
 
             let steps_params = StepsParams {
@@ -282,12 +294,24 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 airgroup_id as u64,
                 air_id as u64,
                 air_instance_id as u64,
-            );
-            proofs.push(proof);
+            );   
+
             timer_stop_and_log_info!(GENERATING_PROOF);
+
+            if pctx.options.aggregation {
+                timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
+                let proof_recursive = generate_vadcop_recursive1_proof(&pctx, &setups, *instance_id, proof, &mut circom_witness, &publics, &trace, &prover_buffer, output_dir_path.clone())?;
+                proofs.push(proof_recursive);
+                timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
+            } else {
+                proofs.push(proof);
+            }
+
+            timer_stop_and_log_info!(GENERATING_RECURSIVE_PROOF);
         }
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
+
 
         let mut valid_proofs = false;
         if !pctx.options.aggregation {
@@ -517,9 +541,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
     }
 
-    fn initialize_fixed_pols_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
-        info!("{}: Initializing setup fixed pols", Self::MY_NAME);
-        timer_start_info!(INITIALIZE_CONST_POLS);
+    fn initialize_fixed_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
+        info!("{}: Initializing setup fixed tree", Self::MY_NAME);
+        timer_start_info!(INITIALIZE_CONST_TREE);
 
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -539,18 +563,18 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             setup.load_const_pols_tree();
         });
 
-        timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
+        timer_stop_and_log_info!(INITIALIZE_CONST_TREE);
 
         if pctx.options.aggregation {
-            timer_start_info!(INITIALIZE_CONST_POLS_AGGREGATION);
+            timer_start_info!(INITIALIZE_CONST_TREE_AGGREGATION);
 
-            info!("{}: Initializing setup fixed pols aggregation", Self::MY_NAME);
+            info!("{}: Initializing setup fixed tree aggregation", Self::MY_NAME);
 
             let global_info = pctx.global_info.clone();
 
             let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
-            info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
-            timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
+            info!("{}: ··· Initializing setup fixed tree compressor", Self::MY_NAME);
+            timer_start_trace!(INITIALIZE_CONST_TREE_COMPRESSOR);
 
             airs.iter().for_each(|&(airgroup_id, air_id)| {
                 if global_info.get_air_has_compressor(airgroup_id, air_id) {
@@ -558,43 +582,43 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     setup.load_const_pols_tree();
                 }
             });
-            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
+            timer_stop_and_log_trace!(INITIALIZE_CONST_TREE_COMPRESSOR);
 
             let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
-            timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
-            info!("{}: ··· Initializing setup fixed pols recursive1", Self::MY_NAME);
+            timer_start_trace!(INITIALIZE_CONST_TREE_RECURSIVE1);
+            info!("{}: ··· Initializing setup fixed tree recursive1", Self::MY_NAME);
             airs.iter().for_each(|&(airgroup_id, air_id)| {
                 let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
                 setup.load_const_pols_tree();
             });
-            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
+            timer_stop_and_log_trace!(INITIALIZE_CONST_TREE_RECURSIVE1);
 
             let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
-            timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
-            info!("{}: ··· Initializing setup fixed pols recursive2", Self::MY_NAME);
+            timer_start_trace!(INITIALIZE_CONST_TREE_RECURSIVE2);
+            info!("{}: ··· Initializing setup fixed tree recursive2", Self::MY_NAME);
             let n_airgroups = global_info.air_groups.len();
             for airgroup in 0..n_airgroups {
                 let setup = sctx_recursive2.get_setup(airgroup, 0);
                 setup.load_const_pols_tree();
             }
-            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
+            timer_stop_and_log_trace!(INITIALIZE_CONST_TREE_RECURSIVE2);
 
             if pctx.dctx_get_rank() == 0 {
                 let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
-                timer_start_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
-                info!("{}: ··· Initializing setup fixed pols vadcop final", Self::MY_NAME);
+                timer_start_trace!(INITIALIZE_CONST_TREE_VADCOP_FINAL);
+                info!("{}: ··· Initializing setup fixed tree vadcop final", Self::MY_NAME);
                 setup_vadcop_final.load_const_pols_tree();
-                timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
+                timer_stop_and_log_trace!(INITIALIZE_CONST_TREE_VADCOP_FINAL);
 
                 if pctx.options.final_snark {
                     let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
-                    timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
-                    info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
+                    timer_start_trace!(INITIALIZE_CONST_TREE_RECURSIVE_FINAL);
+                    info!("{}: ··· Initializing setup fixed tree recursive final", Self::MY_NAME);
                     setup_recursivef.load_const_pols_tree();
-                    timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+                    timer_stop_and_log_trace!(INITIALIZE_CONST_TREE_RECURSIVE_FINAL);
                 }
             }
-            timer_stop_and_log_info!(INITIALIZE_CONST_POLS_AGGREGATION);
+            timer_stop_and_log_info!(INITIALIZE_CONST_TREE_AGGREGATION);
         }
     }
 
@@ -776,8 +800,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             for id in 0..n_field_elements {
                 values[idx * n_field_elements + id] = value[id].as_canonical_u64();
             }
-            println!("VALUE {:?}", value);
-
         }
 
         timer_stop_and_log_info!(COMMITING_STAGE_1);
@@ -821,8 +843,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 value = values[i].clone();
             } else {
                 value = vec![F::zero(); 4];
-                calculate_hash_c(value.as_mut_ptr() as *mut u8, buffer.as_mut_ptr() as *mut u8, 4);
-                println!("HASHED VALUE {:?} OF {:?}", value, buffer);
+                calculate_hash_c(value.as_mut_ptr() as *mut u8, buffer.as_mut_ptr() as *mut u8, buffer.len() as u64);
             }
 
             result.push(value);

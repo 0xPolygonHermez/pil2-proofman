@@ -188,12 +188,6 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     c++;
     assert(c == (starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size() + 1));
 
-    // Print challenges 3 by 3 
-
-    cout << "GLOBAL CHALLENGE " << Goldilocks::toString(globalChallenge[0]) << " " << Goldilocks::toString(globalChallenge[1]) << " " << Goldilocks::toString(globalChallenge[2]) << endl;
-    for(uint64_t i = 0; i < starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size() + 1; i++) {
-        cout << i << " " << Goldilocks::toString(challenges[i*FIELD_EXTENSION]) << " " << Goldilocks::toString(challenges[i*FIELD_EXTENSION + 1]) << " " << Goldilocks::toString(challenges[i*FIELD_EXTENSION + 2]) << endl;
-    }
     Goldilocks::Element *challenge = &challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size()) * FIELD_EXTENSION];
 
     TranscriptType transcriptPermutation(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom);
