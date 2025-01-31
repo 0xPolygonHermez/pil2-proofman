@@ -2,7 +2,7 @@
 #define MERKLETREEGL
 
 #include "goldilocks_base_field.hpp"
-#include "poseidon_goldilocks.hpp"
+#include "poseidon2_goldilocks.hpp"
 #include "zklog.hpp"
 #include <math.h>
 

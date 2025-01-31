@@ -3,6 +3,8 @@
 
 #include "../src/goldilocks_base_field.hpp"
 #include "../src/poseidon_goldilocks.hpp"
+#include "../src/poseidon2_goldilocks.hpp"
+#include "../src/poseidon2_goldilocks_avx.hpp"
 #include "../src/poseidon_goldilocks_avx.hpp"
 #include "../src/ntt_goldilocks.hpp"
 #include "../src/merklehash_goldilocks.hpp"
@@ -164,8 +166,78 @@ static void MUL_OP_AVX_BENCH(benchmark::State &state)
     Goldilocks::Element res[4];
     Goldilocks::store_avx(res, term2_);
     assert(Goldilocks::toU64(res[0]) == 1922281271747280077ULL);
-
 }
+
+
+static void POSEIDON2_BENCH_FULL(benchmark::State &state)
+{
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)SPONGE_WIDTH;
+    Goldilocks::Element *x = new Goldilocks::Element[input_size];
+    Goldilocks::Element *result = new Goldilocks::Element[input_size];
+
+    for (uint64_t i = 0; i < input_size; i++)
+    {
+        x[i] = Goldilocks::fromU64(i);
+    }
+
+    // Benchmark
+    for (auto _ : state)
+    {
+#pragma omp parallel for num_threads(state.range(0)) schedule(static)
+        for (uint64_t i = 0; i < NUM_HASHES; i++)
+        {
+            Poseidon2Goldilocks::hash_full_result_seq((Goldilocks::Element(&)[SPONGE_WIDTH])result[i * SPONGE_WIDTH], (Goldilocks::Element(&)[SPONGE_WIDTH])x[i * SPONGE_WIDTH]);
+        }
+    }
+    // Check poseidon results poseidon ( 0 1 2 3 4 5 6 7 8 9 10 11 )
+    assert(Goldilocks::toU64(result[0]) == 0X1EAEF96BDF1C0C1 );
+    assert(Goldilocks::toU64(result[1]) == 0X1F0D2CC525B2540C);
+    assert(Goldilocks::toU64(result[2]) == 0X6282C1DFE1E0358D);
+    assert(Goldilocks::toU64(result[3]) == 0XE780D721F698E1E6);
+    delete[] x;
+    delete[] result;
+    // Rate = time to process 1 posseidon per core
+    // BytesProcessed = total bytes processed per second on every iteration
+    int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
+    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NUM_HASHES / (double)state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["BytesProcessed"] = benchmark::Counter(input_size * sizeof(uint64_t), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
+}
+
+static void POSEIDON2_BENCH_FULL_AVX(benchmark::State &state)
+{
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)SPONGE_WIDTH;
+    Goldilocks::Element *x = new Goldilocks::Element[input_size];
+    Goldilocks::Element *result = new Goldilocks::Element[input_size];
+
+    for (uint64_t i = 0; i < input_size; i++)
+    {
+        x[i] = Goldilocks::fromU64(i);
+    }
+
+    // Benchmark
+    for (auto _ : state)
+    {
+#pragma omp parallel for num_threads(state.range(0)) schedule(static)
+        for (uint64_t i = 0; i < NUM_HASHES; i++)
+        {
+            Poseidon2Goldilocks::hash_full_result((Goldilocks::Element(&)[SPONGE_WIDTH])result[i * SPONGE_WIDTH], (Goldilocks::Element(&)[SPONGE_WIDTH])x[i * SPONGE_WIDTH]);
+        }
+    }
+    // Check poseidon results poseidon ( 0 1 2 3 4 5 6 7 8 9 10 11 )
+    // assert(Goldilocks::toU64(result[0]) == 0X1EAEF96BDF1C0C1 );
+    // assert(Goldilocks::toU64(result[1]) == 0X1F0D2CC525B2540C);
+    // assert(Goldilocks::toU64(result[2]) == 0X6282C1DFE1E0358D);
+    // assert(Goldilocks::toU64(result[3]) == 0XE780D721F698E1E6);
+    delete[] x;
+    delete[] result;
+    // Rate = time to process 1 posseidon per core
+    // BytesProcessed = total bytes processed per second on every iteration
+    int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
+    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NUM_HASHES / (double)state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["BytesProcessed"] = benchmark::Counter(input_size * sizeof(uint64_t), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
+}
+
+
 
 static void POSEIDON_BENCH_FULL(benchmark::State &state)
 {
@@ -289,6 +361,80 @@ static void POSEIDON_BENCH_FULL_AVX512(benchmark::State &state)
     state.counters["BytesProcessed"] = benchmark::Counter(input_size * sizeof(uint64_t), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
 }
 #endif
+
+
+static void POSEIDON2_BENCH(benchmark::State &state)
+{
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)SPONGE_WIDTH;
+    uint64_t output_size = (uint64_t)NUM_HASHES * (uint64_t)CAPACITY;
+    Goldilocks::Element *x = new Goldilocks::Element[input_size];
+    Goldilocks::Element *result = new Goldilocks::Element[output_size];
+
+    for (uint64_t i = 0; i < input_size; i++)
+    {
+        x[i] = Goldilocks::fromU64(i);
+    }
+
+    // Benchmark
+    for (auto _ : state)
+    {
+#pragma omp parallel for num_threads(state.range(0)) schedule(static)
+        for (uint64_t i = 0; i < NUM_HASHES; i++)
+        {
+            Poseidon2Goldilocks::hash_seq((Goldilocks::Element(&)[CAPACITY])result[i * CAPACITY], (Goldilocks::Element(&)[SPONGE_WIDTH])x[i * SPONGE_WIDTH]);
+        }
+    }
+    // Check poseidon results poseidon ( 0 1 2 3 4 5 6 7 8 9 10 11 )
+    assert(Goldilocks::toU64(result[0]) == 0X1EAEF96BDF1C0C1 );
+    assert(Goldilocks::toU64(result[1]) == 0X1F0D2CC525B2540C);
+    assert(Goldilocks::toU64(result[2]) == 0X6282C1DFE1E0358D);
+    assert(Goldilocks::toU64(result[3]) == 0XE780D721F698E1E6);
+
+    delete[] x;
+    delete[] result;
+    // Rate = time to process 1 posseidon per core
+    // BytesProcessed = total bytes processed per second on every iteration
+    int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
+    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NUM_HASHES / (double)state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["BytesProcessed"] = benchmark::Counter(input_size * sizeof(uint64_t), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
+}
+
+
+static void POSEIDON2_BENCH_AVX(benchmark::State &state)
+{
+    uint64_t input_size = (uint64_t)NUM_HASHES * (uint64_t)SPONGE_WIDTH;
+    uint64_t output_size = (uint64_t)NUM_HASHES * (uint64_t)CAPACITY;
+    Goldilocks::Element *x = new Goldilocks::Element[input_size];
+    Goldilocks::Element *result = new Goldilocks::Element[output_size];
+
+    for (uint64_t i = 0; i < input_size; i++)
+    {
+        x[i] = Goldilocks::fromU64(i);
+    }
+
+    // Benchmark
+    for (auto _ : state)
+    {
+#pragma omp parallel for num_threads(state.range(0)) schedule(static)
+        for (uint64_t i = 0; i < NUM_HASHES; i++)
+        {
+            Poseidon2Goldilocks::hash((Goldilocks::Element(&)[CAPACITY])result[i * CAPACITY], (Goldilocks::Element(&)[SPONGE_WIDTH])x[i * SPONGE_WIDTH]);
+        }
+    }
+    // Check poseidon results poseidon ( 0 1 2 3 4 5 6 7 8 9 10 11 )
+    // assert(Goldilocks::toU64(result[0]) == 0X1EAEF96BDF1C0C1 );
+    // assert(Goldilocks::toU64(result[1]) == 0X1F0D2CC525B2540C);
+    // assert(Goldilocks::toU64(result[2]) == 0X6282C1DFE1E0358D);
+    // assert(Goldilocks::toU64(result[3]) == 0XE780D721F698E1E6);
+
+    delete[] x;
+    delete[] result;
+    // Rate = time to process 1 posseidon per core
+    // BytesProcessed = total bytes processed per second on every iteration
+    int threads_core = 2 * state.range(0) / omp_get_max_threads(); // we assume hyperthreading
+    state.counters["Rate"] = benchmark::Counter(threads_core * (double)NUM_HASHES / (double)state.range(0), benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
+    state.counters["BytesProcessed"] = benchmark::Counter(input_size * sizeof(uint64_t), benchmark::Counter::kIsIterationInvariantRate, benchmark::Counter::OneK::kIs1024);
+}
 
 static void POSEIDON_BENCH(benchmark::State &state)
 {
@@ -1133,6 +1279,16 @@ BENCHMARK(INV_OP_BENCH)
     ->Unit(benchmark::kMicrosecond)
     ->UseRealTime();
 
+BENCHMARK(POSEIDON2_BENCH_FULL)
+    ->Unit(benchmark::kMicrosecond)
+    ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
+    ->UseRealTime();
+
+BENCHMARK(POSEIDON2_BENCH_FULL_AVX)
+    ->Unit(benchmark::kMicrosecond)
+    ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
+    ->UseRealTime();
+
 BENCHMARK(POSEIDON_BENCH_FULL)
     ->Unit(benchmark::kMicrosecond)
     ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
@@ -1149,6 +1305,16 @@ BENCHMARK(POSEIDON_BENCH_FULL_AVX512)
     ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
     ->UseRealTime();
 #endif
+
+BENCHMARK(POSEIDON2_BENCH)
+    ->Unit(benchmark::kMicrosecond)
+    ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
+    ->UseRealTime();
+
+BENCHMARK(POSEIDON2_BENCH_AVX)
+    ->Unit(benchmark::kMicrosecond)
+    ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
+    ->UseRealTime();
 
 BENCHMARK(POSEIDON_BENCH)
     ->Unit(benchmark::kMicrosecond)
