@@ -126,6 +126,32 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 }
             }
 
+            pub fn from_slice(
+                slice: &[#generics],
+            ) -> Self {
+                let num_rows = Self::NUM_ROWS;
+
+                unsafe {
+                    // Create a mutable slice from the raw pointer
+                    let buffer: &mut [#row_struct_name<#generics>] = std::slice::from_raw_parts_mut(
+                        slice.as_ptr() as *mut #row_struct_name<#generics>,
+                        num_rows
+                    );
+
+                    // Convert the slice into a Vec without taking ownership (caller still owns the memory)
+                    let buffer_vec = buffer.to_vec(); // This creates a new Vec, without modifying the original memory
+
+                    Self {
+                        buffer: buffer_vec,
+                        num_rows,
+                        row_size: #row_struct_name::<#generics>::ROW_SIZE,
+                        airgroup_id: Self::AIRGROUP_ID,
+                        air_id: Self::AIR_ID,
+                        commit_id: #commit_id,
+                    }
+                }
+            }
+
             pub fn num_rows(&self) -> usize {
                 self.num_rows
             }
