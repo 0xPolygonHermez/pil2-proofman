@@ -1184,8 +1184,8 @@ public:
         cudaMemcpy(d_ops, deviceArgs.ops, deviceArgs.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice);
 
         uint16_t* d_args;
-        cudaMalloc(&d_args, deviceArgs.nArgsTotal * sizeof(uint64_t));
-        cudaMemcpy(d_args, deviceArgs.args, deviceArgs.nArgsTotal * sizeof(uint64_t), cudaMemcpyHostToDevice);
+        cudaMalloc(&d_args, deviceArgs.nArgsTotal * sizeof(uint16_t));
+        cudaMemcpy(d_args, deviceArgs.args, deviceArgs.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice);
 
 
         // Update the device struct with device pointers
