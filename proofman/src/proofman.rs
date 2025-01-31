@@ -107,6 +107,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx_assign_instances();
 
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
+        pctx.dctx_barrier();
+
         wcm.calculate_witness(1);
 
         pctx.dctx_close();
@@ -116,9 +119,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_WITNESS);
         timer_start_info!(INITIALIZING_PROOFMAN_2);
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
+        Self::initialize_fixed_pols_tree(setups.clone(), pctx.clone());
         pctx.dctx_barrier();
-
         Self::write_fixed_pols_tree(setups.clone(), pctx.clone());
 
         pctx.dctx_barrier();
@@ -427,7 +429,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         airs.iter().for_each(|&(airgroup_id, air_id)| {
             let setup = setups.sctx.get_setup(airgroup_id, air_id);
             setup.load_const_pols();
-            setup.load_const_pols_tree();
         });
 
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
@@ -447,7 +448,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 if global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id);
                     setup.load_const_pols();
-                    setup.load_const_pols_tree();
                 }
             });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
@@ -458,7 +458,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             airs.iter().for_each(|&(airgroup_id, air_id)| {
                 let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
                 setup.load_const_pols();
-                setup.load_const_pols_tree();
             });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
 
@@ -469,7 +468,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             for airgroup in 0..n_airgroups {
                 let setup = sctx_recursive2.get_setup(airgroup, 0);
                 setup.load_const_pols();
-                setup.load_const_pols_tree();
             }
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
 
@@ -478,7 +476,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_start_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
                 info!("{}: ··· Initializing setup fixed pols vadcop final", Self::MY_NAME);
                 setup_vadcop_final.load_const_pols();
-                setup_vadcop_final.load_const_pols_tree();
                 timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
 
                 if pctx.options.final_snark {
@@ -486,6 +483,86 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
                     info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
                     setup_recursivef.load_const_pols();
+                    timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+                }
+            }
+            timer_stop_and_log_info!(INITIALIZE_CONST_POLS_AGGREGATION);
+        }
+    }
+
+    fn initialize_fixed_pols_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
+        info!("{}: Initializing setup fixed pols", Self::MY_NAME);
+        timer_start_info!(INITIALIZE_CONST_POLS);
+
+        let instances = pctx.dctx_get_instances();
+        let my_instances = pctx.dctx_get_my_instances();
+
+        let mut airs = Vec::new();
+        let mut seen = HashSet::new();
+
+        for instance_id in my_instances.iter() {
+            let (airgroup_id, air_id) = instances[*instance_id];
+            if seen.insert((airgroup_id, air_id)) {
+                airs.push((airgroup_id, air_id));
+            }
+        }
+
+        airs.iter().for_each(|&(airgroup_id, air_id)| {
+            let setup = setups.sctx.get_setup(airgroup_id, air_id);
+            setup.load_const_pols_tree();
+        });
+
+        timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
+
+        if pctx.options.aggregation {
+            timer_start_info!(INITIALIZE_CONST_POLS_AGGREGATION);
+
+            info!("{}: Initializing setup fixed pols aggregation", Self::MY_NAME);
+
+            let global_info = pctx.global_info.clone();
+
+            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
+            info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
+            timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
+
+            airs.iter().for_each(|&(airgroup_id, air_id)| {
+                if global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    let setup = sctx_compressor.get_setup(airgroup_id, air_id);
+                    setup.load_const_pols_tree();
+                }
+            });
+            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
+
+            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
+            timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
+            info!("{}: ··· Initializing setup fixed pols recursive1", Self::MY_NAME);
+            airs.iter().for_each(|&(airgroup_id, air_id)| {
+                let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
+                setup.load_const_pols_tree();
+            });
+            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
+
+            let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
+            timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
+            info!("{}: ··· Initializing setup fixed pols recursive2", Self::MY_NAME);
+            let n_airgroups = global_info.air_groups.len();
+            for airgroup in 0..n_airgroups {
+                let setup = sctx_recursive2.get_setup(airgroup, 0);
+                setup.load_const_pols_tree();
+            }
+            timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
+
+            if pctx.dctx_get_rank() == 0 {
+                let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
+                timer_start_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
+                info!("{}: ··· Initializing setup fixed pols vadcop final", Self::MY_NAME);
+                setup_vadcop_final.load_const_pols_tree();
+                timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
+
+                if pctx.options.final_snark {
+                    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
+                    timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
+                    info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
                     setup_recursivef.load_const_pols_tree();
                     timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
                 }
