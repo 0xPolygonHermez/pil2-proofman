@@ -69,10 +69,10 @@ impl<F: Field> AirInstancesRepository<F> {
         let mut count = 0;
         for (index, air_instance) in air_instances.iter() {
             if air_instance.airgroup_id == airgroup_id && air_instance.air_id == air_id {
-                count += 1;
                 if count == air_instance_id {
                     return Some(*index);
                 }
+                count += 1;
             }
         }
 

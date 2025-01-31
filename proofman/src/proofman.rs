@@ -64,8 +64,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), options);
 
-        let setups = Arc::new(SetupsVadcop::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
-        let sctx: Arc<SetupCtx> = setups.sctx.clone();
+        let setups =
+            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
+        let sctx: Arc<SetupCtx<F>> = setups.sctx.clone();
 
         pctx.set_weights(&sctx);
 
@@ -363,7 +364,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Ok(())
     }
 
-    fn initialize_provers(sctx: Arc<SetupCtx>, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: Arc<ProofCtx<F>>) {
+    fn initialize_provers(sctx: Arc<SetupCtx<F>>, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: Arc<ProofCtx<F>>) {
         timer_start_debug!(INITIALIZE_PROVERS);
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -406,7 +407,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);
     }
 
-    fn initialize_fixed_pols(setups: Arc<SetupsVadcop>, pctx: Arc<ProofCtx<F>>) {
+    fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_info!(INITIALIZE_CONST_POLS);
 
@@ -493,7 +494,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
     }
 
-    fn write_fixed_pols_tree(setups: Arc<SetupsVadcop>, pctx: Arc<ProofCtx<F>>) {
+    fn write_fixed_pols_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
         timer_start_info!(WRITE_CONST_TREE);
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -564,7 +565,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     pub fn calculate_stage(
         stage: u32,
         provers: &mut [Box<dyn Prover<F>>],
-        sctx: Arc<SetupCtx>,
+        sctx: Arc<SetupCtx<F>>,
         pctx: Arc<ProofCtx<F>>,
     ) {
         if stage as usize == pctx.global_info.n_challenges.len() + 1 {
@@ -700,7 +701,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     pub fn opening_stages(
         provers: &mut [Box<dyn Prover<F>>],
         pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx>,
+        sctx: Arc<SetupCtx<F>>,
 
         transcript: &mut FFITranscript,
     ) {
@@ -856,7 +857,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(FREE_PROVERS);
     }
 
-    fn print_global_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop>) {
+    fn print_global_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
         let mut air_info = HashMap::new();
 
         let mut air_instances = HashMap::new();
@@ -1040,7 +1041,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         info!("{}: ----------------------------------------------------------", Self::MY_NAME);
     }
 
-    fn print_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop>) {
+    fn print_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
         let mut air_info = HashMap::new();
 
         let mut air_instances = HashMap::new();

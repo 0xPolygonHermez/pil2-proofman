@@ -57,7 +57,7 @@ pub fn verify_basic_proofs<F: Field>(
     provers: &mut [Box<dyn Prover<F>>],
     proves: Vec<*mut c_void>,
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
 ) -> bool {
     const MY_NAME: &str = "Verify  ";
     timer_start_info!(VERIFYING_BASIC_PROOFS);

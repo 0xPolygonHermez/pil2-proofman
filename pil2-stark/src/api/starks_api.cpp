@@ -299,9 +299,9 @@ uint64_t get_const_tree_size(void *pStarkInfo) {
     ConstTree constTree;
     auto starkInfo = *(StarkInfo *)pStarkInfo;
     if(starkInfo.starkStruct.verificationHashType == "GL") {
-        return constTree.getConstTreeSizeBytesGL(starkInfo);
+        return constTree.getConstTreeSizeGL(starkInfo);
     } else {
-        return constTree.getConstTreeSizeBytesBN128(starkInfo);
+        return constTree.getConstTreeSizeBN128(starkInfo);
     }
     
 };
@@ -309,7 +309,7 @@ uint64_t get_const_tree_size(void *pStarkInfo) {
 uint64_t get_const_size(void *pStarkInfo) {
     auto starkInfo = *(StarkInfo *)pStarkInfo;
     uint64_t N = 1 << starkInfo.starkStruct.nBits;
-    return N * starkInfo.nConstants * sizeof(Goldilocks::Element);
+    return N * starkInfo.nConstants;
 }
 
 

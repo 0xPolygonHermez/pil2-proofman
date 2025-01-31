@@ -8,15 +8,19 @@ use proofman_hints::{
     HintFieldValue,
 };
 
-pub trait AirComponent<F> {
+pub trait AirComponent<F: Clone> {
     const MY_NAME: &'static str;
 
-    fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>, airgroup_id: Option<usize>, air_id: Option<usize>)
-        -> Arc<Self>;
+    fn new(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        airgroup_id: Option<usize>,
+        air_id: Option<usize>,
+    ) -> Arc<Self>;
 }
 
 // Helper to extract hint fields
-pub fn get_global_hint_field_constant_as<T, F>(sctx: Arc<SetupCtx>, hint_id: u64, field_name: &str) -> T
+pub fn get_global_hint_field_constant_as<T, F>(sctx: Arc<SetupCtx<F>>, hint_id: u64, field_name: &str) -> T
 where
     T: TryFrom<u64>,
     T::Error: std::fmt::Debug,
@@ -37,7 +41,7 @@ where
 }
 
 pub fn get_hint_field_constant_as_field<F: PrimeField>(
-    sctx: &SetupCtx,
+    sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -51,7 +55,7 @@ pub fn get_hint_field_constant_as_field<F: PrimeField>(
 }
 
 pub fn get_hint_field_constant_a_as_string<F: PrimeField>(
-    sctx: &SetupCtx,
+    sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -73,7 +77,7 @@ pub fn get_hint_field_constant_a_as_string<F: PrimeField>(
 }
 
 pub fn get_hint_field_constant_as_string<F: PrimeField>(
-    sctx: &SetupCtx,
+    sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,

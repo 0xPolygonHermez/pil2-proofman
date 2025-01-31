@@ -49,7 +49,7 @@ pub struct StdRangeCheck<F: PrimeField> {
 impl<F: PrimeField> StdRangeCheck<F> {
     const _MY_NAME: &'static str = "STD Range Check";
 
-    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) -> Arc<Self> {
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Arc<Self> {
         // Find which range check related AIRs need to be instantiated
         let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
         let u16air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u16air");
@@ -81,7 +81,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
         return std_range_check;
 
         // Helper function to instantiate AIRs
-        fn create_air<T, F: PrimeField>(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>, hints: &[u64]) -> Option<Arc<T>>
+        fn create_air<T, F: PrimeField>(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, hints: &[u64]) -> Option<Arc<T>>
         where
             T: AirComponent<F>,
         {
@@ -94,7 +94,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
         }
     }
 
-    fn register_ranges(&self, sctx: &SetupCtx, airgroup_id: usize, air_id: usize) {
+    fn register_ranges(&self, sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize) {
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         // Obtain info from the range hints
@@ -252,7 +252,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
         }
     }
 
-    pub fn drain_inputs(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    pub fn drain_inputs(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         if let Some(u8air) = self.u8air.as_ref() {
             u8air.drain_inputs(pctx.clone(), sctx.clone());
         }

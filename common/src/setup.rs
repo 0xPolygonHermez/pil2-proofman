@@ -5,11 +5,11 @@ use std::sync::atomic::Ordering;
 use std::sync::RwLock;
 
 use proofman_starks_lib_c::{
-    get_const_tree_size_c, get_const_size_c, prover_helpers_new_c, expressions_bin_new_c, stark_info_new_c,
-    load_const_tree_c, load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c,
-    prover_helpers_free_c, get_map_totaln_c, write_const_tree_c,
+    get_const_tree_size_c, prover_helpers_new_c, expressions_bin_new_c, stark_info_new_c, load_const_tree_c,
+    load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c, prover_helpers_free_c,
+    get_map_totaln_c, write_const_tree_c,
 };
-use proofman_util::create_buffer_fast_u8;
+use proofman_util::create_buffer_fast;
 
 use crate::GlobalInfo;
 use crate::ProofType;
@@ -33,11 +33,11 @@ impl From<&SetupC> for *mut c_void {
 }
 
 #[derive(Debug)]
-pub struct Pols {
-    pub values: RwLock<Vec<u8>>,
+pub struct Pols<F: Clone> {
+    pub values: RwLock<Vec<F>>,
 }
 
-impl Default for Pols {
+impl<F: Clone> Default for Pols<F> {
     fn default() -> Self {
         Self { values: RwLock::new(Vec::new()) }
     }
@@ -46,13 +46,13 @@ impl Default for Pols {
 /// Air instance context for managing air instances (traces)
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct Setup {
+pub struct Setup<F: Clone> {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub p_setup: SetupC,
     pub stark_info: StarkInfo,
-    pub const_pols: Pols,
-    pub const_tree: Pols,
+    pub const_pols: Pols<F>,
+    pub const_tree: Pols<F>,
     pub prover_buffer_size: u64,
     pub write_const_tree: AtomicBool,
     pub setup_path: PathBuf,
@@ -60,7 +60,7 @@ pub struct Setup {
     pub air_name: String,
 }
 
-impl Setup {
+impl<F: Clone> Setup<F> {
     const MY_NAME: &'static str = "Setup";
 
     pub fn new(global_info: &GlobalInfo, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> Self {
@@ -96,8 +96,8 @@ impl Setup {
             airgroup_id,
             stark_info,
             p_setup: SetupC { p_stark_info, p_expressions_bin, p_prover_helpers },
-            const_pols: Pols::default(),
-            const_tree: Pols::default(),
+            const_pols: Pols::<F>::default(),
+            const_tree: Pols::<F>::default(),
             prover_buffer_size,
             write_const_tree: AtomicBool::new(false),
             setup_path: setup_path.clone(),
@@ -122,12 +122,10 @@ impl Setup {
 
         let const_pols_path = self.setup_path.display().to_string() + ".const";
 
-        let p_stark_info = self.p_setup.p_stark_info;
+        let const_size = self.stark_info.n_constants * (1 << self.stark_info.stark_struct.n_bits);
+        let const_pols = create_buffer_fast(const_size as usize);
 
-        let const_size = get_const_size_c(p_stark_info) as usize;
-        let const_pols = create_buffer_fast_u8(const_size);
-
-        load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_size as u64);
+        load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_size * 8);
         *self.const_pols.values.write().unwrap() = const_pols;
     }
 
@@ -147,14 +145,14 @@ impl Setup {
 
         let const_tree_size = get_const_tree_size_c(p_stark_info) as usize;
 
-        let const_tree = create_buffer_fast_u8(const_tree_size);
+        let const_tree = create_buffer_fast(const_tree_size);
 
         let valid_root = if PathBuf::from(&const_pols_tree_path).exists() {
             load_const_tree_c(
                 p_stark_info,
                 const_tree.as_ptr() as *mut u8,
                 const_pols_tree_path.as_str(),
-                const_tree_size as u64,
+                (const_tree_size * 8) as u64,
                 verkey_path.as_str(),
             )
         } else {

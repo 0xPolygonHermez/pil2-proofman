@@ -52,6 +52,7 @@ struct AirCtx {
     name: String,
     num_rows: u32,
     columns: Vec<ColumnCtx>,
+    fixed: Vec<ColumnCtx>,
     stages_columns: Vec<StageColumnCtx>,
     custom_columns: Vec<CustomCommitsCtx>,
     air_values: Vec<ValuesCtx>,
@@ -61,7 +62,7 @@ struct AirCtx {
 #[derive(Clone, Debug, Serialize)]
 struct ValuesCtx {
     values: Vec<ColumnCtx>,
-    values_u64: Vec<ColumnCtx>,
+    values_u64: Vec<Column64Ctx>,
     values_default: Vec<ColumnCtx>,
 }
 
@@ -74,6 +75,13 @@ struct CustomCommitsCtx {
 #[derive(Clone, Debug, Serialize)]
 struct ColumnCtx {
     name: String,
+    r#type: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct Column64Ctx {
+    name: String,
+    array: bool,
     r#type: String,
 }
 
@@ -136,6 +144,7 @@ impl PilHelpersCmd {
                         name: air.name.as_ref().unwrap().to_string(),
                         num_rows: air.num_rows.unwrap(),
                         columns: Vec::new(),
+                        fixed: Vec::new(),
                         stages_columns: vec![StageColumnCtx::default(); pilout.num_challenges.len() - 1],
                         custom_columns: Vec::new(),
                         air_values: Vec::new(),
@@ -223,7 +232,11 @@ impl PilHelpersCmd {
                             .rev()
                             .fold("u64".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
                     };
-                    publics[0].values_u64.push(ColumnCtx { name: name.to_owned(), r#type: r#type_64 });
+                    publics[0].values_u64.push(Column64Ctx {
+                        name: name.to_owned(),
+                        r#type: r#type_64,
+                        array: !symbol.lengths.is_empty(),
+                    });
 
                     let default = "0".to_string();
                     let r#type_default = if symbol.lengths.is_empty() {
@@ -262,6 +275,7 @@ impl PilHelpersCmd {
                                 || symbol.r#type == SymbolType::AirGroupValue as i32)
                             && symbol.stage.is_some()
                             && ((symbol.r#type == SymbolType::WitnessCol as i32)
+                                || (symbol.r#type == SymbolType::FixedCol as i32)
                                 || (symbol.r#type == SymbolType::AirValue as i32)
                                 || (symbol.r#type == SymbolType::AirGroupValue as i32)
                                 || (symbol.r#type == SymbolType::CustomCol as i32 && symbol.stage.unwrap() == 0))
@@ -298,6 +312,8 @@ impl PilHelpersCmd {
                                     .columns
                                     .push(ColumnCtx { name: name.to_owned(), r#type: ext_type });
                             }
+                        } else if symbol.r#type == SymbolType::FixedCol as i32 {
+                            air.fixed.push(ColumnCtx { name: name.to_owned(), r#type });
                         } else if symbol.r#type == SymbolType::AirValue as i32 {
                             if air.air_values.is_empty() {
                                 air.air_values.push(ValuesCtx {
