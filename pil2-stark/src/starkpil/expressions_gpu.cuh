@@ -1010,37 +1010,66 @@ public:
 
     void calculateExpressions_gpu(StepsParams& params, StepsParams& params_gpu, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize) {
 
-        setBufferTInfo(domainSize, params, parserArgs, dests);
-
+        CHECKCUDAERR(cudaDeviceSynchronize());
         double time = omp_get_wtime();
-        loadDeviceArguments(params_gpu);
+        setBufferTInfo(domainSize, params, parserArgs, dests);
+        CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
-        std::cout << "rick cudaMalloc expressions time: " << time << std::endl;
+        std::cout << "goal setBufferTInfo time: " << time << std::endl;
+
+        CHECKCUDAERR(cudaDeviceSynchronize());
+        time = omp_get_wtime();
+        loadDeviceArguments(params_gpu);
+        CHECKCUDAERR(cudaDeviceSynchronize());
+        time = omp_get_wtime() - time;
+        std::cout << "goal cudaMalloc expressions time: " << time << std::endl;
+
+
+        CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime();
         dim3 nBlocks = deviceArgs.nBlocks;
         dim3 nThreads = deviceArgs.nrowsPack;
+        std::cout << "goal2 nBlocks: " << nBlocks.x << std::endl;
         computeExpressions_<<<nBlocks,nThreads>>>(d_deviceArgs);
+        CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
-        std::cout << "despres de computeExpressions: " << time << std::endl;
+        std::cout << "goal de computeExpressions: " << time << std::endl;
+
+        CHECKCUDAERR(cudaDeviceSynchronize());
+        time = omp_get_wtime();
         for(uint32_t i = 0; i < deviceArgs.nDests; ++i) {
             cudaMemcpy(dests[i].dest, deviceArgs.dests[i].dest_gpu, domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
         }
+        CHECKCUDAERR(cudaDeviceSynchronize());
+        time = omp_get_wtime() - time;
+        std::cout << "goal de cudaMemcpy dests time: " << time << std::endl;
 
     }
     void calculateExpressions_gpu2(StepsParams& params, StepsParams& params_gpu, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize) {
 
-        setBufferTInfo(domainSize, params, parserArgs, dests);
-
+        CHECKCUDAERR(cudaDeviceSynchronize());
         double time = omp_get_wtime();
-        loadDeviceArguments(params_gpu);
+        setBufferTInfo(domainSize, params, parserArgs, dests);
+        CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
-        std::cout << "rick cudaMalloc expressions time: " << time << std::endl;
+        std::cout << "goal2 setBufferTInfo time: " << time << std::endl;
+
+        CHECKCUDAERR(cudaDeviceSynchronize());
+        time = omp_get_wtime();
+        loadDeviceArguments(params_gpu);
+        CHECKCUDAERR(cudaDeviceSynchronize());
+        time = omp_get_wtime() - time;
+        std::cout << "goal2 cudaMalloc expressions time: " << time << std::endl;
+
+        CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime();
         dim3 nBlocks = deviceArgs.nBlocks;
         dim3 nThreads = deviceArgs.nrowsPack;
+        std::cout << "goal2 nBlocks aqui: " << nBlocks.x << std::endl;
         computeExpressions_<<<nBlocks,nThreads>>>(d_deviceArgs);
+        CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
-        std::cout << "despres de computeExpressions 2: " << time << std::endl;
+        std::cout << "goal2 despres de computeExpressions 2: " << time << std::endl;
 
     }
 
@@ -1083,9 +1112,12 @@ public:
         deviceArgs.nBlocks = nBlocks;
         deviceArgs.bufferSize = deviceArgs.nOpenings * deviceArgs.nCols * deviceArgs.nrowsPack;
         Goldilocks::Element** bufferT_ = new Goldilocks::Element*[deviceArgs.nBlocks];
+        int cont = 0;
         for(uint64_t i = 0; i < deviceArgs.nBlocks; ++i) {
             cudaMalloc(&bufferT_[i], deviceArgs.bufferSize * sizeof(Goldilocks::Element));
+            cont += deviceArgs.bufferSize * sizeof(Goldilocks::Element);
         }        
+        std::cout<<"total memory in buffers "<< (1.0*cont)/(1024.0*1024.0*1024.0)<<std::endl;
         deviceArgs.bufferT_ = bufferT_;
         Goldilocks::Element** d_bufferT_;
         cudaMalloc(&d_bufferT_, deviceArgs.nBlocks * sizeof(Goldilocks::Element*)); 

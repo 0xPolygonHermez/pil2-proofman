@@ -390,7 +390,7 @@ void evmap_inplace(StepsParams& params, StepsParams& d_params, uint64_t LEv_offs
     computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element) >>>(extendBits, size_eval, N, openingsSize, LEv_offset, (gl64_t*)d_params.evals, d_evalsInfo, (gl64_t*)d_buffers->d_trace, (gl64_t*) d_buffers->d_constTree);
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
-    std::cout << "goal computeEvals_v2: " << time << std::endl;
+    std::cout << "rick computeEvals_v2: " << time << std::endl;
 
 
 
@@ -747,7 +747,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         //CHECKCUDAERR(cudaMalloc(&d_trees[i].nodes, numNodes * sizeof(gl64_t)));
     }
 
-    ExpressionsGPU expressionsCtx(setupCtx);
+    ExpressionsGPU expressionsCtx(setupCtx, 64, 256);
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
 
