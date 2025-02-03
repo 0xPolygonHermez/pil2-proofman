@@ -11,6 +11,7 @@ use std::{
 use num_bigint::BigUint;
 
 use crate::{
+    airout::AirOut,
     cli::Config,
     f3g::F3g,
     get_pilout_info::get_fixed_pols_pil2,
@@ -21,7 +22,7 @@ use crate::{
 
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     println!("Attempting to load airout file from '{}'", config.airout.airout_filename.display());
-    let airout = AirOut::from_file(&config.airout.airout_filename).await?;
+    let airout = AirOut::from_file(&config.airout.airout_filename)?;
     let setup_options = SetupOptions {
         opt_im_pols: config.setup.opt_im_pols,
         const_tree: config.setup.const_tree.clone(),
@@ -54,29 +55,29 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
         }
     }
 
-    for airgroup in &airout.air_groups {
+    for (airgroup_id, airgroup) in airout.pilout().air_groups.iter().enumerate() {
         setup.push(vec![]);
-        for air in &airgroup.airs {
-            info!("Computing setup for air '{}'", air.name);
+        for (air_id, air) in airgroup.airs.iter().enumerate() {
+            info!("Computing setup for air '{}'", air.name.as_ref().unwrap());
 
             let settings = config
                 .setup
                 .settings
-                .get(&air.name)
+                .get(air.name.as_ref().unwrap())
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or(AirSettings { stark_struct: None, final_degree: min_final_degree });
 
             let files_dir = build_dir
                 .as_ref()
-                .join(airgroup.airgroup_id.to_string())
-                .join(air.air_id.to_string())
+                .join(airgroup_id.to_string())
+                .join(air_id.to_string())
                 .join("airs")
-                .join(&air.name)
+                .join(air.name.as_ref().unwrap())
                 .join("air");
 
             async_fs::create_dir_all(&files_dir).await?;
 
-            let air_num_rows: u32 = air.num_rows.try_into().unwrap();
+            let air_num_rows: u32 = air.num_rows.unwrap().try_into().unwrap();
             let stark_struct = settings
                 .stark_struct
                 .as_ref()
@@ -87,7 +88,7 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
             // Generate Fixed Columns
             let field_modulus = BigUint::from(1u32) << 256; // Placeholder modulus
-            let fixed_pols = generate_fixed_cols(air.symbols.clone(), air.num_rows, field_modulus);
+            let fixed_pols = generate_fixed_cols(airout.pilout().symbols.clone(), air_num_rows, field_modulus);
 
             let air_json: HashMap<String, Value> = serde_json::from_value(serde_json::to_value(air)?)?;
             let mut fixed_pols_map = fixed_pols.to_hashmap();
@@ -98,15 +99,16 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
             let stark_setup_result = stark_setup(air, &stark_struct, &setup_options).await?;
             let json_output = serde_json::to_string_pretty(&stark_setup_result)?;
 
-            async_fs::write(files_dir.join(format!("{}.starkinfo.json", air.name)), json_output).await?;
+            async_fs::write(files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())), json_output)
+                .await?;
 
             // Compute Constant Tree
             let const_tree_cmd = format!(
                 "{} -c {} -s {} -v {}",
                 setup_options.const_tree.display(),
-                files_dir.join(format!("{}.const", air.name)).display(),
-                files_dir.join(format!("{}.starkinfo.json", air.name)).display(),
-                files_dir.join(format!("{}.verkey.json", air.name)).display()
+                files_dir.join(format!("{}.const", air.name.as_ref().unwrap())).display(),
+                files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())).display(),
+                files_dir.join(format!("{}.verkey.json", air.name.as_ref().unwrap())).display()
             );
 
             let output = tokio::process::Command::new("sh").arg("-c").arg(&const_tree_cmd).output().await?;
@@ -114,25 +116,26 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
             info!("Constant tree output: {}", String::from_utf8_lossy(&output.stdout));
 
             let const_root = serde_json::from_str::<Value>(
-                &tokio::fs::read_to_string(files_dir.join(format!("{}.verkey.json", air.name))).await?,
+                &tokio::fs::read_to_string(files_dir.join(format!("{}.verkey.json", air.name.as_ref().unwrap())))
+                    .await?,
             )?;
 
-            setup[airgroup.airgroup_id][air.air_id].const_root = Some(const_root.clone());
+            setup[airgroup_id][air_id].const_root = Some(const_root.clone());
 
             // Compute Bin File
             let bin_cmd = format!(
                 "{} -s {} -e {} -b {}",
                 setup_options.bin_file.display(),
-                files_dir.join(format!("{}.starkinfo.json", air.name)).display(),
-                files_dir.join(format!("{}.expressionsinfo.json", air.name)).display(),
-                files_dir.join(format!("{}.bin", air.name)).display()
+                files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())).display(),
+                files_dir.join(format!("{}.expressionsinfo.json", air.name.as_ref().unwrap())).display(),
+                files_dir.join(format!("{}.bin", air.name.as_ref().unwrap())).display()
             );
 
             let output = tokio::process::Command::new("sh").arg("-c").arg(&bin_cmd).output().await?;
 
             info!("Bin file output: {}", String::from_utf8_lossy(&output.stdout));
 
-            setup[airgroup.airgroup_id].push(stark_struct);
+            setup[airgroup_id].push(stark_struct);
         }
     }
 
@@ -254,19 +257,6 @@ pub async fn stark_setup(
         verifier_info: pil_result["verifierInfo"].clone(),
         stats: pil_result["stats"].clone(),
     })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AirOut {
-    pub air_groups: Vec<AirGroup>,
-}
-
-impl AirOut {
-    pub async fn from_file(filename: &Path) -> Result<Self, Box<dyn std::error::Error>> {
-        let content = async_fs::read_to_string(filename).await?;
-        let airout: Self = serde_json::from_str(&content)?;
-        Ok(airout)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

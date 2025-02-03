@@ -1,48 +1,34 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use num_bigint::BigUint;
 use num_traits::Zero;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Symbol {
-    pub name: String,              // Name of the symbol
-    pub id: usize,                 // Unique identifier
-    pub stage: usize,              // Stage of the symbol in computation
-    pub dim: usize,                // Dimension of the symbol (default 1)
-    pub air_group_id: usize,       // AIR Group ID (equivalent to `stage_id`)
-    pub pol_deg: Option<usize>,    // Polynomial degree (optional)
-    pub values: Option<Vec<u128>>, // Polynomial values (used for "fixed" symbols)
-    pub symbol_type: String,       // "challenge", "fixed", "witness", "custom"
-    pub pol_id: Option<usize>,     // ID of polynomial (if applicable)
-    pub commit_id: Option<usize>,  // Commitment ID (if applicable)
-    pub lengths: Vec<usize>,       // Lengths of polynomials (replaces `Vec<u128>` for generality)
-}
+pub use pilout::pilout::Symbol;
+pub use pilout::pilout::SymbolType;
 
 /// Generates multi-array indexes recursively.
 pub fn generate_multi_array_indexes(
     symbols: &mut Vec<Symbol>,
     name: &str,
-    lengths: &[usize],
-    pol_id: usize,
-    stage: usize,
-    indexes: Vec<usize>,
-) -> usize {
+    lengths: &[u32],
+    pol_id: u32,
+    stage: u32,
+    indexes: Vec<u32>,
+) -> u32 {
     if indexes.len() == lengths.len() {
         symbols.push(Symbol {
             name: name.to_string(),
             lengths: indexes.clone(),
             id: pol_id,
-            stage,
-            dim: 1,          // Default dimension
-            air_group_id: 0, // Default value, update as needed
-            pol_deg: None,
-            values: None,
-            symbol_type: "witness".to_string(), // Default type, update as needed
-            pol_id: Some(pol_id),
+            stage: Some(stage),
+            dim: 1,
+            air_group_id: None,
+            air_id: None,
             commit_id: None,
+            debug_line: None,
+            r#type: SymbolType::WitnessCol as i32,
         });
         return pol_id + 1;
     }
@@ -60,17 +46,24 @@ pub fn generate_multi_array_indexes(
 /// Represents the columnar data structure used in PIL computations.
 pub struct ColsPil2 {
     pub symbols: Vec<Symbol>,
-    pub n: usize,
-    pub n_cols: usize,
+    pub n: u32,
+    pub n_cols: u32,
     pub buffer: Vec<BigUint>,
     pub field_mod: BigUint,
 }
 
 impl ColsPil2 {
-    pub fn new(symbols: Vec<Symbol>, degree: usize, field_mod: BigUint) -> Self {
-        let n_cols = symbols.len();
-        let buffer = vec![BigUint::zero(); degree * n_cols];
-        Self { symbols, n: degree, n_cols, buffer, field_mod }
+    pub fn new(symbols: Vec<Symbol>, degree: u32, field_mod: BigUint) -> Self {
+        let n_cols = symbols.len() as u32; // Convert `usize` to `u32`
+        let buffer = vec![BigUint::zero(); degree as usize * n_cols as usize];
+
+        Self {
+            symbols,
+            n: degree,
+            n_cols, // Remains u32
+            buffer,
+            field_mod,
+        }
     }
 
     /// Converts `ColsPil2` into a `HashMap<String, Vec<Value>>` where column names are based on symbols.
@@ -79,47 +72,18 @@ impl ColsPil2 {
 
         // Ensure buffer is correctly grouped into columns
         for (i, symbol) in self.symbols.iter().enumerate() {
-            let key = symbol.name.clone(); // Use actual symbol names instead of "col_{}"
+            let key = symbol.name.clone();
 
             let values: Vec<Value> = self
                 .buffer
-                .chunks(self.n_cols) // Group buffer values into columns
-                .map(|chunk| serde_json::to_value(chunk[i].clone()).unwrap()) // Extract the i-th element for this column
+                .chunks(self.n_cols as usize)
+                .map(|chunk| serde_json::to_value(chunk[i].clone()).unwrap())
                 .collect();
 
             map.insert(key, values);
         }
 
         map
-    }
-
-    /// Sets a value in the multi-dimensional array structure.
-    pub fn set_value_multi_array(arr: &mut Vec<VecDeque<BigUint>>, indexes: &[usize], value: BigUint) {
-        if indexes.len() == 1 {
-            // If at the last index, insert the value directly into the VecDeque
-            while arr.len() <= indexes[0] {
-                arr.push(VecDeque::new());
-            }
-            arr[indexes[0]].push_back(value);
-        } else {
-            // Ensure the nested structure exists
-            while arr.len() <= indexes[0] {
-                arr.push(VecDeque::new());
-            }
-            let next_index = indexes[0];
-            let next_arr = &mut arr[next_index];
-
-            // Ensure the next level is correctly initialized as a Vec<VecDeque<BigUint>>
-            let mut nested_arr = Vec::new();
-            nested_arr.push(VecDeque::new());
-
-            ColsPil2::set_value_multi_array(&mut nested_arr, &indexes[1..], value);
-
-            // Replace the existing VecDeque with a new structure (if needed)
-            if next_arr.is_empty() {
-                *next_arr = nested_arr[0].clone();
-            }
-        }
     }
 
     /// Saves the buffer to a file.
@@ -146,11 +110,11 @@ impl ColsPil2 {
 }
 
 /// Generates fixed columns for the computation process.
-pub fn generate_fixed_cols(symbols: Vec<Symbol>, degree: usize, field_mod: BigUint) -> ColsPil2 {
+pub fn generate_fixed_cols(symbols: Vec<Symbol>, degree: u32, field_mod: BigUint) -> ColsPil2 {
     let mut fixed_symbols = Vec::new();
 
     for symbol in symbols.iter() {
-        if symbol.stage != 0 {
+        if symbol.stage.unwrap_or(0) != 0 {
             continue;
         }
         if symbol.lengths.is_empty() {
@@ -161,7 +125,7 @@ pub fn generate_fixed_cols(symbols: Vec<Symbol>, degree: usize, field_mod: BigUi
                 &symbol.name,
                 &symbol.lengths,
                 symbol.id,
-                symbol.stage,
+                symbol.stage.unwrap_or(0),
                 vec![],
             );
         }
@@ -171,11 +135,11 @@ pub fn generate_fixed_cols(symbols: Vec<Symbol>, degree: usize, field_mod: BigUi
 }
 
 /// Generates witness columns for the computation process.
-pub fn generate_wtns_cols(symbols: Vec<Symbol>, degree: usize, field_mod: BigUint) -> ColsPil2 {
+pub fn generate_wtns_cols(symbols: Vec<Symbol>, degree: u32, field_mod: BigUint) -> ColsPil2 {
     let mut witness_symbols = Vec::new();
 
     for symbol in symbols.iter() {
-        if symbol.stage != 1 {
+        if symbol.stage.unwrap_or(1) != 1 {
             continue;
         }
         if symbol.lengths.is_empty() {
@@ -186,7 +150,7 @@ pub fn generate_wtns_cols(symbols: Vec<Symbol>, degree: usize, field_mod: BigUin
                 &symbol.name,
                 &symbol.lengths,
                 symbol.id,
-                symbol.stage,
+                symbol.stage.unwrap_or(1),
                 vec![],
             );
         }
