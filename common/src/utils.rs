@@ -1,5 +1,5 @@
 use crate::{
-    AirGroupMap, AirIdMap, AirInstance, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, ProofOptions, StdMode,
+    AirGroupMap, AirIdMap, AirInstance, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode,
     VerboseMode, DEFAULT_PRINT_VALS,
 };
 use proofman_starks_lib_c::set_log_level_c;
@@ -47,15 +47,19 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
     format!("{:.2} {}", num_bytes, units[unit_index])
 }
 
-pub fn skip_prover_instance(
-    options: ProofOptions,
-    airgroup_id: usize,
-    air_id: usize,
-    air_instance_id: usize,
+pub fn skip_prover_instance<F: Field>(
+    pctx: &ProofCtx<F>,
+    global_idx: usize,
 ) -> (bool, Vec<usize>) {
-    if options.debug_info.debug_instances.is_empty() {
+    if pctx.options.debug_info.debug_instances.is_empty() {
         return (false, Vec::new());
-    } else if let Some(airgroup_id_map) = options.debug_info.debug_instances.get(&airgroup_id) {
+    }
+
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[global_idx];
+    let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
+
+    if let Some(airgroup_id_map) = pctx.options.debug_info.debug_instances.get(&airgroup_id) {
         if airgroup_id_map.is_empty() {
             return (false, Vec::new());
         } else if let Some(air_id_map) = airgroup_id_map.get(&air_id) {

@@ -342,7 +342,8 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn get_air_instance_trace(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
-        let index = self.air_instance_repo.find_instance(airgroup_id, air_id, air_instance_id);
+        let dctx = self.dctx.read().unwrap();
+        let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
             return self.air_instance_repo.air_instances.read().unwrap().get(&index).unwrap().get_trace();
         } else {
@@ -354,7 +355,8 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn get_air_instance_air_values(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
-        let index = self.air_instance_repo.find_instance(airgroup_id, air_id, air_instance_id);
+        let dctx = self.dctx.read().unwrap();
+        let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
             return self.air_instance_repo.air_instances.read().unwrap().get(&index).unwrap().get_air_values();
         } else {
@@ -371,7 +373,8 @@ impl<F: Field> ProofCtx<F> {
         air_id: usize,
         air_instance_id: usize,
     ) -> Vec<F> {
-        let index = self.air_instance_repo.find_instance(airgroup_id, air_id, air_instance_id);
+        let dctx = self.dctx.read().unwrap();
+        let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
             return self.air_instance_repo.air_instances.read().unwrap().get(&index).unwrap().get_airgroup_values();
         } else {

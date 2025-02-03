@@ -67,10 +67,12 @@ impl<F: Clone> WitnessManager<F> {
     }
 
     pub fn debug(&self) {
-        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug {
+        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug || !self.pctx.options.debug_info.debug_instances.is_empty() {
             for component in self.components.read().unwrap().iter() {
                 component.debug(self.pctx.clone(), self.sctx.clone());
             }
+        }
+        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug {
             for component in self.components_std.read().unwrap().iter() {
                 component.debug(self.pctx.clone(), self.sctx.clone());
             }

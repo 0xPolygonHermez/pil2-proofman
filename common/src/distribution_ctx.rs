@@ -157,6 +157,20 @@ impl DistributionCtx {
     }
 
     #[inline]
+    pub fn find_instance_id(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
+        let mut count = 0;
+        for (global_idx, instance) in self.instances.iter().enumerate() {
+            if instance == &(airgroup_id, air_id) {
+                if count == air_instance_id {
+                    return Some(global_idx);
+                }
+                count += 1;
+            }
+        }
+        None
+    }
+
+    #[inline]
     pub fn is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
         let mut min_owner = self.n_processes + 1;
         for (idx, instance) in self.instances.iter().enumerate() {

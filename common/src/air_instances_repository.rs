@@ -62,20 +62,4 @@ impl<F: Field> AirInstancesRepository<F> {
 
         indices
     }
-
-    pub fn find_instance(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
-        let air_instances = self.air_instances.read().unwrap();
-
-        let mut count = 0;
-        for (index, air_instance) in air_instances.iter() {
-            if air_instance.airgroup_id == airgroup_id && air_instance.air_id == air_id {
-                if count == air_instance_id {
-                    return Some(*index);
-                }
-                count += 1;
-            }
-        }
-
-        None
-    }
 }

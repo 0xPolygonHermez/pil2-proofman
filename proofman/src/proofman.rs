@@ -374,7 +374,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let (airgroup_id, air_id) = instances[*instance_id];
             let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
             let (skip, constraints_skip) =
-                skip_prover_instance(pctx.options.clone(), airgroup_id, air_id, air_instance_id);
+                skip_prover_instance(&pctx, *instance_id);
             if skip {
                 continue;
             };

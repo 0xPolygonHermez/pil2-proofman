@@ -73,7 +73,7 @@ pub fn verify_constraints_proof<F: Field>(
         let (airgroup_id, air_id) = instances[*instance_id];
         let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
         let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
-        let (skip, _) = skip_prover_instance(pctx.options.clone(), airgroup_id, air_id, air_instance_id);
+        let (skip, _) = skip_prover_instance(&pctx, *instance_id);
         if skip {
             log::info!(
                 "{}",
