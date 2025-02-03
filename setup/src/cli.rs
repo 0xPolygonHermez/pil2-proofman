@@ -64,7 +64,7 @@ pub async fn parse_cli() -> Config {
             Arg::new("binfile")
                 .short('f')
                 .long("binfile")
-                .required(true)
+                .required(false)
                 .value_parser(clap::value_parser!(PathBuf))
                 .help("Path to binfile"),
         )
