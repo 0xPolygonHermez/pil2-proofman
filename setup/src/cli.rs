@@ -93,7 +93,7 @@ pub async fn parse_cli() -> Config {
 
     let build_dir = matches.get_one::<PathBuf>("builddir").cloned().unwrap_or_else(|| PathBuf::from("tmp"));
     let const_tree = matches.get_one::<PathBuf>("consttree").expect("Bctree path must be provided").clone();
-    let bin_file = matches.get_one::<PathBuf>("binfile").expect("BinFile path must be provided").clone();
+    let bin_file = matches.get_one::<PathBuf>("binfile").unwrap_or(&PathBuf::from("/tmp/binfile.bin")).clone(); //expect("BinFile path must be provided").clone();
     let pilout_path = matches.get_one::<PathBuf>("airout").expect("Airout path must be provided").clone();
 
     let stark_structs_info = if let Some(starkstructs) = matches.get_one::<PathBuf>("starkstructs") {

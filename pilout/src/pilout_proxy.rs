@@ -7,7 +7,7 @@ use std::ops::Deref;
 
 use log::{debug, trace};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PilOutProxy {
     pub pilout: PilOut,
 }

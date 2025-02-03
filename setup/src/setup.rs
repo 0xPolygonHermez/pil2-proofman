@@ -20,6 +20,7 @@ use crate::{
 };
 
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("Attempting to load airout file from '{}'", config.airout.airout_filename.display());
     let airout = AirOut::from_file(&config.airout.airout_filename).await?;
     let setup_options = SetupOptions {
         opt_im_pols: config.setup.opt_im_pols,
@@ -255,17 +256,17 @@ pub async fn stark_setup(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AirOut {
+    pub air_groups: Vec<AirGroup>,
+}
+
 impl AirOut {
     pub async fn from_file(filename: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let content = async_fs::read_to_string(filename).await?;
         let airout: Self = serde_json::from_str(&content)?;
         Ok(airout)
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AirOut {
-    pub air_groups: Vec<AirGroup>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
