@@ -64,8 +64,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), options);
 
-        let setups =
-            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, pctx.options.aggregation, pctx.options.final_snark));
+        let setups = Arc::new(SetupsVadcop::<F>::new(
+            &pctx.global_info,
+            pctx.options.verify_constraints,
+            pctx.options.aggregation,
+            pctx.options.final_snark,
+        ));
         let sctx: Arc<SetupCtx<F>> = setups.sctx.clone();
 
         pctx.set_weights(&sctx);
@@ -82,28 +86,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Self::initialize_witness(witness_lib_path, wcm.clone())?;
         pctx.dctx_barrier();
 
-        let mpi_rank = pctx.dctx_get_rank();
-        let n_processes = pctx.dctx_get_n_processes();
-
-        if n_processes > 1 {
-            let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info();
-            log::info!(
-                "{}: Load balance. Average: {} max: {} min: {} deviation: {}",
-                Self::MY_NAME,
-                average_weight,
-                max_weight,
-                min_weight,
-                max_deviation
-            );
-        }
-
-        if mpi_rank == 0 {
-            Self::print_global_summary(pctx.clone(), setups.clone());
-        }
-
-        if n_processes > 1 {
-            Self::print_summary(pctx.clone(), setups.clone());
-        }
+        Self::print_summary_info(pctx.clone(), setups.clone());
 
         pctx.dctx_assign_instances();
 
@@ -117,14 +100,18 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         pctx.dctx_barrier();
 
         timer_stop_and_log_info!(GENERATING_WITNESS);
-        timer_start_info!(INITIALIZING_PROOFMAN_2);
 
-        Self::initialize_fixed_pols_tree(setups.clone(), pctx.clone());
-        pctx.dctx_barrier();
-        Self::write_fixed_pols_tree(setups.clone(), pctx.clone());
+        if !pctx.options.verify_constraints {
+            timer_start_info!(INITIALIZING_PROOFMAN_2);
 
-        pctx.dctx_barrier();
-        timer_stop_and_log_info!(INITIALIZING_PROOFMAN_2);
+            Self::initialize_fixed_pols_tree(setups.clone(), pctx.clone());
+            pctx.dctx_barrier();
+            Self::write_fixed_pols_tree(setups.clone(), pctx.clone());
+            pctx.dctx_barrier();
+
+            timer_stop_and_log_info!(INITIALIZING_PROOFMAN_2);
+        }
+
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOF);
@@ -270,6 +257,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         info!("{}: Recursive2 proofs generated successfully", Self::MY_NAME);
 
         pctx_aggregation.dctx.read().unwrap().barrier();
+        let mpi_rank = pctx.dctx_get_rank();
         if mpi_rank == 0 {
             let setup_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
             timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
@@ -373,8 +361,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         for instance_id in my_instances.iter() {
             let (airgroup_id, air_id) = instances[*instance_id];
             let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
-            let (skip, constraints_skip) =
-                skip_prover_instance(&pctx, *instance_id);
+            let (skip, constraints_skip) = skip_prover_instance(&pctx, *instance_id);
             if skip {
                 continue;
             };
@@ -934,14 +921,51 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(FREE_PROVERS);
     }
 
-    fn print_global_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
+    pub fn print_summary_info(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
+        let mpi_rank = pctx.dctx_get_rank();
+        let n_processes = pctx.dctx_get_n_processes();
+
+        if n_processes > 1 {
+            let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info();
+            log::info!(
+                "{}: Load balance. Average: {} max: {} min: {} deviation: {}",
+                Self::MY_NAME,
+                average_weight,
+                max_weight,
+                min_weight,
+                max_deviation
+            );
+        }
+
+        if mpi_rank == 0 {
+            Self::print_summary(pctx.clone(), setups.clone(), true);
+        }
+
+        if n_processes > 1 {
+            Self::print_summary(pctx.clone(), setups.clone(), false);
+        }
+    }
+
+    pub fn print_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>, global: bool) {
         let mut air_info = HashMap::new();
 
         let mut air_instances = HashMap::new();
 
         let instances = pctx.dctx_get_instances();
 
-        for (airgroup_id, air_id) in &instances {
+        let mut print = vec![global; instances.len()];
+
+        if !global {
+            let my_instances = pctx.dctx_get_my_instances();
+            for instance_id in my_instances.iter() {
+                print[*instance_id] = true;
+            }
+        }
+
+        for (instance_id, (airgroup_id, air_id)) in instances.iter().enumerate() {
+            if !print[instance_id] {
+                continue;
+            }
             let air_name = pctx.global_info.airs[*airgroup_id][*air_id].clone().name;
             let air_group_name = pctx.global_info.air_groups[*airgroup_id].clone();
             let air_instance_map = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
@@ -949,13 +973,16 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let setup = setups.sctx.get_setup(*airgroup_id, *air_id);
                 let n_bits = setup.stark_info.stark_struct.n_bits;
                 let memory_instance = setup.prover_buffer_size as f64 * 8.0;
-                let memory_fixed = (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
-                    + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext))
-                    + (1 << (setup.stark_info.stark_struct.n_bits_ext))
-                    + ((2 * (1 << (setup.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
-                    as f64
-                    * 8.0;
-                let mut memory_fixed_aggregation = 0f64 * 8.0;
+                let mut memory_fixed =
+                    (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64;
+                if !pctx.options.verify_constraints {
+                    memory_fixed += (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext))
+                        + (1 << (setup.stark_info.stark_struct.n_bits_ext))
+                        + ((2 * (1 << (setup.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
+                        as f64;
+                }
+                memory_fixed *= 8.0;
+                let mut memory_fixed_aggregation = 0f64;
                 if pctx.options.aggregation {
                     if pctx.global_info.get_air_has_compressor(*airgroup_id, *air_id) {
                         let setup_compressor =
@@ -1008,8 +1035,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 .bold()
         );
         info!("{}:     ► {} Air instances found:", Self::MY_NAME, instances.len());
-        let mut _total_cells = 0f64;
-        let mut _total_cells_witness = 0f64;
         for air_group in air_groups.clone() {
             let air_group_instances = air_instances.get(air_group).unwrap();
             let mut air_names: Vec<_> = air_group_instances.keys().collect();
@@ -1018,9 +1043,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             info!("{}:       Air Group [{}]", Self::MY_NAME, air_group);
             for air_name in air_names {
                 let count = air_group_instances.get(air_name).unwrap();
-                let (n_bits, total_cols, cols_witness, _, _, _) = air_info.get(air_name).unwrap();
-                _total_cells += *total_cols as f64 * *count as f64 * (1 << *n_bits) as f64;
-                _total_cells_witness += *cols_witness * *count as f64 * (1 << *n_bits) as f64;
+                let (n_bits, total_cols, _, _, _, _) = air_info.get(air_name).unwrap();
                 info!(
                     "{}:       {}",
                     Self::MY_NAME,
@@ -1074,12 +1097,21 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
 
         info!("{}: ----------------------------------------------------------", Self::MY_NAME);
-        info!(
-            "{}",
-            format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", Self::MY_NAME)
-                .bright_white()
-                .bold()
-        );
+        if pctx.options.verify_constraints {
+            info!(
+                "{}",
+                format!("{}: --- TOTAL CONSTRAINT CHECKER MEMORY USAGE ----------------------------", Self::MY_NAME)
+                    .bright_white()
+                    .bold()
+            );
+        } else {
+            info!(
+                "{}",
+                format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", Self::MY_NAME)
+                    .bright_white()
+                    .bold()
+            );
+        }
         let mut total_memory = 0f64;
         let mut memory_helper_size = 0f64;
         for air_group in air_groups {
@@ -1116,176 +1148,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             format!("Total prover memory required: {}", format_bytes(total_memory)).bright_white().bold()
         );
         info!("{}: ----------------------------------------------------------", Self::MY_NAME);
-    }
-
-    fn print_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
-        let mut air_info = HashMap::new();
-
-        let mut air_instances = HashMap::new();
-
-        let sctx = setups.sctx.clone();
-
-        let instances = pctx.dctx_get_instances();
-        let my_instances = pctx.dctx_get_my_instances();
-
-        for instance_id in my_instances.iter() {
-            let (airgroup_id, air_id) = instances[*instance_id];
-            let air_name = pctx.global_info.airs[airgroup_id][air_id].clone().name;
-            let air_group_name = pctx.global_info.air_groups[airgroup_id].clone();
-            let air_instance_map = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
-            if !air_instance_map.contains_key(&air_name.clone()) {
-                let setup = sctx.get_setup(airgroup_id, air_id);
-                let n_bits = setup.stark_info.stark_struct.n_bits;
-                let memory_instance = setup.prover_buffer_size as f64 * 8.0;
-                let memory_fixed = (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))
-                    + setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext))
-                    + (1 << (setup.stark_info.stark_struct.n_bits_ext))
-                    + ((2 * (1 << (setup.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
-                    as f64
-                    * 8.0;
-                let mut memory_fixed_aggregation = 0f64 * 8.0;
-                if pctx.options.aggregation {
-                    if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                        let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                        memory_fixed_aggregation += (setup_compressor.stark_info.n_constants
-                            * (1 << (setup_compressor.stark_info.stark_struct.n_bits))
-                            + setup_compressor.stark_info.n_constants
-                                * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
-                            + (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
-                            + ((2 * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
-                            as f64
-                            * 8.0;
-                    }
-
-                    let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                    memory_fixed_aggregation += (setup_recursive1.stark_info.n_constants
-                        * (1 << (setup_recursive1.stark_info.stark_struct.n_bits))
-                        + setup_recursive1.stark_info.n_constants
-                            * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
-                        + (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
-                        + ((2 * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
-                        as f64
-                        * 8.0;
-                }
-
-                let memory_helpers = setup.stark_info.get_buff_helper_size() as f64 * 8.0;
-                let total_cols: u64 = setup
-                    .stark_info
-                    .map_sections_n
-                    .iter()
-                    .filter(|(key, _)| *key != "const")
-                    .map(|(_, value)| *value)
-                    .sum();
-                air_info.insert(
-                    air_name.clone(),
-                    (n_bits, total_cols, memory_fixed, memory_fixed_aggregation, memory_helpers, memory_instance),
-                );
-            }
-            let air_instance_map_key = air_instance_map.entry(air_name).or_insert(0);
-            *air_instance_map_key += 1;
-        }
-
-        let mut air_groups: Vec<_> = air_instances.keys().collect();
-        air_groups.sort();
-
-        info!("{}: --- PROOF INSTANCES SUMMARY ------------------------", Self::MY_NAME);
-        info!("{}:     ► {} Air instances found:", Self::MY_NAME, my_instances.len());
-        for air_group in air_groups.clone() {
-            let air_group_instances = air_instances.get(air_group).unwrap();
-            let mut air_names: Vec<_> = air_group_instances.keys().collect();
-            air_names.sort();
-
-            info!("{}:       Air Group [{}]", Self::MY_NAME, air_group);
-            for air_name in air_names {
-                let count = air_group_instances.get(air_name).unwrap();
-                let (n_bits, total_cols, _, _, _, _) = air_info.get(air_name).unwrap();
-                info!(
-                    "{}:       {}",
-                    Self::MY_NAME,
-                    format!("· {} x Air [{}] ({} x 2^{})", count, air_name, total_cols, n_bits).bright_white().bold()
-                );
-            }
-        }
-        info!("{}: ------------------------------------------------", Self::MY_NAME);
-        info!("{}: --- SETUP MEMORY USAGE ------------------------", Self::MY_NAME);
-        info!("{}:     ► {} Air instances found:", Self::MY_NAME, my_instances.len());
-        let mut total_memory = 0f64;
-        for air_group in air_groups.clone() {
-            let air_group_instances = air_instances.get(air_group).unwrap();
-            let mut air_names: Vec<_> = air_group_instances.keys().collect();
-            air_names.sort();
-
-            for air_name in air_names {
-                let (_, _, memory_fixed, memory_fixed_aggregation, _, _) = air_info.get(air_name).unwrap();
-                total_memory += memory_fixed;
-
-                if !pctx.options.aggregation {
-                    info!(
-                        "{}:       {}",
-                        Self::MY_NAME,
-                        format!("· {}: {} fixed cols", air_name, format_bytes(*memory_fixed),)
-                    );
-                } else {
-                    total_memory += memory_fixed_aggregation;
-                    info!(
-                        "{}:       {}",
-                        Self::MY_NAME,
-                        format!(
-                            "· {}: {} fixed cols | {} fixed cols aggregation | Total: {}",
-                            air_name,
-                            format_bytes(*memory_fixed),
-                            format_bytes(*memory_fixed_aggregation),
-                            format_bytes(*memory_fixed + *memory_fixed_aggregation),
-                        )
-                    );
-                }
-            }
-            info!(
-                "{}:       {}",
-                Self::MY_NAME,
-                format!("Total setup memory required: {}", format_bytes(total_memory)).bright_white().bold()
-            );
-        }
-
-        info!("{}: ------------------------------------------------", Self::MY_NAME);
-        info!("{}: --- PROVER MEMORY USAGE ------------------------", Self::MY_NAME);
-        info!("{}:     ► {} Air instances found:", Self::MY_NAME, my_instances.len());
-        let mut total_memory = 0f64;
-        let mut memory_helper_size = 0f64;
-        for air_group in air_groups {
-            let air_group_instances = air_instances.get(air_group).unwrap();
-            let mut air_names: Vec<_> = air_group_instances.keys().collect();
-            air_names.sort();
-
-            for air_name in air_names {
-                let count = air_group_instances.get(air_name).unwrap();
-                let (_, _, _, _, memory_helper_instance_size, memory_instance) = air_info.get(air_name).unwrap();
-                let total_memory_instance = memory_instance * *count as f64;
-                total_memory += total_memory_instance;
-                if *memory_helper_instance_size > memory_helper_size {
-                    memory_helper_size = *memory_helper_instance_size;
-                }
-                info!(
-                    "{}:       {}",
-                    Self::MY_NAME,
-                    format!(
-                        "· {}: {} per each of {} instance | Total {}",
-                        air_name,
-                        format_bytes(*memory_instance),
-                        count,
-                        format_bytes(total_memory_instance)
-                    )
-                );
-            }
-        }
-        total_memory += memory_helper_size;
-        info!("{}:       {}", Self::MY_NAME, format!("Extra helper memory: {}", format_bytes(memory_helper_size)));
-        info!(
-            "{}:       {}",
-            Self::MY_NAME,
-            format!("Total prover memory required: {}", format_bytes(total_memory)).bright_white().bold()
-        );
-        info!("{}: ------------------------------------------------", Self::MY_NAME);
     }
 
     fn check_paths(

@@ -20,10 +20,10 @@ pub struct SetupsVadcop<F: Clone> {
 }
 
 impl<F: Clone> SetupsVadcop<F> {
-    pub fn new(global_info: &GlobalInfo, aggregation: bool, final_snark: bool) -> Self {
+    pub fn new(global_info: &GlobalInfo, verify_constraints: bool, aggregation: bool, final_snark: bool) -> Self {
         info!("Initializing setups");
         timer_start_info!(INITIALIZING_BASIC_SETUP);
-        let sctx = SetupCtx::<F>::new(global_info, &ProofType::Basic);
+        let sctx = SetupCtx::<F>::new(global_info, &ProofType::Basic, verify_constraints);
         timer_stop_and_log_info!(INITIALIZING_BASIC_SETUP);
         if aggregation {
             timer_start_info!(INITIALIZING_AGGREGATION_SETUP);
@@ -31,22 +31,22 @@ impl<F: Clone> SetupsVadcop<F> {
 
             timer_start_debug!(INITIALIZING_SETUP_COMPRESSOR);
             info!(" ··· Initializing setups compressor");
-            let sctx_compressor = SetupCtx::<F>::new(global_info, &ProofType::Compressor);
+            let sctx_compressor = SetupCtx::<F>::new(global_info, &ProofType::Compressor, false);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_COMPRESSOR);
 
             timer_start_debug!(INITIALIZING_SETUP_RECURSIVE1);
             info!(" ··· Initializing setups recursive1");
-            let sctx_recursive1 = SetupCtx::<F>::new(global_info, &ProofType::Recursive1);
+            let sctx_recursive1 = SetupCtx::<F>::new(global_info, &ProofType::Recursive1, false);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVE1);
 
             timer_start_debug!(INITIALIZING_SETUP_RECURSIVE2);
             info!(" ··· Initializing setups recursive2");
-            let sctx_recursive2 = SetupCtx::<F>::new(global_info, &ProofType::Recursive2);
+            let sctx_recursive2 = SetupCtx::<F>::new(global_info, &ProofType::Recursive2, false);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVE2);
 
             timer_start_debug!(INITIALIZING_SETUP_VADCOP_FINAL);
             info!(" ··· Initializing setups vadcop final");
-            let setup_vadcop_final = Setup::<F>::new(global_info, 0, 0, &ProofType::VadcopFinal);
+            let setup_vadcop_final = Setup::<F>::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_VADCOP_FINAL);
             timer_stop_and_log_info!(INITIALIZING_AGGREGATION_SETUP);
 
@@ -55,7 +55,8 @@ impl<F: Clone> SetupsVadcop<F> {
                 timer_start_debug!(INITIALIZING_SETUP_RECURSION);
                 timer_start_debug!(INITIALIZING_SETUP_RECURSIVEF);
                 info!(" ··· Initializing setups recursivef");
-                setup_recursivef = Some(Arc::new(Setup::<F>::new(global_info, 0, 0, &ProofType::RecursiveF)));
+                setup_recursivef =
+                    Some(Arc::new(Setup::<F>::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints)));
                 timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVEF);
                 timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSION);
             }
@@ -92,7 +93,7 @@ unsafe impl<F: Clone> Send for SetupRepository<F> {}
 unsafe impl<F: Clone> Sync for SetupRepository<F> {}
 
 impl<F: Clone> SetupRepository<F> {
-    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
+    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool) -> Self {
         let mut setups = HashMap::new();
 
         let global_bin = match setup_type == &ProofType::Basic {
@@ -111,11 +112,14 @@ impl<F: Clone> SetupRepository<F> {
         if setup_type != &ProofType::VadcopFinal {
             for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
-                    setups.insert((airgroup_id, air_id), Setup::new(global_info, airgroup_id, air_id, setup_type));
+                    setups.insert(
+                        (airgroup_id, air_id),
+                        Setup::new(global_info, airgroup_id, air_id, setup_type, verify_constraints),
+                    );
                 }
             }
         } else {
-            setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type));
+            setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints));
         }
 
         Self { setups, global_bin, global_info_file }
@@ -133,9 +137,9 @@ pub struct SetupCtx<F: Clone> {
 }
 
 impl<F: Clone> SetupCtx<F> {
-    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType) -> Self {
+    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool) -> Self {
         SetupCtx {
-            setup_repository: SetupRepository::<F>::new(global_info, setup_type),
+            setup_repository: SetupRepository::<F>::new(global_info, setup_type, verify_constraints),
             setup_type: setup_type.clone(),
         }
     }
