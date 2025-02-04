@@ -23,6 +23,7 @@ use crate::{
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     println!("Attempting to load airout file from '{}'", config.airout.airout_filename.display());
     let airout = AirOut::from_file(&config.airout.airout_filename)?;
+    println!("Successfully loaded airout file");
     let setup_options = SetupOptions {
         opt_im_pols: config.setup.opt_im_pols,
         const_tree: config.setup.const_tree.clone(),
