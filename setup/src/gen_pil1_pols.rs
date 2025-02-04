@@ -92,7 +92,7 @@ pub fn generate_pil1_polynomials(
 
     generate_libs_polynomials(fr_mul, k, res, &mut pil_map, &mut symbols, &mut hints);
 
-    tracing::debug!("pil: {:?}", pil);
+    tracing::info!("pil: {:?}", pil);
 
     res.insert("nCommitments".to_string(), pil["nCommitments"].clone());
 
