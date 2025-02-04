@@ -31,7 +31,7 @@ pub fn generate_pil1_polynomials(
     res.insert("nConstants".to_string(), pil["nConstants"].clone());
     res.insert("customCommits".to_string(), json!([]));
 
-    let n_stages = if pil["plookupIdentities"].as_array().unwrap().is_empty() { 2 } else { 3 };
+    let n_stages = if pil["plookupIdentities"].as_array().unwrap_or(&Vec::<Value>::new()).is_empty() { 2 } else { 3 };
     res.insert("nStages".to_string(), json!(n_stages));
 
     let mut symbols = vec![];
