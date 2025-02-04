@@ -36,16 +36,16 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
     let mut min_final_degree = 5;
 
     // Determine minimum final degree across all air groups
-    for airgroup in &airout.air_groups {
+    for airgroup in &airout.pilout().air_groups {
         for air in &airgroup.airs {
             let settings = config
                 .setup
                 .settings
-                .get(&air.name)
+                .get(&air.name.unwrap_or("not found".to_string()))
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or(AirSettings { stark_struct: None, final_degree: min_final_degree });
 
-            let air_num_rows: u32 = air.num_rows.try_into().unwrap();
+            let air_num_rows: u32 = air.num_rows.unwrap_or(0);
 
             min_final_degree = if let Some(stark_struct) = &settings.stark_struct {
                 stark_struct.steps.last().map_or(min_final_degree, |step| step.n_bits)
@@ -90,13 +90,13 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
             let field_modulus = BigUint::from(1u32) << 256; // Placeholder modulus
             let fixed_pols = generate_fixed_cols(airout.pilout().symbols.clone(), air_num_rows, field_modulus);
 
-            let air_json: HashMap<String, Value> = serde_json::from_value(serde_json::to_value(air)?)?;
+            let air_json = serde_json::to_value(air)?;
             let mut fixed_pols_map = fixed_pols.to_hashmap();
 
             get_fixed_pols_pil2(files_dir.to_str().unwrap(), &air_json, &mut fixed_pols_map)?;
 
             // STARK Setup
-            let stark_setup_result = stark_setup(air, &stark_struct, &setup_options).await?;
+            let stark_setup_result = stark_setup(air_json, &stark_struct, &setup_options).await?;
             let json_output = serde_json::to_string_pretty(&stark_setup_result)?;
 
             async_fs::write(files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())), json_output)
@@ -228,15 +228,12 @@ fn multiply_f64(a: f64, b: f64) -> f64 {
 }
 
 pub async fn stark_setup(
-    air: &Air,
+    air_json: serde_json::Value,
     stark_struct: &StarkStruct,
     setup_options: &SetupOptions,
 ) -> Result<StarkSetupResult, Box<dyn std::error::Error>> {
     // Check if pil2 mode is enabled
     let pil2 = setup_options.settings.get("pil2").and_then(|v| v.as_bool()).unwrap_or(false);
-
-    // Convert `air` to JSON format for processing
-    let air_json: Value = serde_json::to_value(air)?;
 
     // Convert setup_options to a HashMap<String, Value> for compatibility with pil_info
     let options_map: HashMap<String, Value> = serde_json::from_value(serde_json::to_value(setup_options)?)?;
@@ -259,13 +256,13 @@ pub async fn stark_setup(
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AirGroup {
     pub airgroup_id: usize,
     pub airs: Vec<Air>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Air {
     pub name: String,
     pub air_id: usize,
