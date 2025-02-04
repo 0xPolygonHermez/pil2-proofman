@@ -1,10 +1,17 @@
-use pilout::pilout::{AirGroupValue, PilOut, SymbolType};
-use pilout::pilout_proxy::PilOutProxy;
+use pilout::pilout::{AirGroupValue, GlobalConstraint, PilOut, SymbolType};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value, Map};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
+use crate::airout::AirOut;
+use crate::{
+    gen_code::{build_code, pil_code_gen, CodeGenContext},
+    gen_pil_code::add_hints_info,
+    helpers::add_info_expressions,
+    setup::StarkStruct,
+};
+use itertools::Itertools; // Needed for sorting
 
 /// Enum representing Pilout types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -573,12 +580,52 @@ pub struct VadcopInfo {
     pub proof_values_map: Vec<ProofValueMetadata>,
 }
 
-/// Manually convert `AirGroupValue` to JSON.
+/// Convert `AirGroupValue` to JSON manually
 fn air_group_value_to_json(value: &AirGroupValue) -> Value {
     json!({
-        "agg_type": value.agg_type, // Assuming this is an i32 enum
+        "agg_type": value.agg_type,
         "stage": value.stage
     })
+}
+
+/// Convert `GlobalConstraint` to JSON manually
+fn global_constraint_to_json(constraint: &GlobalConstraint) -> Value {
+    json!({
+        "expression_idx": constraint.expression_idx.as_ref().map(|e| json!({ "idx": e.idx })),
+        "debug_line": constraint.debug_line.clone().unwrap_or_default()
+    })
+}
+
+/// Convert `PilOut` to a `HashMap<String, Value>` for JSON serialization.
+fn pilout_to_json(pilout: &PilOut) -> HashMap<String, Value> {
+    let mut json_map = HashMap::new();
+
+    json_map.insert("name".to_string(), json!(pilout.name.clone().unwrap_or_default()));
+    json_map.insert("base_field".to_string(), json!(pilout.base_field));
+
+    // Convert `AirGroup`
+    let air_groups_json: Vec<Value> = pilout
+        .air_groups
+        .iter()
+        .map(|group| {
+            json!({
+                "name": group.name.clone().unwrap_or_default(),
+                "air_group_values": group.air_group_values.iter().map(air_group_value_to_json).collect::<Vec<_>>(),
+                "airs": group.airs.len() // Storing just the count to reduce size
+            })
+        })
+        .collect();
+    json_map.insert("air_groups".to_string(), json!(air_groups_json));
+
+    json_map.insert("num_challenges".to_string(), json!(pilout.num_challenges));
+    json_map.insert("num_proof_values".to_string(), json!(pilout.num_proof_values));
+    json_map.insert("num_public_values".to_string(), json!(pilout.num_public_values));
+
+    // Convert `GlobalConstraint`
+    let constraints_json: Vec<Value> = pilout.constraints.iter().map(global_constraint_to_json).collect();
+    json_map.insert("constraints".to_string(), json!(constraints_json));
+
+    json_map
 }
 
 /// Extracts metadata from `AirOut` and STARK structures.
@@ -641,21 +688,12 @@ pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (Vadco
         .map(|p| ProofValueMetadata { name: p.name.clone(), id: p.id as usize })
         .collect();
 
-    // Extract global constraints
-    let global_constraints = get_global_constraints_info(pilout, true);
+    // Convert `PilOut` to JSON for constraints
+    let pilout_json = pilout_to_json(pilout);
+    let global_constraints = get_global_constraints_info(&pilout_json, true);
 
     (vadcop_info, global_constraints)
 }
-
-use crate::airout::AirOut;
-use crate::{
-    gen_code::{build_code, pil_code_gen, CodeGenContext},
-    gen_pil_code::add_hints_info,
-    helpers::add_info_expressions,
-    setup::StarkStruct,
-};
-
-use itertools::Itertools; // Needed for sorting
 
 /// Extracts global constraints information from a given `pilout` JSON structure.
 /// This function replicates the `getGlobalConstraintsInfo` logic from JavaScript.
