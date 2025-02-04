@@ -1,4 +1,7 @@
-use pilout::pilout::{PilOut, SymbolType};
+use pilout::pilout::{
+    global_expression, global_operand, hint_field, operand, GlobalExpression, GlobalOperand, HintField, PilOut,
+    SymbolType,
+};
 use pilout::pilout_proxy::PilOutProxy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value, Map};
@@ -36,18 +39,16 @@ impl PiloutType {
     }
 }
 
-/// Formats expressions from Pilout, returning formatted expressions and optionally symbols.
-pub fn format_expressions(pilout: &HashMap<String, Value>, save_symbols: bool, global: bool) -> HashMap<String, Value> {
+/// Formats expressions from `PilOut`, returning formatted expressions and optionally symbols.
+pub fn format_expressions(pilout: &PilOut, save_symbols: bool, global: bool) -> HashMap<String, Value> {
     let mut symbols = Vec::new();
-    let expressions: Vec<Value> = pilout["expressions"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .map(|e| format_expression(e, pilout, &mut symbols, save_symbols, global))
-        .collect();
+
+    let expressions: Vec<Value> =
+        pilout.expressions.iter().map(|e| format_expression(e, pilout, &mut symbols, save_symbols, global)).collect();
 
     let mut result = Map::new();
     result.insert("expressions".to_string(), json!(expressions));
+
     if save_symbols {
         result.insert("symbols".to_string(), json!(symbols));
     }
@@ -413,57 +414,68 @@ pub fn format_hints(
         .collect()
 }
 
-/// Processes a single hint field, extracting values and lengths recursively.
-/// This function mirrors the `processHintField` logic in JavaScript.
-fn process_hint_field(
-    hint_field: &Value,
+pub fn process_hint_field(
+    hint_field: &HintField,
     pilout: &PilOut,
     symbols: &mut Vec<Value>,
     expressions: &mut Vec<Value>,
     save_symbols: bool,
-) -> (Value, Option<Vec<usize>>) {
-    if let Some(hint_field_array) = hint_field.get("hintFieldArray") {
-        let hint_fields = hint_field_array["hintFields"].as_array().unwrap_or(&vec![]);
+    global: bool,
+) -> Value {
+    let mut result_fields = Vec::new();
+    let mut lengths = Vec::new();
 
-        let mut values = Vec::new();
-        let mut lengths = Vec::new();
+    if let Some(hint_field_array) = hint_field.value.as_ref().and_then(|v| match v {
+        hint_field::Value::HintFieldArray(arr) => Some(arr),
+        _ => None,
+    }) {
+        let hint_fields = &hint_field_array.hint_fields;
 
         for field in hint_fields {
-            let (sub_values, sub_lengths) = process_hint_field(field, pilout, symbols, expressions, save_symbols);
-            values.push(sub_values);
+            let processed = process_hint_field(field, pilout, symbols, expressions, save_symbols, global);
+
+            result_fields.push(processed["values"].clone());
 
             if lengths.is_empty() {
                 lengths.push(hint_fields.len());
             }
 
-            if let Some(sub_lengths) = sub_lengths {
+            if let Some(sub_lengths) = processed["lengths"].as_array() {
                 for (i, len) in sub_lengths.iter().enumerate() {
                     if i + 1 >= lengths.len() {
-                        lengths.push(*len);
+                        lengths.push(len.as_u64().unwrap_or(0) as usize);
                     }
                 }
             }
         }
-
-        return (json!(values), Some(lengths));
+        return json!({ "values": result_fields, "lengths": lengths });
     }
 
-    let value = if let Some(operand) = hint_field.get("operand") {
-        let formatted_expr = format_expression(operand, pilout, symbols, save_symbols, false);
-        if formatted_expr["op"] == json!("exp") {
+    let value = if let Some(operand) = hint_field.value.as_ref().and_then(|v| match v {
+        hint_field::Value::Operand(op) => Some(op),
+        _ => None,
+    }) {
+        let formatted_expr =
+            format_expression(&serde_json::to_value(operand).unwrap(), pilout, symbols, save_symbols, global);
+
+        if formatted_expr["op"] == "exp" {
             let expr_id = formatted_expr["id"].as_u64().unwrap_or(0) as usize;
             if let Some(expr) = expressions.get_mut(expr_id) {
                 expr["keep"] = json!(true);
             }
         }
+
         formatted_expr
-    } else if let Some(string_value) = hint_field.get("stringValue") {
+    } else if let Some(string_value) = hint_field.value.as_ref().and_then(|v| match v {
+        hint_field::Value::StringValue(s) => Some(s),
+        _ => None,
+    }) {
         json!({ "op": "string", "string": string_value })
     } else {
         panic!("Unknown hint field format");
     };
 
-    (value, None)
+    json!({ "values": value })
 }
 
 /// Formats an individual expression from `PilOut`, mirroring JavaScript behavior.
@@ -472,7 +484,7 @@ pub fn format_expression(
     pilout: &PilOut,
     symbols: &mut Vec<Value>,
     save_symbols: bool,
-    _global: bool,
+    global: bool,
 ) -> Value {
     if exp.get("op").is_some() {
         return exp.clone();
@@ -484,18 +496,36 @@ pub fn format_expression(
     let formatted_exp = match op {
         "expression" => {
             let id = exp[op]["idx"].as_u64().unwrap_or(0) as usize;
+            let pilout_expr = &pilout.expressions[id];
+            let exp_op = pilout_expr.operation.as_ref().unwrap();
+
+            if let Some(inner_op) = match exp_op {
+                pilout::pilout::global_expression::Operation::Mul(mul) => Some(mul.lhs.as_ref().unwrap()),
+                _ => None,
+            } {
+                if !inner_op.is_expression() && pilout_expr.is_rhs_constant_zero() {
+                    return format_expression(
+                        &serde_json::to_value(inner_op).unwrap(),
+                        pilout,
+                        symbols,
+                        save_symbols,
+                        global,
+                    );
+                }
+            }
+
             json!({ "op": "exp", "id": id })
         }
         "add" | "mul" | "sub" => json!({
             "op": op,
             "values": [
-                format_expression(&exp[op]["lhs"], pilout, symbols, save_symbols, false),
-                format_expression(&exp[op]["rhs"], pilout, symbols, save_symbols, false)
+                format_expression(&exp[op]["lhs"], pilout, symbols, save_symbols, global),
+                format_expression(&exp[op]["rhs"], pilout, symbols, save_symbols, global)
             ]
         }),
         "neg" => json!({
             "op": op,
-            "values": [format_expression(&exp[op]["value"], pilout, symbols, save_symbols, false)]
+            "values": [format_expression(&exp[op]["value"], pilout, symbols, save_symbols, global)]
         }),
         "constant" => json!({
             "op": "number",
