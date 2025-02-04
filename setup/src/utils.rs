@@ -1,3 +1,5 @@
+use pilout::pilout::{PilOut, SymbolType};
+use pilout::pilout_proxy::PilOutProxy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value, Map};
 use std::cmp::Ordering;
@@ -537,61 +539,69 @@ pub fn get_ks<F: Fn(f64, f64) -> f64>(fr_mul: F, n: usize, k: f64) -> Vec<f64> {
     ks
 }
 
-/// Represents metadata for an AIR system.
+/// Metadata structure for an AIR system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AIRMetadata {
     pub name: String,
     pub num_rows: usize,
 }
 
-/// Represents an FRI step.
+/// FRI step information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FRIStep {
     pub n_bits: usize,
 }
 
-/// Represents a proof value mapping.
+/// Proof value mapping.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProofValue {
+pub struct ProofValueMetadata {
     pub name: String,
     pub id: usize,
 }
 
-/// Contains extracted AIR metadata and FRI settings.
+/// VADCOP information structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VadcopInfo {
     pub name: String,
     pub airs: Vec<Vec<AIRMetadata>>,
     pub air_groups: Vec<String>,
-    pub agg_types: Vec<Vec<Value>>, // Holds aggregated values per air group
+    pub agg_types: Vec<Vec<Value>>, // Using `Value` to match JSON expectations
     pub steps_fri: Vec<FRIStep>,
     pub n_publics: usize,
     pub num_challenges: Vec<usize>,
     pub num_proof_values: usize,
-    pub proof_values_map: Vec<ProofValue>,
+    pub proof_values_map: Vec<ProofValueMetadata>,
 }
 
-/// Extracts metadata from the AIR system and STARK structures.
-/// This function replicates the `setAiroutInfo` logic from JavaScript.
-pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (VadcopInfo, HashMap<String, Value>) {
+/// Extracts metadata from AIR system and STARK structures.
+pub fn set_airout_info(airout: &PilOut, stark_structs: &[StarkStruct]) -> (VadcopInfo, HashMap<String, Value>) {
     let mut vadcop_info = VadcopInfo {
-        name: "default".to_string(), // Adjusted to a default string (if `AirOut` has no name)
+        name: airout.name.clone().unwrap_or_else(|| "default".to_string()), // Extract name or set default
         airs: vec![vec![]; airout.air_groups.len()],
         air_groups: vec![],
         agg_types: vec![vec![]; airout.air_groups.len()],
         steps_fri: vec![],
-        n_publics: 0,            // Adjusted since `num_public_values` is missing in `AirOut`
-        num_challenges: vec![0], // Adjusted since `num_challenges` is missing
-        num_proof_values: 0,     // Adjusted since `num_proof_values` is missing
+        n_publics: airout.num_public_values.try_into().unwrap(), // Ensure correct usize conversion
+        num_challenges: airout.num_challenges.iter().map(|&x| x as usize).collect(),
+        num_proof_values: airout.num_proof_values.len(), // Convert from Vec<u32> length
         proof_values_map: vec![],
     };
 
-    for airgroup in airout.air_groups.iter() {
-        let airgroup_id = airgroup.airgroup_id;
-        vadcop_info.air_groups.push(format!("AirGroup {}", airgroup_id)); // Placeholder name if missing
+    for (airgroup_id, airgroup) in airout.air_groups.iter().enumerate() {
+        vadcop_info.air_groups.push(airgroup.name.clone().unwrap_or_else(|| format!("AirGroup {}", airgroup_id)));
 
-        vadcop_info.airs[airgroup_id] =
-            airgroup.airs.iter().map(|air| AIRMetadata { name: air.name.clone(), num_rows: air.num_rows }).collect();
+        // Convert `Vec<AirGroupValue>` to `Vec<Value>` for JSON compatibility
+        vadcop_info.agg_types[airgroup_id] =
+            airgroup.air_group_values.iter().map(|val| serde_json::to_value(val).unwrap()).collect();
+
+        vadcop_info.airs[airgroup_id] = airgroup
+            .airs
+            .iter()
+            .map(|air| AIRMetadata {
+                name: air.name.clone().unwrap_or_else(|| "Unnamed Air".to_string()),
+                num_rows: air.num_rows.unwrap_or(0) as usize, // Convert u32 to usize
+            })
+            .collect();
     }
 
     // Extract the final step FRI from the first StarkStruct
@@ -599,7 +609,7 @@ pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (Vadco
         .first()
         .and_then(|s| s.steps.last())
         .map(|s| s.n_bits)
-        .unwrap_or_else(|| panic!("StarkStruct must contain at least one step"));
+        .expect("StarkStruct must contain at least one step");
 
     let mut steps_fri: HashSet<usize> = HashSet::new();
 
@@ -618,17 +628,26 @@ pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (Vadco
         .map(|n_bits| FRIStep { n_bits })
         .collect();
 
-    // Extract global constraints
-    let global_constraints = HashMap::new(); // Placeholder as `AirOut` lacks constraints field
+    // Extract proof values map
+    vadcop_info.proof_values_map = airout
+        .symbols
+        .iter()
+        .filter(|s| s.r#type == SymbolType::ProofValue as i32)
+        .map(|p| ProofValueMetadata { name: p.name.clone(), id: p.id as usize })
+        .collect();
+
+    // Extract global constraints (if present)
+    let global_constraints = get_global_constraints_info(airout, true);
 
     (vadcop_info, global_constraints)
 }
 
+use crate::airout::AirOut;
 use crate::{
     gen_code::{build_code, pil_code_gen, CodeGenContext},
     gen_pil_code::add_hints_info,
     helpers::add_info_expressions,
-    setup::{AirOut, StarkStruct},
+    setup::StarkStruct,
 };
 
 use itertools::Itertools; // Needed for sorting
