@@ -81,7 +81,7 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
             let files_dir = build_dir
                 .as_ref()
-                .join(airgroup_id.to_string())
+                .join(&airgroup.name.clone().unwrap())
                 .join(air_id.to_string())
                 .join("airs")
                 .join(air.name.as_ref().unwrap())
