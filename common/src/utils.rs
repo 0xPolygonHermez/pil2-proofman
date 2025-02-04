@@ -1,6 +1,6 @@
 use crate::{
-    AirGroupMap, AirIdMap, AirInstance, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode,
-    VerboseMode, DEFAULT_PRINT_VALS,
+    AirGroupMap, AirIdMap, AirInstance, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
+    DEFAULT_PRINT_VALS,
 };
 use proofman_starks_lib_c::set_log_level_c;
 use std::path::PathBuf;
@@ -47,10 +47,7 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
     format!("{:.2} {}", num_bytes, units[unit_index])
 }
 
-pub fn skip_prover_instance<F: Field>(
-    pctx: &ProofCtx<F>,
-    global_idx: usize,
-) -> (bool, Vec<usize>) {
+pub fn skip_prover_instance<F: Field>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
     if pctx.options.debug_info.debug_instances.is_empty() {
         return (false, Vec::new());
     }

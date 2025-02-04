@@ -51,7 +51,13 @@ pub struct Setup<F: Clone> {
 impl<F: Clone> Setup<F> {
     const MY_NAME: &'static str = "Setup";
 
-    pub fn new(global_info: &GlobalInfo, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> Self {
+    pub fn new(
+        global_info: &GlobalInfo,
+        airgroup_id: usize,
+        air_id: usize,
+        setup_type: &ProofType,
+        verify_constraints: bool,
+    ) -> Self {
         let setup_path = match setup_type {
             ProofType::VadcopFinal => global_info.get_setup_path("vadcop_final"),
             ProofType::RecursiveF => global_info.get_setup_path("recursivef"),
@@ -79,7 +85,17 @@ impl<F: Clone> Setup<F> {
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false);
             let recursive = &ProofType::Basic != setup_type;
-            let prover_buffer_size = get_map_totaln_c(p_stark_info, recursive);
+            let prover_buffer_size = if verify_constraints {
+                let mut mem_instance = 0;
+                for stage in 0..stark_info.n_stages + 1 {
+                    let n_cols = stark_info.map_sections_n[&format!("cm{}", stage + 1)];
+                    mem_instance += n_cols * (1 << (stark_info.stark_struct.n_bits));
+                }
+                mem_instance += (stark_info.custom_commits_map.len() * (1 << (stark_info.stark_struct.n_bits))) as u64;
+                mem_instance
+            } else {
+                get_map_totaln_c(p_stark_info, recursive)
+            };
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let prover_helpers = prover_helpers_new_c(p_stark_info, recursive);
             let const_pols_size = (stark_info.n_constants * (1 << stark_info.stark_struct.n_bits)) as usize;

@@ -25,7 +25,7 @@ impl GetConstraintsCmd {
         println!();
 
         let global_info = GlobalInfo::new(&self.proving_key);
-        let setups = Arc::new(SetupsVadcop::<Goldilocks>::new(&global_info, false, false));
+        let setups = Arc::new(SetupsVadcop::<Goldilocks>::new(&global_info, false, false, false));
 
         initialize_logger(proofman_common::VerboseMode::Info);
 
