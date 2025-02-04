@@ -38,10 +38,17 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
     // Determine minimum final degree across all air groups
     for airgroup in &airout.pilout().air_groups {
         for air in &airgroup.airs {
+            let name = match { air.name.as_ref().map(|s| s.as_str()) } {
+                Some(name) => name,
+                None => {
+                    info!("Air name not found");
+                    continue;
+                }
+            };
             let settings = config
                 .setup
                 .settings
-                .get(&air.name.unwrap_or("not found".to_string()))
+                .get(name)
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or(AirSettings { stark_struct: None, final_degree: min_final_degree });
 
@@ -93,7 +100,8 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
             let air_json = serde_json::to_value(air)?;
             let mut fixed_pols_map = fixed_pols.to_hashmap();
 
-            get_fixed_pols_pil2(files_dir.to_str().unwrap(), &air_json, &mut fixed_pols_map)?;
+            let air_json_map: HashMap<String, Value> = serde_json::from_value(air_json.clone())?;
+            get_fixed_pols_pil2(files_dir.to_str().unwrap(), &air_json_map, &mut fixed_pols_map)?;
 
             // STARK Setup
             let stark_setup_result = stark_setup(air_json, &stark_struct, &setup_options).await?;
