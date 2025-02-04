@@ -153,7 +153,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     }
                 }
             }
-            
+
             /// Returns parallel mutable iterators to access the buffer.
             ///
             /// # Arguments
