@@ -112,20 +112,8 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer: Vec<#row_struct_name<#generics>> =
-                if cfg!(feature = "debug") {
-                    let mut buffer_u64 = vec![u64::MAX - 1; num_rows * #row_struct_name::<#generics>::ROW_SIZE];
+                let buffer: Vec<#row_struct_name<#generics>> = vec![#row_struct_name::<#generics>::default(); num_rows];
 
-                    // Convert safely by properly managing size & alignment
-                    let ptr = buffer_u64.as_mut_ptr();
-                    let len = buffer_u64.len() / #row_struct_name::<#generics>::ROW_SIZE;
-                    let cap = buffer_u64.capacity() / #row_struct_name::<#generics>::ROW_SIZE;
-                    std::mem::forget(buffer_u64);
-
-                    unsafe { Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, len, cap) }
-                } else {
-                    vec![#row_struct_name::<#generics>::default(); num_rows]
-                };
 
                 #trace_struct_name {
                     buffer,

@@ -9,6 +9,8 @@ pub use proofman_macros::values;
 
 use std::fmt;
 
+use rayon::prelude::*;
+
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
@@ -31,6 +33,13 @@ pub const U_8_AIR_AIR_IDS: &[usize] = &[2];
 use serde::Deserialize;
 use serde::Serialize;
 use serde_arrays;
+
+
+fn default_array_rom_root() -> [u64; 4] {
+    [0; 4]
+}
+
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BuildPublics {
     #[serde(default)]
@@ -41,7 +50,7 @@ pub struct BuildPublics {
     pub in2: u64,
     #[serde(default)]
     pub out: u64,
-    #[serde(default, with = "serde_arrays")]
+    #[serde(default = "default_array_rom_root", with = "serde_arrays")]
     pub rom_root: [u64; 4],
     
 }

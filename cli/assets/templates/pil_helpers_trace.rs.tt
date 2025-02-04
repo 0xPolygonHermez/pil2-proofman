@@ -29,9 +29,16 @@ pub const { constant.0 }_AIR_IDS: &[usize] = &[{ constant.3 }];
 use serde::Deserialize;
 use serde::Serialize;
 use serde_arrays;
+
+{{ for column in public_values.values_u64 }}{{ if column.array }}
+fn default_array_{column.name}() -> {column.type} \{
+    {column.type_default}
+}
+{{endif}}{{ endfor }}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct {project_name}Publics \{
-    {{ for column in public_values.values_u64 }}{{ if column.array }}#[serde(default, with = "serde_arrays")]{{ else }}#[serde(default)]{{ endif }}
+    {{ for column in public_values.values_u64 }}{{ if column.array }}#[serde(default = "default_array_{column.name}", with = "serde_arrays")]{{ else }}#[serde(default)]{{ endif }}
     pub {column.name}: {column.type},
     {{ endfor }}
 }
