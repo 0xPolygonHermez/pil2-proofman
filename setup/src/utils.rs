@@ -245,33 +245,6 @@ fn generate_multi_array_symbols(
     }
 }
 
-/// Formats raw hints by processing fields recursively.
-pub fn format_hints(
-    pilout: &HashMap<String, Value>,
-    raw_hints: &[Value],
-    symbols: &mut Vec<Value>,
-    expressions: &mut Vec<Value>,
-    save_symbols: bool,
-    _global: bool,
-) -> Vec<Value> {
-    raw_hints
-        .iter()
-        .map(|hint| {
-            let fields = hint["hintFields"][0]["hintFieldArray"]["hintFields"]
-                .as_array()
-                .unwrap_or(&vec![])
-                .iter()
-                .map(|field| {
-                    let (values, lengths) = process_hint_field(field, pilout, symbols, expressions, save_symbols);
-                    json!({ "name": field["name"], "values": values, "lengths": lengths })
-                })
-                .collect::<Vec<_>>();
-
-            json!({ "name": hint["name"], "fields": fields })
-        })
-        .collect()
-}
-
 /// Formats constraints from `pilout`, mimicking the original JavaScript function.
 pub fn format_constraints(pilout: &Value) -> Vec<Value> {
     let mut constraints = Vec::new();
@@ -388,51 +361,115 @@ pub fn print_expressions(
     }
 }
 
-/// Recursively processes a hint field, extracting values and lengths.
-pub fn process_hint_field(
+/// Formats raw hints by processing fields recursively.
+/// This function mirrors the JavaScript `formatHints` function.
+///
+/// # Arguments
+/// * `pilout` - A reference to the `PilOut` structure.
+/// * `raw_hints` - A slice of hints to be formatted.
+/// * `symbols` - A mutable reference to the symbols vector.
+/// * `expressions` - A mutable reference to the expressions vector.
+/// * `save_symbols` - A boolean indicating whether to save symbols.
+/// * `_global` - A boolean indicating whether to format hints globally.
+///
+/// # Returns
+/// A vector of JSON values representing the formatted hints.
+pub fn format_hints(
+    pilout: &PilOut,
+    raw_hints: &[Value],
+    symbols: &mut Vec<Value>,
+    expressions: &mut Vec<Value>,
+    save_symbols: bool,
+    _global: bool,
+) -> Vec<Value> {
+    raw_hints
+        .iter()
+        .map(|hint| {
+            let hint_name = hint["name"].as_str().unwrap_or_default().to_string();
+            let mut formatted_hint = json!({ "name": hint_name, "fields": [] });
+
+            if let Some(hint_fields) = hint
+                .get("hintFields")
+                .and_then(|hf| hf.get(0))
+                .and_then(|hf| hf.get("hintFieldArray"))
+                .and_then(|hfa| hfa.get("hintFields"))
+                .and_then(|hf| hf.as_array())
+            {
+                let formatted_fields: Vec<Value> = hint_fields
+                    .iter()
+                    .map(|field| {
+                        let name = field["name"].as_str().unwrap_or_default().to_string();
+                        let (values, lengths) = process_hint_field(field, pilout, symbols, expressions, save_symbols);
+
+                        json!({ "name": name, "values": values, "lengths": lengths })
+                    })
+                    .collect();
+
+                formatted_hint["fields"] = json!(formatted_fields);
+            }
+
+            formatted_hint
+        })
+        .collect()
+}
+
+/// Processes a single hint field, extracting values and lengths recursively.
+/// This function mirrors the `processHintField` logic in JavaScript.
+fn process_hint_field(
     hint_field: &Value,
-    pilout: &HashMap<String, Value>,
+    pilout: &PilOut,
     symbols: &mut Vec<Value>,
     expressions: &mut Vec<Value>,
     save_symbols: bool,
 ) -> (Value, Option<Vec<usize>>) {
     if let Some(hint_field_array) = hint_field.get("hintFieldArray") {
-        let fields = hint_field_array["hintFields"]
-            .as_array()
-            .unwrap_or(&vec![])
-            .iter()
-            .map(|f| process_hint_field(f, pilout, symbols, expressions, save_symbols))
-            .collect::<Vec<_>>();
+        let hint_fields = hint_field_array["hintFields"].as_array().unwrap_or(&vec![]);
 
-        let values: Vec<Value> = fields.iter().map(|(v, _)| v.clone()).collect();
+        let mut values = Vec::new();
         let mut lengths = Vec::new();
-        if let Some(first_len) = fields.first().and_then(|(_, l)| l.clone()) {
-            lengths.push(first_len.len());
-            lengths.extend(first_len);
+
+        for field in hint_fields {
+            let (sub_values, sub_lengths) = process_hint_field(field, pilout, symbols, expressions, save_symbols);
+            values.push(sub_values);
+
+            if lengths.is_empty() {
+                lengths.push(hint_fields.len());
+            }
+
+            if let Some(sub_lengths) = sub_lengths {
+                for (i, len) in sub_lengths.iter().enumerate() {
+                    if i + 1 >= lengths.len() {
+                        lengths.push(*len);
+                    }
+                }
+            }
         }
 
-        (json!(values), Some(lengths))
-    } else {
-        let value = if let Some(operand) = hint_field.get("operand") {
-            let formatted_expr = format_expression(operand, pilout, symbols, save_symbols, false);
-            if formatted_expr["op"] == json!("exp") {
-                expressions[formatted_expr["id"].as_u64().unwrap_or(0) as usize]["keep"] = json!(true);
-            }
-            formatted_expr
-        } else if let Some(string_value) = hint_field.get("stringValue") {
-            json!({ "op": "string", "string": string_value })
-        } else {
-            panic!("Unknown hint field");
-        };
-
-        (value, None)
+        return (json!(values), Some(lengths));
     }
+
+    let value = if let Some(operand) = hint_field.get("operand") {
+        let formatted_expr = format_expression(operand, pilout, symbols, save_symbols, false);
+        if formatted_expr["op"] == json!("exp") {
+            let expr_id = formatted_expr["id"].as_u64().unwrap_or(0) as usize;
+            if let Some(expr) = expressions.get_mut(expr_id) {
+                expr["keep"] = json!(true);
+            }
+        }
+        formatted_expr
+    } else if let Some(string_value) = hint_field.get("stringValue") {
+        json!({ "op": "string", "string": string_value })
+    } else {
+        panic!("Unknown hint field format");
+    };
+
+    (value, None)
 }
 
-/// Formats an individual expression from Pilout.
+/// Formats an individual expression from `PilOut`, mirroring JavaScript behavior.
 pub fn format_expression(
     exp: &Value,
-    pilout: &HashMap<String, Value>,
+    pilout: &PilOut,
     symbols: &mut Vec<Value>,
     save_symbols: bool,
     _global: bool,
@@ -441,9 +478,10 @@ pub fn format_expression(
         return exp.clone();
     }
 
-    let op = exp.as_object().unwrap().keys().next().unwrap().clone();
+    let op = exp.as_object().unwrap().keys().next().unwrap().as_str();
     let mut store = false;
-    let formatted_exp = match op.as_str() {
+
+    let formatted_exp = match op {
         "expression" => {
             let id = exp[op]["idx"].as_u64().unwrap_or(0) as usize;
             json!({ "op": "exp", "id": id })
@@ -451,13 +489,13 @@ pub fn format_expression(
         "add" | "mul" | "sub" => json!({
             "op": op,
             "values": [
-                format_expression(&exp[&op]["lhs"], pilout, symbols, save_symbols, false),
-                format_expression(&exp[&op]["rhs"], pilout, symbols, save_symbols, false)
+                format_expression(&exp[op]["lhs"], pilout, symbols, save_symbols, false),
+                format_expression(&exp[op]["rhs"], pilout, symbols, save_symbols, false)
             ]
         }),
         "neg" => json!({
             "op": op,
-            "values": [format_expression(&exp[&op]["value"], pilout, symbols, save_symbols, false)]
+            "values": [format_expression(&exp[op]["value"], pilout, symbols, save_symbols, false)]
         }),
         "constant" => json!({
             "op": "number",
@@ -470,6 +508,82 @@ pub fn format_expression(
         "proofValue" => {
             store = true;
             json!({ "op": "proofvalue", "id": exp[op]["idx"] })
+        }
+        "witnessCol" | "customCol" => {
+            let col_type = if op == "witnessCol" { "cm" } else { "custom" };
+            let commit_id = if op == "customCol" { exp[op]["commitId"].as_u64() } else { None };
+            let stage_widths = if op == "witnessCol" {
+                &pilout.stage_widths
+            } else {
+                &pilout.custom_commits[commit_id.unwrap() as usize].stage_widths
+            };
+
+            let stage_id = exp[op]["colIdx"].as_u64().unwrap_or(0) as usize;
+            let row_offset = exp[op]["rowOffset"].as_i64().unwrap_or(0);
+            let stage = exp[op]["stage"].as_u64().unwrap_or(0) as usize;
+            let id = stage_id + stage_widths.iter().take(stage - 1).sum::<usize>();
+
+            json!({
+                "op": col_type,
+                "id": id,
+                "stageId": stage_id,
+                "rowOffset": row_offset,
+                "stage": stage,
+                "dim": if stage <= 1 { 1 } else { 3 },
+                "airgroupId": exp[op]["airGroupId"],
+                "airId": exp[op]["airId"],
+                "commitId": commit_id,
+            })
+        }
+        "fixedCol" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            let row_offset = exp[op]["rowOffset"].as_i64().unwrap_or(0);
+
+            json!({
+                "op": "const",
+                "id": id,
+                "rowOffset": row_offset,
+                "stage": 0,
+                "dim": 1,
+                "airgroupId": exp[op]["airGroupId"],
+                "airId": exp[op]["airId"],
+            })
+        }
+        "airGroupValue" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            let stage = pilout.air_group_values[id as usize].stage;
+
+            json!({
+                "op": "airgroupvalue",
+                "id": id,
+                "airgroupId": exp[op]["airGroupId"],
+                "dim": 3,
+                "stage": stage,
+            })
+        }
+        "airValue" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            let stage = pilout.air_values[id as usize].stage;
+            let dim = if stage != 1 { 3 } else { 1 };
+
+            json!({
+                "op": "airvalue",
+                "id": id,
+                "stage": stage,
+                "dim": dim,
+            })
+        }
+        "challenge" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            let stage = exp[op]["stage"].as_u64().unwrap_or(0);
+            let challenge_id = id + pilout.num_challenges.iter().take(stage as usize - 1).sum::<u32>();
+
+            json!({
+                "op": "challenge",
+                "stage": stage,
+                "stageId": id,
+                "id": challenge_id,
+            })
         }
         _ => panic!("Unknown op: {}", op),
     };
@@ -652,31 +766,32 @@ use crate::{
 
 use itertools::Itertools; // Needed for sorting
 
-/// Extracts global constraints information from a given `pilout` JSON structure.
+/// Extracts global constraints information from a given `PilOut`.
 /// This function replicates the `getGlobalConstraintsInfo` logic from JavaScript.
 ///
 /// # Arguments
-/// * `pilout` - A reference to the `pilout` JSON structure.
+/// * `pilout` - A reference to the `PilOut` structure.
 /// * `save_symbols` - A boolean indicating whether to save symbols.
 ///
 /// # Returns
-/// A `HashMap` containing `constraints` and `hints` extracted from pilout.
-pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols: bool) -> HashMap<String, Value> {
+/// A `HashMap` containing `constraints` and `hints` extracted from `pilout`.
+pub fn get_global_constraints_info(pilout: &PilOut, save_symbols: bool) -> HashMap<String, Value> {
     let mut constraints_code = Vec::new();
     let mut hints_code = Vec::new();
     let mut expressions = Vec::new();
     let mut symbols = Vec::new();
 
-    // Check for constraints
-    if let Some(constraints) = pilout.get("constraints").and_then(|c| c.as_array()) {
-        let formatted_constraints: Vec<HashMap<String, Value>> = constraints
+    // Extract constraints from `PilOut`
+    if !pilout.constraints.is_empty() {
+        let constraints: Vec<HashMap<String, Value>> = pilout
+            .constraints
             .iter()
-            .filter_map(|c| {
-                Some(HashMap::from([
-                    ("e".to_string(), json!(c["expressionIdx"]["idx"].as_u64()?)),
-                    ("boundary".to_string(), json!("finalProof")),
-                    ("line".to_string(), c["debugLine"].clone()),
-                ]))
+            .map(|c| {
+                let mut constraint = HashMap::new();
+                constraint.insert("e".to_string(), json!(c.expression_idx.as_ref().map(|e| e.idx).unwrap_or(0)));
+                constraint.insert("boundary".to_string(), json!("finalProof"));
+                constraint.insert("line".to_string(), json!(c.debug_line.clone()));
+                constraint
             })
             .collect();
 
@@ -691,7 +806,7 @@ pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols
         }
 
         // Add expression info
-        for constraint in &formatted_constraints {
+        for constraint in &constraints {
             if let Some(e_idx) = constraint.get("e").and_then(|e| e.as_u64()) {
                 add_info_expressions(&mut expressions, e_idx as usize);
             }
@@ -713,7 +828,7 @@ pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols
         };
 
         // Generate constraint code
-        for constraint in &formatted_constraints {
+        for constraint in &constraints {
             if let Some(e_idx) = constraint.get("e").and_then(|e| e.as_u64()) {
                 pil_code_gen(&mut ctx, &symbols, &expressions, e_idx as usize, 0);
                 let mut code = build_code(&mut ctx);
@@ -726,13 +841,9 @@ pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols
     }
 
     // Handle global hints
-    if let Some(global_hints) = pilout.get("hints").and_then(|h| h.as_array()).map(|hints| {
-        hints
-            .iter()
-            .filter(|h| h.get("airId").is_none() && h.get("airgroupId").is_none())
-            .cloned()
-            .collect::<Vec<Value>>()
-    }) {
+    let global_hints: Vec<_> = pilout.hints.iter().filter(|h| h.air_id.is_none() && h.air_group_id.is_none()).collect();
+
+    if !global_hints.is_empty() {
         let hints = format_hints(pilout, &global_hints, &mut symbols, &mut expressions, save_symbols, true);
         let mut res = HashMap::new();
         hints_code = add_hints_info(&mut res, &mut expressions, &hints);
