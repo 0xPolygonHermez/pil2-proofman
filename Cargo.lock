@@ -813,6 +813,7 @@ dependencies = [
  "p3-goldilocks",
  "proofman-common",
  "proofman-hints",
+ "proofman-macros",
  "proofman-starks-lib-c",
  "proofman-util",
  "rayon",
