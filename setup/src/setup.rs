@@ -21,9 +21,9 @@ use crate::{
 };
 
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Attempting to load airout file from '{}'", config.airout.airout_filename.display());
+    tracing::info!("Attempting to load airout file from '{}'", config.airout.airout_filename.display());
     let airout = AirOut::from_file(&config.airout.airout_filename)?;
-    println!("Successfully loaded airout file");
+    tracing::info!("Successfully loaded airout file");
     let setup_options = SetupOptions {
         opt_im_pols: config.setup.opt_im_pols,
         const_tree: config.setup.const_tree.clone(),
@@ -37,6 +37,7 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
     let mut min_final_degree = 5;
 
     // Determine minimum final degree across all air groups
+    tracing::info!("Determining minimum final degree across all air groups");
     for airgroup in &airout.pilout().air_groups {
         for air in &airgroup.airs {
             let name = match { air.name.as_ref().map(|s| s.as_str()) } {
@@ -62,7 +63,9 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
             };
         }
     }
+    tracing::info!("Minimum final degree: {}", min_final_degree);
 
+    tracing::info!("Generating setup for each air group");
     for (airgroup_id, airgroup) in airout.pilout().air_groups.iter().enumerate() {
         setup.push(vec![]);
         for (air_id, air) in airgroup.airs.iter().enumerate() {
