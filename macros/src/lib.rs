@@ -55,6 +55,8 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
     // Generate trace struct
     let trace_struct = quote! {
+        use rayon::prelude::*;
+
         pub struct #trace_struct_name<#generics> {
             pub buffer: Vec<#row_struct_name<#generics>>,
             pub num_rows: usize,
@@ -64,7 +66,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             pub commit_id: Option<usize>,
         }
 
-        impl<#generics: Default + Clone + Copy> #trace_struct_name<#generics> {
+        impl<#generics: Default + Clone + Copy + Send> #trace_struct_name<#generics> {
             pub const NUM_ROWS: usize = #num_rows;
             pub const AIRGROUP_ID: usize = #airgroup_id;
             pub const AIR_ID: usize = #air_id;
@@ -150,6 +152,21 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                         commit_id: #commit_id,
                     }
                 }
+            }
+            
+            /// Returns parallel mutable iterators to access the buffer.
+            ///
+            /// # Arguments
+            /// * `n` - The number of segments to divide the buffer into. Must be a power of two and <= `NUM_ROWS`.
+            ///
+            /// # Panics
+            /// Panics if `n` is not a power of two or if `n > NUM_ROWS`.
+            pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl rayon::iter::IndexedParallelIterator<Item = &mut [#row_struct_name<#generics>]> {
+                assert!(n > 0 && (n & (n - 1)) == 0, "n must be a power of two");
+                assert!(n <= self.num_rows, "n must be less than or equal to NUM_ROWS");
+                let chunk_size = self.num_rows / n;
+                assert!(chunk_size > 0, "Chunk size must be greater than zero");
+                self.buffer.par_chunks_mut(chunk_size)
             }
 
             pub fn num_rows(&self) -> usize {
