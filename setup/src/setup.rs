@@ -21,6 +21,7 @@ use crate::{
 };
 
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
+    tracing::info!("build_dir: {:?}", build_dir.as_ref());
     tracing::info!("Attempting to load airout file from '{}'", config.airout.airout_filename.display());
     let airout = AirOut::from_file(&config.airout.airout_filename)?;
     tracing::info!("Successfully loaded airout file");
