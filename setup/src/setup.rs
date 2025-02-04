@@ -69,7 +69,7 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
     for (airgroup_id, airgroup) in airout.pilout().air_groups.iter().enumerate() {
         setup.push(vec![]);
         for (air_id, air) in airgroup.airs.iter().enumerate() {
-            info!("Computing setup for air '{}'", air.name.as_ref().unwrap());
+            tracing::info!("Computing setup for air '{}'", air.name.as_ref().unwrap());
 
             let settings = config
                 .setup
@@ -77,6 +77,7 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
                 .get(air.name.as_ref().unwrap())
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or(AirSettings { stark_struct: None, final_degree: min_final_degree });
+            tracing::info!("Settings: {:?}", settings);
 
             let files_dir = build_dir
                 .as_ref()
@@ -85,36 +86,48 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
                 .join("airs")
                 .join(air.name.as_ref().unwrap())
                 .join("air");
+            tracing::info!("Creating directory '{}'", files_dir.display());
 
             async_fs::create_dir_all(&files_dir).await?;
 
+            tracing::info!("Generating setup for air '{}'", air.name.as_ref().unwrap());
             let air_num_rows: u32 = air.num_rows.unwrap().try_into().unwrap();
+
+            tracing::info!("Generating STARK struct for air '{}'", air.name.as_ref().unwrap());
             let stark_struct = settings
                 .stark_struct
                 .as_ref()
                 .cloned()
                 .unwrap_or_else(|| generate_stark_struct(&settings, log2(air_num_rows).try_into().unwrap()));
-
             stark_structs.push(stark_struct.clone());
 
             // Generate Fixed Columns
             let field_modulus = BigUint::from(1u32) << 256; // Placeholder modulus
+            tracing::info!("Generating fixed columns for air '{}'", air.name.as_ref().unwrap());
             let fixed_pols = generate_fixed_cols(airout.pilout().symbols.clone(), air_num_rows, field_modulus);
 
             let air_json = serde_json::to_value(air)?;
             let mut fixed_pols_map = fixed_pols.to_hashmap();
 
             let air_json_map: HashMap<String, Value> = serde_json::from_value(air_json.clone())?;
+            tracing::info!("Getting fixed polynomials for air '{}'", air.name.as_ref().unwrap());
             get_fixed_pols_pil2(files_dir.to_str().unwrap(), &air_json_map, &mut fixed_pols_map)?;
 
             // STARK Setup
+            tracing::info!("Running STARK setup for air '{}'", air.name.as_ref().unwrap());
             let stark_setup_result = stark_setup(air_json, &stark_struct, &setup_options).await?;
+            tracing::info!("STARK setup completed for air '{}'", air.name.as_ref().unwrap());
             let json_output = serde_json::to_string_pretty(&stark_setup_result)?;
 
+            tracing::info!(
+                "Writing STARK setup output to '{}'",
+                files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())).display()
+            );
             async_fs::write(files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())), json_output)
                 .await?;
 
             // Compute Constant Tree
+            tracing::info!("Computing constant tree for air '{}'", air.name.as_ref().unwrap());
             let const_tree_cmd = format!(
                 "{} -c {} -s {} -v {}",
                 setup_options.const_tree.display(),
@@ -123,10 +136,15 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
                 files_dir.join(format!("{}.verkey.json", air.name.as_ref().unwrap())).display()
             );
 
+            tracing::info!("Running command: '{}'", const_tree_cmd);
             let output = tokio::process::Command::new("sh").arg("-c").arg(&const_tree_cmd).output().await?;
 
-            info!("Constant tree output: {}", String::from_utf8_lossy(&output.stdout));
+            tracing::info!("Constant tree output: {}", String::from_utf8_lossy(&output.stdout));
 
+            tracing::info!(
+                "Reading constant root from '{}'",
+                files_dir.join(format!("{}.verkey.json", air.name.as_ref().unwrap())).display()
+            );
             let const_root = serde_json::from_str::<Value>(
                 &tokio::fs::read_to_string(files_dir.join(format!("{}.verkey.json", air.name.as_ref().unwrap())))
                     .await?,
@@ -143,9 +161,10 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
                 files_dir.join(format!("{}.bin", air.name.as_ref().unwrap())).display()
             );
 
+            tracing::info!("Running command: '{}'", bin_cmd);
             let output = tokio::process::Command::new("sh").arg("-c").arg(&bin_cmd).output().await?;
 
-            info!("Bin file output: {}", String::from_utf8_lossy(&output.stdout));
+            tracing::info!("Bin file output: {}", String::from_utf8_lossy(&output.stdout));
 
             setup[airgroup_id].push(stark_struct);
         }
@@ -153,14 +172,17 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
     // Generate Final Recursive Setup
     if config.setup.gen_aggregation_setup {
+        tracing::info!("Generating final recursive setup");
         let (global_info, global_constraints) = set_airout_info(&airout, &stark_structs);
 
+        tracing::info!("Writing global info and constraints to '{}'", build_dir.as_ref().join("provingKey").display());
         async_fs::write(
             build_dir.as_ref().join("provingKey/pilout.globalInfo.json"),
             serde_json::to_string_pretty(&global_info)?,
         )
         .await?;
 
+        tracing::info!("Writing global constraints to '{}'", build_dir.as_ref().join("provingKey").display());
         async_fs::write(
             build_dir.as_ref().join("provingKey/pilout.globalConstraints.json"),
             serde_json::to_string_pretty(&global_constraints)?,
@@ -175,10 +197,13 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
             build_dir.as_ref().join("provingKey/pilout.globalConstraints.bin").display()
         );
 
+        tracing::info!("Running command: '{}'", global_bin_cmd);
         let output = tokio::process::Command::new("sh").arg("-c").arg(&global_bin_cmd).output().await?;
 
         info!("Global bin file output: {}", String::from_utf8_lossy(&output.stdout));
     }
+
+    tracing::info!("Setup completed successfully");
 
     Ok(())
 }
