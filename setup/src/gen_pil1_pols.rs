@@ -92,6 +92,8 @@ pub fn generate_pil1_polynomials(
 
     generate_libs_polynomials(fr_mul, k, res, &mut pil_map, &mut symbols, &mut hints);
 
+    tracing::debug!("pil: {:?}", pil);
+
     res.insert("nCommitments".to_string(), pil["nCommitments"].clone());
 
     let first_reference = pil["references"].as_object().unwrap().values().next().unwrap()["polDeg"].as_u64().unwrap();
