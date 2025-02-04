@@ -38,7 +38,7 @@ pub fn prepare_pil(
         }
     }
 
-    if pil2 {
+    if true {
         let pil_map: HashMap<String, Value> =
             pil.as_object().unwrap().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
