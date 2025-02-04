@@ -747,7 +747,7 @@ void *genRecursiveProof_gpu(SetupCtx& setupCtx, json& globalInfo, uint64_t airgr
         //CHECKCUDAERR(cudaMalloc(&d_trees[i].nodes, numNodes * sizeof(gl64_t)));
     }
 
-    ExpressionsGPU expressionsCtx(setupCtx, 64, 256);
+    ExpressionsGPU expressionsCtx(setupCtx, 1, 128, 2048); //note nParams max harcoded here
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
 

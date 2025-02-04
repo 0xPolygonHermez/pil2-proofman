@@ -7,6 +7,7 @@ use proofman_starks_lib_c::*;
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::io::Read;
+use std::io::{self, Write};
 
 use proofman_common::{ExecutionCtx, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 
@@ -21,7 +22,6 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 type GenWitnessResult<F> = Result<(Vec<MaybeUninit<F>>, Vec<MaybeUninit<F>>), Box<dyn std::error::Error>>;
 
-
 pub struct MaxSizes {
     pub max_n: u64,
     pub max_n_ext: u64,
@@ -33,10 +33,20 @@ pub struct MaxSizes {
     pub max_const_tree_size: u64,
 }
 
-pub fn discover_max_sizes<F: Field>(
-    pctx: &ProofCtx<F>,
-    setups: Arc<SetupsVadcop>,
-) -> MaxSizes {
+pub fn wait_for_keyword(keyword: &str) {
+    let mut input = String::new();
+    /*loop {
+        print!("Type '{}' to continue: ", keyword);
+        io::stdout().flush().unwrap(); // Ensure the prompt is printed immediately
+        io::stdin().read_line(&mut input).unwrap();
+        if input.trim() == keyword {
+            break;
+        }
+        input.clear();
+    }*/
+}
+
+pub fn discover_max_sizes<F: Field>(pctx: &ProofCtx<F>, setups: Arc<SetupsVadcop>) -> MaxSizes {
     let mut max_n_bits = 0;
     let mut max_n_bits_ext = 0;
     let mut max_wit_pols = 0;
@@ -61,7 +71,8 @@ pub fn discover_max_sizes<F: Field>(
 
     for air_instance in pctx.air_instance_repo.air_instances.write().unwrap().iter_mut() {
         if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) {
-            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
+            let setup =
+                setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
             update_max_values(&setup);
         }
 
@@ -115,6 +126,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
         if pctx.global_info.get_air_has_compressor(air_instance.airgroup_id, air_instance.air_id) {
             timer_start_trace!(GENERATING_COMPRESSOR_PROOF);
+
+            wait_for_keyword("c");
 
             let setup =
                 setups.sctx_compressor.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
@@ -174,6 +187,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
         }
 
         timer_start_trace!(GENERATE_RECURSIVE1_PROOF);
+        wait_for_keyword("c");
 
         let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(air_instance.airgroup_id, air_instance.air_id);
         let p_setup: *mut c_void = (&setup.p_setup).into();
@@ -273,7 +287,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
             6) (&gpu_r_[gpu_id], ext_size * sizeof(uint64_t)));
 
     */
-
+    wait_for_keyword("c");
     // Pre-process data before starting recursion loop
     for airgroup in 0..n_airgroups {
         let instances = &dctx.airgroup_instances[airgroup];
@@ -376,6 +390,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                         let const_pols_ptr = (*setup.const_pols.values.read().unwrap()).as_ptr() as *mut c_void;
                         let const_tree_ptr = (*setup.const_tree.values.read().unwrap()).as_ptr() as *mut c_void;
 
+                        wait_for_keyword("c");
                         let zkin = gen_recursive_proof_c(
                             p_setup,
                             p_address,
@@ -433,7 +448,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
         let proofs_recursive2_ptr = proofs_recursive2.as_mut_ptr();
 
         let stark_infos_recursive2_ptr = stark_infos_recursive2.as_mut_ptr();
-
+        wait_for_keyword("c");
         zkin_final = join_zkin_final_c(
             public_inputs,
             proof_values,
