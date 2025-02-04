@@ -1,4 +1,4 @@
-use pilout::pilout::{PilOut, SymbolType};
+use pilout::pilout::{AirGroupValue, PilOut, SymbolType};
 use pilout::pilout_proxy::PilOutProxy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value, Map};
@@ -573,38 +573,47 @@ pub struct VadcopInfo {
     pub proof_values_map: Vec<ProofValueMetadata>,
 }
 
-/// Extracts metadata from AIR system and STARK structures.
-pub fn set_airout_info(airout: &PilOut, stark_structs: &[StarkStruct]) -> (VadcopInfo, HashMap<String, Value>) {
+/// Manually convert `AirGroupValue` to JSON.
+fn air_group_value_to_json(value: &AirGroupValue) -> Value {
+    json!({
+        "agg_type": value.agg_type, // Assuming this is an i32 enum
+        "stage": value.stage
+    })
+}
+
+/// Extracts metadata from `AirOut` and STARK structures.
+pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (VadcopInfo, HashMap<String, Value>) {
+    let pilout = airout.pilout(); // Access `PilOut`
+
     let mut vadcop_info = VadcopInfo {
-        name: airout.name.clone().unwrap_or_else(|| "default".to_string()), // Extract name or set default
-        airs: vec![vec![]; airout.air_groups.len()],
+        name: pilout.name.clone().unwrap_or_else(|| "default".to_string()),
+        airs: vec![vec![]; pilout.air_groups.len()],
         air_groups: vec![],
-        agg_types: vec![vec![]; airout.air_groups.len()],
+        agg_types: vec![vec![]; pilout.air_groups.len()],
         steps_fri: vec![],
-        n_publics: airout.num_public_values.try_into().unwrap(), // Ensure correct usize conversion
-        num_challenges: airout.num_challenges.iter().map(|&x| x as usize).collect(),
-        num_proof_values: airout.num_proof_values.len(), // Convert from Vec<u32> length
+        n_publics: pilout.num_public_values as usize,
+        num_challenges: pilout.num_challenges.iter().map(|&x| x as usize).collect(),
+        num_proof_values: pilout.num_proof_values.len(),
         proof_values_map: vec![],
     };
 
-    for (airgroup_id, airgroup) in airout.air_groups.iter().enumerate() {
+    for (airgroup_id, airgroup) in pilout.air_groups.iter().enumerate() {
         vadcop_info.air_groups.push(airgroup.name.clone().unwrap_or_else(|| format!("AirGroup {}", airgroup_id)));
 
-        // Convert `Vec<AirGroupValue>` to `Vec<Value>` for JSON compatibility
-        vadcop_info.agg_types[airgroup_id] =
-            airgroup.air_group_values.iter().map(|val| serde_json::to_value(val).unwrap()).collect();
+        // Manually serialize `AirGroupValue` to JSON
+        vadcop_info.agg_types[airgroup_id] = airgroup.air_group_values.iter().map(air_group_value_to_json).collect();
 
         vadcop_info.airs[airgroup_id] = airgroup
             .airs
             .iter()
             .map(|air| AIRMetadata {
                 name: air.name.clone().unwrap_or_else(|| "Unnamed Air".to_string()),
-                num_rows: air.num_rows.unwrap_or(0) as usize, // Convert u32 to usize
+                num_rows: air.num_rows.unwrap_or(0) as usize,
             })
             .collect();
     }
 
-    // Extract the final step FRI from the first StarkStruct
+    // Extract final step FRI
     let final_step = stark_structs
         .first()
         .and_then(|s| s.steps.last())
@@ -622,22 +631,18 @@ pub fn set_airout_info(airout: &PilOut, stark_structs: &[StarkStruct]) -> (Vadco
         }
     }
 
-    vadcop_info.steps_fri = steps_fri
-        .into_iter()
-        .sorted_by(|a, b| b.cmp(a)) // Sort in descending order
-        .map(|n_bits| FRIStep { n_bits })
-        .collect();
+    vadcop_info.steps_fri = steps_fri.into_iter().sorted_by(|a, b| b.cmp(a)).map(|n_bits| FRIStep { n_bits }).collect();
 
     // Extract proof values map
-    vadcop_info.proof_values_map = airout
+    vadcop_info.proof_values_map = pilout
         .symbols
         .iter()
         .filter(|s| s.r#type == SymbolType::ProofValue as i32)
         .map(|p| ProofValueMetadata { name: p.name.clone(), id: p.id as usize })
         .collect();
 
-    // Extract global constraints (if present)
-    let global_constraints = get_global_constraints_info(airout, true);
+    // Extract global constraints
+    let global_constraints = get_global_constraints_info(pilout, true);
 
     (vadcop_info, global_constraints)
 }
