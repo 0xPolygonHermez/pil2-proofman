@@ -24,6 +24,7 @@ p3-field.workspace = true
 serde.workspace = true
 serde_arrays.workspace = true
 serde_json.workspace = true
+rayon.workspace = true
 
 [build-dependencies]
 proofman-cli.workspace = true
