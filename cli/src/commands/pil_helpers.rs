@@ -83,6 +83,7 @@ struct Column64Ctx {
     name: String,
     array: bool,
     r#type: String,
+    r#type_default: String,
 }
 
 #[derive(Default, Clone, Debug, Serialize)]
@@ -232,12 +233,6 @@ impl PilHelpersCmd {
                             .rev()
                             .fold("u64".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
                     };
-                    publics[0].values_u64.push(Column64Ctx {
-                        name: name.to_owned(),
-                        r#type: r#type_64,
-                        array: !symbol.lengths.is_empty(),
-                    });
-
                     let default = "0".to_string();
                     let r#type_default = if symbol.lengths.is_empty() {
                         default // Case when lengths.len() == 0
@@ -245,6 +240,12 @@ impl PilHelpersCmd {
                         // Start with "u64" and apply each length in reverse order
                         symbol.lengths.iter().rev().fold(default, |acc, &length| format!("[{}; {}]", acc, length))
                     };
+                    publics[0].values_u64.push(Column64Ctx {
+                        name: name.to_owned(),
+                        r#type: r#type_64,
+                        r#type_default: r#type_default.clone(),
+                        array: !symbol.lengths.is_empty(),
+                    });
                     publics[0].values_default.push(ColumnCtx { name: name.to_owned(), r#type: r#type_default });
                 }
             });

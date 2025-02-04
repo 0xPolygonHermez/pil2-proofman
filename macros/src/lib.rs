@@ -79,12 +79,23 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let mut buff_uninit: Vec<std::mem::MaybeUninit<#row_struct_name<#generics>>> = Vec::with_capacity(num_rows);
+                let buffer: Vec<#row_struct_name::<#generics>> = if cfg!(feature = "debug") {
+                    let mut buffer_u64 = vec![u64::MAX - 1; num_rows * #row_struct_name::<#generics>::ROW_SIZE];
 
-                unsafe {
-                    buff_uninit.set_len(num_rows);
-                }
-                let buffer: Vec<#row_struct_name::<#generics>> = unsafe { std::mem::transmute(buff_uninit) };
+                    // Convert safely by properly managing size & alignment
+                    let ptr = buffer_u64.as_mut_ptr();
+                    let len = buffer_u64.len() / #row_struct_name::<#generics>::ROW_SIZE;
+                    let cap = buffer_u64.capacity() / #row_struct_name::<#generics>::ROW_SIZE;
+                    std::mem::forget(buffer_u64);
+
+                    unsafe { Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, len, cap) }
+                } else {
+                    let mut buff_uninit: Vec<std::mem::MaybeUninit<#row_struct_name<#generics>>> = Vec::with_capacity(num_rows);
+                    unsafe {
+                        buff_uninit.set_len(num_rows);
+                    }
+                    unsafe { std::mem::transmute(buff_uninit) }
+                };
 
                 #trace_struct_name {
                     buffer,
@@ -101,7 +112,8 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer = vec![#row_struct_name::<#generics>::default(); num_rows];
+                let buffer: Vec<#row_struct_name<#generics>> = vec![#row_struct_name::<#generics>::default(); num_rows];
+
 
                 #trace_struct_name {
                     buffer,
