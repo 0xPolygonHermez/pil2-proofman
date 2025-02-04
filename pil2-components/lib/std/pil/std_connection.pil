@@ -108,7 +108,7 @@ function connection_init(const int opid, const expr cols[], int default_frame_si
         int cols_num = 0;
 
         expr map_cols[cols_count];
-        col fixed CONN[cols_count];
+        col fixed `CONN_${opid}`[cols_count];
 
         // 1st dimension: The number of connections can be as large as one wants. Until we have dynamic arrays, we fix the size to cols·rows
         // 2nd dimension:
@@ -158,7 +158,7 @@ function connection_init(const int opid, const expr cols[], int default_frame_si
 
         // Initialize polynomial CONN[0](X) as X and CONN[i](X) as k_i·X, for i >= 0
         for (int j = 0; j < N; j++) {
-            connid.CONN[i][j] = k * conn.ID[j];
+            connid.`CONN_${opid}`[i][j] = k * conn.ID[j];
         }
     }
 
@@ -447,15 +447,15 @@ function connection_connect(const int opid) {
             const int col2_id_clust = conn_cluster[j+1][0];
             const int row2_id_clust = conn_cluster[j+1][1];
 
-            const int tmp = CONN[col1_id_clust][row1_id_clust];
-            CONN[col1_id_clust][row1_id_clust] = CONN[col2_id_clust][row2_id_clust];
-            CONN[col2_id_clust][row2_id_clust] = tmp;
+            const int tmp = air.std.connect.`id${opid}`.`CONN_${opid}`[col1_id_clust][row1_id_clust];
+            air.std.connect.`id${opid}`.`CONN_${opid}`[col1_id_clust][row1_id_clust] = air.std.connect.`id${opid}`.`CONN_${opid}`[col2_id_clust][row2_id_clust];
+            air.std.connect.`id${opid}`.`CONN_${opid}`[col2_id_clust][row2_id_clust] = tmp;
         }
     }
 
     // Send to the bus the permuted columns
     for (int i = 0; i < cols_num; i++) {
-        permutation_proves(opid, [map_cols[i], CONN[i]], bus_type: bus_type, name: PIOP_NAME_CONNECTION);
+        permutation_proves(opid, [map_cols[i], air.std.connect.`id${opid}`.`CONN_${opid}`[i]], bus_type: bus_type, name: PIOP_NAME_CONNECTION);
     }
 
     // Mark the connection as closed

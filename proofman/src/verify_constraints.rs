@@ -15,7 +15,7 @@ use colored::*;
 
 pub fn verify_global_constraints_proof<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     airgroupvalues: Vec<Vec<F>>,
 ) -> Vec<GlobalConstraintInfo> {
     const MY_NAME: &str = "GlCstVfy";
@@ -51,7 +51,7 @@ pub fn verify_global_constraints_proof<F: Field>(
 
 pub fn verify_constraints_proof<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     provers: &mut [Box<dyn Prover<F>>],
 ) -> Result<(), Box<dyn std::error::Error>> {
     const MY_NAME: &str = "CstrVrfy";
@@ -73,7 +73,7 @@ pub fn verify_constraints_proof<F: Field>(
         let (airgroup_id, air_id) = instances[*instance_id];
         let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
         let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
-        let (skip, _) = skip_prover_instance(pctx.options.clone(), airgroup_id, air_id, air_instance_id);
+        let (skip, _) = skip_prover_instance(&pctx, *instance_id);
         if skip {
             log::info!(
                 "{}",

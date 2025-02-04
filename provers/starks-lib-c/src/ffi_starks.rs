@@ -55,8 +55,8 @@ pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn fri_proof_new_c(p_setup_ctx: *mut c_void, instance_id: u64) -> *mut c_void {
-    unsafe { fri_proof_new(p_setup_ctx, instance_id) }
+pub fn fri_proof_new_c(p_setup_ctx: *mut c_void, airgroup_id: u64, air_id: u64, instance_id: u64) -> *mut c_void {
+    unsafe { fri_proof_new(p_setup_ctx, airgroup_id, air_id, instance_id) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -207,31 +207,45 @@ pub fn get_const_tree_size_c(pStarkInfo: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn load_const_tree_c(pConstPolsTreeAddress: *mut u8, tree_filename: &str, const_tree_size: u64) {
+pub fn load_const_tree_c(
+    pStarkInfo: *mut c_void,
+    pConstPolsTreeAddress: *mut u8,
+    tree_filename: &str,
+    const_tree_size: u64,
+    verkey_filename: &str,
+) -> bool {
     unsafe {
         let tree_filename: CString = CString::new(tree_filename).unwrap();
+        let verkey_filename: CString = CString::new(verkey_filename).unwrap();
 
         load_const_tree(
+            pStarkInfo,
             pConstPolsTreeAddress as *mut std::os::raw::c_void,
             tree_filename.as_ptr() as *mut std::os::raw::c_char,
             const_tree_size,
+            verkey_filename.as_ptr() as *mut std::os::raw::c_char,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn calculate_const_tree_c(pStarkInfo: *mut c_void, pConstPols: *mut u8, pConstPolsTreeAddress: *mut u8) {
+    unsafe {
+        calculate_const_tree(
+            pStarkInfo,
+            pConstPols as *mut std::os::raw::c_void,
+            pConstPolsTreeAddress as *mut std::os::raw::c_void,
         );
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn calculate_const_tree_c(
-    pStarkInfo: *mut c_void,
-    pConstPols: *mut u8,
-    pConstPolsTreeAddress: *mut u8,
-    tree_filename: &str,
-) {
+pub fn write_const_tree_c(pStarkInfo: *mut c_void, pConstPolsTreeAddress: *mut u8, tree_filename: &str) {
     unsafe {
         let tree_filename: CString = CString::new(tree_filename).unwrap();
 
-        calculate_const_tree(
+        write_const_tree(
             pStarkInfo,
-            pConstPols as *mut std::os::raw::c_void,
             pConstPolsTreeAddress as *mut std::os::raw::c_void,
             tree_filename.as_ptr() as *mut std::os::raw::c_char,
         );
@@ -491,13 +505,6 @@ pub fn free_provers_c(n_proofs: u64, p_starks: *mut *mut c_void, p_proofs: *mut 
 pub fn treesGL_get_root_c(pStark: *mut c_void, index: u64, root: *mut u8) {
     unsafe {
         treesGL_get_root(pStark, index, root as *mut std::os::raw::c_void);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn treesGL_set_root_c(pStark: *mut c_void, index: u64, pProof: *mut c_void) {
-    unsafe {
-        treesGL_set_root(pStark, index, pProof);
     }
 }
 
@@ -931,6 +938,8 @@ pub fn gen_recursive_proof_c(
     proof_file: &str,
     global_info_file: &str,
     airgroup_id: u64,
+    air_id: u64,
+    instance_id: u64,
     vadcop: bool,
 ) -> *mut c_void {
     let proof_file_name = CString::new(proof_file).unwrap();
@@ -944,6 +953,8 @@ pub fn gen_recursive_proof_c(
             p_setup_ctx,
             global_info_file_ptr,
             airgroup_id,
+            air_id,
+            instance_id,
             p_witness as *mut std::os::raw::c_void,
             p_aux_trace as *mut std::os::raw::c_void,
             p_const_pols as *mut std::os::raw::c_void,
@@ -1159,6 +1170,39 @@ pub fn free_buffer_c(buffer: *mut u8) {
     }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn write_fixed_cols_bin_c(
+    binfile: &str,
+    airgroup: &str,
+    air: &str,
+    n: u64,
+    n_fixed_pols: u64,
+    fixed_pols_info: *mut c_void,
+) {
+    let binfile_name = CString::new(binfile).unwrap();
+    let binfile_name_ptr = binfile_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let airgroup_name = CString::new(airgroup).unwrap();
+    let airgroup_name_ptr = airgroup_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let air_name = CString::new(air).unwrap();
+    let air_name_ptr = air_name.as_ptr() as *mut std::os::raw::c_char;
+    unsafe {
+        write_fixed_cols_bin(binfile_name_ptr, airgroup_name_ptr, air_name_ptr, n, n_fixed_pols, fixed_pols_info);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_omp_max_threads_c() -> u64 {
+    unsafe { get_omp_max_threads() }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_omp_num_threads_c(num_threads: u64) {
+    unsafe {
+        set_omp_num_threads(num_threads);
+    }
+}
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -1178,7 +1222,7 @@ pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _out
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn fri_proof_new_c(_p_setup_ctx: *mut c_void, _instance_id: u64) -> *mut c_void {
+pub fn fri_proof_new_c(_p_setup_ctx: *mut c_void, _airgroup_id: u64, _air_id: u64, _instance_id: u64) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "fri_proof_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -1309,18 +1353,25 @@ pub fn get_const_size_c(_pStarkInfo: *mut c_void) -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn load_const_tree_c(_pConstPolsTreeAddress: *mut u8, _tree_filename: &str, _const_tree_size: u64) {
+pub fn load_const_tree_c(
+    _pStarkInfo: *mut c_void,
+    _pConstPolsTreeAddress: *mut u8,
+    _tree_filename: &str,
+    _const_tree_size: u64,
+    _verkey_path: &str,
+) -> bool {
     trace!("{}: ··· {}", "ffi     ", "load_const_tree: This is a mock call because there is no linked library");
+    true
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn calculate_const_tree_c(
-    _pStarkInfo: *mut c_void,
-    _pConstPols: *mut u8,
-    _pConstPolsTreeAddress: *mut u8,
-    _tree_filename: &str,
-) {
+pub fn calculate_const_tree_c(_pStarkInfo: *mut c_void, _pConstPols: *mut u8, _pConstPolsTreeAddress: *mut u8) {
     trace!("{}: ··· {}", "ffi     ", "calculate_const_tree: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn write_const_tree_c(_pStarkInfo: *mut c_void, _pConstPolsTreeAddress: *mut u8, _tree_filename: &str) {
+    trace!("{}: ··· {}", "ffi     ", "write_const_tree: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1466,11 +1517,6 @@ pub fn starks_free_c(_p_stark: *mut c_void) {
 #[cfg(feature = "no_lib_link")]
 pub fn treesGL_get_root_c(_pStark: *mut c_void, _index: u64, _root: *mut u8) {
     trace!("{}: ··· {}", "ffi     ", "treesGL_get_root: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn treesGL_set_root_c(_pStark: *mut c_void, _index: u64, _pProof: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "treesGL_set_root: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1808,6 +1854,8 @@ pub fn gen_recursive_proof_c(
     _proof_file: &str,
     _global_info_file: &str,
     _airgroup_id: u64,
+    _air_id: u64,
+    _instance_id: u64,
     _vadcop: bool,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
@@ -1918,4 +1966,27 @@ pub fn stark_verify_c(
 ) -> bool {
     trace!("{}: ··· {}", "ffi     ", "stark_verify_c: This is a mock call because there is no linked library");
     true
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn write_fixed_cols_bin_c(
+    _binfile: &str,
+    _airgroup: &str,
+    _air: &str,
+    _n: u64,
+    _n_fixed_pols: u64,
+    _fixed_pols_info: *mut c_void,
+) {
+    trace!("{}: ··· {}", "ffi     ", "write_fixed_cols_bi: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_omp_max_threads() -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_omp_max_threads: This is a mock call because there is no linked library");
+    1
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_omp_num_threads(_num_threads: u64) {
+    trace!("{}: ··· {}", "ffi     ", "set_omp_num_threads: This is a mock call because there is no linked library");
 }

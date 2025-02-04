@@ -46,9 +46,6 @@ void StarkInfo::load(json j, bool verify_)
         starkStruct.steps.push_back(step);
     }
 
-    airId = j["airId"];
-    airgroupId = j["airgroupId"];
-
     nPublics = j["nPublics"];
     nConstants = j["nConstants"];
 
@@ -288,21 +285,28 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("evals", true)] = mapTotalN;
     mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
 
-    // Merkle tree nodes sizes
-    for (uint64_t i = 0; i < nStages + 1; i++) {
-        uint64_t numNodes = getNumNodesMT(1 << starkStruct.nBitsExt);
-        mapOffsets[std::make_pair("mt" + to_string(i + 1), true)] = mapTotalN;
-        mapTotalN += numNodes;
-    }
-    
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
         uint64_t width = ((1 << starkStruct.steps[step].nBits) / height) * FIELD_EXTENSION;
-        uint64_t numNodes = getNumNodesMT(height);
         mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)] = mapTotalN;
         mapTotalN += height * width;
-        mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)] = mapTotalN;
-        mapTotalN += numNodes;
+    }
+
+    if(starkStruct.verificationHashType == "GL") {
+        // Merkle tree nodes sizes
+        for (uint64_t i = 0; i < nStages + 1; i++) {
+            uint64_t numNodes = getNumNodesMT(1 << starkStruct.nBitsExt);
+            mapOffsets[std::make_pair("mt" + to_string(i + 1), true)] = mapTotalN;
+            mapTotalN += numNodes;
+        }
+        
+        
+        for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
+            uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
+            uint64_t numNodes = getNumNodesMT(height);
+            mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)] = mapTotalN;
+            mapTotalN += numNodes;
+        }
     }
 }
 
@@ -324,28 +328,7 @@ void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, st
 }
 
 uint64_t StarkInfo::getNumNodesMT(uint64_t height) {
-    if(starkStruct.verificationHashType == "BN128") {
-        uint n_tmp = height;
-        uint64_t nextN = floor(((double)(n_tmp - 1) / starkStruct.merkleTreeArity) + 1);
-        uint64_t acc = nextN * starkStruct.merkleTreeArity;
-        while (n_tmp > 1)
-        {
-            // FIll with zeros if n nodes in the leve is not even
-            n_tmp = nextN;
-            nextN = floor((n_tmp - 1) / starkStruct.merkleTreeArity) + 1;
-            if (n_tmp > 1)
-            {
-                acc += nextN * starkStruct.merkleTreeArity;
-            }
-            else
-            {
-                acc += 1;
-            }
-        }
-        return acc * sizeof(RawFr::Element) / sizeof(Goldilocks::Element);
-    } else {
-        return height * HASH_SIZE + (height - 1) * HASH_SIZE;
-    }
+    return height * HASH_SIZE + (height - 1) * HASH_SIZE;
 }
 
 opType string2opType(const string s) 

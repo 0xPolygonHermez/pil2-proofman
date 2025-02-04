@@ -2,32 +2,25 @@ use std::sync::Arc;
 
 use p3_field::PrimeField;
 use num_traits::ToPrimitive;
-use proofman_common::{AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{ProofCtx, SetupCtx};
 use proofman_hints::{
     get_hint_field_constant_gc, get_hint_field_constant, get_hint_field_constant_a, HintFieldOptions, HintFieldOutput,
     HintFieldValue,
 };
 
-pub trait AirComponent<F> {
+pub trait AirComponent<F: Clone> {
     const MY_NAME: &'static str;
 
-    fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>, airgroup_id: Option<usize>, air_id: Option<usize>)
-        -> Arc<Self>;
-
-    fn debug_mode(
-        &self,
-        _pctx: &ProofCtx<F>,
-        _sctx: &SetupCtx,
-        _air_instance: &mut AirInstance<F>,
-        _air_instance_id: usize,
-        _num_rows: usize,
-        _debug_data_hints: Vec<u64>,
-    ) {
-    }
+    fn new(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        airgroup_id: Option<usize>,
+        air_id: Option<usize>,
+    ) -> Arc<Self>;
 }
 
 // Helper to extract hint fields
-pub fn get_global_hint_field_constant_as<T, F>(sctx: Arc<SetupCtx>, hint_id: u64, field_name: &str) -> T
+pub fn get_global_hint_field_constant_as<T, F>(sctx: Arc<SetupCtx<F>>, hint_id: u64, field_name: &str) -> T
 where
     T: TryFrom<u64>,
     T::Error: std::fmt::Debug,
@@ -48,7 +41,7 @@ where
 }
 
 pub fn get_hint_field_constant_as_field<F: PrimeField>(
-    sctx: &SetupCtx,
+    sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -62,7 +55,7 @@ pub fn get_hint_field_constant_as_field<F: PrimeField>(
 }
 
 pub fn get_hint_field_constant_a_as_string<F: PrimeField>(
-    sctx: &SetupCtx,
+    sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,
@@ -84,7 +77,7 @@ pub fn get_hint_field_constant_a_as_string<F: PrimeField>(
 }
 
 pub fn get_hint_field_constant_as_string<F: PrimeField>(
-    sctx: &SetupCtx,
+    sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
     hint_id: usize,

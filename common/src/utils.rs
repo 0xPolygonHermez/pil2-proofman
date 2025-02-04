@@ -1,6 +1,6 @@
 use crate::{
-    AirGroupMap, AirIdMap, AirInstance, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, ProofOptions, StdMode,
-    VerboseMode, DEFAULT_PRINT_VALS,
+    AirGroupMap, AirIdMap, AirInstance, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
+    DEFAULT_PRINT_VALS,
 };
 use proofman_starks_lib_c::set_log_level_c;
 use std::path::PathBuf;
@@ -47,15 +47,16 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
     format!("{:.2} {}", num_bytes, units[unit_index])
 }
 
-pub fn skip_prover_instance(
-    options: ProofOptions,
-    airgroup_id: usize,
-    air_id: usize,
-    air_instance_id: usize,
-) -> (bool, Vec<usize>) {
-    if options.debug_info.debug_instances.is_empty() {
+pub fn skip_prover_instance<F: Field>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
+    if pctx.options.debug_info.debug_instances.is_empty() {
         return (false, Vec::new());
-    } else if let Some(airgroup_id_map) = options.debug_info.debug_instances.get(&airgroup_id) {
+    }
+
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[global_idx];
+    let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
+
+    if let Some(airgroup_id_map) = pctx.options.debug_info.debug_instances.get(&airgroup_id) {
         if airgroup_id_map.is_empty() {
             return (false, Vec::new());
         } else if let Some(air_id_map) = airgroup_id_map.get(&air_id) {
@@ -70,6 +71,9 @@ pub fn skip_prover_instance(
     (true, Vec::new())
 }
 
+fn default_fast_mode() -> bool {
+    true
+}
 #[derive(Debug, Default, Deserialize)]
 struct StdDebugMode {
     #[serde(default)]
@@ -78,6 +82,8 @@ struct StdDebugMode {
     n_print: Option<usize>,
     #[serde(default)]
     print_to_file: bool,
+    #[serde(default = "default_fast_mode")]
+    fast_mode: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,14 +206,18 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     let global_constraints = json.global_constraints.unwrap_or_default();
 
     let std_mode = if !airgroup_map.is_empty() {
-        StdMode::new(ModeName::Standard, Vec::new(), 0, false)
+        StdMode::new(ModeName::Standard, Vec::new(), 0, false, false)
     } else {
         let mode = json.std_mode.unwrap_or_default();
+        let fast_mode =
+            if mode.opids.is_some() && !mode.opids.as_ref().unwrap().is_empty() { false } else { mode.fast_mode };
+
         StdMode::new(
             ModeName::Debug,
             mode.opids.unwrap_or_default(),
             mode.n_print.unwrap_or(DEFAULT_PRINT_VALS),
             mode.print_to_file,
+            fast_mode,
         )
     };
 

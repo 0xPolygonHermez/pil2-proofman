@@ -19,4 +19,9 @@ rayon = "1"
 
 serde.workspace = true
 serde_json.workspace = true
+serde_arrays.workspace = true
 num-bigint = "0.4"
+
+[features]
+default = []
+debug = []

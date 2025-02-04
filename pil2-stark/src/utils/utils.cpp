@@ -209,17 +209,21 @@ uint64_t fileSize (const string &fileName)
 }
 
 
-void loadFileParallel(void* buffer, const string &fileName, uint64_t size) {
+bool loadFileParallel(void* buffer, const string &fileName, uint64_t size, bool exit) {
 
     // Check file size
     struct stat sb;
     if (lstat(fileName.c_str(), &sb) == -1) {
         zklog.error("loadFileParallel() failed calling lstat() of file " + fileName);
-        exitProcess();
+        if(exit) exitProcess();
+        return false;
     }
     if ((uint64_t)sb.st_size != size) {
-        zklog.error("loadFileParallel() found size of file " + fileName + " to be " + to_string(sb.st_size) + " B instead of " + to_string(size) + " B");
-        exitProcess();
+        if(exit) {
+            zklog.error("loadFileParallel() found size of file " + fileName + " to be " + to_string(sb.st_size) + " B instead of " + to_string(size) + " B");
+            exitProcess();
+        }
+        return false;
     }
 
     // Determine the number of chunks and the size of each chunk
@@ -245,6 +249,8 @@ void loadFileParallel(void* buffer, const string &fileName, uint64_t size) {
         }
         fclose(file);
     }
+
+    return true;
 }
 
 void* loadFileParallel(const string &fileName, uint64_t size) {

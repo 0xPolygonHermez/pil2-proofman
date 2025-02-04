@@ -21,7 +21,7 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 #[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_recursive1_proof<F: Field>(
     pctx: &ProofCtx<F>,
-    setups: Arc<SetupsVadcop>,
+    setups: Arc<SetupsVadcop<F>>,
     proofs: &[*mut c_void],
     circom_witness: &mut [F],
     publics: &[F],
@@ -81,6 +81,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
                 &proof_file,
                 global_info_file,
                 airgroup_id as u64,
+                air_id as u64,
+                air_instance_id as u64,
                 true,
             );
 
@@ -129,6 +131,8 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
             &proof_file,
             global_info_file,
             airgroup_id as u64,
+            air_id as u64,
+            air_instance_id as u64,
             true,
         );
         proofs_out.push(p_prove);
@@ -143,7 +147,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 #[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_recursive2_proof<F: Field>(
     pctx: &ProofCtx<F>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     proofs: &[*mut c_void],
     circom_witness: &mut [F],
     publics: &[F],
@@ -274,6 +278,8 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                             &proof_file,
                             global_info_file,
                             airgroup as u64,
+                            0,
+                            0,
                             true,
                         );
 
@@ -330,7 +336,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 #[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_final_proof<F: Field>(
     pctx: &ProofCtx<F>,
-    setup: Arc<Setup>,
+    setup: Arc<Setup<F>>,
     proof: *mut c_void,
     circom_witness: &mut [F],
     publics: &[F],
@@ -364,6 +370,8 @@ pub fn generate_vadcop_final_proof<F: Field>(
         &proof_file,
         global_info_file,
         0,
+        0,
+        0,
         false,
     );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
@@ -375,7 +383,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
 #[allow(clippy::too_many_arguments)]
 pub fn generate_recursivef_proof<F: Field>(
     pctx: &ProofCtx<F>,
-    setup: Arc<Setup>,
+    setup: Arc<Setup<F>>,
     proof: *mut c_void,
     circom_witness: &mut [F],
     publics: &[F],
@@ -411,6 +419,8 @@ pub fn generate_recursivef_proof<F: Field>(
         publics.as_ptr() as *mut u8,
         &proof_file,
         global_info_file,
+        0,
+        0,
         0,
         false,
     );
@@ -475,7 +485,7 @@ fn generate_witness<F: Field>(
     buffer: &[F],
     publics: &[F],
     setup_path: &Path,
-    setup: &Setup,
+    setup: &Setup<F>,
     zkin: *mut c_void,
     n_cols: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -528,7 +538,7 @@ fn generate_witness<F: Field>(
 
 pub fn get_buff_sizes<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    setups: Arc<SetupsVadcop>,
+    setups: Arc<SetupsVadcop<F>>,
 ) -> Result<(usize, usize, usize, usize), Box<dyn std::error::Error>> {
     let mut witness_size = 0;
     let mut publics = 0;
@@ -582,7 +592,7 @@ pub fn get_buff_sizes<F: Field>(
     if pctx.options.final_snark {
         let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
         let setup_path = pctx.global_info.get_setup_path("recursivef");
-        let sizes = get_size(&setup_path, setup_recursivef, 12)?;
+        let sizes = get_size::<F>(&setup_path, setup_recursivef, 12)?;
         witness_size = witness_size.max(sizes.0);
         publics = publics.max(sizes.1);
         buffer = buffer.max(sizes.2);
@@ -592,9 +602,9 @@ pub fn get_buff_sizes<F: Field>(
     Ok((witness_size, publics, buffer, prover_size as usize))
 }
 
-fn get_size(
+fn get_size<F: Field>(
     setup_path: &Path,
-    setup: &Setup,
+    setup: &Setup<F>,
     n_cols: usize,
 ) -> Result<(usize, usize, usize), Box<dyn std::error::Error>> {
     // Load the symbol (function) from the library

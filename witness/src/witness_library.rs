@@ -6,7 +6,7 @@ use proofman_common::VerboseMode;
 /// This is the type of the function that is used to load a witness library.
 pub type WitnessLibInitFn<F> = fn(VerboseMode) -> Result<Box<dyn WitnessLibrary<F>>, Box<dyn Error>>;
 
-pub trait WitnessLibrary<F> {
+pub trait WitnessLibrary<F: Clone> {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>);
 }
 

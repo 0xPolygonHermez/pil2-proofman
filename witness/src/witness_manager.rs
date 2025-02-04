@@ -1,37 +1,55 @@
 use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 
-use proofman_common::{ProofCtx, SetupCtx};
+use proofman_common::{ModeName, ProofCtx, SetupCtx};
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use crate::WitnessComponent;
 
-pub struct WitnessManager<F> {
+pub struct WitnessManager<F: Clone> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
+    components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     rom_path: Option<PathBuf>,
     public_inputs_path: Option<PathBuf>,
+    input_data_path: Option<PathBuf>,
 }
 
-impl<F> WitnessManager<F> {
+impl<F: Clone> WitnessManager<F> {
     const MY_NAME: &'static str = "WCMnager";
 
     pub fn new(
         pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx>,
+        sctx: Arc<SetupCtx<F>>,
         rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
+        input_data_path: Option<PathBuf>,
     ) -> Self {
-        WitnessManager { components: RwLock::new(Vec::new()), pctx, sctx, rom_path, public_inputs_path }
+        WitnessManager {
+            components: RwLock::new(Vec::new()),
+            components_std: RwLock::new(Vec::new()),
+            pctx,
+            sctx,
+            rom_path,
+            public_inputs_path,
+            input_data_path,
+        }
     }
 
     pub fn register_component(&self, component: Arc<dyn WitnessComponent<F>>) {
         self.components.write().unwrap().push(component);
     }
 
+    pub fn register_component_std(&self, component: Arc<dyn WitnessComponent<F>>) {
+        self.components_std.write().unwrap().push(component);
+    }
+
     pub fn start_proof(&self) {
         timer_start_info!(START_PROOF);
         for component in self.components.read().unwrap().iter() {
+            component.start_proof(self.pctx.clone(), self.sctx.clone());
+        }
+        for component in self.components_std.read().unwrap().iter() {
             component.start_proof(self.pctx.clone(), self.sctx.clone());
         }
         timer_stop_and_log_info!(START_PROOF);
@@ -42,18 +60,24 @@ impl<F> WitnessManager<F> {
         for component in self.components.read().unwrap().iter() {
             component.execute(self.pctx.clone());
         }
+        for component in self.components_std.read().unwrap().iter() {
+            component.execute(self.pctx.clone());
+        }
         timer_stop_and_log_info!(EXECUTE);
     }
 
     pub fn debug(&self) {
-        for component in self.components.read().unwrap().iter() {
-            component.debug(self.pctx.clone());
+        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug
+            || !self.pctx.options.debug_info.debug_instances.is_empty()
+        {
+            for component in self.components.read().unwrap().iter() {
+                component.debug(self.pctx.clone(), self.sctx.clone());
+            }
         }
-    }
-
-    pub fn end_proof(&self) {
-        for component in self.components.read().unwrap().iter() {
-            component.end_proof();
+        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug {
+            for component in self.components_std.read().unwrap().iter() {
+                component.debug(self.pctx.clone(), self.sctx.clone());
+            }
         }
     }
 
@@ -67,8 +91,11 @@ impl<F> WitnessManager<F> {
 
         timer_start_info!(CALCULATING_WITNESS);
 
-        // Call one time all unused components
         for component in self.components.read().unwrap().iter() {
+            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone());
+        }
+
+        for component in self.components_std.read().unwrap().iter() {
             component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone());
         }
 
@@ -79,7 +106,7 @@ impl<F> WitnessManager<F> {
         self.pctx.clone()
     }
 
-    pub fn get_sctx(&self) -> Arc<SetupCtx> {
+    pub fn get_sctx(&self) -> Arc<SetupCtx<F>> {
         self.sctx.clone()
     }
 
@@ -89,5 +116,9 @@ impl<F> WitnessManager<F> {
 
     pub fn get_public_inputs_path(&self) -> Option<PathBuf> {
         self.public_inputs_path.clone()
+    }
+
+    pub fn get_input_data_path(&self) -> Option<PathBuf> {
+        self.input_data_path.clone()
     }
 }

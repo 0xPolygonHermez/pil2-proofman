@@ -29,7 +29,7 @@ impl<F: PrimeField> AirComponent<F> for U8Air<F> {
 
     fn new(
         _pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx>,
+        _sctx: Arc<SetupCtx<F>>,
         airgroup_id: Option<usize>,
         air_id: Option<usize>,
     ) -> Arc<Self> {
@@ -59,7 +59,7 @@ impl<F: PrimeField> U8Air<F> {
         }
     }
 
-    pub fn drain_inputs(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    pub fn drain_inputs(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         let mut inputs = self.inputs.lock().unwrap();
         let drained_inputs = inputs.drain(..).collect();
 
@@ -73,13 +73,8 @@ impl<F: PrimeField> U8Air<F> {
             _ => panic!("Multiplicities must be a column"),
         };
 
-        let (instance_found, global_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
-
-        let (is_mine, global_idx) = if instance_found {
-            (pctx.dctx_is_my_instance(global_idx), global_idx)
-        } else {
-            pctx.dctx_add_instance(self.airgroup_id, self.air_id, pctx.get_weight(self.airgroup_id, self.air_id))
-        };
+        let (_, global_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+        let is_mine = pctx.dctx_is_my_instance(global_idx);
 
         pctx.dctx_distribute_multiplicity(&mut multiplicity, global_idx);
 
@@ -127,7 +122,7 @@ impl<F: PrimeField> U8Air<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
-    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn start_proof(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         // Obtain info from the mul hints
         let setup = sctx.get_setup(self.airgroup_id, self.air_id);
         let u8air_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "u8air");
@@ -142,19 +137,31 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
         let buffer = create_buffer_fast(buffer_size);
 
         // Add a new air instance. Since U8Air is a table, only this air instance is needed
-        let mut air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
+        let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
 
         *self.mul_column.lock().unwrap() = get_hint_field::<F>(
             &sctx,
             &pctx,
-            &mut air_instance,
+            &air_instance,
             u8air_hints[0] as usize,
             "reference",
             HintFieldOptions::dest_with_zeros(),
         );
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx>) {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
+        let (instance_found, _global_idx) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+
+        if !instance_found {
+            pctx.dctx_add_instance_no_assign(
+                self.airgroup_id,
+                self.air_id,
+                pctx.get_weight(self.airgroup_id, self.air_id),
+            );
+        }
+    }
+
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         if stage == 1 {
             Self::drain_inputs(self, pctx, sctx);
         }

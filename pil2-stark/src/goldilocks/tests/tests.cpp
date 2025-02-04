@@ -4,6 +4,7 @@
 #include "../src/goldilocks_base_field.hpp"
 #include "../src/goldilocks_cubic_extension.hpp"
 #include "../src/poseidon_goldilocks.hpp"
+#include "../src/poseidon2_goldilocks.hpp"
 #include "../src/ntt_goldilocks.hpp"
 #include "../src/merklehash_goldilocks.hpp"
 #include <immintrin.h>
@@ -1486,7 +1487,43 @@ TEST(GOLDILOCKS_TEST, inv)
     ASSERT_EQ(Goldilocks::inv(inE1), Goldilocks::inv(inE1_plus_p));
 }
 
-TEST(GOLDILOCKS_TEST, poseidon_avx_seq)
+TEST(GOLDILOCKS_TEST, poseidon2_seq)
+{
+    Goldilocks::Element x[SPONGE_WIDTH];
+    Goldilocks::Element result[CAPACITY];
+
+    for (uint64_t i = 0; i < SPONGE_WIDTH; i++)
+    {
+        x[i] = Goldilocks::fromU64(i);
+    }
+
+    Poseidon2Goldilocks::hash_seq(result, x);
+
+    ASSERT_EQ(Goldilocks::toU64(result[0]), 0X1EAEF96BDF1C0C1 );
+    ASSERT_EQ(Goldilocks::toU64(result[1]), 0X1F0D2CC525B2540C);
+    ASSERT_EQ(Goldilocks::toU64(result[2]), 0X6282C1DFE1E0358D);
+    ASSERT_EQ(Goldilocks::toU64(result[3]), 0XE780D721F698E1E6);  
+}
+
+TEST(GOLDILOCKS_TEST, poseidon2_avx)
+{
+    Goldilocks::Element x[SPONGE_WIDTH];
+    Goldilocks::Element result[CAPACITY];
+
+    for (uint64_t i = 0; i < SPONGE_WIDTH; i++)
+    {
+        x[i] = Goldilocks::fromU64(i);
+    }
+
+    Poseidon2Goldilocks::hash(result, x);
+
+    ASSERT_EQ(Goldilocks::toU64(result[0]), 0X1EAEF96BDF1C0C1 );
+    ASSERT_EQ(Goldilocks::toU64(result[1]), 0X1F0D2CC525B2540C);
+    ASSERT_EQ(Goldilocks::toU64(result[2]), 0X6282C1DFE1E0358D);
+    ASSERT_EQ(Goldilocks::toU64(result[3]), 0XE780D721F698E1E6);  
+}
+
+TEST(GOLDILOCKS_TEST, poseidon_seq)
 {
 
     Goldilocks::Element fibonacci[SPONGE_WIDTH];
