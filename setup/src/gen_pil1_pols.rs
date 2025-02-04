@@ -27,7 +27,7 @@ pub fn generate_pil1_polynomials(
         }
     }
 
-    res.insert("nPublics".to_string(), json!(pil["publics"].as_array().unwrap().len()));
+    res.insert("nPublics".to_string(), json!(pil["publics"].as_array().unwrap_or(&Vec::<Value>::new()).len()));
     res.insert("nConstants".to_string(), pil["nConstants"].clone());
     res.insert("customCommits".to_string(), json!([]));
 
