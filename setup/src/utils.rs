@@ -395,35 +395,46 @@ pub fn print_expressions(
     }
 }
 
-/// Recursively processes a hint field, extracting values and lengths.
 pub fn process_hint_field(
     hint_field: &Value,
     pilout: &HashMap<String, Value>,
     symbols: &mut Vec<Value>,
     expressions: &mut Vec<Value>,
     save_symbols: bool,
+    global: bool, // Added missing `global` argument for compatibility with JS
 ) -> (Value, Option<Vec<usize>>) {
+    let mut result_fields = Vec::new();
+    let mut lengths = Vec::new();
+
     if let Some(hint_field_array) = hint_field.get("hintFieldArray") {
-        let fields = hint_field_array["hintFields"]
-            .as_array()
-            .unwrap_or(&vec![])
-            .iter()
-            .map(|f| process_hint_field(f, pilout, symbols, expressions, save_symbols))
-            .collect::<Vec<_>>();
+        if let Some(fields) = hint_field_array["hintFields"].as_array() {
+            for field in fields {
+                let (values, sub_lengths) =
+                    process_hint_field(field, pilout, symbols, expressions, save_symbols, global);
 
-        let values: Vec<Value> = fields.iter().map(|(v, _)| v.clone()).collect();
-        let mut lengths = Vec::new();
-        if let Some(first_len) = fields.first().and_then(|(_, l)| l.clone()) {
-            lengths.push(first_len.len());
-            lengths.extend(first_len);
+                result_fields.push(values);
+
+                if lengths.is_empty() {
+                    lengths.push(fields.len()); // Initialize the first length
+                }
+
+                if let Some(sub_lengths) = sub_lengths {
+                    for (i, &sub_length) in sub_lengths.iter().enumerate() {
+                        if lengths.get(i + 1).is_none() {
+                            lengths.push(sub_length);
+                        }
+                    }
+                }
+            }
         }
-
-        (json!(values), Some(lengths))
     } else {
         let value = if let Some(operand) = hint_field.get("operand") {
-            let formatted_expr = format_expression(operand, pilout, symbols, save_symbols, false);
+            let formatted_expr = format_expression(operand, pilout, symbols, save_symbols, global);
             if formatted_expr["op"] == json!("exp") {
-                expressions[formatted_expr["id"].as_u64().unwrap_or(0) as usize]["keep"] = json!(true);
+                let id = formatted_expr["id"].as_u64().unwrap_or(0) as usize;
+                if let Some(expr) = expressions.get_mut(id) {
+                    expr["keep"] = json!(true);
+                }
             }
             formatted_expr
         } else if let Some(string_value) = hint_field.get("stringValue") {
@@ -432,8 +443,10 @@ pub fn process_hint_field(
             panic!("Unknown hint field");
         };
 
-        (value, None)
+        return (value, None);
     }
+
+    (json!(result_fields), Some(lengths))
 }
 
 /// Formats an individual expression from `pilout`, mirroring the JavaScript implementation.
