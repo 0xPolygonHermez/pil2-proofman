@@ -476,6 +476,7 @@ pub fn format_expression(
     save_symbols: bool,
     global: bool,
 ) -> Value {
+    println!("exp: {:?}", exp);
     if exp.get("op").is_some() {
         return exp.clone();
     }
