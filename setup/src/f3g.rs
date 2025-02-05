@@ -137,7 +137,7 @@ impl F3g {
 
     /// Generates a random element in the field
     pub fn random(&self) -> BigUint {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut bytes = vec![0u8; (self.bit_length / 8) as usize];
         rng.fill(&mut bytes[..]);
         BigUint::from_bytes_be(&bytes) % &self.p
