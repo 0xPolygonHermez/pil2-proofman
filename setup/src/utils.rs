@@ -259,7 +259,7 @@ pub fn format_hints(
     symbols: &mut Vec<Value>,
     expressions: &mut Vec<Value>,
     save_symbols: bool,
-    _global: bool,
+    global: bool,
 ) -> Vec<Value> {
     raw_hints
         .iter()
@@ -269,7 +269,8 @@ pub fn format_hints(
                 .unwrap_or(&vec![])
                 .iter()
                 .map(|field| {
-                    let (values, lengths) = process_hint_field(field, pilout, symbols, expressions, save_symbols);
+                    let (values, lengths) =
+                        process_hint_field(field, pilout, symbols, expressions, save_symbols, global);
                     json!({ "name": field["name"], "values": values, "lengths": lengths })
                 })
                 .collect::<Vec<_>>();
