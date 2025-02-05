@@ -271,7 +271,7 @@ pub async fn stark_setup(
     setup_options: &SetupOptions,
 ) -> Result<StarkSetupResult, Box<dyn std::error::Error>> {
     // Check if pil2 mode is enabled
-    let pil2 = setup_options.settings.get("pil2").and_then(|v| v.as_bool()).unwrap_or(false);
+    let pil2 = setup_options.settings.get("pil2").and_then(|v| v.as_bool()).unwrap_or(true);
 
     // Convert setup_options to a HashMap<String, Value> for compatibility with pil_info
     let options_map: HashMap<String, Value> = serde_json::from_value(serde_json::to_value(setup_options)?)?;
