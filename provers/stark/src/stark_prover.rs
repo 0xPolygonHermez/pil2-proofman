@@ -33,6 +33,7 @@ pub struct StarkProver<F: Field> {
     merkle_tree_custom: bool,
     p_proof: *mut c_void,
     constraints_to_check: Vec<usize>,
+    prover_buffer_size: u64,
     _marker: PhantomData<F>, // Add PhantomData to track the type F
 }
 
@@ -51,6 +52,8 @@ impl<F: Field> StarkProver<F> {
         constraints_to_check: Vec<usize>,
     ) -> Self {
         let setup = sctx.get_setup(airgroup_id, air_id);
+
+        let prover_buffer_size = setup.prover_buffer_size;
 
         let p_stark = starks_new_c((&setup.p_setup).into(), setup.get_const_tree_ptr());
 
@@ -81,6 +84,7 @@ impl<F: Field> StarkProver<F> {
             merkle_tree_arity,
             merkle_tree_custom,
             constraints_to_check,
+            prover_buffer_size,
             _marker: PhantomData,
         }
     }
@@ -90,7 +94,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     fn build(&mut self, pctx: Arc<ProofCtx<F>>) {
         let mut air_instances = pctx.air_instance_repo.air_instances.write().unwrap();
         let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
-        air_instance.init_aux_trace(get_map_totaln_c(self.p_stark_info, false) as usize);
+        air_instance.init_aux_trace(self.prover_buffer_size as usize);
         air_instance.init_evals(self.stark_info.ev_map.len() * Self::FIELD_EXTENSION);
 
         let n_custom_commits = self.stark_info.custom_commits.len();

@@ -538,7 +538,7 @@ uint64_t multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hi
     return hintFieldDestVal.id;
 }
 
-void accHintField(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName, bool add) {
+void accHintField(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element *pBuffHelper, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName, bool add) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
 
     Hint hint = setupCtx.expressionsBin.hints[hintId];
@@ -551,7 +551,7 @@ void accHintField(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std:
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
-    Goldilocks::Element *vals = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
+    Goldilocks::Element *vals = pBuffHelper;
     
     Dest destStruct(vals, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName, hintOptions);
@@ -589,7 +589,7 @@ uint64_t getHintId(SetupCtx& setupCtx, uint64_t hintId, std::string name) {
     return hintField->values[0].id;
 }
 
-void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
+void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element *pBuffHelper, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
 
     Hint hint = setupCtx.expressionsBin.hints[hintId];
@@ -600,7 +600,7 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, 
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
-    Goldilocks::Element *vals = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
+    Goldilocks::Element *vals = pBuffHelper;
     
     Dest destStruct(vals, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);

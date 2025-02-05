@@ -79,7 +79,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer: Vec<#row_struct_name::<#generics>> = if cfg!(feature = "debug") {
+                let buffer: Vec<#row_struct_name::<#generics>> = if cfg!(feature = "diagnostic") {
                     let mut buffer_u64 = vec![u64::MAX - 1; num_rows * #row_struct_name::<#generics>::ROW_SIZE];
 
                     // Convert safely by properly managing size & alignment

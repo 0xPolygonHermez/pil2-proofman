@@ -87,7 +87,7 @@ impl<F: Clone> Setup<F> {
             let recursive = &ProofType::Basic != setup_type;
             let prover_buffer_size = if verify_constraints {
                 let mut mem_instance = 0;
-                for stage in 0..stark_info.n_stages + 1 {
+                for stage in 0..stark_info.n_stages {
                     let n_cols = stark_info.map_sections_n[&format!("cm{}", stage + 1)];
                     mem_instance += n_cols * (1 << (stark_info.stark_struct.n_bits));
                 }

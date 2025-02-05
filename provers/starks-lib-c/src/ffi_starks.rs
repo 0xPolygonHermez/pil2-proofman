@@ -361,9 +361,11 @@ pub fn mul_hint_fields_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn acc_hint_field_c(
     p_setup_ctx: *mut c_void,
     p_steps_params: *mut u8,
+    p_buff_helper: *mut u8,
     hint_id: u64,
     hint_field_dest: &str,
     hint_field_airgroupvalue: &str,
@@ -378,6 +380,7 @@ pub fn acc_hint_field_c(
         acc_hint_field(
             p_setup_ctx,
             p_steps_params as *mut std::os::raw::c_void,
+            p_buff_helper as *mut std::os::raw::c_void,
             hint_id,
             field_dest.as_ptr() as *mut std::os::raw::c_char,
             field_airgroupvalue.as_ptr() as *mut std::os::raw::c_char,
@@ -392,6 +395,7 @@ pub fn acc_hint_field_c(
 pub fn acc_mul_hint_fields_c(
     p_setup_ctx: *mut c_void,
     p_steps_params: *mut u8,
+    p_buff_helper: *mut u8,
     hint_id: u64,
     hint_field_dest: &str,
     hint_field_airgroupvalue: &str,
@@ -410,6 +414,7 @@ pub fn acc_mul_hint_fields_c(
         acc_mul_hint_fields(
             p_setup_ctx,
             p_steps_params as *mut std::os::raw::c_void,
+            p_buff_helper as *mut std::os::raw::c_void,
             hint_id,
             field_dest.as_ptr() as *mut std::os::raw::c_char,
             field_airgroupvalue.as_ptr() as *mut std::os::raw::c_char,
@@ -1439,9 +1444,11 @@ pub fn mul_hint_fields_c(
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn acc_hint_field_c(
     _p_setup_ctx: *mut c_void,
     _p_steps_params: *mut u8,
+    _p_buff_helper: *mut u8,
     _hint_id: u64,
     _hint_field_dest: &str,
     _hint_field_airgroupvalue: &str,
@@ -1456,6 +1463,7 @@ pub fn acc_hint_field_c(
 pub fn acc_mul_hint_fields_c(
     _p_setup_ctx: *mut c_void,
     _p_steps_params: *mut u8,
+    _p_buff_helper: *mut u8,
     _hint_id: u64,
     _hint_field_dest: &str,
     _hint_field_airgroupvalue: &str,
