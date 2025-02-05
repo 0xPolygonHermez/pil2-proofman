@@ -402,7 +402,7 @@ pub fn process_hint_field(
     symbols: &mut Vec<Value>,
     expressions: &mut Vec<Value>,
     save_symbols: bool,
-    global: bool, // Added missing `global` argument for compatibility with JS
+    global: bool,
 ) -> (Value, Option<Vec<usize>>) {
     let mut result_fields = Vec::new();
     let mut lengths = Vec::new();
