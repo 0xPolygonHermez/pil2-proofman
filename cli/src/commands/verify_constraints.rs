@@ -24,8 +24,12 @@ pub struct VerifyConstraintsCmd {
     #[clap(short, long)]
     pub rom: Option<PathBuf>,
 
-    /// Public inputs path
+    /// Inputs path
     #[clap(short = 'i', long)]
+    pub input_data: Option<PathBuf>,
+
+    /// Public inputs path
+    #[clap(short = 'p', long)]
     pub public_inputs: Option<PathBuf>,
 
     /// Setup folder path
@@ -61,6 +65,7 @@ impl VerifyConstraintsCmd {
                 self.witness_lib.clone(),
                 self.rom.clone(),
                 self.public_inputs.clone(),
+                self.input_data.clone(),
                 self.proving_key.clone(),
                 PathBuf::new(),
                 ProofOptions::new(true, self.verbose.into(), false, false, debug_info),

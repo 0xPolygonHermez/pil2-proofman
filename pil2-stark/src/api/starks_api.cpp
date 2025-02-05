@@ -10,6 +10,7 @@
 #include "setup_ctx.hpp"
 #include "stark_verify.hpp"
 #include "exec_file.hpp"
+#include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 
 #include <nlohmann/json.hpp>
@@ -72,10 +73,10 @@ void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir) 
 
 
 
-void *fri_proof_new(void *pSetupCtx, uint64_t instanceId)
+void *fri_proof_new(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId)
 {
     SetupCtx setupCtx = *(SetupCtx *)pSetupCtx;
-    FRIProof<Goldilocks::Element> *friProof = new FRIProof<Goldilocks::Element>(setupCtx.starkInfo, instanceId);
+    FRIProof<Goldilocks::Element> *friProof = new FRIProof<Goldilocks::Element>(setupCtx.starkInfo, airgroupId, airId, instanceId);
 
     return friProof;
 }
@@ -147,12 +148,10 @@ void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs
         zkin["proofvalues"] = j["proofvalues"];
         zkin["challenges"] = j["challenges"]["challenges"];
         zkin["challengesFRISteps"] = j["challenges"]["challengesFRISteps"];
-
-        std::string airName = globalInfo["airs"][friProof->airgroupId][friProof->airId]["name"];
-        std::string proofName = airName + "_" + std::to_string(friProof->instanceId);
-
         if(!string(fileDir).empty()) {
-            json2file(zkin, string(fileDir) + "/zkin/proof_" + proofName + "_zkin.json");
+            std::string airName = globalInfo["airs"][friProof->airgroupId][friProof->airId]["name"];
+            std::string proofName = airName + "_" + std::to_string(friProof->instanceId);
+            json2file(zkin, string(fileDir) + "/proofs/proof_" + proofName + "_zkin.json");
         }
 
         proofs[i] = (void *) new nlohmann::json(zkin);
@@ -285,9 +284,10 @@ void prover_helpers_free(void *pProverHelpers) {
 
 // Const Pols
 // ========================================================================================
-void load_const_tree(void *pConstTree, char *treeFilename, uint64_t constTreeSize) {
+bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char* verkeyFilename) {
     ConstTree constTree;
-    constTree.loadConstTree(pConstTree, treeFilename, constTreeSize);
+    auto starkInfo = *(StarkInfo *)pStarkInfo;
+    return constTree.loadConstTree(starkInfo, pConstTree, treeFilename, constTreeSize, verkeyFilename);
 };
 
 void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize) {
@@ -299,9 +299,9 @@ uint64_t get_const_tree_size(void *pStarkInfo) {
     ConstTree constTree;
     auto starkInfo = *(StarkInfo *)pStarkInfo;
     if(starkInfo.starkStruct.verificationHashType == "GL") {
-        return constTree.getConstTreeSizeBytesGL(starkInfo);
+        return constTree.getConstTreeSizeGL(starkInfo);
     } else {
-        return constTree.getConstTreeSizeBytesBN128(starkInfo);
+        return constTree.getConstTreeSizeBN128(starkInfo);
     }
     
 };
@@ -309,17 +309,27 @@ uint64_t get_const_tree_size(void *pStarkInfo) {
 uint64_t get_const_size(void *pStarkInfo) {
     auto starkInfo = *(StarkInfo *)pStarkInfo;
     uint64_t N = 1 << starkInfo.starkStruct.nBits;
-    return N * starkInfo.nConstants * sizeof(Goldilocks::Element);
+    return N * starkInfo.nConstants;
 }
 
 
-void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress, char *treeFilename) {
+void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
     ConstTree constTree;
     auto starkInfo = *(StarkInfo *)pStarkInfo;
     if(starkInfo.starkStruct.verificationHashType == "GL") {
-        constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress, treeFilename);
+        constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
     } else {
-        constTree.calculateConstTreeBN128(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress, treeFilename);
+        constTree.calculateConstTreeBN128(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
+    }
+};
+
+void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename) {
+    ConstTree constTree;
+    auto starkInfo = *(StarkInfo *)pStarkInfo;
+    if(starkInfo.starkStruct.verificationHashType == "GL") {
+        constTree.writeConstTreeFileGL(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
+    } else {
+        constTree.writeConstTreeFileBN128(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
     }
 };
 
@@ -358,12 +368,12 @@ uint64_t mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, ch
     return multiplyHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldName1), string(hintFieldName2), *(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2);
 }
 
-void acc_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add) {
-    accHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName), add);
+void acc_hint_field(void *pSetupCtx, void* stepsParams, void *pBuffHelper, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add) {
+    accHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (Goldilocks::Element *)pBuffHelper, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName), add);
 }
 
-void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add) {
-    accMulHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add);
+void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, void *pBuffHelper, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add) {
+    accMulHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (Goldilocks::Element *)pBuffHelper, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add);
 }
 
 uint64_t update_airgroupvalue(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add) {
@@ -399,14 +409,6 @@ void treesGL_get_root(void *pStarks, uint64_t index, void *dst)
 
     starks->ffi_treesGL_get_root(index, (Goldilocks::Element *)dst);
 }
-
-void treesGL_set_root(void *pStarks, uint64_t index, void *pProof)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-
-    starks->ffi_treesGL_set_root(index, *(FRIProof<Goldilocks::Element> *)pProof);
-}
-
 
 void calculate_fri_polynomial(void *pStarks, void* stepsParams)
 {
@@ -666,15 +668,15 @@ void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row) {
 
 // Recursive proof
 // ================================================================================= 
-void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop) {
+void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
     auto setup = *(SetupCtx *)pSetupCtx;
     if(setup.starkInfo.starkStruct.verificationHashType == "GL") {
-        return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
+        return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
     } else {
-        return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), false);
+        return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId,  airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), false);
     }
 }
 
@@ -847,4 +849,18 @@ void *create_buffer(uint64_t size) {
 void free_buffer(void *buffer) {
     cout <<  (Goldilocks::Element *)buffer << endl;
     delete[] (Goldilocks::Element *)buffer;
+}
+
+// Fixed cols
+// =================================================================================
+void write_fixed_cols_bin(char* binFile, char* airgroupName, char* airName, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo) {
+    writeFixedColsBin(string(binFile), string(airgroupName), string(airName), N, nFixedPols, (FixedPolsInfo *)fixedPolsInfo);
+}
+
+uint64_t get_omp_max_threads(){
+    return omp_get_max_threads();
+}
+
+void set_omp_num_threads(uint64_t num_threads){
+    omp_set_num_threads(num_threads);
 }

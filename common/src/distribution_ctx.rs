@@ -43,6 +43,49 @@ pub struct DistributionCtx {
     pub balance_distribution: bool,
 }
 
+impl std::fmt::Debug for DistributionCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[cfg(feature = "distributed")]
+        {
+            f.debug_struct("DistributionCtx")
+                .field("rank", &self.rank)
+                .field("n_processes", &self.n_processes)
+                .field("n_instances", &self.n_instances)
+                .field("my_instances", &self.my_instances)
+                .field("instances", &self.instances)
+                .field("instances_owner", &self.instances_owner)
+                .field("owners_count", &self.owners_count)
+                .field("owners_weight", &self.owners_weight)
+                .field("my_groups", &self.my_groups)
+                .field("my_air_groups", &self.my_air_groups)
+                .field("airgroup_instances", &self.airgroup_instances)
+                .field("glob2loc", &self.glob2loc)
+                .field("balance_distribution", &self.balance_distribution)
+                .field("roots_gatherv_count", &self.roots_gatherv_count)
+                .field("roots_gatherv_displ", &self.roots_gatherv_displ)
+                .finish()
+        }
+        #[cfg(not(feature = "distributed"))]
+        {
+            f.debug_struct("DistributionCtx")
+                .field("rank", &self.rank)
+                .field("n_processes", &self.n_processes)
+                .field("n_instances", &self.n_instances)
+                .field("my_instances", &self.my_instances)
+                .field("instances", &self.instances)
+                .field("instances_owner", &self.instances_owner)
+                .field("owners_count", &self.owners_count)
+                .field("owners_weight", &self.owners_weight)
+                .field("my_groups", &self.my_groups)
+                .field("my_air_groups", &self.my_air_groups)
+                .field("airgroup_instances", &self.airgroup_instances)
+                .field("glob2loc", &self.glob2loc)
+                .field("balance_distribution", &self.balance_distribution)
+                .finish()
+        }
+    }
+}
+
 impl DistributionCtx {
     pub fn new() -> Self {
         #[cfg(feature = "distributed")]
@@ -154,6 +197,36 @@ impl DistributionCtx {
         } else {
             panic!("Multiple instances found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
         }
+    }
+
+    #[inline]
+    pub fn find_instance_id(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
+        let mut count = 0;
+        for (global_idx, instance) in self.instances.iter().enumerate() {
+            if instance == &(airgroup_id, air_id) {
+                if count == air_instance_id {
+                    return Some(global_idx);
+                }
+                count += 1;
+            }
+        }
+        None
+    }
+
+    #[inline]
+    pub fn is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
+        let mut min_owner = self.n_processes + 1;
+        for (idx, instance) in self.instances.iter().enumerate() {
+            if instance == &(airgroup_id, air_id) && self.instances_owner[idx].0 < min_owner {
+                min_owner = self.instances_owner[idx].0;
+            }
+        }
+
+        if min_owner == self.n_processes + 1 {
+            panic!("No instance found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
+        }
+
+        min_owner == self.rank
     }
 
     #[inline]

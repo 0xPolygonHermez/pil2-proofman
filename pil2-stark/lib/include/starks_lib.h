@@ -10,7 +10,7 @@
 
     // FRIProof
     // ========================================================================================
-    void *fri_proof_new(void *pSetupCtx, uint64_t instanceId);
+    void *fri_proof_new(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId);
     void fri_proof_get_tree_root(void *pFriProof, void* root, uint64_t tree_index);
     void fri_proof_set_airgroupvalues(void *pFriProof, void *airgroupValues);
     void fri_proof_set_airvalues(void *pFriProof, void *airValues);
@@ -39,11 +39,12 @@
 
     // Const Pols
     // ========================================================================================
-    void load_const_tree(void *pConstTree, char *treeFilename, uint64_t constTreeSize);
+    bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char* verkeyFilename);
     void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize);
     uint64_t get_const_tree_size(void *pStarkInfo);
     uint64_t get_const_size(void *pStarkInfo);
-    void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree, char *treeFilename);
+    void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTree);
+    void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename);
 
     // Expressions Bin
     // ========================================================================================
@@ -56,8 +57,8 @@
     uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char* hintFieldName);
     void get_hint_field_sizes(void *pSetupCtx, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions);
     uint64_t mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2); 
-    void acc_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add);
-    void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2,  void* hintOptions1, void *hintOptions2, bool add);
+    void acc_hint_field(void *pSetupCtx, void* stepsParams, void *pBuffHelper, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add);
+    void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, void *pBuffHelper, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2,  void* hintOptions1, void *hintOptions2, bool add);
     uint64_t update_airgroupvalue(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add);
     uint64_t set_hint_field(void *pSetupCtx, void* stepsParams, void *values, uint64_t hintId, char* hintFieldName);
     uint64_t get_hint_id(void *pSetupCtx, uint64_t hintId, char * hintFieldName);
@@ -68,7 +69,6 @@
     void starks_free(void *pStarks);
 
     void treesGL_get_root(void *pStarks, uint64_t index, void *root);
-    void treesGL_set_root(void *pStarks, uint64_t index, void *pProof);
 
     void calculate_xdivxsub(void *pStarks, void* xiChallenge, void *xDivXSub);
     void *get_fri_pol(void *pStarkInfo, void *buffer);
@@ -129,7 +129,7 @@
 
     // Recursive proof
     // =================================================================================
-    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
+    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
     void *get_zkin_ptr(char *zkin_file);
     void *add_recursive2_verkey(void *pZkin, char* recursive2VerKeyFilename);
     void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPublics, void* pChallenges, void *zkin1, void *zkin2, void *starkInfoRecursive2);
@@ -160,5 +160,14 @@
 
     void *create_buffer(uint64_t size);
     void free_buffer(void *buffer);
+
+    // Fixed cols
+    // =================================================================================
+    void write_fixed_cols_bin(char* binFile, char* airgroupName, char* airName, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo);
+    
+    // OMP
+    // =================================================================================
+    uint64_t get_omp_max_threads();
+    void set_omp_num_threads(uint64_t num_threads);
     
 #endif

@@ -24,7 +24,7 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>>
         airgroupvalues.push(values);
     }
 
-    for (_, air_instance) in pctx.air_instance_repo.air_instances.write().unwrap().iter() {
+    for (_, air_instance) in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
         for (idx, agg_type) in pctx.global_info.agg_types[air_instance.airgroup_id].iter().enumerate() {
             let mut acc = ExtensionField {
                 value: [
@@ -72,7 +72,7 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>>
 
 fn get_global_hint_f<F: Field>(
     pctx: Option<Arc<ProofCtx<F>>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -132,7 +132,7 @@ fn get_global_hint_f<F: Field>(
     hint_field_values
 }
 pub fn get_hint_field_constant_gc<F: Field>(
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -151,7 +151,7 @@ pub fn get_hint_field_constant_gc<F: Field>(
 }
 
 pub fn get_hint_field_gc_constant_a<F: Field>(
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -174,7 +174,7 @@ pub fn get_hint_field_gc_constant_a<F: Field>(
 }
 
 pub fn get_hint_field_constant_gc_m<F: Field>(
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -203,7 +203,7 @@ pub fn get_hint_field_constant_gc_m<F: Field>(
 
 pub fn get_hint_field_gc<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -223,7 +223,7 @@ pub fn get_hint_field_gc<F: Field>(
 
 pub fn get_hint_field_gc_a<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -247,7 +247,7 @@ pub fn get_hint_field_gc_a<F: Field>(
 
 pub fn get_hint_field_gc_m<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -276,7 +276,7 @@ pub fn get_hint_field_gc_m<F: Field>(
 
 pub fn set_hint_field_gc<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx>,
+    sctx: Arc<SetupCtx<F>>,
     hint_id: u64,
     hint_field_name: &str,
     value: HintFieldOutput<F>,

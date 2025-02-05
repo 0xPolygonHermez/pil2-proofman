@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 proofman-common = { path = "../common" }
+proofman-macros = { path = "../macros" }
 proofman-hints = { path = "../hints" }
 proofman-util = { path = "../util" }
 stark = { path = "../provers/stark" }
@@ -27,3 +28,4 @@ rayon = "1.7"
 default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
 distributed = ["proofman-common/distributed", "dep:mpi"]
+diagnostic = ["proofman-macros/diagnostic"]

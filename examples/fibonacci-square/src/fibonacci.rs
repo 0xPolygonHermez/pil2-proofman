@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use proofman_common::{add_air_instance, AirInstance, FromTrace, ProofCtx};
+use proofman_common::{add_air_instance, AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::WitnessComponent;
 
 use p3_field::PrimeField64;
 
 use crate::{
-    FibonacciSquareRomTrace, BuildPublicValues, BuildProofValues, FibonacciSquareAirValues, FibonacciSquareTrace,
+    BuildProofValues, BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace,
     Module,
 };
 
@@ -70,8 +70,9 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>) {
-        // let trace = FibonacciSquareTrace::from_vec(pctx.get_air_instance_trace(0, 0, 0));
+    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) {
+        // let trace = FibonacciSquareTrace::from_vec(_pctx.get_air_instance_trace(0, 0, 0));
+        // let fixed = FibonacciSquareFixed::from_vec(_sctx.get_fixed(0, 0));
         // let air_values = FibonacciSquareAirValues::from_vec(pctx.get_air_instance_air_values(0, 0, 0));
         // let airgroup_values = FibonacciSquareAirGroupValues::from_vec(pctx.get_air_instance_airgroup_values(0, 0, 0));
 

@@ -111,6 +111,7 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
     @specified_ranges{num_rows: N};
 
     col witness mul[opids_count];
+    col fixed RANGE[opids_count];
 
     for (int j = 0; j < opids_count; j++) {
         int opid = opids[j];
@@ -124,8 +125,8 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
             error(`The range [min,max]=[${min},${max}] is too big, the maximum range length is ${N}`);
         }
 
-        col fixed RANGE = [min..max-1,max...];
-        lookup_proves(opid, [RANGE], mul[j], PIOP_NAME_RANGE_CHECK);
+        RANGE[j] = [min..max-1,max...];
+        lookup_proves(opid, [RANGE[j]], mul[j], PIOP_NAME_RANGE_CHECK);
     }
 }
 

@@ -1,4 +1,5 @@
 use std::{collections::HashMap, sync::RwLock};
+use rayon::prelude::*;
 
 use p3_field::Field;
 
@@ -31,10 +32,10 @@ impl<F: Field> AirInstancesRepository<F> {
 
     pub fn free_traces(&self) {
         let mut air_instances = self.air_instances.write().unwrap();
-        for (_, air_instance) in air_instances.iter_mut() {
+        air_instances.par_iter_mut().for_each(|(_, air_instance)| {
             air_instance.clear_trace();
             air_instance.clear_custom_commits_trace();
-        }
+        });
     }
 
     pub fn find_airgroup_instances(&self, airgroup_id: usize) -> Vec<usize> {
@@ -60,21 +61,5 @@ impl<F: Field> AirInstancesRepository<F> {
         }
 
         indices
-    }
-
-    pub fn find_instance(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
-        let air_instances = self.air_instances.read().unwrap();
-
-        let mut count = 0;
-        for (index, air_instance) in air_instances.iter() {
-            if air_instance.airgroup_id == airgroup_id && air_instance.air_id == air_id {
-                count += 1;
-                if count == air_instance_id {
-                    return Some(*index);
-                }
-            }
-        }
-
-        None
     }
 }
