@@ -215,25 +215,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "connection"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "num-bigint",
- "p3-field",
- "p3-goldilocks",
- "pil-std-lib",
- "proofman",
- "proofman-cli",
- "proofman-common",
- "proofman-macros",
- "rand",
- "rayon",
- "witness",
-]
-
-[[package]]
 name = "conv"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -287,49 +268,6 @@ name = "custom_derive"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
-
-[[package]]
-name = "diff-buses"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "num-bigint",
- "num-traits",
- "p3-field",
- "p3-goldilocks",
- "pil-std-lib",
- "proofman",
- "proofman-cli",
- "proofman-common",
- "proofman-macros",
- "rand",
- "rayon",
- "witness",
-]
-
-[[package]]
-name = "direct-update"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "num-bigint",
- "num-traits",
- "p3-field",
- "p3-goldilocks",
- "pil-std-lib",
- "proofman",
- "proofman-cli",
- "proofman-common",
- "proofman-macros",
- "rand",
- "rayon",
- "serde",
- "serde_arrays",
- "serde_json",
- "witness",
-]
 
 [[package]]
 name = "either"
@@ -569,25 +507,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04cbf5b083de1c7e0222a7a51dbfdba1cbe1c6ab0b15e29fff3f6c077fd9cd9f"
 
 [[package]]
-name = "lookup"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "num-bigint",
- "p3-field",
- "p3-goldilocks",
- "pil-std-lib",
- "proofman",
- "proofman-cli",
- "proofman-common",
- "proofman-macros",
- "rand",
- "rayon",
- "witness",
-]
-
-[[package]]
 name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -802,25 +721,6 @@ version = "0.1.0"
 source = "git+https://github.com/Plonky3/Plonky3.git?rev=c3d754ef77b9fce585b46b972af751fe6e7a9803#c3d754ef77b9fce585b46b972af751fe6e7a9803"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "permutation"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "num-bigint",
- "p3-field",
- "p3-goldilocks",
- "pil-std-lib",
- "proofman",
- "proofman-cli",
- "proofman-common",
- "proofman-macros",
- "rand",
- "rayon",
- "witness",
 ]
 
 [[package]]
@@ -1092,26 +992,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "range-check"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "num-bigint",
- "num-traits",
- "p3-field",
- "p3-goldilocks",
- "pil-std-lib",
- "proofman",
- "proofman-cli",
- "proofman-common",
- "proofman-macros",
- "rand",
- "rayon",
- "witness",
-]
-
-[[package]]
 name = "rayon"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1237,26 +1117,6 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
-
-[[package]]
-name = "simple"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "num-bigint",
- "p3-field",
- "p3-goldilocks",
- "pil-std-lib",
- "pilout",
- "proofman",
- "proofman-cli",
- "proofman-common",
- "proofman-macros",
- "rand",
- "rayon",
- "witness",
-]
 
 [[package]]
 name = "smallvec"
