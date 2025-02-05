@@ -28,4 +28,4 @@ rayon = "1.7"
 default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
 distributed = ["proofman-common/distributed", "dep:mpi"]
-debug = ["proofman-macros/debug"]
+diagnostic = ["proofman-macros/diagnostic"]

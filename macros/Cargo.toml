@@ -14,4 +14,4 @@ rayon = "1.10"
 
 [features]
 default = []
-debug = []
+diagnostic = []

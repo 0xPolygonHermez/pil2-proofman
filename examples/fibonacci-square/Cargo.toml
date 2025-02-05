@@ -24,4 +24,4 @@ num-bigint = "0.4"
 
 [features]
 default = []
-debug = []
+diagnostic = []

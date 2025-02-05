@@ -101,7 +101,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_stop_and_log_info!(GENERATING_WITNESS);
 
-        #[cfg(feature = "debug")]
+        #[cfg(feature = "diagnostic")]
         {
             let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
             let instances = pctx.dctx_get_instances();
