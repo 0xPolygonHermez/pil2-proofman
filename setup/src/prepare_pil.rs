@@ -12,6 +12,8 @@ pub fn prepare_pil(
     pil2: bool,
     options: &HashMap<String, Value>,
 ) -> HashMap<String, Value> {
+    let keys = pil.as_object().unwrap().keys().cloned().collect::<Vec<String>>();
+    println!("prepare_pil keys: {:?}", keys);
     let mut res = HashMap::new();
     res.insert("name".to_string(), pil["name"].clone());
     res.insert("imPolsStages".to_string(), options.get("imPolsStages").unwrap_or(&json!(false)).clone());

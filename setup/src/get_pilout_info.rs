@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 /// Extracts and processes PIL information from `pilout`, mirroring JavaScript logic.
 pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String, Value>) -> HashMap<String, Value> {
+    println!("get_pilout_info keys: {:?}", pilout.keys());
     res.insert("airId".to_string(), pilout["airId"].clone());
     res.insert("airgroupId".to_string(), pilout["airGroupId"].clone());
 

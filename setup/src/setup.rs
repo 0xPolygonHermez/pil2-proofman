@@ -107,7 +107,9 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
             tracing::info!("Generating fixed columns for air '{}'", air.name.as_ref().unwrap());
             let fixed_pols = generate_fixed_cols(airout.pilout().symbols.clone(), air_num_rows, field_modulus);
 
-            let air_json = serde_json::to_value(air)?;
+            let mut air_json = serde_json::to_value(air)?;
+            air_json["airId"] = Value::Number(air_id.to_string().parse().unwrap());
+            air_json["airGroupId"] = Value::Number(airgroup_id.to_string().parse().unwrap());
             let mut fixed_pols_map = fixed_pols.to_hashmap();
 
             let air_json_map: HashMap<String, Value> = serde_json::from_value(air_json.clone())?;
@@ -270,6 +272,8 @@ pub async fn stark_setup(
     stark_struct: &StarkStruct,
     setup_options: &SetupOptions,
 ) -> Result<StarkSetupResult, Box<dyn std::error::Error>> {
+    let keys = air_json.as_object().unwrap().keys().cloned().collect::<Vec<String>>();
+    println!("air_json keys: {:?}", keys);
     // Check if pil2 mode is enabled
     let pil2 = setup_options.settings.get("pil2").and_then(|v| v.as_bool()).unwrap_or(true);
 
