@@ -822,6 +822,7 @@ pub fn acc_hint_field<F: Field>(
     acc_hint_field_c(
         (&setup.p_setup).into(),
         (&steps_params).into(),
+        pctx.get_buff_helper_ptr(),
         hint_id as u64,
         hint_field_dest,
         hint_field_airgroupvalue,
@@ -870,6 +871,7 @@ pub fn acc_mul_hint_fields<F: Field>(
     acc_mul_hint_fields_c(
         (&setup.p_setup).into(),
         (&steps_params).into(),
+        pctx.get_buff_helper_ptr(),
         hint_id as u64,
         hint_field_dest,
         hint_field_airgroupvalue,
