@@ -69,6 +69,7 @@ impl ProofOptions {
 pub struct ProofCtx<F> {
     pub public_inputs: Values<F>,
     pub proof_values: Values<F>,
+    pub global_challenge: Values<F>,
     pub challenges: Values<F>,
     pub buff_helper: Values<F>,
     pub global_info: GlobalInfo,
@@ -87,7 +88,7 @@ impl<F: Field> ProofCtx<F> {
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info.proof_values_map.as_ref().unwrap().len();
-        let n_challenges = 4 + global_info.n_challenges.iter().sum::<usize>();
+        let n_challenges = global_info.n_challenges.iter().sum::<usize>();
 
         let weights = HashMap::new();
 
@@ -96,31 +97,10 @@ impl<F: Field> ProofCtx<F> {
             public_inputs: Values::new(n_publics),
             proof_values: Values::new(n_proof_values * 3),
             challenges: Values::new(n_challenges * 3),
+            global_challenge: Values::new(3),
             buff_helper: Values::default(),
             air_instance_repo: AirInstancesRepository::new(),
             dctx: RwLock::new(DistributionCtx::new()),
-            weights,
-            options,
-        }
-    }
-
-    pub fn create_ctx_agg(
-        global_info: &GlobalInfo,
-        options: ProofOptions,
-        public_inputs: Vec<F>,
-        challenges: Vec<F>,
-        proof_values: Vec<F>,
-        dctx: DistributionCtx,
-        weights: HashMap<(usize, usize), u64>,
-    ) -> Self {
-        Self {
-            global_info: global_info.clone(),
-            public_inputs: Values { values: RwLock::new(public_inputs) },
-            proof_values: Values { values: RwLock::new(proof_values) },
-            challenges: Values { values: RwLock::new(challenges) },
-            buff_helper: Values::default(),
-            air_instance_repo: AirInstancesRepository::new(),
-            dctx: RwLock::new(dctx),
             weights,
             options,
         }
@@ -288,6 +268,20 @@ impl<F: Field> ProofCtx<F> {
         self.public_inputs.values.write().unwrap()[public_id] = F::from_canonical_u64(value);
     }
 
+    pub fn set_global_challenge(&self, global_challenge: Vec<F>) {
+        let mut global_challenge_guard = self.global_challenge.values.write().unwrap();
+        global_challenge_guard[0] = global_challenge[0];
+        global_challenge_guard[1] = global_challenge[1];
+        global_challenge_guard[2] = global_challenge[2];
+    }
+
+    pub fn set_challenge(&self, index: usize, challenge: Vec<F>) {
+        let mut challenges_guard = self.challenges.values.write().unwrap();
+        challenges_guard[index] = challenge[0];
+        challenges_guard[index + 1] = challenge[1];
+        challenges_guard[index + 2] = challenge[2];
+    }
+
     pub fn get_publics(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
         self.public_inputs.values.write().unwrap()
     }
@@ -334,6 +328,15 @@ impl<F: Field> ProofCtx<F> {
 
     pub fn get_challenges_ptr(&self) -> *mut u8 {
         let guard = &self.challenges.values.read().unwrap();
+        guard.as_ptr() as *mut u8
+    }
+
+    pub fn get_global_challenge(&self) -> std::sync::RwLockWriteGuard<Vec<F>> {
+        self.global_challenge.values.write().unwrap()
+    }
+
+    pub fn get_global_challenge_ptr(&self) -> *mut u8 {
+        let guard = &self.global_challenge.values.read().unwrap();
         guard.as_ptr() as *mut u8
     }
 

@@ -24,7 +24,7 @@ template <typename ElementType>
 class Starks
 {
 public:
-    SetupCtx& setupCtx;    
+    SetupCtx& setupCtx;
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     using MerkleTreeType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, MerkleTreeGL, MerkleTreeBN128>;
 
@@ -79,6 +79,7 @@ public:
     void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
 
     void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void commitCustomStage(uint64_t step, Goldilocks::Element **buffer, Goldilocks::Element **bufferExt, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
     void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params);

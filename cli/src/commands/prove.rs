@@ -8,7 +8,7 @@ use crate::commands::field::Field;
 use p3_goldilocks::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::ProofOptions;
+use proofman_common::{ModeName, ProofOptions};
 use std::fs;
 use std::path::Path;
 
@@ -88,17 +88,31 @@ impl ProveCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone()),
         };
 
-        match self.field {
-            Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
-                self.witness_lib.clone(),
-                self.rom.clone(),
-                self.public_inputs.clone(),
-                self.input_data.clone(),
-                self.proving_key.clone(),
-                self.output_dir.clone(),
-                ProofOptions::new(false, self.verbose.into(), self.aggregation, self.final_snark, debug_info),
-            )?,
-        };
+        if debug_info.std_mode.name == ModeName::Debug {
+            match self.field {
+                Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof_constraints(
+                    self.witness_lib.clone(),
+                    self.rom.clone(),
+                    self.public_inputs.clone(),
+                    self.input_data.clone(),
+                    self.proving_key.clone(),
+                    self.output_dir.clone(),
+                    ProofOptions::new(false, self.verbose.into(), self.aggregation, self.final_snark, debug_info),
+                )?,
+            };
+        } else {
+            match self.field {
+                Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
+                    self.witness_lib.clone(),
+                    self.rom.clone(),
+                    self.public_inputs.clone(),
+                    self.input_data.clone(),
+                    self.proving_key.clone(),
+                    self.output_dir.clone(),
+                    ProofOptions::new(false, self.verbose.into(), self.aggregation, self.final_snark, debug_info),
+                )?,
+            };
+        }
 
         Ok(())
     }

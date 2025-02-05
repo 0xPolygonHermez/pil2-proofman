@@ -116,6 +116,16 @@ void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace,
 }
 
 template <typename ElementType>
+void Starks<ElementType>::commitCustomStage(uint64_t step, Goldilocks::Element **buffer, Goldilocks::Element **bufferExt, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper)
+{  
+    for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
+        if(setupCtx.starkInfo.customCommits[i].stageWidths[step] != 0) {
+            extendAndMerkelizeCustomCommit(i, step, buffer[i], bufferExt[i], proof, pBuffHelper, "");
+        }
+    }
+}
+
+template <typename ElementType>
 void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper)
 {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;

@@ -84,7 +84,6 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
         nPols += setupCtx.starkInfo.mapSectionsN["cm" + to_string(stage)];
     }
 
-    // TODO: REUSE MEMORY
     Goldilocks::Element* pBuffer = new Goldilocks::Element[setupCtx.expressionsBin.constraintsInfoDebug.size() * N * FIELD_EXTENSION];
 
     std::vector<uint64_t> destToConstraintIndex;

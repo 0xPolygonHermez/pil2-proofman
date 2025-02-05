@@ -325,7 +325,7 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z28calculate_impols_expressionsPvmS_"]
     pub fn calculate_impols_expressions(
-        pStarks: *mut ::std::os::raw::c_void,
+        pSetupCtx: *mut ::std::os::raw::c_void,
         step: u64,
         stepsParams: *mut ::std::os::raw::c_void,
     );
@@ -385,13 +385,18 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14calculate_hashPvS_S_m"]
-    pub fn calculate_hash(
-        pStarks: *mut ::std::os::raw::c_void,
-        pHhash: *mut ::std::os::raw::c_void,
-        pBuffer: *mut ::std::os::raw::c_void,
-        nElements: u64,
+    #[link_name = "\u{1}_Z14commit_witnessmmmPvS_"]
+    pub fn commit_witness(
+        nBits: u64,
+        nBitsExt: u64,
+        nCols: u64,
+        root: *mut ::std::os::raw::c_void,
+        trace: *mut ::std::os::raw::c_void,
     );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z14calculate_hashPvS_m"]
+    pub fn calculate_hash(pValue: *mut ::std::os::raw::c_void, pBuffer: *mut ::std::os::raw::c_void, nElements: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z19compute_fri_foldingmPvS_mmm"]
@@ -441,8 +446,8 @@ extern "C" {
     pub fn set_fri_final_pol(pProof: *mut ::std::os::raw::c_void, buffer: *mut ::std::os::raw::c_void, nBits: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14transcript_newjmb"]
-    pub fn transcript_new(elementType: u32, arity: u64, custom: bool) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z14transcript_newmb"]
+    pub fn transcript_new(arity: u64, custom: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_addPvS_m"]
@@ -456,16 +461,12 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15transcript_freePvj"]
-    pub fn transcript_free(pTranscript: *mut ::std::os::raw::c_void, elementType: u32);
+    #[link_name = "\u{1}_Z15transcript_freePv"]
+    pub fn transcript_free(pTranscript: *mut ::std::os::raw::c_void);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z13get_challengePvS_S_"]
-    pub fn get_challenge(
-        pStarks: *mut ::std::os::raw::c_void,
-        pTranscript: *mut ::std::os::raw::c_void,
-        pElement: *mut ::std::os::raw::c_void,
-    );
+    #[link_name = "\u{1}_Z13get_challengePvS_"]
+    pub fn get_challenge(pTranscript: *mut ::std::os::raw::c_void, pElement: *mut ::std::os::raw::c_void);
 }
 extern "C" {
     #[link_name = "\u{1}_Z16get_permutationsPvPmmm"]
@@ -566,6 +567,19 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z9print_rowPvS_mm"]
     pub fn print_row(pSetupCtx: *mut ::std::os::raw::c_void, buffer: *mut ::std::os::raw::c_void, stage: u64, row: u64);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_S_Pc"]
+    pub fn gen_proof(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        instanceId: u64,
+        params: *mut ::std::os::raw::c_void,
+        globalChallenge: *mut ::std::os::raw::c_void,
+        pBuffHelper: *mut ::std::os::raw::c_void,
+        proofFile: *mut ::std::os::raw::c_char,
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_S0_b"]

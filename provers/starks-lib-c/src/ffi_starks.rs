@@ -540,9 +540,9 @@ pub fn calculate_quotient_polynomial_c(p_starks: *mut c_void, p_steps_params: *m
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn calculate_impols_expressions_c(p_starks: *mut c_void, step: u64, p_steps_params: *mut u8) {
+pub fn calculate_impols_expressions_c(p_setup: *mut c_void, step: u64, p_steps_params: *mut u8) {
     unsafe {
-        calculate_impols_expressions(p_starks, step, p_steps_params as *mut std::os::raw::c_void);
+        calculate_impols_expressions(p_setup, step, p_steps_params as *mut std::os::raw::c_void);
     }
 }
 
@@ -616,6 +616,19 @@ pub fn commit_stage_c(
             buffer as *mut std::os::raw::c_void,
             p_proof,
             p_buff_helper as *mut std::os::raw::c_void,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn commit_witness_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, root: *mut u8, witness: *mut u8) {
+    unsafe {
+        commit_witness(
+            n_bits,
+            n_bits_ext,
+            n_cols,
+            root as *mut std::os::raw::c_void,
+            witness as *mut std::os::raw::c_void,
         );
     }
 }
@@ -704,15 +717,15 @@ pub fn set_fri_final_pol_c(p_proof: *mut c_void, buffer: *mut u8, n_bits: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn calculate_hash_c(pStarks: *mut c_void, pHhash: *mut u8, pBuffer: *mut u8, nElements: u64) {
+pub fn calculate_hash_c(pValue: *mut u8, pBuffer: *mut u8, nElements: u64) {
     unsafe {
-        calculate_hash(pStarks, pHhash as *mut std::os::raw::c_void, pBuffer as *mut std::os::raw::c_void, nElements);
+        calculate_hash(pValue as *mut std::os::raw::c_void, pBuffer as *mut std::os::raw::c_void, nElements);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn transcript_new_c(element_type: u32, arity: u64, custom: bool) -> *mut c_void {
-    unsafe { transcript_new(element_type, arity, custom) }
+pub fn transcript_new_c(arity: u64, custom: bool) -> *mut c_void {
+    unsafe { transcript_new(arity, custom) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -730,16 +743,16 @@ pub fn transcript_add_polinomial_c(p_transcript: *mut c_void, p_polinomial: *mut
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn transcript_free_c(p_transcript: *mut c_void, type_: u32) {
+pub fn transcript_free_c(p_transcript: *mut c_void) {
     unsafe {
-        transcript_free(p_transcript, type_);
+        transcript_free(p_transcript);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_challenge_c(p_starks: *mut c_void, p_transcript: *mut c_void, p_element: *mut c_void) {
+pub fn get_challenge_c(p_transcript: *mut c_void, p_element: *mut c_void) {
     unsafe {
-        get_challenge(p_starks, p_transcript, p_element);
+        get_challenge(p_transcript, p_element);
     }
 }
 
@@ -928,6 +941,35 @@ pub fn set_hint_field_global_constraints_c(
 pub fn print_row_c(p_setup_ctx: *mut c_void, buffer: *mut u8, stage: u64, row: u64) {
     unsafe {
         print_row(p_setup_ctx, buffer as *mut std::os::raw::c_void, stage, row);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
+pub fn gen_proof_c(
+    p_setup: *mut c_void,
+    p_params: *mut u8,
+    p_buff_helper: *mut u8,
+    p_global_challenge: *mut u8,
+    proof_file: &str,
+    airgroup_id: u64,
+    air_id: u64,
+    instance_id: u64,
+) -> *mut c_void {
+    let proof_file_name = CString::new(proof_file).unwrap();
+    let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        gen_proof(
+            p_setup,
+            airgroup_id,
+            air_id,
+            instance_id,
+            p_params as *mut std::os::raw::c_void,
+            p_global_challenge as *mut std::os::raw::c_void,
+            p_buff_helper as *mut std::os::raw::c_void,
+            proof_file_ptr,
+        )
     }
 }
 
@@ -1538,7 +1580,7 @@ pub fn calculate_quotient_polynomial_c(_p_starks: *mut c_void, _p_steps_params: 
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn calculate_impols_expressions_c(_p_starks: *mut c_void, _step: u64, _p_steps_params: *mut u8) {
+pub fn calculate_impols_expressions_c(_p_setup: *mut c_void, _step: u64, _p_steps_params: *mut u8) {
     trace!(
         "{}: ··· {}",
         "mckzkevm",
@@ -1589,6 +1631,11 @@ pub fn commit_stage_c(
     _p_buff_helper: *mut u8,
 ) {
     trace!("{}: ··· {}", "ffi     ", "commit_stage: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn commit_witness_c(_n_bits: u64, _n_bits_ext: u64, _n_cols: u64, _root: *mut u8, _witness: *mut u8) {
+    trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1665,12 +1712,12 @@ pub fn set_fri_final_pol_c(_p_proof: *mut c_void, _buffer: *mut u8, _n_bits: u64
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn calculate_hash_c(_pStarks: *mut c_void, _pHhash: *mut u8, _pBuffer: *mut u8, _nElements: u64) {
+pub fn calculate_hash_c(_pValue: *mut u8, _pBuffer: *mut u8, _nElements: u64) {
     trace!("{}: ··· {}", "ffi     ", "calculate_hash: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn transcript_new_c(_element_type: u32, _arity: u64, _custom: bool) -> *mut c_void {
+pub fn transcript_new_c(_arity: u64, _custom: bool) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "transcript_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -1690,12 +1737,12 @@ pub fn transcript_add_polinomial_c(_p_transcript: *mut c_void, _p_polinomial: *m
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn transcript_free_c(_p_transcript: *mut c_void, _element_type: u32) {
+pub fn transcript_free_c(_p_transcript: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "transcript_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_challenge_c(_p_starks: *mut c_void, _p_transcript: *mut c_void, _p_element: *mut c_void) {
+pub fn get_challenge_c(_p_transcript: *mut c_void, _p_element: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "get_challenges: This is a mock call because there is no linked library");
 }
 
@@ -1848,6 +1895,22 @@ pub fn set_hint_field_global_constraints_c(
 #[cfg(feature = "no_lib_link")]
 pub fn print_row_c(_p_setup_ctx: *mut c_void, _buffer: *mut u8, _stage: u64, _row: u64) {
     trace!("{}: ··· {}", "ffi     ", "print_row: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn gen_proof_c(
+    _p_setup_ctx: *mut c_void,
+    _p_params: *mut u8,
+    _p_buff_helper: *mut u8,
+    _p_global_challenge: *mut u8,
+    _proof_file: &str,
+    _airgroup_id: u64,
+    _air_id: u64,
+    _instance_id: u64,
+) -> *mut c_void {
+    trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
+    std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]

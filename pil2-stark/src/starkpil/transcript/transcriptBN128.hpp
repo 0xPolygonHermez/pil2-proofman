@@ -6,7 +6,6 @@
 #include <cstring>
 #include "goldilocks_base_field.hpp"
 
-// TODO: Pending to review and re-factor
 class TranscriptBN128
 {
 private:
