@@ -261,23 +261,41 @@ pub fn format_hints(
     save_symbols: bool,
     global: bool,
 ) -> Vec<Value> {
-    raw_hints
-        .iter()
-        .map(|hint| {
-            let fields = hint["hintFields"][0]["hintFieldArray"]["hintFields"]
-                .as_array()
-                .unwrap_or(&vec![])
-                .iter()
-                .map(|field| {
-                    let (values, lengths) =
-                        process_hint_field(field, pilout, symbols, expressions, save_symbols, global);
-                    json!({ "name": field["name"], "values": values, "lengths": lengths })
-                })
-                .collect::<Vec<_>>();
+    let mut hints = Vec::new();
 
-            json!({ "name": hint["name"], "fields": fields })
-        })
-        .collect()
+    for raw_hint in raw_hints {
+        let mut hint = json!({ "name": raw_hint["name"] });
+
+        // Ensure the first element exists and contains `hintFieldArray`
+        if let Some(hint_fields) = raw_hint
+            .get("hintFields")
+            .and_then(|hf| hf.get(0))
+            .and_then(|first_field| first_field.get("hintFieldArray"))
+            .and_then(|hf_array| hf_array.get("hintFields"))
+            .and_then(|hf| hf.as_array())
+        {
+            let mut formatted_fields = Vec::new();
+
+            for field in hint_fields {
+                let name = field["name"].clone();
+                let (values, lengths) = process_hint_field(field, pilout, symbols, expressions, save_symbols, global);
+
+                let field_entry = if lengths.is_none() {
+                    json!({ "name": name, "values": [values], "lengths": lengths })
+                } else {
+                    json!({ "name": name, "values": values, "lengths": lengths })
+                };
+
+                formatted_fields.push(field_entry);
+            }
+
+            hint["fields"] = json!(formatted_fields);
+        }
+
+        hints.push(hint);
+    }
+
+    hints
 }
 
 /// Formats constraints from `pilout`, mimicking the original JavaScript function.
