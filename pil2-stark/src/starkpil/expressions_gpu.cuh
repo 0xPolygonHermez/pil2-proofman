@@ -131,6 +131,8 @@ public:
     uint32_t nBlocks;
     uint64_t nCols;
     uint32_t nParamsMax;
+    uint32_t nTemp1Max;
+    uint32_t nTemp3Max;
     vector<uint64_t> nColsStages;
     vector<uint64_t> nColsStagesAcc;
     vector<uint64_t> offsetsStages;
@@ -138,7 +140,7 @@ public:
     DeviceArguments *d_deviceArgs;
     DeviceArguments h_deviceArgs;
 
-    ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint64_t nrowsPack_ = 64, uint32_t nBlocks_ = 256) : ExpressionsCtx(setupCtx), nParamsMax(nParamsMax), nrowsPack(nrowsPack_), nBlocks(nBlocks_)
+    ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint32_t nTemp1Max, uint32_t nTemp3Max, uint64_t nrowsPack_ = 64, uint32_t nBlocks_ = 256) : ExpressionsCtx(setupCtx), nParamsMax(nParamsMax), nTemp1Max(nTemp1Max), nTemp3Max(nTemp3Max), nrowsPack(nrowsPack_), nBlocks(nBlocks_)
     {
         uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
@@ -196,6 +198,7 @@ public:
         uint64_t nCols3 = nColsStagesAcc[ns * nOpenings] + 1;
         uint64_t nColsMax = max(nCols1, max(nCols2, nCols3));
 
+        // bufferT_
         uint64_t bufferSize = nOpenings * nrowsPack * nColsMax;
         deviceArgs.bufferT_ = new Goldilocks::Element *[nBlocks];
         int contMem = 0;
@@ -206,8 +209,35 @@ public:
         }
         cudaMalloc(&h_deviceArgs.bufferT_, nBlocks * sizeof(Goldilocks::Element *));
         cudaMemcpy(h_deviceArgs.bufferT_, deviceArgs.bufferT_, nBlocks * sizeof(Goldilocks::Element *), cudaMemcpyHostToDevice);
-
         std::cout << "Total memory in expressions buffers [Gb]: " << (1.0 * contMem) / (1024.0 * 1024.0 * 1024.0) << std::endl;
+
+        // destVals
+        contMem = 0;
+        uint64_t destValsSize = nParamsMax * FIELD_EXTENSION * nrowsPack;
+        deviceArgs.destVals = new Goldilocks::Element *[nBlocks];
+        for (int i = 0; i < nBlocks; i++)
+        {
+            cudaMalloc(&deviceArgs.destVals[i], destValsSize * sizeof(Goldilocks::Element));
+            contMem += destValsSize * sizeof(Goldilocks::Element);
+        }
+        cudaMalloc(&h_deviceArgs.destVals, nBlocks * sizeof(Goldilocks::Element *));
+        cudaMemcpy(h_deviceArgs.destVals, deviceArgs.destVals, nBlocks * sizeof(Goldilocks::Element *), cudaMemcpyHostToDevice);
+        std::cout << "Total memory in expressions destVals [Gb]: " << (1.0 * contMem) / (1024.0 * 1024.0 * 1024.0) << std::endl;
+
+        // tmps
+        uint64_t tmp1Size = nTemp1Max * nrowsPack;
+        uint64_t tmp3Size = nTemp3Max * FIELD_EXTENSION * nrowsPack;
+        deviceArgs.tmp1 = new Goldilocks::Element *[nBlocks];
+        deviceArgs.tmp3 = new Goldilocks::Element *[nBlocks];
+        for (uint64_t i = 0; i < nBlocks; ++i)
+        {
+            cudaMalloc(&deviceArgs.tmp1[i], tmp1Size * sizeof(Goldilocks::Element));
+            cudaMalloc(&deviceArgs.tmp3[i], tmp3Size * sizeof(Goldilocks::Element));
+        }
+        cudaMalloc(&h_deviceArgs.tmp1, nBlocks * sizeof(Goldilocks::Element *));
+        cudaMemcpy(h_deviceArgs.tmp1, deviceArgs.tmp1, nBlocks * sizeof(Goldilocks::Element *), cudaMemcpyHostToDevice);
+        cudaMalloc(&h_deviceArgs.tmp3, nBlocks * sizeof(Goldilocks::Element *));
+        cudaMemcpy(h_deviceArgs.tmp3, deviceArgs.tmp3, nBlocks * sizeof(Goldilocks::Element *), cudaMemcpyHostToDevice);
     };
 
     ~ExpressionsGPU()
@@ -231,8 +261,14 @@ public:
         for (int i = 0; i < nBlocks; i++)
         {
             cudaFree(deviceArgs.bufferT_[i]);
+            cudaFree(deviceArgs.destVals[i]);
+            cudaFree(deviceArgs.tmp1[i]);
+            cudaFree(deviceArgs.tmp3[i]);
         }
         delete[] deviceArgs.bufferT_;
+        delete[] deviceArgs.destVals;
+        delete[] deviceArgs.tmp1;
+        delete[] deviceArgs.tmp3;
     }
 
     void setBufferTInfo(uint64_t domainSize, StepsParams &params, ParserArgs &parserArgs, std::vector<Dest> &dests)
@@ -658,24 +694,24 @@ public:
         setBufferTInfo(domainSize, params, parserArgs, dests);
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
-        std::cout << "goal setBufferTInfo time: " << time << std::endl;
+        std::cout << "goal2_ setBufferTInfo time: " << time << std::endl;
 
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime();
         loadDeviceArguments(params_gpu);
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
-        std::cout << "goal cudaMalloc expressions time: " << time << std::endl;
+        std::cout << "goal2_ cudaMalloc expressions time: " << time << std::endl;
 
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime();
         dim3 nBlocks = deviceArgs.nBlocks;
         dim3 nThreads = deviceArgs.nrowsPack;
-        std::cout << "goal2 nBlocks: " << nBlocks.x << std::endl;
+        std::cout << "goal2_ nBlocks: " << nBlocks.x << std::endl;
         computeExpressions_<<<nBlocks, nThreads>>>(d_deviceArgs);
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
-        std::cout << "goal de computeExpressions: " << time << std::endl;
+        std::cout << "goal2_ de computeExpressions: " << time << std::endl;
 
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime();
@@ -685,14 +721,14 @@ public:
         }
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
-        std::cout << "goal de cudaMemcpy dests time: " << time << std::endl;
+        std::cout << "goal2_ de cudaMemcpy dests time: " << time << std::endl;
 
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime();
         freeDeviceArguments();
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
-        std::cout << "goal freeDeviceArguments time: " << time << std::endl;
+        std::cout << "goal2_ freeDeviceArguments time: " << time << std::endl;
     }
     void calculateExpressions_gpu2(StepsParams &params, StepsParams &params_gpu, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize)
     {
@@ -715,10 +751,10 @@ public:
         time = omp_get_wtime();
         dim3 nBlocks = deviceArgs.nBlocks;
         dim3 nThreads = deviceArgs.nrowsPack;
-        std::cout << "goal2 nBlocks aqui: " << nBlocks.x << std::endl;
         computeExpressions_<<<nBlocks, nThreads>>>(d_deviceArgs);
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
+        std::cout << "goal2 nBlocks aqui: " << nBlocks.x << std::endl;
         std::cout << "goal2 despres de computeExpressions 2: " << time << std::endl;
 
         CHECKCUDAERR(cudaDeviceSynchronize());
@@ -772,58 +808,6 @@ public:
         time = omp_get_wtime() - time;
         std::cout << "goal2 cudaMalloc dests: " << time << std::endl;
 
-        // destVals
-        time = omp_get_wtime();
-        deviceArgs.destVals = new Goldilocks::Element *[deviceArgs.nBlocks];
-        for (int i = 0; i < deviceArgs.nBlocks; i++)
-        {
-            cudaMalloc(&deviceArgs.destVals[i], nParamsMax * FIELD_EXTENSION * nrowsPack * sizeof(Goldilocks::Element));
-        }
-
-        Goldilocks::Element **d_destVals;
-        cudaMalloc(&d_destVals, deviceArgs.nBlocks * sizeof(Goldilocks::Element *));
-        cudaMemcpy(d_destVals, deviceArgs.destVals, deviceArgs.nBlocks * sizeof(Goldilocks::Element *), cudaMemcpyHostToDevice);
-        time = omp_get_wtime() - time;
-        std::cout << "goal2 cudaMalloc destVals: " << time << std::endl;
-
-        // tmps
-        // find max nTemp1 and nTmp3
-        time = omp_get_wtime();
-        uint32_t max_nTemp1 = 0;
-        uint32_t max_nTemp3 = 0;
-        for (uint32_t i = 0; i < deviceArgs.nDests; ++i)
-        {
-            for (uint32_t j = 0; j < deviceArgs.dests[i].nParams; j++)
-            {
-                if (deviceArgs.dests[i].params[j].parserParams.nTemp1 > max_nTemp1)
-                {
-                    max_nTemp1 = deviceArgs.dests[i].params[j].parserParams.nTemp1;
-                }
-                if (deviceArgs.dests[i].params[j].parserParams.nTemp3 > max_nTemp3)
-                {
-                    max_nTemp3 = deviceArgs.dests[i].params[j].parserParams.nTemp3;
-                }
-            }
-        }
-
-        Goldilocks::Element **tmp1 = new Goldilocks::Element *[deviceArgs.nBlocks];
-        Goldilocks::Element **tmp3 = new Goldilocks::Element *[deviceArgs.nBlocks];
-        for (uint64_t i = 0; i < deviceArgs.nBlocks; ++i)
-        {
-            cudaMalloc(&tmp1[i], max_nTemp1 * nrowsPack * sizeof(Goldilocks::Element));
-            cudaMalloc(&tmp3[i], max_nTemp3 * FIELD_EXTENSION * nrowsPack * sizeof(Goldilocks::Element));
-        }
-        deviceArgs.tmp1 = tmp1;
-        deviceArgs.tmp3 = tmp3;
-        Goldilocks::Element **d_tmp1;
-        Goldilocks::Element **d_tmp3;
-        cudaMalloc(&d_tmp1, deviceArgs.nBlocks * sizeof(Goldilocks::Element *));
-        cudaMemcpy(d_tmp1, deviceArgs.tmp1, deviceArgs.nBlocks * sizeof(Goldilocks::Element *), cudaMemcpyHostToDevice);
-        cudaMalloc(&d_tmp3, deviceArgs.nBlocks * sizeof(Goldilocks::Element *));
-        cudaMemcpy(d_tmp3, deviceArgs.tmp3, deviceArgs.nBlocks * sizeof(Goldilocks::Element *), cudaMemcpyHostToDevice);
-        time = omp_get_wtime() - time;
-        std::cout << "goal2 cudaMalloc tmps: " << time << std::endl;
-
         // Update the device struct with device pointers
         h_deviceArgs.N = deviceArgs.N;
         h_deviceArgs.NExtended = deviceArgs.NExtended;
@@ -855,10 +839,6 @@ public:
         h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
 
         h_deviceArgs.dests = d_dests;
-
-        h_deviceArgs.destVals = d_destVals;
-        h_deviceArgs.tmp1 = d_tmp1;
-        h_deviceArgs.tmp3 = d_tmp3;
 
         // Allocate memory for the struct on the device
         cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
@@ -1779,19 +1759,6 @@ __global__ void computeExpressions_(DeviceArguments *d_deviceArgs)
     gl64_t *tmp1 = (gl64_t *)d_deviceArgs->tmp1[iBlock];
     gl64_t *tmp3 = (gl64_t *)d_deviceArgs->tmp3[iBlock];
 
-    if (blockIdx.x == 0 && threadIdx.x == 0)
-    {
-        printf("goal2 nchunks: %llu\n", nchunks);
-        printf("goal2 nDests: %u\n", nDests);
-        for (uint64_t j = 0; j < nDests; ++j)
-        {
-            printf("goal2 dest: %llu nParams: %u\n", j, dests[j].nParams);
-            for (uint32_t k = 0; k < dests[j].nParams; ++k)
-            {
-                printf("goal2 dest: %llu param: %u nops: %u\n", j, k, dests[j].params[k].parserParams.nOps);
-            }
-        }
-    }
     while (chunk_idx < nchunks)
     {
         uint64_t i = chunk_idx * nrowsPack;
