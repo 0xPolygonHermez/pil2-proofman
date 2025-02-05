@@ -115,7 +115,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         
         pctx.dctx_close();
 
-        Self::initialize_air_instances(pctx.clone(), sctx.clone());
+        let my_instances = pctx.dctx_get_my_instances();
+        for instance_id in &my_instances {
+            Self::initialize_air_instance(pctx.clone(), sctx.clone(), *instance_id);
+        }
 
         let transcript: FFITranscript = FFITranscript::new(2, true);
 
@@ -176,9 +179,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         Self::initialize_proofman_2(pctx.clone(), setups.clone());
 
+        let instances = pctx.dctx_get_instances();
+        let my_instances = pctx.dctx_get_my_instances();
+
         wcm.calculate_witness(1);
 
         Self::initialize_fixed_tree(setups.clone(), pctx.clone());
+        pctx.dctx_barrier();
+
+        Self::write_fixed_pols_tree(setups.clone(), pctx.clone());
         pctx.dctx_barrier();
 
         pctx.dctx_close();
@@ -187,9 +196,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_start_info!(GENERATING_PROOFS);
 
-        Self::initialize_air_instances(pctx.clone(), sctx.clone());
+        let mut values = vec![0; my_instances.len() * 4];
 
-        let values = Self::get_challenge_air(pctx.clone(), sctx.clone());
+        for (idx, instance_id) in my_instances.iter().enumerate() {
+            let value = Self::get_contribution_air(pctx.clone(), sctx.clone(), *instance_id);
+            for id in 0..4 {
+                values[idx * 4 + id] = value[id];
+            }
+        }
 
         let transcript = FFITranscript::new(2, true);
 
@@ -229,9 +243,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let global_challenge = vec![F::zero(); 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
-        pctx.set_global_challenge(global_challenge);
+        log::info!("Global challenge: {:?}", &global_challenge);
 
-        let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
+        pctx.set_global_challenge(global_challenge);
 
         let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
@@ -244,15 +258,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         } else {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new())
         };
-
-        let instances = pctx.dctx_get_instances();
-        let my_instances = pctx.dctx_get_my_instances();
         
         let mut proofs = Vec::new();
         for instance_id in my_instances.iter() {
+            Self::initialize_air_instance(pctx.clone(), sctx.clone(), *instance_id);
+
             let (airgroup_id, air_id) = instances[*instance_id];
             let setup = sctx.get_setup(airgroup_id, air_id);
             let p_setup = (&setup.p_setup).into();
+            let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
             let air_instance = air_instances.get(instance_id).unwrap();
             let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
             let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
@@ -376,9 +390,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         Self::initialize_fixed_pols(setups.clone(), pctx.clone());
         pctx.dctx_barrier();
-        Self::write_fixed_pols_tree(setups.clone(), pctx.clone());
 
-        pctx.dctx_barrier();
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN_2);
     }
 
@@ -399,61 +411,49 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Ok(())
     }
 
-    fn initialize_air_instances(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
+    fn initialize_air_instance(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) {
         let instances = pctx.dctx_get_instances();
-        let my_instances = pctx.dctx_get_my_instances();
 
-        let mut buff_helper_size = 0_usize;
+        let mut air_instances_w = pctx.air_instance_repo.air_instances.write().unwrap();
 
-        for instance_id in my_instances.iter() {
-            let mut air_instances_w = pctx.air_instance_repo.air_instances.write().unwrap();
-            let (airgroup_id, air_id) = instances[*instance_id];
-            let setup = sctx.get_setup(airgroup_id, air_id);
-            let buff_helper_prover_size = setup.stark_info.get_buff_helper_size();
-            if buff_helper_prover_size > buff_helper_size {
-                buff_helper_size = buff_helper_prover_size;
+        let (airgroup_id, air_id) = instances[instance_id];
+        let setup = sctx.get_setup(airgroup_id, air_id);
+        
+        let air_instance = air_instances_w.get_mut(&instance_id).unwrap();
+        air_instance.init_aux_trace(setup.prover_buffer_size as usize);
+        air_instance.init_evals(setup.stark_info.ev_map.len() * 3);
+        air_instance.init_challenges((setup.stark_info.challenges_map.as_ref().unwrap().len() + setup.stark_info.stark_struct.steps.len() + 1) * 3);
+        
+        let n_custom_commits = setup.stark_info.custom_commits.len();
+
+        for commit_id in 0..n_custom_commits {
+            let n_cols = *setup
+                .stark_info
+                .map_sections_n
+                .get(&(setup.stark_info.custom_commits[commit_id].name.clone() + "0"))
+                .unwrap() as usize;
+
+            if air_instance.custom_commits[commit_id].is_empty() {
+                air_instance.init_custom_commit(commit_id, (1 << setup.stark_info.stark_struct.n_bits) * n_cols);
             }
 
-            let air_instance = air_instances_w.get_mut(&*instance_id).unwrap();
-            air_instance.init_aux_trace(setup.prover_buffer_size as usize);
-            air_instance.init_evals(setup.stark_info.ev_map.len() * 3);
-            air_instance.init_challenges((setup.stark_info.challenges_map.as_ref().unwrap().len() + setup.stark_info.stark_struct.steps.len() + 1) * 3);
-           
-            let n_custom_commits = setup.stark_info.custom_commits.len();
-
-            for commit_id in 0..n_custom_commits {
-                let n_cols = *setup
-                    .stark_info
-                    .map_sections_n
-                    .get(&(setup.stark_info.custom_commits[commit_id].name.clone() + "0"))
-                    .unwrap() as usize;
-
-                if air_instance.custom_commits[commit_id].is_empty() {
-                    air_instance.init_custom_commit(commit_id, (1 << setup.stark_info.stark_struct.n_bits) * n_cols);
-                }
-
-                let extended_size = (1 << setup.stark_info.stark_struct.n_bits_ext) * n_cols;
-                let mt_nodes = (2 * (1 << setup.stark_info.stark_struct.n_bits_ext) - 1) * 4;
-                air_instance.init_custom_commit_extended(commit_id, extended_size + mt_nodes);
-            }
-
-            let n_airgroup_values = setup.stark_info.airgroupvalues_map.as_ref().unwrap().len();
-            let n_air_values = setup.stark_info.airvalues_map.as_ref().unwrap().len();
-
-            if n_air_values > 0 && air_instance.airvalues.is_empty() {
-                air_instance.init_airvalues(n_air_values * 3);
-            }
-
-            if n_airgroup_values > 0 && air_instance.airgroup_values.is_empty() {
-                air_instance.init_airgroup_values(n_airgroup_values * 3);
-            }
-
-            air_instance.set_prover_initialized();
+            let extended_size = (1 << setup.stark_info.stark_struct.n_bits_ext) * n_cols;
+            let mt_nodes = (2 * (1 << setup.stark_info.stark_struct.n_bits_ext) - 1) * 4;
+            air_instance.init_custom_commit_extended(commit_id, extended_size + mt_nodes);
         }
 
-        let buff_helper = create_buffer_fast(buff_helper_size);
+        let n_airgroup_values = setup.stark_info.airgroupvalues_map.as_ref().unwrap().len();
+        let n_air_values = setup.stark_info.airvalues_map.as_ref().unwrap().len();
 
-        *pctx.buff_helper.values.write().unwrap() = buff_helper;
+        if n_air_values > 0 && air_instance.airvalues.is_empty() {
+            air_instance.init_airvalues(n_air_values * 3);
+        }
+
+        if n_airgroup_values > 0 && air_instance.airgroup_values.is_empty() {
+            air_instance.init_airgroup_values(n_airgroup_values * 3);
+        }
+
+        air_instance.set_prover_initialized();        
     }
 
     fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
@@ -473,11 +473,19 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
         }
 
+        let mut buff_helper_size = 0_usize;
+
         airs.iter().for_each(|&(airgroup_id, air_id)| {
             let setup = setups.sctx.get_setup(airgroup_id, air_id);
+            let buff_helper_prover_size = setup.stark_info.get_buff_helper_size();
+            if buff_helper_prover_size > buff_helper_size {
+                buff_helper_size = buff_helper_prover_size;
+            }
             setup.load_const_pols();
         });
 
+        *pctx.buff_helper.values.write().unwrap() = create_buffer_fast(buff_helper_size);
+        
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
 
         if pctx.options.aggregation {
@@ -728,78 +736,70 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(CALCULATING_IM_POLS);
     }
 
-    pub fn get_challenge_air(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Vec<u64> {
+    pub fn get_contribution_air(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) -> Vec<u64> {
         info!("{}: Committing stage 1", Self::MY_NAME);
 
         let n_field_elements = 4;
 
         timer_start_info!(COMMITING_STAGE_1);
         let instances = pctx.dctx_get_instances();
-        let my_instances = pctx.dctx_get_my_instances();
         let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
+       
+        let (airgroup_id, air_id) = instances[instance_id];
+        let setup = sctx.get_setup(airgroup_id, air_id);
+        let air_instance = air_instances.get(&instance_id).unwrap();
 
-        let mut values = vec![0; my_instances.len() * n_field_elements];
+        let root = vec![F::zero(); n_field_elements];
+        commit_witness_c(
+            setup.stark_info.stark_struct.n_bits,
+            setup.stark_info.stark_struct.n_bits_ext,
+            *setup.stark_info.map_sections_n.get("cm1").unwrap(),
+            root.as_ptr() as *mut u8,
+            air_instance.get_trace_ptr(),
+        );
 
-        for (idx, instance_id) in my_instances.iter().enumerate() {
-            let (airgroup_id, air_id) = instances[*instance_id];
-            let setup = sctx.get_setup(airgroup_id, air_id);
-            let air_instance = air_instances.get(instance_id).unwrap();
+        let mut value = vec![Goldilocks::zero(); n_field_elements];
 
-            let root = vec![F::zero(); n_field_elements];
-            commit_witness_c(
-                setup.stark_info.stark_struct.n_bits,
-                setup.stark_info.stark_struct.n_bits_ext,
-                *setup.stark_info.map_sections_n.get("cm1").unwrap(),
-                root.as_ptr() as *mut u8,
-                air_instance.get_trace_ptr(),
-            );
+        let n_airvalues: usize = setup
+            .stark_info
+            .airvalues_map
+            .as_ref()
+            .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
+            .unwrap_or(0);
 
-            let mut value = vec![Goldilocks::zero(); n_field_elements];
+        let size = 2 * n_field_elements + n_airvalues;
 
-            let n_airvalues: usize = setup
-                .stark_info
-                .airvalues_map
-                .as_ref()
-                .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
-                .unwrap_or(0);
+        let mut values_hash = vec![F::zero(); size];
 
-            let size = 2 * n_field_elements + n_airvalues;
+        let verkey =
+            pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic).display().to_string()
+                + ".verkey.json";
 
-            let mut values_hash = vec![F::zero(); size];
+        let mut file = File::open(&verkey).expect("Unable to open file");
+        let mut json_str = String::new();
+        file.read_to_string(&mut json_str).expect("Unable to read file");
+        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("REASON");
+        for j in 0..n_field_elements {
+            values_hash[j] = F::from_canonical_u64(vk[j]);
+            values_hash[j + n_field_elements] = root[j];
+        }
 
-            let verkey =
-                pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic).display().to_string()
-                    + ".verkey.json";
-
-            let mut file = File::open(&verkey).expect("Unable to open file");
-            let mut json_str = String::new();
-            file.read_to_string(&mut json_str).expect("Unable to read file");
-            let vk: Vec<u64> = serde_json::from_str(&json_str).expect("REASON");
-            for j in 0..n_field_elements {
-                values_hash[j] = F::from_canonical_u64(vk[j]);
-                values_hash[j + n_field_elements] = root[j];
-            }
-
-            let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
-            let mut p = 0;
-            let mut count = 0;
-            for air_value in airvalues_map {
-                if air_value.stage == 1 {
-                    values_hash[2 * n_field_elements + count] = air_instance.airvalues[p];
-                    count += 1;
-                    p += 1;
-                }
-            }
-
-            calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64);
-
-            for id in 0..n_field_elements {
-                values[idx * n_field_elements + id] = value[id].as_canonical_u64();
+        let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
+        let mut p = 0;
+        let mut count = 0;
+        for air_value in airvalues_map {
+            if air_value.stage == 1 {
+                values_hash[2 * n_field_elements + count] = air_instance.airvalues[p];
+                count += 1;
+                p += 1;
             }
         }
 
+        calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64);
+
         timer_stop_and_log_info!(COMMITING_STAGE_1);
-        values
+
+        value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
     }
 
     fn hash_b_tree(values: Vec<Vec<F>>) -> Vec<F> {
