@@ -72,13 +72,14 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
         if stage == 1 {
             let (_, instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
-            let mut multiplicity_u64 =
-                self.multiplicity.iter().map(|x| x.load(Ordering::Relaxed)).collect::<Vec<u64>>();
-
-            pctx.dctx_distribute_multiplicity(&mut multiplicity_u64, instance_id);
+            pctx.dctx_distribute_multiplicity(&self.multiplicity, instance_id);
 
             if pctx.dctx_is_my_instance(instance_id) {
-                let buffer = multiplicity_u64.iter().map(|x| F::from_canonical_u64(*x)).collect::<Vec<F>>();
+                let buffer = self
+                    .multiplicity
+                    .iter()
+                    .map(|x| F::from_canonical_u64(x.load(Ordering::Relaxed)))
+                    .collect::<Vec<F>>();
 
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
                 pctx.add_air_instance(air_instance, instance_id);

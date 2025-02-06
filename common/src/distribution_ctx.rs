@@ -10,6 +10,7 @@ use mpi::datatype::PartitionMut;
 use mpi::topology::Communicator;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
+use std::sync::atomic::{Ordering, AtomicU64};
 #[cfg(feature = "distributed")]
 use proofman_starks_lib_c::*;
 use std::ffi::c_void;
@@ -495,7 +496,7 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_multiplicity(&self, _multiplicity: &mut [u64], _owner: i32) {
+    pub fn distribute_multiplicity(&self, _multiplicity: &[AtomicU64], _owner: i32) {
         #[cfg(feature = "distributed")]
         {
             //assert that I can operate with u32
@@ -505,7 +506,8 @@ impl DistributionCtx {
                 //pack multiplicities in a sparce vector
                 let mut packed_multiplicity = Vec::new();
                 packed_multiplicity.push(0u32); //this will be the counter
-                for (idx, &m) in _multiplicity.iter().enumerate() {
+                for (idx, mul) in _multiplicity.iter().enumerate() {
+                    let m = mul.load(Ordering::Relaxed);
                     if m != 0 {
                         assert!(m < u32::MAX as u64);
                         packed_multiplicity.push(idx as u32);
@@ -522,7 +524,7 @@ impl DistributionCtx {
                         for j in (1..packed_multiplicity[0]).step_by(2) {
                             let idx = packed_multiplicity[j as usize] as usize;
                             let m = packed_multiplicity[j as usize + 1] as u64;
-                            _multiplicity[idx] += m;
+                            _multiplicity[idx].fetch_add(m, Ordering::Relaxed);
                         }
                     }
                 }
@@ -530,7 +532,7 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_multiplicities(&self, _multiplicities: &mut [Vec<u64>], _owner: i32) {
+    pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<AtomicU64>], _owner: i32) {
         #[cfg(feature = "distributed")]
         {
             // Ensure that each multiplicity vector can be operated with u32
@@ -545,7 +547,8 @@ impl DistributionCtx {
                 // Pack multiplicities in a sparse vector
                 let mut packed_multiplicities = vec![0u32; n_columns];
                 for (col_idx, multiplicity) in _multiplicities.iter().enumerate() {
-                    for (idx, &m) in multiplicity.iter().enumerate() {
+                    for (idx, mul) in multiplicity.iter().enumerate() {
+                        let m = mul.load(Ordering::Relaxed);
                         if m != 0 {
                             assert!(m < u32::MAX as u64);
                             packed_multiplicities[col_idx] += 1;
@@ -573,7 +576,7 @@ impl DistributionCtx {
                             for _ in 0..counters[col_idx] {
                                 let row_idx = packed_multiplicities[idx] as usize;
                                 let m = packed_multiplicities[idx + 1] as u64;
-                                _multiplicities[col_idx][row_idx] += m;
+                                _multiplicities[col_idx][row_idx].fetch_add(m, Ordering::Relaxed);
                                 idx += 2;
                             }
                         }

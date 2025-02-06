@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
@@ -248,7 +249,7 @@ impl<F: Field> ProofCtx<F> {
         dctx.set_balance_distribution(balance);
     }
 
-    pub fn dctx_distribute_multiplicity(&self, multiplicity: &mut [u64], global_idx: usize) {
+    pub fn dctx_distribute_multiplicity(&self, multiplicity: &[AtomicU64], global_idx: usize) {
         let dctx = self.dctx.read().unwrap();
         let owner = dctx.owner(global_idx);
         dctx.distribute_multiplicity(multiplicity, owner);
@@ -262,7 +263,7 @@ impl<F: Field> ProofCtx<F> {
         }
     }
 
-    pub fn dctx_distribute_multiplicities(&self, multiplicities: &mut [Vec<u64>], global_idx: usize) {
+    pub fn dctx_distribute_multiplicities(&self, multiplicities: &[Vec<AtomicU64>], global_idx: usize) {
         let dctx = self.dctx.read().unwrap();
         let owner = dctx.owner(global_idx);
         dctx.distribute_multiplicities(multiplicities, owner);
