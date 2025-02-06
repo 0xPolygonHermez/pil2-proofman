@@ -38,6 +38,7 @@ impl<F: PrimeField> AirComponent<F> for U8Air<F> {
 }
 
 impl<F: PrimeField> U8Air<F> {
+    #[inline(always)]
     pub fn update_inputs(&self, value: F, multiplicity: F) {
         let value = value.as_canonical_biguint().to_usize().expect("Cannot convert to usize");
         let index = value % NUM_ROWS;

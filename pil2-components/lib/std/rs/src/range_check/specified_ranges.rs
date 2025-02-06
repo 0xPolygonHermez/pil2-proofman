@@ -155,6 +155,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
 }
 
 impl<F: PrimeField> SpecifiedRanges<F> {
+    #[inline(always)]
     pub fn update_inputs(&self, value: F, range: Range<F>, multiplicity: F) {
         let val = (value - range.0)
             .as_canonical_biguint()
