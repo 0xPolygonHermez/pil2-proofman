@@ -70,18 +70,4 @@ impl<F: PrimeField> Std<F> {
     pub fn get_ranges(&self) -> Vec<(usize, usize, RangeCheckAir)> {
         self.range_check.get_ranges()
     }
-
-    pub fn drain_inputs(&self, rc_type: &RangeCheckAir) {
-        match rc_type {
-            RangeCheckAir::U8Air => {
-                self.range_check.u8air.as_ref().unwrap().drain_inputs(self.pctx.clone(), self.sctx.clone());
-            }
-            RangeCheckAir::U16Air => {
-                self.range_check.u16air.as_ref().unwrap().drain_inputs(self.pctx.clone(), self.sctx.clone());
-            }
-            RangeCheckAir::SpecifiedRanges => {
-                self.range_check.specified_ranges.as_ref().unwrap().drain_inputs(self.pctx.clone(), self.sctx.clone());
-            }
-        };
-    }
 }

@@ -403,7 +403,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut witness_lib = witness_lib(wcm.get_pctx().options.verbose_mode)?;
         witness_lib.register_witness(wcm.clone());
 
-        wcm.start_proof();
         wcm.execute();
 
         timer_stop_and_log_info!(INITIALIZE_WITNESS);

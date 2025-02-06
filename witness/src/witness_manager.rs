@@ -44,17 +44,6 @@ impl<F: Clone> WitnessManager<F> {
         self.components_std.write().unwrap().push(component);
     }
 
-    pub fn start_proof(&self) {
-        timer_start_info!(START_PROOF);
-        for component in self.components.read().unwrap().iter() {
-            component.start_proof(self.pctx.clone(), self.sctx.clone());
-        }
-        for component in self.components_std.read().unwrap().iter() {
-            component.start_proof(self.pctx.clone(), self.sctx.clone());
-        }
-        timer_stop_and_log_info!(START_PROOF);
-    }
-
     pub fn gen_custom_commits_fixed(&self, check: bool) -> Result<(), Box<dyn std::error::Error>> {
         for component in self.components.read().unwrap().iter() {
             component.gen_custom_commits_fixed(self.pctx.clone(), self.sctx.clone(), check)?;
