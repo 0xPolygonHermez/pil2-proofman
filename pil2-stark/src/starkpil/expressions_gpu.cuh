@@ -142,6 +142,7 @@ public:
     DeviceArguments deviceArgs;
     DeviceArguments *d_deviceArgs;
     DeviceArguments h_deviceArgs;
+    DestGPU *d_dests;
 
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint32_t nTemp1Max, uint32_t nTemp3Max, uint64_t nrowsPack_ = 64, uint32_t nBlocks_ = 256) : ExpressionsCtx(setupCtx), nParamsMax(nParamsMax), nTemp1Max(nTemp1Max), nTemp3Max(nTemp3Max), nrowsPack(nrowsPack_), nBlocks(nBlocks_)
     {
@@ -724,20 +725,20 @@ public:
 
         // Dests
         time = omp_get_wtime();
-        DestGPU *dests = new DestGPU[deviceArgs.nDests];
+        d_dests = new DestGPU[deviceArgs.nDests];
         for (int i = 0; i < deviceArgs.nDests; ++i)
         {
-            dests[i].dest = deviceArgs.dests[i].dest;
-            dests[i].dest_gpu = deviceArgs.dests[i].dest_gpu;
-            dests[i].offset = deviceArgs.dests[i].offset;
-            dests[i].dim = deviceArgs.dests[i].dim;
-            dests[i].nParams = deviceArgs.dests[i].nParams;
-            cudaMalloc(&dests[i].params, dests[i].nParams * sizeof(ParamsGPU));
-            cudaMemcpy(dests[i].params, deviceArgs.dests[i].params, dests[i].nParams * sizeof(ParamsGPU), cudaMemcpyHostToDevice);
+            d_dests[i].dest = deviceArgs.dests[i].dest;
+            d_dests[i].dest_gpu = deviceArgs.dests[i].dest_gpu;
+            d_dests[i].offset = deviceArgs.dests[i].offset;
+            d_dests[i].dim = deviceArgs.dests[i].dim;
+            d_dests[i].nParams = deviceArgs.dests[i].nParams;
+            cudaMalloc(&d_dests[i].params, d_dests[i].nParams * sizeof(ParamsGPU));
+            cudaMemcpy(d_dests[i].params, deviceArgs.dests[i].params, d_dests[i].nParams * sizeof(ParamsGPU), cudaMemcpyHostToDevice);
         }
-        DestGPU *d_dests;
-        cudaMalloc(&d_dests, deviceArgs.nDests * sizeof(DestGPU));
-        cudaMemcpy(d_dests, dests, deviceArgs.nDests * sizeof(DestGPU), cudaMemcpyHostToDevice);
+        DestGPU *d_dests_;
+        cudaMalloc(&d_dests_, deviceArgs.nDests * sizeof(DestGPU));
+        cudaMemcpy(d_dests_, d_dests, deviceArgs.nDests * sizeof(DestGPU), cudaMemcpyHostToDevice);
 
         time = omp_get_wtime() - time;
         std::cout << "goal2 cudaMalloc dests: " << time << std::endl;
@@ -775,7 +776,7 @@ public:
         h_deviceArgs.pols = params_gpu.pols;
         h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
 
-        h_deviceArgs.dests = d_dests;
+        h_deviceArgs.dests = d_dests_;
 
         // Allocate memory for the struct on the device
         cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
@@ -783,6 +784,11 @@ public:
     }
     void freeDeviceArguments()
     {
+        for (int i = 0; i < deviceArgs.nDests; ++i)
+        {
+            cudaFree(d_dests[i].params);
+        }
+        cudaFree(h_deviceArgs.dests);
         cudaFree(d_deviceArgs);
     }
 };
