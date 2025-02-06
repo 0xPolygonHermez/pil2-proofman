@@ -173,6 +173,9 @@ SPECIAL
 
 mkdir -p ./pil2-components/test/std/special/build/ \
 && rm -rf pil2-components/test/special/build/proofs/ \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/array_size.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/array_size.pilout \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/expr_optimizations.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/expr_optimizations.pilout \
