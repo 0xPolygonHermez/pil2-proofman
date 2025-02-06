@@ -91,12 +91,12 @@ function connection_init(const int opid, const expr cols[], int default_frame_si
 
     container proof.std.connect alias kscont {
         int ks_count = 0;
-        int ks[100];
+        int ks[ARRAY_SIZE];
     }
 
     container air.std.connect alias conn {
         int opids_count = 0;
-        int opids[100];
+        int opids[ARRAY_SIZE];
 
         col fixed ID = [1,GEN[BITS]..*..]; // {1,g,g²,...,gᴺ⁻¹} --> multiplicative group of order 2**BITS = N
     }
