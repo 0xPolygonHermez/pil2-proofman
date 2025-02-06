@@ -196,19 +196,14 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
         if stage == 1 {
             let (_, instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
-            let mut multiplicities_u64 = self
-                .multiplicities
-                .iter()
-                .map(|column| column.iter().map(|x| x.load(Ordering::Relaxed)).collect::<Vec<u64>>())
-                .collect::<Vec<Vec<u64>>>();
-            pctx.dctx_distribute_multiplicities(&mut multiplicities_u64, instance_id);
+            pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
 
             if pctx.dctx_is_my_instance(instance_id) {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast::<F>(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
-                    for (col, vec) in multiplicities_u64.iter().enumerate() {
-                        chunk[col] = F::from_canonical_u64(vec[row]);
+                    for (col, vec) in self.multiplicities.iter().enumerate() {
+                        chunk[col] = F::from_canonical_u64(vec[row].load(Ordering::Relaxed));
                     }
                 });
 
