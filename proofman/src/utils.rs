@@ -74,8 +74,7 @@ pub fn print_summary<F: PrimeField>(name: &str, pctx: Arc<ProofCtx<F>>, setups: 
             let mut memory_fixed_aggregation = 0f64;
             if pctx.options.aggregation {
                 if pctx.global_info.get_air_has_compressor(*airgroup_id, *air_id) {
-                    let setup_compressor =
-                        setups.sctx_compressor.as_ref().unwrap().get_setup(*airgroup_id, *air_id);
+                    let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(*airgroup_id, *air_id);
                     memory_fixed_aggregation += (setup_compressor.stark_info.n_constants
                         * (1 << (setup_compressor.stark_info.stark_struct.n_bits))
                         + setup_compressor.stark_info.n_constants
@@ -117,12 +116,7 @@ pub fn print_summary<F: PrimeField>(name: &str, pctx: Arc<ProofCtx<F>>, setups: 
     let mut air_groups: Vec<_> = air_instances.keys().collect();
     air_groups.sort();
 
-    info!(
-        "{}",
-        format!("{}: --- TOTAL PROOF INSTANCES SUMMARY ------------------------", name)
-            .bright_white()
-            .bold()
-    );
+    info!("{}", format!("{}: --- TOTAL PROOF INSTANCES SUMMARY ------------------------", name).bright_white().bold());
     info!("{}:     ► {} Air instances found:", name, instances.len());
     for air_group in air_groups.clone() {
         let air_group_instances = air_instances.get(air_group).unwrap();
@@ -141,12 +135,7 @@ pub fn print_summary<F: PrimeField>(name: &str, pctx: Arc<ProofCtx<F>>, setups: 
         }
     }
     info!("{}: ----------------------------------------------------------", name);
-    info!(
-        "{}",
-        format!("{}: --- TOTAL SETUP MEMORY USAGE ----------------------------", name)
-            .bright_white()
-            .bold()
-    );
+    info!("{}", format!("{}: --- TOTAL SETUP MEMORY USAGE ----------------------------", name).bright_white().bold());
     let mut total_memory = 0f64;
     for air_group in air_groups.clone() {
         let air_group_instances = air_instances.get(air_group).unwrap();
@@ -158,11 +147,7 @@ pub fn print_summary<F: PrimeField>(name: &str, pctx: Arc<ProofCtx<F>>, setups: 
             total_memory += memory_fixed;
 
             if !pctx.options.aggregation {
-                info!(
-                    "{}:       {}",
-                    name,
-                    format!("· {}: {} fixed cols", air_name, format_bytes(*memory_fixed),)
-                );
+                info!("{}:       {}", name, format!("· {}: {} fixed cols", air_name, format_bytes(*memory_fixed),));
             } else {
                 total_memory += memory_fixed_aggregation;
                 info!(
@@ -196,9 +181,7 @@ pub fn print_summary<F: PrimeField>(name: &str, pctx: Arc<ProofCtx<F>>, setups: 
     } else {
         info!(
             "{}",
-            format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", name)
-                .bright_white()
-                .bold()
+            format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", name).bright_white().bold()
         );
     }
     let mut total_memory = 0f64;

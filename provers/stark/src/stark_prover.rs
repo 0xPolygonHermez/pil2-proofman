@@ -96,8 +96,11 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
         air_instance.init_aux_trace(self.prover_buffer_size as usize);
         air_instance.init_evals(self.stark_info.ev_map.len() * Self::FIELD_EXTENSION);
-        air_instance.init_challenges((self.stark_info.challenges_map.as_ref().unwrap().len() + self.stark_info.stark_struct.steps.len() + 1) * Self::FIELD_EXTENSION);
-        
+        air_instance.init_challenges(
+            (self.stark_info.challenges_map.as_ref().unwrap().len() + self.stark_info.stark_struct.steps.len() + 1)
+                * Self::FIELD_EXTENSION,
+        );
+
         let n_custom_commits = self.stark_info.custom_commits.len();
 
         for commit_id in 0..n_custom_commits {
@@ -522,7 +525,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         value64
     }
 
-    fn get_challenges(&self, stage_id: u32, pctx: Arc<ProofCtx<F>>, transcript: &FFITranscript) -> Vec<Vec<F>> {
+    fn get_challenges(&self, _stage_id: u32, _pctx: Arc<ProofCtx<F>>, _transcript: &FFITranscript) -> Vec<Vec<F>> {
         Vec::new()
     }
 
@@ -534,7 +537,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         self.p_stark
     }
 
-    fn get_zkin_proof(&self, pctx: Arc<ProofCtx<F>>, output_dir: &str) -> *mut c_void {
+    fn get_zkin_proof(&self, _pctx: Arc<ProofCtx<F>>, _output_dir: &str) -> *mut c_void {
         std::ptr::null_mut()
     }
 
@@ -632,11 +635,9 @@ impl<F: Field> StarkProver<F> {
         calculate_fri_polynomial_c(p_stark, (&steps_params).into());
     }
 
-    fn compute_fri_folding(&mut self, step_index: u32, pctx: Arc<ProofCtx<F>>) {
-    }
+    fn compute_fri_folding(&mut self, _step_index: u32, _pctx: Arc<ProofCtx<F>>) {}
 
-    fn compute_fri_queries(&mut self, _opening_id: u32, pctx: Arc<ProofCtx<F>>) {
-    }
+    fn compute_fri_queries(&mut self, _opening_id: u32, _pctx: Arc<ProofCtx<F>>) {}
 }
 
 unsafe impl<F: Field> Send for StarkProver<F> {}

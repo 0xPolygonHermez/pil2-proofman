@@ -19,8 +19,7 @@ pub struct SpecifiedRanges<F: PrimeField> {
     // Parameters
     airgroup_id: usize,
     air_id: usize,
-
-    // Inputs
+    instance_id: AtomicU64,
     num_rows: usize,
     num_cols: usize,
     ranges: Vec<Range<F>>,
@@ -150,7 +149,15 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                 .collect();
         }
 
-        Arc::new(Self { airgroup_id, air_id, num_cols, num_rows, ranges, multiplicities })
+        Arc::new(Self {
+            airgroup_id,
+            air_id,
+            instance_id: AtomicU64::new(0),
+            num_cols,
+            num_rows,
+            ranges,
+            multiplicities,
+        })
     }
 }
 
@@ -180,21 +187,24 @@ impl<F: PrimeField> SpecifiedRanges<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let (instance_found, _) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+        let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            pctx.dctx_add_instance_no_assign(
-                self.airgroup_id,
-                self.air_id,
-                pctx.get_weight(self.airgroup_id, self.air_id),
-            );
+            instance_id = pctx.add_instance(self.airgroup_id, self.air_id);
         }
+
+        self.instance_id.store(instance_id as u64, Ordering::SeqCst);
+        Vec::new()
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) {
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
         if stage == 1 {
-            let (_, instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+            let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
+
+            if !_instance_ids.contains(&instance_id) {
+                return;
+            }
 
             pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
 

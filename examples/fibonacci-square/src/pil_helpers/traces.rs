@@ -77,19 +77,19 @@ values!(BuildProofValues<F> {
  
 trace!(FibonacciSquareFixed<F> {
  L1: F, __L1__: F,
-},  0, 0, 262144 );
+},  0, 0, 4194304 );
 
 trace!(FibonacciSquareTrace<F> {
  a: F, b: F,
-},  0, 0, 262144 );
+},  0, 0, 4194304 );
 
 trace!(ModuleFixed<F> {
  SEGMENT_LN: F, __L1__: F,
-},  0, 1, 65536 );
+},  0, 1, 1048576 );
 
 trace!(ModuleTrace<F> {
  x: F, q: F, x_mod: F,
-},  0, 1, 65536 );
+},  0, 1, 1048576 );
 
 trace!(U8AirFixed<F> {
  U8: F, __L1__: F,
@@ -101,7 +101,7 @@ trace!(U8AirTrace<F> {
 
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
-}, 0, 0, 262144, 0 );
+}, 0, 0, 4194304, 0 );
 
 values!(FibonacciSquareAirValues<F> {
  fibo1: [F; 2], fibo3: FieldExtension<F>,

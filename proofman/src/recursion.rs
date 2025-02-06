@@ -147,7 +147,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
     let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
-    
+
     let mut zkin;
 
     if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
@@ -216,8 +216,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
         format!("··· Generating recursive1 proof for instance {} of {}", air_instance_id, air_instance_name)
     );
 
-    let output_file_path =
-        output_dir_path.join(format!("proofs/recursive1_{}_{}.json", air_instance_name, global_idx));
+    let output_file_path = output_dir_path.join(format!("proofs/recursive1_{}_{}.json", air_instance_name, global_idx));
 
     let proof_file = match pctx.options.debug_info.save_proofs_to_file {
         true => output_file_path.to_string_lossy().into_owned(),
@@ -241,7 +240,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
     log::info!("{}: ··· Recursive1 Proof generated.", MY_NAME);
     timer_stop_and_log_trace!(GENERATE_RECURSIVE1_PROOF);
-    
 
     Ok(p_prove)
 }

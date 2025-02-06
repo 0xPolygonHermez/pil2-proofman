@@ -23,7 +23,7 @@ pub fn verify_constraints<F: Field>(
 ) -> Vec<ConstraintInfo> {
     let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
     let air_instance = air_instances.get(&global_id).unwrap();
-    
+
     let instances = pctx.dctx_get_instances();
 
     let (airgroup_id, air_id) = instances[global_id];
@@ -46,7 +46,6 @@ pub fn verify_constraints<F: Field>(
         custom_commits_extended: [std::ptr::null_mut(); 10],
     };
 
-
     let p_setup = (&setup.p_setup).into();
 
     let n_constraints = get_n_constraints_c(p_setup);
@@ -55,7 +54,7 @@ pub fn verify_constraints<F: Field>(
 
     let (skip, constraints_skip) = skip_prover_instance(&pctx, global_id);
 
-    if !skip {   
+    if !skip {
         if !constraints_skip.is_empty() {
             constraints_info.iter_mut().for_each(|constraint| constraint.skip = true);
             for constraint_id in &constraints_skip {
@@ -146,7 +145,7 @@ pub fn verify_constraints_proof<F: Field>(
     for (idx, instance_id) in my_instances.iter().enumerate() {
         let (airgroup_id, air_id) = instances[*instance_id];
         let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
-        
+
         let (skip, _) = skip_prover_instance(&pctx, *instance_id);
         if skip {
             continue;

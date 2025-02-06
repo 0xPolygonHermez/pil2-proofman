@@ -254,7 +254,7 @@ impl<F: PrimeField> StdProd<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
         let stage_wc = self.stage_wc.as_ref();
         if stage_wc.is_none() {
             return;

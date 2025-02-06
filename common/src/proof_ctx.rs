@@ -199,9 +199,10 @@ impl<F: Field> ProofCtx<F> {
         dctx.find_instance(airgroup_id, air_id)
     }
 
-    pub fn dctx_add_instance(&self, airgroup_id: usize, air_id: usize, weight: u64) -> (bool, usize) {
+    pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_instance(airgroup_id, air_id, weight)
+        let weight = self.get_weight(airgroup_id, air_id);
+        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
     }
 
     pub fn dctx_distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {

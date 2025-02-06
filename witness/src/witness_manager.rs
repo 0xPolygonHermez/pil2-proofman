@@ -1,12 +1,15 @@
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 
+use p3_field::Field;
 use proofman_common::{ModeName, ProofCtx, SetupCtx};
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use crate::WitnessComponent;
 
-pub struct WitnessManager<F: Clone> {
+pub struct WitnessManager<F: Field> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
+    components_instance_ids: RwLock<Vec<Vec<usize>>>,
     components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     pctx: Arc<ProofCtx<F>>,
     sctx: Arc<SetupCtx<F>>,
@@ -15,7 +18,7 @@ pub struct WitnessManager<F: Clone> {
     input_data_path: Option<PathBuf>,
 }
 
-impl<F: Clone> WitnessManager<F> {
+impl<F: Field> WitnessManager<F> {
     const MY_NAME: &'static str = "WCMnager";
 
     pub fn new(
@@ -27,6 +30,7 @@ impl<F: Clone> WitnessManager<F> {
     ) -> Self {
         WitnessManager {
             components: RwLock::new(Vec::new()),
+            components_instance_ids: RwLock::new(Vec::new()),
             components_std: RwLock::new(Vec::new()),
             pctx,
             sctx,
@@ -38,6 +42,7 @@ impl<F: Clone> WitnessManager<F> {
 
     pub fn register_component(&self, component: Arc<dyn WitnessComponent<F>>) {
         self.components.write().unwrap().push(component);
+        self.components_instance_ids.write().unwrap().push(Vec::new());
     }
 
     pub fn register_component_std(&self, component: Arc<dyn WitnessComponent<F>>) {
@@ -46,8 +51,9 @@ impl<F: Clone> WitnessManager<F> {
 
     pub fn execute(&self) {
         timer_start_info!(EXECUTE);
-        for component in self.components.read().unwrap().iter() {
-            component.execute(self.pctx.clone());
+        for (idx, component) in self.components.read().unwrap().iter().enumerate() {
+            let global_ids = component.execute(self.pctx.clone());
+            self.components_instance_ids.write().unwrap()[idx] = global_ids;
         }
         for component in self.components_std.read().unwrap().iter() {
             component.execute(self.pctx.clone());
@@ -70,7 +76,7 @@ impl<F: Clone> WitnessManager<F> {
         }
     }
 
-    pub fn calculate_witness(&self, stage: u32) {
+    pub fn calculate_witness(&self, stage: u32, instance_ids: &[usize]) {
         log::info!(
             "{}: Calculating witness for stage {} / {}",
             Self::MY_NAME,
@@ -79,13 +85,22 @@ impl<F: Clone> WitnessManager<F> {
         );
 
         timer_start_info!(CALCULATING_WITNESS);
+        for (idx, component) in self.components.read().unwrap().iter().enumerate() {
+            let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 
-        for component in self.components.read().unwrap().iter() {
-            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone());
+            let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
+                .iter()
+                .filter(|id| ids_hash_set.contains(id))
+                .cloned()
+                .collect();
+
+            if !instance_ids_filtered.is_empty() {
+                component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), &instance_ids_filtered);
+            }
         }
 
         for component in self.components_std.read().unwrap().iter() {
-            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone());
+            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), &instance_ids);  
         }
 
         timer_stop_and_log_info!(CALCULATING_WITNESS);
