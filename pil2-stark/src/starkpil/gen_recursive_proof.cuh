@@ -1231,6 +1231,7 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     delete evals;
     delete airgroupValues;
     delete foldedFRIPol;
+    TimerStopAndLog(STARK_PROOF);
 
     time = omp_get_wtime();
     nlohmann::json jProof = proof.proof.proof2json();
@@ -1242,8 +1243,6 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     }
     time = omp_get_wtime() - time;
     std::cout << "rick proof2json time: " << time << std::endl;
-
-    TimerStopAndLog(STARK_PROOF);
 
     zkin = publics2zkin(zkin, publicInputs, globalInfo, airgroupId);
 

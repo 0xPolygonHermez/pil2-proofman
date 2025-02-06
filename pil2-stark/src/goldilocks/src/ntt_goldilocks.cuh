@@ -125,41 +125,62 @@ __device__ __constant__ uint64_t domain_size_inverse[33] = {
 
 __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols)
 {
-      uint32_t j = blockIdx.x;
-      uint32_t col = threadIdx.x;
-      uint32_t start = domain_size >> 1;
-      twiddles = twiddles + start;
-      if (j < domain_size / 2 && col < ncols)
-      {
-            uint32_t half_group_size = 1 << i;
-            uint32_t group = j >> i;                     // j/(group_size/2);
-            uint32_t offset = j & (half_group_size - 1); // j%(half_group_size);
-            uint32_t index1 = (group << i + 1) + offset;
-            uint32_t index2 = index1 + half_group_size;
-            gl64_t factor = twiddles[offset * (domain_size >> i + 1)];
-            gl64_t odd_sub = gl64_t((uint64_t)data[index2 * ncols + col]) * factor;
-            data[index2 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) - odd_sub;
-            data[index1 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) + odd_sub;
-            // DEGUG: assert(data[index2 * ncols + col] < 18446744069414584321ULL);
-            // DEBUG: assert(data[index1 * ncols + col] < 18446744069414584321ULL);
-      }
+    uint32_t j = blockIdx.x;
+    uint32_t col = threadIdx.x;
+    uint32_t start = domain_size >> 1;
+    twiddles = twiddles + start;
+    if (j < domain_size / 2 && col < ncols)
+    {
+        uint32_t half_group_size = 1 << i;
+        uint32_t group = j >> i;                     // j/(group_size/2);
+        uint32_t offset = j & (half_group_size - 1); // j%(half_group_size);
+        uint32_t index1 = (group << i + 1) + offset;
+        uint32_t index2 = index1 + half_group_size;
+        gl64_t factor = twiddles[offset * (domain_size >> i + 1)];
+        gl64_t odd_sub = gl64_t((uint64_t)data[index2 * ncols + col]) * factor;
+        data[index2 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) - odd_sub;
+        data[index1 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) + odd_sub;
+        // DEGUG: assert(data[index2 * ncols + col] < 18446744069414584321ULL);
+        // DEBUG: assert(data[index1 * ncols + col] < 18446744069414584321ULL);
+    }
 }
 
 __global__ void intt_scale(gl64_t *data, gl64_t *r, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, bool extend)
 {
-      uint32_t j = blockIdx.x;    // domain_size
-      uint32_t col = threadIdx.x; // cols
-      uint32_t index = j * ncols + col;
-      gl64_t factor = gl64_t(domain_size_inverse[log_domain_size]);
-      if (extend)
-      {
-          factor = factor * r[domain_size + j];
-      }
-      if (index < domain_size * ncols)
-      {
-          data[index] = gl64_t((uint64_t)data[index]) * factor;
-          // DEBUG: assert(data[index] < 18446744069414584321ULL);
-      }
+    uint32_t j = blockIdx.x;    // domain_size
+    uint32_t col = threadIdx.x; // cols
+    uint32_t index = j * ncols + col;
+    gl64_t factor = gl64_t(domain_size_inverse[log_domain_size]);
+    if (extend)
+    {
+        factor = factor * r[domain_size + j];
+    }
+    if (index < domain_size * ncols)
+    {
+        data[index] = gl64_t((uint64_t)data[index]) * factor;
+        // DEBUG: assert(data[index] < 18446744069414584321ULL);
+    }
+}
+
+__global__ void reverse_permutation_new(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
+{
+    uint64_t row = blockIdx.x;
+    uint64_t col = threadIdx.x;
+    uint64_t domain_size = 1 << log_domain_size;
+
+    for (uint64_t r = row; r < domain_size; r += gridDim.x)
+    {
+        uint64_t rowr = __brev(r) >> (32 - log_domain_size);
+        if (rowr > r)
+        {
+            for (uint64_t c = col; c < ncols; c += blockDim.x)
+            {
+                gl64_t tmp = data[r * ncols + c];
+                data[r * ncols + c] = data[rowr * ncols + c];
+                data[rowr * ncols + c] = tmp;
+            }
+        }
+    }
 }
 
 __global__ void reverse_permutation(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
@@ -286,13 +307,13 @@ __global__ void init_r_small_size(gl64_t *r, uint32_t log_domain_size)
 
 __global__ void init_r_first_step(gl64_t *r, uint32_t log_domain_size)
 {
-  uint32_t start = 1 << log_domain_size;
-  r[start] = gl64_t::one();
-  // init first 4097 elements and then init others in parallel
-  for (uint32_t i = start + 1; i <= start + (1 << 12); i++)
-  {
-      r[i] = r[i - 1] * gl64_t(SHIFT);
-  }
+    uint32_t start = 1 << log_domain_size;
+    r[start] = gl64_t::one();
+    // init first 4097 elements and then init others in parallel
+    for (uint32_t i = start + 1; i <= start + (1 << 12); i++)
+    {
+        r[i] = r[i - 1] * gl64_t(SHIFT);
+    }
 }
 
 __global__ void init_r_second_step(gl64_t *r, uint32_t log_domain_size)
@@ -328,7 +349,7 @@ void ntt_cuda(cudaStream_t stream, gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles
 
     dim3 blockDim;
     dim3 gridDim;
-    if (domain_size > TPB_NTT)
+    /*if (domain_size > TPB_NTT)
     {
         blockDim = dim3(TPB_NTT);
         gridDim = dim3(domain_size / TPB_NTT);
@@ -337,24 +358,29 @@ void ntt_cuda(cudaStream_t stream, gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles
     {
         blockDim = dim3(domain_size);
         gridDim = dim3(1);
-    }
-   /*uint32_t total_elements = (1 << log_domain_size) * ncols;
-   dim3 blockDim(TPB_NTT_x);
-   dim3 gridDim((total_elements + TPB_NTT_x - 1) / TPB_NTT_x);*/
+    }*/
+    /*uint32_t total_elements = (1 << log_domain_size) * ncols;
+    dim3 blockDim(TPB_NTT_x);
+    dim3 gridDim((total_elements + TPB_NTT_x - 1) / TPB_NTT_x);*/
 
-   /*dim3 blockDim(TPB_NTT_x, TPB_NTT_y);
-   dim3 gridDim((ncols + TPB_NTT_x - 1) / TPB_NTT_x, ((1 << log_domain_size) + TPB_NTT_y - 1) / TPB_NTT_y);
+    /*dim3 blockDim(TPB_NTT_x, TPB_NTT_y);
+    dim3 gridDim((ncols + TPB_NTT_x - 1) / TPB_NTT_x, ((1 << log_domain_size) + TPB_NTT_y - 1) / TPB_NTT_y);
 
-    printf("Grid dimensions: (%d, %d)\n", gridDim.x, gridDim.y);
-    printf("Block dimensions: (%d, %d)\n", blockDim.x, blockDim.y);*/
+     printf("Grid dimensions: (%d, %d)\n", gridDim.x, gridDim.y);
+     printf("Block dimensions: (%d, %d)\n", blockDim.x, blockDim.y);*/
+    blockDim = dim3(TPB_NTT);
+    gridDim = dim3(8192);
+
+    std::cout << "goal 3: " << log_domain_size << " " << ncols << " " << gridDim.x << " " << blockDim.x << std::endl;
 
 #ifdef GPU_TIMING
+    cudaDeviceSynchronize();
     TimerStart(NTT_Core_ReversePermutation);
 #endif
-    reverse_permutation<<<gridDim, blockDim, 0, stream>>>(data, log_domain_size, ncols);
+    reverse_permutation_new<<<gridDim, blockDim, 0>>>(data, log_domain_size, ncols);
     CHECKCUDAERR(cudaGetLastError());
 #ifdef GPU_TIMING
-    cudaStreamSynchronize(stream);
+    cudaDeviceSynchronize();
     TimerStopAndLog(NTT_Core_ReversePermutation);
 #endif
 
@@ -364,27 +390,29 @@ void ntt_cuda(cudaStream_t stream, gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles
         ptr_twiddles = inv_twiddles;
     }
 #ifdef GPU_TIMING
+    cudaDeviceSynchronize();
     TimerStart(NTT_Core_BRNTTGroup);
 #endif
     for (uint32_t i = 0; i < log_domain_size; i++)
     {
-        br_ntt_group<<<domain_size / 2, ncols, 0, stream>>>(data, ptr_twiddles, i, domain_size, ncols);
+        br_ntt_group<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
         CHECKCUDAERR(cudaGetLastError());
     }
 #ifdef GPU_TIMING
-    cudaStreamSynchronize(stream);
+    cudaDeviceSynchronize();
     TimerStopAndLog(NTT_Core_BRNTTGroup);
 #endif
 
     if (inverse)
     {
 #ifdef GPU_TIMING
+        cudaDeviceSynchronize();
         TimerStart(NTT_Core_INTTScale);
 #endif
-        intt_scale<<<domain_size, ncols, 0, stream>>>(data, r, domain_size, log_domain_size, ncols, extend);
+        intt_scale<<<domain_size, ncols, 0>>>(data, r, domain_size, log_domain_size, ncols, extend);
         CHECKCUDAERR(cudaGetLastError());
 #ifdef GPU_TIMING
-        cudaStreamSynchronize(stream);
+        cudaDeviceSynchronize();
         TimerStopAndLog(NTT_Core_INTTScale);
 #endif
     }
