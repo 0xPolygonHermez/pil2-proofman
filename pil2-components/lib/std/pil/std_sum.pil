@@ -94,7 +94,7 @@ private function init_proof_containers_sum(const int name, const int opids[]) {
     container proof.std.gsum {
         // Used for final checks
         int opids_count = 0;
-        int opids[100];
+        int opids[ARRAY_SIZE];
 
         // Resulting sum of every airgroup and every air
         // It is the accumulation of each partial sum that each air 
@@ -103,13 +103,13 @@ private function init_proof_containers_sum(const int name, const int opids[]) {
 
         // Direct-related data, used to update `gsum` at the proof level
         int direct_gsum_nargs = 0;
-        expr direct_gsum_s[100];
-        expr direct_gsum_e[100];
+        expr direct_gsum_s[ARRAY_SIZE];
+        expr direct_gsum_e[ARRAY_SIZE];
 
         // For global hints
         int air_count = 0;
-        int airgroup_ids[100];
-        int air_ids[100];
+        int airgroup_ids[ARRAY_SIZE];
+        int air_ids[ARRAY_SIZE];
     }
 
     // Opid-specific data
@@ -128,14 +128,14 @@ private function init_air_containers_sum(const int name) {
     // AIR-specific data
     container air.std.gsum {
         int gsum_nargs = 0;
-        expr gsum_s[100];
-        expr gsum_e[100];
-        int gsum_t[100]; // Used for optimization
+        expr gsum_s[ARRAY_SIZE];
+        expr gsum_e[ARRAY_SIZE];
+        int gsum_t[ARRAY_SIZE]; // Used for optimization
 
         // Direct-related data, used to update `gsum` at the air level
         int direct_gsum_nargs = 0;
-        expr direct_gsum_s[100];
-        expr direct_gsum_e[100];
+        expr direct_gsum_s[ARRAY_SIZE];
+        expr direct_gsum_e[ARRAY_SIZE];
     }
 }
 

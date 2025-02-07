@@ -307,7 +307,7 @@ function range_check_id(const int min, const int max, const int predefined = 0):
 
     container air.std.rcid alias rcid {
         int opids_count_id = 0;
-        int opids_id[100];
+        int opids_id[ARRAY_SIZE];
         int called = 0;
     }
 
@@ -395,15 +395,15 @@ private function opid_process(const int min, const int max, const int predefined
 
         // FIX: dynamic arrays not ready
         int opids_count = 0;
-        int opids[100];
-        int predefineds[100];
-        int mins[100];
-        int maxs[100];
+        int opids[ARRAY_SIZE];
+        int predefineds[ARRAY_SIZE];
+        int mins[ARRAY_SIZE];
+        int maxs[ARRAY_SIZE];
 
         // For global hints
         int air_count = 0;
-        int airgroup_ids[100];
-        int air_ids[100];
+        int airgroup_ids[ARRAY_SIZE];
+        int air_ids[ARRAY_SIZE];
     }
 
     container airgroup.std.rc {

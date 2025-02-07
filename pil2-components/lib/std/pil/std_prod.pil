@@ -89,7 +89,7 @@ private function init_proof_containers_prod(const int name, const int opid) {
     container proof.std.gprod {
         // Used for final checks
         int opids_count = 0;
-        int opids[100];
+        int opids[ARRAY_SIZE];
 
         // Resulting product of every airgroup and every air
         // It is the accumulation of each partial product that each air 
@@ -98,17 +98,17 @@ private function init_proof_containers_prod(const int name, const int opid) {
 
         // Direct-related data, used to update `gprod` at the proof level
         int direct_gprod_assumes_count = 0;
-        expr direct_gprod_assumes_sel[100];
-        expr direct_gprod_assumes[100];
+        expr direct_gprod_assumes_sel[ARRAY_SIZE];
+        expr direct_gprod_assumes[ARRAY_SIZE];
 
         int direct_gprod_proves_count = 0;
-        expr direct_gprod_proves_sel[100];
-        expr direct_gprod_proves[100];
+        expr direct_gprod_proves_sel[ARRAY_SIZE];
+        expr direct_gprod_proves[ARRAY_SIZE];
 
         // For global hints
         int air_count = 0;
-        int airgroup_ids[100];
-        int air_ids[100];
+        int airgroup_ids[ARRAY_SIZE];
+        int air_ids[ARRAY_SIZE];
     }
 
     // Opid-specific data
@@ -126,25 +126,25 @@ private function init_air_containers_prod(const int name) {
     container air.std.gprod {
         // Assumes and proves of the air
         int gprod_assumes_count = 0;
-        expr gprod_assumes_sel[100];
-        expr gprod_assumes[100];
+        expr gprod_assumes_sel[ARRAY_SIZE];
+        expr gprod_assumes[ARRAY_SIZE];
 
         int gprod_proves_count = 0;
-        expr gprod_proves_sel[100];
-        expr gprod_proves[100];
+        expr gprod_proves_sel[ARRAY_SIZE];
+        expr gprod_proves[ARRAY_SIZE];
 
         int gprod_free_count = 0;
-        expr gprod_free_sel[100];
-        expr gprod_free_expr[100];
+        expr gprod_free_sel[ARRAY_SIZE];
+        expr gprod_free_expr[ARRAY_SIZE];
 
         // Direct-related data, used to update `gprod` at the air level
         int direct_gprod_assumes_count = 0;
-        expr direct_gprod_assumes_sel[100];
-        expr direct_gprod_assumes[100];
+        expr direct_gprod_assumes_sel[ARRAY_SIZE];
+        expr direct_gprod_assumes[ARRAY_SIZE];
 
         int direct_gprod_proves_count = 0;
-        expr direct_gprod_proves_sel[100];
-        expr direct_gprod_proves[100];
+        expr direct_gprod_proves_sel[ARRAY_SIZE];
+        expr direct_gprod_proves[ARRAY_SIZE];
     }
 }
 

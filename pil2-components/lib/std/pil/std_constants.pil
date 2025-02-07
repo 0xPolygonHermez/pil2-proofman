@@ -1,6 +1,14 @@
 require "baby_bear.pil";
 require "goldilocks.pil";
 
+// FIX: dynamic arrays not ready yet
+// Set the array size across the library
+int ARRAY_SIZE = 500;
+
+function set_array_size(const int limit) {
+    ARRAY_SIZE = limit;
+}
+
 /*
 Available PIOPs:
 

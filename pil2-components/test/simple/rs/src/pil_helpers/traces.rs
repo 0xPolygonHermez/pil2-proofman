@@ -9,6 +9,8 @@ pub use proofman_macros::values;
 
 use std::fmt;
 
+use rayon::prelude::*;
+
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
@@ -26,7 +28,7 @@ pub const SIMPLE_RIGHT_AIR_IDS: &[usize] = &[1];
 
   
 trace!(SimpleLeftFixed<F> {
- __L1: F,
+ __L1__: F,
 },  0, 0, 4 );
 
 trace!(SimpleLeftTrace<F> {
@@ -34,7 +36,7 @@ trace!(SimpleLeftTrace<F> {
 },  0, 0, 4 );
 
 trace!(SimpleRightFixed<F> {
- __L1: F,
+ __L1__: F,
 },  0, 1, 4 );
 
 trace!(SimpleRightTrace<F> {
