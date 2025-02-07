@@ -158,9 +158,42 @@ __global__ void fillLEv(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t W_,
     }
 }
 
-void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers)
+__global__ void fillLEv_2d(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, gl64_t *d_trace, uint64_t N)
 {
 
+    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t k = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i < nOpeningPoints && k < N)
+    {
+        gl64_t w(1);
+        Goldilocks3GPU::Element xi;
+        Goldilocks3GPU::Element xiShifted;
+        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
+        gl64_t *LEv = (gl64_t *)d_trace + LEv_offset;
+        gl64_t W(W_);
+        gl64_t shift(shift_);
+        gl64_t invShift = shift.reciprocal();
+        for (uint64_t j = 0; j < openingAbs; ++j)
+        {
+            w *= W;
+        }
+
+        if (d_openingPoints[i] < 0)
+        {
+            w = w.reciprocal();
+        }
+        Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), w);
+        Goldilocks3GPU::mul(xiShifted, xi, invShift);
+        Goldilocks3GPU::Element &xiShiftedPow = Goldilocks3GPU::pow(xiShifted, k);
+        LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION] = xiShiftedPow[0];
+        LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 1] = xiShiftedPow[1];
+        LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 2] = xiShiftedPow[2];
+    }
+}
+
+void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers)
+{
+    cudaDeviceSynchronize();
     double time = omp_get_wtime();
     uint64_t N = 1 << nBits;
 
@@ -171,9 +204,13 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, u
     cudaMalloc(&d_openingPoints, nOpeningPoints * sizeof(int64_t));
     cudaMemcpy(d_openingPoints, openingPoints, nOpeningPoints * sizeof(int64_t), cudaMemcpyHostToDevice);
 
-    dim3 nThreads(32);
+    /*dim3 nThreads(32);
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x);
-    fillLEv<<<nBlocks, nThreads>>>(LEv_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, d_buffers->d_trace, N);
+    fillLEv<<<nBlocks, nThreads>>>(LEv_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, d_buffers->d_trace, N);*/
+    dim3 nThreads(1, 64);
+    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (N + nThreads.y - 1) / nThreads.y);
+    fillLEv_2d<<<nBlocks, nThreads>>>(LEv_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, d_buffers->d_trace, N);
+    cudaDeviceSynchronize();
     time = omp_get_wtime() - time;
     std::cout << "LEv inplace: " << time << std::endl;
 
