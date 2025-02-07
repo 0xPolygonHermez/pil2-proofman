@@ -111,7 +111,7 @@ void NTT_Goldilocks::computeQ_inplace(uint64_t **d_tree, uint64_t offset_cmQ, ui
     CHECKCUDAERR(cudaMemcpy(d_S, S, qDeg * sizeof(gl64_t), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time1 = omp_get_wtime();
-    std::cout << "      PUNT rick Time for S cudaMalloc: " << time1 - time << std::endl;
+    std::cout << "      check rick Time for S cudaMalloc: " << time1 - time << std::endl;
     time = time1;
     if (ncols == 0 || NExtended == 0)
     {
@@ -127,7 +127,7 @@ void NTT_Goldilocks::computeQ_inplace(uint64_t **d_tree, uint64_t offset_cmQ, ui
     CHECKCUDAERR(cudaMemset(d_buffers->d_inverseTwiddleFactors, 0, NExtended * sizeof(uint64_t)));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      PUNT rick Time for cudaMalloc: " << time1 - time << std::endl;
+    std::cout << "      check rick Time for cudaMalloc: " << time1 - time << std::endl;
 
     time = time1;
     // Init twiddle factors
@@ -135,7 +135,7 @@ void NTT_Goldilocks::computeQ_inplace(uint64_t **d_tree, uint64_t offset_cmQ, ui
     init_twiddle_factors(d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2ext);
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      PUNT rick Time for init_twiddle_factors: " << time1 - time << std::endl;
+    std::cout << "      check rick Time for init_twiddle_factors: " << time1 - time << std::endl;
 
     // Intt
     time = time1;
@@ -143,7 +143,7 @@ void NTT_Goldilocks::computeQ_inplace(uint64_t **d_tree, uint64_t offset_cmQ, ui
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      PUNT rick Time for ntt_cuda: " << time1 - time << std::endl;
+    std::cout << "      check rick Time for ntt_cuda: " << time1 - time << std::endl;
 
     time = time1;
     dim3 threads(128, 1, 1);
@@ -152,27 +152,27 @@ void NTT_Goldilocks::computeQ_inplace(uint64_t **d_tree, uint64_t offset_cmQ, ui
     CHECKCUDAERR(cudaMemset(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t)));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      PUNT rick Time for applyS: " << time1 - time << std::endl;
+    std::cout << "      check rick Time for applyS: " << time1 - time << std::endl;
 
     time = time1;
     ntt_cuda(gpu_stream[gpu_id], d_cmQ, d_buffers->d_r, d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2ext, ncols, false, false);
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      PUNT rick Time for ntt_cuda: " << time1 - time << std::endl;
+    std::cout << "      check rick Time for ntt_cuda: " << time1 - time << std::endl;
 
     time = time1;
     PoseidonGoldilocks::merkletree_cuda_gpudata_inplace(d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      PUNT rick Time for merkletree_cuda_gpudata: " << time1 - time << std::endl;
+    std::cout << "      check rick Time for merkletree_cuda_gpudata: " << time1 - time << std::endl;
 
     time = time1;
     CHECKCUDAERR(cudaStreamDestroy(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      PUNT rick Time for cudaStreamDestroy: " << time1 - time << std::endl;
+    std::cout << "      check rick Time for cudaStreamDestroy: " << time1 - time << std::endl;
 }
 
 void NTT_Goldilocks::LDE_MerkleTree_GPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer, u_int64_t nphase, bool buildMerkleTree)
@@ -253,7 +253,7 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(uint64_t **d_tree, gl64_t *d_dst
     CHECKCUDAERR(cudaMemset(d_buffers->d_r, 0, ext_size * sizeof(uint64_t)));
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time1 = omp_get_wtime();
-    std::cout << "      rick PUNT Time for cudaMalloc: " << time1 - time << std::endl;
+    std::cout << "      rick check Time for cudaMalloc: " << time1 - time << std::endl;
 
     time = time1;
     int lg2 = log2(size);
@@ -263,33 +263,33 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(uint64_t **d_tree, gl64_t *d_dst
     init_r(d_buffers->d_r, lg2);
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      rick PUNT Time for init_twiddle_factors: " << time1 - time << std::endl;
+    std::cout << "      rick check Time for init_twiddle_factors: " << time1 - time << std::endl;
 
     time = time1;
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_ntt, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      rick PUNT Time for cudaMemcpy: " << time1 - time << std::endl;
+    std::cout << "      rick check Time for cudaMemcpy: " << time1 - time << std::endl;
 
     time = time1;
     ntt_cuda(gpu_stream[gpu_id], d_buffers->d_ntt, d_buffers->d_r, d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2, ncols, true, true);
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      rick PUNT Time for ntt_cuda: " << time1 - time << std::endl;
+    std::cout << "      rick check Time for ntt_cuda: " << time1 - time << std::endl;
 
     time = time1;
     ntt_cuda(gpu_stream[gpu_id], d_buffers->d_ntt, d_buffers->d_r, d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2ext, ncols, false, false);
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      rick PUNT Time for ntt_cuda: " << time1 - time << std::endl;
+    std::cout << "      rick check Time for ntt_cuda: " << time1 - time << std::endl;
 
     time = time1;
     CHECKCUDAERR(cudaMemcpy(d_dst_ntt_, d_buffers->d_ntt, ext_size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      rick PUNT Time for cudaMemcpy: " << time1 - time << std::endl;
+    std::cout << "      rick check Time for cudaMemcpy: " << time1 - time << std::endl;
 
     time = time1;
 
@@ -297,20 +297,22 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(uint64_t **d_tree, gl64_t *d_dst
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      rick PUNT Time for merkletree_cuda_gpudata: " << time1 - time << std::endl;
+    std::cout << "      rick check Time for merkletree_cuda_gpudata: " << time1 - time << std::endl;
 
     time = time1;
     CHECKCUDAERR(cudaStreamDestroy(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    std::cout << "      rick PUNT Time for cudaStreamDestroy: " << time1 - time << std::endl;
-    std::cout << "             PUNT Total Time: " << time1 - time0 << std::endl;
+    std::cout << "      rick check Time for cudaStreamDestroy: " << time1 - time << std::endl;
+    std::cout << "             check Total Time: " << time1 - time0 << std::endl;
 }
 
 void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers)
 {
 
     gl64_t *dst_src = d_buffers->d_trace + data_offset;
+    cudaDeviceSynchronize();
+    double time_base = omp_get_wtime();
     double time = omp_get_wtime();
     if (ncols == 0 || size == 0)
     {
@@ -334,8 +336,10 @@ void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_
     time1 = omp_get_wtime();
     std::cout << "rick Time for init_twiddle_factors: " << time1 - time << std::endl;
 
-    time = time1;
+    cudaDeviceSynchronize();
+    time = omp_get_wtime();
     ntt_cuda(gpu_stream[gpu_id], dst_src, d_buffers->d_r, d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2, ncols, true, false);
+    cudaDeviceSynchronize();
     time1 = omp_get_wtime();
     std::cout << "rick Time for ntt_cuda: " << time1 - time << std::endl;
 
@@ -344,6 +348,9 @@ void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_
     time1 = omp_get_wtime();
     std::cout << "rick Time for cudaStreamDestroy: " << time1 - time << std::endl;
     time = time1;
+    cudaDeviceSynchronize();
+    time1 = omp_get_wtime();
+    std::cout << "rick Time for INTT dins: " << time1 - time_base << std::endl;
 }
 
 void NTT_Goldilocks::offloadNTT(Goldilocks::Element *dst, gl64_t *d_src, uint64_t offset_d_src, u_int64_t size)

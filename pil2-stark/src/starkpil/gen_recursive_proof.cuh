@@ -177,9 +177,11 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, u
     time = omp_get_wtime() - time;
     std::cout << "LEv inplace: " << time << std::endl;
 
+    cudaDeviceSynchronize();
     time = omp_get_wtime();
     NTT_Goldilocks ntt(N);
     ntt.INTT_inplace(LEv_offset, N, FIELD_EXTENSION * nOpeningPoints, d_buffers);
+    cudaDeviceSynchronize();
     time = omp_get_wtime() - time;
     std::cout << "INTT: " << time << std::endl;
 }
@@ -840,8 +842,9 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time = omp_get_wtime();
-    std::cout << "Rick fins PUNT1 " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
+    std::cout << "Rick fins PUNT1 (pre-process) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = omp_get_wtime();
+
     //--------------------------------
     // 0.- Add const root and publics to transcript
     //--------------------------------
@@ -864,10 +867,9 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     }
     TimerStopAndLog(STARK_STEP_0);
     CHECKCUDAERR(cudaDeviceSynchronize());
-
     time = omp_get_wtime();
-    std::cout << "Rick fins PUNT2 " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
+    std::cout << "Rick fins PUNT2 (step0) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = omp_get_wtime();
 
     TimerStart(STARK_STEP_1);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -881,23 +883,20 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     TimerStart(STARK_COMMIT_STAGE_1);
     starks.commitStage_inplace(1, d_buffers->d_witness, d_buffers->d_trace, (uint64_t **)(&d_trees[0].nodes), d_buffers);
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT3 " << time - time0 << std::endl;
-    offloadCommit(1, starks.treesGL, trace, d_buffers->d_trace, (uint64_t *)d_trees[0].nodes, proof, setupCtx);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT3.1 " << time - time0 << std::endl;
-    starks.addTranscript(transcript, &proof.proof.roots[0][0], nFieldElements);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT3.2 " << time - time0 << std::endl;
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT4 " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
 
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT3 (step1) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = omp_get_wtime();
+
+    offloadCommit(1, starks.treesGL, trace, d_buffers->d_trace, (uint64_t *)d_trees[0].nodes, proof, setupCtx);
+    starks.addTranscript(transcript, &proof.proof.roots[0][0], nFieldElements);
     TimerStopAndLog(STARK_STEP_1);
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT4 (offload) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
 
     TimerStart(STARK_STEP_2);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -927,13 +926,14 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
+    std::cout << "Rick fins PUNT5 (pre-expressions) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
+
     expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
 
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    std::cout << "rick calculateExpressions time: " << time << std::endl;
     time = omp_get_wtime();
-    std::cout << "Rick fins PUNT5" << time - time0 << " " << time - time_prev << std::endl;
+    std::cout << "Rick fins PUNT6 (expressions) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
     Goldilocks3::copy((Goldilocks3::Element *)&gprod[0], &Goldilocks3::one());
@@ -951,6 +951,11 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     uint64_t offset = setupCtx.starkInfo.getTraceOffset("cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
     uint64_t nCols = setupCtx.starkInfo.getTraceNColsSection("cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
 
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT7 (gprod) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
+
     dim3 nThreads(256);
     dim3 nBlocks((N + nThreads.x - 1) / nThreads.x);
     insertTracePol<<<nBlocks, nThreads>>>((Goldilocks::Element *)d_buffers->d_trace, offset, nCols, d_grod, FIELD_EXTENSION, N);
@@ -959,12 +964,12 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     delete den;
     delete gprod;
 
-    time = omp_get_wtime();
-    TimerStart(CALCULATE_IM_POLS);
-    time = omp_get_wtime();
     CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT6 " << time - time0 << " " << time - time_prev << std::endl;
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT8 (upload) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
+
+    TimerStart(CALCULATE_IM_POLS);
 
     std::vector<Dest> dests2;
     for (uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++)
@@ -980,45 +985,37 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
         }
     }
 
-    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests2, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
-
-    TimerStopAndLog(CALCULATE_IM_POLS);
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    std::cout << "rick calculateImPolsExpressions time: " << time << std::endl;
-
     time = omp_get_wtime();
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT7 " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time = omp_get_wtime();
+    std::cout << "Rick fins PUNT9 (pre-expressions) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
 
-    double tima = omp_get_wtime();
+    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests2, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
+    TimerStopAndLog(CALCULATE_IM_POLS);
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT10 (expressions im pols) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
+
     TimerStart(STARK_COMMIT_STAGE_2);
     starks.commitStage_inplace(2, d_buffers->d_witness, d_buffers->d_trace, (uint64_t **)(&d_trees[1].nodes), d_buffers);
-    double timeb = omp_get_wtime();
-    std::cout << "PUNT crida " << timeb - tima << std::endl;
 
-    time = omp_get_wtime();
     CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT8.1 " << time - time0 << " " << time - time_prev << std::endl;
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT11 (commit) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
     offloadCommit(2, starks.treesGL, trace, d_buffers->d_trace, (uint64_t *)d_trees[1].nodes, proof, setupCtx);
 
-    time = omp_get_wtime();
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT8.2 " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
-
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], nFieldElements);
-
     TimerStopAndLog(STARK_STEP_2);
-
-    time = omp_get_wtime();
     CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT8 " << time - time0 << " " << time - time_prev << std::endl;
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT12 (offload) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
+
     TimerStart(STARK_STEP_Q);
 
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -1028,8 +1025,6 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
         }
     }
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
 
     uint64_t domainSize;
     uint64_t expressionId = setupCtx.starkInfo.cExpId;
@@ -1046,33 +1041,33 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     destStructq.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
     destStructq.dest_gpu = (Goldilocks::Element *)(d_buffers->d_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]);
     std::vector<Dest> dests3 = {destStructq};
-    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests3, domainSize);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    std::cout << "rick calculateExpression time: " << time << std::endl;
 
-    time = omp_get_wtime();
     CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT9 " << time - time0 << " " << time - time_prev << std::endl;
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT13 (Q expressions preparation) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
+
+    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests3, domainSize);
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT14 (Q expressions) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
-    time = omp_get_wtime();
     starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_trace, (uint64_t **)(&d_trees[setupCtx.starkInfo.nStages].nodes), d_buffers);
-    time = omp_get_wtime() - time;
-    std::cout << "rick Q_inplace time: " << time << std::endl;
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
+    std::cout << "Rick fins PUNT15 (Q commit) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
+
     offloadCommit(setupCtx.starkInfo.nStages + 1, starks.treesGL, trace, d_buffers->d_trace, (uint64_t *)d_trees[setupCtx.starkInfo.nStages].nodes, proof, setupCtx);
-    time = omp_get_wtime() - time;
-    std::cout << "rick Q_offloadCommit time: " << time << std::endl;
+
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], nFieldElements);
     TimerStopAndLog(STARK_STEP_Q);
 
-    time = omp_get_wtime();
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT9 " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
     TimerStart(STARK_STEP_EVALS);
 
     uint64_t xiChallengeIndex = 0;
@@ -1089,16 +1084,25 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
     uint64_t LEv_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("LEv", true)];
 
+    CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
-    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.mapOffsets[make_pair("LEv", true)], setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers);
-    time = omp_get_wtime() - time;
-    std::cout << "rick computeLEv time: " << time << std::endl;
-    time = omp_get_wtime();
-    evmap_inplace(params, d_params, LEv_offset, proof, &starks, d_buffers);
-    time = omp_get_wtime() - time;
-    std::cout << "rick evmap_inplace time: " << time << std::endl;
+    std::cout << "Rick fins PUNT16 (Q offload) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
 
+    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.mapOffsets[make_pair("LEv", true)], setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers);
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
+    std::cout << "Rick fins PUNT17 (LEv) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
+
+    evmap_inplace(params, d_params, LEv_offset, proof, &starks, d_buffers);
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT18 (Evmap) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
+
     if (!setupCtx.starkInfo.starkStruct.hashCommits)
     {
         starks.addTranscriptGL(transcript, evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
@@ -1118,14 +1122,9 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
             starks.getChallenge(transcript, challenges[i * FIELD_EXTENSION]);
         }
     }
-    time = omp_get_wtime() - time;
-    std::cout << "rick evals-challenges time: " << time << std::endl;
 
     TimerStopAndLog(STARK_STEP_EVALS);
-    time = omp_get_wtime();
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT10 " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
+
     //--------------------------------
     // 6. Compute FRI
     //--------------------------------
@@ -1135,10 +1134,18 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     uint64_t xDivXSub_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)];
     // params.xDivXSub = &trace[xDivXSub_offset];
     d_params.xDivXSub = (Goldilocks::Element *)(d_buffers->d_trace + xDivXSub_offset);
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
+    std::cout << "Rick fins PUNT19 (transition) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
+
     calculateXDivXSub_inplace(xDivXSub_offset, xiChallenge, setupCtx, d_buffers);
-    time = omp_get_wtime() - time;
-    std::cout << "rick calculateXDivXSub time: " << time << std::endl;
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT20 (xDivxSub) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
 
     // FRI expressions
     expressionId = setupCtx.starkInfo.friExpId;
@@ -1155,14 +1162,20 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     destStructf.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
     destStructf.dest_gpu = (Goldilocks::Element *)(d_buffers->d_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
     std::vector<Dest> destsf = {destStructf};
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT21 (pre-expressions) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
+
     expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsf, domainSize);
 
-    TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
-
-    time = omp_get_wtime();
     CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT11 " << time - time0 << " " << time - time_prev << std::endl;
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT22 (expressions FRI) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
+
+    TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
     uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
@@ -1200,17 +1213,11 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     }
     TimerStopAndLog(STARK_FRI_FOLDING);
 
-    time = omp_get_wtime();
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    std::cout << "Rick fins PUNT12 " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
-
     TimerStart(STARK_FRI_QUERIES);
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
     TranscriptType transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
-    time = omp_get_wtime() - time;
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     proveQueries_inplace(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, d_trees, nTrees, d_buffers);
@@ -1226,6 +1233,11 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     TimerStopAndLog(STARK_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime();
+    std::cout << "Rick fins PUNT23 (FRI) " << time - time0 << " " << time - time_prev << std::endl;
+    time_prev = time;
 
     delete challenges;
     delete evals;
