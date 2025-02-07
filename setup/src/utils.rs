@@ -123,7 +123,7 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                     "stageId": stage_id,
                     "dim": dim,
                     "airId": s["airId"],
-                    "airgroupId": s["airGroupId"],
+                    "airGroupId": s["airGroupId"],
                 });
 
                 if s_type == 10 {
@@ -179,7 +179,7 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 "name": s["name"],
                 "type": "airgroupvalue",
                 "id": s["id"],
-                "airgroupId": s["airGroupId"],
+                "airGroupId": s["airGroupId"],
                 "dim": 3
             });
 
@@ -197,7 +197,7 @@ pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Valu
                 "name": s["name"],
                 "type": "airvalue",
                 "id": s["id"],
-                "airgroupId": s["airGroupId"]
+                "airGroupId": s["airGroupId"]
             });
 
             if !global {
@@ -240,7 +240,7 @@ fn generate_multi_array_symbols(
             "stageId": s["id"],
             "dim": dim,
             "airId": s["airId"],
-            "airgroupId": s["airGroupId"]
+            "airGroupId": s["airGroupId"]
         }));
         return;
     }
@@ -560,7 +560,7 @@ pub fn format_expression(
             let airgroup_id = exp[op].get("airGroupId").and_then(|v| v.as_u64()).unwrap_or(0);
             let air_id = exp[op].get("airId").and_then(|v| v.as_u64()).unwrap_or(0);
 
-            let mut res = json!({ "op": col_type, "id": id, "stageId": stage_id, "rowOffset": row_offset, "stage": stage, "dim": dim, "airgroupId": airgroup_id, "airId": air_id });
+            let mut res = json!({ "op": col_type, "id": id, "stageId": stage_id, "rowOffset": row_offset, "stage": stage, "dim": dim, "airGroupId": airgroup_id, "airId": air_id });
             if op == "customCol" {
                 res["commitId"] = json!(commit_id);
             }
@@ -575,7 +575,7 @@ pub fn format_expression(
             let air_id = exp[op].get("airId").and_then(|v| v.as_u64()).unwrap_or(0);
 
             store = true;
-            json!({ "op": "const", "id": id, "rowOffset": row_offset, "stage": 0, "dim": 1, "airgroupId": airgroup_id, "airId": air_id })
+            json!({ "op": "const", "id": id, "rowOffset": row_offset, "stage": 0, "dim": 1, "airGroupId": airgroup_id, "airId": air_id })
         }
         "publicValue" => {
             store = true;
@@ -639,7 +639,7 @@ pub fn format_expression(
                     .unwrap_or(0)
             };
             store = true;
-            json!({ "op": "airgroupvalue", "id": id, "airgroupId": exp[op]["airGroupId"], "dim": 3, "stage": stage })
+            json!({ "op": "airgroupvalue", "id": id, "airGroupId": exp[op]["airGroupId"], "dim": 3, "stage": stage })
         }
         "operation" => format_expression(&exp["operation"], pilout, symbols, save_symbols, global),
         "operand" => format_expression(&exp["operand"], pilout, symbols, save_symbols, global),
@@ -937,7 +937,7 @@ pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols
     if let Some(global_hints) = pilout.get("hints").and_then(|h| h.as_array()).map(|hints| {
         hints
             .iter()
-            .filter(|h| h.get("airId").is_none() && h.get("airgroupId").is_none())
+            .filter(|h| h.get("airId").is_none() && h.get("airGroupId").is_none())
             .cloned()
             .collect::<Vec<Value>>()
     }) {

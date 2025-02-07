@@ -15,12 +15,12 @@ pub fn generate_pil1_polynomials(
     let dim = 3;
     let e = ExpressionOps::new(stage, dim);
 
-    res.insert("airgroupId".to_string(), json!(0));
+    res.insert("airGroupId".to_string(), json!(0));
     res.insert("airId".to_string(), json!(0));
 
     if let Some(opts) = options {
-        if let Some(airgroup_id) = opts.get("airgroupId") {
-            res.insert("airgroupId".to_string(), airgroup_id.clone());
+        if let Some(airgroup_id) = opts.get("airGroupId") {
+            res.insert("airGroupId".to_string(), airgroup_id.clone());
         }
         if let Some(air_id) = opts.get("airId") {
             res.insert("airId".to_string(), air_id.clone());
@@ -59,7 +59,7 @@ pub fn generate_pil1_polynomials(
                         "polId": pol_id,
                         "stage": stage,
                         "dim": 1,
-                        "airgroupId": res["airgroupId"],
+                        "airGroupId": res["airGroupId"],
                         "airId": res["airId"]
                     }));
 
@@ -75,7 +75,7 @@ pub fn generate_pil1_polynomials(
                     "polId": pol_id,
                     "stage": stage,
                     "dim": 1,
-                    "airgroupId": res["airgroupId"],
+                    "airGroupId": res["airGroupId"],
                     "airId": res["airId"]
                 }));
 

@@ -19,7 +19,7 @@ pub fn generate_libs_polynomials(
     pil.insert("nCm2".to_string(), json!(0));
     pil.insert("nCm3".to_string(), json!(0));
 
-    let airgroup_id = res["airgroupId"].as_u64().unwrap();
+    let airgroup_id = res["airGroupId"].as_u64().unwrap();
     let air_id = res["airId"].as_u64().unwrap();
 
     let mut challenge_sets: Vec<Vec<Value>> = Vec::new();

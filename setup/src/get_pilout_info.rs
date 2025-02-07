@@ -6,7 +6,7 @@ use std::collections::HashMap;
 pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String, Value>) -> HashMap<String, Value> {
     println!("get_pilout_info keys: {:?}", pilout.keys());
     res.insert("airId".to_string(), pilout["airId"].clone());
-    res.insert("airgroupId".to_string(), pilout["airGroupId"].clone());
+    res.insert("airGroupId".to_string(), pilout["airGroupId"].clone());
 
     let constraints = format_constraints(&json!(pilout));
 
@@ -27,7 +27,7 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
         .filter(|s| {
             let symbol_type = s["type"].as_str().unwrap_or("");
             symbol_type != "witness" && symbol_type != "fixed"
-                || (s["airId"] == res["airId"] && s["airgroupId"] == res["airgroupId"])
+                || (s["airId"] == res["airId"] && s["airGroupId"] == res["airGroupId"])
         })
         .cloned()
         .collect::<Vec<Value>>());
@@ -40,14 +40,14 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
         .as_array()
         .unwrap()
         .iter()
-        .filter(|s| s["type"] == "witness" && s["airId"] == res["airId"] && s["airgroupId"] == res["airgroupId"])
+        .filter(|s| s["type"] == "witness" && s["airId"] == res["airId"] && s["airGroupId"] == res["airGroupId"])
         .count();
 
     let fixed_symbols = symbols
         .as_array()
         .unwrap()
         .iter()
-        .filter(|s| s["type"] == "fixed" && s["airId"] == res["airId"] && s["airgroupId"] == res["airgroupId"])
+        .filter(|s| s["type"] == "fixed" && s["airId"] == res["airId"] && s["airGroupId"] == res["airGroupId"])
         .count();
 
     let public_symbols = symbols.as_array().unwrap().iter().filter(|s| s["type"] == "public").count();
@@ -78,7 +78,7 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
         .map(|hints| {
             hints
                 .iter()
-                .filter(|h| h["airId"] == res["airId"] && h["airGroupId"] == res["airgroupId"])
+                .filter(|h| h["airId"] == res["airId"] && h["airGroupId"] == res["airGroupId"])
                 .cloned()
                 .collect::<Vec<Value>>()
         })

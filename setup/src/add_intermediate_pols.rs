@@ -244,7 +244,7 @@ pub fn add_intermediate_polynomials(
             ("dim".to_string(), json!(dim)),
             ("imPol".to_string(), json!(true)),
             ("airId".to_string(), res["airId"].clone()),
-            ("airgroupId".to_string(), res["airgroupId"].clone()),
+            ("airGroupId".to_string(), res["airGroupId"].clone()),
         ]));
 
         let intermediate_expr = e.sub(

@@ -143,7 +143,7 @@ pub fn grand_product_connection(
                 "stage": stage,
                 "dim": std::cmp::max(n_dim, d_dim),
                 "airId": air_id,
-                "airgroupId": airgroup_id,
+                "airGroupId": airgroup_id,
             }));
 
             // Append to hints

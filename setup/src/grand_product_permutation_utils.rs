@@ -148,7 +148,7 @@ pub fn grand_product_permutation(
                 "stage": stage,
                 "dim": std::cmp::max(num_dim, den_dim),
                 "airId": air_id,
-                "airgroupId": airgroup_id,
+                "airGroupId": airgroup_id,
             }));
         }
     }

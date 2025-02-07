@@ -70,8 +70,8 @@ pub fn prepare_pil(
         println!("starkStruct: {:?}", stark_struct);
         if stark_struct["nBits"] != res["pilPower"] {
             panic!(
-                "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",
-                pil["airId"], pil["airgroupId"], stark_struct["nBits"], res["pilPower"]
+                "starkStruct and pilfile have degree mismatch (airId: {} airGroupId: {} starkStruct:{} pilfile:{})",
+                pil["airId"], pil["airGroupId"], stark_struct["nBits"], res["pilPower"]
             );
         }
 

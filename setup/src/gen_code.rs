@@ -47,7 +47,7 @@ pub fn generate_expressions_code(res: &Value, symbols: &[Value], expressions: &[
             code: Vec::new(),
             dom,
             air_id: res["airId"].clone(),
-            airgroup_id: res["airgroupId"].clone(),
+            airgroup_id: res["airGroupId"].clone(),
             opening_points: vec![],
             verifier_evaluations: false,
             ev_map: Vec::new(),
@@ -232,7 +232,7 @@ fn eval_exp(ctx: &mut CodeGenContext, symbols: &[Value], expressions: &[Value], 
             "type": exp["op"],
             "id": exp["id"],
             "dim": exp["dim"],
-            "airgroupId": exp["airgroupId"]
+            "airGroupId": exp["airGroupId"]
         }),
         "xDivXSubXi" => json!({
             "type": "xDivXSubXi",
@@ -273,7 +273,7 @@ pub fn fix_commit_pol(r: &mut Value, ctx: &mut CodeGenContext, symbols: &[Value]
         s["type"] == "witness"
             && s["expId"] == r["id"]
             && s["airId"] == ctx.air_id
-            && s["airgroupId"] == ctx.airgroup_id
+            && s["airGroupId"] == ctx.airgroup_id
     }) {
         if symbol["imPol"].as_bool().unwrap_or(false)
             && (ctx.dom == "ext"
@@ -450,7 +450,7 @@ pub fn generate_constraints_debug_code(
             code: Vec::new(),
             dom: "n".to_string(),
             air_id: res["airId"].clone(),
-            airgroup_id: res["airgroupId"].clone(),
+            airgroup_id: res["airGroupId"].clone(),
             ..Default::default()
         };
 
@@ -504,7 +504,7 @@ pub fn generate_constraint_polynomial_verifier_code(
         ev_map: Vec::new(),
         dom: "n".to_string(),
         air_id: res["airId"].clone(),
-        airgroup_id: res["airgroupId"].clone(),
+        airgroup_id: res["airGroupId"].clone(),
         opening_points: res["openingPoints"].as_array().unwrap_or(&vec![]).iter().filter_map(|v| v.as_i64()).collect(),
         symbols_used: Vec::new(),
         verifier_evaluations: true,
