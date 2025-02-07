@@ -581,6 +581,40 @@ pub fn format_expression(
             store = true;
             json!({ "op": "public", "id": exp[op]["idx"], "stage": 1 })
         }
+        "proofValue" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            store = true;
+            json!({ "op": "proofvalue", "id": id })
+        }
+        "airValue" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            let stage = pilout
+                .get("airValues")
+                .and_then(|arr| arr.as_array())
+                .and_then(|arr| arr.get(id as usize))
+                .and_then(|v| v.get("stage"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            let dim = if stage != 1 { 3 } else { 1 };
+
+            store = true;
+            json!({ "op": "airvalue", "id": id, "stage": stage, "dim": dim })
+        }
+        "challenge" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            let stage = exp[op]["stage"].as_u64().unwrap_or(1);
+
+            let challenge_id = id
+                + pilout
+                    .get("numChallenges")
+                    .and_then(|arr| arr.as_array())
+                    .map(|arr| arr.iter().take((stage - 1) as usize).filter_map(|v| v.as_u64()).sum::<u64>())
+                    .unwrap_or(0);
+
+            store = true;
+            json!({ "op": "challenge", "stage": stage, "stageId": id, "id": challenge_id })
+        }
         "airGroupValue" => {
             let id = exp[op]["idx"].as_u64().unwrap_or(0);
             let stage = if !global {
