@@ -298,13 +298,15 @@ pub async fn stark_setup(
     })
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AirGroup {
     pub airgroup_id: usize,
     pub airs: Vec<Air>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Air {
     pub name: String,
     pub air_id: usize,
@@ -313,6 +315,7 @@ pub struct Air {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SetupOptions {
     pub opt_im_pols: bool,
     pub const_tree: PathBuf,
@@ -322,12 +325,14 @@ pub struct SetupOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AirSettings {
     pub stark_struct: Option<StarkStruct>,
     pub final_degree: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum VerificationType {
     GL,
     BN128,
@@ -352,10 +357,11 @@ pub struct StarkStruct {
     pub verification_hash_type: VerificationType,
     pub hash_commits: bool,
     pub steps: Vec<Step>,
-    pub const_root: Option<Value>, // Add this field to store const_root
+    pub const_root: Option<Value>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Step {
     pub n_bits: usize,
 }
