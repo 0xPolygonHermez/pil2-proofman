@@ -477,29 +477,36 @@ pub fn format_expression(
     global: bool,
 ) -> Value {
     println!("exp: {:?}", exp);
+
     if exp.get("op").is_some() {
         return exp.clone();
     }
 
-    let op_key = exp.as_object().unwrap().keys().next().unwrap(); // Borrowed reference to the operator
-    let op = op_key.as_str(); // Convert to &str
+    // Store owned value to prevent temporary being dropped
+    let unknown_op = String::from("unknown");
+    let op_key = exp.as_object().and_then(|obj| obj.keys().next()).unwrap_or(&unknown_op);
+    let op = op_key.as_str();
+
     let mut store = false;
 
-    let formatted_exp = match op.to_lowercase().as_str() {
+    let formatted_exp = match op {
         "expression" => {
-            let id = exp[op]["idx"].as_u64().unwrap_or(0) as usize;
-            let expr_obj = &pilout["expressions"][id];
+            let id = exp[op].get("idx").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if let Some(expr_obj) = pilout.get("expressions").and_then(|e| e.as_array()).and_then(|arr| arr.get(id)) {
+                let unknown_exp_op = String::from("unknown_exp");
+                let exp_op_key = expr_obj.as_object().and_then(|obj| obj.keys().next()).unwrap_or(&unknown_exp_op);
+                let exp_op = exp_op_key.as_str();
+                let exp_op_obj = &expr_obj[exp_op];
 
-            let exp_op_key = expr_obj.as_object().unwrap().keys().next().unwrap();
-            let exp_op = exp_op_key.as_str();
-            let exp_op_obj = &expr_obj[exp_op];
-
-            if exp_op != "mul"
-                && exp_op_obj["lhs"].as_object().unwrap().keys().next().unwrap() != "expression"
-                && exp_op_obj["rhs"].as_object().unwrap().keys().next().unwrap() == "constant"
-                && buf2bint(&exp_op_obj["rhs"]["constant"]["value"]) == 0
-            {
-                return format_expression(&exp_op_obj["lhs"], pilout, symbols, save_symbols, global);
+                if exp_op != "mul"
+                    && exp_op_obj.get("lhs").and_then(|lhs| lhs.as_object()).and_then(|lhs| lhs.keys().next())
+                        != Some(&"expression".to_string())
+                    && exp_op_obj.get("rhs").and_then(|rhs| rhs.as_object()).and_then(|rhs| rhs.keys().next())
+                        == Some(&"constant".to_string())
+                    && buf2bint(&exp_op_obj["rhs"]["constant"]["value"]) == 0
+                {
+                    return format_expression(&exp_op_obj["lhs"], pilout, symbols, save_symbols, global);
+                }
             }
 
             json!({ "op": "exp", "id": id })
@@ -519,26 +526,39 @@ pub fn format_expression(
             "op": "number",
             "value": buf2bint(&exp[op]["value"]).to_string()
         }),
-        "witnesscol" | "customcol" => {
+        "witnessCol" | "customCol" => {
             let col_type = if op == "witnessCol" { "cm" } else { "custom" };
-            let commit_id = if op == "customCol" { exp[op]["commitId"].as_u64() } else { None };
+            let commit_id = if op == "customCol" { exp[op].get("commitId").and_then(|v| v.as_u64()) } else { None };
+
+            // Prevent dropping temporary value by storing vec![] in a variable
+            let empty_vec = vec![];
             let stage_widths = if op == "witnessCol" {
-                &pilout["stage_widths"]
+                pilout.get("stageWidths").and_then(|v| v.as_array()).unwrap_or(&empty_vec)
             } else {
-                &pilout["custom_commits"][commit_id.unwrap() as usize]["stageWidths"]
+                let id = commit_id.unwrap_or(0) as usize;
+                pilout
+                    .get("customCommits")
+                    .and_then(|commits| commits.as_array())
+                    .and_then(|arr| arr.get(id))
+                    .and_then(|commit| commit.get("stageWidths"))
+                    .and_then(|widths| widths.as_array())
+                    .unwrap_or(&empty_vec)
             };
-            let stage_id = exp[op]["colIdx"].as_u64().unwrap();
-            let row_offset = exp[op]["rowOffset"].as_i64().unwrap();
-            let stage = exp[op]["stage"].as_u64().unwrap();
+
+            let stage_id = exp[op].get("colIdx").and_then(|v| v.as_u64()).unwrap_or(0);
+            let row_offset = exp[op].get("rowOffset").and_then(|v| v.as_i64()).unwrap_or(0);
+            let stage = exp[op].get("stage").and_then(|v| v.as_u64()).unwrap_or(1);
 
             let id = stage_id
-                + stage_widths.as_array().unwrap()[..(stage as usize - 1)]
+                + stage_widths
                     .iter()
-                    .map(|v| v.as_u64().unwrap())
+                    .take((stage as usize).saturating_sub(1))
+                    .map(|v| v.as_u64().unwrap_or(0))
                     .sum::<u64>();
+
             let dim = if stage <= 1 { 1 } else { 3 };
-            let airgroup_id = exp[op]["airGroupId"].as_u64().unwrap();
-            let air_id = exp[op]["airId"].as_u64().unwrap();
+            let airgroup_id = exp[op].get("airGroupId").and_then(|v| v.as_u64()).unwrap_or(0);
+            let air_id = exp[op].get("airId").and_then(|v| v.as_u64()).unwrap_or(0);
 
             let mut res = json!({ "op": col_type, "id": id, "stageId": stage_id, "rowOffset": row_offset, "stage": stage, "dim": dim, "airgroupId": airgroup_id, "airId": air_id });
             if op == "customCol" {
@@ -548,59 +568,44 @@ pub fn format_expression(
             store = true;
             res
         }
-        "fixedcol" => {
-            let id = exp[op]["idx"].as_u64().unwrap();
-            let row_offset = exp[op]["rowOffset"].as_i64().unwrap();
-            let airgroup_id = exp[op]["airGroupId"].as_u64().unwrap();
-            let air_id = exp[op]["airId"].as_u64().unwrap();
+        "fixedCol" => {
+            let id = exp[op].get("idx").and_then(|v| v.as_u64()).unwrap_or(0);
+            let row_offset = exp[op].get("rowOffset").and_then(|v| v.as_i64()).unwrap_or(0);
+            let airgroup_id = exp[op].get("airGroupId").and_then(|v| v.as_u64()).unwrap_or(0);
+            let air_id = exp[op].get("airId").and_then(|v| v.as_u64()).unwrap_or(0);
 
             store = true;
             json!({ "op": "const", "id": id, "rowOffset": row_offset, "stage": 0, "dim": 1, "airgroupId": airgroup_id, "airId": air_id })
         }
-        "publicvalue" => {
+        "publicValue" => {
             store = true;
             json!({ "op": "public", "id": exp[op]["idx"], "stage": 1 })
         }
-        "airgroupvalue" => {
-            let id = exp[op]["idx"].as_u64().unwrap();
+        "airGroupValue" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
             let stage = if !global {
-                pilout["airGroupValues"][id as usize]["stage"].as_u64().unwrap()
+                pilout
+                    .get("airGroupValues")
+                    .and_then(|arr| arr.as_array())
+                    .and_then(|arr| arr.get(id as usize))
+                    .and_then(|v| v.get("stage"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
             } else {
-                let airgroup_id = exp[op]["airGroupId"].as_u64().unwrap();
-                pilout["airGroups"][airgroup_id as usize]["airGroupValues"][id as usize]["stage"].as_u64().unwrap()
+                let airgroup_id = exp[op]["airGroupId"].as_u64().unwrap_or(0);
+                pilout
+                    .get("airGroups")
+                    .and_then(|groups| groups.as_array())
+                    .and_then(|arr| arr.get(airgroup_id as usize))
+                    .and_then(|group| group.get("airGroupValues"))
+                    .and_then(|values| values.as_array())
+                    .and_then(|arr| arr.get(id as usize))
+                    .and_then(|v| v.get("stage"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
             };
             store = true;
             json!({ "op": "airgroupvalue", "id": id, "airgroupId": exp[op]["airGroupId"], "dim": 3, "stage": stage })
-        }
-        "airvalue" => {
-            let id = exp[op]["idx"].as_u64().unwrap();
-            let stage = pilout["airValues"][id as usize]["stage"].as_u64().unwrap();
-            let dim = if stage != 1 { 3 } else { 1 };
-
-            store = true;
-            json!({ "op": "airvalue", "id": id, "stage": stage, "dim": dim })
-        }
-        "challenge" => {
-            let id = exp[op]["idx"].as_u64().unwrap();
-            let stage = exp[op]["stage"].as_u64().unwrap();
-            let num_challenges = &pilout["numChallenges"];
-
-            let challenge_id = id
-                + num_challenges
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .take((stage - 1) as usize)
-                    .map(|v| v.as_u64().unwrap())
-                    .sum::<u64>();
-
-            store = true;
-            json!({ "op": "challenge", "stage": stage, "stageId": id, "id": challenge_id })
-        }
-        "proofvalue" => {
-            let id = exp[op]["idx"].as_u64().unwrap();
-            store = true;
-            json!({ "op": "proofvalue", "id": id })
         }
         "operation" => format_expression(&exp["operation"], pilout, symbols, save_symbols, global),
         "operand" => format_expression(&exp["operand"], pilout, symbols, save_symbols, global),
