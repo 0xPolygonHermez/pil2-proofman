@@ -34,7 +34,10 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
 
     let air_group_values = pilout.get("airGroupValues").cloned().unwrap_or(json!([]));
 
-    res.insert("pilPower".to_string(), json!(pilout["numRows"].as_u64().map(|n| (n as f64).log2()).unwrap_or(0.0)));
+    res.insert(
+        "pilPower".to_string(),
+        json!(pilout["numRows"].as_u64().map(|n| (n as f64).log2()).unwrap_or(0.0).round() as u32),
+    );
 
     let witness_symbols = symbols
         .as_array()
