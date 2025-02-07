@@ -485,7 +485,7 @@ pub fn format_expression(
     let op = op_key.as_str(); // Convert to &str
     let mut store = false;
 
-    let formatted_exp = match op {
+    let formatted_exp = match op.to_lowercase().as_str() {
         "expression" => {
             let id = exp[op]["idx"].as_u64().unwrap_or(0) as usize;
             let expr_obj = &pilout["expressions"][id];
@@ -519,13 +519,13 @@ pub fn format_expression(
             "op": "number",
             "value": buf2bint(&exp[op]["value"]).to_string()
         }),
-        "witnessCol" | "customCol" => {
+        "witnesscol" | "customcol" => {
             let col_type = if op == "witnessCol" { "cm" } else { "custom" };
             let commit_id = if op == "customCol" { exp[op]["commitId"].as_u64() } else { None };
             let stage_widths = if op == "witnessCol" {
-                &pilout["stageWidths"]
+                &pilout["stage_widths"]
             } else {
-                &pilout["customCommits"][commit_id.unwrap() as usize]["stageWidths"]
+                &pilout["custom_commits"][commit_id.unwrap() as usize]["stageWidths"]
             };
             let stage_id = exp[op]["colIdx"].as_u64().unwrap();
             let row_offset = exp[op]["rowOffset"].as_i64().unwrap();
@@ -548,7 +548,7 @@ pub fn format_expression(
             store = true;
             res
         }
-        "fixedCol" => {
+        "fixedcol" => {
             let id = exp[op]["idx"].as_u64().unwrap();
             let row_offset = exp[op]["rowOffset"].as_i64().unwrap();
             let airgroup_id = exp[op]["airGroupId"].as_u64().unwrap();
@@ -557,11 +557,11 @@ pub fn format_expression(
             store = true;
             json!({ "op": "const", "id": id, "rowOffset": row_offset, "stage": 0, "dim": 1, "airgroupId": airgroup_id, "airId": air_id })
         }
-        "publicValue" => {
+        "publicvalue" => {
             store = true;
             json!({ "op": "public", "id": exp[op]["idx"], "stage": 1 })
         }
-        "airGroupValue" => {
+        "airgroupvalue" => {
             let id = exp[op]["idx"].as_u64().unwrap();
             let stage = if !global {
                 pilout["airGroupValues"][id as usize]["stage"].as_u64().unwrap()
@@ -572,7 +572,7 @@ pub fn format_expression(
             store = true;
             json!({ "op": "airgroupvalue", "id": id, "airgroupId": exp[op]["airGroupId"], "dim": 3, "stage": stage })
         }
-        "airValue" => {
+        "airvalue" => {
             let id = exp[op]["idx"].as_u64().unwrap();
             let stage = pilout["airValues"][id as usize]["stage"].as_u64().unwrap();
             let dim = if stage != 1 { 3 } else { 1 };
@@ -597,11 +597,13 @@ pub fn format_expression(
             store = true;
             json!({ "op": "challenge", "stage": stage, "stageId": id, "id": challenge_id })
         }
-        "proofValue" => {
+        "proofvalue" => {
             let id = exp[op]["idx"].as_u64().unwrap();
             store = true;
             json!({ "op": "proofvalue", "id": id })
         }
+        "operation" => format_expression(&exp["operation"], pilout, symbols, save_symbols, global),
+        "operand" => format_expression(&exp["operand"], pilout, symbols, save_symbols, global),
         _ => panic!("Unknown op: {}", op),
     };
 
