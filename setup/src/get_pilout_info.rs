@@ -68,6 +68,7 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
         })),
     );
 
+    println!("keys: {:?}", pilout.keys());
     let air_hints = pilout["hints"]
         .as_array()
         .map(|hints| {
