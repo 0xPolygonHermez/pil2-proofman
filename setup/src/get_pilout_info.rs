@@ -68,6 +68,10 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
         })),
     );
 
+    let mut pilout = pilout.clone();
+    if !pilout.contains_key("hints") {
+        pilout.insert("hints".to_string(), json!([]));
+    }
     println!("keys: {:?}", pilout.keys());
     let air_hints = pilout["hints"]
         .as_array()
@@ -83,7 +87,7 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
     let mut symbols_vec = symbols.as_array().unwrap().clone();
     let mut expressions_vec = expressions.as_array().unwrap().clone();
 
-    let hints = format_hints(pilout, &air_hints, &mut symbols_vec, &mut expressions_vec, save_symbols, false);
+    let hints = format_hints(&pilout, &air_hints, &mut symbols_vec, &mut expressions_vec, save_symbols, false);
 
     res.insert("customCommits".to_string(), pilout.get("customCommits").cloned().unwrap_or(json!([])));
 

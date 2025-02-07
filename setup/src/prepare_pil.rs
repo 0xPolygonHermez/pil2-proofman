@@ -67,6 +67,7 @@ pub fn prepare_pil(
     if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap() {
         res.insert("starkStruct".to_string(), stark_struct.clone());
 
+        println!("starkStruct: {:?}", stark_struct);
         if stark_struct["nBits"] != res["pilPower"] {
             panic!(
                 "starkStruct and pilfile have degree mismatch (airId: {} airgroupId: {} starkStruct:{} pilfile:{})",

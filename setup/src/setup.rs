@@ -344,6 +344,7 @@ impl VerificationType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StarkStruct {
     pub n_bits: usize,
     pub n_bits_ext: usize,
