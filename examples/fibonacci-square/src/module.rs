@@ -5,7 +5,7 @@ use witness::WitnessComponent;
 use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField64};
 use num_bigint::BigInt;
-
+use rayon::prelude::*;
 use crate::{BuildPublicValues, FibonacciSquareTrace, ModuleAirValues, ModuleTrace};
 
 pub struct Module<F: PrimeField64> {
@@ -21,14 +21,8 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
         Arc::new(Module { inputs: Mutex::new(Vec::new()), std_lib, instance_ids: RwLock::new(Vec::new()) })
     }
 
-    pub fn calculate_module(&self, x: u64, module: u64) -> u64 {
-        let x_mod = x % module;
-
-        let mut inputs = self.inputs.lock().unwrap();
-
-        inputs.push((x, x_mod));
-
-        x_mod
+    pub fn set_inputs(&self, inputs: Vec<(u64, u64)>) {
+        *self.inputs.lock().unwrap() = inputs;
     }
 }
 
@@ -64,7 +58,7 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
                 }
                 let mut x_mods = Vec::new();
 
-                let mut trace = ModuleTrace::new_zeroes();
+                let mut trace = ModuleTrace::new();
 
                 let start = j * num_rows;
                 let end = ((j + 1) * num_rows).min(inputs.len());
@@ -82,12 +76,18 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
                     x_mods.push(x_mod);
                 }
 
+                for i in inputs_slice.len()..num_rows {
+                    trace[i].x = F::zero();
+                    trace[i].q = F::zero();
+                    trace[i].x_mod = F::zero();
+                }
+
                 let mut air_values = ModuleAirValues::<F>::new();
                 air_values.last_segment = F::from_bool(j == num_instances - 1);
 
-                for x_mod in x_mods.iter() {
+                x_mods.par_iter().for_each(|x_mod| {
                     self.std_lib.range_check(F::from_canonical_u64(module - x_mod), F::one(), range);
-                }
+                });
 
                 // Trivial range check for the remaining rows
                 for _ in inputs_slice.len()..trace.num_rows() {

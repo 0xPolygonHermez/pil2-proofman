@@ -34,7 +34,7 @@ where
     fn execute(&self, pctx: Arc<ProofCtx<F>>) {
         let mut rng = rand::thread_rng();
 
-        let mut trace = RangeCheckDynamic2Trace::new_zeroes();
+        let mut trace = RangeCheckDynamic2Trace::new();
         let num_rows = trace.num_rows();
 
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);

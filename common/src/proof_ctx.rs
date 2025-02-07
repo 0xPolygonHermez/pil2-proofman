@@ -3,8 +3,9 @@ use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
 use p3_field::Field;
+use proofman_util::create_buffer_fast;
 
-use crate::{SetupCtx, DistributionCtx, AirInstance, AirInstancesRepository, GlobalInfo, StdMode, VerboseMode};
+use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams, VerboseMode};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -73,10 +74,11 @@ pub struct ProofCtx<F> {
     pub challenges: Values<F>,
     pub buff_helper: Values<F>,
     pub global_info: GlobalInfo,
-    pub air_instance_repo: AirInstancesRepository<F>,
+    pub air_instances: RwLock<HashMap<usize, AirInstance<F>>>,
     pub options: ProofOptions,
     pub weights: HashMap<(usize, usize), u64>,
     pub dctx: RwLock<DistributionCtx>,
+    pub max_prover_buffer_size: u64,
 }
 
 impl<F: Field> ProofCtx<F> {
@@ -99,10 +101,11 @@ impl<F: Field> ProofCtx<F> {
             challenges: Values::new(n_challenges * 3),
             global_challenge: Values::new(3),
             buff_helper: Values::default(),
-            air_instance_repo: AirInstancesRepository::new(),
+            air_instances: RwLock::new(HashMap::new()),
             dctx: RwLock::new(DistributionCtx::new()),
             weights,
             options,
+            max_prover_buffer_size: 0,
         }
     }
 
@@ -123,20 +126,35 @@ impl<F: Field> ProofCtx<F> {
         }
     }
 
+    pub fn set_buff_helper(&mut self, sctx: &SetupCtx<F>) {
+        let mut buff_helper_size = 0;
+        let mut prover_buffer_size = 0;
+
+        for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let setup = sctx.get_setup(airgroup_id, air_id);
+                let buff_helper_prover_size = setup.stark_info.get_buff_helper_size();
+                if buff_helper_prover_size > buff_helper_size {
+                    buff_helper_size = buff_helper_prover_size;
+                }
+
+                if setup.prover_buffer_size > prover_buffer_size {
+                    prover_buffer_size = setup.prover_buffer_size;
+                }
+            }
+        }
+
+        *self.buff_helper.values.write().unwrap() = create_buffer_fast(buff_helper_size);
+        self.max_prover_buffer_size = prover_buffer_size;
+    }
+
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
 
-    pub fn free_instances(&self) {
-        self.air_instance_repo.free();
-    }
-
-    pub fn free_traces(&self) {
-        self.air_instance_repo.free_traces();
-    }
-
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
-        self.air_instance_repo.add_air_instance(air_instance, global_idx);
+        let mut air_instances = self.air_instances.write().unwrap();
+        air_instances.insert(global_idx, air_instance);
     }
 
     pub fn dctx_barrier(&self) {
@@ -346,11 +364,40 @@ impl<F: Field> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
+    pub fn get_air_instance_params(&self, sctx: &SetupCtx<F>, instance_id: usize) -> StepsParams {
+        let air_instances = self.air_instances.read().unwrap();
+        let air_instance = air_instances.get(&instance_id).unwrap();
+
+        let instances = self.dctx_get_instances();
+        let (airgroup_id, air_id) = instances[instance_id];
+        let setup = sctx.get_setup(airgroup_id, air_id);
+
+        StepsParams {
+            trace: air_instance.get_trace_ptr(),
+            aux_trace: air_instance.get_aux_trace_ptr(),
+            public_inputs: self.get_publics_ptr(),
+            proof_values: self.get_proof_values_ptr(),
+            challenges: air_instance.get_challenges_ptr(),
+            airgroup_values: air_instance.get_airgroup_values_ptr(),
+            airvalues: air_instance.get_airvalues_ptr(),
+            evals: air_instance.get_evals_ptr(),
+            xdivxsub: std::ptr::null_mut(),
+            p_const_pols: setup.get_const_ptr(),
+            p_const_tree: setup.get_const_tree_ptr(),
+            custom_commits: air_instance.get_custom_commits_ptr(),
+            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+        }
+    }
+
+    pub fn get_air_instance_trace_ptr(&self, instance_id: usize) -> *mut u8 {
+        self.air_instances.read().unwrap().get(&instance_id).unwrap().get_trace_ptr()
+    }
+
     pub fn get_air_instance_trace(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instance_repo.air_instances.read().unwrap().get(&index).unwrap().get_trace();
+            return self.air_instances.read().unwrap().get(&index).unwrap().get_trace();
         } else {
             panic!(
                 "Air Instance with id {} for airgroup {} and air {} not found",
@@ -363,7 +410,7 @@ impl<F: Field> ProofCtx<F> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instance_repo.air_instances.read().unwrap().get(&index).unwrap().get_air_values();
+            return self.air_instances.read().unwrap().get(&index).unwrap().get_air_values();
         } else {
             panic!(
                 "Air Instance with id {} for airgroup {} and air {} not found",
@@ -381,12 +428,17 @@ impl<F: Field> ProofCtx<F> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instance_repo.air_instances.read().unwrap().get(&index).unwrap().get_airgroup_values();
+            return self.air_instances.read().unwrap().get(&index).unwrap().get_airgroup_values();
         } else {
             panic!(
                 "Air Instance with id {} for airgroup {} and air {} not found",
                 air_instance_id, airgroup_id, air_id
             );
         }
+    }
+
+    pub fn free_instance(&self, instance_id: usize) {
+        let mut air_instances = self.air_instances.write().unwrap();
+        air_instances.remove(&instance_id);
     }
 }

@@ -6,14 +6,9 @@ use colored::*;
 
 use std::sync::Arc;
 
-use proofman_common::{ProofCtx, ProofType, SetupCtx, get_global_constraints_lines_str};
-
-use proofman_hints::aggregate_airgroupvals;
-use proofman_util::{timer_start_info, timer_stop_and_log_info};
+use proofman_common::{ProofCtx, ProofType};
 
 use std::os::raw::c_void;
-
-use crate::verify_global_constraints_proof;
 
 pub fn verify_proof<F: Field>(
     p_proof: *mut c_void,
@@ -53,123 +48,51 @@ pub fn verify_proof<F: Field>(
     )
 }
 
-pub fn verify_basic_proofs<F: Field>(proofs: Vec<*mut c_void>, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> bool {
+pub fn verify_basic_proof<F: Field>(pctx: Arc<ProofCtx<F>>, instance_id: usize, proof: *mut c_void) -> bool {
     const MY_NAME: &str = "Verify  ";
-    timer_start_info!(VERIFYING_BASIC_PROOFS);
     let mut is_valid = true;
 
     let instances = pctx.dctx_get_instances();
-    let my_instances = pctx.dctx_get_my_instances();
 
-    for (idx, instance_id) in my_instances.iter().enumerate() {
-        let (airgroup_id, air_id) = instances[*instance_id];
-        let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
+    let (airgroup_id, air_id) = instances[instance_id];
+    let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
 
-        let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);
+    let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);
 
-        let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-        let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
-        let verkey_path = setup_path.display().to_string() + ".verkey.json";
+    let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
+    let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
+    let verkey_path = setup_path.display().to_string() + ".verkey.json";
 
-        let is_valid_proof = verify_proof(
-            proofs[idx],
-            stark_info_path,
-            expressions_bin_path,
-            verkey_path,
-            Some(pctx.get_publics().clone()),
-            Some(pctx.get_proof_values().clone()),
-            Some(pctx.get_global_challenge().clone()),
+    let is_valid_proof = verify_proof(
+        proof,
+        stark_info_path,
+        expressions_bin_path,
+        verkey_path,
+        Some(pctx.get_publics().clone()),
+        Some(pctx.get_proof_values().clone()),
+        Some(pctx.get_global_challenge().clone()),
+    );
+
+    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+
+    if !is_valid_proof {
+        is_valid = false;
+        log::info!(
+            "{}: ··· {}",
+            MY_NAME,
+            format!("\u{2717} Proof of {}: Instance #{} was not verified", air_name, air_instance_id,)
+                .bright_red()
+                .bold()
         );
-
-        let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-
-        if !is_valid_proof {
-            is_valid = false;
-            log::info!(
-                "{}: ··· {}",
-                MY_NAME,
-                format!("\u{2717} Proof of {}: Instance #{} was not verified", air_name, air_instance_id,)
-                    .bright_red()
-                    .bold()
-            );
-        } else {
-            log::info!(
-                "{}:     {}",
-                MY_NAME,
-                format!("\u{2713} Proof of {}: Instance #{} was verified", air_name, air_instance_id,)
-                    .bright_green()
-                    .bold()
-            );
-        }
-    }
-
-    let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
-        || !pctx.options.debug_info.debug_global_instances.is_empty();
-
-    let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone());
-
-    let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
-    if pctx.dctx_get_rank() == 0 && check_global_constraints {
-        let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
-        let mut valid_global_constraints = true;
-
-        let global_constraints_lines = get_global_constraints_lines_str(sctx.clone());
-
-        for idx in 0..global_constraints.len() {
-            let constraint = global_constraints[idx];
-            let line_str = &global_constraints_lines[idx];
-
-            if constraint.skip {
-                log::debug!("{}:     · Skipping Global Constraint #{} -> {}", MY_NAME, idx, line_str,);
-                continue;
-            }
-
-            let valid = if !constraint.valid { "is invalid".bright_red() } else { "is valid".bright_green() };
-            if constraint.valid {
-                log::debug!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
-            } else {
-                log::info!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
-            }
-            if !constraint.valid {
-                valid_global_constraints = false;
-                if constraint.dim == 1 {
-                    log::info!("{}: ···        \u{2717} Failed with value: {}", MY_NAME, constraint.value[0]);
-                } else {
-                    log::info!(
-                        "{}: ···        \u{2717} Failed with value: [{}, {}, {}]",
-                        MY_NAME,
-                        constraint.value[0],
-                        constraint.value[1],
-                        constraint.value[2]
-                    );
-                }
-            }
-        }
-
-        if valid_global_constraints {
-            log::info!(
-                "{}: ··· {}",
-                MY_NAME,
-                "\u{2713} All global constraints were successfully verified".bright_green().bold()
-            );
-        } else {
-            log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all global constraints were verified".bright_red().bold());
-        }
-
-        if is_valid && valid_global_constraints {
-            log::info!("{}: ··· {}", MY_NAME, "\u{2713} All proofs were verified".bright_green().bold());
-        } else {
-            log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all proofs were verified.".bright_red().bold());
-            is_valid = false;
-        }
-    } else if check_global_constraints {
-        log::info!("{}: ··· {}", MY_NAME, "\u{2713} Skipping global constraints verification".bright_yellow().bold());
-    } else if is_valid {
-        log::info!("{}: ··· {}", MY_NAME, "\u{2713} All proofs were verified".bright_green().bold());
     } else {
-        log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all proofs were verified.".bright_red().bold());
+        log::info!(
+            "{}:     {}",
+            MY_NAME,
+            format!("\u{2713} Proof of {}: Instance #{} was verified", air_name, air_instance_id,)
+                .bright_green()
+                .bold()
+        );
     }
 
-    timer_stop_and_log_info!(VERIFYING_BASIC_PROOFS);
     is_valid
 }

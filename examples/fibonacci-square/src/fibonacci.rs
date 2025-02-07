@@ -46,23 +46,27 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
             let mut a = F::as_canonical_u64(&publics.in1);
             let mut b = F::as_canonical_u64(&publics.in2);
 
-            let mut trace = FibonacciSquareTrace::new_zeroes();
+            let mut trace = FibonacciSquareTrace::new();
 
             trace[0].a = F::from_canonical_u64(a);
             trace[0].b = F::from_canonical_u64(b);
 
+            let mut modules = Vec::new();
             for i in 1..trace.num_rows() {
                 let tmp = b;
-                let result = self.module.calculate_module(a.pow(2) + b.pow(2), module);
+                let result = (a.pow(2) + b.pow(2)) % module;
+                modules.push((a.pow(2) + b.pow(2), result));
                 (a, b) = (tmp, result);
 
                 trace[i].a = F::from_canonical_u64(a);
                 trace[i].b = F::from_canonical_u64(b);
             }
 
+            self.module.set_inputs(modules);
+
             publics.out = trace[trace.num_rows() - 1].b;
 
-            let mut trace_rom = FibonacciSquareRomTrace::new_zeroes();
+            let mut trace_rom = FibonacciSquareRomTrace::new();
 
             for i in 0..trace_rom.num_rows() {
                 trace_rom[i].line = F::from_canonical_u64(3 + i as u64);
@@ -85,7 +89,7 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
         }
     }
 
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) {
+    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
         // let trace = FibonacciSquareTrace::from_vec(_pctx.get_air_instance_trace(0, 0, 0));
         // let fixed = FibonacciSquareFixed::from_vec(_sctx.get_fixed(0, 0));
         // let air_values = FibonacciSquareAirValues::from_vec(pctx.get_air_instance_air_values(0, 0, 0));

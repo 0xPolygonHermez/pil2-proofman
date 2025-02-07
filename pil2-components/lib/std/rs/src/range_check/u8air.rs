@@ -73,7 +73,7 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
         if stage == 1 {
             let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
-            
+
             if !_instance_ids.contains(&instance_id) {
                 return;
             }
@@ -84,11 +84,15 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
                 let buffer = self
                     .multiplicity
                     .iter()
-                    .map(|x| F::from_canonical_u64(x.load(Ordering::Relaxed)))
+                    .map(|x| F::from_canonical_u64(x.swap(0, Ordering::Relaxed)))
                     .collect::<Vec<F>>();
 
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
                 pctx.add_air_instance(air_instance, instance_id);
+            } else {
+                for x in self.multiplicity.iter() {
+                    x.store(0, Ordering::Relaxed);
+                }
             }
         }
     }

@@ -1,14 +1,14 @@
 use proofman_starks_lib_c::{
     get_hint_field_id_c, acc_hint_field_c, acc_mul_hint_fields_c, get_hint_field_c, get_hint_field_sizes_c,
-    get_hint_field_values_c, get_hint_ids_by_name_c, mul_hint_fields_c, print_row_c, set_hint_field_c,
-    update_airgroupvalue_c, n_hint_ids_by_name_c,
+    get_hint_field_values_c, get_hint_ids_by_name_c, mul_hint_fields_c, set_hint_field_c, update_airgroupvalue_c,
+    n_hint_ids_by_name_c,
 };
 
 use std::collections::HashMap;
 use std::ffi::c_void;
 
 use p3_field::Field;
-use proofman_common::{AirInstance, ExtensionField, ProofCtx, SetupCtx, StepsParams};
+use proofman_common::{ExtensionField, ProofCtx, SetupCtx, StepsParams};
 use proofman_util::create_buffer_fast;
 
 use std::ops::{Add, Div, Mul, Sub, AddAssign, DivAssign, MulAssign, SubAssign};
@@ -752,7 +752,7 @@ pub fn get_hint_ids_by_name(p_expressions_bin: *mut std::os::raw::c_void, name: 
 pub fn mul_hint_fields<F: Field + Field>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    instance_id: usize,
     hint_id: usize,
     hint_field_dest: &str,
     hint_field_name1: &str,
@@ -760,23 +760,12 @@ pub fn mul_hint_fields<F: Field + Field>(
     hint_field_name2: &str,
     options2: HintFieldOptions,
 ) -> u64 {
-    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[instance_id];
 
-    let steps_params = StepsParams {
-        trace: air_instance.get_trace_ptr(),
-        aux_trace: air_instance.get_aux_trace_ptr(),
-        public_inputs: pctx.get_publics_ptr(),
-        proof_values: pctx.get_proof_values_ptr(),
-        challenges: air_instance.get_challenges_ptr(),
-        airgroup_values: air_instance.get_airgroup_values_ptr(),
-        airvalues: air_instance.get_airvalues_ptr(),
-        evals: air_instance.get_evals_ptr(),
-        xdivxsub: std::ptr::null_mut(),
-        p_const_pols: setup.get_const_ptr(),
-        p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
-    };
+    let setup = sctx.get_setup(airgroup_id, air_id);
+
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
 
     mul_hint_fields_c(
         (&setup.p_setup).into(),
@@ -794,30 +783,18 @@ pub fn mul_hint_fields<F: Field + Field>(
 pub fn acc_hint_field<F: Field>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    instance_id: usize,
     hint_id: usize,
     hint_field_dest: &str,
     hint_field_airgroupvalue: &str,
     hint_field_name: &str,
     add: bool,
 ) -> (u64, u64) {
-    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[instance_id];
+    let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = StepsParams {
-        trace: air_instance.get_trace_ptr(),
-        aux_trace: air_instance.get_aux_trace_ptr(),
-        public_inputs: pctx.get_publics_ptr(),
-        proof_values: pctx.get_proof_values_ptr(),
-        challenges: air_instance.get_challenges_ptr(),
-        airgroup_values: air_instance.get_airgroup_values_ptr(),
-        airvalues: air_instance.get_airvalues_ptr(),
-        evals: air_instance.get_evals_ptr(),
-        xdivxsub: std::ptr::null_mut(),
-        p_const_pols: setup.get_const_ptr(),
-        p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
-    };
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
 
     acc_hint_field_c(
         (&setup.p_setup).into(),
@@ -840,7 +817,7 @@ pub fn acc_hint_field<F: Field>(
 pub fn acc_mul_hint_fields<F: Field>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    instance_id: usize,
     hint_id: usize,
     hint_field_dest: &str,
     hint_field_airgroupvalue: &str,
@@ -850,23 +827,11 @@ pub fn acc_mul_hint_fields<F: Field>(
     options2: HintFieldOptions,
     add: bool,
 ) -> (u64, u64) {
-    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[instance_id];
+    let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = StepsParams {
-        trace: air_instance.get_trace_ptr(),
-        aux_trace: air_instance.get_aux_trace_ptr(),
-        public_inputs: pctx.get_publics_ptr(),
-        proof_values: pctx.get_proof_values_ptr(),
-        challenges: air_instance.get_challenges_ptr(),
-        airgroup_values: air_instance.get_airgroup_values_ptr(),
-        airvalues: air_instance.get_airvalues_ptr(),
-        evals: air_instance.get_evals_ptr(),
-        xdivxsub: std::ptr::null_mut(),
-        p_const_pols: setup.get_const_ptr(),
-        p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
-    };
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
 
     acc_mul_hint_fields_c(
         (&setup.p_setup).into(),
@@ -892,7 +857,7 @@ pub fn acc_mul_hint_fields<F: Field>(
 pub fn update_airgroupvalue<F: Field>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    instance_id: usize,
     hint_id: usize,
     hint_field_airgroupvalue: &str,
     hint_field_name1: &str,
@@ -901,23 +866,11 @@ pub fn update_airgroupvalue<F: Field>(
     options2: HintFieldOptions,
     add: bool,
 ) -> u64 {
-    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[instance_id];
+    let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = StepsParams {
-        trace: air_instance.get_trace_ptr(),
-        aux_trace: air_instance.get_aux_trace_ptr(),
-        public_inputs: pctx.get_publics_ptr(),
-        proof_values: pctx.get_proof_values_ptr(),
-        challenges: air_instance.get_challenges_ptr(),
-        airgroup_values: air_instance.get_airgroup_values_ptr(),
-        airvalues: air_instance.get_airvalues_ptr(),
-        evals: air_instance.get_evals_ptr(),
-        xdivxsub: std::ptr::null_mut(),
-        p_const_pols: setup.get_const_ptr(),
-        p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
-    };
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
 
     update_airgroupvalue_c(
         (&setup.p_setup).into(),
@@ -938,29 +891,15 @@ fn get_hint_f<F: Field>(
     pctx: Option<&ProofCtx<F>>,
     airgroup_id: usize,
     air_id: usize,
-    air_instance: Option<&AirInstance<F>>,
+    instance_id: Option<usize>,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> Vec<HintFieldInfo<F>> {
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = if let Some(air_instance) = air_instance {
-        StepsParams {
-            trace: air_instance.get_trace_ptr(),
-            aux_trace: air_instance.get_aux_trace_ptr(),
-            public_inputs: pctx.unwrap().get_publics_ptr(),
-            proof_values: pctx.unwrap().get_proof_values_ptr(),
-            challenges: air_instance.get_challenges_ptr(),
-            airgroup_values: air_instance.get_airgroup_values_ptr(),
-            airvalues: air_instance.get_airvalues_ptr(),
-            evals: air_instance.get_evals_ptr(),
-            xdivxsub: std::ptr::null_mut(),
-            p_const_pols: setup.get_const_ptr(),
-            p_const_tree: setup.get_const_tree_ptr(),
-            custom_commits: air_instance.get_custom_commits_ptr(),
-            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
-        }
+    let steps_params = if let Some(instance_id) = instance_id {
+        pctx.unwrap().get_air_instance_params(sctx, instance_id)
     } else {
         StepsParams::default()
     };
@@ -1003,21 +942,16 @@ fn get_hint_f<F: Field>(
 pub fn get_hint_field<F: Field>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
-    air_instance: &AirInstance<F>,
+    instance_id: usize,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> HintFieldValue<F> {
-    let hint_info = get_hint_f(
-        sctx,
-        Some(pctx),
-        air_instance.airgroup_id,
-        air_instance.air_id,
-        Some(air_instance),
-        hint_id,
-        hint_field_name,
-        options.clone(),
-    );
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[instance_id];
+
+    let hint_info =
+        get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
 
     if hint_info[0].matrix_size != 0 {
         panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
@@ -1033,21 +967,16 @@ pub fn get_hint_field<F: Field>(
 pub fn get_hint_field_a<F: Field>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
-    air_instance: &AirInstance<F>,
+    instance_id: usize,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> HintFieldValuesVec<F> {
-    let hint_infos: Vec<HintFieldInfo<F>> = get_hint_f(
-        sctx,
-        Some(pctx),
-        air_instance.airgroup_id,
-        air_instance.air_id,
-        Some(air_instance),
-        hint_id,
-        hint_field_name,
-        options.clone(),
-    );
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[instance_id];
+
+    let hint_infos: Vec<HintFieldInfo<F>> =
+        get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
@@ -1067,21 +996,16 @@ pub fn get_hint_field_a<F: Field>(
 pub fn get_hint_field_m<F: Field>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
-    air_instance: &AirInstance<F>,
+    instance_id: usize,
     hint_id: usize,
     hint_field_name: &str,
     options: HintFieldOptions,
 ) -> HintFieldValues<F> {
-    let hint_infos: Vec<HintFieldInfo<F>> = get_hint_f(
-        sctx,
-        Some(pctx),
-        air_instance.airgroup_id,
-        air_instance.air_id,
-        Some(air_instance),
-        hint_id,
-        hint_field_name,
-        options.clone(),
-    );
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[instance_id];
+
+    let hint_infos: Vec<HintFieldInfo<F>> =
+        get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
@@ -1189,29 +1113,18 @@ pub fn get_hint_field_constant_m<F: Field>(
 }
 
 pub fn set_hint_field<F: Field>(
+    pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    instance_id: usize,
     hint_id: u64,
     hint_field_name: &str,
     values: &HintFieldValue<F>,
 ) {
-    let steps_params = StepsParams {
-        trace: air_instance.get_trace_ptr(),
-        aux_trace: air_instance.get_aux_trace_ptr(),
-        public_inputs: std::ptr::null_mut(),
-        proof_values: std::ptr::null_mut(),
-        challenges: std::ptr::null_mut(),
-        airgroup_values: std::ptr::null_mut(),
-        airvalues: std::ptr::null_mut(),
-        evals: std::ptr::null_mut(),
-        xdivxsub: std::ptr::null_mut(),
-        p_const_pols: std::ptr::null_mut(),
-        p_const_tree: std::ptr::null_mut(),
-        custom_commits: [std::ptr::null_mut(); 10],
-        custom_commits_extended: [std::ptr::null_mut(); 10],
-    };
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[instance_id];
+    let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
 
     let values_ptr: *mut u8 = match values {
         HintFieldValue::Column(vec) => vec.as_ptr() as *mut u8,
@@ -1223,29 +1136,18 @@ pub fn set_hint_field<F: Field>(
 }
 
 pub fn set_hint_field_val<F: Field>(
+    pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
-    air_instance: &mut AirInstance<F>,
+    instance_id: usize,
     hint_id: u64,
     hint_field_name: &str,
     value: HintFieldOutput<F>,
 ) {
-    let steps_params = StepsParams {
-        trace: std::ptr::null_mut(),
-        aux_trace: std::ptr::null_mut(),
-        public_inputs: std::ptr::null_mut(),
-        proof_values: std::ptr::null_mut(),
-        challenges: std::ptr::null_mut(),
-        airgroup_values: air_instance.get_airgroup_values_ptr(),
-        airvalues: air_instance.get_airvalues_ptr(),
-        evals: std::ptr::null_mut(),
-        xdivxsub: std::ptr::null_mut(),
-        p_const_pols: std::ptr::null_mut(),
-        p_const_tree: std::ptr::null_mut(),
-        custom_commits: [std::ptr::null_mut(); 10],
-        custom_commits_extended: [std::ptr::null_mut(); 10],
-    };
+    let instances = pctx.dctx_get_instances();
+    let (airgroup_id, air_id) = instances[instance_id];
+    let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
 
     let mut value_array: Vec<F> = Vec::new();
 
@@ -1263,15 +1165,4 @@ pub fn set_hint_field_val<F: Field>(
     let values_ptr = value_array.as_ptr() as *mut u8;
 
     set_hint_field_c((&setup.p_setup).into(), (&steps_params).into(), values_ptr, hint_id, hint_field_name);
-}
-
-pub fn print_row<F: Field>(sctx: &SetupCtx<F>, air_instance: &AirInstance<F>, stage: u64, row: u64) {
-    let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
-
-    let buffer = match stage == 1 {
-        true => air_instance.get_trace_ptr(),
-        false => air_instance.get_aux_trace_ptr(),
-    };
-
-    print_row_c((&setup.p_setup).into(), buffer, stage, row);
 }

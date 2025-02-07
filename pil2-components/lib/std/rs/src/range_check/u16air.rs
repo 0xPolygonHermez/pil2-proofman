@@ -5,6 +5,7 @@ use p3_field::{Field, PrimeField};
 use witness::WitnessComponent;
 use proofman_common::{TraceInfo, AirInstance, ProofCtx, SetupCtx};
 use std::sync::atomic::Ordering;
+use rayon::prelude::*;
 
 use crate::AirComponent;
 
@@ -83,11 +84,15 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
                 let buffer = self
                     .multiplicity
                     .iter()
-                    .map(|x| F::from_canonical_u64(x.load(Ordering::Relaxed)))
+                    .map(|x| F::from_canonical_u64(x.swap(0, Ordering::Relaxed)))
                     .collect::<Vec<F>>();
 
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
                 pctx.add_air_instance(air_instance, instance_id);
+            } else {
+                self.multiplicity.par_iter().for_each(|x| {
+                    x.store(0, Ordering::SeqCst);
+                });
             }
         }
     }

@@ -7,7 +7,7 @@ pub trait WitnessComponent<F: Clone>: Send + Sync {
         Vec::new()
     }
 
-    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) {}
+    fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {}
 
     fn calculate_witness(
         &self,
@@ -17,4 +17,6 @@ pub trait WitnessComponent<F: Clone>: Send + Sync {
         _instance_ids: &[usize],
     ) {
     }
+
+    fn end(&self, _pctx: Arc<ProofCtx<F>>) {}
 }

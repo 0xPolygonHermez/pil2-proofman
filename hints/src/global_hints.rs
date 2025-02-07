@@ -8,9 +8,9 @@ use std::ffi::c_void;
 
 use std::{collections::HashMap, sync::Arc};
 
-use proofman_common::{ExtensionField, ProofCtx, SetupCtx};
+use proofman_common::{skip_prover_instance, ExtensionField, ProofCtx, SetupCtx};
 
-pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>> {
+pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>, airgroup_values: Vec<Vec<F>>) -> Vec<Vec<u64>> {
     const FIELD_EXTENSION: usize = 3;
 
     let mut airgroupvalues: Vec<Vec<F>> = Vec::new();
@@ -24,21 +24,26 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>>
         airgroupvalues.push(values);
     }
 
-    for (_, air_instance) in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
-        for (idx, agg_type) in pctx.global_info.agg_types[air_instance.airgroup_id].iter().enumerate() {
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
+
+    for instance_id in my_instances.iter() {
+        let (airgroup_id, _) = instances[*instance_id];
+        for (idx, agg_type) in pctx.global_info.agg_types[airgroup_id].iter().enumerate() {
             let mut acc = ExtensionField {
                 value: [
-                    airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION],
-                    airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION + 1],
-                    airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION + 2],
+                    airgroupvalues[airgroup_id][idx * FIELD_EXTENSION],
+                    airgroupvalues[airgroup_id][idx * FIELD_EXTENSION + 1],
+                    airgroupvalues[airgroup_id][idx * FIELD_EXTENSION + 2],
                 ],
             };
-            if !air_instance.airgroup_values.is_empty() {
+
+            if !airgroup_values[*instance_id].is_empty() {
                 let instance_airgroup_val = ExtensionField {
                     value: [
-                        air_instance.airgroup_values[idx * FIELD_EXTENSION],
-                        air_instance.airgroup_values[idx * FIELD_EXTENSION + 1],
-                        air_instance.airgroup_values[idx * FIELD_EXTENSION + 2],
+                        airgroup_values[*instance_id][idx * FIELD_EXTENSION],
+                        airgroup_values[*instance_id][idx * FIELD_EXTENSION + 1],
+                        airgroup_values[*instance_id][idx * FIELD_EXTENSION + 2],
                     ],
                 };
                 if agg_type.agg_type == 0 {
@@ -46,9 +51,9 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>>
                 } else {
                     acc *= instance_airgroup_val;
                 }
-                airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION] = acc.value[0];
-                airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION + 1] = acc.value[1];
-                airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION + 2] = acc.value[2];
+                airgroupvalues[airgroup_id][idx * FIELD_EXTENSION] = acc.value[0];
+                airgroupvalues[airgroup_id][idx * FIELD_EXTENSION + 1] = acc.value[1];
+                airgroupvalues[airgroup_id][idx * FIELD_EXTENSION + 2] = acc.value[2];
             }
         }
     }
@@ -106,7 +111,21 @@ fn get_global_hint_f<F: Field>(
     let challenges = if let Some(ref pctx) = pctx { pctx.get_challenges_ptr() } else { std::ptr::null_mut() };
     let proof_values = if let Some(ref pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
     let airgroup_values = if let Some(ref pctx) = pctx {
-        let mut airgroupvals = aggregate_airgroupvals(pctx.clone());
+        let mut airgroup_values_air_instances = Vec::new();
+        let instances = pctx.dctx_get_instances();
+        let my_instances = pctx.dctx_get_my_instances();
+        for instance_id in my_instances.iter() {
+            if !skip_prover_instance(pctx, *instance_id).0 {
+                let (airgroup_id, air_id) = instances[*instance_id];
+                let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
+                airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
+                    airgroup_id,
+                    air_id,
+                    air_instance_id,
+                ));
+            }
+        }
+        let mut airgroupvals = aggregate_airgroupvals(pctx.clone(), airgroup_values_air_instances);
         let mut airgroup_values_ptrs: Vec<*mut u64> = airgroupvals
             .iter_mut() // Iterate mutably over the inner Vecs
             .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec

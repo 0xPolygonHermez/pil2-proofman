@@ -1,8 +1,10 @@
 use libloading::{Library, Symbol};
 use log::info;
+use proofman_common::skip_prover_instance;
+use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::calculate_impols_expressions_c;
-use std::collections::HashMap;
 use std::fs::File;
+use std::fmt::Write;
 use std::io::Read;
 use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
@@ -16,12 +18,14 @@ use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessManager};
 
+use crate::verify_basic_proof;
+use crate::verify_global_constraints_proof;
 use crate::{
-    verify_basic_proofs, verify_constraints_proof, check_paths, print_summary_info, aggregate_proofs, get_buff_sizes,
+    verify_constraints_proof, check_paths, print_summary_info, aggregate_proofs, get_buff_sizes,
     generate_vadcop_recursive1_proof,
 };
 
-use proofman_common::{StepsParams, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop};
+use proofman_common::{ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop};
 
 use std::ffi::c_void;
 
@@ -68,70 +72,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         Self::initialize_proofman_2(pctx.clone(), setups.clone());
 
-        wcm.calculate_witness(1, &pctx.dctx_get_my_instances());
-
-        #[cfg(feature = "diagnostic")]
-        {
-            let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
-            let instances = pctx.dctx_get_instances();
-            let my_instances = pctx.dctx_get_my_instances();
-            let mut missing_initialization = false;
-            for instance_id in my_instances.iter() {
-                let (airgroup_id, air_id) = instances[*instance_id];
-                let air_instance = air_instances.get(instance_id).unwrap();
-                let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
-                let air_name = pctx.global_info.airs[airgroup_id][air_id].clone().name;
-                let setup = setups.sctx.get_setup(airgroup_id, air_id);
-                let cm_pols_map = setup.stark_info.cm_pols_map.as_ref().unwrap();
-                let n_cols = *setup.stark_info.map_sections_n.get("cm1").unwrap() as usize;
-
-                let len = air_instance.trace.len();
-                let vals = unsafe { std::slice::from_raw_parts(air_instance.get_trace_ptr() as *mut u64, len) };
-
-                for (pos, val) in vals.iter().enumerate() {
-                    if *val == u64::MAX - 1 {
-                        let row = pos / n_cols;
-                        let col_id = pos % n_cols;
-                        let col = cm_pols_map.get(col_id).unwrap();
-                        let col_name = if !col.lengths.is_empty() {
-                            let lengths = col.lengths.iter().map(|l| format!("[{}]", l)).collect::<String>();
-                            &format!("{}{}", col.name, lengths)
-                        } else {
-                            &col.name
-                        };
-                        log::warn!(
-                            "{}: Missing initialization {} at row {} of {} in instance {}",
-                            Self::MY_NAME,
-                            col_name,
-                            row,
-                            air_name,
-                            air_instance_id,
-                        );
-                        missing_initialization = true;
-                    }
-                }
-            }
-            if missing_initialization {
-                return Err("Missing initialization".into());
-            } else {
-                log::info!("{}: Witness Initialization is done properly", Self::MY_NAME);
-                return Ok(());
-            }
-        }
-
         pctx.dctx_close();
 
-        let my_instances = pctx.dctx_get_my_instances();
-        for instance_id in &my_instances {
-            Self::initialize_air_instance(pctx.clone(), sctx.clone(), *instance_id);
-        }
-
         let transcript: FFITranscript = FFITranscript::new(2, true);
-
         let dummy_element = [F::zero(), F::one(), F::two(), F::neg_one()];
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
+
         for stage in 2..=num_commit_stages {
             let initial_pos = pctx.global_info.n_challenges.iter().take(stage as usize - 1).sum::<usize>();
             let num_challenges = pctx.global_info.n_challenges[stage as usize - 1];
@@ -141,17 +89,72 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 );
             }
 
-            wcm.calculate_witness(stage, &pctx.dctx_get_my_instances());
-
-            Self::calculate_im_pols(stage, sctx.clone(), pctx.clone());
-
             transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
         }
 
-        wcm.debug();
+        let mut valid_constraints = true;
 
-        if pctx.options.verify_constraints {
-            return verify_constraints_proof(pctx.clone(), sctx.clone());
+        let instances = pctx.dctx_get_instances();
+        let my_instances = pctx.dctx_get_my_instances();
+        let mut airgroup_values_air_instances = Vec::new();
+        for instance_id in &my_instances {
+            let (airgroup_id, air_id) = instances[*instance_id];
+            let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
+            let (skip, _) = skip_prover_instance(&pctx, *instance_id);
+
+            if skip {
+                continue;
+            };
+
+            timer_start_info!(GENERATING_WITNESS);
+
+            wcm.calculate_witness(1, &[*instance_id]);
+
+            timer_stop_and_log_info!(GENERATING_WITNESS);
+            
+            Self::initialize_air_instance(pctx.clone(), sctx.clone(), *instance_id, true);
+            #[cfg(feature = "diagnostic")]
+            {
+                Self::diagnostic_instance(pctx.clone(), sctx.clone(), *instance_id);
+            }
+            for stage in 2..=num_commit_stages {
+                wcm.calculate_witness(stage, &[*instance_id]);
+                Self::calculate_im_pols(stage, sctx.clone(), pctx.clone(), *instance_id);
+            }
+
+            wcm.debug(&[*instance_id]);
+
+            if pctx.options.verify_constraints {
+                valid_constraints = verify_constraints_proof(pctx.clone(), sctx.clone(), *instance_id);
+            }
+
+            airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
+                airgroup_id,
+                air_id,
+                air_instance_id,
+            ));
+            pctx.free_instance(*instance_id);
+        }
+
+        wcm.end();
+
+        let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
+            || !pctx.options.debug_info.debug_global_instances.is_empty();
+
+        if check_global_constraints {
+            let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone(), airgroup_values_air_instances);
+            let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+
+            if pctx.dctx_get_rank() == 0 {
+                let valid_global_constraints =
+                    verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
+
+                if valid_constraints && valid_global_constraints.is_ok() {
+                    return Ok(());
+                } else {
+                    return Err("Constraints were not verified".into());
+                }
+            }
         }
 
         Ok(())
@@ -209,7 +212,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         for (idx, instance_id) in my_instances.iter().enumerate() {
             wcm.calculate_witness(1, &[*instance_id]);
             let value = Self::get_contribution_air(pctx.clone(), sctx.clone(), *instance_id);
-            *pctx.air_instance_repo.air_instances.write().unwrap() = HashMap::new();
+            pctx.free_instance(*instance_id);
             for id in 0..4 {
                 values[idx * 4 + id] = value[id];
             }
@@ -252,8 +255,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let global_challenge = vec![F::zero(); 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
-        log::info!("Global challenge: {:?}", &global_challenge);
-
         pctx.set_global_challenge(global_challenge);
 
         let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
@@ -268,37 +269,26 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new())
         };
 
+        let aux_trace: Vec<F> = create_buffer_fast(pctx.max_prover_buffer_size as usize);
+
+        let mut valid_proofs = false;
         let mut proofs = Vec::new();
+        let mut airgroup_values_air_instances = Vec::new();
         for instance_id in my_instances.iter() {
+            timer_start_info!(GENERATING_WITNESS);
             wcm.calculate_witness(1, &[*instance_id]);
-            Self::initialize_air_instance(pctx.clone(), sctx.clone(), *instance_id);
+            timer_stop_and_log_info!(GENERATING_WITNESS);
+            Self::initialize_air_instance(pctx.clone(), sctx.clone(), *instance_id, false);
 
             let (airgroup_id, air_id) = instances[*instance_id];
             let setup = sctx.get_setup(airgroup_id, air_id);
             let p_setup = (&setup.p_setup).into();
-            let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
-            let air_instance = air_instances.get(instance_id).unwrap();
             let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
             let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-
-            timer_start_info!(GENERATING_RECURSIVE_PROOF);
             timer_start_info!(GENERATING_PROOF);
 
-            let steps_params = StepsParams {
-                trace: air_instance.get_trace_ptr(),
-                aux_trace: air_instance.get_aux_trace_ptr(),
-                public_inputs: pctx.get_publics_ptr(),
-                proof_values: pctx.get_proof_values_ptr(),
-                challenges: air_instance.get_challenges_ptr(),
-                airgroup_values: air_instance.get_airgroup_values_ptr(),
-                airvalues: air_instance.get_airvalues_ptr(),
-                evals: air_instance.get_evals_ptr(),
-                xdivxsub: std::ptr::null_mut(),
-                p_const_pols: setup.get_const_ptr(),
-                p_const_tree: setup.get_const_tree_ptr(),
-                custom_commits: air_instance.get_custom_commits_ptr(),
-                custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
-            };
+            let mut steps_params = pctx.get_air_instance_params(&sctx, *instance_id);
+            steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
 
             let p_steps_params = (&steps_params).into();
 
@@ -320,7 +310,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 air_instance_id as u64,
             );
 
-            timer_stop_and_log_info!(GENERATING_PROOF);
+            airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
+                airgroup_id,
+                air_id,
+                air_instance_id,
+            ));
+
+            timer_start_info!(FREE_INSTANCE);
+            pctx.free_instance(*instance_id);
+            timer_stop_and_log_info!(FREE_INSTANCE);
 
             if pctx.options.aggregation {
                 timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
@@ -337,18 +335,29 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 )?;
                 proofs.push(proof_recursive);
                 timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
+                timer_stop_and_log_info!(GENERATING_PROOF);
+
             } else {
                 proofs.push(proof);
+                timer_stop_and_log_info!(GENERATING_PROOF);
+                valid_proofs = verify_basic_proof(pctx.clone(), *instance_id, proof);
             }
-
-            timer_stop_and_log_info!(GENERATING_RECURSIVE_PROOF);
         }
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
-        let mut valid_proofs = false;
-        if !pctx.options.aggregation {
-            valid_proofs = verify_basic_proofs(proofs.clone(), pctx.clone(), sctx.clone());
+        if !pctx.options.aggregation
+            && pctx.dctx_get_rank() == 0
+            && (pctx.options.debug_info.debug_instances.is_empty()
+                || !pctx.options.debug_info.debug_global_instances.is_empty())
+        {
+            let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone(), airgroup_values_air_instances);
+            let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+
+            let valid_global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
+            if valid_global_constraints.is_err() {
+                valid_proofs = false;
+            }
         }
 
         if !pctx.options.aggregation {
@@ -397,6 +406,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         ));
 
         pctx.set_weights(&setups.sctx.clone());
+        pctx.set_buff_helper(&setups.sctx.clone());
 
         let pctx = Arc::new(pctx);
 
@@ -435,16 +445,60 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Ok(())
     }
 
-    fn initialize_air_instance(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) {
+    #[allow(dead_code)]
+    fn diagnostic_instance(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) {
         let instances = pctx.dctx_get_instances();
 
-        let mut air_instances_w = pctx.air_instance_repo.air_instances.write().unwrap();
+        let (airgroup_id, air_id) = instances[instance_id];
+        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
+        let air_name = pctx.global_info.airs[airgroup_id][air_id].clone().name;
+        let setup = sctx.get_setup(airgroup_id, air_id);
+        let cm_pols_map = setup.stark_info.cm_pols_map.as_ref().unwrap();
+        let n_cols = *setup.stark_info.map_sections_n.get("cm1").unwrap() as usize;
+        let n_rows = 1 << setup.stark_info.stark_struct.n_bits;
+
+        let vals = unsafe {
+            std::slice::from_raw_parts(pctx.get_air_instance_trace_ptr(instance_id) as *mut u64, n_cols * n_rows)
+        };
+
+        for (pos, val) in vals.iter().enumerate() {
+            if *val == u64::MAX - 1 {
+                let row = pos / n_cols;
+                let col_id = pos % n_cols;
+                let col = cm_pols_map.get(col_id).unwrap();
+                let col_name = if !col.lengths.is_empty() {
+                    let lengths = col.lengths.iter().fold(String::new(), |mut acc, l| {
+                        write!(acc, "[{}]", l).unwrap();
+                        acc
+                    });
+                    format!("{}{}", col.name, lengths)
+                } else {
+                    col.name.clone()
+                };
+                log::warn!(
+                    "{}: Missing initialization {} at row {} of {} in instance {}",
+                    Self::MY_NAME,
+                    col_name,
+                    row,
+                    air_name,
+                    air_instance_id,
+                );
+            }
+        }
+    }
+
+    fn initialize_air_instance(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize, init_aux_trace: bool) {
+        let instances = pctx.dctx_get_instances();
+
+        let mut air_instances_w = pctx.air_instances.write().unwrap();
 
         let (airgroup_id, air_id) = instances[instance_id];
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let air_instance = air_instances_w.get_mut(&instance_id).unwrap();
-        air_instance.init_aux_trace(setup.prover_buffer_size as usize);
+        if init_aux_trace {
+            air_instance.init_aux_trace(setup.prover_buffer_size as usize);
+        }
         air_instance.init_evals(setup.stark_info.ev_map.len() * 3);
         air_instance.init_challenges(
             (setup.stark_info.challenges_map.as_ref().unwrap().len() + setup.stark_info.stark_struct.steps.len() + 1)
@@ -479,8 +533,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         if n_airgroup_values > 0 && air_instance.airgroup_values.is_empty() {
             air_instance.init_airgroup_values(n_airgroup_values * 3);
         }
-
-        air_instance.set_prover_initialized();
     }
 
     fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
@@ -500,18 +552,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
         }
 
-        let mut buff_helper_size = 0_usize;
-
         airs.iter().for_each(|&(airgroup_id, air_id)| {
             let setup = setups.sctx.get_setup(airgroup_id, air_id);
-            let buff_helper_prover_size = setup.stark_info.get_buff_helper_size();
-            if buff_helper_prover_size > buff_helper_size {
-                buff_helper_size = buff_helper_prover_size;
-            }
             setup.load_const_pols();
         });
-
-        *pctx.buff_helper.values.write().unwrap() = create_buffer_fast(buff_helper_size);
 
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
 
@@ -721,56 +765,25 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(WRITE_CONST_TREE);
     }
 
-    pub fn calculate_im_pols(stage: u32, sctx: Arc<SetupCtx<F>>, pctx: Arc<ProofCtx<F>>) {
+    pub fn calculate_im_pols(stage: u32, sctx: Arc<SetupCtx<F>>, pctx: Arc<ProofCtx<F>>, instance_id: usize) {
         let instances = pctx.dctx_get_instances();
-        let my_instances = pctx.dctx_get_my_instances();
+        let (airgroup_id, air_id) = instances[instance_id];
+        let setup = sctx.get_setup(airgroup_id, air_id);
 
-        info!("{}: Calculating im pols {}", Self::MY_NAME, stage);
-        timer_start_info!(CALCULATING_IM_POLS);
-        for instance_id in my_instances.iter() {
-            let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
-            let air_instance = air_instances.get(instance_id).unwrap();
+        let steps_params = pctx.get_air_instance_params(&sctx, instance_id);
 
-            if !air_instance.prover_initialized {
-                continue;
-            }
-
-            let (airgroup_id, air_id) = instances[*instance_id];
-            let setup = sctx.get_setup(airgroup_id, air_id);
-
-            let steps_params = StepsParams {
-                trace: air_instance.get_trace_ptr(),
-                aux_trace: air_instance.get_aux_trace_ptr(),
-                public_inputs: pctx.get_publics_ptr(),
-                proof_values: pctx.get_proof_values_ptr(),
-                challenges: air_instance.get_challenges_ptr(),
-                airgroup_values: air_instance.get_airgroup_values_ptr(),
-                airvalues: air_instance.get_airvalues_ptr(),
-                evals: air_instance.get_evals_ptr(),
-                xdivxsub: std::ptr::null_mut(),
-                p_const_pols: setup.get_const_ptr(),
-                p_const_tree: setup.get_const_tree_ptr(),
-                custom_commits: air_instance.get_custom_commits_ptr(),
-                custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
-            };
-
-            calculate_impols_expressions_c((&setup.p_setup).into(), stage as u64, (&steps_params).into());
-        }
-        timer_stop_and_log_info!(CALCULATING_IM_POLS);
+        calculate_impols_expressions_c((&setup.p_setup).into(), stage as u64, (&steps_params).into());
     }
 
     pub fn get_contribution_air(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) -> Vec<u64> {
-        info!("{}: Committing stage 1", Self::MY_NAME);
-
         let n_field_elements = 4;
 
-        timer_start_info!(COMMITING_STAGE_1);
+        timer_start_info!(GET_CONTRIBUTION_AIR);
         let instances = pctx.dctx_get_instances();
-        let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
 
         let (airgroup_id, air_id) = instances[instance_id];
+        let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let setup = sctx.get_setup(airgroup_id, air_id);
-        let air_instance = air_instances.get(&instance_id).unwrap();
 
         let root = vec![F::zero(); n_field_elements];
         commit_witness_c(
@@ -778,7 +791,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),
             root.as_ptr() as *mut u8,
-            air_instance.get_trace_ptr(),
+            pctx.get_air_instance_trace_ptr(instance_id),
         );
 
         let mut value = vec![Goldilocks::zero(); n_field_elements];
@@ -806,12 +819,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             values_hash[j + n_field_elements] = root[j];
         }
 
+        let air_values = pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id);
+
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
         let mut p = 0;
         let mut count = 0;
         for air_value in airvalues_map {
             if air_value.stage == 1 {
-                values_hash[2 * n_field_elements + count] = air_instance.airvalues[p];
+                values_hash[2 * n_field_elements + count] = air_values[p];
                 count += 1;
                 p += 1;
             }
@@ -819,7 +834,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64);
 
-        timer_stop_and_log_info!(COMMITING_STAGE_1);
+        timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
 
         value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
     }

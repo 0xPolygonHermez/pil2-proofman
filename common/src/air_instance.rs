@@ -125,7 +125,6 @@ pub struct AirInstance<F> {
     pub airvalues: Vec<F>,
     pub challenges: Vec<F>,
     pub evals: Vec<F>,
-    pub prover_initialized: bool,
 }
 
 impl<F: Field> AirInstance<F> {
@@ -150,7 +149,6 @@ impl<F: Field> AirInstance<F> {
             airvalues,
             evals: Vec::new(),
             challenges: Vec::new(),
-            prover_initialized: false,
         }
     }
 
@@ -285,12 +283,12 @@ impl<F: Field> AirInstance<F> {
         ptrs
     }
 
-    pub fn set_prover_initialized(&mut self) {
-        self.prover_initialized = true;
-    }
-
     pub fn clear_trace(&mut self) {
         self.trace.clear();
+    }
+
+    pub fn clear_aux_trace(&mut self) {
+        self.aux_trace.clear();
     }
 
     pub fn clear_custom_commits_trace(&mut self) {

@@ -19,7 +19,7 @@ pub struct WitnessManager<F: Field> {
 }
 
 impl<F: Field> WitnessManager<F> {
-    const MY_NAME: &'static str = "WCMnager";
+    const _MY_NAME: &'static str = "WCMnager";
 
     pub fn new(
         pctx: Arc<ProofCtx<F>>,
@@ -61,30 +61,32 @@ impl<F: Field> WitnessManager<F> {
         timer_stop_and_log_info!(EXECUTE);
     }
 
-    pub fn debug(&self) {
+    pub fn debug(&self, instance_ids: &[usize]) {
         if self.pctx.options.debug_info.std_mode.name == ModeName::Debug
             || !self.pctx.options.debug_info.debug_instances.is_empty()
         {
-            for component in self.components.read().unwrap().iter() {
-                component.debug(self.pctx.clone(), self.sctx.clone());
+            for (idx, component) in self.components.read().unwrap().iter().enumerate() {
+                let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
+
+                let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
+                    .iter()
+                    .filter(|id| ids_hash_set.contains(id))
+                    .cloned()
+                    .collect();
+
+                if !instance_ids_filtered.is_empty() {
+                    component.debug(self.pctx.clone(), self.sctx.clone(), &instance_ids_filtered);
+                }
             }
         }
         if self.pctx.options.debug_info.std_mode.name == ModeName::Debug {
             for component in self.components_std.read().unwrap().iter() {
-                component.debug(self.pctx.clone(), self.sctx.clone());
+                component.debug(self.pctx.clone(), self.sctx.clone(), instance_ids);
             }
         }
     }
 
     pub fn calculate_witness(&self, stage: u32, instance_ids: &[usize]) {
-        log::info!(
-            "{}: Calculating witness for stage {} / {}",
-            Self::MY_NAME,
-            stage,
-            self.pctx.global_info.n_challenges.len()
-        );
-
-        timer_start_info!(CALCULATING_WITNESS);
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 
@@ -100,10 +102,17 @@ impl<F: Field> WitnessManager<F> {
         }
 
         for component in self.components_std.read().unwrap().iter() {
-            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), &instance_ids);  
+            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), instance_ids);
         }
+    }
 
-        timer_stop_and_log_info!(CALCULATING_WITNESS);
+    pub fn end(&self) {
+        for component in self.components.read().unwrap().iter() {
+            component.end(self.pctx.clone());
+        }
+        for component in self.components_std.read().unwrap().iter() {
+            component.end(self.pctx.clone());
+        }
     }
 
     pub fn get_pctx(&self) -> Arc<ProofCtx<F>> {

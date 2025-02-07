@@ -213,12 +213,18 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
                 let mut buffer = create_buffer_fast::<F>(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
-                        chunk[col] = F::from_canonical_u64(vec[row].load(Ordering::Relaxed));
+                        chunk[col] = F::from_canonical_u64(vec[row].swap(0, Ordering::Relaxed));
                     }
                 });
 
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
                 pctx.add_air_instance(air_instance, instance_id);
+            } else {
+                self.multiplicities.par_iter().for_each(|x| {
+                    x.par_iter().for_each(|y| {
+                        y.store(0, Ordering::Relaxed);
+                    });
+                });
             }
         }
     }
