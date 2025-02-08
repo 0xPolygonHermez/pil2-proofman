@@ -87,6 +87,7 @@ pub fn prepare_pil(
 
     if let Some(constraints_array) = constraints.as_array_mut() {
         for constraint in constraints_array.iter_mut() {
+            println!("constraint: {:?}", constraint);
             let constraint_exp_id = constraint["e"].as_u64().unwrap() as usize;
             if let Some(expressions_array) = expressions.as_array_mut() {
                 add_info_expressions(expressions_array, constraint_exp_id);
