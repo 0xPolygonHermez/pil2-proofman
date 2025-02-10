@@ -65,8 +65,6 @@ pub fn prepare_pil(
         }
     }
 
-    panic!("after this");
-
     if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap() {
         res.insert("starkStruct".to_string(), stark_struct.clone());
 
@@ -88,15 +86,26 @@ pub fn prepare_pil(
         res.insert("starkStruct".to_string(), json!({ "nBits": res["pilPower"] }));
     }
 
+    // this section is infinitely recursing and overflowing the stack
+    println!("entering critical section");
     if let Some(constraints_array) = constraints.as_array_mut() {
-        for constraint in constraints_array.iter_mut() {
+        let mut stage_updates = Vec::new(); // Store updates instead of modifying in-place
+
+        for constraint in constraints_array.iter() {
             let constraint_exp_id = constraint["e"].as_u64().unwrap() as usize;
             if let Some(expressions_array) = expressions.as_array_mut() {
                 add_info_expressions(expressions_array, constraint_exp_id);
-                constraint["stage"] = expressions_array[constraint_exp_id]["stage"].clone();
+                stage_updates.push((constraint_exp_id, expressions_array[constraint_exp_id]["stage"].clone()));
             }
         }
+
+        // Apply collected updates
+        for (idx, stage) in stage_updates {
+            constraints_array[idx]["stage"] = stage;
+        }
     }
+    println!("finished critical section");
+    // end bad section
 
     let mut missing_symbol_indices = Vec::new();
     if let Some(expressions_array) = expressions.as_array() {

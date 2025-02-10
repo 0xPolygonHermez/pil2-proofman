@@ -135,22 +135,28 @@ pub fn get_exp_dim(expressions: &[Value], exp_id: usize) -> usize {
 
 /// Adds metadata information to an expression.
 pub fn add_info_expressions(expressions: &mut [Value], exp_id: usize) {
+    // Prevent infinite recursion by skipping already processed expressions
     if expressions[exp_id].get("expDeg").is_some() {
         return;
     }
 
+    // Handle `next` field if it exists
     if let Some(next) = expressions[exp_id].get("next") {
         let row_offset = if next.as_bool().unwrap_or(false) { 1 } else { 0 };
         expressions[exp_id]["rowOffset"] = json!(row_offset);
         expressions[exp_id].as_object_mut().unwrap().remove("next");
     }
 
-    // Extract `op` and handle logic outside the borrow scope
     let op = expressions[exp_id].get("op").and_then(|op| op.as_str()).unwrap_or("").to_string();
 
     match op.as_str() {
         "exp" => {
             let id = expressions[exp_id]["id"].as_u64().unwrap_or(0) as usize;
+
+            if id == exp_id {
+                panic!("Detected self-referencing expression at index {}", exp_id);
+            }
+
             add_info_expressions(expressions, id);
 
             let cloned_id_data = expressions[id].clone();
@@ -181,14 +187,56 @@ pub fn add_info_expressions(expressions: &mut [Value], exp_id: usize) {
                 exp["rowsOffsets"] = json!([row_offset.clone()]);
             }
         }
+        "xDivXSubXi" => {
+            expressions[exp_id]["expDeg"] = json!(1);
+        }
+        "challenge" | "eval" => {
+            expressions[exp_id]["expDeg"] = json!(0);
+            expressions[exp_id]["dim"] = json!(3);
+        }
+        "airgroupvalue" | "proofvalue" => {
+            expressions[exp_id]["expDeg"] = json!(0);
+            expressions[exp_id]["dim"] = json!(3);
+        }
+        "airvalue" => {
+            expressions[exp_id]["expDeg"] = json!(0);
+            if expressions[exp_id].get("dim").is_none() {
+                let stage = expressions[exp_id]["stage"].as_u64().unwrap_or(1);
+                expressions[exp_id]["dim"] = json!(if stage != 1 { 3 } else { 1 });
+            }
+        }
+        "public" => {
+            expressions[exp_id]["expDeg"] = json!(0);
+            expressions[exp_id]["stage"] = json!(1);
+            if expressions[exp_id].get("dim").is_none() {
+                expressions[exp_id]["dim"] = json!(1);
+            }
+        }
+        "number" | "Zi" if expressions[exp_id].get("boundary") == Some(&json!("everyRow")) => {
+            expressions[exp_id]["expDeg"] = json!(0);
+            expressions[exp_id]["stage"] = json!(0);
+            if expressions[exp_id].get("dim").is_none() {
+                expressions[exp_id]["dim"] = json!(1);
+            }
+        }
         "add" | "sub" | "mul" | "neg" => {
-            let lhs_id = expressions[exp_id]["values"][0]["id"].as_u64().unwrap_or(0) as usize;
-            let rhs_id = expressions[exp_id]["values"][1]["id"].as_u64().unwrap_or(0) as usize;
+            let empty: Vec<Value> = Vec::new();
+            let values = expressions[exp_id].get("values").and_then(|v| v.as_array()).unwrap_or(&empty);
+
+            if values.len() < 2 {
+                panic!("Binary operation '{}' missing values at index {}", op, exp_id);
+            }
+
+            let lhs_id = values[0]["id"].as_u64().unwrap_or(0) as usize;
+            let rhs_id = values[1]["id"].as_u64().unwrap_or(0) as usize;
+
+            if lhs_id == exp_id || rhs_id == exp_id {
+                panic!("Expression references itself at index {}", exp_id);
+            }
 
             add_info_expressions(expressions, lhs_id);
             add_info_expressions(expressions, rhs_id);
 
-            // Clone data outside of borrow scope
             let lhs = expressions[lhs_id].clone();
             let rhs = expressions[rhs_id].clone();
 
@@ -214,7 +262,11 @@ pub fn add_info_expressions(expressions: &mut [Value], exp_id: usize) {
             exp["stage"] = json!(stage);
             exp["rowsOffsets"] = json!(combined_offsets);
         }
-        _ => panic!("Exp op not defined: {}", expressions[exp_id].get("op").unwrap_or(&json!("unknown"))),
+        _ => panic!(
+            "Exp op not defined: {} at index {}",
+            expressions[exp_id].get("op").unwrap_or(&json!("unknown")),
+            exp_id
+        ),
     }
 }
 
