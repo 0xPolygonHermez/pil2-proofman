@@ -65,6 +65,8 @@ pub fn prepare_pil(
         }
     }
 
+    panic!("after this");
+
     if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap() {
         res.insert("starkStruct".to_string(), stark_struct.clone());
 
