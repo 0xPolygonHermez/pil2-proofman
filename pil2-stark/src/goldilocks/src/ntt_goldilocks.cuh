@@ -145,6 +145,30 @@ __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_
     }
 }
 
+__global__ void br_ntt_group_new(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols)
+{
+    uint32_t start = domain_size >> 1;
+    twiddles = twiddles + start;
+
+    for (uint32_t j = blockIdx.x; j < domain_size / 2; j += gridDim.x)
+    {
+        for (uint32_t col = threadIdx.x; col < ncols; col += blockDim.x)
+        {
+            uint32_t half_group_size = 1 << i;
+            uint32_t group = j >> i;                     // j/(group_size/2);
+            uint32_t offset = j & (half_group_size - 1); // j%(half_group_size);
+            uint32_t index1 = (group << (i + 1)) + offset;
+            uint32_t index2 = index1 + half_group_size;
+            gl64_t factor = twiddles[offset * (domain_size >> (i + 1))];
+            gl64_t odd_sub = gl64_t((uint64_t)data[index2 * ncols + col]) * factor;
+            data[index2 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) - odd_sub;
+            data[index1 * ncols + col] = gl64_t((uint64_t)data[index1 * ncols + col]) + odd_sub;
+            // DEBUG: assert(data[index2 * ncols + col] < 18446744069414584321ULL);
+            // DEBUG: assert(data[index1 * ncols + col] < 18446744069414584321ULL);
+        }
+    }
+}
+
 __global__ void intt_scale(gl64_t *data, gl64_t *r, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, bool extend)
 {
     uint32_t j = blockIdx.x;    // domain_size
