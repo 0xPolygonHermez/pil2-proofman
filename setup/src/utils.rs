@@ -307,8 +307,8 @@ pub fn format_constraints(pilout: &Value) -> Vec<Value> {
             if let Some((boundary, constraint_data)) = constraint_obj.as_object().unwrap().iter().next() {
                 let mut constraint = json!({
                     "boundary": boundary,
-                    "e": constraint_data["expressionIdx"]["idx"],
-                    "line": constraint_data["debugLine"]
+                    "e": constraint_data["everyRow"]["expressionIdx"]["idx"],
+                    "line": constraint_data["everyRow"]["debugLine"]
                 });
 
                 if boundary == "everyFrame" {
