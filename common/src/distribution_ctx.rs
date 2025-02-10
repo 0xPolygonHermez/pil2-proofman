@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 #[cfg(feature = "distributed")]
+use std::sync::atomic::Ordering;
+#[cfg(feature = "distributed")]
 use proofman_starks_lib_c::*;
 use std::ffi::c_void;
 
