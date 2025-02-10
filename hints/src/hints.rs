@@ -774,8 +774,7 @@ pub fn mul_hint_fields<F: Field + Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: setup.get_const_ptr(),
         p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     mul_hint_fields_c(
@@ -815,8 +814,7 @@ pub fn acc_hint_field<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: setup.get_const_ptr(),
         p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     acc_hint_field_c(
@@ -864,8 +862,7 @@ pub fn acc_mul_hint_fields<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: setup.get_const_ptr(),
         p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     acc_mul_hint_fields_c(
@@ -915,8 +912,7 @@ pub fn update_airgroupvalue<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: setup.get_const_ptr(),
         p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     update_airgroupvalue_c(
@@ -958,8 +954,7 @@ fn get_hint_f<F: Field>(
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: setup.get_const_ptr(),
             p_const_tree: setup.get_const_tree_ptr(),
-            custom_commits: air_instance.get_custom_commits_ptr(),
-            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+            custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
         }
     } else {
         StepsParams::default()
@@ -1207,8 +1202,7 @@ pub fn set_hint_field<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
-        custom_commits: [std::ptr::null_mut(); 10],
-        custom_commits_extended: [std::ptr::null_mut(); 10],
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
@@ -1241,8 +1235,7 @@ pub fn set_hint_field_val<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
-        custom_commits: [std::ptr::null_mut(); 10],
-        custom_commits_extended: [std::ptr::null_mut(); 10],
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);

@@ -11,11 +11,13 @@ proofman-util = { path = "../util" }
 proofman = { path = "../proofman" }
 proofman-common = { path = "../common" }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
+witness = { path = "../witness" }
 
 p3-goldilocks.workspace = true
 p3-field.workspace = true
 log.workspace = true
 env_logger.workspace = true
+libloading = "0.8.4"
 
 colored.workspace = true
 serde.workspace = true

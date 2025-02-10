@@ -264,6 +264,12 @@ uint64_t get_map_total_n(void *pStarkInfo, bool recursive)
     return starkInfo->mapTotalN;
 }
 
+uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
+{
+    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
+    return starkInfo->mapTotalNCustomCommitsFixed;
+}
+
 void stark_info_free(void *pStarkInfo)
 {
     auto starkInfo = (StarkInfo *)pStarkInfo;
@@ -429,16 +435,22 @@ void calculate_impols_expressions(void *pStarks, uint64_t step, void* stepsParam
     starks->calculateImPolsExpressions(step, *(StepsParams *)stepsParams);
 }
 
-void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void* bufferExt, void *pProof, void *pBuffHelper, char *bufferFile)
+void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void* buffer, void *pProof, void *pBuffHelper)
 {
     Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->extendAndMerkelizeCustomCommit(commitId, step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)bufferExt, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper, string(bufferFile));
+    starks->extendAndMerkelizeCustomCommit(commitId, step, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper);
 }
 
-void load_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, char *bufferFile)
+void load_custom_commit(void *pStarks, uint64_t commitId, void *buffer, void *pProof, char *bufferFile)
 {
     Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->loadCustomCommit(commitId, step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)bufferExt, *(FRIProof<Goldilocks::Element> *)pProof, string(bufferFile));
+    starks->loadCustomCommit(commitId, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, string(bufferFile));
+}
+
+void write_custom_commit(void *pStarks, uint64_t commitId, void *buffer, char *bufferFile, uint8_t* hashFile)
+{
+    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
+    starks->writeCustomCommitFile(commitId, (Goldilocks::Element *)buffer, string(bufferFile), hashFile);
 }
 
 void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trace, void *buffer, void *pProof, void *pBuffHelper) {

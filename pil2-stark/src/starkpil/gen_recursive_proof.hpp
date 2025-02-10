@@ -36,8 +36,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         xDivXSub : nullptr,
         pConstPolsAddress: pConstPols,
         pConstPolsExtendedTreeAddress: pConstTree,
-        pCustomCommits:  {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
-        pCustomCommitsExtended:  {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
+        pCustomCommitsFixed:  nullptr,
     };
 
     //--------------------------------

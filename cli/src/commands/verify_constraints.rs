@@ -1,7 +1,7 @@
 // extern crate env_logger;
 use clap::Parser;
 use proofman_common::{initialize_logger, json_to_debug_instances_map, DebugInfo};
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
 
@@ -45,6 +45,9 @@ pub struct VerifyConstraintsCmd {
 
     #[clap(short = 'd', long)]
     pub debug: Option<Option<String>>,
+
+    #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
+    pub custom_commits: Vec<String>,
 }
 
 impl VerifyConstraintsCmd {
@@ -60,6 +63,15 @@ impl VerifyConstraintsCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone()),
         };
 
+        let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
+        for commit in &self.custom_commits {
+            if let Some((key, value)) = commit.split_once('=') {
+                custom_commits_map.insert(key.to_string(), PathBuf::from(value));
+            } else {
+                eprintln!("Invalid commit format: {:?}", commit);
+            }
+        }
+
         match self.field {
             Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
                 self.witness_lib.clone(),
@@ -68,6 +80,7 @@ impl VerifyConstraintsCmd {
                 self.input_data.clone(),
                 self.proving_key.clone(),
                 PathBuf::new(),
+                custom_commits_map,
                 ProofOptions::new(true, self.verbose.into(), false, false, debug_info),
             )?,
         };

@@ -5,7 +5,9 @@ use stark::StarkProver;
 use proofman_starks_lib_c::{
     free_provers_c, fri_proof_get_zkinproofs_c, save_challenges_c, save_proof_values_c, save_publics_c,
 };
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
+
 use std::error::Error;
 
 use colored::*;
@@ -42,6 +44,7 @@ pub struct ProofMan<F> {
 impl<F: PrimeField + 'static> ProofMan<F> {
     const MY_NAME: &'static str = "ProofMan";
 
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_proof(
         witness_lib_path: PathBuf,
         rom_path: Option<PathBuf>,
@@ -49,6 +52,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
         timer_start_info!(INITIALIZING_PROOFMAN_1);
@@ -62,7 +66,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             options.verify_constraints,
         )?;
 
-        let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), options);
+        let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options);
 
         let setups = Arc::new(SetupsVadcop::<F>::new(
             &pctx.global_info,
@@ -80,8 +84,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx_barrier();
         timer_start_info!(GENERATING_WITNESS);
-        let wcm =
-            Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path, input_data_path));
+        let wcm = Arc::new(WitnessManager::new(
+            pctx.clone(),
+            sctx.clone(),
+            rom_path.clone(),
+            public_inputs_path,
+            input_data_path,
+        ));
 
         Self::initialize_witness(witness_lib_path, wcm.clone())?;
         pctx.dctx_barrier();
@@ -174,16 +183,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut transcript: FFITranscript = provers[0].new_transcript();
 
-        timer_start_debug!(COMMITING_STAGE_0);
-        let mut custom_publics = Vec::new();
+        timer_start_info!(LOAD_CUSTOM_COMMITS_STAGE_0);
         for prover in provers.iter_mut() {
-            let publics = prover.commit_custom_commits_stage(0, pctx.clone());
-            custom_publics.extend(publics);
+            prover.commit_custom_commits_stage(0, pctx.clone());
         }
 
-        pctx.dctx_distribute_publics(custom_publics);
-
-        timer_stop_and_log_debug!(COMMITING_STAGE_0);
+        timer_stop_and_log_info!(LOAD_CUSTOM_COMMITS_STAGE_0);
 
         // Commit stages
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
@@ -465,6 +470,36 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         airs.iter().for_each(|&(airgroup_id, air_id)| {
             let setup = setups.sctx.get_setup(airgroup_id, air_id);
             setup.load_const_pols();
+
+            for custom_commit in setup.stark_info.custom_commits.iter() {
+                if custom_commit.stage_widths[0] > 0 {
+                    let custom_commit_name = &custom_commit.name.clone();
+                    let custom_file_path = pctx.get_custom_commits_fixed_buffer(custom_commit_name);
+                    if custom_file_path.is_none() {
+                        panic!("Custom commit {} not found", custom_commit_name);
+                    }
+                    
+                    let mut file = File::open(custom_file_path.unwrap()).unwrap();
+                    let mut hash_file_stored = [0u8; 32];
+                    file.read_exact(&mut hash_file_stored).unwrap();
+
+                    // let hash_file = blake3_file_hash_bytes(rom_path.clone().unwrap().to_str().unwrap())?;
+                    // if hash_file_stored != hash_file {
+                    //     return Err("ROM file has changed".into());
+                    // }
+
+                    let mut root_bytes = [0u8; 32];
+                    file.read_exact(&mut root_bytes).unwrap();
+
+                    for (idx, p) in custom_commit.public_values.iter().enumerate() {
+                        let public_id = p.idx as usize;
+                        pctx.set_public_value(
+                            u64::from_le_bytes(root_bytes[idx * 8..(idx + 1) * 8].try_into().unwrap()),
+                            public_id,
+                        );
+                    }
+                }
+            }
         });
 
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
