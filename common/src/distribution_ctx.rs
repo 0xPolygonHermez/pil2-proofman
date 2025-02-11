@@ -10,7 +10,9 @@ use mpi::datatype::PartitionMut;
 use mpi::topology::Communicator;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
-use std::sync::atomic::{Ordering, AtomicU64};
+use std::sync::atomic::AtomicU64;
+#[cfg(feature = "distributed")]
+use std::sync::atomic::Ordering;
 #[cfg(feature = "distributed")]
 use proofman_starks_lib_c::*;
 use std::ffi::c_void;
@@ -29,7 +31,7 @@ pub struct DistributionCtx {
     pub world: mpi::topology::SimpleCommunicator,
     pub n_instances: usize,
     pub my_instances: Vec<usize>,
-    pub instances: Vec<(usize, usize)>,          //group_id, air_id
+    pub instances: Vec<(usize, usize, bool)>,    //group_id, air_id
     pub instances_owner: Vec<(i32, usize, u64)>, //owner_rank, owner_instance_idx, weight
     pub owners_count: Vec<i32>,
     pub owners_weight: Vec<u64>,
@@ -160,7 +162,7 @@ impl DistributionCtx {
 
     #[inline]
     pub fn get_instance_info(&self, global_idx: usize) -> (usize, usize) {
-        self.instances[global_idx]
+        (self.instances[global_idx].0, self.instances[global_idx].1)
     }
 
     #[inline]
@@ -176,9 +178,9 @@ impl DistributionCtx {
     #[inline]
     pub fn find_air_instance_id(&self, global_idx: usize) -> usize {
         let mut air_instance_id = 0;
-        let (airgroup_id, air_id) = self.instances[global_idx];
+        let (airgroup_id, air_id, _) = self.instances[global_idx];
         for idx in 0..global_idx {
-            let (instance_airgroup_id, instance_air_id) = self.instances[idx];
+            let (instance_airgroup_id, instance_air_id, _) = self.instances[idx];
             if (instance_airgroup_id, instance_air_id) == (airgroup_id, air_id) {
                 air_instance_id += 1;
             }
@@ -189,12 +191,12 @@ impl DistributionCtx {
     #[inline]
     pub fn find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
         let indexes: Vec<_> =
-            self.instances.iter().enumerate().filter(|&(_, &(x, y))| x == airgroup_id && y == air_id).collect();
+            self.instances.iter().enumerate().filter(|&(_, &(x, y, _))| x == airgroup_id && y == air_id).collect();
 
         if indexes.is_empty() {
             (false, 0)
         } else if indexes.len() == 1 {
-            (true, self.instances.iter().position(|&(x, y)| x == airgroup_id && y == air_id).unwrap())
+            (true, self.instances.iter().position(|&(x, y, _)| x == airgroup_id && y == air_id).unwrap())
         } else {
             panic!("Multiple instances found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
         }
@@ -204,7 +206,8 @@ impl DistributionCtx {
     pub fn find_instance_id(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
         let mut count = 0;
         for (global_idx, instance) in self.instances.iter().enumerate() {
-            if instance == &(airgroup_id, air_id) {
+            let (inst_airgroup_id, inst_air_id, _) = instance;
+            if airgroup_id == *inst_airgroup_id && air_id == *inst_air_id {
                 if count == air_instance_id {
                     return Some(global_idx);
                 }
@@ -218,7 +221,8 @@ impl DistributionCtx {
     pub fn is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
         let mut min_owner = self.n_processes + 1;
         for (idx, instance) in self.instances.iter().enumerate() {
-            if instance == &(airgroup_id, air_id) && self.instances_owner[idx].0 < min_owner {
+            let (inst_airgroup_id, inst_air_id, _) = instance;
+            if airgroup_id == *inst_airgroup_id && air_id == *inst_air_id && self.instances_owner[idx].0 < min_owner {
                 min_owner = self.instances_owner[idx].0;
             }
         }
@@ -231,25 +235,15 @@ impl DistributionCtx {
     }
 
     #[inline]
-    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> (bool, usize) {
-        let mut is_mine = false;
-        let owner = (self.n_instances % self.n_processes as usize) as i32;
-        self.instances.push((airgroup_id, air_id));
-        self.instances_owner.push((owner, self.owners_count[owner as usize] as usize, weight));
-        self.owners_count[owner as usize] += 1;
-        self.owners_weight[owner as usize] += weight;
-
-        if owner == self.rank {
-            self.my_instances.push(self.n_instances);
-            is_mine = true;
-        }
+    pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        self.instances.push((airgroup_id, air_id, false));
+        self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
-        (is_mine, self.n_instances - 1)
+        self.n_instances - 1
     }
 
-    #[inline]
-    pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        self.instances.push((airgroup_id, air_id));
+    pub fn add_instance_no_assign_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        self.instances.push((airgroup_id, air_id, true));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
@@ -341,7 +335,7 @@ impl DistributionCtx {
         }
 
         // Populate the HashMap based on group_id and buffer positions
-        for (idx, &(group_id, _)) in self.instances.iter().enumerate() {
+        for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
             #[cfg(feature = "distributed")]
             let pos_buffer = self.roots_gatherv_displ[self.instances_owner[idx].0 as usize] as usize
                 + self.instances_owner[idx].1 * 4;
@@ -359,7 +353,7 @@ impl DistributionCtx {
         let mut my_air_groups_indices: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
         for (loc_idx, glob_idx) in self.my_instances.iter().enumerate() {
             let instance_idx = self.instances[*glob_idx];
-            my_air_groups_indices.entry(instance_idx).or_default().push(loc_idx);
+            my_air_groups_indices.entry((instance_idx.0, instance_idx.1)).or_default().push(loc_idx);
         }
 
         // Flatten the HashMap into a single vector for my_air_groups
@@ -369,7 +363,7 @@ impl DistributionCtx {
 
         //Calculate instances of each airgroup
         self.airgroup_instances = vec![Vec::new(); n_airgroups];
-        for (idx, &(group_id, _)) in self.instances.iter().enumerate() {
+        for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
             self.airgroup_instances[group_id].push(idx);
         }
 

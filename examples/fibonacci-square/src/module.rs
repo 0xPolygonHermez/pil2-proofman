@@ -9,7 +9,7 @@ use rayon::prelude::*;
 use crate::{BuildPublicValues, FibonacciSquareTrace, ModuleAirValues, ModuleTrace};
 
 pub struct Module<F: PrimeField64> {
-    inputs: Mutex<Vec<(u64, u64)>>,
+    inputs: Mutex<Vec<u64>>,
     instance_ids: RwLock<Vec<usize>>,
     std_lib: Arc<Std<F>>,
 }
@@ -21,7 +21,7 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
         Arc::new(Module { inputs: Mutex::new(Vec::new()), std_lib, instance_ids: RwLock::new(Vec::new()) })
     }
 
-    pub fn set_inputs(&self, inputs: Vec<(u64, u64)>) {
+    pub fn set_inputs(&self, inputs: Vec<u64>) {
         *self.inputs.lock().unwrap() = inputs;
     }
 }
@@ -66,9 +66,9 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
                 let inputs_slice = inputs[start..end].to_vec();
 
                 for (i, input) in inputs_slice.iter().enumerate() {
-                    let x = input.0;
+                    let x = *input;
                     let q = x / module;
-                    let x_mod = input.1;
+                    let x_mod = x % module;
 
                     trace[i].x = F::from_canonical_u64(x);
                     trace[i].q = F::from_canonical_u64(q);

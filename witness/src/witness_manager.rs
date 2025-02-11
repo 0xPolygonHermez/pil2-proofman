@@ -92,7 +92,10 @@ impl<F: Field> WitnessManager<F> {
 
             let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
                 .iter()
-                .filter(|id| ids_hash_set.contains(id))
+                .filter(|id| {
+                    ids_hash_set.contains(id)
+                        && (self.pctx.dctx_is_my_instance(**id) || self.pctx.dctx_is_instance_all(**id))
+                })
                 .cloned()
                 .collect();
 

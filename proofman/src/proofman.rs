@@ -95,45 +95,47 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut valid_constraints = true;
 
         let instances = pctx.dctx_get_instances();
-        let my_instances = pctx.dctx_get_my_instances();
         let mut airgroup_values_air_instances = Vec::new();
-        for instance_id in &my_instances {
-            let (airgroup_id, air_id) = instances[*instance_id];
-            let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
-            let (skip, _) = skip_prover_instance(&pctx, *instance_id);
+        for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
+            let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
+            let (skip, _) = skip_prover_instance(&pctx, instance_id);
 
-            if skip {
+            if skip || (!all && !pctx.dctx_is_my_instance(instance_id)) {
                 continue;
             };
 
             timer_start_info!(GENERATING_WITNESS);
 
-            wcm.calculate_witness(1, &[*instance_id]);
+            wcm.calculate_witness(1, &[instance_id]);
 
             timer_stop_and_log_info!(GENERATING_WITNESS);
-            
-            Self::initialize_air_instance(pctx.clone(), sctx.clone(), *instance_id, true);
+
+            if !pctx.dctx_is_my_instance(instance_id) {
+                continue;
+            }
+
+            Self::initialize_air_instance(pctx.clone(), sctx.clone(), instance_id, true);
             #[cfg(feature = "diagnostic")]
             {
                 Self::diagnostic_instance(pctx.clone(), sctx.clone(), *instance_id);
             }
             for stage in 2..=num_commit_stages {
-                wcm.calculate_witness(stage, &[*instance_id]);
-                Self::calculate_im_pols(stage, sctx.clone(), pctx.clone(), *instance_id);
+                wcm.calculate_witness(stage, &[instance_id]);
+                Self::calculate_im_pols(stage, sctx.clone(), pctx.clone(), instance_id);
             }
 
-            wcm.debug(&[*instance_id]);
+            wcm.debug(&[instance_id]);
 
             if pctx.options.verify_constraints {
-                valid_constraints = verify_constraints_proof(pctx.clone(), sctx.clone(), *instance_id);
+                valid_constraints = verify_constraints_proof(pctx.clone(), sctx.clone(), instance_id);
             }
 
             airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
-                airgroup_id,
-                air_id,
+                *airgroup_id,
+                *air_id,
                 air_instance_id,
             ));
-            pctx.free_instance(*instance_id);
+            pctx.free_instance(instance_id);
         }
 
         wcm.end();
@@ -209,21 +211,29 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut values = vec![0; my_instances.len() * 4];
 
-        for (idx, instance_id) in my_instances.iter().enumerate() {
-            wcm.calculate_witness(1, &[*instance_id]);
-            let value = Self::get_contribution_air(pctx.clone(), sctx.clone(), *instance_id);
-            pctx.free_instance(*instance_id);
+        for (instance_id, (_, _, all)) in instances.iter().enumerate() {
+            if !all && !pctx.dctx_is_my_instance(instance_id) {
+                continue;
+            }
+
+            wcm.calculate_witness(1, &[instance_id]);
+
+            if !pctx.dctx_is_my_instance(instance_id) {
+                continue;
+            }
+            let value = Self::get_contribution_air(pctx.clone(), sctx.clone(), instance_id);
+            pctx.free_instance(instance_id);
             for id in 0..4 {
-                values[idx * 4 + id] = value[id];
+                values[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = value[id];
             }
         }
 
         let transcript = FFITranscript::new(2, true);
 
-        // pctx.set_public_value(170320164326670721, 4);
-        // pctx.set_public_value(17316773654152950811, 5);
-        // pctx.set_public_value(11953482335611793423, 6);
-        // pctx.set_public_value(12850755888860414039, 7);
+        // pctx.set_public_value(6906030331108571511, 4);
+        // pctx.set_public_value(12916946059069441159, 5);
+        // pctx.set_public_value(13745806071312653307, 6);
+        // pctx.set_public_value(11447020614488192113, 7);
 
         transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
 
@@ -252,10 +262,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
         }
 
-        let global_challenge = vec![F::zero(); 3];
+        let global_challenge = [F::zero(); 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
-        pctx.set_global_challenge(global_challenge);
+        // pctx.set_global_challenge(global_challenge);
+        pctx.set_global_challenge(vec![
+            F::from_canonical_u64(7231166124381270513),
+            F::from_canonical_u64(10516099347468053826),
+            F::from_canonical_u64(5859738286781135773),
+        ]);
 
         let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
@@ -274,20 +289,27 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut valid_proofs = false;
         let mut proofs = Vec::new();
         let mut airgroup_values_air_instances = Vec::new();
-        for instance_id in my_instances.iter() {
+        for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
             timer_start_info!(GENERATING_WITNESS);
-            wcm.calculate_witness(1, &[*instance_id]);
-            timer_stop_and_log_info!(GENERATING_WITNESS);
-            Self::initialize_air_instance(pctx.clone(), sctx.clone(), *instance_id, false);
+            if !all && !pctx.dctx_is_my_instance(instance_id) {
+                continue;
+            }
 
-            let (airgroup_id, air_id) = instances[*instance_id];
-            let setup = sctx.get_setup(airgroup_id, air_id);
+            wcm.calculate_witness(1, &[instance_id]);
+
+            if !pctx.dctx_is_my_instance(instance_id) {
+                continue;
+            }
+            timer_stop_and_log_info!(GENERATING_WITNESS);
+            Self::initialize_air_instance(pctx.clone(), sctx.clone(), instance_id, false);
+
+            let setup = sctx.get_setup(*airgroup_id, *air_id);
             let p_setup = (&setup.p_setup).into();
-            let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
-            let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+            let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
+            let air_instance_name = &pctx.global_info.airs[*airgroup_id][*air_id].name;
             timer_start_info!(GENERATING_PROOF);
 
-            let mut steps_params = pctx.get_air_instance_params(&sctx, *instance_id);
+            let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id);
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
 
             let p_steps_params = (&steps_params).into();
@@ -305,19 +327,25 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 pctx.get_buff_helper_ptr(),
                 pctx.get_global_challenge_ptr(),
                 &proof_file,
-                airgroup_id as u64,
-                air_id as u64,
+                *airgroup_id as u64,
+                *air_id as u64,
                 air_instance_id as u64,
             );
 
             airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
-                airgroup_id,
-                air_id,
+                *airgroup_id,
+                *air_id,
                 air_instance_id,
             ));
 
+            println!(
+                "AIRGROUP VALUES {:?} {:?}",
+                instance_id,
+                pctx.get_air_instance_airgroup_values(*airgroup_id, *air_id, air_instance_id,)
+            );
+
             timer_start_info!(FREE_INSTANCE);
-            pctx.free_instance(*instance_id);
+            pctx.free_instance(instance_id);
             timer_stop_and_log_info!(FREE_INSTANCE);
 
             if pctx.options.aggregation {
@@ -325,7 +353,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let proof_recursive = generate_vadcop_recursive1_proof(
                     &pctx,
                     &setups,
-                    *instance_id,
+                    instance_id,
                     proof,
                     &mut circom_witness,
                     &publics,
@@ -336,27 +364,30 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 proofs.push(proof_recursive);
                 timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
                 timer_stop_and_log_info!(GENERATING_PROOF);
-
             } else {
                 proofs.push(proof);
                 timer_stop_and_log_info!(GENERATING_PROOF);
-                valid_proofs = verify_basic_proof(pctx.clone(), *instance_id, proof);
+                valid_proofs = verify_basic_proof(pctx.clone(), instance_id, proof);
             }
         }
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
-        if !pctx.options.aggregation
-            && pctx.dctx_get_rank() == 0
-            && (pctx.options.debug_info.debug_instances.is_empty()
-                || !pctx.options.debug_info.debug_global_instances.is_empty())
-        {
-            let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone(), airgroup_values_air_instances);
-            let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+        if !pctx.options.aggregation {
+            let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
+                || !pctx.options.debug_info.debug_global_instances.is_empty();
 
-            let valid_global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
-            if valid_global_constraints.is_err() {
-                valid_proofs = false;
+            if check_global_constraints {
+                let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone(), airgroup_values_air_instances);
+                let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+
+                if pctx.dctx_get_rank() == 0 {
+                    let valid_global_constraints =
+                        verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
+                    if valid_global_constraints.is_err() {
+                        valid_proofs = false;
+                    }
+                }
             }
         }
 
@@ -449,7 +480,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     fn diagnostic_instance(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) {
         let instances = pctx.dctx_get_instances();
 
-        let (airgroup_id, air_id) = instances[instance_id];
+        let (airgroup_id, air_id, _) = instances[instance_id];
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let air_name = pctx.global_info.airs[airgroup_id][air_id].clone().name;
         let setup = sctx.get_setup(airgroup_id, air_id);
@@ -487,12 +518,17 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
     }
 
-    fn initialize_air_instance(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize, init_aux_trace: bool) {
+    fn initialize_air_instance(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        instance_id: usize,
+        init_aux_trace: bool,
+    ) {
         let instances = pctx.dctx_get_instances();
 
         let mut air_instances_w = pctx.air_instances.write().unwrap();
 
-        let (airgroup_id, air_id) = instances[instance_id];
+        let (airgroup_id, air_id, _) = instances[instance_id];
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let air_instance = air_instances_w.get_mut(&instance_id).unwrap();
@@ -546,7 +582,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut seen = HashSet::new();
 
         for instance_id in my_instances.iter() {
-            let (airgroup_id, air_id) = instances[*instance_id];
+            let (airgroup_id, air_id, _) = instances[*instance_id];
             if seen.insert((airgroup_id, air_id)) {
                 airs.push((airgroup_id, air_id));
             }
@@ -627,7 +663,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut seen = HashSet::new();
 
         for instance_id in my_instances.iter() {
-            let (airgroup_id, air_id) = instances[*instance_id];
+            let (airgroup_id, air_id, _) = instances[*instance_id];
             if seen.insert((airgroup_id, air_id)) {
                 airs.push((airgroup_id, air_id));
             }
@@ -706,7 +742,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut seen = HashSet::new();
 
         for instance_id in my_instances.iter() {
-            let (airgroup_id, air_id) = instances[*instance_id];
+            let (airgroup_id, air_id, _) = instances[*instance_id];
             if seen.insert((airgroup_id, air_id)) {
                 airs.push((airgroup_id, air_id));
             }
@@ -767,7 +803,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
     pub fn calculate_im_pols(stage: u32, sctx: Arc<SetupCtx<F>>, pctx: Arc<ProofCtx<F>>, instance_id: usize) {
         let instances = pctx.dctx_get_instances();
-        let (airgroup_id, air_id) = instances[instance_id];
+        let (airgroup_id, air_id, _) = instances[instance_id];
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let steps_params = pctx.get_air_instance_params(&sctx, instance_id);
@@ -781,7 +817,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_start_info!(GET_CONTRIBUTION_AIR);
         let instances = pctx.dctx_get_instances();
 
-        let (airgroup_id, air_id) = instances[instance_id];
+        let (airgroup_id, air_id, _) = instances[instance_id];
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let setup = sctx.get_setup(airgroup_id, air_id);
 

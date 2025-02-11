@@ -649,7 +649,7 @@ pub fn get_buff_sizes<F: Field>(
     let my_instances = pctx.dctx_get_my_instances();
 
     for instance_id in my_instances.iter() {
-        let (airgroup_id, air_id) = instances[*instance_id];
+        let (airgroup_id, air_id, _) = instances[*instance_id];
 
         if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
             let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);

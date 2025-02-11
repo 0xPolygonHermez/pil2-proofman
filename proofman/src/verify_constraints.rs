@@ -21,7 +21,7 @@ pub fn verify_constraints<F: Field>(
     global_id: usize,
 ) -> Vec<ConstraintInfo> {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[global_id];
+    let (airgroup_id, air_id, _) = instances[global_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = pctx.get_air_instance_params(&sctx, global_id);
@@ -144,7 +144,7 @@ pub fn verify_constraints_proof<F: Field>(pctx: Arc<ProofCtx<F>>, sctx: Arc<Setu
 
     let constraints = verify_constraints::<F>(pctx.clone(), sctx.clone(), instance_id);
 
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
     let (skip, _) = skip_prover_instance(&pctx, instance_id);

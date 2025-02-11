@@ -761,7 +761,7 @@ pub fn mul_hint_fields<F: Field + Field>(
     options2: HintFieldOptions,
 ) -> u64 {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
 
     let setup = sctx.get_setup(airgroup_id, air_id);
 
@@ -791,7 +791,7 @@ pub fn acc_hint_field<F: Field>(
     add: bool,
 ) -> (u64, u64) {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = pctx.get_air_instance_params(sctx, instance_id);
@@ -828,7 +828,7 @@ pub fn acc_mul_hint_fields<F: Field>(
     add: bool,
 ) -> (u64, u64) {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = pctx.get_air_instance_params(sctx, instance_id);
@@ -867,7 +867,7 @@ pub fn update_airgroupvalue<F: Field>(
     add: bool,
 ) -> u64 {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = pctx.get_air_instance_params(sctx, instance_id);
@@ -948,7 +948,7 @@ pub fn get_hint_field<F: Field>(
     options: HintFieldOptions,
 ) -> HintFieldValue<F> {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
 
     let hint_info =
         get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
@@ -973,7 +973,7 @@ pub fn get_hint_field_a<F: Field>(
     options: HintFieldOptions,
 ) -> HintFieldValuesVec<F> {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
 
     let hint_infos: Vec<HintFieldInfo<F>> =
         get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
@@ -1002,7 +1002,7 @@ pub fn get_hint_field_m<F: Field>(
     options: HintFieldOptions,
 ) -> HintFieldValues<F> {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
 
     let hint_infos: Vec<HintFieldInfo<F>> =
         get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
@@ -1121,7 +1121,7 @@ pub fn set_hint_field<F: Field>(
     values: &HintFieldValue<F>,
 ) {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = pctx.get_air_instance_params(sctx, instance_id);
@@ -1144,7 +1144,7 @@ pub fn set_hint_field_val<F: Field>(
     value: HintFieldOutput<F>,
 ) {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = pctx.get_air_instance_params(sctx, instance_id);

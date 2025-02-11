@@ -54,7 +54,7 @@ pub fn verify_basic_proof<F: Field>(pctx: Arc<ProofCtx<F>>, instance_id: usize, 
 
     let instances = pctx.dctx_get_instances();
 
-    let (airgroup_id, air_id) = instances[instance_id];
+    let (airgroup_id, air_id, _) = instances[instance_id];
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
 
     let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic);

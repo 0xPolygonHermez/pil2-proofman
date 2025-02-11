@@ -27,8 +27,8 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>, airgroup_values:
     let instances = pctx.dctx_get_instances();
     let my_instances = pctx.dctx_get_my_instances();
 
-    for instance_id in my_instances.iter() {
-        let (airgroup_id, _) = instances[*instance_id];
+    for (my_instance_idx, instance_id) in my_instances.iter().enumerate() {
+        let (airgroup_id, _, _) = instances[*instance_id];
         for (idx, agg_type) in pctx.global_info.agg_types[airgroup_id].iter().enumerate() {
             let mut acc = ExtensionField {
                 value: [
@@ -38,12 +38,12 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>, airgroup_values:
                 ],
             };
 
-            if !airgroup_values[*instance_id].is_empty() {
+            if !airgroup_values[my_instance_idx].is_empty() {
                 let instance_airgroup_val = ExtensionField {
                     value: [
-                        airgroup_values[*instance_id][idx * FIELD_EXTENSION],
-                        airgroup_values[*instance_id][idx * FIELD_EXTENSION + 1],
-                        airgroup_values[*instance_id][idx * FIELD_EXTENSION + 2],
+                        airgroup_values[my_instance_idx][idx * FIELD_EXTENSION],
+                        airgroup_values[my_instance_idx][idx * FIELD_EXTENSION + 1],
+                        airgroup_values[my_instance_idx][idx * FIELD_EXTENSION + 2],
                     ],
                 };
                 if agg_type.agg_type == 0 {
@@ -116,7 +116,7 @@ fn get_global_hint_f<F: Field>(
         let my_instances = pctx.dctx_get_my_instances();
         for instance_id in my_instances.iter() {
             if !skip_prover_instance(pctx, *instance_id).0 {
-                let (airgroup_id, air_id) = instances[*instance_id];
+                let (airgroup_id, air_id, _) = instances[*instance_id];
                 let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
                 airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
                     airgroup_id,

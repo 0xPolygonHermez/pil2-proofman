@@ -62,7 +62,7 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
         let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            instance_id = pctx.add_instance(self.airgroup_id, self.air_id);
+            instance_id = pctx.add_instance_all(self.airgroup_id, self.air_id);
         }
 
         self.instance_id.store(instance_id as u64, Ordering::SeqCst);

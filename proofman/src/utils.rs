@@ -51,7 +51,7 @@ pub fn print_summary<F: PrimeField>(name: &str, pctx: Arc<ProofCtx<F>>, setups: 
         }
     }
 
-    for (instance_id, (airgroup_id, air_id)) in instances.iter().enumerate() {
+    for (instance_id, (airgroup_id, air_id, _)) in instances.iter().enumerate() {
         if !print[instance_id] {
             continue;
         }

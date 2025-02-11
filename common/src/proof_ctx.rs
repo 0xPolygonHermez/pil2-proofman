@@ -177,7 +177,7 @@ impl<F: Field> ProofCtx<F> {
         dctx.n_processes as usize
     }
 
-    pub fn dctx_get_instances(&self) -> Vec<(usize, usize)> {
+    pub fn dctx_get_instances(&self) -> Vec<(usize, usize, bool)> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances.clone()
     }
@@ -202,9 +202,19 @@ impl<F: Field> ProofCtx<F> {
         dctx.get_instance_info(global_idx)
     }
 
+    pub fn dctx_get_instance_idx(&self, global_idx: usize) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.get_instance_idx(global_idx)
+    }
+
     pub fn dctx_is_my_instance(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
         dctx.is_my_instance(global_idx)
+    }
+
+    pub fn dctx_is_instance_all(&self, global_idx: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances[global_idx].2
     }
 
     pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> usize {
@@ -221,6 +231,12 @@ impl<F: Field> ProofCtx<F> {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
         dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+    }
+
+    pub fn add_instance_all(&self, airgroup_id: usize, air_id: usize) -> usize {
+        let mut dctx = self.dctx.write().unwrap();
+        let weight = self.get_weight(airgroup_id, air_id);
+        dctx.add_instance_no_assign_all(airgroup_id, air_id, weight)
     }
 
     pub fn dctx_distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
@@ -369,7 +385,7 @@ impl<F: Field> ProofCtx<F> {
         let air_instance = air_instances.get(&instance_id).unwrap();
 
         let instances = self.dctx_get_instances();
-        let (airgroup_id, air_id) = instances[instance_id];
+        let (airgroup_id, air_id, _) = instances[instance_id];
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         StepsParams {
