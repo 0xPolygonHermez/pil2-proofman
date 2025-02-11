@@ -36,6 +36,7 @@ fn main() {
         eprintln!("`libstarks.a` not found! Compiling...");
         run_command("make", &["clean"], &pil2_stark_path);
         run_command("make", &["-j", "starks_lib"], &pil2_stark_path);
+        run_command("make", &["-j", "bctree"], &pil2_stark_path);
     } else {
         println!("C++ library already compiled, skipping rebuild.");
     }
