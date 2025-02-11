@@ -304,19 +304,33 @@ pub fn format_constraints(pilout: &Value) -> Vec<Value> {
 
     if let Some(pilout_constraints) = pilout["constraints"].as_array() {
         for constraint_obj in pilout_constraints {
-            if let Some((boundary, constraint_data)) = constraint_obj.as_object().unwrap().iter().next() {
-                let mut constraint = json!({
-                    "boundary": boundary,
-                    "e": constraint_data["everyRow"]["expressionIdx"]["idx"],
-                    "line": constraint_data["everyRow"]["debugLine"]
-                });
+            if let Some(constraint_inner) = constraint_obj.get("constraint") {
+                let valid_boundaries = ["everyRow", "firstRow", "lastRow", "everyFrame"];
 
-                if boundary == "everyFrame" {
-                    constraint["offsetMin"] = constraint_data["offsetMin"].clone();
-                    constraint["offsetMax"] = constraint_data["offsetMax"].clone();
+                if let Some(boundary) = valid_boundaries.iter().find_map(|&key| constraint_inner.get(key).map(|_| key))
+                {
+                    let constraint_data = &constraint_inner[boundary];
+
+                    let mut constraint = json!({
+                        "boundary": boundary, // Now correctly sets "everyRow", etc.
+                        "e": constraint_data["expressionIdx"]["idx"],
+                        "line": constraint_data["debugLine"]
+                    });
+
+                    if boundary == "everyFrame" {
+                        constraint["offsetMin"] = constraint_data["offsetMin"].clone();
+                        constraint["offsetMax"] = constraint_data["offsetMax"].clone();
+                    }
+
+                    constraints.push(constraint);
+                } else {
+                    println!(
+                        "⚠️ Warning: Constraint boundary not recognized inside 'constraint': {:?}",
+                        constraint_inner
+                    );
                 }
-
-                constraints.push(constraint);
+            } else {
+                println!("⚠️ Warning: Constraint object does not contain a 'constraint' key: {:?}", constraint_obj);
             }
         }
     }
