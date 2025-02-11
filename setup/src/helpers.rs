@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 /// Prints a formatted expression recursively.
@@ -135,12 +135,11 @@ pub fn get_exp_dim(expressions: &[Value], exp_id: usize) -> usize {
 
 /// Adds metadata information to an expression.
 pub fn add_info_expressions(expressions: &mut [Value], exp_id: usize) {
-    // Prevent infinite recursion by skipping already processed expressions
     if expressions[exp_id].get("expDeg").is_some() {
         return;
     }
 
-    // Handle `next` field if it exists
+    // Handle "next" field
     if let Some(next) = expressions[exp_id].get("next") {
         let row_offset = if next.as_bool().unwrap_or(false) { 1 } else { 0 };
         expressions[exp_id]["rowOffset"] = json!(row_offset);
@@ -153,8 +152,9 @@ pub fn add_info_expressions(expressions: &mut [Value], exp_id: usize) {
         "exp" => {
             let id = expressions[exp_id]["id"].as_u64().unwrap_or(0) as usize;
 
+            // Prevent self-reference processing
             if id == exp_id {
-                panic!("Detected self-referencing expression at index {}", exp_id);
+                return;
             }
 
             add_info_expressions(expressions, id);
@@ -188,50 +188,56 @@ pub fn add_info_expressions(expressions: &mut [Value], exp_id: usize) {
             }
         }
         "xDivXSubXi" => {
-            expressions[exp_id]["expDeg"] = json!(1);
+            let exp = &mut expressions[exp_id];
+            exp["expDeg"] = json!(1);
         }
         "challenge" | "eval" => {
-            expressions[exp_id]["expDeg"] = json!(0);
-            expressions[exp_id]["dim"] = json!(3);
+            let exp = &mut expressions[exp_id];
+            exp["expDeg"] = json!(0);
+            exp["dim"] = json!(3);
         }
         "airgroupvalue" | "proofvalue" => {
-            expressions[exp_id]["expDeg"] = json!(0);
-            expressions[exp_id]["dim"] = json!(3);
+            let exp = &mut expressions[exp_id];
+            exp["expDeg"] = json!(0);
+            exp["dim"] = json!(3);
         }
         "airvalue" => {
-            expressions[exp_id]["expDeg"] = json!(0);
-            if expressions[exp_id].get("dim").is_none() {
-                let stage = expressions[exp_id]["stage"].as_u64().unwrap_or(1);
-                expressions[exp_id]["dim"] = json!(if stage != 1 { 3 } else { 1 });
+            let exp = &mut expressions[exp_id];
+            exp["expDeg"] = json!(0);
+            if exp.get("dim").is_none() {
+                exp["dim"] = json!(if exp["stage"] != json!(1) { 3 } else { 1 });
             }
         }
         "public" => {
-            expressions[exp_id]["expDeg"] = json!(0);
-            expressions[exp_id]["stage"] = json!(1);
-            if expressions[exp_id].get("dim").is_none() {
-                expressions[exp_id]["dim"] = json!(1);
+            let exp = &mut expressions[exp_id];
+            exp["expDeg"] = json!(0);
+            exp["stage"] = json!(1);
+            if exp.get("dim").is_none() {
+                exp["dim"] = json!(1);
             }
         }
         "number" | "Zi" if expressions[exp_id].get("boundary") == Some(&json!("everyRow")) => {
-            expressions[exp_id]["expDeg"] = json!(0);
-            expressions[exp_id]["stage"] = json!(0);
-            if expressions[exp_id].get("dim").is_none() {
-                expressions[exp_id]["dim"] = json!(1);
+            let exp = &mut expressions[exp_id];
+            exp["expDeg"] = json!(0);
+            exp["stage"] = json!(0);
+            if exp.get("dim").is_none() {
+                exp["dim"] = json!(1);
             }
         }
         "add" | "sub" | "mul" | "neg" => {
-            let empty: Vec<Value> = Vec::new();
-            let values = expressions[exp_id].get("values").and_then(|v| v.as_array()).unwrap_or(&empty);
+            let empty = vec![];
+            let values = expressions[exp_id]["values"].as_array().unwrap_or(&empty);
 
-            if values.len() < 2 {
-                panic!("Binary operation '{}' missing values at index {}", op, exp_id);
+            if values.is_empty() {
+                panic!("Operation `{}` has no values!", op);
             }
 
             let lhs_id = values[0]["id"].as_u64().unwrap_or(0) as usize;
-            let rhs_id = values[1]["id"].as_u64().unwrap_or(0) as usize;
+            let rhs_id = values.get(1).map_or(0, |v| v["id"].as_u64().unwrap_or(0)) as usize;
 
+            // Prevent infinite recursion due to self-referencing expressions
             if lhs_id == exp_id || rhs_id == exp_id {
-                panic!("Expression references itself at index {}", exp_id);
+                return;
             }
 
             add_info_expressions(expressions, lhs_id);
@@ -262,11 +268,7 @@ pub fn add_info_expressions(expressions: &mut [Value], exp_id: usize) {
             exp["stage"] = json!(stage);
             exp["rowsOffsets"] = json!(combined_offsets);
         }
-        _ => panic!(
-            "Exp op not defined: {} at index {}",
-            expressions[exp_id].get("op").unwrap_or(&json!("unknown")),
-            exp_id
-        ),
+        _ => panic!("Exp op not defined: {}", expressions[exp_id].get("op").unwrap_or(&json!("unknown"))),
     }
 }
 
