@@ -108,7 +108,10 @@ pub fn generate_constraint_polynomial(
     // Add "std_xi" challenge to symbols
     let xi_id = symbols
         .iter()
-        .filter(|s| s.get("type") == Some(&json!("challenge")) && s["stage"].as_u64().unwrap_or(0) < stage as u64 + 1)
+        .filter(|s| {
+            s.get("type") == Some(&json!("challenge"))
+                && s.get("stage").and_then(|v| v.as_u64()).unwrap_or(0) < stage as u64
+        })
         .count();
 
     symbols.push(HashMap::from([
