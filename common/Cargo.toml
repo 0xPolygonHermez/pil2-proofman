@@ -19,6 +19,6 @@ mpi = { version = "0.8.0", optional = true }
 rayon.workspace = true
 
 [features]
-default = []
+default = ["distributed"]
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
 distributed = ["dep:mpi"]

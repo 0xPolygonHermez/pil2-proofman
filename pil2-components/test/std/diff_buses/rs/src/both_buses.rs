@@ -4,7 +4,7 @@ use witness::WitnessComponent;
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
 use p3_field::PrimeField;
-use rand::{distributions::Standard, prelude::Distribution, Rng};
+use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rngs::StdRng};
 
 use crate::BothBusesTrace;
 
@@ -23,7 +23,12 @@ where
     Standard: Distribution<F>,
 {
     fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let mut rng = rand::thread_rng();
+        let seed = if cfg!(feature = "debug") {
+            0
+        } else {
+            rand::thread_rng().gen::<u64>()
+        };
+        let mut rng = StdRng::seed_from_u64(seed);
 
         let mut trace = BothBusesTrace::new();
         let num_rows = trace.num_rows();

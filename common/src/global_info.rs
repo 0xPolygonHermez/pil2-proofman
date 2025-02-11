@@ -48,7 +48,7 @@ pub struct GlobalInfo {
     pub publics_map: Option<Vec<PublicMap>>,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct GlobalInfoAir {
     pub name: String,
 

@@ -22,9 +22,9 @@ where
         let direct_update_sum_local = DirectUpdateSumLocal::new();
         let direct_update_sum_global = DirectUpdateSumGlobal::new();
 
-        wcm.register_component(direct_update_prod_local.clone());
+        // wcm.register_component(direct_update_prod_local.clone());
         wcm.register_component(direct_update_prod_global.clone());
-        wcm.register_component(direct_update_sum_local.clone());
-        wcm.register_component(direct_update_sum_global.clone());
+        // wcm.register_component(direct_update_sum_local.clone());
+        // wcm.register_component(direct_update_sum_global.clone());
     }
 }

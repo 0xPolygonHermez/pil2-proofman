@@ -117,8 +117,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             Self::initialize_air_instance(pctx.clone(), sctx.clone(), instance_id, true);
             #[cfg(feature = "diagnostic")]
             {
-                Self::diagnostic_instance(pctx.clone(), sctx.clone(), *instance_id);
+                Self::diagnostic_instance(pctx.clone(), sctx.clone(), instance_id);
             }
+
             for stage in 2..=num_commit_stages {
                 wcm.calculate_witness(stage, &[instance_id]);
                 Self::calculate_im_pols(stage, sctx.clone(), pctx.clone(), instance_id);
@@ -265,12 +266,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let global_challenge = [F::zero(); 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
-        // pctx.set_global_challenge(global_challenge);
-        pctx.set_global_challenge(vec![
-            F::from_canonical_u64(7231166124381270513),
-            F::from_canonical_u64(10516099347468053826),
-            F::from_canonical_u64(5859738286781135773),
-        ]);
+        pctx.set_global_challenge(global_challenge.to_vec());
 
         let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
@@ -337,12 +333,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 *air_id,
                 air_instance_id,
             ));
-
-            println!(
-                "AIRGROUP VALUES {:?} {:?}",
-                instance_id,
-                pctx.get_air_instance_airgroup_values(*airgroup_id, *air_id, air_instance_id,)
-            );
 
             timer_start_info!(FREE_INSTANCE);
             pctx.free_instance(instance_id);

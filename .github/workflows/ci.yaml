@@ -159,7 +159,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: develop
+          ref: feature/single-global-challenge
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -170,7 +170,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-compiler
-          ref: feature/proofval-stage
+          ref: develop
           path: pil2-compiler
 
       - name: Install pil2-compiler dependencies
@@ -270,7 +270,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: develop
+          ref: feature/single-global-challenge
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -281,7 +281,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-compiler
-          ref: feature/proofval-stage
+          ref: develop
           path: pil2-compiler
 
       - name: Install pil2-compiler dependencies
@@ -473,22 +473,6 @@ jobs:
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey --output-dir ./pil2-components/test/std/connection/build
 
-      - name: Verify constraints direct_update
-        run: |
-          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey
-
-      - name: Generate proof direct_update
-        run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build
-
-      - name: Verify constraints direct_update
-        run: |
-          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey
-
-      - name: Generate proof direct_update
-        run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build
-
       - name: Verify constraints range-check
         run: |
           cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey
@@ -504,6 +488,14 @@ jobs:
       - name: Generate proof simple
         run: |
           cargo run --bin proofman-cli prove --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build/provingKey --output-dir ./pil2-components/test/simple/build
+       
+      - name: Verify constraints direct_update
+        run: |
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey
+
+      - name: Generate proof direct_update
+        run: |
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build
 
       # - name: Verify constraints diff_buses
       #   run: |

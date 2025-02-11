@@ -60,11 +60,7 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
                 trace[i].b = F::from_canonical_u64(b);
             }
 
-            println!("SETTING INPUTS {}", modules.len());
-
             self.module.set_inputs(modules);
-
-            println!("INPUTS SET");
 
             publics.out = trace[trace.num_rows() - 1].b;
 

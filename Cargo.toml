@@ -35,6 +35,7 @@ proofman-common = { path = "common", version = "0.1.0" }
 proofman-hints = { path = "hints", version = "0.1.0" }
 proofman-util = { path = "util", version = "0.1.0" }
 proofman-cli = { path = "cli", version = "0.1.0" }
+proofman-starks-lib-c = { path = "provers/starks-lib-c", version = "0.1.0" }
 pil-std-lib = { path = "pil2-components/lib/std/rs", version = "0.1.0" }
 witness = { path = "witness", version = "0.1.0" }
 pilout = { path = "pilout", version = "0.1.0" }
