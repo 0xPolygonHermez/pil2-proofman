@@ -16,12 +16,12 @@ pub fn prepare_pil(
     res.insert("name".to_string(), pil["name"].clone());
     res.insert("imPolsStages".to_string(), options.get("imPolsStages").unwrap_or(&json!(false)).clone());
 
-    res.insert("cmPolsMap".to_string(), json!([]));
-    res.insert("constPolsMap".to_string(), json!([]));
-    res.insert("challengesMap".to_string(), json!([]));
-    res.insert("publicsMap".to_string(), json!([]));
-    res.insert("airgroupValuesMap".to_string(), json!([]));
-    res.insert("airValuesMap".to_string(), json!([]));
+    res.insert("cmPolsMap".to_string(), json!({}));
+    res.insert("constPolsMap".to_string(), json!({}));
+    res.insert("challengesMap".to_string(), json!({}));
+    res.insert("publicsMap".to_string(), json!({}));
+    res.insert("airgroupValuesMap".to_string(), json!({}));
+    res.insert("airValuesMap".to_string(), json!({}));
     res.insert("pil2".to_string(), json!(pil2));
 
     res.insert("mapSectionsN".to_string(), json!({ "const": 0 }));
