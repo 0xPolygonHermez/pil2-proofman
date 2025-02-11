@@ -42,7 +42,8 @@ pub async fn pil_info(
     {
         let im_info: Value;
 
-        if options.get("optImPols").unwrap_or(&json!(false)).as_bool().unwrap() {
+        println!("options: {:?}", options);
+        if options.get("optImPols").unwrap_or(&json!(false)).as_bool().unwrap() == false {
             let info_pil_file = NamedTempFile::new().expect("Failed to create temp file");
             let im_pols_file = NamedTempFile::new().expect("Failed to create temp file");
 
