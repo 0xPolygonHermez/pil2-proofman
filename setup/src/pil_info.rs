@@ -17,7 +17,6 @@ pub async fn pil_info(
     stark_struct: &Value,
     options: HashMap<String, Value>,
 ) -> HashMap<String, Value> {
-    let keys = pil.as_object().unwrap().keys().cloned().collect::<Vec<String>>();
     let mut pil_clone = pil.clone();
     let info_pil = prepare_pil(f, &mut pil_clone, stark_struct, pil2, &options);
 

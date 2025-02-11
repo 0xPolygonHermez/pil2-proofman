@@ -272,7 +272,6 @@ pub async fn stark_setup(
     stark_struct: &StarkStruct,
     setup_options: &SetupOptions,
 ) -> Result<StarkSetupResult, Box<dyn std::error::Error>> {
-    let keys = air_json.as_object().unwrap().keys().cloned().collect::<Vec<String>>();
     // Check if pil2 mode is enabled
     let pil2 = setup_options.settings.get("pil2").and_then(|v| v.as_bool()).unwrap_or(true);
 

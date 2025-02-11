@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Write;
 
 /// Prints a formatted expression recursively.
