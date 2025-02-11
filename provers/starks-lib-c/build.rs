@@ -42,5 +42,8 @@ fn main() {
         for lib in &["sodium", "pthread", "gmp", "stdc++", "gmpxx", "crypto", "iomp5"] {
             println!("cargo:rustc-link-lib={}", lib);
         }
+
+        let out_dir = env::var("OUT_DIR").unwrap();
+        println!("cargo:rustc-link-search=native={}", out_dir);
     }
 }
