@@ -123,8 +123,9 @@ pub fn generate_constraint_polynomial(
         ("id".to_string(), json!(xi_id)),
     ]));
 
-    // FIX: Corrected `calculate_exp_deg` (pass `c_exp_id`, not `&expressions[c_exp_id]`)
+    println!("before");
     let initial_q_degree = calculate_exp_deg(expressions, c_exp_id, &[], false);
+    println!("after");
 
     println!("The maximum constraint degree is {} (without intermediate polynomials)", initial_q_degree);
 }
