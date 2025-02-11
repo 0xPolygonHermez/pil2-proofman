@@ -65,8 +65,6 @@ pub fn prepare_pil(
 
     if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap() {
         res.insert("starkStruct".to_string(), stark_struct.clone());
-
-        println!("starkStruct: {:?}", stark_struct);
         if stark_struct["nBits"] != res["pilPower"] {
             panic!(
                 "starkStruct and pilfile have degree mismatch (airId: {} airGroupId: {} starkStruct:{} pilfile:{})",
@@ -90,11 +88,6 @@ pub fn prepare_pil(
         for (i, constraint) in constraints_array.iter().enumerate() {
             if let Some(constraint_exp_id) = constraint["e"].as_u64().map(|v| v as usize) {
                 let expressions_len = expressions.as_array().map(|a| a.len()).unwrap_or(0);
-
-                println!(
-                    "Processing constraint {}: e = {}, expressions_len = {}",
-                    i, constraint_exp_id, expressions_len
-                );
 
                 if constraint_exp_id >= expressions_len {
                     panic!(

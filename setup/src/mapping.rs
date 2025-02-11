@@ -136,6 +136,8 @@ fn add_pol(res: &mut HashMap<String, Value>, symbol: &Value) {
         _ => panic!("Invalid symbol type"),
     };
 
+    println!("symbol: {:#?}", symbol);
+
     let pos = symbol["polId"].as_u64().unwrap() as usize;
     let mut entry = Map::from_iter(vec![
         ("stage".to_string(), symbol["stage"].clone()),

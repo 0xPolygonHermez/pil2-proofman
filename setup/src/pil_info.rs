@@ -1,13 +1,13 @@
 use crate::{
-    add_intermediate_pols::add_intermediate_polynomials, gen_pil_code::generate_pil_code, mapping::map,
+    /*add_intermediate_pols::add_intermediate_polynomials,*/ gen_pil_code::generate_pil_code, mapping::map,
     prepare_pil::prepare_pil,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
-use std::process::Command;
-use tempfile::NamedTempFile;
+// use std::fs;
+// use std::path::Path;
+// use std::process::Command;
+// use tempfile::NamedTempFile;
 
 /// Translates `pilInfo` function from JavaScript to Rust.
 pub async fn pil_info(
