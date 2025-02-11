@@ -295,6 +295,8 @@ pub fn add_intermediate_polynomials(
     }
 }
 
+use std::collections::HashSet;
+
 /// Calculates the maximum degree of an expression.
 pub fn calculate_exp_deg(
     expressions: &mut [Value], // Mutable reference to store degrees
@@ -302,11 +304,33 @@ pub fn calculate_exp_deg(
     im_exps: &[usize],
     cache_values: bool,
 ) -> usize {
-    // Borrow exp separately
+    let mut visited = HashSet::new();
+    calculate_exp_deg_inner(expressions, exp_id, im_exps, cache_values, &mut visited)
+}
+
+/// Inner function to track visited nodes and prevent infinite recursion.
+fn calculate_exp_deg_inner(
+    expressions: &mut [Value],
+    exp_id: usize,
+    im_exps: &[usize],
+    cache_values: bool,
+    visited: &mut HashSet<usize>,
+) -> usize {
+    if visited.contains(&exp_id) {
+        println!("⚠️ Cycle detected at exp_id {}. Returning 0 to prevent infinite recursion.", exp_id);
+        return 0; // Prevent infinite recursion
+    }
+    visited.insert(exp_id);
+
     let exp = expressions.get(exp_id).expect("Invalid exp_id index").clone();
 
+    println!("Entering calculate_exp_deg for exp_id: {}", exp_id);
+    println!("Processing exp_id {}: {:?}", exp_id, exp);
+
+    // Check for cached value
     if cache_values {
         if let Some(degree) = exp.get("degree_").and_then(|v| v.as_u64()) {
+            println!("Cache hit for exp_id {}: {}", exp_id, degree);
             return degree as usize;
         }
     }
@@ -315,9 +339,10 @@ pub fn calculate_exp_deg(
         Some("exp") => {
             let id = exp.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             if im_exps.contains(&id) {
+                println!("exp_id {} is in im_exps, returning 1", exp_id);
                 1
             } else {
-                calculate_exp_deg(expressions, id, im_exps, cache_values)
+                calculate_exp_deg_inner(expressions, id, im_exps, cache_values, visited)
             }
         }
         Some("x") | Some("const") | Some("cm") | Some("custom") => 1,
@@ -334,33 +359,58 @@ pub fn calculate_exp_deg(
         | Some("eval")
         | Some("airgroupvalue")
         | Some("airvalue") => 0,
-        Some("neg") => exp.get("values").and_then(|v| v.as_array()).and_then(|values| values.first()).map_or(0, |v| {
-            let id = v.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            calculate_exp_deg(expressions, id, im_exps, cache_values)
-        }),
+        Some("neg") => {
+            let values = exp.get("values").and_then(|v| v.as_array());
+            if let Some(values) = values {
+                if let Some(first) = values.first() {
+                    let id = first.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    calculate_exp_deg_inner(expressions, id, im_exps, cache_values, visited)
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        }
         Some("add") | Some("sub") | Some("mul") => {
-            let blank = vec![];
-            let values = exp.get("values").and_then(|v| v.as_array()).unwrap_or(&blank);
+            let empty = Vec::new();
+            let values = exp.get("values").and_then(|v| v.as_array()).unwrap_or(&empty);
             if values.len() < 2 {
                 return 0;
             }
+
             let lhs_id = values[0].get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let rhs_id = values[1].get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
-            let lhs_deg = calculate_exp_deg(expressions, lhs_id, im_exps, cache_values);
-            let rhs_deg = calculate_exp_deg(expressions, rhs_id, im_exps, cache_values);
+            println!(
+                "Processing \"{}\": exp_id={} -> lhs_id={}, rhs_id={}",
+                exp.get("op").unwrap().as_str().unwrap_or("unknown"),
+                exp_id,
+                lhs_id,
+                rhs_id
+            );
+
+            let lhs_deg = calculate_exp_deg_inner(expressions, lhs_id, im_exps, cache_values, visited);
+            let rhs_deg = calculate_exp_deg_inner(expressions, rhs_id, im_exps, cache_values, visited);
+
             if exp["op"] == "mul" {
                 lhs_deg + rhs_deg
             } else {
                 lhs_deg.max(rhs_deg)
             }
         }
-        _ => panic!("Exp op not defined: {:?}", exp),
+        _ => {
+            println!("⚠️ Exp op not defined: {:?}", exp);
+            panic!("Exp op not defined: {:?}", exp);
+        }
     };
+
+    visited.remove(&exp_id); // Remove from visited set
 
     if cache_values {
         expressions[exp_id]["degree_"] = json!(deg);
     }
 
+    println!("Leaving calculate_exp_deg for exp_id {} with degree {}", exp_id, deg);
     deg
 }
