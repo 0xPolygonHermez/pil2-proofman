@@ -297,13 +297,13 @@ pub fn add_intermediate_polynomials(
 
 use std::collections::HashSet;
 
-/// Public function: **Keeps existing API**
+/// Public function: Keeps the existing API
 pub fn calculate_exp_deg(expressions: &mut [Value], exp_id: usize, im_exps: &[usize], cache_values: bool) -> usize {
     let mut visited = HashSet::new();
     calculate_exp_deg_helper(expressions, exp_id, im_exps, cache_values, &mut visited)
 }
 
-/// Recursive helper function: **Does the actual work**
+/// Recursive helper function: Does the actual work
 fn calculate_exp_deg_helper(
     expressions: &mut [Value],
     exp_id: usize,
@@ -311,27 +311,29 @@ fn calculate_exp_deg_helper(
     cache_values: bool,
     visited: &mut HashSet<usize>,
 ) -> usize {
-    if !visited.insert(exp_id) {
-        println!("⚠️ Cycle detected at exp_id {}. Returning 0 to prevent infinite recursion.", exp_id);
-        return 0;
+    if visited.contains(&exp_id) {
+        println!("⚠️ Possible cycle detected at exp_id {}. Returning 1 instead of 0.", exp_id);
+        return 1;
     }
 
+    visited.insert(exp_id);
     println!("🔍 Entering calculate_exp_deg for exp_id: {}", exp_id);
 
-    let exp_clone = expressions.get(exp_id).expect("Invalid exp_id index").clone();
-    println!("📜 Processing exp_id {}: {:?}", exp_id, exp_clone);
+    // Clone the expression to avoid borrowing issues
+    let exp = expressions.get(exp_id).expect("Invalid exp_id index").clone();
+    println!("📜 Processing exp_id {}: {:?}", exp_id, exp);
 
     if cache_values {
-        if let Some(degree) = exp_clone.get("degree_").and_then(|v| v.as_u64()) {
+        if let Some(degree) = exp.get("degree_").and_then(|v| v.as_u64()) {
             println!("✅ Using cached degree {} for exp_id {}", degree, exp_id);
-            visited.remove(&exp_id); // Remove from visited before returning
+            visited.remove(&exp_id);
             return degree as usize;
         }
     }
 
-    let deg = match exp_clone.get("op").and_then(|v| v.as_str()) {
+    let deg = match exp.get("op").and_then(|v| v.as_str()) {
         Some("exp") => {
-            let id = exp_clone.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let id = exp.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             println!("🌀 Recursing into 'exp' op for id {}", id);
             if im_exps.contains(&id) {
                 println!("✅ id {} found in im_exps, returning 1", id);
@@ -341,11 +343,11 @@ fn calculate_exp_deg_helper(
             }
         }
         Some("x") | Some("const") | Some("cm") | Some("custom") => {
-            println!("📌 Returning 1 for constant-like op: {}", exp_clone["op"]);
+            println!("📌 Returning 1 for constant-like op: {}", exp["op"]);
             1
         }
         Some("Zi") => {
-            if exp_clone.get("boundary") == Some(&json!("everyRow")) {
+            if exp.get("boundary") == Some(&json!("everyRow")) {
                 println!("📌 Returning 0 for 'Zi' op with 'everyRow' boundary");
                 0
             } else {
@@ -359,11 +361,11 @@ fn calculate_exp_deg_helper(
         | Some("eval")
         | Some("airgroupvalue")
         | Some("airvalue") => {
-            println!("📌 Returning 0 for known zero-degree op: {}", exp_clone["op"]);
+            println!("📌 Returning 0 for known zero-degree op: {}", exp["op"]);
             0
         }
         Some("neg") => {
-            if let Some(values) = exp_clone.get("values").and_then(|v| v.as_array()) {
+            if let Some(values) = exp.get("values").and_then(|v| v.as_array()) {
                 if let Some(first) = values.first() {
                     let id = first.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                     println!("🌀 Recursing into 'neg' op for id {}", id);
@@ -378,34 +380,31 @@ fn calculate_exp_deg_helper(
             }
         }
         Some("add") | Some("sub") | Some("mul") => {
-            let empty_vec = vec![];
-            let values = exp_clone.get("values").and_then(|v| v.as_array()).unwrap_or(&empty_vec);
+            let empty_vec = vec![]; // Fix borrowing issue
+            let values = exp.get("values").and_then(|v| v.as_array()).unwrap_or(&empty_vec);
 
             if values.len() < 2 {
-                println!("⚠️ Binary op '{}' missing operands, returning 0", exp_clone["op"]);
+                println!("⚠️ Binary op '{}' missing operands, returning 0", exp["op"]);
                 return 0;
             }
 
             let lhs_id = values[0].get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let rhs_id = values[1].get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
-            println!(
-                "🌀 Processing '{}' op: exp_id={} -> lhs_id={}, rhs_id={}",
-                exp_clone["op"], exp_id, lhs_id, rhs_id
-            );
+            println!("🌀 Processing '{}' op: exp_id={} -> lhs_id={}, rhs_id={}", exp["op"], exp_id, lhs_id, rhs_id);
 
             let lhs_deg = calculate_exp_deg_helper(expressions, lhs_id, im_exps, cache_values, visited);
             let rhs_deg = calculate_exp_deg_helper(expressions, rhs_id, im_exps, cache_values, visited);
 
-            if exp_clone["op"] == "mul" {
+            if exp["op"] == "mul" {
                 println!("📌 Returning {} + {} for 'mul' op", lhs_deg, rhs_deg);
                 lhs_deg + rhs_deg
             } else {
-                println!("📌 Returning max({}, {}) for '{}' op", lhs_deg, rhs_deg, exp_clone["op"]);
+                println!("📌 Returning max({}, {}) for '{}' op", lhs_deg, rhs_deg, exp["op"]);
                 lhs_deg.max(rhs_deg)
             }
         }
-        _ => panic!("❌ Exp op not defined: {:?}", exp_clone),
+        _ => panic!("❌ Exp op not defined: {:?}", exp),
     };
 
     if cache_values {
@@ -413,7 +412,7 @@ fn calculate_exp_deg_helper(
         expressions[exp_id]["degree_"] = json!(deg);
     }
 
-    visited.remove(&exp_id); // Remove from visited when done
+    visited.remove(&exp_id);
     println!("✅ Leaving calculate_exp_deg for exp_id {} with degree {}", exp_id, deg);
     deg
 }
