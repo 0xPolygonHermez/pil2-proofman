@@ -86,25 +86,36 @@ pub fn prepare_pil(
         res.insert("starkStruct".to_string(), json!({ "nBits": res["pilPower"] }));
     }
 
-    println!("entering critical section");
     if let Some(constraints_array) = constraints.as_array_mut() {
-        let mut stage_updates = Vec::new(); // Store updates instead of modifying in-place
+        let mut stage_updates = Vec::new();
 
-        for constraint in constraints_array.iter() {
-            let constraint_exp_id = constraint["e"].as_u64().unwrap() as usize;
-            if let Some(expressions_array) = expressions.as_array_mut() {
-                add_info_expressions(expressions_array, constraint_exp_id);
-                stage_updates.push((constraint_exp_id, expressions_array[constraint_exp_id]["stage"].clone()));
+        for (i, constraint) in constraints_array.iter().enumerate() {
+            if let Some(constraint_exp_id) = constraint["e"].as_u64().map(|v| v as usize) {
+                let expressions_len = expressions.as_array().map(|a| a.len()).unwrap_or(0);
+
+                println!(
+                    "Processing constraint {}: e = {}, expressions_len = {}",
+                    i, constraint_exp_id, expressions_len
+                );
+
+                if constraint_exp_id >= expressions_len {
+                    panic!(
+                        "Constraint references out-of-bounds index: constraint_exp_id = {}, expressions_len = {}",
+                        constraint_exp_id, expressions_len
+                    );
+                }
+
+                if let Some(expressions_array) = expressions.as_array_mut() {
+                    add_info_expressions(expressions_array, constraint_exp_id);
+                    stage_updates.push((i, expressions_array[constraint_exp_id]["stage"].clone()));
+                }
             }
         }
 
-        // Apply collected updates
-        for (idx, stage) in stage_updates {
-            constraints_array[idx]["stage"] = stage;
+        for (i, stage) in stage_updates {
+            constraints_array[i]["stage"] = stage;
         }
     }
-    println!("finished critical section");
-    // end bad section
 
     let mut missing_symbol_indices = Vec::new();
     if let Some(expressions_array) = expressions.as_array() {
