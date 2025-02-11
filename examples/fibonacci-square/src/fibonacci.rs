@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use proofman_common::{add_air_instance, AirInstance, FromTrace, ProofCtx, SetupCtx};
+use proofman_common::{add_air_instance, write_custom_commit_trace, AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::WitnessComponent;
 
 use p3_field::PrimeField64;
@@ -48,13 +48,6 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
 
         publics.out = trace[trace.num_rows() - 1].b;
 
-        let mut trace_rom = FibonacciSquareRomTrace::new_zeroes();
-
-        for i in 0..trace_rom.num_rows() {
-            trace_rom[i].line = F::from_canonical_u64(3 + i as u64);
-            trace_rom[i].flags = F::from_canonical_u64(2 + i as u64);
-        }
-
         let mut proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());
         proof_values.value1 = F::from_canonical_u64(5);
         proof_values.value2 = F::from_canonical_u64(125);
@@ -64,10 +57,19 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
         air_values.fibo1[1] = F::from_canonical_u64(2);
         air_values.fibo3 = [F::from_canonical_u64(5), F::from_canonical_u64(5), F::from_canonical_u64(5)];
 
-        let air_instance = AirInstance::new_from_trace(
-            FromTrace::new(&mut trace).with_custom_traces(vec![&mut trace_rom]).with_air_values(&mut air_values),
-        );
+        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace).with_air_values(&mut air_values));
         add_air_instance::<F>(air_instance, pctx.clone());
+    }
+
+    fn gen_custom_commits_fixed(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
+        let mut trace_rom = FibonacciSquareRomTrace::new_zeroes();
+
+        for i in 0..trace_rom.num_rows() {
+            trace_rom[i].line = F::from_canonical_u64(3 + i as u64);
+            trace_rom[i].flags = F::from_canonical_u64(2 + i as u64);
+        }
+
+        write_custom_commit_trace(&pctx, &sctx, &mut trace_rom, "rom", [0u8; 32]);
     }
 
     fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) {

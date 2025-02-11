@@ -34,6 +34,7 @@ pub struct StarkProver<F: Field> {
     p_proof: *mut c_void,
     constraints_to_check: Vec<usize>,
     prover_buffer_size: u64,
+    custom_commits_fixed_buffer_size: u64,
     _marker: PhantomData<F>, // Add PhantomData to track the type F
 }
 
@@ -54,6 +55,7 @@ impl<F: Field> StarkProver<F> {
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let prover_buffer_size = setup.prover_buffer_size;
+        let custom_commits_fixed_buffer_size = setup.custom_commits_fixed_buffer_size;
 
         let p_stark = starks_new_c((&setup.p_setup).into(), setup.get_const_tree_ptr());
 
@@ -85,6 +87,7 @@ impl<F: Field> StarkProver<F> {
             merkle_tree_custom,
             constraints_to_check,
             prover_buffer_size,
+            custom_commits_fixed_buffer_size,
             _marker: PhantomData,
         }
     }
@@ -96,24 +99,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
         air_instance.init_aux_trace(self.prover_buffer_size as usize);
         air_instance.init_evals(self.stark_info.ev_map.len() * Self::FIELD_EXTENSION);
-
-        let n_custom_commits = self.stark_info.custom_commits.len();
-
-        for commit_id in 0..n_custom_commits {
-            let n_cols = *self
-                .stark_info
-                .map_sections_n
-                .get(&(self.stark_info.custom_commits[commit_id].name.clone() + "0"))
-                .unwrap() as usize;
-
-            if air_instance.custom_commits[commit_id].is_empty() {
-                air_instance.init_custom_commit(commit_id, (1 << self.stark_info.stark_struct.n_bits) * n_cols);
-            }
-
-            let extended_size = (1 << self.stark_info.stark_struct.n_bits_ext) * n_cols;
-            let mt_nodes = (2 * (1 << self.stark_info.stark_struct.n_bits_ext) - 1) * self.n_field_elements;
-            air_instance.init_custom_commit_extended(commit_id, extended_size + mt_nodes);
-        }
+        air_instance.init_custom_commit_fixed_trace(self.custom_commits_fixed_buffer_size as usize);
 
         let n_airgroup_values = self.stark_info.airgroupvalues_map.as_ref().unwrap().len();
         let n_air_values = self.stark_info.airvalues_map.as_ref().unwrap().len();
@@ -164,8 +150,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: setup.get_const_ptr(),
             p_const_tree: std::ptr::null_mut(),
-            custom_commits: air_instance.get_custom_commits_ptr(),
-            custom_commits_extended: [std::ptr::null_mut(); 10],
+            custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
         };
 
         let p_setup = (&setup.p_setup).into();
@@ -204,8 +189,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: setup.get_const_ptr(),
             p_const_tree: setup.get_const_tree_ptr(),
-            custom_commits: air_instance.get_custom_commits_ptr(),
-            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+            custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
         };
 
         if stage_id as usize <= pctx.global_info.n_challenges.len() {
@@ -320,7 +304,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         }
     }
 
-    fn commit_custom_commits_stage(&mut self, stage_id: u32, pctx: Arc<ProofCtx<F>>) -> Vec<u64> {
+    fn commit_custom_commits_stage(&mut self, stage_id: u32, pctx: Arc<ProofCtx<F>>) {
         let mut air_instances = pctx.air_instance_repo.air_instances.write().unwrap();
         let air_instance = air_instances.get_mut(&self.global_idx).unwrap();
 
@@ -330,7 +314,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         let n_custom_commits = self.stark_info.custom_commits.len();
 
         if n_custom_commits == 0 {
-            return Vec::new();
+            return;
         }
 
         let air_name = &pctx.global_info.airs[self.airgroup_id][self.air_id].name;
@@ -342,7 +326,6 @@ impl<F: Field> Prover<F> for StarkProver<F> {
             air_name
         );
 
-        let mut custom_publics = Vec::new();
         for commit_id in 0..n_custom_commits {
             let custom_commits_stage = self.stark_info.custom_commits_map[commit_id]
                 .as_ref()
@@ -351,36 +334,31 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 .any(|custom_commit| custom_commit.stage == stage_id as u64);
 
             if custom_commits_stage {
-                extend_and_merkelize_custom_commit_c(
-                    p_stark,
-                    commit_id as u64,
-                    stage_id as u64,
-                    air_instance.custom_commits[commit_id].as_ptr() as *mut u8,
-                    air_instance.custom_commits_extended[commit_id].as_ptr() as *mut u8,
-                    p_proof,
-                    pctx.get_buff_helper_ptr(),
-                    "",
-                );
-            }
+                if stage_id != 0 {
+                    extend_and_merkelize_custom_commit_c(
+                        p_stark,
+                        commit_id as u64,
+                        stage_id as u64,
+                        air_instance.get_aux_trace_ptr(),
+                        p_proof,
+                        pctx.get_buff_helper_ptr(),
+                    );
+                } else {
+                    let custom_commit_file_path = &pctx
+                        .get_custom_commits_fixed_buffer(&self.stark_info.custom_commits[commit_id].name)
+                        .unwrap()
+                        .to_string_lossy();
 
-            let mut value = vec![Goldilocks::zero(); self.n_field_elements];
-            treesGL_get_root_c(
-                p_stark,
-                (self.stark_info.n_stages + 2 + commit_id as u32) as u64,
-                value.as_mut_ptr() as *mut u8,
-            );
-            if !self.stark_info.custom_commits[commit_id].public_values.is_empty() {
-                assert!(
-                    self.n_field_elements == self.stark_info.custom_commits[commit_id].public_values.len(),
-                    "Invalid public values size"
-                );
-                for (idx, val) in value.iter().enumerate() {
-                    custom_publics.push(self.stark_info.custom_commits[commit_id].public_values[idx].idx);
-                    custom_publics.push(val.as_canonical_u64());
+                    load_custom_commit_c(
+                        p_stark,
+                        commit_id as u64,
+                        air_instance.get_custom_commits_fixed_ptr(),
+                        p_proof,
+                        custom_commit_file_path,
+                    );
                 }
             }
         }
-        custom_publics
     }
 
     fn calculate_xdivxsub(&mut self, pctx: Arc<ProofCtx<F>>, challenge: Vec<F>) {
@@ -674,8 +652,7 @@ impl<F: Field> StarkProver<F> {
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: std::ptr::null_mut(),
             p_const_tree: setup.get_const_tree_ptr(),
-            custom_commits: air_instance.get_custom_commits_ptr(),
-            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+            custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
         };
 
         compute_evals_c(p_stark, (&steps_params).into(), pctx.get_buff_helper_ptr(), p_proof);
@@ -708,8 +685,7 @@ impl<F: Field> StarkProver<F> {
             xdivxsub: pctx.get_buff_helper_ptr(),
             p_const_pols: setup.get_const_ptr(),
             p_const_tree: setup.get_const_tree_ptr(),
-            custom_commits: air_instance.get_custom_commits_ptr(),
-            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+            custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
         };
 
         calculate_fri_polynomial_c(p_stark, (&steps_params).into());

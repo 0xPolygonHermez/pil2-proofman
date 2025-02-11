@@ -9,6 +9,9 @@ use std::collections::HashMap;
 use p3_field::Field;
 use serde::Deserialize;
 use std::fs;
+use blake3;
+use std::fs::File;
+use std::io::{BufReader, Read};
 
 pub fn add_air_instance<F: Field>(air_instance: AirInstance<F>, pctx: Arc<ProofCtx<F>>) -> bool {
     let (is_mine, gid) = pctx.dctx.write().unwrap().add_instance(
@@ -227,4 +230,21 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         std_mode,
         save_proofs_to_file: true,
     }
+}
+
+pub fn blake3_file_hash_bytes(filename: &str) -> Result<[u8; 32], std::io::Error> {
+    let file = File::open(filename)?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = blake3::Hasher::new();
+
+    let mut buffer = [0; 8192];
+    while let Ok(n) = reader.read(&mut buffer) {
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+
+    let hash = hasher.finalize();
+    Ok(*hash.as_bytes())
 }

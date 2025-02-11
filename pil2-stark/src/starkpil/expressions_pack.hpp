@@ -129,7 +129,6 @@ public:
         }
 
         for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); ++i) {
-            Goldilocks::Element *customCommits = domainExtended ? params.pCustomCommitsExtended[i] : params.pCustomCommits[i];
             for(uint64_t j = 0; j < setupCtx.starkInfo.customCommits[i].stageWidths[0]; ++j) {
                 if(!customCommitsUsed[i][j]) continue;
                 PolMap polInfo = setupCtx.starkInfo.customCommitsMap[i][j];
@@ -139,7 +138,7 @@ public:
                     for(uint64_t o = 0; o < nOpenings; ++o) {
                         for(uint64_t j = 0; j < nrowsPack; ++j) {
                             uint64_t l = (row + j + nextStrides[o]) % domainSize;
-                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = customCommits[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.pCustomCommitsFixed[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                         }
                     }
                 }
