@@ -44,9 +44,18 @@ pub fn generate_constraint_polynomial(
 
     let boundaries_array = boundaries.as_array_mut().expect("Expected 'boundaries' to be an array");
 
+    println!("constraints: {:?}", constraints);
+
     // Process constraints
     for constraint in constraints {
         let boundary = constraint["boundary"].as_str().expect("Boundary must be a string");
+
+        if boundary == "constraint" {
+            println!("Skipping constraint: {:?}", constraint);
+            continue; // Skip this iteration
+        }
+
+        println!("Processing boundary: {}", boundary);
 
         if !["everyRow", "firstRow", "lastRow", "everyFrame"].contains(&boundary) {
             panic!("Boundary {} not supported", boundary);
