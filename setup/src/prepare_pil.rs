@@ -86,7 +86,6 @@ pub fn prepare_pil(
         res.insert("starkStruct".to_string(), json!({ "nBits": res["pilPower"] }));
     }
 
-    // this section is infinitely recursing and overflowing the stack
     println!("entering critical section");
     if let Some(constraints_array) = constraints.as_array_mut() {
         let mut stage_updates = Vec::new(); // Store updates instead of modifying in-place
