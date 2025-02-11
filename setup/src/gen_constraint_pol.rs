@@ -52,12 +52,7 @@ pub fn generate_constraint_polynomial(
             panic!("Boundary {} not supported", boundary);
         }
 
-        // FIX: Removed the incorrect call to `e.exp` (no `exp` method exists)
-        let mut expr = json!({
-            "op": "exp",
-            "e": constraint["e"].as_u64().unwrap_or(0) as usize,
-            "stage": 0
-        });
+        let mut expr = e.exp(constraint["e"].as_u64().unwrap_or(0) as usize, 0, stage);
 
         // Handle boundary-specific logic
         if boundary == "everyFrame" {
