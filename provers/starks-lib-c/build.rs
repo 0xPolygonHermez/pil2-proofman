@@ -1,49 +1,59 @@
 use std::env;
+use std::path::Path;
+use std::process::Command;
 
 fn main() {
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-cfg=feature=\"no_lib_link\"");
         return;
     }
+
     // Check if the "NO_LIB_LINK" feature is enabled
     if env::var("CARGO_FEATURE_NO_LIB_LINK").is_err() {
-        let library_short_name = "starks";
-        let library_folder: String = "../../pil2-stark/lib".to_string();
-        let library_path = format!("{}/lib{}.a", library_folder, library_short_name);
+        let pil2_stark_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pil2-stark");
+        let library_folder = pil2_stark_path.join("lib");
+        let library_name = "starks";
 
-        println!("Library folder: {}  and library path: {}", library_folder, library_path);
+        if !pil2_stark_path.exists() {
+            panic!("Missing `pil2-stark` submodule! Run `git submodule update --init --recursive`");
+        }
 
-        // Trigger a rebuild if the library path changes
-        let current_dir = env::current_dir().unwrap();
-        println!("cargo:rerun-if-changed={}", current_dir.join(&library_path).display());
+        let _ = Command::new("git")
+            .args(&["submodule", "init"])
+            .current_dir(&pil2_stark_path)
+            .status()
+            .expect("Failed to initialize submodules");
 
-        // Add the library folder to the linker search path
-        println!("cargo:rustc-link-search=native={}", current_dir.join(&library_folder).display());
+        let _ = Command::new("git")
+            .args(&["submodule", "update", "--recursive"])
+            .current_dir(&pil2_stark_path)
+            .status()
+            .expect("Failed to update submodules");
 
-        // Add additional common library search paths
-        println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu/");
-        println!("cargo:rustc-link-search=native=/usr/lib/gcc/x86_64-linux-gnu/11/");
+        let _ = Command::new("make")
+            .arg("clean")
+            .current_dir(&pil2_stark_path)
+            .status()
+            .expect("Failed to clean previous build");
 
-        // Add linker arguments
-        println!("cargo:rustc-link-arg=-fopenmp");
-        println!("cargo:rustc-link-arg=-MMD");
-        println!("cargo:rustc-link-arg=-MP");
-        println!("cargo:rustc-link-arg=-std=c++17");
-        println!("cargo:rustc-link-arg=-Wall");
-        println!("cargo:rustc-link-arg=-flarge-source-files");
-        println!("cargo:rustc-link-arg=-Wno-unused-label");
-        println!("cargo:rustc-link-arg=-rdynamic");
-        println!("cargo:rustc-link-arg=-mavx2");
+        let _ = Command::new("make")
+            .args(&["-j", "starks_lib"])
+            .current_dir(&pil2_stark_path)
+            .status()
+            .expect("Failed to compile `starks_lib`");
 
-        // Link the static library specified by `library_short_name`
-        println!("cargo:rustc-link-lib=static={}", library_short_name);
+        let abs_lib_path = library_folder.canonicalize().unwrap_or(library_folder.clone());
+        let lib_file = abs_lib_path.join(format!("lib{}.a", library_name));
 
-        // Link other required libraries
+        if !lib_file.exists() {
+            panic!("`libstarks.a` was not found at {}", lib_file.display());
+        }
+
+        println!("cargo:rustc-link-search=native={}", abs_lib_path.display());
+        println!("cargo:rustc-link-lib=static={}", library_name);
+
         for lib in &["sodium", "pthread", "gmp", "stdc++", "gmpxx", "crypto", "iomp5"] {
             println!("cargo:rustc-link-lib={}", lib);
         }
-
-        let out_dir = env::var("OUT_DIR").unwrap();
-        println!("cargo:rustc-link-search=native={}", out_dir);
     }
 }
