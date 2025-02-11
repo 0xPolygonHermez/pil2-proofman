@@ -55,10 +55,12 @@ impl<F: Clone> WitnessManager<F> {
         timer_stop_and_log_info!(START_PROOF);
     }
 
-    pub fn gen_custom_commits_fixed(&self) {
+    pub fn gen_custom_commits_fixed(&self, check: bool) -> Result<(), Box<dyn std::error::Error>> {
         for component in self.components.read().unwrap().iter() {
-            component.gen_custom_commits_fixed(self.pctx.clone(), self.sctx.clone());
+            component.gen_custom_commits_fixed(self.pctx.clone(), self.sctx.clone(), check)?;
         }
+
+        Ok(())
     }
 
     pub fn execute(&self) {

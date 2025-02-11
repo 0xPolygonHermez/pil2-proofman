@@ -39,6 +39,9 @@ pub struct GenCustomCommitsFixedCmd {
 
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
+
+    #[clap(long, short = 'k')]
+    pub check: bool,
 }
 
 impl GenCustomCommitsFixedCmd {
@@ -71,8 +74,6 @@ impl GenCustomCommitsFixedCmd {
         let mut witness_lib = witness_lib(wcm.get_pctx().options.verbose_mode)?;
         witness_lib.register_witness(wcm.clone());
 
-        wcm.gen_custom_commits_fixed();
-
-        Ok(())
+        wcm.gen_custom_commits_fixed(self.check)
     }
 }

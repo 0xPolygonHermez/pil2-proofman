@@ -482,12 +482,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     let mut file = File::open(custom_file_path.unwrap()).unwrap();
                     let mut hash_file_stored = [0u8; 32];
                     file.read_exact(&mut hash_file_stored).unwrap();
-
-                    // let hash_file = blake3_file_hash_bytes(rom_path.clone().unwrap().to_str().unwrap())?;
-                    // if hash_file_stored != hash_file {
-                    //     return Err("ROM file has changed".into());
-                    // }
-
                     let mut root_bytes = [0u8; 32];
                     file.read_exact(&mut root_bytes).unwrap();
 

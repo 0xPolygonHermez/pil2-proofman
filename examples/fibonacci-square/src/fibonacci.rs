@@ -61,7 +61,12 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
         add_air_instance::<F>(air_instance, pctx.clone());
     }
 
-    fn gen_custom_commits_fixed(&self, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
+    fn gen_custom_commits_fixed(
+        &self,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        check: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut trace_rom = FibonacciSquareRomTrace::new_zeroes();
 
         for i in 0..trace_rom.num_rows() {
@@ -69,7 +74,7 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
             trace_rom[i].flags = F::from_canonical_u64(2 + i as u64);
         }
 
-        write_custom_commit_trace(&pctx, &sctx, &mut trace_rom, "rom", [0u8; 32]);
+        write_custom_commit_trace(&pctx, &sctx, &mut trace_rom, "rom", [0u8; 32], check)
     }
 
     fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) {
