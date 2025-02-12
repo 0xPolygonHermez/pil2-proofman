@@ -112,7 +112,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             Self::initialize_air_instance(pctx.clone(), sctx.clone(), instance_id, true);
             #[cfg(feature = "diagnostic")]
             {
-                Self::diagnostic_instance(pctx.clone(), sctx.clone(), instance_id);
+                let invalid_initialization = Self::diagnostic_instance(pctx.clone(), sctx.clone(), instance_id);
+                if invalid_initialization {
+                    return Err("Invalid initialization".into());
+                }
             }
 
             for stage in 2..=num_commit_stages {
@@ -224,45 +227,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
         }
 
-        let transcript = FFITranscript::new(2, true);
-
-        // pctx.set_public_value(6906030331108571511, 4);
-        // pctx.set_public_value(12916946059069441159, 5);
-        // pctx.set_public_value(13745806071312653307, 6);
-        // pctx.set_public_value(11447020614488192113, 7);
-
-        transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
-
-        let proof_values_stage = pctx.get_proof_values_by_stage(1);
-        if !proof_values_stage.is_empty() {
-            transcript.add_elements(proof_values_stage.as_ptr() as *mut u8, proof_values_stage.len());
-        }
-
-        let all_roots = pctx.dctx_distribute_roots(values);
-
-        // add challenges to transcript in order
-        for group_idxs in pctx.dctx_get_my_groups() {
-            let mut values = Vec::new();
-            for idx in group_idxs.iter() {
-                let value = vec![
-                    F::from_wrapped_u64(all_roots[*idx]),
-                    F::from_wrapped_u64(all_roots[*idx + 1]),
-                    F::from_wrapped_u64(all_roots[*idx + 2]),
-                    F::from_wrapped_u64(all_roots[*idx + 3]),
-                ];
-                values.push(value);
-            }
-            if !values.is_empty() {
-                let value = Self::hash_b_tree(values);
-                transcript.add_elements(value.as_ptr() as *mut u8, value.len());
-            }
-        }
-
-        let global_challenge = [F::zero(); 3];
-        transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
-
-        pctx.set_global_challenge(2, global_challenge.to_vec());
-
+        Self::calculate_global_challenge(pctx.clone(), values);
+        
         let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
                 get_buff_sizes(pctx.clone(), setups.clone())?;
@@ -461,8 +427,44 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Ok(())
     }
 
+    fn calculate_global_challenge(pctx: Arc<ProofCtx<F>>, values: Vec<u64>) {
+        let transcript = FFITranscript::new(2, true);
+
+        transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
+
+        let proof_values_stage = pctx.get_proof_values_by_stage(1);
+        if !proof_values_stage.is_empty() {
+            transcript.add_elements(proof_values_stage.as_ptr() as *mut u8, proof_values_stage.len());
+        }
+
+        let all_roots = pctx.dctx_distribute_roots(values);
+
+        // add challenges to transcript in order
+        for group_idxs in pctx.dctx_get_my_groups() {
+            let mut values = Vec::new();
+            for idx in group_idxs.iter() {
+                let value = vec![
+                    F::from_wrapped_u64(all_roots[*idx]),
+                    F::from_wrapped_u64(all_roots[*idx + 1]),
+                    F::from_wrapped_u64(all_roots[*idx + 2]),
+                    F::from_wrapped_u64(all_roots[*idx + 3]),
+                ];
+                values.push(value);
+            }
+            if !values.is_empty() {
+                let value = Self::hash_b_tree(values);
+                transcript.add_elements(value.as_ptr() as *mut u8, value.len());
+            }
+        }
+
+        let global_challenge = [F::zero(); 3];
+        transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
+
+        pctx.set_global_challenge(2, global_challenge.to_vec());
+    }
+
     #[allow(dead_code)]
-    fn diagnostic_instance(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) {
+    fn diagnostic_instance(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) -> bool {
         let instances = pctx.dctx_get_instances();
 
         let (airgroup_id, air_id, _) = instances[instance_id];
@@ -476,6 +478,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let vals = unsafe {
             std::slice::from_raw_parts(pctx.get_air_instance_trace_ptr(instance_id) as *mut u64, n_cols * n_rows)
         };
+
+        let mut invalid_initialization = false;
 
         for (pos, val) in vals.iter().enumerate() {
             if *val == u64::MAX - 1 {
@@ -499,8 +503,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     air_name,
                     air_instance_id,
                 );
+                invalid_initialization = true;
             }
         }
+
+        invalid_initialization
     }
 
     fn initialize_air_instance(

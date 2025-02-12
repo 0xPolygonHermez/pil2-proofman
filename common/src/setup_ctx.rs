@@ -110,7 +110,6 @@ impl<F: Clone> SetupRepository<F> {
 
         // Initialize Hashmap for each airgroup_id, air_id
         if setup_type != &ProofType::VadcopFinal {
-            println!("{:?}", global_info.airs);
             for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
                     setups.insert(
