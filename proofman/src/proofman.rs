@@ -40,7 +40,7 @@ pub struct ProofMan<F> {
 impl<F: PrimeField + 'static> ProofMan<F> {
     const MY_NAME: &'static str = "ProofMan";
 
-    pub fn generate_proof_constraints(
+    pub fn verify_proof_constraints(
         witness_lib_path: PathBuf,
         rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
@@ -70,7 +70,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         Self::execute(witness_lib_path, wcm.clone())?;
 
-        Self::initialize_proofman_2(pctx.clone(), setups.clone());
+        pctx.dctx_assign_instances();
+
+        print_summary_info(Self::MY_NAME, pctx.clone(), setups.clone());
+
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
 
         pctx.dctx_close();
 
@@ -78,14 +82,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let dummy_element = [F::zero(), F::one(), F::two(), F::neg_one()];
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
-        let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
-
-        for stage in 2..=num_commit_stages {
-            let global_challenge = [F::zero(); 3];
-            transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
-            pctx.set_global_challenge(stage as usize, global_challenge.to_vec());
-            transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
-        }
+        let global_challenge = [F::zero(); 3];
+        transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
+        pctx.set_global_challenge(2 as usize, global_challenge.to_vec());
+        transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
         let mut valid_constraints = true;
 
@@ -95,21 +95,22 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
             let (skip, _) = skip_prover_instance(&pctx, instance_id);
 
+            timer_start_info!(GENERATING_WITNESS);
+
             if skip || (!all && !pctx.dctx_is_my_instance(instance_id)) {
                 continue;
             };
 
-            timer_start_info!(GENERATING_WITNESS);
-
             wcm.calculate_witness(1, &[instance_id]);
-
-            timer_stop_and_log_info!(GENERATING_WITNESS);
 
             if !pctx.dctx_is_my_instance(instance_id) {
                 continue;
             }
 
+            timer_stop_and_log_info!(GENERATING_WITNESS);
+
             Self::initialize_air_instance(pctx.clone(), sctx.clone(), instance_id, true);
+
             #[cfg(feature = "diagnostic")]
             {
                 let invalid_initialization = Self::diagnostic_instance(pctx.clone(), sctx.clone(), instance_id);
@@ -118,10 +119,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 }
             }
 
-            for stage in 2..=num_commit_stages {
-                wcm.calculate_witness(stage, &[instance_id]);
-                Self::calculate_im_pols(stage, sctx.clone(), pctx.clone(), instance_id);
-            }
+            wcm.calculate_witness(2, &[instance_id]);
+            Self::calculate_im_pols(2, sctx.clone(), pctx.clone(), instance_id);
 
             wcm.debug(&[instance_id]);
 
@@ -191,7 +190,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         Self::execute(witness_lib_path, wcm.clone())?;
 
-        Self::initialize_proofman_2(pctx.clone(), setups.clone());
+        pctx.dctx_assign_instances();
+
+        print_summary_info(Self::MY_NAME, pctx.clone(), setups.clone());
+
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
 
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -220,6 +223,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             if !pctx.dctx_is_my_instance(instance_id) {
                 continue;
             }
+
             let value = Self::get_contribution_air(pctx.clone(), sctx.clone(), instance_id);
             pctx.free_instance(instance_id);
             for id in 0..4 {
@@ -228,7 +232,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
 
         Self::calculate_global_challenge(pctx.clone(), values);
-        
+
         let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
                 get_buff_sizes(pctx.clone(), setups.clone())?;
@@ -340,9 +344,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     }
                 }
             }
-        }
 
-        if !pctx.options.aggregation {
             if valid_proofs {
                 return Ok(());
             } else {
@@ -395,19 +397,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN_1);
 
         Ok((pctx, setups))
-    }
-
-    fn initialize_proofman_2(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
-        timer_start_info!(INITIALIZING_PROOFMAN_2);
-
-        pctx.dctx_assign_instances();
-
-        print_summary_info(Self::MY_NAME, pctx.clone(), setups.clone());
-
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
-        pctx.dctx_barrier();
-
-        timer_stop_and_log_info!(INITIALIZING_PROOFMAN_2);
     }
 
     fn execute(witness_lib_path: PathBuf, wcm: Arc<WitnessManager<F>>) -> Result<(), Box<dyn std::error::Error>> {

@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use proofman_common::{AirInstance, FromTrace, ProofCtx, SetupCtx};
-use witness::{WitnessComponent, execute};
+use witness::WitnessComponent;
 
 use p3_field::PrimeField64;
 
@@ -24,7 +24,14 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
 }
 
 impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
-    execute!(FibonacciSquareTrace, 1);
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+        let mut instance_ids = Vec::new();
+        instance_ids.push(
+            pctx.add_instance_all(FibonacciSquareTrace::<usize>::AIRGROUP_ID, FibonacciSquareTrace::<usize>::AIR_ID),
+        );
+        *self.instance_ids.write().unwrap() = instance_ids.clone();
+        instance_ids
+    }
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {

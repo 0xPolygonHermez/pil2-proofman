@@ -31,7 +31,7 @@ pub struct DistributionCtx {
     pub world: mpi::topology::SimpleCommunicator,
     pub n_instances: usize,
     pub my_instances: Vec<usize>,
-    pub instances: Vec<(usize, usize, bool)>,    //group_id, air_id
+    pub instances: Vec<(usize, usize, bool)>,    //group_id, air_id, all
     pub instances_owner: Vec<(i32, usize, u64)>, //owner_rank, owner_instance_idx, weight
     pub owners_count: Vec<i32>,
     pub owners_weight: Vec<u64>,

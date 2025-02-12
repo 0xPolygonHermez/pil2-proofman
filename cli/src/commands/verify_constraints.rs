@@ -61,7 +61,7 @@ impl VerifyConstraintsCmd {
         };
 
         match self.field {
-            Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof_constraints(
+            Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
                 self.witness_lib.clone(),
                 self.rom.clone(),
                 self.public_inputs.clone(),

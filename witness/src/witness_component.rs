@@ -27,7 +27,7 @@ macro_rules! execute {
         fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
             let mut instance_ids = Vec::new();
             for _ in 0..$num_instances {
-                instance_ids.push(pctx.add_instance_all($Trace::<usize>::AIRGROUP_ID, $Trace::<usize>::AIR_ID));
+                instance_ids.push(pctx.add_instance($Trace::<usize>::AIRGROUP_ID, $Trace::<usize>::AIR_ID));
             }
             *self.instance_ids.write().unwrap() = instance_ids.clone();
             instance_ids
