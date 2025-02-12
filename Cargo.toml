@@ -12,7 +12,7 @@ members = [
     "witness",
     "util",
     "pil2-components/lib/std/rs",
-    # "pil2-components/test/std/direct_update/rs",
+    "pil2-components/test/std/direct_update/rs",
     # "pil2-components/test/std/diff_buses/rs",
     # "pil2-components/test/std/range_check/rs",
     # "pil2-components/test/std/lookup/rs",

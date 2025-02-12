@@ -24,7 +24,7 @@ pub fn verify_constraints<F: Field>(
     let (airgroup_id, air_id, _) = instances[global_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(&sctx, global_id);
+    let steps_params = pctx.get_air_instance_params(&sctx, global_id, false);
 
     let p_setup = (&setup.p_setup).into();
 
@@ -70,6 +70,7 @@ pub fn verify_global_constraints_proof<F: Field>(
             global_constraints[*constraint_id].skip = false;
         }
     }
+
     verify_global_constraints_c(
         sctx.get_global_info_file().as_str(),
         sctx.get_global_bin(),

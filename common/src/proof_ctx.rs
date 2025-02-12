@@ -1,9 +1,11 @@
+use std::os::raw::c_void;
 use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
 use p3_field::Field;
 use proofman_util::create_buffer_fast;
+use transcript::FFITranscript;
 
 use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams, VerboseMode};
 
@@ -303,11 +305,22 @@ impl<F: Field> ProofCtx<F> {
         self.public_inputs.values.write().unwrap()[public_id] = F::from_canonical_u64(value);
     }
 
-    pub fn set_global_challenge(&self, global_challenge: Vec<F>) {
+    pub fn set_global_challenge(&self, stage: usize, global_challenge: Vec<F>) {
         let mut global_challenge_guard = self.global_challenge.values.write().unwrap();
         global_challenge_guard[0] = global_challenge[0];
         global_challenge_guard[1] = global_challenge[1];
         global_challenge_guard[2] = global_challenge[2];
+
+        let transcript = FFITranscript::new(2, true);
+
+        transcript.add_elements(global_challenge.as_ptr() as *mut u8, 3);
+        let challenges_guard = self.challenges.values.read().unwrap();
+
+        let initial_pos = self.global_info.n_challenges.iter().take(stage - 1).sum::<usize>();
+        let num_challenges = self.global_info.n_challenges[stage - 1];
+        for i in 0..num_challenges {
+            transcript.get_challenge(&challenges_guard[(initial_pos + i) * 3] as *const F as *mut c_void);
+        }
     }
 
     pub fn set_challenge(&self, index: usize, challenge: Vec<F>) {
@@ -380,7 +393,7 @@ impl<F: Field> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
-    pub fn get_air_instance_params(&self, sctx: &SetupCtx<F>, instance_id: usize) -> StepsParams {
+    pub fn get_air_instance_params(&self, sctx: &SetupCtx<F>, instance_id: usize, gen_proof: bool) -> StepsParams {
         let air_instances = self.air_instances.read().unwrap();
         let air_instance = air_instances.get(&instance_id).unwrap();
 
@@ -388,12 +401,14 @@ impl<F: Field> ProofCtx<F> {
         let (airgroup_id, air_id, _) = instances[instance_id];
         let setup = sctx.get_setup(airgroup_id, air_id);
 
+        let challenges = if gen_proof { air_instance.get_challenges_ptr() } else { self.get_challenges_ptr() };
+
         StepsParams {
             trace: air_instance.get_trace_ptr(),
             aux_trace: air_instance.get_aux_trace_ptr(),
             public_inputs: self.get_publics_ptr(),
             proof_values: self.get_proof_values_ptr(),
-            challenges: air_instance.get_challenges_ptr(),
+            challenges,
             airgroup_values: air_instance.get_airgroup_values_ptr(),
             airvalues: air_instance.get_airvalues_ptr(),
             evals: air_instance.get_evals_ptr(),

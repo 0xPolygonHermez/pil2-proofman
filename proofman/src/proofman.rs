@@ -81,14 +81,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
 
         for stage in 2..=num_commit_stages {
-            let initial_pos = pctx.global_info.n_challenges.iter().take(stage as usize - 1).sum::<usize>();
-            let num_challenges = pctx.global_info.n_challenges[stage as usize - 1];
-            for i in 0..num_challenges {
-                transcript.get_challenge(
-                    &pctx.challenges.values.write().unwrap()[(initial_pos + i) * 3] as *const F as *mut c_void,
-                );
-            }
-
+            let global_challenge = [F::zero(); 3];
+            transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
+            pctx.set_global_challenge(stage as usize, global_challenge.to_vec());
             transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
         }
 
@@ -266,7 +261,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let global_challenge = [F::zero(); 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
-        pctx.set_global_challenge(global_challenge.to_vec());
+        pctx.set_global_challenge(2, global_challenge.to_vec());
 
         let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
@@ -305,7 +300,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let air_instance_name = &pctx.global_info.airs[*airgroup_id][*air_id].name;
             timer_start_info!(GENERATING_PROOF);
 
-            let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id);
+            let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
 
             let p_steps_params = (&steps_params).into();
@@ -796,7 +791,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let (airgroup_id, air_id, _) = instances[instance_id];
         let setup = sctx.get_setup(airgroup_id, air_id);
 
-        let steps_params = pctx.get_air_instance_params(&sctx, instance_id);
+        let steps_params = pctx.get_air_instance_params(&sctx, instance_id, false);
 
         calculate_impols_expressions_c((&setup.p_setup).into(), stage as u64, (&steps_params).into());
     }

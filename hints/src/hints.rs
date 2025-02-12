@@ -765,7 +765,7 @@ pub fn mul_hint_fields<F: Field + Field>(
 
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
 
     mul_hint_fields_c(
         (&setup.p_setup).into(),
@@ -794,7 +794,7 @@ pub fn acc_hint_field<F: Field>(
     let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
 
     acc_hint_field_c(
         (&setup.p_setup).into(),
@@ -831,7 +831,7 @@ pub fn acc_mul_hint_fields<F: Field>(
     let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
 
     acc_mul_hint_fields_c(
         (&setup.p_setup).into(),
@@ -870,7 +870,7 @@ pub fn update_airgroupvalue<F: Field>(
     let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
 
     update_airgroupvalue_c(
         (&setup.p_setup).into(),
@@ -899,7 +899,7 @@ fn get_hint_f<F: Field>(
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = if let Some(instance_id) = instance_id {
-        pctx.unwrap().get_air_instance_params(sctx, instance_id)
+        pctx.unwrap().get_air_instance_params(sctx, instance_id, false)
     } else {
         StepsParams::default()
     };
@@ -1124,7 +1124,7 @@ pub fn set_hint_field<F: Field>(
     let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
 
     let values_ptr: *mut u8 = match values {
         HintFieldValue::Column(vec) => vec.as_ptr() as *mut u8,
@@ -1147,7 +1147,7 @@ pub fn set_hint_field_val<F: Field>(
     let (airgroup_id, air_id, _) = instances[instance_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id);
+    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
 
     let mut value_array: Vec<F> = Vec::new();
 

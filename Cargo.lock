@@ -270,6 +270,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef8ae57c4978a2acd8b869ce6b9ca1dfe817bff704c220209fdef2c0b75a01b9"
 
 [[package]]
+name = "direct-update"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "num-bigint",
+ "num-traits",
+ "p3-field",
+ "p3-goldilocks",
+ "pil-std-lib",
+ "proofman",
+ "proofman-cli",
+ "proofman-common",
+ "proofman-macros",
+ "proofman-starks-lib-c",
+ "rand",
+ "rayon",
+ "serde",
+ "serde_arrays",
+ "serde_json",
+ "witness",
+]
+
+[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
