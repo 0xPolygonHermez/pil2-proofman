@@ -1,24 +1,54 @@
-use proofman_starks_lib_c::{extend_and_merkelize_custom_commit_c, fri_proof_new_c, starks_new_c};
-use p3_goldilocks::Goldilocks;
+use std::fs::File;
+use std::io::Read;
 
-use crate::Setup;
+use p3_field::Field;
+use proofman_starks_lib_c::write_custom_commit_c;
 
-pub fn get_custom_commit_trace(
-    commit_id: u64,
-    step: u64,
-    setup: &Setup<Goldilocks>,
-    buffer: Vec<Goldilocks>,
-    buffer_ext: Vec<Goldilocks>,
-    buffer_str: &str,
-) {
-    extend_and_merkelize_custom_commit_c(
-        starks_new_c((&setup.p_setup).into(), std::ptr::null_mut()),
-        commit_id,
-        step,
+use crate::trace::Trace;
+
+pub fn write_custom_commit_trace<F: Field>(
+    custom_trace: &mut dyn Trace<F>,
+    blowup_factor: u64,
+    file_name: &str,
+    check: bool,
+) -> Result<Vec<F>, Box<dyn std::error::Error>> {
+    let buffer: Vec<F> = custom_trace.get_buffer();
+    let n = custom_trace.num_rows() as u64;
+    let n_extended = blowup_factor * custom_trace.num_rows() as u64;
+    let n_cols = custom_trace.n_cols() as u64;
+    let mut root: Vec<F> = vec![F::zero(), F::zero(), F::zero(), F::zero()];
+
+    let mut root_file: Vec<F> = vec![F::zero(), F::zero(), F::zero(), F::zero()];
+    if check {
+        let mut file = File::open(file_name).unwrap();
+        let mut root_bytes = [0u8; 32];
+        file.read_exact(&mut root_bytes).unwrap();
+
+        for (idx, val) in root_file.iter_mut().enumerate().take(4) {
+            let byte_range = idx * 8..(idx + 1) * 8;
+            let value = u64::from_le_bytes(root_bytes[byte_range].try_into()?);
+            *val = F::from_canonical_u64(value);
+        }
+
+        println!("Root from file: {:?}", root_file);
+    }
+
+    write_custom_commit_c(
+        root.as_mut_ptr() as *mut u8,
+        n,
+        n_extended,
+        n_cols,
         buffer.as_ptr() as *mut u8,
-        buffer_ext.as_ptr() as *mut u8,
-        fri_proof_new_c((&setup.p_setup).into(), 0, 0, 0),
-        std::ptr::null_mut(),
-        buffer_str,
+        file_name,
+        check,
     );
+
+    if check {
+        for idx in 0..4 {
+            if root_file[idx] != root[idx] {
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Root does not match")));
+            }
+        }
+    }
+    Ok(root)
 }

@@ -47,7 +47,7 @@ uint64_t fileSize (const std::string &fileName);
 // Load file in parallel
 void * loadFileParallel(const std::string &fileName, uint64_t size);
 
-bool loadFileParallel(void *buffer, const std::string &fileName, uint64_t size, bool exit = true);
+bool loadFileParallel(void *buffer, const std::string &fileName, uint64_t size, bool exit = true, uint64_t skipBytes = 0);
 
 void writeFileParallel(const std::string &fileName, const void* buffer, uint64_t size, uint64_t offset = 0);
 

@@ -30,7 +30,7 @@ void *genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     
-    Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress);
+    Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
     
 #ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
@@ -43,21 +43,16 @@ void *genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
     TimerStart(STARK_STEP_0);
-    starks.commitCustomStage(0, params.pCustomCommits, params.pCustomCommitsExtended, proof, pBuffHelper);
     for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
         if(setupCtx.starkInfo.customCommits[i].stageWidths[0] != 0) {
-            Goldilocks::Element root[HASH_SIZE];
-            starks.treesGL[setupCtx.starkInfo.nStages + 2 + i]->getRoot(root);
-            for(uint64_t p = 0; p < HASH_SIZE; ++p) {
-                params.publicInputs[setupCtx.starkInfo.customCommits[i].publicValues[p]] = root[p];
-            }   
+            uint64_t pos = setupCtx.starkInfo.nStages + 2 + i;
+            starks.treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
         }
     }
     TimerStopAndLog(STARK_STEP_0);
 
     TimerStart(STARK_STEP_1);
     starks.commitStage(1, params.trace, params.aux_trace, proof, pBuffHelper);
-    starks.commitCustomStage(1, params.pCustomCommits, params.pCustomCommitsExtended, proof, pBuffHelper);
     TimerStopAndLog(STARK_STEP_1);
 
     starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
@@ -79,7 +74,6 @@ void *genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t
 
     TimerStart(STARK_COMMIT_STAGE_2);
     starks.commitStage(2, nullptr, params.aux_trace, proof, pBuffHelper);
-    starks.commitCustomStage(2, params.pCustomCommits, params.pCustomCommitsExtended, proof, pBuffHelper);
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
 

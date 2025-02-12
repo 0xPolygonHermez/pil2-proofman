@@ -19,6 +19,15 @@ pub trait WitnessComponent<F: Clone>: Send + Sync {
     }
 
     fn end(&self, _pctx: Arc<ProofCtx<F>>) {}
+
+    fn gen_custom_commits_fixed(
+        &self,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _check: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
 }
 
 #[macro_export]

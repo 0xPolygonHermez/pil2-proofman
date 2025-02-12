@@ -2,15 +2,16 @@ use libloading::{Library, Symbol};
 use log::info;
 use proofman_common::skip_prover_instance;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::calculate_impols_expressions_c;
+use std::collections::HashMap;
 use std::fs::File;
 use std::fmt::Write;
 use std::io::Read;
+use std::error::Error;
 use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
 use p3_field::PrimeField64;
-use proofman_starks_lib_c::{gen_proof_c, commit_witness_c, calculate_hash_c};
+use proofman_starks_lib_c::{gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c, calculate_impols_expressions_c};
 
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
@@ -47,6 +48,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (pctx, setups) = Self::initialize_proofman_1(
@@ -56,6 +58,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             input_data_path.clone(),
             proving_key_path,
             output_dir_path,
+            custom_commits_fixed,
             options,
         )?;
         let sctx = setups.sctx.clone();
@@ -74,7 +77,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         print_summary_info(Self::MY_NAME, pctx.clone(), setups.clone());
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone())?;
 
         pctx.dctx_close();
 
@@ -167,6 +170,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (pctx, setups) = Self::initialize_proofman_1(
@@ -176,6 +180,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             input_data_path.clone(),
             proving_key_path,
             output_dir_path.clone(),
+            custom_commits_fixed,
             options,
         )?;
         let sctx = setups.sctx.clone();
@@ -194,7 +199,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         print_summary_info(Self::MY_NAME, pctx.clone(), setups.clone());
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone())?;
 
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -366,6 +371,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupsVadcop<F>>), Box<dyn std::error::Error>> {
         timer_start_info!(INITIALIZING_PROOFMAN_1);
@@ -380,7 +386,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             options.verify_constraints,
         )?;
 
-        let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), options);
+        let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options);
 
         let setups = Arc::new(SetupsVadcop::new(
             &pctx.global_info,
@@ -522,22 +528,22 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 * 3,
         );
 
+        air_instance.init_custom_commit_fixed_trace(setup.custom_commits_fixed_buffer_size as usize);
+
         let n_custom_commits = setup.stark_info.custom_commits.len();
 
         for commit_id in 0..n_custom_commits {
-            let n_cols = *setup
-                .stark_info
-                .map_sections_n
-                .get(&(setup.stark_info.custom_commits[commit_id].name.clone() + "0"))
-                .unwrap() as usize;
+            if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
+                
+                let custom_commit_file_path = pctx.get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name).unwrap();
 
-            if air_instance.custom_commits[commit_id].is_empty() {
-                air_instance.init_custom_commit(commit_id, (1 << setup.stark_info.stark_struct.n_bits) * n_cols);
+                load_custom_commit_c(
+                    (&setup.p_setup).into(),
+                    commit_id as u64,
+                    air_instance.get_custom_commits_fixed_ptr(),
+                    custom_commit_file_path,
+                );
             }
-
-            let extended_size = (1 << setup.stark_info.stark_struct.n_bits_ext) * n_cols;
-            let mt_nodes = (2 * (1 << setup.stark_info.stark_struct.n_bits_ext) - 1) * 4;
-            air_instance.init_custom_commit_extended(commit_id, extended_size + mt_nodes);
         }
 
         let n_airgroup_values = setup.stark_info.airgroupvalues_map.as_ref().unwrap().len();
@@ -552,7 +558,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
     }
 
-    fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
+    fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) -> Result<(), Box<dyn Error>> {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_info!(INITIALIZE_CONST_POLS);
 
@@ -573,6 +579,33 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let setup = setups.sctx.get_setup(airgroup_id, air_id);
             setup.load_const_pols();
         });
+
+        let result: Result<(), Box<dyn std::error::Error>> = airs.iter().try_for_each(|&(airgroup_id, air_id)| {
+            let setup = setups.sctx.get_setup(airgroup_id, air_id);
+            for custom_commit in &setup.stark_info.custom_commits {
+                if custom_commit.stage_widths[0] > 0 {
+                    let custom_commit_name = &custom_commit.name;
+
+                    // Handle the possibility that this returns None
+                    let custom_file_path = pctx.get_custom_commits_fixed_buffer(custom_commit_name)?;
+
+                    let mut file = File::open(custom_file_path)?;
+                    let mut root_bytes = [0u8; 32];
+                    file.read_exact(&mut root_bytes)?;
+
+                    for (idx, p) in custom_commit.public_values.iter().enumerate() {
+                        let public_id = p.idx as usize;
+                        let byte_range = idx * 8..(idx + 1) * 8;
+                        let value = u64::from_le_bytes(root_bytes[byte_range].try_into()?);
+                        pctx.set_public_value(value, public_id);
+                    }
+                }
+            }
+            Ok(())
+        });
+
+        // Propagate the result
+        result?;
 
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
 
@@ -631,6 +664,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
             timer_stop_and_log_info!(INITIALIZE_CONST_POLS_AGGREGATION);
         }
+
+        Ok(())
     }
 
     fn initialize_fixed_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {

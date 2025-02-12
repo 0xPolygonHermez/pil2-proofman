@@ -17,8 +17,7 @@ pub struct StepsParams {
     pub xdivxsub: *mut u8,
     pub p_const_pols: *mut u8,
     pub p_const_tree: *mut u8,
-    pub custom_commits: [*mut u8; 10],
-    pub custom_commits_extended: [*mut u8; 10],
+    pub custom_commits_fixed: *mut u8,
 }
 
 impl From<&StepsParams> for *mut u8 {
@@ -41,8 +40,7 @@ impl Default for StepsParams {
             xdivxsub: ptr::null_mut(),
             p_const_pols: ptr::null_mut(),
             p_const_tree: ptr::null_mut(),
-            custom_commits: [ptr::null_mut(); 10],
-            custom_commits_extended: [ptr::null_mut(); 10],
+            custom_commits_fixed: ptr::null_mut(),
         }
     }
 }
@@ -119,8 +117,7 @@ pub struct AirInstance<F> {
     pub air_id: usize,
     pub trace: Vec<F>,
     pub aux_trace: Vec<F>,
-    pub custom_commits: Vec<Vec<F>>,
-    pub custom_commits_extended: Vec<Vec<F>>,
+    pub custom_commits_fixed: Vec<F>,
     pub airgroup_values: Vec<F>,
     pub airvalues: Vec<F>,
     pub challenges: Vec<F>,
@@ -132,8 +129,6 @@ impl<F: Field> AirInstance<F> {
         let airgroup_id = trace_info.airgroup_id;
         let air_id = trace_info.air_id;
 
-        let custom_commits = Self::init_custom_commits(trace_info.custom_traces);
-
         let airvalues = trace_info.air_values.unwrap_or_default();
 
         let airgroup_values = trace_info.airgroup_values.unwrap_or_default();
@@ -143,8 +138,7 @@ impl<F: Field> AirInstance<F> {
             air_id,
             trace: trace_info.trace,
             aux_trace: Vec::new(),
-            custom_commits,
-            custom_commits_extended: vec![Vec::new(); 10],
+            custom_commits_fixed: Vec::new(),
             airgroup_values,
             airvalues,
             evals: Vec::new(),
@@ -172,18 +166,6 @@ impl<F: Field> AirInstance<F> {
         }
 
         AirInstance::new(trace_info)
-    }
-
-    pub fn init_custom_commits(traces_custom: Option<Vec<CustomCommitInfo<F>>>) -> Vec<Vec<F>> {
-        if let Some(traces_custom) = traces_custom {
-            let mut custom_commits = vec![Vec::new(); traces_custom.len()];
-            for trace in traces_custom {
-                custom_commits[trace.commit_id] = trace.trace;
-            }
-            custom_commits
-        } else {
-            vec![Vec::new(); 10]
-        }
     }
 
     pub fn get_trace(&self) -> Vec<F> {
@@ -252,12 +234,8 @@ impl<F: Field> AirInstance<F> {
         self.airgroup_values = vec![F::zero(); size];
     }
 
-    pub fn init_custom_commit(&mut self, commit_id: usize, size: usize) {
-        self.custom_commits[commit_id] = create_buffer_fast(size);
-    }
-
-    pub fn init_custom_commit_extended(&mut self, commit_id: usize, size: usize) {
-        self.custom_commits_extended[commit_id] = create_buffer_fast(size);
+    pub fn init_custom_commit_fixed_trace(&mut self, size: usize) {
+        self.custom_commits_fixed = create_buffer_fast(size);
     }
 
     pub fn get_aux_trace_ptr(&self) -> *mut u8 {
@@ -267,31 +245,15 @@ impl<F: Field> AirInstance<F> {
         }
     }
 
-    pub fn get_custom_commits_ptr(&self) -> [*mut u8; 10] {
-        let mut ptrs = [std::ptr::null_mut(); 10];
-        for (i, custom_commit) in self.custom_commits.iter().enumerate() {
-            ptrs[i] = custom_commit.as_ptr() as *mut u8;
-        }
-        ptrs
-    }
-
-    pub fn get_custom_commits_extended_ptr(&self) -> [*mut u8; 10] {
-        let mut ptrs = [std::ptr::null_mut(); 10];
-        for (i, custom_commit) in self.custom_commits_extended.iter().enumerate() {
-            ptrs[i] = custom_commit.as_ptr() as *mut u8;
-        }
-        ptrs
+    pub fn get_custom_commits_fixed_ptr(&self) -> *mut u8 {
+        self.custom_commits_fixed.as_ptr() as *mut u8
     }
 
     pub fn clear_trace(&mut self) {
         self.trace.clear();
     }
 
-    pub fn clear_aux_trace(&mut self) {
-        self.aux_trace.clear();
-    }
-
-    pub fn clear_custom_commits_trace(&mut self) {
-        self.custom_commits.clear();
+    pub fn clear_custom_commits_fixed_trace(&mut self) {
+        self.custom_commits_fixed.clear();
     }
 }

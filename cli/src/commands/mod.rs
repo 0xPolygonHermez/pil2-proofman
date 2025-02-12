@@ -5,3 +5,4 @@ pub mod prove;
 pub mod verify_constraints;
 pub mod get_constraints;
 pub mod verify_stark;
+pub mod gen_custom_commits_fixed;

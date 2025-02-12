@@ -79,6 +79,7 @@ pub struct ProofCtx<F> {
     pub air_instances: RwLock<HashMap<usize, AirInstance<F>>>,
     pub options: ProofOptions,
     pub weights: HashMap<(usize, usize), u64>,
+    pub custom_commits_fixed: HashMap<String, PathBuf>,
     pub dctx: RwLock<DistributionCtx>,
     pub max_prover_buffer_size: u64,
 }
@@ -86,7 +87,11 @@ pub struct ProofCtx<F> {
 impl<F: Field> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
-    pub fn create_ctx(proving_key_path: PathBuf, options: ProofOptions) -> Self {
+    pub fn create_ctx(
+        proving_key_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        options: ProofOptions,
+    ) -> Self {
         log::info!("{}: Creating proof context", Self::MY_NAME);
 
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
@@ -105,6 +110,7 @@ impl<F: Field> ProofCtx<F> {
             buff_helper: Values::default(),
             air_instances: RwLock::new(HashMap::new()),
             dctx: RwLock::new(DistributionCtx::new()),
+            custom_commits_fixed,
             weights,
             options,
             max_prover_buffer_size: 0,
@@ -152,6 +158,20 @@ impl<F: Field> ProofCtx<F> {
 
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
+    }
+
+    pub fn get_custom_commits_fixed_buffer(&self, name: &str) -> Result<&str, Box<std::io::Error>> {
+        let file_name = self.custom_commits_fixed.get(name);
+        match file_name {
+            Some(path) => Ok(path.to_str().expect("Invalid UTF-8 in path")),
+            None => {
+                // Return error
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Custom Commit Fixed {:?} not found", file_name),
+                )))
+            }
+        }
     }
 
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
@@ -415,8 +435,7 @@ impl<F: Field> ProofCtx<F> {
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: setup.get_const_ptr(),
             p_const_tree: setup.get_const_tree_ptr(),
-            custom_commits: air_instance.get_custom_commits_ptr(),
-            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+            custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
         }
     }
 

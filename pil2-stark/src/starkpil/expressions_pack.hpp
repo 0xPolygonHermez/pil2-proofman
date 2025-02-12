@@ -129,7 +129,6 @@ public:
         }
 
         for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); ++i) {
-            Goldilocks::Element *customCommits = domainExtended ? params.pCustomCommitsExtended[i] : params.pCustomCommits[i];
             for(uint64_t j = 0; j < setupCtx.starkInfo.customCommits[i].stageWidths[0]; ++j) {
                 if(!customCommitsUsed[i][j]) continue;
                 PolMap polInfo = setupCtx.starkInfo.customCommitsMap[i][j];
@@ -139,7 +138,7 @@ public:
                     for(uint64_t o = 0; o < nOpenings; ++o) {
                         for(uint64_t j = 0; j < nrowsPack; ++j) {
                             uint64_t l = (row + j + nextStrides[o]) % domainSize;
-                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = customCommits[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                            bufferT_[(nColsStagesAcc[ns*o + stage] + (stagePos + d))*nrowsPack + j] = params.pCustomCommitsFixed[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                         }
                     }
                 }
@@ -302,7 +301,7 @@ public:
             }
         }
 
-        Goldilocks::Element numbers_[parserArgs.nNumbers*nrowsPack];
+        Goldilocks::Element *numbers_ = new Goldilocks::Element[parserArgs.nNumbers*nrowsPack];
         for(uint64_t i = 0; i < parserArgs.nNumbers; ++i) {
             for(uint64_t k = 0; k < nrowsPack; ++k) {
                 numbers_[i*nrowsPack + k] = Goldilocks::fromU64(parserArgs.numbers[i]);
@@ -389,9 +388,27 @@ public:
             }
         }
 
+        Goldilocks::Element *bufferT__ = new Goldilocks::Element[omp_get_max_threads()*nOpenings*nCols*nrowsPack];
+
+        uint64_t maxTemp1Size = 0;
+        uint64_t maxTemp3Size = 0;
+        for (uint64_t j = 0; j < dests.size(); ++j) {
+            for (uint64_t k = 0; k < dests[j].params.size(); ++k) {
+                if (dests[j].params[k].parserParams.nTemp1*nrowsPack > maxTemp1Size) {
+                    maxTemp1Size = dests[j].params[k].parserParams.nTemp1*nrowsPack;
+                }
+                if (dests[j].params[k].parserParams.nTemp3*nrowsPack*FIELD_EXTENSION > maxTemp3Size*nrowsPack) {
+                    maxTemp3Size = dests[j].params[k].parserParams.nTemp3*nrowsPack*FIELD_EXTENSION;
+                }
+            }
+        } 
+        
+        Goldilocks::Element *tmp1_ = new Goldilocks::Element[omp_get_max_threads() * maxTemp1Size];
+        Goldilocks::Element *tmp3_ = new Goldilocks::Element[omp_get_max_threads() * maxTemp3Size];
+
     #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
-            Goldilocks::Element bufferT_[nOpenings*nCols*nrowsPack];
+            Goldilocks::Element *bufferT_ = &bufferT__[omp_get_thread_num()*nOpenings*nCols*nrowsPack];
 
             if(!compilation_time) loadPolynomials(params, parserArgs, dests, bufferT_, i, domainSize, domainExtended);
 
@@ -417,8 +434,8 @@ public:
 
                     uint8_t* ops = &parserArgs.ops[dests[j].params[k].parserParams.opsOffset];
                     uint16_t* args = &parserArgs.args[dests[j].params[k].parserParams.argsOffset];
-                    Goldilocks::Element tmp1[dests[j].params[k].parserParams.nTemp1*nrowsPack];
-                    Goldilocks::Element tmp3[dests[j].params[k].parserParams.nTemp3*nrowsPack*FIELD_EXTENSION];
+                    Goldilocks::Element *tmp1 = &tmp1_[omp_get_thread_num()*maxTemp1Size];
+                    Goldilocks::Element *tmp3 = &tmp3_[omp_get_thread_num()*maxTemp3Size];
 
                     for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
                         switch (ops[kk]) {
@@ -1043,6 +1060,10 @@ public:
             }
             delete[] destVals;
         }
+        delete[] numbers_;
+        delete[] bufferT__;
+        delete[] tmp1_;
+        delete[] tmp3_;
     }
 };
 
