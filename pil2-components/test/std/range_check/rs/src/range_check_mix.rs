@@ -1,7 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use pil_std_lib::Std;
-use witness::WitnessComponent;
+use witness::{WitnessComponent, execute, define_wc_with_std};
 
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
@@ -12,32 +11,13 @@ use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rng
 
 use crate::RangeCheckMixTrace;
 
-pub struct RangeCheckMix<F: PrimeField> {
-    instance_ids: RwLock<Vec<usize>>,
-    std_lib: Arc<Std<F>>,
-}
-
-impl<F: PrimeField> RangeCheckMix<F>
-where
-    Standard: Distribution<F>,
-{
-    const MY_NAME: &'static str = "RngChMix";
-
-    pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
-        Arc::new(Self { std_lib, instance_ids: RwLock::new(Vec::new()) })
-    }
-}
+define_wc_with_std!(RangeCheckMix, "RngChMix");
 
 impl<F: PrimeField> WitnessComponent<F> for RangeCheckMix<F>
 where
     Standard: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
-        let global_ids =
-            vec![pctx.add_instance(RangeCheckMixTrace::<usize>::AIRGROUP_ID, RangeCheckMixTrace::<usize>::AIR_ID)];
-        self.instance_ids.write().unwrap().push(global_ids[0]);
-        global_ids
-    }
+    execute!(RangeCheckMixTrace, 1);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {

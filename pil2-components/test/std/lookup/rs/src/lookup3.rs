@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use witness::WitnessComponent;
+use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use rand::{distributions::Standard, prelude::Distribution};
@@ -9,27 +9,13 @@ use p3_field::PrimeField;
 
 use crate::Lookup3Trace;
 
-pub struct Lookup3 {
-    instance_ids: RwLock<Vec<usize>>,
-}
-
-impl Lookup3 {
-    const MY_NAME: &'static str = "Lookup_3";
-
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self { instance_ids: RwLock::new(Vec::new()) })
-    }
-}
+define_wc!(Lookup3, "Lkup3");
 
 impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup3
 where
     Standard: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
-        let global_ids = vec![pctx.add_instance(Lookup3Trace::<usize>::AIRGROUP_ID, Lookup3Trace::<usize>::AIR_ID)];
-        self.instance_ids.write().unwrap().push(global_ids[0]);
-        global_ids
-    }
+    execute!(Lookup3Trace, 1);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {

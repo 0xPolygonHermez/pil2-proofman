@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use witness::WitnessComponent;
+use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
@@ -8,30 +8,13 @@ use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rng
 
 use crate::{DirectUpdateProdLocalTrace, DirectUpdateProdLocalAirValues, DirectUpdatePublicValues, DirectUpdateProofValues};
 
-pub struct DirectUpdateProdLocal {
-    instance_ids: RwLock<Vec<usize>>,
-}
-
-impl DirectUpdateProdLocal {
-    const MY_NAME: &'static str = "DUPL    ";
-
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self { instance_ids: RwLock::new(Vec::new()) })
-    }
-}
+define_wc!(DirectUpdateProdLocal, "DUPL    ");
 
 impl<F: PrimeField + Copy> WitnessComponent<F> for DirectUpdateProdLocal
 where
     Standard: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
-        let global_ids = vec![pctx.add_instance(
-            DirectUpdateProdLocalTrace::<usize>::AIRGROUP_ID,
-            DirectUpdateProdLocalTrace::<usize>::AIR_ID,
-        )];
-        self.instance_ids.write().unwrap().push(global_ids[0]);
-        global_ids
-    }
+    execute!(DirectUpdateProdLocalTrace, 1);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {

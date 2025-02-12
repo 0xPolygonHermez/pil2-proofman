@@ -20,3 +20,54 @@ pub trait WitnessComponent<F: Clone>: Send + Sync {
 
     fn end(&self, _pctx: Arc<ProofCtx<F>>) {}
 }
+
+#[macro_export]
+macro_rules! execute {
+    ($Trace:ident, $num_instances: expr) => {
+        fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+            let mut instance_ids = Vec::new();
+            for _ in 0..$num_instances {
+                instance_ids.push(pctx.add_instance_all($Trace::<usize>::AIRGROUP_ID, $Trace::<usize>::AIR_ID));
+            }
+            *self.instance_ids.write().unwrap() = instance_ids.clone();
+            instance_ids
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! define_wc {
+    ($StructName:ident, $name:expr) => {
+        pub struct $StructName {
+            instance_ids: std::sync::RwLock<Vec<usize>>,
+        }
+
+        impl $StructName {
+            const MY_NAME: &'static str = $name;
+
+            pub fn new() -> std::sync::Arc<Self> {
+                std::sync::Arc::new(Self { instance_ids: std::sync::RwLock::new(Vec::new()) })
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! define_wc_with_std {
+    ($StructName:ident, $name:expr) => {
+        use pil_std_lib::Std;
+
+        pub struct $StructName<F: PrimeField> {
+            std_lib: Arc<Std<F>>,
+            instance_ids: std::sync::RwLock<Vec<usize>>,
+        }
+
+        impl<F: PrimeField> $StructName<F> {
+            const MY_NAME: &'static str = $name;
+
+            pub fn new(std_lib: Arc<Std<F>>) -> std::sync::Arc<Self> {
+                std::sync::Arc::new(Self { std_lib, instance_ids: std::sync::RwLock::new(Vec::new()) })
+            }
+        }
+    };
+}

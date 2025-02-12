@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, RwLock};
 
 use proofman_common::{AirInstance, FromTrace, ProofCtx, SetupCtx};
-use witness::WitnessComponent;
+use witness::{WitnessComponent, execute};
 use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField64};
 use num_bigint::BigInt;
@@ -27,15 +27,7 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
 }
 
 impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
-        let mut instance_ids = Vec::new();
-        let num_instances = FibonacciSquareTrace::<usize>::NUM_ROWS / ModuleTrace::<usize>::NUM_ROWS;
-        for _ in 0..num_instances {
-            instance_ids.push(pctx.add_instance(ModuleTrace::<usize>::AIRGROUP_ID, ModuleTrace::<usize>::AIR_ID));
-        }
-        *self.instance_ids.write().unwrap() = instance_ids.clone();
-        instance_ids
-    }
+    execute!(ModuleTrace, FibonacciSquareTrace::<usize>::NUM_ROWS / ModuleTrace::<usize>::NUM_ROWS);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {

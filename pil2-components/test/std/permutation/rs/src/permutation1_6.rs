@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use witness::WitnessComponent;
+use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
@@ -8,30 +8,13 @@ use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng
 
 use crate::Permutation1_6Trace;
 
-pub struct Permutation1_6 {
-    instance_ids: RwLock<Vec<usize>>,
-}
+define_wc!(Permutation1_6, "Perm1_6 ");
 
-impl Permutation1_6 {
-    const MY_NAME: &'static str = "Perm1_6 ";
-
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self { instance_ids: RwLock::new(Vec::new()) })
-    }
-}
 impl<F: PrimeField + Copy> WitnessComponent<F> for Permutation1_6
 where
     Standard: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
-        let global_ids = vec![
-            pctx.add_instance(Permutation1_6Trace::<usize>::AIRGROUP_ID, Permutation1_6Trace::<usize>::AIR_ID),
-            pctx.add_instance(Permutation1_6Trace::<usize>::AIRGROUP_ID, Permutation1_6Trace::<usize>::AIR_ID),
-        ];
-        self.instance_ids.write().unwrap().push(global_ids[0]);
-        self.instance_ids.write().unwrap().push(global_ids[1]);
-        global_ids
-    }
+    execute!(Permutation1_6Trace, 2);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {

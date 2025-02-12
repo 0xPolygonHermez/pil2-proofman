@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use witness::WitnessComponent;
+use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
@@ -8,28 +8,13 @@ use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rng
 
 use crate::Connection1Trace;
 
-pub struct Connection1 {
-    instance_ids: RwLock<Vec<usize>>,
-}
-
-impl Connection1 {
-    const MY_NAME: &'static str = "Connct_1";
-
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self { instance_ids: RwLock::new(Vec::new()) })
-    }
-}
+define_wc!(Connection1, "Connct_1");
 
 impl<F: PrimeField + Copy> WitnessComponent<F> for Connection1
 where
     Standard: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
-        let global_ids =
-            vec![pctx.add_instance(Connection1Trace::<usize>::AIRGROUP_ID, Connection1Trace::<usize>::AIR_ID)];
-        self.instance_ids.write().unwrap().push(global_ids[0]);
-        global_ids
-    }
+    execute!(Connection1Trace, 1);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {

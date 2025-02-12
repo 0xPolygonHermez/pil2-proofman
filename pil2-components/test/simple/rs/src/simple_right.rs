@@ -1,6 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use witness::WitnessComponent;
+use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField64;
@@ -8,28 +8,14 @@ use rand::{distributions::Standard, prelude::Distribution};
 
 use crate::SimpleRightTrace;
 
-pub struct SimpleRight {
-    instance_ids: RwLock<Vec<usize>>,
-}
-
-impl SimpleRight {
-    const MY_NAME: &'static str = "SimRight";
-
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self { instance_ids: RwLock::new(Vec::new()) })
-    }
-}
+define_wc!(SimpleRight, "SimRight");
 
 impl<F: PrimeField64 + Copy> WitnessComponent<F> for SimpleRight
 where
     Standard: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
-        let global_ids =
-            vec![pctx.add_instance(SimpleRightTrace::<usize>::AIRGROUP_ID, SimpleRightTrace::<usize>::AIR_ID)];
-        self.instance_ids.write().unwrap().push(global_ids[0]);
-        global_ids
-    }
+    execute!(SimpleRightTrace, 1);
+
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {
