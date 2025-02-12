@@ -130,8 +130,18 @@ impl<F: Field> ProofCtx<F> {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
 
-    pub fn get_custom_commits_fixed_buffer(&self, name: &str) -> Option<&PathBuf> {
-        self.custom_commits_fixed.get(name)
+    pub fn get_custom_commits_fixed_buffer(&self, name: &str) -> Result<&str, Box<std::io::Error>> {
+        let file_name = self.custom_commits_fixed.get(name);
+        match file_name {
+            Some(path) => Ok(path.to_str().expect("Invalid UTF-8 in path")),
+            None => {
+                // Return error
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Custom Commit Fixed {:?} not found", file_name),
+                )))
+            }
+        }
     }
 
     pub fn free_instances(&self) {

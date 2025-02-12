@@ -46,7 +46,7 @@ pub struct GenCustomCommitsFixedCmd {
 
 impl GenCustomCommitsFixedCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{} VerifyConstraints", format!("{: >12}", "Command").bright_green().bold());
+        println!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
         initialize_logger(self.verbose.into());

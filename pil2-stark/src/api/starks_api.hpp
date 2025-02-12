@@ -82,7 +82,7 @@
     void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *bufferExt, void *pProof, void *pBuffHelper);
     
     void load_custom_commit(void *pStarks, uint64_t commitId, void *bufferExt, void *pProof, char *customCommitFile);
-    void write_custom_commit(void *pStarks, uint64_t commitId, void *bufferExt, char *customCommitFile, uint8_t* hashFile);
+    void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check);
 
     void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trace, void *buffer, void *pProof, void *pBuffHelper);
     

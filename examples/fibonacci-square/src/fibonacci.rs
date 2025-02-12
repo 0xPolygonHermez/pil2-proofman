@@ -74,7 +74,12 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
             trace_rom[i].flags = F::from_canonical_u64(2 + i as u64);
         }
 
-        write_custom_commit_trace(&pctx, &sctx, &mut trace_rom, "rom", [0u8; 32], check)
+        let file_name = pctx.get_custom_commits_fixed_buffer("rom")?;
+
+        let setup = sctx.get_setup(trace_rom.airgroup_id(), trace_rom.air_id());
+        let blowup_factor = 1 << (setup.stark_info.stark_struct.n_bits_ext - setup.stark_info.stark_struct.n_bits);
+        write_custom_commit_trace(&mut trace_rom, blowup_factor, file_name, check)?;
+        Ok(())
     }
 
     fn debug(&self, _pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) {

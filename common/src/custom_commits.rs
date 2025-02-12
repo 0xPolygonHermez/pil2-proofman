@@ -2,49 +2,53 @@ use std::fs::File;
 use std::io::Read;
 
 use p3_field::Field;
-use proofman_starks_lib_c::{starks_new_c, write_custom_commit_c};
+use proofman_starks_lib_c::write_custom_commit_c;
 
-use crate::{trace::Trace, ProofCtx, SetupCtx};
+use crate::trace::Trace;
 
 pub fn write_custom_commit_trace<F: Field>(
-    pctx: &ProofCtx<F>,
-    sctx: &SetupCtx<F>,
     custom_trace: &mut dyn Trace<F>,
-    name: &str,
-    mut hash_file: [u8; 32],
+    blowup_factor: u64,
+    file_name: &str,
     check: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let file_name = pctx.get_custom_commits_fixed_buffer(name);
+) -> Result<Vec<F>, Box<dyn std::error::Error>> {
+    let buffer: Vec<F> = custom_trace.get_buffer();
+    let n = custom_trace.num_rows() as u64;
+    let n_extended = blowup_factor * custom_trace.num_rows() as u64;
+    let n_cols = custom_trace.n_cols() as u64;
+    let mut root: Vec<F> = vec![F::zero(), F::zero(), F::zero(), F::zero()];
 
-    let file_name_str = match file_name {
-        Some(path) => path.to_str().expect("Invalid UTF-8 in path"),
-        None => {
-            // Return error
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Custom Commit Fixed {:?} not found", file_name),
-            )));
+    let mut root_file: Vec<F> = vec![F::zero(), F::zero(), F::zero(), F::zero()];
+    if check {
+        let mut file = File::open(file_name).unwrap();
+        let mut root_bytes = [0u8; 32];
+        file.read_exact(&mut root_bytes).unwrap();
+
+        for (idx, val) in root_file.iter_mut().enumerate().take(4) {
+            let byte_range = idx * 8..(idx + 1) * 8;
+            let value = u64::from_le_bytes(root_bytes[byte_range].try_into()?);
+            *val = F::from_canonical_u64(value);
         }
-    };
+
+        println!("Root from file: {:?}", root_file);
+    }
+
+    write_custom_commit_c(
+        root.as_mut_ptr() as *mut u8,
+        n,
+        n_extended,
+        n_cols,
+        buffer.as_ptr() as *mut u8,
+        file_name,
+        check,
+    );
 
     if check {
-        let mut file = File::open(file_name_str).unwrap();
-        let mut hash_file_stored = [0u8; 32];
-        file.read_exact(&mut hash_file_stored).unwrap();
-
-        if hash_file_stored != hash_file {
-            return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Hash does not match")));
+        for idx in 0..4 {
+            if root_file[idx] != root[idx] {
+                return Err(Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "Root does not match")));
+            }
         }
-        Ok(())
-    } else {
-        let setup = sctx.get_setup(custom_trace.airgroup_id(), custom_trace.air_id());
-
-        let p_starks = starks_new_c((&setup.p_setup).into(), std::ptr::null_mut());
-        let buffer: Vec<F> = custom_trace.get_buffer();
-
-        let commit_id = custom_trace.commit_id().unwrap() as u64;
-
-        write_custom_commit_c(p_starks, commit_id, buffer.as_ptr() as *mut u8, file_name_str, hash_file.as_mut_ptr());
-        Ok(())
     }
+    Ok(root)
 }

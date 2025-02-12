@@ -356,13 +356,15 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19write_custom_commitPvmS_PcPh"]
+    #[link_name = "\u{1}_Z19write_custom_commitPvmmmS_Pcb"]
     pub fn write_custom_commit(
-        pStarks: *mut ::std::os::raw::c_void,
-        commitId: u64,
-        bufferExt: *mut ::std::os::raw::c_void,
-        customCommitFile: *mut ::std::os::raw::c_char,
-        hashFile: *mut u8,
+        root: *mut ::std::os::raw::c_void,
+        N: u64,
+        NExtended: u64,
+        nCols: u64,
+        buffer: *mut ::std::os::raw::c_void,
+        bufferFile: *mut ::std::os::raw::c_char,
+        check: bool,
     );
 }
 extern "C" {

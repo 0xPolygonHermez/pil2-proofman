@@ -344,10 +344,8 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                         pctx.get_buff_helper_ptr(),
                     );
                 } else {
-                    let custom_commit_file_path = &pctx
-                        .get_custom_commits_fixed_buffer(&self.stark_info.custom_commits[commit_id].name)
-                        .unwrap()
-                        .to_string_lossy();
+                    let custom_commit_file_path =
+                        pctx.get_custom_commits_fixed_buffer(&self.stark_info.custom_commits[commit_id].name).unwrap();
 
                     load_custom_commit_c(
                         p_stark,

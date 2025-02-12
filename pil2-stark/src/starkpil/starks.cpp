@@ -33,45 +33,6 @@ void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint
 }
 
 template <typename ElementType>
-void Starks<ElementType>::writeCustomCommitFile(uint64_t commitId, Goldilocks::Element *buffer, string bufferFile, uint8_t* hashFile)
-{   
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-
-    std::string section = setupCtx.starkInfo.customCommits[commitId].name + "0";
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-   
-    uint64_t pos = setupCtx.starkInfo.nStages + 2 + commitId;
-
-    Goldilocks::Element *pBuffExtended = new Goldilocks::Element[NExtended * nCols + treesGL[pos]->numNodes];
-
-    NTT_Goldilocks ntt(N);
-    ntt.extendPol(pBuffExtended, buffer, NExtended, N, nCols);
-    
-    treesGL[pos]->setSource(pBuffExtended);
-    if(setupCtx.starkInfo.starkStruct.verificationHashType == "GL") {
-        Goldilocks::Element *pBuffNodesGL = &pBuffExtended[NExtended * nCols];
-        ElementType *pBuffNodes = (ElementType *)pBuffNodesGL;
-        treesGL[pos]->setNodes(pBuffNodes);
-    }
-    treesGL[pos]->merkelize();
-    
-    ElementType *root = new ElementType[HASH_SIZE];
-    treesGL[pos]->getRoot(&root[0]);
-
-    ofstream fw(bufferFile.c_str(), std::fstream::out | std::fstream::binary);
-    writeFileParallel(bufferFile, hashFile, 32, 0);
-    writeFileParallel(bufferFile, root, 32, 32);
-    writeFileParallel(bufferFile, buffer, N * nCols * sizeof(Goldilocks::Element), 64);
-    writeFileParallel(bufferFile, treesGL[pos]->source, NExtended * nCols * sizeof(Goldilocks::Element), 64 + N * nCols * sizeof(Goldilocks::Element));
-    writeFileParallel(bufferFile, treesGL[pos]->nodes, treesGL[pos]->numNodes * sizeof(Goldilocks::Element), 64 + (NExtended + N) * nCols * sizeof(Goldilocks::Element));
-    fw.close();
-
-    delete[] pBuffExtended;
-    
-}
-
-template <typename ElementType>
 void Starks<ElementType>::loadCustomCommit(
     uint64_t commitId,
     Goldilocks::Element *buffer,
@@ -86,7 +47,7 @@ void Starks<ElementType>::loadCustomCommit(
 
     uint64_t pos = setupCtx.starkInfo.nStages + 2 + commitId;
     
-    loadFileParallel(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + treesGL[pos]->numNodes) * sizeof(Goldilocks::Element), true, 64);
+    loadFileParallel(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + treesGL[pos]->numNodes) * sizeof(Goldilocks::Element), true, 32);
 
     treesGL[pos]->setSource(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)]]);
 

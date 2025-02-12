@@ -99,7 +99,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx_assign_instances();
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone())?;
         pctx.dctx_barrier();
 
         wcm.calculate_witness(1);
@@ -450,7 +450,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);
     }
 
-    fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
+    fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) -> Result<(), Box<dyn Error>> {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_info!(INITIALIZE_CONST_POLS);
 
@@ -470,31 +470,34 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         airs.iter().for_each(|&(airgroup_id, air_id)| {
             let setup = setups.sctx.get_setup(airgroup_id, air_id);
             setup.load_const_pols();
+        });
 
-            for custom_commit in setup.stark_info.custom_commits.iter() {
+        let result: Result<(), Box<dyn std::error::Error>> = airs.iter().try_for_each(|&(airgroup_id, air_id)| {
+            let setup = setups.sctx.get_setup(airgroup_id, air_id);
+            for custom_commit in &setup.stark_info.custom_commits {
                 if custom_commit.stage_widths[0] > 0 {
-                    let custom_commit_name = &custom_commit.name.clone();
-                    let custom_file_path = pctx.get_custom_commits_fixed_buffer(custom_commit_name);
-                    if custom_file_path.is_none() {
-                        panic!("Custom commit {} not found", custom_commit_name);
-                    }
+                    let custom_commit_name = &custom_commit.name;
 
-                    let mut file = File::open(custom_file_path.unwrap()).unwrap();
-                    let mut hash_file_stored = [0u8; 32];
-                    file.read_exact(&mut hash_file_stored).unwrap();
+                    // Handle the possibility that this returns None
+                    let custom_file_path = pctx.get_custom_commits_fixed_buffer(custom_commit_name)?;
+
+                    let mut file = File::open(custom_file_path)?;
                     let mut root_bytes = [0u8; 32];
-                    file.read_exact(&mut root_bytes).unwrap();
+                    file.read_exact(&mut root_bytes)?;
 
                     for (idx, p) in custom_commit.public_values.iter().enumerate() {
                         let public_id = p.idx as usize;
-                        pctx.set_public_value(
-                            u64::from_le_bytes(root_bytes[idx * 8..(idx + 1) * 8].try_into().unwrap()),
-                            public_id,
-                        );
+                        let byte_range = idx * 8..(idx + 1) * 8;
+                        let value = u64::from_le_bytes(root_bytes[byte_range].try_into()?);
+                        pctx.set_public_value(value, public_id);
                     }
                 }
             }
+            Ok(())
         });
+
+        // Propagate the result
+        result?;
 
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
 
@@ -553,6 +556,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
             timer_stop_and_log_info!(INITIALIZE_CONST_POLS_AGGREGATION);
         }
+
+        Ok(())
     }
 
     fn initialize_fixed_pols_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {

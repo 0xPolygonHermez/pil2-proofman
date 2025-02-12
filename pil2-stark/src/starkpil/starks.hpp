@@ -75,7 +75,6 @@ public:
     };
     
     void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper);
-    void writeCustomCommitFile(uint64_t commitId, Goldilocks::Element *buffer, string bufferFile, uint8_t* hashFile);
     void loadCustomCommit(uint64_t commitId, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, string bufferFile);
     void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
 

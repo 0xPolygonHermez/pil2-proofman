@@ -595,20 +595,24 @@ pub fn load_custom_commit_c(
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn write_custom_commit_c(
-    p_starks: *mut c_void,
-    commit_id: u64,
+    root: *mut u8,
+    n: u64,
+    n_extended: u64,
+    n_cols: u64,
     buffer: *mut u8,
     buffer_file: &str,
-    file_hash: *mut u8,
+    check: bool,
 ) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
         write_custom_commit(
-            p_starks,
-            commit_id,
+            root as *mut std::os::raw::c_void,
+            n,
+            n_extended,
+            n_cols,
             buffer as *mut std::os::raw::c_void,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
-            file_hash,
+            check,
         );
     }
 }
@@ -1598,11 +1602,13 @@ pub fn load_custom_commit_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn write_custom_commit_c(
-    _p_starks: *mut c_void,
-    _commit_id: u64,
+    _root: *mut u8,
+    _n: u64,
+    _n_extended: u64,
+    _n_cols: u64,
     _buffer: *mut u8,
     _buffer_file: &str,
-    _file_hash: *mut u8,
+    _check: bool,
 ) {
     trace!("{}: ··· {}", "ffi     ", "write_custom_commit: This is a mock call because there is no linked library");
 }
