@@ -74,13 +74,18 @@ pub struct ProofCtx<F> {
     pub air_instance_repo: AirInstancesRepository<F>,
     pub options: ProofOptions,
     pub weights: HashMap<(usize, usize), u64>,
+    pub custom_commits_fixed: HashMap<String, PathBuf>,
     pub dctx: RwLock<DistributionCtx>,
 }
 
 impl<F: Field> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
-    pub fn create_ctx(proving_key_path: PathBuf, options: ProofOptions) -> Self {
+    pub fn create_ctx(
+        proving_key_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        options: ProofOptions,
+    ) -> Self {
         log::info!("{}: Creating proof context", Self::MY_NAME);
 
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
@@ -98,28 +103,7 @@ impl<F: Field> ProofCtx<F> {
             buff_helper: Values::default(),
             air_instance_repo: AirInstancesRepository::new(),
             dctx: RwLock::new(DistributionCtx::new()),
-            weights,
-            options,
-        }
-    }
-
-    pub fn create_ctx_agg(
-        global_info: &GlobalInfo,
-        options: ProofOptions,
-        public_inputs: Vec<F>,
-        challenges: Vec<F>,
-        proof_values: Vec<F>,
-        dctx: DistributionCtx,
-        weights: HashMap<(usize, usize), u64>,
-    ) -> Self {
-        Self {
-            global_info: global_info.clone(),
-            public_inputs: Values { values: RwLock::new(public_inputs) },
-            proof_values: Values { values: RwLock::new(proof_values) },
-            challenges: Values { values: RwLock::new(challenges) },
-            buff_helper: Values::default(),
-            air_instance_repo: AirInstancesRepository::new(),
-            dctx: RwLock::new(dctx),
+            custom_commits_fixed,
             weights,
             options,
         }
@@ -144,6 +128,20 @@ impl<F: Field> ProofCtx<F> {
 
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
+    }
+
+    pub fn get_custom_commits_fixed_buffer(&self, name: &str) -> Result<&str, Box<std::io::Error>> {
+        let file_name = self.custom_commits_fixed.get(name);
+        match file_name {
+            Some(path) => Ok(path.to_str().expect("Invalid UTF-8 in path")),
+            None => {
+                // Return error
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Custom Commit Fixed {:?} not found", file_name),
+                )))
+            }
+        }
     }
 
     pub fn free_instances(&self) {

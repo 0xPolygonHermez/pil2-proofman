@@ -209,7 +209,7 @@ uint64_t fileSize (const string &fileName)
 }
 
 
-bool loadFileParallel(void* buffer, const string &fileName, uint64_t size, bool exit) {
+bool loadFileParallel(void* buffer, const string &fileName, uint64_t size, bool exit, uint64_t skipBytes) {
 
     // Check file size
     struct stat sb;
@@ -218,7 +218,7 @@ bool loadFileParallel(void* buffer, const string &fileName, uint64_t size, bool 
         if(exit) exitProcess();
         return false;
     }
-    if ((uint64_t)sb.st_size != size) {
+    if ((uint64_t)sb.st_size != size + skipBytes) {
         if(exit) {
             zklog.error("loadFileParallel() found size of file " + fileName + " to be " + to_string(sb.st_size) + " B instead of " + to_string(size) + " B");
             exitProcess();
@@ -241,9 +241,9 @@ bool loadFileParallel(void* buffer, const string &fileName, uint64_t size, bool 
             exitProcess();
         }
         size_t chunkSize_ = i == numChunks -1 ? chunkSize + remainder : chunkSize;
-        size_t offset = i * chunkSize;
+        size_t offset = skipBytes + i * chunkSize;
         fseek(file, offset, SEEK_SET);
-        size_t readed = fread((uint8_t*)buffer + offset, 1, chunkSize_, file);
+        size_t readed = fread((uint8_t*)buffer + i * chunkSize, 1, chunkSize_, file);
         if(readed != chunkSize_){
             zklog.error("loadFileParallel() failed to read the file");
         }

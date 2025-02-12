@@ -113,6 +113,10 @@ extern "C" {
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void, recursive: bool) -> u64;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z36get_map_total_n_custom_commits_fixedPv"]
+    pub fn get_map_total_n_custom_commits_fixed(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
     #[link_name = "\u{1}_Z15stark_info_freePv"]
     pub fn stark_info_free(pStarkInfo: *mut ::std::os::raw::c_void);
 }
@@ -331,28 +335,36 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z34extend_and_merkelize_custom_commitPvmmS_S_S_S_Pc"]
+    #[link_name = "\u{1}_Z34extend_and_merkelize_custom_commitPvmmS_S_S_"]
     pub fn extend_and_merkelize_custom_commit(
         pStarks: *mut ::std::os::raw::c_void,
         commitId: u64,
         step: u64,
-        buffer: *mut ::std::os::raw::c_void,
         bufferExt: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
         pBuffHelper: *mut ::std::os::raw::c_void,
-        treeFile: *mut ::std::os::raw::c_char,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z18load_custom_commitPvmmS_S_S_Pc"]
+    #[link_name = "\u{1}_Z18load_custom_commitPvmS_S_Pc"]
     pub fn load_custom_commit(
         pStarks: *mut ::std::os::raw::c_void,
         commitId: u64,
-        step: u64,
-        buffer: *mut ::std::os::raw::c_void,
         bufferExt: *mut ::std::os::raw::c_void,
         pProof: *mut ::std::os::raw::c_void,
-        treeFile: *mut ::std::os::raw::c_char,
+        customCommitFile: *mut ::std::os::raw::c_char,
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z19write_custom_commitPvmmmS_Pcb"]
+    pub fn write_custom_commit(
+        root: *mut ::std::os::raw::c_void,
+        N: u64,
+        NExtended: u64,
+        nCols: u64,
+        buffer: *mut ::std::os::raw::c_void,
+        bufferFile: *mut ::std::os::raw::c_char,
+        check: bool,
     );
 }
 extern "C" {

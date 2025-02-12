@@ -165,6 +165,11 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void, recursive: bool) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_map_totaln_custom_commits_fixed_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n_custom_commits_fixed(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn stark_info_free_c(p_stark_info: *mut c_void) {
     unsafe {
         stark_info_free(p_stark_info);
@@ -553,22 +558,17 @@ pub fn extend_and_merkelize_custom_commit_c(
     commit_id: u64,
     step: u64,
     buffer: *mut u8,
-    buffer_ext: *mut u8,
     p_proof: *mut c_void,
     p_buff_helper: *mut u8,
-    buffer_file: &str,
 ) {
-    let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
         extend_and_merkelize_custom_commit(
             p_starks,
             commit_id,
             step,
             buffer as *mut std::os::raw::c_void,
-            buffer_ext as *mut std::os::raw::c_void,
             p_proof,
             p_buff_helper as *mut std::os::raw::c_void,
-            buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
         );
     }
 }
@@ -577,9 +577,7 @@ pub fn extend_and_merkelize_custom_commit_c(
 pub fn load_custom_commit_c(
     p_starks: *mut c_void,
     commit_id: u64,
-    step: u64,
     buffer: *mut u8,
-    buffer_ext: *mut u8,
     p_proof: *mut c_void,
     buffer_file: &str,
 ) {
@@ -588,11 +586,33 @@ pub fn load_custom_commit_c(
         load_custom_commit(
             p_starks,
             commit_id,
-            step,
             buffer as *mut std::os::raw::c_void,
-            buffer_ext as *mut std::os::raw::c_void,
             p_proof,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn write_custom_commit_c(
+    root: *mut u8,
+    n: u64,
+    n_extended: u64,
+    n_cols: u64,
+    buffer: *mut u8,
+    buffer_file: &str,
+    check: bool,
+) {
+    let buffer_file_name = CString::new(buffer_file).unwrap();
+    unsafe {
+        write_custom_commit(
+            root as *mut std::os::raw::c_void,
+            n,
+            n_extended,
+            n_cols,
+            buffer as *mut std::os::raw::c_void,
+            buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
+            check,
         );
     }
 }
@@ -1321,6 +1341,12 @@ pub fn get_map_totaln_c(_p_stark_info: *mut c_void, _recursive: bool) -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn get_map_totaln_custom_commits_fixed_c(_p_stark_info: *mut c_void) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
+    100000000
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn get_custom_commit_id_c(_p_stark_info: *mut c_void, _name: &str) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_custom_commit_id: This is a mock call because there is no linked library");
     100000000
@@ -1553,10 +1579,8 @@ pub fn extend_and_merkelize_custom_commit_c(
     _commit_id: u64,
     _step: u64,
     _buffer: *mut u8,
-    _buffer_ext: *mut u8,
     _p_proof: *mut c_void,
     _p_buff_helper: *mut u8,
-    _tree_file: &str,
 ) {
     trace!(
         "{}: ··· {}",
@@ -1569,13 +1593,24 @@ pub fn extend_and_merkelize_custom_commit_c(
 pub fn load_custom_commit_c(
     _p_starks: *mut c_void,
     _commit_id: u64,
-    _step: u64,
     _buffer: *mut u8,
-    _buffer_ext: *mut u8,
     _p_proof: *mut c_void,
     _tree_file: &str,
 ) {
     trace!("{}: ··· {}", "ffi     ", "load_custom_commit: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn write_custom_commit_c(
+    _root: *mut u8,
+    _n: u64,
+    _n_extended: u64,
+    _n_cols: u64,
+    _buffer: *mut u8,
+    _buffer_file: &str,
+    _check: bool,
+) {
+    trace!("{}: ··· {}", "ffi     ", "write_custom_commit: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

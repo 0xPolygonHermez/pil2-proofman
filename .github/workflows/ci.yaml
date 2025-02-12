@@ -217,11 +217,15 @@ jobs:
 
       - name: Verify constraints Fibonacci Square
         run: |
-          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json
+          cargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --custom-commits rom=buffer.bin
+      
+      - name: Verify constraints Fibonacci Square
+        run: |
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json --custom-commits rom=buffer.bin
 
       - name: Generate proof Fibonacci Square
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json --output-dir examples/fibonacci-square/build/proofs -a
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libfibonacci_square.so --proving-key examples/fibonacci-square/build/provingKey/ --public-inputs examples/fibonacci-square/src/inputs.json --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=buffer.bin -a
 
       - name: Verify vadcop final proof Fibonacci Square
         run: |

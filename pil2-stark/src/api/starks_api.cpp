@@ -264,6 +264,12 @@ uint64_t get_map_total_n(void *pStarkInfo, bool recursive)
     return starkInfo->mapTotalN;
 }
 
+uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
+{
+    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
+    return starkInfo->mapTotalNCustomCommitsFixed;
+}
+
 void stark_info_free(void *pStarkInfo)
 {
     auto starkInfo = (StarkInfo *)pStarkInfo;
@@ -429,16 +435,39 @@ void calculate_impols_expressions(void *pStarks, uint64_t step, void* stepsParam
     starks->calculateImPolsExpressions(step, *(StepsParams *)stepsParams);
 }
 
-void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void* bufferExt, void *pProof, void *pBuffHelper, char *bufferFile)
+void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void* buffer, void *pProof, void *pBuffHelper)
 {
     Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->extendAndMerkelizeCustomCommit(commitId, step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)bufferExt, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper, string(bufferFile));
+    starks->extendAndMerkelizeCustomCommit(commitId, step, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper);
 }
 
-void load_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, char *bufferFile)
+void load_custom_commit(void *pStarks, uint64_t commitId, void *buffer, void *pProof, char *bufferFile)
 {
     Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->loadCustomCommit(commitId, step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)bufferExt, *(FRIProof<Goldilocks::Element> *)pProof, string(bufferFile));
+    starks->loadCustomCommit(commitId, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, string(bufferFile));
+}
+
+void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+{   
+    MerkleTreeGL mt(2, true, NExtended, nCols, true, true);
+
+    NTT_Goldilocks ntt(N);
+    ntt.extendPol(mt.source, (Goldilocks::Element *)buffer, NExtended, N, nCols);
+    
+    mt.merkelize();
+    
+    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
+    mt.getRoot(&rootGL[0]);
+
+    if(!check) {
+        std::string buffFile = string(bufferFile);
+        ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
+        writeFileParallel(buffFile, root, 32, 0);
+        writeFileParallel(buffFile, buffer, N * nCols * sizeof(Goldilocks::Element), 32);
+        writeFileParallel(buffFile, mt.source, NExtended * nCols * sizeof(Goldilocks::Element), 32 + N * nCols * sizeof(Goldilocks::Element));
+        writeFileParallel(buffFile, mt.nodes, mt.numNodes * sizeof(Goldilocks::Element), 32 + (NExtended + N) * nCols * sizeof(Goldilocks::Element));
+        fw.close();
+    }
 }
 
 void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trace, void *buffer, void *pProof, void *pBuffHelper) {
