@@ -34,6 +34,10 @@ public:
 public:
     Starks(SetupCtx& setupCtx_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr) : setupCtx(setupCtx_)                           
     {
+
+        uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
         bool allocateNodes = setupCtx.starkInfo.starkStruct.verificationHashType == "GL" ? false : true;
         treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
         if (pConstPolsExtendedTreeAddress != nullptr) treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
@@ -41,16 +45,16 @@ public:
         {
             std::string section = "cm" + to_string(i + 1);
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-            treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, 1 << setupCtx.starkInfo.starkStruct.nBitsExt, nCols, false, allocateNodes);
+            treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols, false, allocateNodes);
         }
 
         
 
         for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[i].name + "0"];
-            treesGL[setupCtx.starkInfo.nStages + 2 + i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, 1 << setupCtx.starkInfo.starkStruct.nBitsExt, nCols, false, false);
-            treesGL[setupCtx.starkInfo.nStages + 2 + i]->setSource(&pConstPolsCustomCommitsTree[32 + (1 << setupCtx.starkInfo.starkStruct.nBits) * nCols]);
-            ElementType *nodes = (ElementType *)&pConstPolsCustomCommitsTree[32 + ((1 << setupCtx.starkInfo.starkStruct.nBits) + (1 << setupCtx.starkInfo.starkStruct.nBitsExt)) * nCols];
+            treesGL[setupCtx.starkInfo.nStages + 2 + i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols);
+            treesGL[setupCtx.starkInfo.nStages + 2 + i]->setSource(&pConstPolsCustomCommitsTree[N * nCols]);
+            ElementType *nodes = (ElementType *)&pConstPolsCustomCommitsTree[(N + NExtended) * nCols];
             treesGL[setupCtx.starkInfo.nStages + 2 + i]->setNodes(nodes);
         }
 
