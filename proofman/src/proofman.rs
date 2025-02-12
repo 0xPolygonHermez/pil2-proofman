@@ -927,15 +927,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_stop_and_log_info!(GET_PROOFS);
 
-        if pctx.options.debug_info.save_proofs_to_file {
-            let n_publics = pctx.global_info.n_publics as u64;
+        save_publics_c(pctx.global_info.n_publics as u64, pctx.get_publics_ptr(), output_dir);
 
-            save_publics_c(n_publics, pctx.get_publics_ptr(), output_dir);
+        save_proof_values_c(pctx.get_proof_values_ptr(), global_info_file, output_dir);
 
-            save_proof_values_c(pctx.get_proof_values_ptr(), global_info_file, output_dir);
-
-            save_challenges_c(pctx.get_challenges_ptr(), global_info_file, output_dir);
-        }
+        save_challenges_c(pctx.get_challenges_ptr(), global_info_file, output_dir);
 
         proves
     }
