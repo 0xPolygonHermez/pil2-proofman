@@ -32,6 +32,7 @@ pub struct ProofOptions {
     pub aggregation: bool,
     pub final_snark: bool,
     pub debug_info: DebugInfo,
+    pub verify_proofs: bool,
 }
 
 #[derive(Default, Clone)]
@@ -58,9 +59,10 @@ impl ProofOptions {
         verbose_mode: VerboseMode,
         aggregation: bool,
         final_snark: bool,
+        verify_proofs: bool,
         debug_info: DebugInfo,
     ) -> Self {
-        Self { verify_constraints, verbose_mode, aggregation, final_snark, debug_info }
+        Self { verify_constraints, verbose_mode, aggregation, final_snark, debug_info, verify_proofs }
     }
 }
 
