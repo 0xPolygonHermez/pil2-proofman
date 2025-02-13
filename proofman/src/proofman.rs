@@ -243,8 +243,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         //Generate proves_out
         let proves_out = Self::get_proofs(&mut provers, pctx.clone(), output_dir_path.to_string_lossy().as_ref());
 
-        let mut valid_proofs = false;
-        if !pctx.options.aggregation {
+        let mut valid_proofs = true;
+        if !pctx.options.aggregation && pctx.options.verify_proofs {
             valid_proofs = verify_basic_proofs(&mut provers, proves_out.clone(), pctx.clone(), sctx.clone());
         }
 
@@ -354,15 +354,17 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let verkey_path = setup_path.display().to_string() + ".verkey.json";
 
                 timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
-                valid_proofs = verify_proof(
-                    final_proof,
-                    stark_info_path,
-                    expressions_bin_path,
-                    verkey_path,
-                    Some(pctx_aggregation.get_publics().clone()),
-                    None,
-                    None,
-                );
+                if pctx.options.verify_proofs {
+                    valid_proofs = verify_proof(
+                        final_proof,
+                        stark_info_path,
+                        expressions_bin_path,
+                        verkey_path,
+                        Some(pctx_aggregation.get_publics().clone()),
+                        None,
+                        None,
+                    );
+                }
                 timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                 if !valid_proofs {
                     log::info!(

@@ -463,7 +463,7 @@ jobs:
 
       - name: Generate proof Lookup
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/liblookup.so --proving-key ./pil2-components/test/std/lookup/build/provingKey --output-dir ./pil2-components/test/std/lookup/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/liblookup.so --proving-key ./pil2-components/test/std/lookup/build/provingKey --output-dir ./pil2-components/test/std/lookup/build -k
 
       - name: Verify constraints permutation
         run: |
@@ -471,7 +471,7 @@ jobs:
 
       - name: Generate proof permutation
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/permutation/build/provingKey --output-dir ./pil2-components/test/std/permutation/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/permutation/build/provingKey --output-dir ./pil2-components/test/std/permutation/build -k
 
       - name: Verify constraints connection
         run: |
@@ -479,7 +479,7 @@ jobs:
 
       - name: Generate proof connection
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey --output-dir ./pil2-components/test/std/connection/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey --output-dir ./pil2-components/test/std/connection/build -k
 
       - name: Verify constraints direct_update
         run: |
@@ -487,7 +487,7 @@ jobs:
 
       - name: Generate proof direct_update
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build -k
 
       - name: Verify constraints direct_update
         run: |
@@ -495,7 +495,7 @@ jobs:
 
       - name: Generate proof direct_update
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build -k
 
       - name: Verify constraints range-check
         run: |
@@ -503,7 +503,7 @@ jobs:
 
       - name: Generate proof range-check
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey --output-dir ./pil2-components/test/std/range_check/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey --output-dir ./pil2-components/test/std/range_check/build -k
 
       - name: Verify constraints simple
         run: |
@@ -511,7 +511,7 @@ jobs:
 
       - name: Generate proof simple
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build/provingKey --output-dir ./pil2-components/test/simple/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build/provingKey --output-dir ./pil2-components/test/simple/build -k
 
       # - name: Verify constraints diff_buses
       #   run: |
