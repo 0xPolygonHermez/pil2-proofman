@@ -311,10 +311,26 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     log::debug!("{}: ··· Computing witness for AIR '{}' at stage {}", Self::MY_NAME, air_name, stage);
 
                     let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
+                    let im_airval_hints = get_hint_ids_by_name(p_expressions_bin, "im_airval");
                     let gsum_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_col");
 
                     // Populate the im columns
                     for hint in im_hints {
+                        mul_hint_fields::<F>(
+                            &sctx,
+                            &pctx,
+                            air_instance,
+                            hint as usize,
+                            "reference",
+                            "numerator",
+                            HintFieldOptions::default(),
+                            "denominator",
+                            HintFieldOptions::inverse(),
+                        );
+                    }
+
+                    // Populate the im airvals
+                    for hint in im_airval_hints {
                         mul_hint_fields::<F>(
                             &sctx,
                             &pctx,
