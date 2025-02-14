@@ -9,20 +9,6 @@ function set_array_size(const int limit) {
     ARRAY_SIZE = limit;
 }
 
-// Control how the airvals are grouped
-int AIRVALS_FACTOR = 1;
-
-function set_airvals_factor(const int factor) {
-    AIRVALS_FACTOR = factor;
-}
-
-// Control how the proofvals are grouped
-int PROOFVALS_FACTOR = 1;
-
-function set_proofvals_factor(const int factor) {
-    PROOFVALS_FACTOR = factor;
-}
-
 /*
 Available PIOPs:
 
