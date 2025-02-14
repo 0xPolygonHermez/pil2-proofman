@@ -398,26 +398,71 @@ private function piop_gsum_air(const int blowupFactor = 2) {
           gsum_result === gsum + ∑ⱼ sⱼ / (eⱼ + ɣ)
      where both sⱼ and eⱼ are field elements, for all j.
 
-     We rewrite it as:
-          (gsum_result - gsum)·∏ⱼ (eⱼ + ɣ) - ∑ⱼ sⱼ·∏ₖ≠ⱼ (eₖ + ɣ) === 0
+    We also transform the rational constraint to a polynomial one by substituting
+    all the rational terms by individual terms:
+          gsum_result === gsum + ∑ᵢ im_i
     */
 
     // Compute the direct terms numerator and denominator
-    expr direct_num = 0;
-    expr direct_den = 1;
-    for (int i = 0; i < direct_gsum_nargs; i++) {
-        direct_den *= (direct_gsum_e[i] + std_gamma);
+    expr sum_ims_direct = 0;
+    if (direct_gsum_nargs > 0) {
+        const int num_im = direct_gsum_nargs/AIRVALS_FACTOR;
 
-        expr _tmp = direct_gsum_s[i];
-        for (int j = 0; j < direct_gsum_nargs; j++) {
-            if (j != i) _tmp *= (direct_gsum_e[j] + std_gamma);
+        airval stage(2) im_direct[num_im];
+        for (int i = 0; i < num_im; i++) {
+            //              s[3*i]            s[3*i+1]            s[3*i+2]
+            // im[i] = --------------- + ----------------- + -----------------
+            //              e[3*i]            e[3*i+1]            e[3*i+2]
+
+            expr prods = 1;
+            expr sums = 0;
+            for (int j = 0; j < AIRVALS_FACTOR; j++) {
+                prods *= (direct_gsum_e[AIRVALS_FACTOR * i + j] + std_gamma);
+
+                expr _partial = direct_gsum_s[AIRVALS_FACTOR * i + j];
+                for (int k = 0; k < AIRVALS_FACTOR; k++) {
+                    if (k == j) continue;
+                    _partial *= (direct_gsum_e[AIRVALS_FACTOR * i + k] + std_gamma);
+                }
+                sums += _partial;
+            }
+            @im_airval{reference: im_direct[i], numerator: sums, denominator: prods};
+
+            // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
+            //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
+            im_direct[i] * prods === sums;
+
+            sum_ims_direct += im_direct[i];
         }
-        direct_num += _tmp;
+
+        const int num_rem_terms = direct_gsum_nargs % AIRVALS_FACTOR;
+        // If there are remaining terms, add an extra cluster
+        if (num_rem_terms != 0) {
+            airval stage(2) im_direct_extra;
+
+            expr prods = 1;
+            expr sums = 0;
+            for (int j = 0; j < num_rem_terms; j++) {
+                prods *= (direct_gsum_e[AIRVALS_FACTOR * num_im + j] + std_gamma);
+
+                expr _partial = direct_gsum_s[AIRVALS_FACTOR * num_im + j];
+                for (int k = 0; k < num_rem_terms; k++) {
+                    if (k == j) continue;
+                    _partial *= (direct_gsum_e[AIRVALS_FACTOR * num_im + k] + std_gamma);
+                }
+                sums += _partial;
+            }
+            @im_airval{reference: im_direct_extra, numerator: sums, denominator: prods};
+
+            im_direct_extra * prods === sums;
+
+            sum_ims_direct += im_direct_extra;
+        }
     }
 
     @gsum_col{reference: gsum, numerator_air: sum_ims * isolated_den + isolated_num, denominator_air: isolated_den, 
-                               numerator_direct: direct_num, denominator_direct: direct_den, result: gsum_result};
-    L1' * ((gsum_result - gsum) * direct_den - direct_num) === 0;
+                               numerator_direct: sum_ims_direct, denominator_direct: 1, result: gsum_result};
+    L1' * (gsum_result - gsum - sum_ims_direct) === 0;
 
     // Store the airgroup and air ids for global hints
     proof.std.gsum.airgroup_ids[proof.std.gsum.air_count] = AIRGROUP_ID;
@@ -438,34 +483,85 @@ private function piop_gsum_airgroup() {
 private function piop_gsum_proof() {
     use proof.std.gsum;
 
-    //           s_1        s_2          s_3
-    // gsum + -------- + --------- + ---------- === 0
-    //           e_1        e_2          e_3
-    // where:
-    // s_i = mul_i  if the i-th term is a prove,
-    // s_i = -sel_i if the i-th term is an assume,
-    // e_i = (t_i + ɣ) if the i-th term is a prove,
-    // e_i = (f_i + ɣ) if the i-th term is an assume,
-    //
-    // We rewrite it as:
-    //      gsum·e_1·e_2·e_3 + s_1·e_2·e_3  + s_2·e_1·e_3 + s_3·e_1·e_2 === 0
-    //
-    // Note: We cannot update this constraint directly if some of the elements
-    //       are not globally defined: constants, public inputs, airgroupvalues, ...
+    /*
+                       s_i
+        gsum + ∑ᵢ ( -------- ) === 0
+                      e_i + ɣ
 
-    expr global_num = 0;
-    expr global_den = 1;
-    for (int i = 0; i < direct_gsum_nargs; i++) {
-        global_den *= (direct_gsum_e[i] + std_gamma);
+    Note: We cannot update this constraint directly if some of the elements
+          are not globally defined: constants, public inputs, airgroupvalues, ...
+    */
 
-        expr _tmp = direct_gsum_s[i];
-        for (int j = 0; j < direct_gsum_nargs; j++) {
-            if (j != i) _tmp *= (direct_gsum_e[j] + std_gamma);
-        }
-        global_num += _tmp;
+    /*
+      Transform the rational constraint to a polynomial one by substituting
+      all the rational terms by individual terms:
+            gsum + ∑ᵢ im_i === 0
+    */
+
+    if (!defined(std_gamma)) {
+        challenge stage(2) std_gamma;
     }
 
-    gsum * global_den + global_num === 0;
+    expr sum_ims_direct = 0;
+    if (direct_gsum_nargs > 0) {
+        const int num_im = direct_gsum_nargs/PROOFVALS_FACTOR;
+
+        proofval stage(2) im_direct[num_im];
+        for (int i = 0; i < num_im; i++) {
+            //              s[3*i]            s[3*i+1]            s[3*i+2]
+            // im[i] = --------------- + ----------------- + -----------------
+            //              e[3*i]            e[3*i+1]            e[3*i+2]
+
+            expr prods = 1;
+            expr sums = 0;
+            for (int j = 0; j < PROOFVALS_FACTOR; j++) {
+                prods *= (direct_gsum_e[PROOFVALS_FACTOR * i + j] + std_gamma);
+
+                expr _partial = direct_gsum_s[PROOFVALS_FACTOR * i + j];
+                for (int k = 0; k < PROOFVALS_FACTOR; k++) {
+                    if (k == j) continue;
+                    _partial *= (direct_gsum_e[PROOFVALS_FACTOR * i + k] + std_gamma);
+                }
+                sums += _partial;
+            }
+            @im_proofval{reference: im_direct[i], numerator: sums, denominator: prods};
+
+            // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
+            //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
+            im_direct[i] * prods === sums;
+
+            sum_ims_direct += im_direct[i];
+        }
+
+        const int num_rem_terms = direct_gsum_nargs % PROOFVALS_FACTOR;
+        // If there are remaining terms, add an extra cluster
+        if (num_rem_terms != 0) {
+            proofval stage(2) im_direct_extra;
+
+            expr prods = 1;
+            expr sums = 0;
+            for (int j = 0; j < num_rem_terms; j++) {
+                prods *= (direct_gsum_e[PROOFVALS_FACTOR * num_im + j] + std_gamma);
+
+                expr _partial = direct_gsum_s[PROOFVALS_FACTOR * num_im + j];
+                for (int k = 0; k < num_rem_terms; k++) {
+                    if (k == j) continue;
+                    _partial *= (direct_gsum_e[PROOFVALS_FACTOR * num_im + k] + std_gamma);
+                }
+                sums += _partial;
+            }
+            @im_proofval{reference: im_direct_extra, numerator: sums, denominator: prods};
+
+            im_direct_extra * prods === sums;
+
+            sum_ims_direct += im_direct_extra;
+        }
+    }
+
+    //  At this point, the constraint has been transformed to:
+    //       gsum + ∑ᵢ im_i === 0
+    //  check that the constraint is satisfied
+    gsum + sum_ims_direct === 0;
 }
 
 private function check_opids_were_completed_sum() {
