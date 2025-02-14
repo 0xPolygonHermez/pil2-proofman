@@ -20,5 +20,6 @@ pub mod grand_product_utils;
 pub mod grand_product_permutation_utils;
 pub mod setup;
 pub mod airout;
+pub mod smt_generation_pil2;
 
 pub use setup::*;
