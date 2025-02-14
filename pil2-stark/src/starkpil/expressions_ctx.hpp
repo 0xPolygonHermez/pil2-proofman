@@ -37,10 +37,11 @@ struct Params {
 struct Dest {
     Goldilocks::Element *dest = nullptr;
     uint64_t offset = 0;
+    bool constant = false;
     uint64_t dim = 1;
     std::vector<Params> params;
 
-    Dest(Goldilocks::Element *dest_, uint64_t offset_ = false) : dest(dest_), offset(offset_) {}
+    Dest(Goldilocks::Element *dest_, uint64_t offset_ = 0, bool constant_ = false) : dest(dest_), offset(offset_), constant(constant_) {}
 
     void addParams(ParserParams& parserParams_, bool inverse_ = false, bool batch_ = true) {
         params.push_back(Params(parserParams_, inverse_, batch_));

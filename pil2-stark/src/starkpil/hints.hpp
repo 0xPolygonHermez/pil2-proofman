@@ -489,7 +489,7 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
         destStruct.addNumber(hintFieldVal.value, hintFieldOptions.inverse);
     } else if(hintFieldVal.operand == opType::tmp) {
         destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[hintFieldVal.id], hintFieldOptions.inverse);
-    } else {
+    } else if(hintFieldVal.operand != opType::airvalue) {
         zklog.error("Op type " + to_string(hintFieldVal.operand) + "is not considered yet.");
         exitProcess();
         exit(-1);
@@ -497,6 +497,11 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
 }
 
 void opHintFields(SetupCtx& setupCtx, StepsParams& params, std::vector<Dest> &dests) {
+
+    if (dests.size() == 1 && dests[0].constant) {
+        ExpressionsPack expressionsCtx(setupCtx, 1);
+        expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, 1, false);
+    } else {
 #ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
 #elif defined(__AVX2__)
@@ -505,8 +510,9 @@ void opHintFields(SetupCtx& setupCtx, StepsParams& params, std::vector<Dest> &de
     ExpressionsPack expressionsCtx(setupCtx);
 #endif
 
-    uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
+        uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
+    }
 }
 
 uint64_t multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldName1, std::string hintFieldName2,  HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2) {
@@ -523,10 +529,20 @@ uint64_t multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hi
     });
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
-    uint64_t offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
-    Goldilocks::Element *buff = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos];
-    
-    Dest destStruct(buff, offset);
+    Goldilocks::Element *buff;
+    uint64_t offset = 0;
+    if(hintFieldDestVal.operand == opType::cm) {
+        offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
+        buff = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos];
+    } else if (hintFieldDestVal.operand == opType::airvalue) {
+        buff = new Goldilocks::Element[FIELD_EXTENSION];
+    } else {
+        zklog.error("Only committed pols and airvalues can be set");
+        exitProcess();
+        exit(-1);
+    }
+
+    Dest destStruct(buff, offset, true);
 
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
@@ -534,6 +550,18 @@ uint64_t multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hi
     std::vector<Dest> dests = {destStruct};
 
     opHintFields(setupCtx, params, dests);
+
+
+    if(hintFieldDestVal.operand == opType::airvalue) {
+        uint64_t pos = 0;
+        uint64_t dim = setupCtx.starkInfo.airValuesMap[hintFieldDestVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
+        for(uint64_t i = 0; i < hintFieldDestVal.id; ++i) {
+            pos += setupCtx.starkInfo.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+        }
+        cout << pos << endl;
+        std::memcpy(&params.airValues[pos], buff, dim * sizeof(Goldilocks::Element));
+        delete[] buff;
+    }
 
     return hintFieldDestVal.id;
 }
