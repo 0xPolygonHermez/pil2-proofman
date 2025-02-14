@@ -57,9 +57,12 @@ pub fn parse_expression_pil(expression: &Value) -> Value {
             return json!(format!("exp_{}", expression["id"]));
         } else if op == "challenge" {
             return json!(0);
+        } else if expression.get("expDeg").is_some() {
+            // Default case: return `expDeg` for unknown expressions
+            return json!(expression["expDeg"].as_i64().unwrap());
         }
     }
-    json!(expression["expDeg"].as_i64().unwrap())
+    json!(1)
 }
 
 /// **Library function replacing the main function**

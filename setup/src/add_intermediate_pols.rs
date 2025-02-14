@@ -190,7 +190,10 @@ pub fn add_intermediate_polynomials(
 
     let vc_id = symbols
         .iter()
-        .filter(|s| s.get("type") == Some(&json!("challenge")) && s["stage"].as_u64().unwrap_or(0) < stage as u64)
+        .filter(|s| {
+            println!("🔍 Checking symbol: {:?}", s);
+            s.get("type") == Some(&json!("challenge")) && s["stage"].as_u64().unwrap_or(0) < stage as u64
+        })
         .count();
 
     let vc = e.challenge("std_vc", stage, 3, 0, vc_id);

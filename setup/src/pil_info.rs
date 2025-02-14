@@ -1,6 +1,6 @@
 use crate::{
-    /*add_intermediate_pols::add_intermediate_polynomials,*/ gen_pil_code::generate_pil_code, mapping::map,
-    prepare_pil::prepare_pil,
+    add_intermediate_pols::add_intermediate_polynomials, gen_pil_code::generate_pil_code, mapping::map,
+    prepare_pil::prepare_pil, calculate_im_pols::process_pil_data,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -37,65 +37,43 @@ pub async fn pil_info(
             - res["starkStruct"]["nBits"].as_u64().unwrap() as usize))
         + 1;
 
-    // if false
-    // // !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap()
-    // //     || !options.get("skipImPols").unwrap_or(&json!(false)).as_bool().unwrap()
+    // if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap()
+    //     || !options.get("skipImPols").unwrap_or(&json!(false)).as_bool().unwrap()
     // {
-    //     let im_info: Value;
+    let mut im_info: serde_json::Value = json!({});
 
-    //     println!("options: {:?}", options);
-    //     if options.get("optImPols").unwrap_or(&json!(false)).as_bool().unwrap() {
-    //         let info_pil_file = NamedTempFile::new().expect("Failed to create temp file");
-    //         let im_pols_file = NamedTempFile::new().expect("Failed to create temp file");
+    if true || options.get("optImPols").unwrap_or(&json!(false)).as_bool().unwrap() {
+        let max_deg = (1
+            << (stark_struct["nBitsExt"].as_u64().unwrap() as usize
+                - stark_struct["nBits"].as_u64().unwrap() as usize))
+            + 1;
 
-    //         let max_deg = (1
-    //             << (stark_struct["nBitsExt"].as_u64().unwrap() as usize
-    //                 - stark_struct["nBits"].as_u64().unwrap() as usize))
-    //             + 1;
+        let info_pil_json = json!({
+            "maxDeg": max_deg,
+            "cExpId": res["cExpId"],
+            "qDim": res["qDim"],
+            "infoPil": info_pil,
+            "expressions": expressions,
+        });
 
-    //         let info_pil_json = json!({
-    //             "maxDeg": max_deg,
-    //             "cExpId": res["cExpId"],
-    //             "qDim": res["qDim"],
-    //             "infoPil": info_pil
-    //         });
+        // Call our Rust function instead of invoking Python
+        let im_info_str = process_pil_data(&info_pil_json.to_string());
+        im_info = serde_json::from_str(&im_info_str).expect("Failed to parse JSON");
 
-    //         fs::write(info_pil_file.path(), info_pil_json.to_string()).expect("Failed to write temp file");
+        new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
+    }
 
-    //         let calculate_im_pols_path = Path::new("./imPolsCalculation/calculateImPols.py");
+    let im_exps: Vec<usize> =
+        im_info["imExps"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
 
-    //         let output = Command::new("python3")
-    //             .arg(calculate_im_pols_path)
-    //             .arg(info_pil_file.path())
-    //             .arg(im_pols_file.path())
-    //             .output()
-    //             .expect("Failed to execute Python script");
-
-    //         println!("{}", String::from_utf8_lossy(&output.stdout));
-
-    //         let data = fs::read_to_string(im_pols_file.path()).expect("Failed to read intermediate polynomials file");
-
-    //         println!("data: {}", data);
-
-    //         im_info = serde_json::from_str(&data).expect("Failed to parse JSON");
-
-    //         let _ = fs::remove_file(info_pil_file.path());
-    //         let _ = fs::remove_file(im_pols_file.path());
-
-    //         new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
-    //     }
-
-    //     let im_exps: Vec<usize> =
-    //         im_info["imExps"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
-
-    //     add_intermediate_polynomials(
-    //         &mut res,
-    //         &mut new_expressions,
-    //         &mut constraints,
-    //         &mut symbols,
-    //         &im_exps,
-    //         im_info["qDeg"].as_u64().unwrap() as usize,
-    //     );
+    add_intermediate_polynomials(
+        &mut res,
+        &mut new_expressions,
+        &mut constraints,
+        &mut symbols,
+        &im_exps,
+        im_info["qDeg"].as_u64().unwrap() as usize,
+    );
     // }
 
     map(
