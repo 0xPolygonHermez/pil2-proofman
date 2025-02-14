@@ -106,7 +106,6 @@ pub async fn pil_info(
         &json!(options),
     );
 
-    // ✅ **Fix: Convert `res` into `Value` before passing it to `generate_pil_code`**
     let mut res_value = json!(res);
 
     let pil_code = generate_pil_code(
