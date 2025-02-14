@@ -18,9 +18,9 @@ pub async fn pil_info(
     options: HashMap<String, Value>,
 ) -> HashMap<String, Value> {
     let mut pil_clone = pil.clone();
-    let info_pil = prepare_pil(f, &mut pil_clone, stark_struct, pil2, &options);
+    let mut info_pil = prepare_pil(f, &mut pil_clone, stark_struct, pil2, &options);
 
-    let expressions = info_pil["expressions"].as_array().unwrap().clone();
+    let mut expressions = info_pil["expressions"].as_array().unwrap().clone();
     let mut constraints = info_pil["constraints"].as_array().unwrap().clone();
     let hints = info_pil["hints"].as_array().unwrap().clone();
     let mut symbols: Vec<HashMap<String, Value>> = info_pil["symbols"]
@@ -61,8 +61,12 @@ pub async fn pil_info(
             im_info = serde_json::from_str(&im_info_str).expect("Failed to parse JSON");
 
             new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
+        } else {
+            calculate_intermediate_pols(&mut expressions, c_exp_id, max_q_deg, q_dim);
         }
-
+        // if im_info["imExps"].is_null() {
+        //     im_info["imExps"] = json!([]);
+        // }
         let im_exps: Vec<usize> =
             im_info["imExps"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
 
