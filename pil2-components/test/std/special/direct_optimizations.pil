@@ -1,5 +1,8 @@
 require "std_direct.pil"
 
+set_airvals_im_non_reduced(3);
+set_airvals_im_reduce_factor(3);
+
 public inputs[64];
 
 airtemplate Whatever(const int N = 2**2) {
