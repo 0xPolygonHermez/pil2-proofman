@@ -97,17 +97,26 @@ impl<F: Clone> WitnessManager<F> {
             self.pctx.global_info.n_challenges.len()
         );
 
+        // Helper closure to process both component groups
+        let process_components = |f: fn(&_, u32, _, _)| {
+            for components in [&self.components, &self.components_std] {
+                for component in components.read().unwrap().iter() {
+                    f(component, stage, self.pctx.clone(), self.sctx.clone());
+                }
+            }
+        };
+
         timer_start_info!(CALCULATING_WITNESS);
-
-        for component in self.components.read().unwrap().iter() {
-            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone());
-        }
-
-        for component in self.components_std.read().unwrap().iter() {
-            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone());
-        }
-
+        process_components(|component, stage, pctx, x| component.calculate_witness(stage, pctx, x));
         timer_stop_and_log_info!(CALCULATING_WITNESS);
+
+        timer_start_info!(CALCULATING_WITNESS_AIRGROUP);
+        process_components(|component, stage, pctx, x| component.calculate_witness_airgroup(stage, pctx, x));
+        timer_stop_and_log_info!(CALCULATING_WITNESS_AIRGROUP);
+
+        timer_start_info!(CALCULATING_WITNESS_PROOF);
+        process_components(|component, stage, pctx, x| component.calculate_witness_proof(stage, pctx, x));
+        timer_stop_and_log_info!(CALCULATING_WITNESS_PROOF);
     }
 
     pub fn get_pctx(&self) -> Arc<ProofCtx<F>> {
