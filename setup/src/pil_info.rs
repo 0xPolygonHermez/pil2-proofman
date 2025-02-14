@@ -37,44 +37,44 @@ pub async fn pil_info(
             - res["starkStruct"]["nBits"].as_u64().unwrap() as usize))
         + 1;
 
-    // if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap()
-    //     || !options.get("skipImPols").unwrap_or(&json!(false)).as_bool().unwrap()
-    // {
-    let mut im_info: serde_json::Value = json!({});
+    if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap()
+        || !options.get("skipImPols").unwrap_or(&json!(false)).as_bool().unwrap()
+    {
+        let mut im_info: serde_json::Value = json!({});
 
-    if true || options.get("optImPols").unwrap_or(&json!(false)).as_bool().unwrap() {
-        let max_deg = (1
-            << (stark_struct["nBitsExt"].as_u64().unwrap() as usize
-                - stark_struct["nBits"].as_u64().unwrap() as usize))
-            + 1;
+        if options.get("optImPols").unwrap_or(&json!(false)).as_bool().unwrap() {
+            let max_deg = (1
+                << (stark_struct["nBitsExt"].as_u64().unwrap() as usize
+                    - stark_struct["nBits"].as_u64().unwrap() as usize))
+                + 1;
 
-        let info_pil_json = json!({
-            "maxDeg": max_deg,
-            "cExpId": res["cExpId"],
-            "qDim": res["qDim"],
-            "infoPil": info_pil,
-            "expressions": expressions,
-        });
+            let info_pil_json = json!({
+                "maxDeg": max_deg,
+                "cExpId": res["cExpId"],
+                "qDim": res["qDim"],
+                "infoPil": info_pil,
+                "expressions": expressions,
+            });
 
-        // Call our Rust function instead of invoking Python
-        let im_info_str = process_pil_data(&info_pil_json.to_string());
-        im_info = serde_json::from_str(&im_info_str).expect("Failed to parse JSON");
+            // Call our Rust function instead of invoking Python
+            let im_info_str = process_pil_data(&info_pil_json.to_string());
+            im_info = serde_json::from_str(&im_info_str).expect("Failed to parse JSON");
 
-        new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
+            new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
+        }
+
+        let im_exps: Vec<usize> =
+            im_info["imExps"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
+
+        add_intermediate_polynomials(
+            &mut res,
+            &mut new_expressions,
+            &mut constraints,
+            &mut symbols,
+            &im_exps,
+            im_info["qDeg"].as_u64().unwrap() as usize,
+        );
     }
-
-    let im_exps: Vec<usize> =
-        im_info["imExps"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
-
-    add_intermediate_polynomials(
-        &mut res,
-        &mut new_expressions,
-        &mut constraints,
-        &mut symbols,
-        &im_exps,
-        im_info["qDeg"].as_u64().unwrap() as usize,
-    );
-    // }
 
     map(
         &mut res,
