@@ -505,7 +505,7 @@ void ExpressionsBin::loadGlobalBin(BinFileUtils::BinFile *globalBin) {
                 } else if(hintFieldValue.operand == opType::airgroupvalue || hintFieldValue.operand == opType::airvalue) {
                     hintFieldValue.dim = globalBin->readU32LE();
                     hintFieldValue.id = globalBin->readU32LE();
-                } else if(hintFieldValue.operand == opType::tmp || hintFieldValue.operand == opType::public_) {
+                } else if(hintFieldValue.operand == opType::tmp || hintFieldValue.operand == opType::public_ || hintFieldValue.operand == opType::proofvalue) {
                     hintFieldValue.id = globalBin->readU32LE();
                 } else {
                     throw new std::invalid_argument("Invalid file type");
