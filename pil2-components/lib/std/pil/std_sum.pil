@@ -256,8 +256,14 @@ private function piop_gsum_air(const int blowupFactor = 2) {
     int low_degree_len = 0;
     int high_degree_len = 0;
     for (int i = 0; i < gsum_nargs; i++) {
+        // If the isolated term has already been identified, continue
+        if (i == isolated_term) {
+            continue;
+        }
+
         const int gsum_s_degree = degree(gsum_s[i]);
         const int gsum_e_degree = degree(gsum_e[i]);
+
         if (gsum_s_degree == 0 && gsum_e_degree == 0)
         {
             // In the case that both the numerator and the denominator are constants, 
@@ -278,11 +284,7 @@ private function piop_gsum_air(const int blowupFactor = 2) {
             if (isolated_term == -1) {
                 // If the isolated term has not been identified, assign
                 isolated_term = i;
-            } else if (i == isolated_term) {
-                // If the isolated term has already been identified, continue
-                continue;
-            }
-            else {
+            } else {
                 // Otherwise, add it to the low-degree terms
                 low_degree_term[low_degree_len] = i;
                 low_degree_len++;
