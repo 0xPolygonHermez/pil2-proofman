@@ -671,7 +671,8 @@ void merkelizeFRI_inplace(uint64_t step, FRIProof<Goldilocks::Element> &proof, g
     cudaMemcpy(treeFRI->source, d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
 
     uint64_t **d_tree = new uint64_t *[1];
-    PoseidonGoldilocks::merkletree_cuda_coalesced(d_tree, (uint64_t *)d_aux, treeFRI->width, treeFRI->height);
+    // PoseidonGoldilocks::merkletree_cuda_coalesced(d_tree, (uint64_t *)d_aux, treeFRI->width, treeFRI->height);
+    PoseidonGoldilocks::merkletree_cuda_streams(d_tree, (uint64_t *)d_aux, treeFRI->width, treeFRI->height);
     uint64_t tree_size = treeFRI->getNumNodes(treeFRI->height) * sizeof(uint64_t);
     CHECKCUDAERR(cudaMemcpy(treeFRI->get_nodes_ptr(), *d_tree, tree_size, cudaMemcpyDeviceToHost));
     treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);

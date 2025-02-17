@@ -162,7 +162,8 @@ void NTT_Goldilocks::computeQ_inplace(uint64_t **d_tree, uint64_t offset_cmQ, ui
     std::cout << "      check rick Time for ntt_cuda: " << time1 - time << std::endl;
 
     time = time1;
-    PoseidonGoldilocks::merkletree_cuda_coalesced(d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
+    // PoseidonGoldilocks::merkletree_cuda_coalesced(d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
+    PoseidonGoldilocks::merkletree_cuda_streams(d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
@@ -293,7 +294,8 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(uint64_t **d_tree, gl64_t *d_dst
 
     time = time1;
 
-    PoseidonGoldilocks::merkletree_cuda_coalesced(d_tree, (uint64_t *)d_buffers->d_ntt, ncols, ext_size);
+    // PoseidonGoldilocks::merkletree_cuda_coalesced(d_tree, (uint64_t *)d_buffers->d_ntt, ncols, ext_size);
+    PoseidonGoldilocks::merkletree_cuda_streams(d_tree, (uint64_t *)d_buffers->d_ntt, ncols, ext_size);
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();

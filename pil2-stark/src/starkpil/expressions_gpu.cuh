@@ -892,7 +892,7 @@ __device__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *dest
     }
 }
 
-__global__ void copyPolynomial_(DeviceArguments *d_deviceArgs, Goldilocks::Element *d_destVals, bool inverse, uint64_t dim, Goldilocks::Element *d_tmp)
+__global__ __launch_bounds__(128, 4) void copyPolynomial_(DeviceArguments *d_deviceArgs, Goldilocks::Element *d_destVals, bool inverse, uint64_t dim, Goldilocks::Element *d_tmp)
 {
     copyPolynomial__(d_deviceArgs, (gl64_t *)d_destVals, inverse, dim, (gl64_t *)d_tmp);
 }
@@ -931,7 +931,7 @@ __device__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals
         }
     }
 }
-__global__ void loadPolynomials_(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
+__global__ __launch_bounds__(128, 4) void loadPolynomials_(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
 {
 
     loadPolynomials__(d_deviceArgs, row, iBlock);
@@ -1043,7 +1043,7 @@ __device__ void multiplyPolynomials__(DeviceArguments *deviceArgs, DestGPU &dest
         gl64_t::copy_gpu(&destVals[2 * deviceArgs->nrowsPack], &vals[2 * deviceArgs->nrowsPack], false);
     }
 }
-__global__ void computeExpressions_(DeviceArguments *d_deviceArgs)
+__global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d_deviceArgs)
 {
 
     int chunk_idx = blockIdx.x;
