@@ -2,6 +2,8 @@
 // Manual modifications are not recommended and may be overwritten.
 #![allow(clippy::all)]
 #![allow(non_snake_case)]
+#![allow(non_upper_case_globals)]
+#![allow(dead_code)]
 
 use proofman_common as common;
 pub use proofman_macros::trace;
@@ -99,6 +101,7 @@ trace!(U8AirTrace<F> {
  mul: F,
 },  0, 2, 256 );
 
+const FibonacciSquareRomHash: &str = "1e66ad0f5817502c1941ce399c54a4a459494f504ebaca93b09dd2cfb26a4743";
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
 }, 0, 0, 4194304, 0 );
