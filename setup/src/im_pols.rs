@@ -145,3 +145,27 @@ fn _calculate_im_pols(
         }
     }
 }
+
+/// Computes the number of added columns in the base field.
+pub fn calculate_added_cols(max_deg: i64, expressions: &[Value], im_exps: &[usize], q_deg: i64, q_dim: i64) -> i64 {
+    let q_cols = q_deg * q_dim;
+    let mut im_cols = 0;
+
+    for &index in im_exps {
+        if let Some(dim) = expressions.get(index).and_then(|exp| exp.get("dim")).and_then(|d| d.as_i64()) {
+            im_cols += dim;
+        }
+    }
+
+    let added_cols = q_cols + im_cols;
+
+    println!("Max constraint degree: {}", max_deg);
+    println!("Number of intermediate polynomials: {}", im_exps.len());
+    println!("Polynomial Q degree: {}", q_deg);
+    println!(
+        "Number of columns added in the basefield: {} (Polynomial Q columns: {} + Intermediate polynomials columns: {})",
+        added_cols, q_cols, im_cols
+    );
+
+    added_cols
+}
