@@ -329,44 +329,44 @@ private function piop_gsum_air(const int blowupFactor = 2) {
     // the degree of the constraint is lower than the maximum allowed
     if (low_degree_len > 0) {
         const int nIm = low_degree_len/blowupFactor;
+        if (nIm > 0) {
+            col witness stage(2) im[nIm];
+            for (int i = 0; i < nIm; i++) {
 
-        col witness stage(2) im[nIm];
+                //              s[3*i]            s[3*i+1]            s[3*i+2]
+                // im[i] = --------------- + ----------------- + -----------------
+                //              e[3*i]            e[3*i+1]            e[3*i+2]
+                // where:
+                // s[x] = mul[x]  if the x-th term is a prove,
+                // s[x] = -sel[x] if the x-th term is an assume,
+                // e[x] = (t[x] + ɣ) if the x-th term is a prove,
+                // e[x] = (f[x] + ɣ) if the x-th term is an assume,
 
-        for (int i = 0; i < nIm; i++) {
+                expr prods = 1;
+                expr sums = 0;
+                for (int j = 0; j < blowupFactor; j++) {
+                    prods *= (gsum_e[low_degree_term[blowupFactor * i + j]] + std_gamma);
 
-            //              s[3*i]            s[3*i+1]            s[3*i+2]
-            // im[i] = --------------- + ----------------- + -----------------
-            //              e[3*i]            e[3*i+1]            e[3*i+2]
-            // where:
-            // s[x] = mul[x]  if the x-th term is a prove,
-            // s[x] = -sel[x] if the x-th term is an assume,
-            // e[x] = (t[x] + ɣ) if the x-th term is a prove,
-            // e[x] = (f[x] + ɣ) if the x-th term is an assume,
-
-            expr prods = 1;
-            expr sums = 0;
-            for (int j = 0; j < blowupFactor; j++) {
-                prods *= (gsum_e[low_degree_term[blowupFactor * i + j]] + std_gamma);
-
-                expr _partial = gsum_s[low_degree_term[blowupFactor * i + j]];
-                for (int k = 0; k < blowupFactor; k++) {
-                    if (k == j) continue;
-                    _partial *= (gsum_e[low_degree_term[blowupFactor * i + k]] + std_gamma);
+                    expr _partial = gsum_s[low_degree_term[blowupFactor * i + j]];
+                    for (int k = 0; k < blowupFactor; k++) {
+                        if (k == j) continue;
+                        _partial *= (gsum_e[low_degree_term[blowupFactor * i + k]] + std_gamma);
+                    }
+                    sums += _partial;
                 }
-                sums += _partial;
+                @im_col{reference: im[i], numerator: sums, denominator: prods};
+
+                // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
+                //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
+                im[i] * prods === sums;
+
+                sum_ims += im[i];
             }
-            @im_col{reference: im[i], numerator: sums, denominator: prods};
-
-            // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
-            //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
-            im[i] * prods === sums;
-
-            sum_ims += im[i];
         }
 
         const int nRemTerms = low_degree_len % blowupFactor;
         // If there are remaining terms, add an extra cluster
-        if (nRemTerms != 0) {
+        if (nRemTerms > 0) {
             col witness stage(2) im_extra;
 
             expr prods = 1;
