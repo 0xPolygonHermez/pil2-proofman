@@ -62,7 +62,7 @@ pub async fn pil_info(
 
             new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
         } else {
-            calculate_intermediate_pols(&mut expressions, c_exp_id, max_q_deg, q_dim);
+            // calculate_intermediate_pols(&mut expressions, c_exp_id, max_q_deg, q_dim);
         }
         // if im_info["imExps"].is_null() {
         //     im_info["imExps"] = json!([]);
