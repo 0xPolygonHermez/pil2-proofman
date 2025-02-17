@@ -184,7 +184,6 @@ mkdir -p ./pil2-components/test/std/special/build/ \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/array_size.pilout \
      -b ./pil2-components/test/std/special/build \
-     -t ./pil2-stark/build/bctree \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/direct_optimizations.pilout \
      -b ./pil2-components/test/std/special/build \
