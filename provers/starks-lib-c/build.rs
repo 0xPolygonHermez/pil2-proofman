@@ -144,7 +144,9 @@ fn find_cpp_files(dir: &Path) -> Vec<PathBuf> {
             if path.is_dir() {
                 cpp_files.extend(find_cpp_files(&path));
             } else if let Some(ext) = path.extension() {
-                if (ext == "cpp" || ext == "h" || ext == "hpp") && path.file_name() != Some(std::ffi::OsStr::new("starks_lib.h")) {
+                if (ext == "cpp" || ext == "h" || ext == "hpp")
+                    && path.file_name() != Some(std::ffi::OsStr::new("starks_lib.h"))
+                {
                     cpp_files.push(path);
                 }
             }
