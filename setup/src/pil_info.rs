@@ -1,6 +1,7 @@
 use crate::{
-    add_intermediate_pols::add_intermediate_polynomials, gen_pil_code::generate_pil_code, mapping::map,
-    prepare_pil::prepare_pil, calculate_im_pols::process_pil_data,
+    add_intermediate_pols::add_intermediate_polynomials, calculate_im_pols::process_pil_data,
+    gen_pil_code::generate_pil_code, im_pols::calculate_intermediate_polynomials, mapping::map,
+    prepare_pil::prepare_pil,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -32,7 +33,7 @@ pub async fn pil_info(
     let mut res: HashMap<String, Value> = info_pil["res"].as_object().unwrap().clone().into_iter().collect();
 
     let mut new_expressions = expressions.clone();
-    let _max_deg = (1
+    let max_deg = (1
         << (res["starkStruct"]["nBitsExt"].as_u64().unwrap() as usize
             - res["starkStruct"]["nBits"].as_u64().unwrap() as usize))
         + 1;
@@ -43,11 +44,6 @@ pub async fn pil_info(
         let mut im_info: serde_json::Value = json!({});
 
         if options.get("optImPols").unwrap_or(&json!(false)).as_bool().unwrap() {
-            let max_deg = (1
-                << (stark_struct["nBitsExt"].as_u64().unwrap() as usize
-                    - stark_struct["nBits"].as_u64().unwrap() as usize))
-                + 1;
-
             let info_pil_json = json!({
                 "maxDeg": max_deg,
                 "cExpId": res["cExpId"],
@@ -62,8 +58,12 @@ pub async fn pil_info(
 
             new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
         } else {
-            // calculate_intermediate_pols(&mut expressions, c_exp_id, max_q_deg, q_dim);
-            // TODO: Implement calculate_intermediate_pols
+            calculate_intermediate_polynomials(
+                &expressions,
+                res["cExpId"].as_u64().unwrap() as usize,
+                max_deg,
+                res["qDim"].as_i64().unwrap(),
+            );
         }
         // if im_info["imExps"].is_null() {
         //     im_info["imExps"] = json!([]);
