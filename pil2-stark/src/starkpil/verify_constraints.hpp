@@ -96,7 +96,7 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
         constraintsInfo[i].imPol = setupCtx.expressionsBin.constraintsInfoDebug[i].imPol;
 
         if(!constraintsInfo[i].skip) {
-            Dest constraintDest(&pBuffer[i*FIELD_EXTENSION*N]);
+            Dest constraintDest(&pBuffer[i*FIELD_EXTENSION*N], N);
             constraintDest.addParams(setupCtx.expressionsBin.constraintsInfoDebug[i]);
             dests.push_back(constraintDest);
             destToConstraintIndex.push_back(i);
@@ -111,7 +111,7 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
     ExpressionsPack expressionsCtx(setupCtx);
 #endif
 
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsConstraints, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
+    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsConstraints, dests, N, false);
 
 #pragma omp parallel for
     for (uint64_t i = 0; i < dests.size(); i++) {

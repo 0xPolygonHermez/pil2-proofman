@@ -18,12 +18,12 @@ struct Params {
     opType op;
     uint64_t value;
     
-    Params(ParserParams& params, bool inverse_ = false, bool batch_ = true) : parserParams(params), inverse(inverse_), batch(batch_) {
+    Params(ParserParams& params, bool inverse_ = false, bool batch_ = true) : parserParams(params), inverse(inverse_), batch(batch_), op(opType::tmp) {
         dim = params.destDim;
         op = opType::tmp;
     }
 
-    Params(PolMap& polMap, uint64_t rowOffsetIndex_, bool inverse_ = false, bool committed = true) : dim(polMap.dim), stage(polMap.stage), stagePos(polMap.stagePos), polsMapId(polMap.polsMapId), rowOffsetIndex(rowOffsetIndex_), inverse(inverse_) {
+    Params(PolMap& polMap, uint64_t rowOffsetIndex_, bool inverse_ = false, bool committed = false): dim(polMap.dim), stage(polMap.stage), stagePos(polMap.stagePos), polsMapId(polMap.polsMapId), rowOffsetIndex(rowOffsetIndex_), inverse(inverse_) {
         op = committed ? opType::cm : opType::const_;
     }
 
@@ -32,16 +32,18 @@ struct Params {
         op = opType::number;
         value = value_;
     }
+
+    Params(PolMap& polMap, uint64_t id, opType op_, bool inverse_ = false) : dim(polMap.dim), stage(polMap.stage), polsMapId(id), inverse(inverse_), op(op_) {}
 };
 
 struct Dest {
     Goldilocks::Element *dest = nullptr;
     uint64_t offset = 0;
-    bool constant = false;
     uint64_t dim = 1;
+    uint64_t domainSize;
     std::vector<Params> params;
 
-    Dest(Goldilocks::Element *dest_, uint64_t offset_ = 0, bool constant_ = false) : dest(dest_), offset(offset_), constant(constant_) {}
+    Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t offset_ = 0) : dest(dest_), offset(offset_), domainSize(domainSize_) {}
 
     void addParams(ParserParams& parserParams_, bool inverse_ = false, bool batch_ = true) {
         params.push_back(Params(parserParams_, inverse_, batch_));
@@ -52,6 +54,12 @@ struct Dest {
     void addCmPol(PolMap& cmPol, uint64_t rowOffsetIndex, bool inverse_ = false) {
         params.push_back(Params(cmPol, rowOffsetIndex, inverse_, true));
         dim = std::max(dim, cmPol.dim);
+    }
+
+    void addAirValue(PolMap& airValueMap, uint64_t id, bool inverse_ = false) {
+        params.push_back(Params(airValueMap, id, opType::airvalue, inverse_));
+        uint64_t airvalueDim = airValueMap.stage == 1 ? 1 : 3;
+        dim = std::max(dim, airvalueDim);
     }
 
     void addConstPol(PolMap& constPol, uint64_t rowOffsetIndex, bool inverse_ = false) {
@@ -86,7 +94,7 @@ public:
         } else {
             domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
         }
-        Dest destStruct(dest);
+        Dest destStruct(dest, domainSize);
         destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], inverse);
         std::vector<Dest> dests = {destStruct};
         calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, compilation_time);

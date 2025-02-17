@@ -515,7 +515,7 @@ private function piop_gsum_air(const int blowupFactor = 2) {
     }
 
     @gsum_col{reference: gsum, numerator_air: sum_ims * isolated_den + isolated_num, denominator_air: isolated_den, 
-                               numerator_direct: direct_num, denominator_direct: direct_den, result: gsum_result};
+                               numerator_direct: direct_sum_ims * direct_den + direct_num, denominator_direct: direct_den, result: gsum_result};
     L1' * ((gsum_result - gsum - direct_sum_ims) * direct_den - direct_num) === 0;
 
     // Store the airgroup and air ids for global hints

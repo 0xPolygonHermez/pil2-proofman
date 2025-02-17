@@ -314,33 +314,22 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     let im_airval_hints = get_hint_ids_by_name(p_expressions_bin, "im_airval");
                     let gsum_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_col");
 
-                    // Populate the im columns
-                    for hint in im_hints {
-                        mul_hint_fields::<F>(
-                            &sctx,
-                            &pctx,
-                            air_instance,
-                            hint as usize,
-                            "reference",
-                            "numerator",
-                            HintFieldOptions::default(),
-                            "denominator",
-                            HintFieldOptions::inverse(),
-                        );
-                    }
+                    let im_total_hints: Vec<u64> = im_hints.iter().chain(im_airval_hints.iter()).cloned().collect();
 
-                    // Populate the im airvals
-                    for hint in im_airval_hints {
+                    let n_im_total_hints = im_total_hints.len();
+
+                    if !im_total_hints.is_empty() {
                         mul_hint_fields::<F>(
                             &sctx,
                             &pctx,
                             air_instance,
-                            hint as usize,
-                            "reference",
-                            "numerator",
-                            HintFieldOptions::default(),
-                            "denominator",
-                            HintFieldOptions::inverse(),
+                            im_total_hints.len() as u64,
+                            im_total_hints,
+                            vec!["reference"; n_im_total_hints],
+                            vec!["numerator"; n_im_total_hints],
+                            vec![HintFieldOptions::default(); n_im_total_hints],
+                            vec!["denominator"; n_im_total_hints],
+                            vec![HintFieldOptions::inverse(); n_im_total_hints],
                         );
                     }
 
