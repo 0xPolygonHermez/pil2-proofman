@@ -169,6 +169,9 @@ mkdir -p ./pil2-components/test/std/special/build/ \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/array_size.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/array_size.pilout \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/direct_optimizations.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/direct_optimizations.pilout \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/expr_optimizations.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/expr_optimizations.pilout \
@@ -178,6 +181,14 @@ mkdir -p ./pil2-components/test/std/special/build/ \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/table.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/table.pilout \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/array_size.pilout \
+     -b ./pil2-components/test/std/special/build \
+     -t ./pil2-stark/build/bctree \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/direct_optimizations.pilout \
+     -b ./pil2-components/test/std/special/build \
+     -t ./pil2-stark/build/bctree \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/expr_optimizations.pilout \
      -b ./pil2-components/test/std/special/build \

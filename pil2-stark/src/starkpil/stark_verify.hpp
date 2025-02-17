@@ -271,7 +271,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     ExpressionsPack expressionsPack(setupCtx, 1);
     
     Goldilocks::Element buff[FIELD_EXTENSION];
-    Dest dest(buff);
+    Dest dest(buff, 1);
     dest.addParams(setupCtx.expressionsBin.expressionsInfo[starkInfo.cExpId]);
     std::vector<Dest> dests = {dest};
     
@@ -308,7 +308,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     zklog.trace("Verifying FRI queries consistency");
     Goldilocks::Element buffQueries[FIELD_EXTENSION*starkInfo.starkStruct.nQueries];
-    Dest destQueries(buffQueries);
+    Dest destQueries(buffQueries, starkInfo.starkStruct.nQueries);
     destQueries.addParams(setupCtx.expressionsBin.expressionsInfo[starkInfo.friExpId]);
     std::vector<Dest> destsQueries = {destQueries};
     expressionsPack.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsQueries, starkInfo.starkStruct.nQueries, false);

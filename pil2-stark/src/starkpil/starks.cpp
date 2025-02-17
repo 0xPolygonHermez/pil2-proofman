@@ -347,11 +347,12 @@ void Starks<ElementType>::ffi_treesGL_get_root(uint64_t index, ElementType *dst)
 
 template <typename ElementType>
 void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams &params) {
+    uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBits);
     std::vector<Dest> dests;
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
         if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
             Goldilocks::Element* pAddress = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.trace : params.aux_trace;
-            Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
+            Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], domainSize, setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
             destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
             
             dests.push_back(destStruct);
@@ -368,7 +369,7 @@ void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams 
     ExpressionsPack expressionsCtx(setupCtx);
 #endif
 
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
+    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
 }
 
 template <typename ElementType>
