@@ -169,3 +169,49 @@ pub fn calculate_added_cols(max_deg: i64, expressions: &[Value], im_exps: &[usiz
 
     added_cols
 }
+
+/// Computes intermediate polynomials for a given expression.
+pub fn calculate_intermediate_polynomials(
+    expressions: &[Value],
+    c_exp_id: usize,
+    max_q_deg: i64,
+    q_dim: i64,
+) -> (Vec<Value>, Vec<usize>, i64) {
+    let mut d = 2;
+
+    println!("-------------------- POSSIBLE DEGREES ----------------------");
+    println!(
+        "** Considering degrees between 2 and {} (blowup factor: {}) **",
+        max_q_deg,
+        (max_q_deg as f64 - 1.0).log2()
+    );
+    println!("------------------------------------------------------------");
+
+    let c_exp = &expressions[c_exp_id];
+
+    let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, c_exp, d);
+    let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg, q_dim);
+    d += 1;
+
+    while !im_exps.is_empty() && d <= max_q_deg {
+        println!("------------------------------------------------------------");
+
+        let (im_exps_p, q_deg_p) = calculate_im_pols(expressions, c_exp, d);
+        let new_added_basefield_cols = calculate_added_cols(d, expressions, &im_exps_p, q_deg_p, q_dim);
+        d += 1;
+
+        if (max_q_deg > 0 && new_added_basefield_cols < added_basefield_cols)
+            || (max_q_deg == 0 && im_exps_p.is_empty())
+        {
+            added_basefield_cols = new_added_basefield_cols;
+            im_exps = im_exps_p.clone(); // Clone here to avoid move
+            q_deg = q_deg_p;
+        }
+
+        if im_exps_p.is_empty() {
+            break;
+        }
+    }
+
+    (expressions.to_vec(), im_exps, q_deg)
+}
