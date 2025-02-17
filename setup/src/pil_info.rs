@@ -18,9 +18,9 @@ pub async fn pil_info(
     options: HashMap<String, Value>,
 ) -> HashMap<String, Value> {
     let mut pil_clone = pil.clone();
-    let mut info_pil = prepare_pil(f, &mut pil_clone, stark_struct, pil2, &options);
+    let info_pil = prepare_pil(f, &mut pil_clone, stark_struct, pil2, &options);
 
-    let mut expressions = info_pil["expressions"].as_array().unwrap().clone();
+    let expressions = info_pil["expressions"].as_array().unwrap().clone();
     let mut constraints = info_pil["constraints"].as_array().unwrap().clone();
     let hints = info_pil["hints"].as_array().unwrap().clone();
     let mut symbols: Vec<HashMap<String, Value>> = info_pil["symbols"]
@@ -63,6 +63,7 @@ pub async fn pil_info(
             new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
         } else {
             // calculate_intermediate_pols(&mut expressions, c_exp_id, max_q_deg, q_dim);
+            // TODO: Implement calculate_intermediate_pols
         }
         // if im_info["imExps"].is_null() {
         //     im_info["imExps"] = json!([]);
