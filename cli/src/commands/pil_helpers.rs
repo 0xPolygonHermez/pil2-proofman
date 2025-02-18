@@ -71,6 +71,7 @@ struct CustomCommitsCtx {
     name: String,
     commit_id: usize,
     custom_columns: Vec<ColumnCtx>,
+    custom_columns_hash: String,
 }
 #[derive(Clone, Debug, Serialize)]
 struct ColumnCtx {
@@ -262,6 +263,7 @@ impl PilHelpersCmd {
                         name: commit.name.as_ref().unwrap().to_case(Case::Pascal),
                         commit_id: index,
                         custom_columns: Vec::new(),
+                        custom_columns_hash: String::new(),
                     })
                     .collect();
 
@@ -343,6 +345,12 @@ impl PilHelpersCmd {
                                 .push(ColumnCtx { name: name.to_owned(), r#type });
                         }
                     });
+                for air in wcctxs[airgroup_id].airs.iter_mut() {
+                    for custom in air.custom_columns.iter_mut() {
+                        let serialized = serde_json::to_vec(&custom.custom_columns)?;
+                        custom.custom_columns_hash = blake3::hash(&serialized).to_hex().to_string();
+                    }
+                }
             }
         }
 

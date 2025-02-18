@@ -207,7 +207,11 @@ pub fn verify_constraints_proof<F: Field>(
 
         for idx in 0..global_constraints.len() {
             let constraint = global_constraints[idx];
-            let line_str = &global_constraints_lines[idx];
+            let mut line_str = &global_constraints_lines[idx];
+            let empty_string = String::new();
+            if line_str.len() > 200 {
+                line_str = &empty_string
+            };
 
             if constraint.skip {
                 log::debug!(
