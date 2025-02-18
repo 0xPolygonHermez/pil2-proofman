@@ -183,7 +183,7 @@ void Starks<ElementType>::computeLEv(Goldilocks::Element *xiChallenge, Goldilock
         for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
         {
             Goldilocks3::pow((Goldilocks3::Element &)(LEv[(k*setupCtx.starkInfo.openingPoints.size() + i)*FIELD_EXTENSION]), (Goldilocks3::Element &)(xisShifted[i * FIELD_EXTENSION]), k);
-            for(uint64_t j = k+1; j < k + 4096; ++j) {
+            for(uint64_t j = k+1; j < std::min(k + 4096, N); ++j) {
                 uint64_t curr = (j*setupCtx.starkInfo.openingPoints.size() + i)*FIELD_EXTENSION;
                 uint64_t prev = ((j-1)*setupCtx.starkInfo.openingPoints.size() + i)*FIELD_EXTENSION;
                 Goldilocks3::mul((Goldilocks3::Element &)(LEv[curr]), (Goldilocks3::Element &)(LEv[prev]), (Goldilocks3::Element &)(xisShifted[i * FIELD_EXTENSION]));
