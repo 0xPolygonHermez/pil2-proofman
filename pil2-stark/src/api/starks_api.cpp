@@ -705,7 +705,6 @@ void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPub
 
     json zkinRecursive2 = joinzkinrecursive2(globalInfo, airgroupId, publics, challenges, *(nlohmann::json *)zkin1, *(nlohmann::json *)zkin2, *(StarkInfo *)starkInfoRecursive2);
 
-    json2file(zkinRecursive2, "tmp/zkinRecursive2.json");
     return (void *) new nlohmann::json(zkinRecursive2);
 }
 
