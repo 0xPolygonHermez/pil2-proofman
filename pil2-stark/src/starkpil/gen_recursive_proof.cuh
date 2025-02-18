@@ -184,7 +184,8 @@ __global__ void fillLEv_2d(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t 
         }
         Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), w);
         Goldilocks3GPU::mul(xiShifted, xi, invShift);
-        Goldilocks3GPU::Element &xiShiftedPow = Goldilocks3GPU::pow(xiShifted, k);
+        Goldilocks3GPU::Element xiShiftedPow; 
+        Goldilocks3GPU::pow(xiShifted, k, xiShiftedPow);
         LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION] = xiShiftedPow[0];
         LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 1] = xiShiftedPow[1];
         LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 2] = xiShiftedPow[2];

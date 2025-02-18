@@ -287,9 +287,8 @@ public:
     }
 
     // ======== POW ========
-    static __device__ __forceinline__ Element &pow(Element &base, uint64_t exp)
+    static __device__ __forceinline__ void pow(Element &base, uint64_t exp, Element &result)
     {
-        Element result;
         one(result);
         while (exp > 0)
         {
@@ -300,7 +299,6 @@ public:
             mul(base, base, base);
             exp /= 2;
         }
-        return result;
     }
 
     // ======== EXPRESSIONS ========

@@ -38,7 +38,7 @@ namespace gl64_device {
 #endif
 
 class gl64_t {
-private:
+public:
     uint64_t val;
 
 public:
