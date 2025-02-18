@@ -10,12 +10,24 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     if(nImHints > 0) {
         uint64_t imHints[nImHints];
         setupCtx.expressionsBin.getHintIdsByName(imHints, "im_col");
+        std::string hintFieldDest[nImHints];
+        std::string hintField1[nImHints];
+        std::string hintField2[nImHints];
+        HintFieldOptions hintOptions1[nImHints];
+        HintFieldOptions hintOptions2[nImHints];
         for(uint64_t i = 0; i < nImHints; i++) {
+            hintFieldDest[i] = "reference";
+            hintField1[i] = "numerator";
+            hintField2[i] = "denominator";
             HintFieldOptions options1;
             HintFieldOptions options2;
             options2.inverse = true;
-            multiplyHintFields(setupCtx, params, imHints[i], "reference", "numerator", "denominator", options1, options2);
+            hintOptions1[i] = options1;
+            hintOptions2[i] = options2;
         }
+
+        multiplyHintFields(setupCtx, params, nImHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2);
+        
     }
 
     HintFieldOptions options1;

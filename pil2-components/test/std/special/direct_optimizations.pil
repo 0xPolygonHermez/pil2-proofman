@@ -1,0 +1,22 @@
+require "std_direct.pil"
+
+set_airvals_im_non_reduced(3);
+set_airvals_im_reduce_factor(3);
+
+public inputs[64];
+
+airtemplate Whatever(const int N = 2**2) {
+    airval inputs_air[64];
+    for (int i = 0; i < 3; i++) {
+        direct_update_assumes(0xAA, [i, inputs_air[i*2], inputs_air[i*2 + 1]]);
+    }
+}
+
+
+airgroup Direct {
+    Whatever();
+
+    for (int i = 0; i < 3; i++) {
+        direct_global_update_proves(0xAA, [i, inputs[i*2], inputs[i*2 + 1]]);
+    }
+}

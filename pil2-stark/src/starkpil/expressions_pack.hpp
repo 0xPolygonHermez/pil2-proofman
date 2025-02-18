@@ -238,6 +238,7 @@ public:
 
     inline void storePolynomial(std::vector<Dest> dests, Goldilocks::Element** destVals, uint64_t row) {
         for(uint64_t i = 0; i < dests.size(); ++i) {
+            if(row >= dests[i].domainSize) continue;
             if(dests[i].dim == 1) {
                 uint64_t offset = dests[i].offset != 0 ? dests[i].offset : 1;
                 Goldilocks::copy_pack(nrowsPack, &dests[i].dest[row*offset], uint64_t(offset), &destVals[i][0]);
@@ -415,6 +416,7 @@ public:
             Goldilocks::Element **destVals = new Goldilocks::Element*[dests.size()];
 
             for(uint64_t j = 0; j < dests.size(); ++j) {
+                if(i >= dests[j].domainSize) continue;
                 destVals[j] = new Goldilocks::Element[dests[j].params.size() * FIELD_EXTENSION* nrowsPack];
                 for(uint64_t k = 0; k < dests[j].params.size(); ++k) {
                     uint64_t i_args = 0;
@@ -430,6 +432,8 @@ public:
                             destVals[j][k*FIELD_EXTENSION*nrowsPack + r] = Goldilocks::fromU64(dests[j].params[k].value);
                         }
                         continue;
+                    } else if(dests[j].params[k].op == opType::airvalue) {
+                        memcpy(&destVals[j][k*FIELD_EXTENSION*nrowsPack], &airValues[dests[j].params[k].polsMapId*FIELD_EXTENSION*nrowsPack], FIELD_EXTENSION*nrowsPack*sizeof(Goldilocks::Element));
                     }
 
                     uint8_t* ops = &parserArgs.ops[dests[j].params[k].parserParams.opsOffset];
@@ -1056,6 +1060,7 @@ public:
             storePolynomial(dests, destVals, i);
 
             for(uint64_t j = 0; j < dests.size(); ++j) {
+                if(i >= dests[j].domainSize) continue;
                 delete[] destVals[j];
             }
             delete[] destVals;

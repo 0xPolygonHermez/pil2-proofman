@@ -69,8 +69,7 @@ After compiling the PIL files, generate the setup:
 ```bash
 node ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build \
-     -t ./pil2-stark/build/bctree
+     -b ./examples/fibonacci-square/build
 ```
 
 To run the aggregated proof, need to add -r to the previous command
@@ -143,7 +142,6 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build \
-     -t ./pil2-stark/build/bctree \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
@@ -174,7 +172,6 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build \
-     -t ./pil2-stark/build/bctree \
      -r \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \

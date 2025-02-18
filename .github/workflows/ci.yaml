@@ -18,14 +18,6 @@ jobs:
           sudo apt-get install -y protobuf-compiler
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
 
-      - name: Install pil2-stark
-        working-directory: pil2-stark
-        run: |
-          git submodule update --init --recursive
-          git submodule update
-          make clean
-          make starks_lib -j
-          make -j bctree
       - name: cargo test
         run: cargo test --workspace --features no_lib_link
   cargo-check:
@@ -184,14 +176,6 @@ jobs:
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev
 
-      - name: Install pil2-stark
-        working-directory: pil2-stark
-        run: |
-          git submodule update --init --recursive
-          make clean
-          make starks_lib -j
-          make -j bctree
-
       - name: Modify Cargo.toml std
         run: |
           sed -i 's/# *"pil2-components\/lib\/std\/rs"/"pil2-components\/lib\/std\/rs"/' ./Cargo.toml
@@ -206,7 +190,7 @@ jobs:
 
       - name: Generate setup Fibonacci Square
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -t pil2-stark/build/bctree -r
+          node pil2-proofman-js/src/main_setup.js -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -r
 
       - name: Generate PIL Helpers Fibonacci Square
         run: |
@@ -302,14 +286,6 @@ jobs:
           sudo apt-get install -y protobuf-compiler
           sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
 
-      - name: Install pil2-stark
-        working-directory: pil2-stark
-        run: |
-          git submodule update --init --recursive
-          make clean
-          make starks_lib -j
-          make -j bctree
-
       - name: Modify Cargo.toml std
         run: |
           sed -i 's/# *"pil2-components\/lib\/std\/rs"/"pil2-components\/lib\/std\/rs"/' ./Cargo.toml
@@ -352,7 +328,7 @@ jobs:
 
       - name: Generate setup Lookup
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/lookup/build/build.pilout -b ./pil2-components/test/std/lookup/build -t pil2-stark/build/bctree
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/lookup/build/build.pilout -b ./pil2-components/test/std/lookup/build
 
       - name: Generate PIL Helpers Lookup
         run: |
@@ -368,7 +344,7 @@ jobs:
 
       - name: Generate setup permutation
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/permutation/build/build.pilout -b ./pil2-components/test/std/permutation/build -t pil2-stark/build/bctree
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/permutation/build/build.pilout -b ./pil2-components/test/std/permutation/build
 
       - name: Generate PIL Helpers permutation
         run: |
@@ -384,7 +360,7 @@ jobs:
 
       - name: Generate setup connection
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/connection/build/build.pilout -b ./pil2-components/test/std/connection/build -t pil2-stark/build/bctree
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/connection/build/build.pilout -b ./pil2-components/test/std/connection/build
 
       - name: Generate PIL Helpers connection
         run: |
@@ -400,7 +376,7 @@ jobs:
 
       - name: Generate setup diff_buses
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/diff_buses/build/build.pilout -b ./pil2-components/test/std/diff_buses/build -t pil2-stark/build/bctree
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/diff_buses/build/build.pilout -b ./pil2-components/test/std/diff_buses/build
 
       - name: Generate PIL Helpers diff_buses
         run: |
@@ -416,7 +392,7 @@ jobs:
 
       - name: Generate setup direct_update
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/direct_update/build/direct_update.pilout -b ./pil2-components/test/std/direct_update/build -t pil2-stark/build/bctree
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/direct_update/build/direct_update.pilout -b ./pil2-components/test/std/direct_update/build
 
       - name: Generate PIL Helpers direct_update
         run: |
@@ -432,7 +408,7 @@ jobs:
 
       - name: Generate setup range-check
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/range_check/build/build.pilout -b ./pil2-components/test/std/range_check/build -t pil2-stark/build/bctree
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/range_check/build/build.pilout -b ./pil2-components/test/std/range_check/build
 
       - name: Generate PIL Helpers range-check
         run: |
@@ -448,7 +424,7 @@ jobs:
 
       - name: Generate setup simple
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/simple/build/build.pilout -b ./pil2-components/test/simple/build -t pil2-stark/build/bctree
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/simple/build/build.pilout -b ./pil2-components/test/simple/build
 
       - name: Generate PIL Helpers simple
         run: |
@@ -463,7 +439,7 @@ jobs:
 
       - name: Generate proof Lookup
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/liblookup.so --proving-key ./pil2-components/test/std/lookup/build/provingKey --output-dir ./pil2-components/test/std/lookup/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/liblookup.so --proving-key ./pil2-components/test/std/lookup/build/provingKey --output-dir ./pil2-components/test/std/lookup/build -k
 
       - name: Verify constraints permutation
         run: |
@@ -471,7 +447,7 @@ jobs:
 
       - name: Generate proof permutation
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/permutation/build/provingKey --output-dir ./pil2-components/test/std/permutation/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libpermutation.so --proving-key ./pil2-components/test/std/permutation/build/provingKey --output-dir ./pil2-components/test/std/permutation/build -k
 
       - name: Verify constraints connection
         run: |
@@ -479,7 +455,23 @@ jobs:
 
       - name: Generate proof connection
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey --output-dir ./pil2-components/test/std/connection/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libconnection.so --proving-key ./pil2-components/test/std/connection/build/provingKey --output-dir ./pil2-components/test/std/connection/build -k
+
+      - name: Verify constraints direct_update
+        run: |
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey
+
+      - name: Generate proof direct_update
+        run: |
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build -k
+
+      - name: Verify constraints direct_update
+        run: |
+          cargo run --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey
+
+      - name: Generate proof direct_update
+        run: |
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/libdirect_update.so --proving-key ./pil2-components/test/std/direct_update/build/provingKey --output-dir ./pil2-components/test/std/direct_update/build -k
 
       - name: Verify constraints range-check
         run: |
@@ -487,7 +479,7 @@ jobs:
 
       - name: Generate proof range-check
         run: |
-          cargo run --bin proofman-cli prove --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey --output-dir ./pil2-components/test/std/range_check/build
+          cargo run --bin proofman-cli prove --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey --output-dir ./pil2-components/test/std/range_check/build -k
 
       - name: Verify constraints simple
         run: |

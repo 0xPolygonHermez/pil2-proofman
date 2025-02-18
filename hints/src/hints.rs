@@ -749,17 +749,18 @@ pub fn get_hint_ids_by_name(p_expressions_bin: *mut std::os::raw::c_void, name: 
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn mul_hint_fields<F: Field + Field>(
+pub fn mul_hint_fields<F: Field>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
     instance_id: usize,
-    hint_id: usize,
-    hint_field_dest: &str,
-    hint_field_name1: &str,
-    options1: HintFieldOptions,
-    hint_field_name2: &str,
-    options2: HintFieldOptions,
-) -> u64 {
+    n_hints: u64,
+    hint_ids: Vec<u64>,
+    hint_field_dest: Vec<&str>,
+    hint_field_name1: Vec<&str>,
+    mut options1: Vec<HintFieldOptions>,
+    hint_field_name2: Vec<&str>,
+    mut options2: Vec<HintFieldOptions>,
+) {
     let instances = pctx.dctx_get_instances();
     let (airgroup_id, air_id, _) = instances[instance_id];
 
@@ -767,16 +768,21 @@ pub fn mul_hint_fields<F: Field + Field>(
 
     let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
 
+    let mut hint_options1: Vec<*mut u8> = options1.iter_mut().map(|s| s as *mut HintFieldOptions as *mut u8).collect();
+
+    let mut hint_options2: Vec<*mut u8> = options2.iter_mut().map(|s| s as *mut HintFieldOptions as *mut u8).collect();
+
     mul_hint_fields_c(
         (&setup.p_setup).into(),
         (&steps_params).into(),
-        hint_id as u64,
+        n_hints,
+        hint_ids.as_ptr() as *mut u64,
         hint_field_dest,
         hint_field_name1,
         hint_field_name2,
-        (&options1).into(),
-        (&options2).into(),
-    )
+        hint_options1.as_mut_ptr(),
+        hint_options2.as_mut_ptr(),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

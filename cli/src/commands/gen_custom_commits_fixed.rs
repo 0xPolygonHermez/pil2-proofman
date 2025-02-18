@@ -60,7 +60,7 @@ impl GenCustomCommitsFixedCmd {
             }
         }
 
-        let options = ProofOptions::new(false, self.verbose.into(), false, false, DebugInfo::default());
+        let options = ProofOptions::new(false, self.verbose.into(), false, false, false, DebugInfo::default());
         let pctx = Arc::new(ProofCtx::create_ctx(self.proving_key.clone(), custom_commits_map, options));
 
         let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false));

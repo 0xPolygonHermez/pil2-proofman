@@ -228,6 +228,7 @@ public:
 
     inline void storePolynomial(std::vector<Dest> dests, __m512i** destVals, uint64_t row) {
         for(uint64_t i = 0; i < dests.size(); ++i) {
+            if(row >= dests[i].domainSize) continue;
             if(dests[i].dim == 1) {
                 uint64_t offset = dests[i].offset != 0 ? dests[i].offset : 1;
                 Goldilocks::store_avx512(&dests[i].dest[row*offset], uint64_t(offset), destVals[i][0]);
@@ -385,6 +386,7 @@ public:
             __m512i** destVals = new __m512i*[dests.size()];
 
             for(uint64_t j = 0; j < dests.size(); ++j) {
+                if(i >= dests[j].domainSize) continue;
                 destVals[j] = new __m512i[dests[j].params.size() * FIELD_EXTENSION];
                 for(uint64_t k = 0; k < dests[j].params.size(); ++k) {
                     uint64_t i_args = 0;
@@ -398,8 +400,12 @@ public:
                     } else if(dests[j].params[k].op == opType::number) {
                         destVals[j][k*FIELD_EXTENSION] = _mm512_set1_epi64(dests[j].params[k].value);
                         continue;
+                    } else if(dests[j].params[k].op == opType::airvalue) {
+                        Goldilocks::copy_avx512(destVals[j][k*FIELD_EXTENSION], airValues[dests[j].params[k].polsMapId][0]);
+                        Goldilocks::copy_avx512(destVals[j][k*FIELD_EXTENSION + 1], airValues[dests[j].params[k].polsMapId][1]);
+                        Goldilocks::copy_avx512(destVals[j][k*FIELD_EXTENSION + 2], airValues[dests[j].params[k].polsMapId][2]);
                     }
-
+                    
                     uint8_t* ops = &parserArgs.ops[dests[j].params[k].parserParams.opsOffset];
                     uint16_t* args = &parserArgs.args[dests[j].params[k].parserParams.argsOffset];
                     __m512i *tmp1 = &tmp1_[omp_get_thread_num()*maxTemp1Size];
@@ -1024,6 +1030,7 @@ public:
             storePolynomial(dests, destVals, i);
 
             for(uint64_t j = 0; j < dests.size(); ++j) {
+                if(i >= dests[j].domainSize) continue;
                 delete[] destVals[j];
             }
             delete[] destVals;

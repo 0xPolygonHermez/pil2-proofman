@@ -212,17 +212,18 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15mul_hint_fieldsPvS_mPcS0_S0_S_S_"]
+    #[link_name = "\u{1}_Z15mul_hint_fieldsPvS_mPmPPcS2_S2_PS_S3_"]
     pub fn mul_hint_fields(
         pSetupCtx: *mut ::std::os::raw::c_void,
         stepsParams: *mut ::std::os::raw::c_void,
-        hintId: u64,
-        hintFieldNameDest: *mut ::std::os::raw::c_char,
-        hintFieldName1: *mut ::std::os::raw::c_char,
-        hintFieldName2: *mut ::std::os::raw::c_char,
-        hintOptions1: *mut ::std::os::raw::c_void,
-        hintOptions2: *mut ::std::os::raw::c_void,
-    ) -> u64;
+        nHints: u64,
+        hintId: *mut u64,
+        hintFieldNameDest: *mut *mut ::std::os::raw::c_char,
+        hintFieldName1: *mut *mut ::std::os::raw::c_char,
+        hintFieldName2: *mut *mut ::std::os::raw::c_char,
+        hintOptions1: *mut *mut ::std::os::raw::c_void,
+        hintOptions2: *mut *mut ::std::os::raw::c_void,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z14acc_hint_fieldPvS_S_mPcS0_S0_b"]

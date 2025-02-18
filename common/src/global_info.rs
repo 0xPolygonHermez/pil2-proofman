@@ -165,6 +165,21 @@ impl GlobalInfo {
             .unwrap_or_else(|| panic!("Air group '{}' not found", air_group_name))
     }
 
+    pub fn get_air_id(&self, air_group_name: &str, air_name: &str) -> (usize, usize) {
+        let airgroup_id = self
+            .air_groups
+            .iter()
+            .position(|name| name == air_group_name)
+            .unwrap_or_else(|| panic!("Air group '{}' not found", air_group_name));
+
+        let air_id = self.airs[airgroup_id]
+            .iter()
+            .position(|air| air.name == air_name)
+            .unwrap_or_else(|| panic!("Air '{}' not found in air group '{}'", air_name, air_group_name));
+
+        (airgroup_id, air_id)
+    }
+
     pub fn get_air_name(&self, airgroup_id: usize, air_id: usize) -> &str {
         &self.airs[airgroup_id][air_id].name
     }

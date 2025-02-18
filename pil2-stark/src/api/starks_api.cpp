@@ -278,9 +278,24 @@ void get_hint_field_sizes(void *pSetupCtx, void* hintFieldValues, uint64_t hintI
     getHintFieldSizes(*(SetupCtx *)pSetupCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
 
-uint64_t mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2) 
+void mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t nHints, uint64_t *hintId, char **hintFieldNameDest, char **hintFieldName1, char **hintFieldName2, void** hintOptions1, void **hintOptions2) 
 {
-    return multiplyHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldName1), string(hintFieldName2), *(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2);
+
+    std::vector<std::string> hintFieldNameDests(nHints);
+    std::vector<std::string> hintFieldNames1(nHints);
+    std::vector<std::string> hintFieldNames2(nHints);
+    std::vector<HintFieldOptions> hintOptions1Vec(nHints);
+    std::vector<HintFieldOptions> hintOptions2Vec(nHints);
+
+    for (uint64_t i = 0; i < nHints; ++i) {
+        hintFieldNameDests[i] = hintFieldNameDest[i];
+        hintFieldNames1[i] = hintFieldName1[i];
+        hintFieldNames2[i] = hintFieldName2[i];
+        hintOptions1Vec[i] = *(HintFieldOptions *)hintOptions1[i];
+        hintOptions2Vec[i] = *(HintFieldOptions *)hintOptions2[i];
+    }
+
+    return multiplyHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, nHints, hintId, hintFieldNameDests.data(), hintFieldNames1.data(), hintFieldNames2.data(), hintOptions1Vec.data(), hintOptions2Vec.data());
 }
 
 void acc_hint_field(void *pSetupCtx, void* stepsParams, void *pBuffHelper, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add) {
@@ -347,7 +362,7 @@ void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsPar
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
         if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
             Goldilocks::Element* pAddress = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.trace : params.aux_trace;
-            Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
+            Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], (1<< setupCtx.starkInfo.starkStruct.nBits), setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
             destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
             
             dests.push_back(destStruct);

@@ -340,27 +340,43 @@ pub fn get_hint_field_sizes_c(
 pub fn mul_hint_fields_c(
     p_setup_ctx: *mut c_void,
     p_steps_params: *mut u8,
-    hint_id: u64,
-    hint_field_dest: &str,
-    hint_field_name1: &str,
-    hint_field_name2: &str,
-    hint_options1: *mut u8,
-    hint_options2: *mut u8,
-) -> u64 {
-    let field_dest = CString::new(hint_field_dest).unwrap();
-    let field_name1 = CString::new(hint_field_name1).unwrap();
-    let field_name2 = CString::new(hint_field_name2).unwrap();
+    n_hints: u64,
+    hint_id: *mut u64,
+    hint_field_dest: Vec<&str>,
+    hint_field_name1: Vec<&str>,
+    hint_field_name2: Vec<&str>,
+    hint_options1: *mut *mut u8,
+    hint_options2: *mut *mut u8,
+) {
+    use std::os::raw::c_char;
+
+    let c_hint_field_dest: Vec<CString> = hint_field_dest.iter().map(|&s| CString::new(s).unwrap()).collect();
+
+    let c_hint_field_name1: Vec<CString> = hint_field_name1.iter().map(|&s| CString::new(s).unwrap()).collect();
+
+    let c_hint_field_name2: Vec<CString> = hint_field_name2.iter().map(|&s| CString::new(s).unwrap()).collect();
+
+    // Convert Vec<CString> to Vec<*mut c_char>
+    let mut hint_field_dest_ptrs: Vec<*mut c_char> =
+        c_hint_field_dest.iter().map(|s| s.as_ptr() as *mut c_char).collect();
+
+    let mut hint_field_name1_ptrs: Vec<*mut c_char> =
+        c_hint_field_name1.iter().map(|s| s.as_ptr() as *mut c_char).collect();
+
+    let mut hint_field_name2_ptrs: Vec<*mut c_char> =
+        c_hint_field_name2.iter().map(|s| s.as_ptr() as *mut c_char).collect();
 
     unsafe {
         mul_hint_fields(
             p_setup_ctx,
             p_steps_params as *mut std::os::raw::c_void,
+            n_hints,
             hint_id,
-            field_dest.as_ptr() as *mut std::os::raw::c_char,
-            field_name1.as_ptr() as *mut std::os::raw::c_char,
-            field_name2.as_ptr() as *mut std::os::raw::c_char,
-            hint_options1 as *mut std::os::raw::c_void,
-            hint_options2 as *mut std::os::raw::c_void,
+            hint_field_dest_ptrs.as_mut_ptr(),
+            hint_field_name1_ptrs.as_mut_ptr(),
+            hint_field_name2_ptrs.as_mut_ptr(),
+            hint_options1 as *mut *mut std::os::raw::c_void,
+            hint_options2 as *mut *mut std::os::raw::c_void,
         )
     }
 }
@@ -1498,15 +1514,15 @@ pub fn get_hint_field_values_c(_p_setup_ctx: *mut c_void, _hint_id: u64, _hint_f
 pub fn mul_hint_fields_c(
     _p_setup_ctx: *mut c_void,
     _p_steps_params: *mut u8,
-    _hint_id: u64,
-    _hint_field_dest: &str,
-    _hint_field_name1: &str,
-    _hint_field_name2: &str,
-    _hint_options1: *mut u8,
-    _hint_options2: *mut u8,
-) -> u64 {
+    _n_hints: u64,
+    _hint_id: *mut u64,
+    _hint_field_dest: Vec<&str>,
+    _hint_field_name1: Vec<&str>,
+    _hint_field_name2: Vec<&str>,
+    _hint_options1: *mut *mut u8,
+    _hint_options2: *mut *mut u8,
+) {
     trace!("{}: ··· {}", "ffi     ", "mul_hint_fields: This is a mock call because there is no linked library");
-    0
 }
 
 #[cfg(feature = "no_lib_link")]
