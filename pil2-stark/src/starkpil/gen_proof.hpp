@@ -7,15 +7,18 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     setupCtx.expressionsBin.getHintIdsByName(hint, name);
 
     uint64_t nImHints = setupCtx.expressionsBin.getNumberHintIdsByName("im_col");
-    if(nImHints > 0) {
-        uint64_t imHints[nImHints];
+    uint64_t nImHintsAirVals = setupCtx.expressionsBin.getNumberHintIdsByName("im_airval");
+    uint64_t nImTotalHints = nImHints + nImHintsAirVals;
+    if(nImTotalHints > 0) {
+        uint64_t imHints[nImHints + nImHintsAirVals];
         setupCtx.expressionsBin.getHintIdsByName(imHints, "im_col");
-        std::string hintFieldDest[nImHints];
-        std::string hintField1[nImHints];
-        std::string hintField2[nImHints];
-        HintFieldOptions hintOptions1[nImHints];
-        HintFieldOptions hintOptions2[nImHints];
-        for(uint64_t i = 0; i < nImHints; i++) {
+        setupCtx.expressionsBin.getHintIdsByName(&imHints[nImHints], "im_airval");
+        std::string hintFieldDest[nImTotalHints];
+        std::string hintField1[nImTotalHints];
+        std::string hintField2[nImTotalHints];
+        HintFieldOptions hintOptions1[nImTotalHints];
+        HintFieldOptions hintOptions2[nImTotalHints];
+        for(uint64_t i = 0; i < nImTotalHints; i++) {
             hintFieldDest[i] = "reference";
             hintField1[i] = "numerator";
             hintField2[i] = "denominator";
@@ -26,7 +29,7 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
             hintOptions2[i] = options2;
         }
 
-        multiplyHintFields(setupCtx, params, nImHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2);
+        multiplyHintFields(setupCtx, params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2);
         
     }
 
