@@ -142,6 +142,23 @@ public:
         }
     };
 
+    // ======== POW ========
+    static inline void pow(Element &result, Element& base, uint64_t exp)
+    {
+        one(result);
+        Element temp;
+        copy(temp, base);
+        while (exp > 0)
+        {
+            if (exp % 2 == 1)
+            {
+                mul(result, result, temp);
+            }
+            mul(temp, temp, temp);
+            exp /= 2;
+        }
+    }
+
     // ======== ADD ========
     static inline void add(Element &result, const Element &a, const uint64_t &b)
     {

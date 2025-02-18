@@ -590,12 +590,7 @@ pub fn extend_and_merkelize_custom_commit_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn load_custom_commit_c(
-    setup: *mut c_void,
-    commit_id: u64,
-    buffer: *mut u8,
-    buffer_file: &str,
-) {
+pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8, buffer_file: &str) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
         load_custom_commit(
@@ -1646,12 +1641,7 @@ pub fn extend_and_merkelize_custom_commit_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn load_custom_commit_c(
-    _p_setup: *mut c_void,
-    _commit_id: u64,
-    _buffer: *mut u8,
-    _tree_file: &str,
-) {
+pub fn load_custom_commit_c(_p_setup: *mut c_void, _commit_id: u64, _buffer: *mut u8, _tree_file: &str) {
     trace!("{}: ··· {}", "ffi     ", "load_custom_commit: This is a mock call because there is no linked library");
 }
 

@@ -25,10 +25,9 @@ impl<F: PrimeField64 + Copy> FibonacciSquare<F> {
 
 impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
     fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
-        let mut instance_ids = Vec::new();
-        instance_ids.push(
-            pctx.add_instance_all(FibonacciSquareTrace::<usize>::AIRGROUP_ID, FibonacciSquareTrace::<usize>::AIR_ID),
-        );
+        let instance_ids =
+            vec![pctx
+                .add_instance_all(FibonacciSquareTrace::<usize>::AIRGROUP_ID, FibonacciSquareTrace::<usize>::AIR_ID)];
         *self.instance_ids.write().unwrap() = instance_ids.clone();
         instance_ids
     }
@@ -75,9 +74,8 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
                 air_values.fibo1[1] = F::from_canonical_u64(2);
                 air_values.fibo3 = [F::from_canonical_u64(5), F::from_canonical_u64(5), F::from_canonical_u64(5)];
 
-                let air_instance = AirInstance::new_from_trace(
-                    FromTrace::new(&mut trace).with_air_values(&mut air_values),
-                );
+                let air_instance =
+                    AirInstance::new_from_trace(FromTrace::new(&mut trace).with_air_values(&mut air_values));
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }

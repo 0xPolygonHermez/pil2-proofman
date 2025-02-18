@@ -56,7 +56,7 @@ impl<F: Field> WitnessManager<F> {
 
         Ok(())
     }
-    
+
     pub fn execute(&self) {
         timer_start_info!(EXECUTE);
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {

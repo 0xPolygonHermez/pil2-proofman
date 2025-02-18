@@ -11,7 +11,9 @@ use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
 use p3_field::PrimeField64;
-use proofman_starks_lib_c::{gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c, calculate_impols_expressions_c};
+use proofman_starks_lib_c::{
+    gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c, calculate_impols_expressions_c,
+};
 
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
@@ -41,6 +43,7 @@ pub struct ProofMan<F> {
 impl<F: PrimeField + 'static> ProofMan<F> {
     const MY_NAME: &'static str = "ProofMan";
 
+    #[allow(clippy::too_many_arguments)]
     pub fn verify_proof_constraints(
         witness_lib_path: PathBuf,
         rom_path: Option<PathBuf>,
@@ -87,7 +90,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let global_challenge = [F::zero(); 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
-        pctx.set_global_challenge(2 as usize, global_challenge.to_vec());
+        pctx.set_global_challenge(2, global_challenge.to_vec());
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
         let mut valid_constraints = true;
@@ -163,6 +166,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_proof(
         witness_lib_path: PathBuf,
         rom_path: Option<PathBuf>,
@@ -364,6 +368,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     }
 
     #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn initialize_proofman_1(
         witness_lib_path: PathBuf,
         rom_path: Option<PathBuf>,
@@ -534,8 +539,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         for commit_id in 0..n_custom_commits {
             if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                
-                let custom_commit_file_path = pctx.get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name).unwrap();
+                let custom_commit_file_path =
+                    pctx.get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name).unwrap();
 
                 load_custom_commit_c(
                     (&setup.p_setup).into(),

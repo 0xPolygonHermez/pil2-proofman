@@ -103,7 +103,7 @@ impl ProveCmd {
                 eprintln!("Invalid commit format: {:?}", commit);
             }
         }
-        
+
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
                 Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
@@ -114,7 +114,14 @@ impl ProveCmd {
                     self.proving_key.clone(),
                     self.output_dir.clone(),
                     custom_commits_map,
-                    ProofOptions::new(false, self.verbose.into(), self.aggregation, self.final_snark, self.verify_proofs, debug_info),
+                    ProofOptions::new(
+                        false,
+                        self.verbose.into(),
+                        self.aggregation,
+                        self.final_snark,
+                        self.verify_proofs,
+                        debug_info,
+                    ),
                 )?,
             };
         } else {
@@ -127,7 +134,14 @@ impl ProveCmd {
                     self.proving_key.clone(),
                     self.output_dir.clone(),
                     custom_commits_map,
-                    ProofOptions::new(false, self.verbose.into(), self.aggregation, self.final_snark, self.verify_proofs, debug_info),
+                    ProofOptions::new(
+                        false,
+                        self.verbose.into(),
+                        self.aggregation,
+                        self.final_snark,
+                        self.verify_proofs,
+                        debug_info,
+                    ),
                 )?,
             };
         }
