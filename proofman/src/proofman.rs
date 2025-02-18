@@ -597,32 +597,30 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             setup.load_const_pols();
         });
 
-        let result: Result<(), Box<dyn std::error::Error>> = airs.iter().try_for_each(|&(airgroup_id, air_id)| {
-            let setup = setups.sctx.get_setup(airgroup_id, air_id);
-            for custom_commit in &setup.stark_info.custom_commits {
-                if custom_commit.stage_widths[0] > 0 {
-                    let custom_commit_name = &custom_commit.name;
+        for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in airs.iter().enumerate() {
+                let setup = setups.sctx.get_setup(airgroup_id, air_id);
+                for custom_commit in &setup.stark_info.custom_commits {
+                    if custom_commit.stage_widths[0] > 0 {
+                        let custom_commit_name = &custom_commit.name;
 
-                    // Handle the possibility that this returns None
-                    let custom_file_path = pctx.get_custom_commits_fixed_buffer(custom_commit_name)?;
+                        // Handle the possibility that this returns None
+                        let custom_file_path = pctx.get_custom_commits_fixed_buffer(custom_commit_name)?;
 
-                    let mut file = File::open(custom_file_path)?;
-                    let mut root_bytes = [0u8; 32];
-                    file.read_exact(&mut root_bytes)?;
+                        let mut file = File::open(custom_file_path)?;
+                        let mut root_bytes = [0u8; 32];
+                        file.read_exact(&mut root_bytes)?;
 
-                    for (idx, p) in custom_commit.public_values.iter().enumerate() {
-                        let public_id = p.idx as usize;
-                        let byte_range = idx * 8..(idx + 1) * 8;
-                        let value = u64::from_le_bytes(root_bytes[byte_range].try_into()?);
-                        pctx.set_public_value(value, public_id);
+                        for (idx, p) in custom_commit.public_values.iter().enumerate() {
+                            let public_id = p.idx as usize;
+                            let byte_range = idx * 8..(idx + 1) * 8;
+                            let value = u64::from_le_bytes(root_bytes[byte_range].try_into()?);
+                            pctx.set_public_value(value, public_id);
+                        }
                     }
                 }
             }
-            Ok(())
-        });
-
-        // Propagate the result
-        result?;
+        }
 
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
 
