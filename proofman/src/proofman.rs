@@ -340,10 +340,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file: &str = global_info_path.to_str().unwrap();
-        
+
         save_challenges_c(pctx.get_challenges_ptr(), global_info_file, output_dir_path.to_string_lossy().as_ref());
         save_proof_values_c(pctx.get_proof_values_ptr(), global_info_file, output_dir_path.to_string_lossy().as_ref());
-        save_publics_c(pctx.global_info.n_publics as u64, pctx.get_publics_ptr(), output_dir_path.to_string_lossy().as_ref());
+        save_publics_c(
+            pctx.global_info.n_publics as u64,
+            pctx.get_publics_ptr(),
+            output_dir_path.to_string_lossy().as_ref(),
+        );
 
         if !pctx.options.aggregation {
             let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
