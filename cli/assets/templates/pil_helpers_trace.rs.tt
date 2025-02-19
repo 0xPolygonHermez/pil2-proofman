@@ -69,7 +69,7 @@ trace!({ air.name }Trace<F> \{
 {{ for column in air.columns }} { column.name }: { column.type },{{ endfor }}
 },  { air_group.airgroup_id }, { air.id }, { air.num_rows } );
 {{ endfor }}{{ endfor }}{{ for air_group in air_groups }}{{ for air in air_group.airs }}{{ for custom_commit in air.custom_columns  }}
-const { air.name }{custom_commit.name}Hash: &str = "{ custom_commit.custom_columns_hash }";
+pub const { air.name }{custom_commit.name}Hash: &str = "{ custom_commit.custom_columns_hash }";
 trace!({ air.name }{custom_commit.name}Trace<F> \{
 {{ for column in custom_commit.custom_columns }} { column.name }: { column.type },{{ endfor }}
 }, { air_group.airgroup_id }, { air.id }, { air.num_rows }, { custom_commit.commit_id } );
