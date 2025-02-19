@@ -1,68 +1,63 @@
 use std::fmt::{Debug, Display};
 
-use num_bigint::{BigInt, ToBigInt};
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug)]
-pub struct Range<F: PrimeField>(pub F, pub F, pub bool, pub bool, pub bool); // (min, max, min_neg, max_neg, predefined)
+pub struct RangeData<F: PrimeField64> {
+    pub min: u64,
+    pub max: u64,
+    pub min_neg: bool,
+    pub max_neg: bool,
+    pub predefined: bool,
+    _phantom: std::marker::PhantomData<F>,
+}
 
-impl<F: PrimeField> Display for Range<F> {
+impl<F: PrimeField64> Display for RangeData<F> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let order = F::order().to_bigint().unwrap();
-        let min = self.0.as_canonical_biguint().to_bigint().unwrap();
-        let max = self.1.as_canonical_biguint().to_bigint().unwrap();
+        let order = Self::ORDER;
 
-        let min_result = if self.2 { min.clone() - &order } else { min.clone() };
-        let max_result = if self.3 { max.clone() - &order } else { max.clone() };
+        let min_128 = self.min as i128;
+        let max_128 = self.max as i128;
+        let min = if self.min_neg { min_128 - order } else { min_128 };
+        let max = if self.max_neg { max_128 - order } else { max_128 };
 
-        write!(f, "[{},{}]", min_result, max_result)
+        write!(f, "[{},{}]", min, max)
     }
 }
 
-impl<F: PrimeField> PartialEq<(bool, BigInt, BigInt)> for Range<F> {
-    fn eq(&self, other: &(bool, BigInt, BigInt)) -> bool {
-        let order = F::order().to_bigint().unwrap();
+impl<F: PrimeField64> PartialEq<(bool, i64, i64)> for RangeData<F> {
+    fn eq(&self, other: &(bool, i64, i64)) -> bool {
+        let order = Self::ORDER;
 
-        let min = self.0.as_canonical_biguint().to_bigint().unwrap();
-        let max = self.1.as_canonical_biguint().to_bigint().unwrap();
+        let min_128 = self.min as i128;
+        let max_128 = self.max as i128;
+        let min = if self.min_neg { min_128 - order } else { min_128 };
+        let max = if self.max_neg { max_128 - order } else { max_128 };
 
-        let min_result = if self.2 { min.clone() - &order } else { min.clone() };
-        let max_result = if self.3 { max.clone() - &order } else { max.clone() };
+        let other_min = other.1 as i128;
+        let other_max = other.2 as i128;
 
-        self.4 == other.0 && min_result == other.1 && max_result == other.2
+        self.predefined == other.0 && min == other_min && max == other_max
     }
 }
 
-impl<F: PrimeField> Range<F> {
-    pub fn contains(&self, value: F) -> bool {
-        let order = F::order().to_bigint().unwrap();
+impl<F: PrimeField64> RangeData<F> {
+    pub const ORDER: i128 = F::ORDER_U64 as i128;
 
-        let value = value.as_canonical_biguint().to_bigint().unwrap();
-
-        let min = self.0.as_canonical_biguint().to_bigint().unwrap();
-        let max = self.1.as_canonical_biguint().to_bigint().unwrap();
-
-        let min_result = min.clone();
-        let max_result = max.clone();
-        if self.2 && !self.3 {
-            // If min is negative, then the range looks like [p-a,b], which means that
-            // value should lie in [0,b]∪[p-a,p-1]
-            return (value >= min_result && value <= max_result)
-                || (value >= BigInt::from(0) && value <= max_result + order);
-        }
-
-        value >= min_result && value <= max_result
+    pub fn new(min: u64, max: u64, min_neg: bool, max_neg: bool, predefined: bool) -> Self {
+        Self { min, max, min_neg, max_neg, predefined, _phantom: std::marker::PhantomData }
     }
 
-    pub fn contained_in(&self, other: &(BigInt, BigInt)) -> bool {
-        let order = F::order().to_bigint().unwrap();
+    pub fn contains(&self, value: i64) -> bool {
+        let order = Self::ORDER;
 
-        let min = self.0.as_canonical_biguint().to_bigint().unwrap();
-        let max = self.1.as_canonical_biguint().to_bigint().unwrap();
+        let value = value as i128;
 
-        let min_result = if self.2 { min.clone() - &order } else { min.clone() };
-        let max_result = if self.3 { max.clone() - &order } else { max.clone() };
+        let min_128 = self.min as i128;
+        let max_128 = self.max as i128;
+        let min = if self.min_neg { min_128 - order } else { min_128 };
+        let max = if self.max_neg { max_128 - order } else { max_128 };
 
-        min_result >= other.0 && max_result <= other.1
+        value >= min && value <= max
     }
 }

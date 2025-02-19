@@ -3,7 +3,7 @@ use std::sync::Arc;
 use pil_std_lib::Std;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 use rand::{distributions::Standard, prelude::Distribution};
 
@@ -11,7 +11,7 @@ use crate::{Lookup0, Lookup1, Lookup2_12, Lookup2_13, Lookup2_15, Lookup3};
 
 witness_library!(WitnessLib, Goldilocks);
 
-impl<F: PrimeField> WitnessLibrary<F> for WitnessLib
+impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
 where
     Standard: Distribution<F>,
 {

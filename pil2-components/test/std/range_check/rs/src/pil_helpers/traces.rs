@@ -9,6 +9,8 @@ pub use proofman_macros::values;
 
 use std::fmt;
 
+use rayon::prelude::*;
+
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
@@ -154,12 +156,12 @@ trace!(U8AirTrace<F> {
 },  9, 0, 256 );
 
 trace!(SpecifiedRangesFixed<F> {
- RANGE: [F; 20], __L1__: F,
-},  10, 0, 131072 );
+ RANGE: [F; 28], __L1__: F,
+},  10, 0, 32768 );
 
 trace!(SpecifiedRangesTrace<F> {
- mul: [F; 20],
-},  10, 0, 131072 );
+ mul: [F; 28],
+},  10, 0, 32768 );
 
 values!(RangeCheck3AirGroupValues<F> {
  gsum_result: FieldExtension<F>,
