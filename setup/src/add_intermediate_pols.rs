@@ -177,7 +177,7 @@ pub fn add_intermediate_polynomials(
     constraints: &mut Vec<Value>,
     symbols: &mut Vec<HashMap<String, Value>>,
     im_exps: &[usize],
-    q_deg: usize,
+    q_deg: i64,
 ) {
     let stage = res["nStages"].as_u64().unwrap_or(0) as usize + 1;
     let e = ExpressionOps::new(stage, 3);
@@ -205,7 +205,7 @@ pub fn add_intermediate_polynomials(
         false, // cache_values
     );
 
-    if max_deg_expr > q_deg + 1 {
+    if max_deg_expr as i64 > q_deg + 1 {
         panic!(
             "The maximum degree of the constraint expression has a higher degree ({}) than the maximum allowed degree ({})",
             max_deg_expr, q_deg + 1
@@ -214,7 +214,7 @@ pub fn add_intermediate_polynomials(
 
     for &exp_id in im_exps {
         let im_pol_deg = calculate_exp_deg(expressions, exp_id, im_exps, false);
-        if im_pol_deg > q_deg + 1 {
+        if im_pol_deg as i64 > q_deg + 1 {
             panic!(
                 "Intermediate polynomial with id: {} has a higher degree ({}) than the maximum allowed degree ({})",
                 exp_id,

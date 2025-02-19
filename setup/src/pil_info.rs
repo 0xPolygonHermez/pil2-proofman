@@ -41,7 +41,7 @@ pub async fn pil_info(
     if !options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap()
         || !options.get("skipImPols").unwrap_or(&json!(false)).as_bool().unwrap()
     {
-        let mut im_info: serde_json::Value = json!({});
+        let im_info: serde_json::Value;
 
         if options.get("optImPols").unwrap_or(&json!(false)).as_bool().unwrap() {
             let info_pil_json = json!({
@@ -58,7 +58,7 @@ pub async fn pil_info(
 
             new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
         } else {
-            calculate_intermediate_polynomials(
+            im_info = calculate_intermediate_polynomials(
                 &expressions,
                 res["cExpId"].as_u64().unwrap() as usize,
                 max_deg,
@@ -77,7 +77,7 @@ pub async fn pil_info(
             &mut constraints,
             &mut symbols,
             &im_exps,
-            im_info["qDeg"].as_u64().unwrap() as usize,
+            im_info["qDeg"].as_i64().unwrap(),
         );
     }
 
