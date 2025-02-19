@@ -333,7 +333,7 @@ void getHintField(
                 memset((uint8_t *)hintFieldInfo.values, 0, hintFieldInfo.size * sizeof(Goldilocks::Element));
             }
         } else if(hintFieldVal.operand == opType::custom) {
-            getPolynomial(setupCtx, &params.pCustomCommitsFixed[setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[hintFieldVal.commitId].name + "0", true)]], hintFieldInfo.values, setupCtx.starkInfo.customCommitsMap[hintFieldVal.commitId][hintFieldVal.id], hintFieldVal.rowOffsetIndex, "custom");
+            getPolynomial(setupCtx, &params.pCustomCommitsFixed[setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[hintFieldVal.commitId].name + "0", false)]], hintFieldInfo.values, setupCtx.starkInfo.customCommitsMap[hintFieldVal.commitId][hintFieldVal.id], hintFieldVal.rowOffsetIndex, "custom");
             if(hintOptions.inverse) {
                 zklog.error("Inverse not supported still for polynomials");
                 exitProcess();
