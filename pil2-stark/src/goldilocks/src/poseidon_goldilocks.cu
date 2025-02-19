@@ -23,10 +23,10 @@ extern __shared__ gl64_t scratchpad[];
 /* new functions */
 __global__ void linear_hash_gpu_tree(uint64_t *output, uint64_t *input, uint32_t size, uint32_t num_rows);
 __global__ void linear_hash_gpu_coalesced(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t size, uint32_t num_rows);
-__device__ __noinline__ void poseidon_store(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride);
-__device__ __noinline__ void poseidon_store(gl64_t *out, uint32_t col_stride, size_t row_stride);
-__device__ __noinline__ void poseidon_hash_loop(const uint64_t *__restrict__ in, uint32_t ncols);
-__device__ __noinline__ void poseidon_hash();
+__device__ __forceinline__ void poseidon_store(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride);
+__device__ __forceinline__ void poseidon_store(gl64_t *out, uint32_t col_stride, size_t row_stride);
+__device__ __forceinline__ void poseidon_hash_loop(const uint64_t *__restrict__ in, uint32_t ncols);
+__device__ __forceinline__ void poseidon_hash();
 __device__ __noinline__ void pow7(gl64_t &x);
 
 /* --- Based on seq code --- */
@@ -1220,26 +1220,21 @@ __device__ __noinline__ static void pow7_state_()
         pow7(scratchpad[i * blockDim.x + threadIdx.x]);
 }
 
-__device__ __noinline__ void dotp(const gl64_t *__restrict__ mat, const gl64_t *__restrict__ state, uint32_t i)
-{
-    scratchpad[i * blockDim.x + threadIdx.x] = mat[i] * state[0];
-#pragma unroll 1
-    for (int j = 1; j < SPONGE_WIDTH; j++)
-    {
-        scratchpad[i * blockDim.x + threadIdx.x] += (mat[12 * j + i] * state[j]);
-    }
-}
-__device__ __noinline__ void mvp_state_(const gl64_t *__restrict__ mat)
+__device__ __forceinline__ void mvp_state_(const gl64_t *mat)
 {
     gl64_t state[SPONGE_WIDTH];
 #pragma unroll
     for (uint32_t i = 0; i < SPONGE_WIDTH; i++)
         state[i] = scratchpad[i * blockDim.x + threadIdx.x];
 
-#pragma unroll
-    for (uint32_t i = 0; i < SPONGE_WIDTH; i++)
+#pragma unroll 1
+    for (int i = 0; i < SPONGE_WIDTH; i++)
     {
-        dotp(mat, state, i);
+        scratchpad[i * blockDim.x + threadIdx.x] = mat[i] * state[0];
+        for (int j = 1; j < SPONGE_WIDTH; j++)
+        {
+            scratchpad[i * blockDim.x + threadIdx.x] += (mat[12 * j + i] * state[j]); // rick: aquest access no mola gents
+        }
     }
 }
 
@@ -1250,24 +1245,28 @@ __device__ __noinline__ void add_state_(const gl64_t C[SPONGE_WIDTH])
         scratchpad[i * blockDim.x + threadIdx.x] += C[i];
 }
 
-__device__ __noinline__ void poseidon_load(const uint64_t *in, uint32_t col, uint32_t ncols,
-                                           uint32_t col_stride, size_t row_stride = 1)
+__device__ __forceinline__ void poseidon_load(const uint64_t *in, uint32_t col, uint32_t ncols,
+                                              uint32_t col_stride, size_t row_stride = 1)
 {
+    gl64_t r[RATE];
+
     const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
     in += tid * col_stride + col * row_stride;
 
+#pragma unroll
     for (uint32_t i = 0; i < RATE; i++, in += row_stride)
         if (i < ncols)
-        {
-            scratchpad[i * blockDim.x + threadIdx.x] = __ldcv((uint64_t *)in);
-        }
-        else
-        {
-            scratchpad[i * blockDim.x + threadIdx.x].set_val(0);
-        }
+            r[i] = __ldcv((uint64_t *)in);
+
+    __syncwarp();
+
+    for (uint32_t i = 0; i < RATE; i++)
+        scratchpad[i * blockDim.x + threadIdx.x] = r[i];
+
+    __syncwarp();
 }
 
-__device__ __noinline__ void poseidon_store(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride = 1)
+__device__ __forceinline__ void poseidon_store(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride = 1)
 {
     gl64_t r[CAPACITY];
 
@@ -1287,7 +1286,7 @@ __device__ __noinline__ void poseidon_store(uint64_t *__restrict__ out, uint32_t
         *(uint64_t *)out = r[i].get_val();
 }
 
-__device__ __noinline__ void poseidon_hash_loop(const uint64_t *__restrict__ in, uint32_t ncols)
+__device__ __forceinline__ void poseidon_hash_loop(const uint64_t *__restrict__ in, uint32_t ncols)
 {
     if (ncols <= CAPACITY)
     {
@@ -1299,35 +1298,34 @@ __device__ __noinline__ void poseidon_hash_loop(const uint64_t *__restrict__ in,
         {
             uint32_t delta = min(ncols - col, RATE);
             poseidon_load(in, col, delta, ncols);
+            if (delta < RATE)
+            {
+                for (uint32_t i = delta; i < RATE; i++)
+                {
+                    scratchpad[i * blockDim.x + threadIdx.x].set_val(0);
+                }
+            }
             poseidon_hash();
             if ((col += RATE) >= ncols)
                 break;
+
+            gl64_t tmp[CAPACITY];
+
 #pragma unroll
             for (uint32_t i = 0; i < CAPACITY; i++)
-                scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = scratchpad[i * blockDim.x + threadIdx.x];
-        }
-    }
-}
-__device__ __noinline__ void parcial_rounds()
-{
-    const gl64_t *GPU_C_GL = (gl64_t *)GPU_C;
-    const gl64_t *GPU_S_GL = (gl64_t *)GPU_S;
-#pragma unroll 1
-    for (int r = 0; r < N_PARTIAL_ROUNDS; r++)
-    {
-        pow7(scratchpad[threadIdx.x]);
-        gl64_t p0 = scratchpad[threadIdx.x] + GPU_C_GL[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + r];
-        scratchpad[threadIdx.x] = p0 * GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r];
-#pragma unroll 1
-        for (uint32_t j = 1; j < SPONGE_WIDTH; j++)
-        {
-            scratchpad[threadIdx.x] += scratchpad[j * blockDim.x + threadIdx.x] * GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r + j];
-            scratchpad[j * blockDim.x + threadIdx.x] += p0 * GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r + SPONGE_WIDTH - 1 + j];
+                tmp[i] = scratchpad[i * blockDim.x + threadIdx.x];
+            __syncwarp();
+
+#pragma unroll
+
+            for (uint32_t i = 0; i < CAPACITY; i++)
+                scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = tmp[i];
+            __syncwarp();
         }
     }
 }
 
-__device__ __noinline__ void poseidon_hash()
+__device__ __forceinline__ void poseidon_hash()
 {
     const gl64_t *GPU_C_GL = (gl64_t *)GPU_C;
     const gl64_t *GPU_M_GL = (gl64_t *)GPU_M;
@@ -1346,8 +1344,21 @@ __device__ __noinline__ void poseidon_hash()
     add_state_(&(GPU_C_GL[(HALF_N_FULL_ROUNDS * SPONGE_WIDTH)]));
     mvp_state_(GPU_P_GL);
 
-    parcial_rounds();
+#pragma unroll 1
+    for (int r = 0; r < N_PARTIAL_ROUNDS; r++)
+    {
+        // rick: millor tot aixo dins una funcio
+        pow7(scratchpad[threadIdx.x]);
+        gl64_t p0 = scratchpad[threadIdx.x] + GPU_C_GL[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + r];
+        gl64_t s0 = p0 * GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r];
 
+        for (uint32_t j = 1; j < SPONGE_WIDTH; j++)
+        {
+            s0 += scratchpad[j * blockDim.x + threadIdx.x] * GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r + j];
+            scratchpad[j * blockDim.x + threadIdx.x] += p0 * GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r + SPONGE_WIDTH - 1 + j];
+        }
+        scratchpad[threadIdx.x] = s0;
+    }
 #pragma unroll 1
     for (int r = 0; r < HALF_N_FULL_ROUNDS - 1; r++)
     {
