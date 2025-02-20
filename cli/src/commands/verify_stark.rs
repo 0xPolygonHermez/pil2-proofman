@@ -28,7 +28,7 @@ pub struct VerifyStark {
     pub verkey: String,
 
     #[clap(short = 'u', long)]
-    pub publics: Option<PathBuf>,
+    pub public_inputs: Option<PathBuf>,
 
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
@@ -44,7 +44,7 @@ impl VerifyStark {
 
         let p_proof = get_zkin_ptr_c(&self.proof.clone());
 
-        let publics = if let Some(publics) = &self.publics {
+        let publics = if let Some(publics) = &self.public_inputs {
             let mut contents = String::new();
             let mut file = File::open(publics).unwrap();
 
