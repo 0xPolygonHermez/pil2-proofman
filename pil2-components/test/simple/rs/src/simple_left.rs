@@ -39,8 +39,8 @@ where
             self.std_lib.get_range(1, (1 << 8) - 1, Some(true)),
             self.std_lib.get_range(0, 1 << 8, Some(true)),
             self.std_lib.get_range(0, (1 << 8) - 1, Some(false)),
-            self.std_lib.get_range(-(1 << 7), - 1, Some(false)),
-            self.std_lib.get_range(-(1 << 7)-1, (1 << 7) - 1, Some(false)),
+            self.std_lib.get_range(-(1 << 7), -1, Some(false)),
+            self.std_lib.get_range(-(1 << 7) - 1, (1 << 7) - 1, Some(false)),
         ];
 
         // Assumes
@@ -61,7 +61,7 @@ where
                 rng.gen_range(0..=(1 << 8)),
                 rng.gen_range(0..=(1 << 8) - 1),
                 rng.gen_range(-(1 << 7)..-1),
-                rng.gen_range(-(1 << 7)-1..(1 << 7) - 1),
+                rng.gen_range(-(1 << 7) - 1..(1 << 7) - 1),
             ];
 
             for j in 0..7 {
@@ -102,7 +102,7 @@ where
                     }
                 } else if j == 6 {
                     if i == 0 {
-                        let val = -(1 << 7)-1;
+                        let val = -(1 << 7) - 1;
                         trace[i].k[j] = F::from_canonical_u64((val as i128 + F::ORDER_U64 as i128) as u64);
                         self.std_lib.range_check(val as i64, 1, range[j]);
                         continue;

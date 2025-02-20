@@ -50,6 +50,17 @@ pub fn get_hint_field_constant_as_field<F: PrimeField64>(
     }
 }
 
+pub fn validate_binary_field<F: PrimeField64>(value: F, field_name: &str) -> bool {
+    if value.is_zero() {
+        false
+    } else if value.is_one() {
+        true
+    } else {
+        log::error!("{} hint must be either 0 or 1", field_name);
+        panic!();
+    }
+}
+
 pub fn get_hint_field_constant_as_u64<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     airgroup_id: usize,

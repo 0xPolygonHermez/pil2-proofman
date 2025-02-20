@@ -40,7 +40,7 @@ impl<F: PrimeField64> AirComponent<F> for U16Air<F> {
 
 impl<F: PrimeField64> U16Air<F> {
     #[inline(always)]
-    pub fn update_inputs(&self, value: u64, multiplicity: u64) {
+    pub fn update_inputs(&self, value: u16, multiplicity: u64) {
         // Get the row index
         let row_idx = value as usize;
 

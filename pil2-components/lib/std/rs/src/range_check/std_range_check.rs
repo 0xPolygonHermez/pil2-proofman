@@ -11,10 +11,17 @@ use proofman_hints::{
 
 use crate::{
     extract_field_element_as_usize, get_global_hint_field_constant_as, get_hint_field_constant_as_field,
-    get_hint_field_constant_as_u64, AirComponent, RangeData, SpecifiedRanges, U16Air, U8Air,
+    get_hint_field_constant_as_u64, validate_binary_field, AirComponent, SpecifiedRanges, U16Air, U8Air,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Debug)]
+pub struct StdRange {
+    id: usize,
+    rc_type: StdRangeType,
+    data: RangeData,
+}
+
+#[derive(Debug)]
 pub enum StdRangeType {
     U8Air,
     U16Air,
@@ -23,16 +30,16 @@ pub enum StdRangeType {
     SpecifiedRanges,
 }
 
-#[derive(Clone, Debug)]
-pub struct StdRange<F: PrimeField64> {
-    id: usize,
-    rc_type: StdRangeType,
-    data: RangeData<F>,
+#[derive(Debug, PartialEq)]
+pub struct RangeData {
+    pub min: i64,
+    pub max: i64,
+    pub predefined: bool,
 }
 
 pub struct StdRangeCheck<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
-    ranges: Vec<StdRange<F>>,
+    ranges: Vec<StdRange>,
     pub u8air: Option<Arc<U8Air<F>>>,
     pub u16air: Option<Arc<U16Air<F>>>,
     pub specified_ranges: Option<Arc<SpecifiedRanges>>,
@@ -52,7 +59,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         let u16air = create_air::<U16Air<F>, F>(pctx.clone(), sctx.clone(), &u16air_hint);
         let specified_ranges = create_air::<SpecifiedRanges, F>(pctx.clone(), sctx.clone(), &specified_ranges_hint);
 
-        let mut ranges: Vec<StdRange<F>> = Vec::new();
+        let mut ranges: Vec<StdRange> = Vec::new();
 
         // Process range check users
         if let Some(std_rc_users) = get_hint_ids_by_name(sctx.get_global_bin(), "std_rc_users").first() {
@@ -89,7 +96,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
-    fn register_ranges(sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize, ranges: &mut Vec<StdRange<F>>) {
+    fn register_ranges(sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize, ranges: &mut Vec<StdRange>) {
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         // Obtain info from the range hints
@@ -166,7 +173,23 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             let min_neg = validate_binary_field(min_neg, "Min neg");
             let max_neg = validate_binary_field(max_neg, "Max neg");
 
-            let data = RangeData::new(min, max, min_neg, max_neg, predefined);
+            let min = if min_neg { min as i128 - F::ORDER_U64 as i128 } else { min as i128 };
+
+            // Check that min does not overflow 63 bits
+            if min > i64::MAX as i128 {
+                log::error!("Min value is too large");
+                panic!();
+            }
+
+            let max = if max_neg { max as i128 - F::ORDER_U64 as i128 } else { max as i128 };
+
+            // Check that max does not overflow 63 bits
+            if max > i64::MAX as i128 {
+                log::error!("Max value is too large");
+                panic!();
+            }
+
+            let data = RangeData { min: min as i64, max: max as i64, predefined };
 
             // If the range is already defined, skip
             if ranges.iter().any(|r| r.data == data) {
@@ -187,17 +210,6 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             // Update ranges
             ranges.push(range);
         }
-
-        fn validate_binary_field<F: PrimeField64>(value: F, field_name: &str) -> bool {
-            if value.is_zero() {
-                false
-            } else if value.is_one() {
-                true
-            } else {
-                log::error!("{} hint must be either 0 or 1", field_name);
-                panic!();
-            }
-        }
     }
 
     pub fn get_range(&self, min: i64, max: i64, predefined: Option<bool>) -> usize {
@@ -205,7 +217,8 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         let predefined = predefined.unwrap_or(false);
 
         // Find the range with the given [min,max] values, return its id
-        if let Some(r) = self.ranges.iter().find(|r| r.data == (predefined, min, max)) {
+        let received_range_data = RangeData { min, max, predefined };
+        if let Some(r) = self.ranges.iter().find(|r| r.data == received_range_data) {
             r.id
         } else {
             // If the range was not computed in the setup phase, error
@@ -223,37 +236,39 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         });
 
         // In debug mode, check that the value is contained within the range
-        let range_data = range_item.data;
-        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug && !range_data.contains(value) {
-            log::error!("Value {} is not in the range [min,max] = {}", value, range_data);
+        let range_data = &range_item.data;
+        let min = range_data.min;
+        let max = range_data.max;
+        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug && (value < min || value > max) {
+            log::error!("Value {} is not in the range [min,max] = [{},{}]", value, min, max);
             panic!();
         }
 
         // Update the multiplicity of the corresponding AIR
         match range_item.rc_type {
             StdRangeType::U8Air => {
-                // Here, we can safely assume that value,min,max >= 0
-                // Therefore, we can safely cast value to u64
-                self.u8air.as_ref().unwrap().update_inputs(value as u64, multiplicity);
+                // Here, we can safely assume that value ∊ [0,2⁸-1]
+                // Therefore, we can safely cast value to u8
+                self.u8air.as_ref().unwrap().update_inputs(value as u8, multiplicity);
             }
             StdRangeType::U16Air => {
-                // Here, we can safely assume that value,min,max >= 0
-                // Therefore, we can safely cast value to u64
-                self.u16air.as_ref().unwrap().update_inputs(value as u64, multiplicity);
+                // Here, we can safely assume that value ∊ [0,2¹⁶-1]
+                // Therefore, we can safely cast value to u16
+                self.u16air.as_ref().unwrap().update_inputs(value as u16, multiplicity);
             }
             StdRangeType::U8AirDouble => {
-                // Here, we can safely assume that value,min,max >= 0
-                // Therefore, we can safely cast value to u64
-                let lower_value = value as u64 - range_data.min;
-                let upper_value = range_data.max - value as u64;
+                // Here, we can safely assume that value ∊ [0,2⁸-1], min >= 0 and max <= 2⁸-1
+                // Therefore, we can safely cast value to u8
+                let lower_value = (value - min) as u8;
+                let upper_value = (max - value) as u8;
                 self.u8air.as_ref().unwrap().update_inputs(lower_value, multiplicity);
                 self.u8air.as_ref().unwrap().update_inputs(upper_value, multiplicity);
             }
             StdRangeType::U16AirDouble => {
-                // Here, we can safely assume that value,min,max >= 0
-                // Therefore, we can safely cast value to u64
-                let lower_value = value as u64 - range_data.min;
-                let upper_value = range_data.max - value as u64;
+                // Here, we can safely assume that value ∊ [0,2¹⁶-1], min >= 0 and max <= 2¹⁶-1
+                // Therefore, we can safely cast value to u16
+                let lower_value = (value - min) as u16;
+                let upper_value = (max - value) as u16;
                 self.u16air.as_ref().unwrap().update_inputs(lower_value, multiplicity);
                 self.u16air.as_ref().unwrap().update_inputs(upper_value, multiplicity);
             }
