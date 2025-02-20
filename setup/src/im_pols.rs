@@ -1,26 +1,24 @@
 use serde_json::{json, Value};
 
 /// Computes the intermediate polynomials and their degrees.
-pub fn calculate_im_pols(expressions: &[Value], exp: &Value, max_deg: i64) -> (Vec<usize>, i64) {
+pub fn calculate_im_pols(expressions: &mut [Value], exp: &mut Value, max_deg: i64) -> (Vec<usize>, i64) {
     let absolute_max = max_deg;
     let mut abs_max_d = 0;
 
-    // Updated to handle Option from _calculate_im_pols
     let (im_pols_opt, degree) = _calculate_im_pols(expressions, exp, vec![], max_deg, absolute_max, &mut abs_max_d);
 
-    // If im_pols_opt is None, return an empty Vec and -1 to represent failure
     let im_pols = im_pols_opt.unwrap_or_else(|| vec![]);
 
-    // Adjust the polynomial degree by subtracting 1, ensuring it doesn't go below 0
-    let adjusted_degree = std::cmp::max(degree, abs_max_d);
+    // Adjust the polynomial degree by subtracting 1, replicating JS behavior
+    let adjusted_degree = std::cmp::max(degree, abs_max_d) - 1;
 
     (im_pols, adjusted_degree)
 }
 
 /// Internal recursive function to compute intermediate polynomials.
 fn _calculate_im_pols(
-    expressions: &[Value],
-    exp: &Value,
+    expressions: &mut [Value],
+    exp: &mut Value,
     im_pols: Vec<usize>,
     max_deg: i64,
     absolute_max: i64,
@@ -31,7 +29,7 @@ fn _calculate_im_pols(
     println!("Intermediate polynomials so far: {:?}", im_pols);
 
     if exp.get("op").is_none() {
-        return (Some(im_pols), -1);
+        return (Some(im_pols), 0); // Constants/leaves are degree 0
     }
 
     match exp["op"].as_str().unwrap() {
@@ -39,7 +37,7 @@ fn _calculate_im_pols(
             let mut max_d = 0;
             let mut updated_pols = im_pols.clone();
 
-            if let Some(values) = exp["values"].as_array() {
+            if let Some(values) = exp["values"].as_array_mut() {
                 for e in values {
                     let (new_pols_opt, d) =
                         _calculate_im_pols(expressions, e, updated_pols.clone(), max_deg, absolute_max, abs_max_d);
@@ -47,7 +45,7 @@ fn _calculate_im_pols(
                         updated_pols = new_pols;
                         max_d = max_d.max(d);
                     } else {
-                        return (None, -1);
+                        return (None, -1); // Propagate failure
                     }
                 }
             }
@@ -55,9 +53,11 @@ fn _calculate_im_pols(
         }
 
         "mul" => {
-            if let Some(values) = exp["values"].as_array() {
-                let left = &values[0];
-                let right = &values[1];
+            let max_deg_here = exp["expDeg"].as_i64().unwrap_or(0);
+            if let Some(values) = exp["values"].as_array_mut() {
+                let (left_slice, right_slice) = values.split_at_mut(1);
+                let left = &mut left_slice[0];
+                let right = &mut right_slice[0];
 
                 // Handle constants in multiplication
                 if !["add", "mul", "sub", "exp"].contains(&left["op"].as_str().unwrap_or(""))
@@ -72,7 +72,6 @@ fn _calculate_im_pols(
                     return _calculate_im_pols(expressions, left, im_pols, max_deg, absolute_max, abs_max_d);
                 }
 
-                let max_deg_here = exp["expDeg"].as_i64().unwrap_or(0);
                 if max_deg_here <= max_deg {
                     return (Some(im_pols), max_deg_here);
                 }
@@ -94,7 +93,7 @@ fn _calculate_im_pols(
                             }
 
                             if e2.len() == im_pols.len() {
-                                return (Some(e2), best_degree);
+                                return (Some(e2), best_degree); // Can't do better
                             }
                         }
                     }
@@ -108,12 +107,12 @@ fn _calculate_im_pols(
 
         "exp" => {
             if max_deg < 1 {
-                return (None, -1);
+                return (None, -1); // Can't proceed if degree is less than 1
             }
 
             let exp_id = exp["id"].as_u64().unwrap() as usize;
             if im_pols.contains(&exp_id) {
-                return (Some(im_pols), 1);
+                return (Some(im_pols), 1); // Already processed
             }
 
             let (e_opt, d) = if let Some(res) = exp
@@ -127,7 +126,7 @@ fn _calculate_im_pols(
             } else {
                 _calculate_im_pols(
                     expressions,
-                    &expressions[exp_id],
+                    &mut expressions[exp_id],
                     im_pols.clone(),
                     absolute_max,
                     absolute_max,
@@ -140,9 +139,20 @@ fn _calculate_im_pols(
                     *abs_max_d = (*abs_max_d).max(d);
                     let mut new_pols = e.clone();
                     new_pols.push(exp_id);
-                    return (Some(new_pols), 1);
+                    return (Some(new_pols), 1); // Force degree 1 if exceeded
                 } else {
-                    // Caching logic (if required)
+                    // Caching logic
+                    if exp.get("res").is_none() {
+                        exp.as_object_mut().unwrap().insert("res".to_string(), serde_json::json!({}));
+                    }
+                    let res_map = exp["res"].as_object_mut().unwrap();
+                    res_map
+                        .entry(absolute_max.to_string())
+                        .or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                        .unwrap()
+                        .insert(serde_json::to_string(&im_pols).unwrap(), serde_json::json!([e, d]));
+
                     return (Some(e), d);
                 }
             }
@@ -188,7 +198,12 @@ pub fn calculate_added_cols(max_deg: i64, expressions: &[Value], im_exps: &[usiz
 }
 
 /// Computes intermediate polynomials for a given expression and returns a JSON object.
-pub fn calculate_intermediate_polynomials(expressions: &[Value], c_exp_id: usize, max_q_deg: i64, q_dim: i64) -> Value {
+pub fn calculate_intermediate_polynomials(
+    expressions: &mut [Value],
+    c_exp_id: usize,
+    max_q_deg: i64,
+    q_dim: i64,
+) -> Value {
     let mut d = 2;
 
     println!("-------------------- POSSIBLE DEGREES ----------------------");
@@ -199,7 +214,7 @@ pub fn calculate_intermediate_polynomials(expressions: &[Value], c_exp_id: usize
     );
     println!("------------------------------------------------------------");
 
-    let c_exp = &expressions[c_exp_id];
+    let c_exp = &mut expressions[c_exp_id];
 
     let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, c_exp, d);
     let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg, q_dim);
