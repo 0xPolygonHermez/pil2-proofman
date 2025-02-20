@@ -148,7 +148,7 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
             const int min = mins[idx];
             const int max = maxs[idx];
 
-            @specified_range{idx: idx, min: min, max: max, min_neg: (min < 0), max_neg: (max < 0)};
+            @specified_range{idx: idx, min: min, min_neg: (min < 0)};
 
             // Sanity check
             if (N < max - min + 1) {

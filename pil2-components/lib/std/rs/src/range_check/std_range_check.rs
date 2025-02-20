@@ -35,7 +35,7 @@ pub struct StdRangeCheck<F: PrimeField64> {
     ranges: Vec<StdRange<F>>,
     pub u8air: Option<Arc<U8Air<F>>>,
     pub u16air: Option<Arc<U16Air<F>>>,
-    pub specified_ranges: Option<Arc<SpecifiedRanges<F>>>,
+    pub specified_ranges: Option<Arc<SpecifiedRanges>>,
 }
 
 impl<F: PrimeField64> StdRangeCheck<F> {
@@ -50,7 +50,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         // Instantiate the AIRs
         let u8air = create_air::<U8Air<F>, F>(pctx.clone(), sctx.clone(), &u8air_hint);
         let u16air = create_air::<U16Air<F>, F>(pctx.clone(), sctx.clone(), &u16air_hint);
-        let specified_ranges = create_air::<SpecifiedRanges<F>, F>(pctx.clone(), sctx.clone(), &specified_ranges_hint);
+        let specified_ranges = create_air::<SpecifiedRanges, F>(pctx.clone(), sctx.clone(), &specified_ranges_hint);
 
         let mut ranges: Vec<StdRange<F>> = Vec::new();
 

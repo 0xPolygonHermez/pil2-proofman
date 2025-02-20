@@ -15,8 +15,8 @@ where
     Standard: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
-        Std::new(wcm.clone());
-        let simple_left = SimpleLeft::new();
+        let std_lib = Std::new(wcm.clone());
+        let simple_left = SimpleLeft::new(std_lib.clone());
         let simple_right = SimpleRight::new();
 
         wcm.register_component(simple_left.clone());

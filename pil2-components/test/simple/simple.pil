@@ -1,7 +1,10 @@
 require "std_permutation.pil";
 require "std_lookup.pil";
+require "std_range_check.pil";
 
-airtemplate SimpleLeft(const int N = 2**2) {
+set_max_specified_bits(6);
+
+airtemplate SimpleLeft(const int N = 2**3) {
 
     col witness a,b,c,d;
     col witness e,f,g,h;
@@ -12,9 +15,18 @@ airtemplate SimpleLeft(const int N = 2**2) {
     permutation_assumes(2, [e, f]);
 
     lookup(3, [g, h], mul: -1);
+
+    col witness k[7];
+    range_check(k[0], 0, 2**8-1, predefined: 1);
+    range_check(k[1], 0, 2**16-1, predefined: 1);
+    range_check(k[2], 1, 2**8-1, predefined: 1); // two U8
+    range_check(k[3], 0, 2**8, predefined: 1); // two U16
+    range_check(k[4], 0, 2**8-1, predefined: 0);
+    range_check(k[5], -2**7, -1, predefined: 0);
+    range_check(k[6], -2**7-1, 2**7-1, predefined: 0);
 };
 
-airtemplate SimpleRight(const int N = 2**2) {
+airtemplate SimpleRight(const int N = 2**3) {
 
     col witness a,b,c,d;
     col witness mul;
