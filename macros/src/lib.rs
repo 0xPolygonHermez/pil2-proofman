@@ -68,6 +68,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
         impl<#generics: Default + Clone + Copy + Send> #trace_struct_name<#generics> {
             pub const NUM_ROWS: usize = #num_rows;
+            pub const ROW_SIZE: usize = #row_size;
             pub const AIRGROUP_ID: usize = #airgroup_id;
             pub const AIR_ID: usize = #air_id;
 

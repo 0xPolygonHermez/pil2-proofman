@@ -28,13 +28,7 @@ pub struct VerifyStark {
     pub verkey: String,
 
     #[clap(short = 'u', long)]
-    pub publics: Option<PathBuf>,
-
-    #[clap(short = 'f', long)]
-    pub proof_values: Option<PathBuf>,
-
-    #[clap(short = 'c', long)]
-    pub challenges: Option<PathBuf>,
+    pub public_inputs: Option<PathBuf>,
 
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
@@ -50,26 +44,16 @@ impl VerifyStark {
 
         let p_proof = get_zkin_ptr_c(&self.proof.clone());
 
-        let publics = if let Some(publics) = &self.publics {
+        let publics = if let Some(publics) = &self.public_inputs {
             let mut contents = String::new();
             let mut file = File::open(publics).unwrap();
 
             let _ =
                 file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
-            let verkey_json: Vec<u64> = serde_json::from_str(&contents).unwrap();
+            let verkey_json_string: Vec<String> = serde_json::from_str(&contents).unwrap();
+            let verkey_json: Vec<u64> =
+                verkey_json_string.iter().map(|s| s.parse::<u64>().expect("Failed to parse string as u64")).collect();
             Some(verkey_json.into_iter().map(Goldilocks::from_canonical_u64).collect::<Vec<Goldilocks>>())
-        } else {
-            None
-        };
-
-        let proof_values = if let Some(proof_values) = &self.proof_values {
-            let mut contents = String::new();
-            let mut file = File::open(proof_values).unwrap();
-
-            let _ =
-                file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
-            let verkey_json: Vec<Vec<u64>> = serde_json::from_str(&contents).unwrap();
-            Some(verkey_json.into_iter().flatten().map(Goldilocks::from_canonical_u64).collect::<Vec<Goldilocks>>())
         } else {
             None
         };
@@ -80,7 +64,7 @@ impl VerifyStark {
             self.verifier_bin.clone(),
             self.verkey.clone(),
             publics,
-            proof_values,
+            None,
             None,
         );
 

@@ -5,7 +5,9 @@ use stark::StarkProver;
 use proofman_starks_lib_c::{
     free_provers_c, fri_proof_get_zkinproofs_c, save_challenges_c, save_proof_values_c, save_publics_c,
 };
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read;
+
 use std::error::Error;
 
 use colored::*;
@@ -42,6 +44,7 @@ pub struct ProofMan<F> {
 impl<F: PrimeField + 'static> ProofMan<F> {
     const MY_NAME: &'static str = "ProofMan";
 
+    #[allow(clippy::too_many_arguments)]
     pub fn generate_proof(
         witness_lib_path: PathBuf,
         rom_path: Option<PathBuf>,
@@ -49,6 +52,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
         timer_start_info!(INITIALIZING_PROOFMAN_1);
@@ -62,7 +66,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             options.verify_constraints,
         )?;
 
-        let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), options);
+        let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options);
 
         let setups = Arc::new(SetupsVadcop::<F>::new(
             &pctx.global_info,
@@ -80,8 +84,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx_barrier();
         timer_start_info!(GENERATING_WITNESS);
-        let wcm =
-            Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), rom_path, public_inputs_path, input_data_path));
+        let wcm = Arc::new(WitnessManager::new(
+            pctx.clone(),
+            sctx.clone(),
+            rom_path.clone(),
+            public_inputs_path,
+            input_data_path,
+        ));
 
         Self::initialize_witness(witness_lib_path, wcm.clone())?;
         pctx.dctx_barrier();
@@ -90,7 +99,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx_assign_instances();
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone());
+        Self::initialize_fixed_pols(setups.clone(), pctx.clone())?;
         pctx.dctx_barrier();
 
         wcm.calculate_witness(1);
@@ -174,16 +183,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut transcript: FFITranscript = provers[0].new_transcript();
 
-        timer_start_debug!(COMMITING_STAGE_0);
-        let mut custom_publics = Vec::new();
+        timer_start_info!(LOAD_CUSTOM_COMMITS_STAGE_0);
         for prover in provers.iter_mut() {
-            let publics = prover.commit_custom_commits_stage(0, pctx.clone());
-            custom_publics.extend(publics);
+            prover.commit_custom_commits_stage(0, pctx.clone());
         }
 
-        pctx.dctx_distribute_publics(custom_publics);
-
-        timer_stop_and_log_debug!(COMMITING_STAGE_0);
+        timer_stop_and_log_info!(LOAD_CUSTOM_COMMITS_STAGE_0);
 
         // Commit stages
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
@@ -238,8 +243,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         //Generate proves_out
         let proves_out = Self::get_proofs(&mut provers, pctx.clone(), output_dir_path.to_string_lossy().as_ref());
 
-        let mut valid_proofs = false;
-        if !pctx.options.aggregation {
+        let mut valid_proofs = true;
+        if !pctx.options.aggregation && pctx.options.verify_proofs {
             valid_proofs = verify_basic_proofs(&mut provers, proves_out.clone(), pctx.clone(), sctx.clone());
         }
 
@@ -349,15 +354,17 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let verkey_path = setup_path.display().to_string() + ".verkey.json";
 
                 timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
-                valid_proofs = verify_proof(
-                    final_proof,
-                    stark_info_path,
-                    expressions_bin_path,
-                    verkey_path,
-                    Some(pctx_aggregation.get_publics().clone()),
-                    None,
-                    None,
-                );
+                if pctx.options.verify_proofs {
+                    valid_proofs = verify_proof(
+                        final_proof,
+                        stark_info_path,
+                        expressions_bin_path,
+                        verkey_path,
+                        Some(pctx_aggregation.get_publics().clone()),
+                        None,
+                        None,
+                    );
+                }
                 timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                 if !valid_proofs {
                     log::info!(
@@ -396,7 +403,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut witness_lib = witness_lib(wcm.get_pctx().options.verbose_mode)?;
         witness_lib.register_witness(wcm.clone());
 
-        wcm.start_proof();
         wcm.execute();
 
         timer_stop_and_log_info!(INITIALIZE_WITNESS);
@@ -445,7 +451,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);
     }
 
-    fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
+    fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) -> Result<(), Box<dyn Error>> {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_info!(INITIALIZE_CONST_POLS);
 
@@ -466,6 +472,31 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let setup = setups.sctx.get_setup(airgroup_id, air_id);
             setup.load_const_pols();
         });
+
+        for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in airs.iter().enumerate() {
+                let setup = setups.sctx.get_setup(airgroup_id, air_id);
+                for custom_commit in &setup.stark_info.custom_commits {
+                    if custom_commit.stage_widths[0] > 0 {
+                        let custom_commit_name = &custom_commit.name;
+
+                        // Handle the possibility that this returns None
+                        let custom_file_path = pctx.get_custom_commits_fixed_buffer(custom_commit_name)?;
+
+                        let mut file = File::open(custom_file_path)?;
+                        let mut root_bytes = [0u8; 32];
+                        file.read_exact(&mut root_bytes)?;
+
+                        for (idx, p) in custom_commit.public_values.iter().enumerate() {
+                            let public_id = p.idx as usize;
+                            let byte_range = idx * 8..(idx + 1) * 8;
+                            let value = u64::from_le_bytes(root_bytes[byte_range].try_into()?);
+                            pctx.set_public_value(value, public_id);
+                        }
+                    }
+                }
+            }
+        }
 
         timer_stop_and_log_info!(INITIALIZE_CONST_POLS);
 
@@ -524,6 +555,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
             timer_stop_and_log_info!(INITIALIZE_CONST_POLS_AGGREGATION);
         }
+
+        Ok(())
     }
 
     fn initialize_fixed_pols_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
@@ -927,15 +960,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_stop_and_log_info!(GET_PROOFS);
 
-        if pctx.options.debug_info.save_proofs_to_file {
-            let n_publics = pctx.global_info.n_publics as u64;
+        save_publics_c(pctx.global_info.n_publics as u64, pctx.get_publics_ptr(), output_dir);
 
-            save_publics_c(n_publics, pctx.get_publics_ptr(), output_dir);
+        save_proof_values_c(pctx.get_proof_values_ptr(), global_info_file, output_dir);
 
-            save_proof_values_c(pctx.get_proof_values_ptr(), global_info_file, output_dir);
-
-            save_challenges_c(pctx.get_challenges_ptr(), global_info_file, output_dir);
-        }
+        save_challenges_c(pctx.get_challenges_ptr(), global_info_file, output_dir);
 
         proves
     }

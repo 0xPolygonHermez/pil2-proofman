@@ -53,7 +53,7 @@ public:
         }
     }
 
-    inline void loadPolynomials(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> &dests, __m256i *bufferT_, uint64_t row, uint64_t domainSize) {
+    inline void loadPolynomials(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> &dests, Goldilocks::Element *bufferT, __m256i *bufferT_, uint64_t row, uint64_t domainSize) {
         uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
         bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
@@ -102,7 +102,6 @@ public:
                 }
             }
         }
-        Goldilocks::Element bufferT[nOpenings*nrowsPack];
 
         for(uint64_t k = 0; k < constPolsUsed.size(); ++k) {
             if(!constPolsUsed[k]) continue;
@@ -136,7 +135,6 @@ public:
         }
 
         for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); ++i) {
-            Goldilocks::Element *customCommits = domainExtended ? params.pCustomCommitsExtended[i] : params.pCustomCommits[i];
             for(uint64_t j = 0; j < setupCtx.starkInfo.customCommits[i].stageWidths[0]; ++j) {
                 if(!customCommitsUsed[i][j]) continue;
                 PolMap polInfo = setupCtx.starkInfo.customCommitsMap[i][j];
@@ -146,7 +144,7 @@ public:
                     for(uint64_t o = 0; o < nOpenings; ++o) {
                         for(uint64_t j = 0; j < nrowsPack; ++j) {
                             uint64_t l = (row + j + nextStrides[o]) % domainSize;
-                            bufferT[nrowsPack*o + j] = customCommits[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                            bufferT[nrowsPack*o + j] = params.pCustomCommitsFixed[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                         }
                         Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*o + stage] + (stagePos + d)], &bufferT[nrowsPack*o]);
                     }
@@ -230,6 +228,7 @@ public:
 
     inline void storePolynomial(std::vector<Dest> dests, __m256i** destVals, uint64_t row) {
         for(uint64_t i = 0; i < dests.size(); ++i) {
+            if(row >= dests[i].domainSize) continue;
             if(dests[i].dim == 1) {
                 uint64_t offset = dests[i].offset != 0 ? dests[i].offset : 1;
                 Goldilocks::store_avx(&dests[i].dest[row*offset], uint64_t(offset), destVals[i][0]);
@@ -286,17 +285,16 @@ public:
         uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].params[0].parserParams.destDim : 0;
         setBufferTInfo(domainExtended, expId);
 
+        __m256i *numbers_ = new __m256i[parserArgs.nNumbers];
+        for(uint64_t i = 0; i < parserArgs.nNumbers; ++i) {
+            numbers_[i] = _mm256_set1_epi64x(parserArgs.numbers[i]);
+        }
+
         Goldilocks3::Element_avx challenges[setupCtx.starkInfo.challengesMap.size()];
         for(uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); ++i) {
             challenges[i][0] = _mm256_set1_epi64x(params.challenges[i * FIELD_EXTENSION].fe);
             challenges[i][1] = _mm256_set1_epi64x(params.challenges[i * FIELD_EXTENSION + 1].fe);
             challenges[i][2] = _mm256_set1_epi64x(params.challenges[i * FIELD_EXTENSION + 2].fe);
-
-        }
-
-        __m256i numbers_[parserArgs.nNumbers];
-        for(uint64_t i = 0; i < parserArgs.nNumbers; ++i) {
-            numbers_[i] = _mm256_set1_epi64x(parserArgs.numbers[i]);
         }
 
         __m256i publics[setupCtx.starkInfo.nPublics];
@@ -359,15 +357,35 @@ public:
             evals[i][2] = _mm256_set1_epi64x(params.evals[i * FIELD_EXTENSION + 2].fe);
         }
 
+        Goldilocks::Element *bufferL = new Goldilocks::Element[omp_get_max_threads()*nOpenings*nrowsPack];
+        __m256i* bufferT = new __m256i[omp_get_max_threads()*nOpenings*nCols];
+
+        uint64_t maxTemp1Size = 0;
+        uint64_t maxTemp3Size = 0;
+        for (uint64_t j = 0; j < dests.size(); ++j) {
+            for (uint64_t k = 0; k < dests[j].params.size(); ++k) {
+                if (dests[j].params[k].parserParams.nTemp1 > maxTemp1Size) {
+                    maxTemp1Size = dests[j].params[k].parserParams.nTemp1;
+                }
+                if (dests[j].params[k].parserParams.nTemp3 > maxTemp3Size) {
+                    maxTemp3Size = dests[j].params[k].parserParams.nTemp3;
+                }
+            }
+        } 
+        
+        __m256i *tmp1_ = new __m256i[omp_get_max_threads() * maxTemp1Size];
+        Goldilocks3::Element_avx *tmp3_ = new Goldilocks3::Element_avx[omp_get_max_threads() * maxTemp3Size];
+
     #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
-            __m256i bufferT_[nOpenings*nCols];
-
-            loadPolynomials(params, parserArgs, dests, bufferT_, i, domainSize);
+            __m256i* bufferT_ = &bufferT[omp_get_thread_num()*nOpenings*nCols];
+            
+            loadPolynomials(params, parserArgs, dests, &bufferL[omp_get_thread_num()*nOpenings*nrowsPack], bufferT_, i, domainSize);
 
             __m256i** destVals = new __m256i*[dests.size()];
 
             for(uint64_t j = 0; j < dests.size(); ++j) {
+                if(i >= dests[j].domainSize) continue;
                 destVals[j] = new __m256i[dests[j].params.size() * FIELD_EXTENSION];
                 for(uint64_t k = 0; k < dests[j].params.size(); ++k) {
                     uint64_t i_args = 0;
@@ -381,12 +399,16 @@ public:
                     } else if(dests[j].params[k].op == opType::number) {
                         destVals[j][k*FIELD_EXTENSION] = _mm256_set1_epi64x(dests[j].params[k].value);
                         continue;
+                    } else if(dests[j].params[k].op == opType::airvalue) {
+                        Goldilocks::copy_avx(destVals[j][k*FIELD_EXTENSION], airValues[dests[j].params[k].polsMapId][0]);
+                        Goldilocks::copy_avx(destVals[j][k*FIELD_EXTENSION + 1], airValues[dests[j].params[k].polsMapId][1]);
+                        Goldilocks::copy_avx(destVals[j][k*FIELD_EXTENSION + 2], airValues[dests[j].params[k].polsMapId][2]);
                     }
 
                     uint8_t* ops = &parserArgs.ops[dests[j].params[k].parserParams.opsOffset];
                     uint16_t* args = &parserArgs.args[dests[j].params[k].parserParams.argsOffset];
-                    __m256i tmp1[dests[j].params[k].parserParams.nTemp1];
-                    Goldilocks3::Element_avx tmp3[dests[j].params[k].parserParams.nTemp3];
+                    __m256i *tmp1 = &tmp1_[omp_get_thread_num()*maxTemp1Size];
+                    Goldilocks3::Element_avx *tmp3 = &tmp3_[omp_get_thread_num()*maxTemp3Size];
 
                     for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
                         switch (ops[kk]) {
@@ -1007,10 +1029,16 @@ public:
             storePolynomial(dests, destVals, i);
 
             for(uint64_t j = 0; j < dests.size(); ++j) {
+                if(i >= dests[j].domainSize) continue;
                 delete[] destVals[j];
             }
             delete[] destVals;
         }
+        delete[] numbers_;
+        delete[] bufferT;
+        delete[] bufferL;
+        delete[] tmp1_;
+        delete[] tmp3_;
     }
 };
 

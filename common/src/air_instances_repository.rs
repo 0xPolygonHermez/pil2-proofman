@@ -34,7 +34,7 @@ impl<F: Field> AirInstancesRepository<F> {
         let mut air_instances = self.air_instances.write().unwrap();
         air_instances.par_iter_mut().for_each(|(_, air_instance)| {
             air_instance.clear_trace();
-            air_instance.clear_custom_commits_trace();
+            air_instance.clear_custom_commits_fixed_trace();
         });
     }
 

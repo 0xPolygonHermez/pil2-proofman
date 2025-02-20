@@ -2,6 +2,8 @@
 // Manual modifications are not recommended and may be overwritten.
 #![allow(clippy::all)]
 #![allow(non_snake_case)]
+#![allow(non_upper_case_globals)]
+#![allow(dead_code)]
 
 use proofman_common as common;
 pub use proofman_macros::trace;
@@ -77,19 +79,19 @@ values!(BuildProofValues<F> {
  
 trace!(FibonacciSquareFixed<F> {
  L1: F, __L1__: F,
-},  0, 0, 262144 );
+},  0, 0, 4194304 );
 
 trace!(FibonacciSquareTrace<F> {
  a: F, b: F,
-},  0, 0, 262144 );
+},  0, 0, 4194304 );
 
 trace!(ModuleFixed<F> {
  SEGMENT_LN: F, __L1__: F,
-},  0, 1, 65536 );
+},  0, 1, 1048576 );
 
 trace!(ModuleTrace<F> {
  x: F, q: F, x_mod: F,
-},  0, 1, 65536 );
+},  0, 1, 1048576 );
 
 trace!(U8AirFixed<F> {
  U8: F, __L1__: F,
@@ -99,9 +101,10 @@ trace!(U8AirTrace<F> {
  mul: F,
 },  0, 2, 256 );
 
+const FibonacciSquareRomHash: &str = "1e66ad0f5817502c1941ce399c54a4a459494f504ebaca93b09dd2cfb26a4743";
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
-}, 0, 0, 262144, 0 );
+}, 0, 0, 4194304, 0 );
 
 values!(FibonacciSquareAirValues<F> {
  fibo1: [F; 2], fibo3: FieldExtension<F>,

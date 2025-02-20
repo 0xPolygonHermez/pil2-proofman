@@ -30,6 +30,8 @@
     // ========================================================================================
     void *stark_info_new(char* filename, bool verifier);
     uint64_t get_map_total_n(void *pStarkInfo, bool recursive);
+    uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
+
     void stark_info_free(void *pStarkInfo);
 
     // Prover Helpers
@@ -56,7 +58,7 @@
     void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions);
     uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char* hintFieldName);
     void get_hint_field_sizes(void *pSetupCtx, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions);
-    uint64_t mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2); 
+    void mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t nHints, uint64_t *hintId, char **hintFieldNameDest, char **hintFieldName1, char **hintFieldName2, void** hintOptions1, void **hintOptions2); 
     void acc_hint_field(void *pSetupCtx, void* stepsParams, void *pBuffHelper, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add);
     void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, void *pBuffHelper, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2,  void* hintOptions1, void *hintOptions2, bool add);
     uint64_t update_airgroupvalue(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add);
@@ -77,8 +79,10 @@
     void calculate_quotient_polynomial(void *pStarks, void* stepsParams);
     void calculate_impols_expressions(void *pStarks, uint64_t step, void* stepsParams);
 
-    void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, void *pBuffHelper, char *treeFile);
-    void load_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, char *treeFile);
+    void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *bufferExt, void *pProof, void *pBuffHelper);
+    
+    void load_custom_commit(void *pStarks, uint64_t commitId, void *bufferExt, void *pProof, char *customCommitFile);
+    void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check);
 
     void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trace, void *buffer, void *pProof, void *pBuffHelper);
     

@@ -1,6 +1,7 @@
 // extern crate env_logger;
 use clap::Parser;
 use proofman_common::{initialize_logger, json_to_debug_instances_map, DebugInfo};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -23,8 +24,8 @@ pub struct ProveCmd {
     /// ROM file path
     /// This is the path to the ROM file that the witness computation dynamic library will use
     /// to generate the witness.
-    #[clap(short, long)]
-    pub rom: Option<PathBuf>,
+    #[clap(short = 'e', long)]
+    pub elf: Option<PathBuf>,
 
     /// Inputs path
     #[clap(short = 'i', long)]
@@ -35,7 +36,7 @@ pub struct ProveCmd {
     pub public_inputs: Option<PathBuf>,
 
     /// Setup folder path
-    #[clap(long)]
+    #[clap(short = 'k', long)]
     pub proving_key: PathBuf,
 
     /// Output dir path
@@ -51,12 +52,18 @@ pub struct ProveCmd {
     #[clap(short = 'f', long, default_value_t = false)]
     pub final_snark: bool,
 
+    #[clap(short = 'y', long, default_value_t = false)]
+    pub verify_proofs: bool,
+
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
 
     #[clap(short = 'd', long)]
     pub debug: Option<Option<String>>,
+
+    #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
+    pub custom_commits: Vec<String>,
 }
 
 impl ProveCmd {
@@ -88,15 +95,32 @@ impl ProveCmd {
             Some(Some(debug_value)) => json_to_debug_instances_map(self.proving_key.clone(), debug_value.clone()),
         };
 
+        let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
+        for commit in &self.custom_commits {
+            if let Some((key, value)) = commit.split_once('=') {
+                custom_commits_map.insert(key.to_string(), PathBuf::from(value));
+            } else {
+                eprintln!("Invalid commit format: {:?}", commit);
+            }
+        }
+
         match self.field {
             Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
                 self.witness_lib.clone(),
-                self.rom.clone(),
+                self.elf.clone(),
                 self.public_inputs.clone(),
                 self.input_data.clone(),
                 self.proving_key.clone(),
                 self.output_dir.clone(),
-                ProofOptions::new(false, self.verbose.into(), self.aggregation, self.final_snark, debug_info),
+                custom_commits_map,
+                ProofOptions::new(
+                    false,
+                    self.verbose.into(),
+                    self.aggregation,
+                    self.final_snark,
+                    self.verify_proofs,
+                    debug_info,
+                ),
             )?,
         };
 

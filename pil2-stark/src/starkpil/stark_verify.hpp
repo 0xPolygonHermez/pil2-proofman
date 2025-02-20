@@ -219,6 +219,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     Goldilocks::Element *trace = new Goldilocks::Element[starkInfo.mapSectionsN["cm1"]*starkInfo.starkStruct.nQueries];
     Goldilocks::Element *aux_trace = new Goldilocks::Element[starkInfo.mapTotalN];
+    Goldilocks::Element *trace_custom_commits_fixed = new Goldilocks::Element[starkInfo.mapTotalNCustomCommitsFixed];
 #pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         for(uint64_t i = 0; i < starkInfo.cmPolsMap.size(); ++i) {
@@ -237,11 +238,6 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         }
     }
     
-    Goldilocks::Element *custom_commits[starkInfo.customCommits.size()];
-    for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
-        custom_commits[c] = new Goldilocks::Element[starkInfo.customCommitsMap[c].size() * starkInfo.starkStruct.nQueries];
-    }
-
 #pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
         for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
@@ -249,14 +245,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                 uint64_t stagePos = starkInfo.customCommitsMap[c][i].stagePos;
                 uint64_t offset = starkInfo.mapOffsets[std::make_pair(starkInfo.customCommits[c].name + "0", false)];
                 uint64_t nPols = starkInfo.mapSectionsN[starkInfo.customCommits[c].name + "0"];
-                Goldilocks::Element *pols = custom_commits[c];
-                if(starkInfo.customCommitsMap[c][i].dim == 1) {
-                    pols[offset + q*nPols + stagePos] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos]);
-                } else {
-                    pols[offset + q*nPols + stagePos] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos]);
-                    pols[offset + q*nPols + stagePos + 1] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos + 1]);
-                    pols[offset + q*nPols + stagePos + 2] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos + 2]);
-                }
+                trace_custom_commits_fixed[offset + q*nPols + stagePos] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][stagePos]);
             }
         }   
     }
@@ -273,12 +262,8 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         xDivXSub : xDivXSub,
         pConstPolsAddress: constPolsVals,
         pConstPolsExtendedTreeAddress: nullptr,
-        pCustomCommits: {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
+        pCustomCommitsFixed: trace_custom_commits_fixed,
     };
-
-    for (uint64_t i = 0; i < starkInfo.customCommits.size(); ++i) {
-        params.pCustomCommits[i] = custom_commits[i];
-    }
 
     bool isValid = true;
 
@@ -286,7 +271,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     ExpressionsPack expressionsPack(setupCtx, 1);
     
     Goldilocks::Element buff[FIELD_EXTENSION];
-    Dest dest(buff);
+    Dest dest(buff, 1);
     dest.addParams(setupCtx.expressionsBin.expressionsInfo[starkInfo.cExpId]);
     std::vector<Dest> dests = {dest};
     
@@ -323,7 +308,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     zklog.trace("Verifying FRI queries consistency");
     Goldilocks::Element buffQueries[FIELD_EXTENSION*starkInfo.starkStruct.nQueries];
-    Dest destQueries(buffQueries);
+    Dest destQueries(buffQueries, starkInfo.starkStruct.nQueries);
     destQueries.addParams(setupCtx.expressionsBin.expressionsInfo[starkInfo.friExpId]);
     std::vector<Dest> destsQueries = {destQueries};
     expressionsPack.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsQueries, starkInfo.starkStruct.nQueries, false);
@@ -565,13 +550,10 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         }
     }
     
-    delete xDivXSub;
-    delete trace;
-    delete aux_trace;
-
-    for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
-        delete[] custom_commits[c];
-    }
+    delete[] xDivXSub;
+    delete[] trace;
+    delete[] aux_trace;
+    delete[] trace_custom_commits_fixed;
 
     return isValid;
 }
