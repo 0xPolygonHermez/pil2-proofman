@@ -29,6 +29,7 @@
     // Stark Info
     // ========================================================================================
     void *stark_info_new(char* filename, bool verifier);
+    uint64_t get_buffer_size_contribution_air(void *pStarkInfo);
     uint64_t get_map_total_n(void *pStarkInfo, bool recursive);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
 
@@ -89,7 +90,7 @@
     void compute_lev(void *pStarks, void *xiChallenge, void* LEv);
     void compute_evals(void *pStarks, void *params, void *LEv, void *pProof);
 
-    void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace);
+    void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace);
     void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements);
 
     // FRI 

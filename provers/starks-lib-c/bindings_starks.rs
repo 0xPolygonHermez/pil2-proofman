@@ -109,6 +109,10 @@ extern "C" {
     pub fn stark_info_new(filename: *mut ::std::os::raw::c_char, verifier: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z32get_buffer_size_contribution_airPv"]
+    pub fn get_buffer_size_contribution_air(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPvb"]
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void, recursive: bool) -> u64;
 }
@@ -397,13 +401,14 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14commit_witnessmmmPvS_"]
+    #[link_name = "\u{1}_Z14commit_witnessmmmPvS_S_"]
     pub fn commit_witness(
         nBits: u64,
         nBitsExt: u64,
         nCols: u64,
         root: *mut ::std::os::raw::c_void,
         trace: *mut ::std::os::raw::c_void,
+        auxTrace: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
@@ -729,7 +734,6 @@ extern "C" {
     #[link_name = "\u{1}_Z11free_bufferPv"]
     pub fn free_buffer(buffer: *mut ::std::os::raw::c_void);
 }
-
 extern "C" {
     #[link_name = "\u{1}_Z20write_fixed_cols_binPcS_S_mmPv"]
     pub fn write_fixed_cols_bin(

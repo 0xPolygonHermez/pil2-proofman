@@ -165,6 +165,11 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void, recursive: bool) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_buffer_size_contribution_air_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_buffer_size_contribution_air(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn get_map_totaln_custom_commits_fixed_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n_custom_commits_fixed(p_stark_info) }
 }
@@ -650,7 +655,14 @@ pub fn commit_stage_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn commit_witness_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, root: *mut u8, witness: *mut u8) {
+pub fn commit_witness_c(
+    n_bits: u64,
+    n_bits_ext: u64,
+    n_cols: u64,
+    root: *mut u8,
+    witness: *mut u8,
+    aux_trace: *mut u8,
+) {
     unsafe {
         commit_witness(
             n_bits,
@@ -658,6 +670,7 @@ pub fn commit_witness_c(n_bits: u64, n_bits_ext: u64, n_cols: u64, root: *mut u8
             n_cols,
             root as *mut std::os::raw::c_void,
             witness as *mut std::os::raw::c_void,
+            aux_trace as *mut std::os::raw::c_void,
         );
     }
 }
@@ -1386,6 +1399,16 @@ pub fn stark_info_new_c(_filename: &str, _verify: bool) -> *mut c_void {
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn get_buffer_size_contribution_air_c(_p_stark_info: *mut c_void) -> u64 {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_buffer_size_contribution_air: This is a mock call because there is no linked library"
+    );
+    100000000
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn get_map_totaln_c(_p_stark_info: *mut c_void, _recursive: bool) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
     100000000
@@ -1672,7 +1695,14 @@ pub fn commit_stage_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn commit_witness_c(_n_bits: u64, _n_bits_ext: u64, _n_cols: u64, _root: *mut u8, _witness: *mut u8) {
+pub fn commit_witness_c(
+    _n_bits: u64,
+    _n_bits_ext: u64,
+    _n_cols: u64,
+    _root: *mut u8,
+    _witness: *mut u8,
+    _aux_trace: *mut u8,
+) {
     trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
 }
 

@@ -173,6 +173,13 @@ uint64_t get_map_total_n(void *pStarkInfo, bool recursive)
     return starkInfo->mapTotalN;
 }
 
+uint64_t get_buffer_size_contribution_air(void *pStarkInfo) {
+    StarkInfo starkInfo = *(StarkInfo *)pStarkInfo;
+    uint64_t NExtended = (1 << starkInfo.starkStruct.nBitsExt);
+    return starkInfo.mapSectionsN["cm1"]*NExtended + starkInfo.getNumNodesMT(NExtended);
+}
+
+
 uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
 {
     StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
@@ -439,23 +446,21 @@ void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trac
     }
 }
 
-void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace) {
+void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace) {
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
-    
+    Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    Goldilocks::Element *pBuffExtended = new Goldilocks::Element[NExtended * nCols];
     NTT_Goldilocks ntt(N);
-    ntt.extendPol(pBuffExtended, traceGL, NExtended, N, nCols);
+    ntt.extendPol(auxTraceGL, traceGL, NExtended, N, nCols);
 
-    MerkleTreeGL mt(2, true, NExtended, nCols, false, true);
-    mt.setSource(pBuffExtended);
+    MerkleTreeGL mt(2, true, NExtended, nCols);
+    mt.setSource(auxTraceGL);
+    mt.setNodes(&auxTraceGL[NExtended * nCols]);
     mt.merkelize();
     mt.getRoot(rootGL);
-
-    delete[] pBuffExtended;
 }
 
 void compute_lev(void *pStarks, void *xiChallenge, void* LEv) {

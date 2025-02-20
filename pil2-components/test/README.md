@@ -152,8 +152,8 @@ mkdir -p ./pil2-components/test/std/range_check/build/ \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/std/range_check/build/build.pilout \
      --path ./pil2-components/test/std/range_check/rs/src -o \
-&& cargo build --features distributed \
-&& mpirun --bind-to none -np 1 -x OMP_NUM_THREADS=64 target/release/proofman-cli prove \
+&& cargo build \
+&& cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/librange_check.so \
      --proving-key ./pil2-components/test/std/range_check/build/provingKey \
      --output-dir ./pil2-components/test/std/range_check/build/proofs
