@@ -65,9 +65,6 @@ pub async fn pil_info(
                 res["qDim"].as_i64().unwrap(),
             );
         }
-        // if im_info["imExps"].is_null() {
-        //     im_info["imExps"] = json!([]);
-        // }
         let im_exps: Vec<usize> =
             im_info["imExps"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
 
