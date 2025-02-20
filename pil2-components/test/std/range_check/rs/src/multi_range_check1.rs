@@ -20,8 +20,7 @@ where
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::thread_rng().gen::<u64>() };
-            let mut rng = StdRng::seed_from_u64(seed);
+            let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
             let mut trace = MultiRangeCheck1Trace::new();
             let num_rows = trace.num_rows();

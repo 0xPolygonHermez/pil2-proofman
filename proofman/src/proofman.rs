@@ -223,6 +223,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut values = vec![0; my_instances.len() * 4];
 
+        let aux_trace_contribution: Vec<F> = create_buffer_fast(pctx.max_contribution_air_buffer_size as usize);
+        let aux_trace_contribution_ptr = aux_trace_contribution.as_ptr() as *mut u8;
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !all && !pctx.dctx_is_my_instance(instance_id) {
                 continue;
@@ -234,8 +236,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 continue;
             }
 
-            let value = Self::get_contribution_air(pctx.clone(), sctx.clone(), instance_id);
-            pctx.free_instance(instance_id);
+            let value = Self::get_contribution_air(pctx.clone(), sctx.clone(), instance_id, aux_trace_contribution_ptr);
+            if !all {
+                pctx.free_instance(instance_id);
+            }
             for id in 0..4 {
                 values[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = value[id];
             }
@@ -261,17 +265,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut proofs = Vec::new();
         let mut airgroup_values_air_instances = Vec::new();
         for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
-            timer_start_info!(GENERATING_WITNESS);
-            if !all && !pctx.dctx_is_my_instance(instance_id) {
-                continue;
-            }
-
-            wcm.calculate_witness(1, &[instance_id]);
-
             if !pctx.dctx_is_my_instance(instance_id) {
                 continue;
             }
-            timer_stop_and_log_info!(GENERATING_WITNESS);
+
+            if !all {
+                timer_start_info!(GENERATING_WITNESS);
+                wcm.calculate_witness(1, &[instance_id]);
+                timer_stop_and_log_info!(GENERATING_WITNESS);
+            }
             Self::initialize_air_instance(pctx.clone(), sctx.clone(), instance_id, false);
 
             let setup = sctx.get_setup(*airgroup_id, *air_id);
@@ -842,7 +844,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         calculate_impols_expressions_c((&setup.p_setup).into(), stage as u64, (&steps_params).into());
     }
 
-    pub fn get_contribution_air(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) -> Vec<u64> {
+    pub fn get_contribution_air(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        instance_id: usize,
+        aux_trace_contribution_ptr: *mut u8,
+    ) -> Vec<u64> {
         let n_field_elements = 4;
 
         timer_start_info!(GET_CONTRIBUTION_AIR);
@@ -859,6 +866,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),
             root.as_ptr() as *mut u8,
             pctx.get_air_instance_trace_ptr(instance_id),
+            aux_trace_contribution_ptr,
         );
 
         let mut value = vec![Goldilocks::zero(); n_field_elements];

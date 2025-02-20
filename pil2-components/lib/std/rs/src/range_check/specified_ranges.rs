@@ -1,6 +1,6 @@
 use core::panic;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 use rayon::prelude::*;
@@ -24,6 +24,7 @@ pub struct SpecifiedRanges<F: PrimeField> {
     num_cols: usize,
     ranges: Vec<Range<F>>,
     multiplicities: Vec<Vec<AtomicU64>>,
+    calculated: AtomicBool,
 }
 
 impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
@@ -157,6 +158,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
             num_rows,
             ranges,
             multiplicities,
+            calculated: AtomicBool::new(false),
         })
     }
 }
@@ -164,6 +166,9 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
 impl<F: PrimeField> SpecifiedRanges<F> {
     #[inline(always)]
     pub fn update_inputs(&self, value: F, range: Range<F>, multiplicity: F) {
+        if self.calculated.load(Ordering::Relaxed) {
+            return;
+        }
         let val = (value - range.0)
             .as_canonical_biguint()
             .to_usize()
@@ -206,6 +211,8 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
                 return;
             }
 
+            self.calculated.store(true, Ordering::Relaxed);
+
             pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
 
             if pctx.dctx_is_my_instance(instance_id) {
@@ -213,18 +220,12 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
                 let mut buffer = create_buffer_fast::<F>(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
-                        chunk[col] = F::from_canonical_u64(vec[row].swap(0, Ordering::Relaxed));
+                        chunk[col] = F::from_canonical_u64(vec[row].load(Ordering::Relaxed));
                     }
                 });
 
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
                 pctx.add_air_instance(air_instance, instance_id);
-            } else {
-                self.multiplicities.par_iter().for_each(|x| {
-                    x.par_iter().for_each(|y| {
-                        y.store(0, Ordering::Relaxed);
-                    });
-                });
             }
         }
     }

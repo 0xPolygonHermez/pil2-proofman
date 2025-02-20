@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicU64, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64},
+    Arc,
+};
 use num_traits::ToPrimitive;
 use p3_field::{Field, PrimeField};
 
@@ -15,6 +18,7 @@ pub struct U8Air<F: Field> {
     air_id: usize,
     instance_id: AtomicU64,
     multiplicity: Vec<AtomicU64>,
+    calculated: AtomicBool,
     _phantom: std::marker::PhantomData<F>,
 }
 
@@ -34,6 +38,7 @@ impl<F: PrimeField> AirComponent<F> for U8Air<F> {
             air_id,
             instance_id: AtomicU64::new(0),
             multiplicity: (0..NUM_ROWS).map(|_| AtomicU64::new(0)).collect(),
+            calculated: AtomicBool::new(false),
             _phantom: std::marker::PhantomData,
         })
     }
@@ -42,6 +47,9 @@ impl<F: PrimeField> AirComponent<F> for U8Air<F> {
 impl<F: PrimeField> U8Air<F> {
     #[inline(always)]
     pub fn update_inputs(&self, value: F, multiplicity: F) {
+        if self.calculated.load(Ordering::Relaxed) {
+            return;
+        }
         let value = value.as_canonical_biguint().to_usize().expect("Cannot convert to usize");
         let index = value % NUM_ROWS;
         let mul = multiplicity.as_canonical_biguint();
@@ -80,19 +88,17 @@ impl<F: PrimeField> WitnessComponent<F> for U8Air<F> {
 
             pctx.dctx_distribute_multiplicity(&self.multiplicity, instance_id);
 
+            self.calculated.store(true, Ordering::Relaxed);
+
             if pctx.dctx_is_my_instance(instance_id) {
                 let buffer = self
                     .multiplicity
                     .iter()
-                    .map(|x| F::from_canonical_u64(x.swap(0, Ordering::Relaxed)))
+                    .map(|x| F::from_canonical_u64(x.load(Ordering::Relaxed)))
                     .collect::<Vec<F>>();
 
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
                 pctx.add_air_instance(air_instance, instance_id);
-            } else {
-                for x in self.multiplicity.iter() {
-                    x.store(0, Ordering::Relaxed);
-                }
             }
         }
     }

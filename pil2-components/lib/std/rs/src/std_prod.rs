@@ -289,17 +289,15 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
             let air_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), std_prod_users, "air_ids", false);
 
             let instances = pctx.dctx_get_instances();
-            let my_instances = pctx.dctx_get_my_instances();
 
             // Process each product check user
             for i in 0..num_users {
                 let airgroup_id = extract_field_element_as_usize(&airgroup_ids.values[i], "airgroup_id");
                 let air_id = extract_field_element_as_usize(&air_ids.values[i], "air_id");
 
-                for instance_id in my_instances.iter() {
+                for instance_id in instance_ids.iter() {
                     if instances[*instance_id].0 != airgroup_id
                         || instances[*instance_id].1 != air_id
-                        || !instance_ids.contains(instance_id)
                         || skip_prover_instance(&pctx, *instance_id).0
                     {
                         continue;

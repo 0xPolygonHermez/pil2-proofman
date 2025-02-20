@@ -65,17 +65,26 @@ macro_rules! define_wc {
 macro_rules! define_wc_with_std {
     ($StructName:ident, $name:expr) => {
         use pil_std_lib::Std;
-
+        use std::sync::atomic::{AtomicU64, Ordering};
         pub struct $StructName<F: PrimeField> {
             std_lib: Arc<Std<F>>,
             instance_ids: std::sync::RwLock<Vec<usize>>,
+            seed: AtomicU64,
         }
 
         impl<F: PrimeField> $StructName<F> {
             const MY_NAME: &'static str = $name;
 
             pub fn new(std_lib: Arc<Std<F>>) -> std::sync::Arc<Self> {
-                std::sync::Arc::new(Self { std_lib, instance_ids: std::sync::RwLock::new(Vec::new()) })
+                std::sync::Arc::new(Self {
+                    std_lib,
+                    instance_ids: std::sync::RwLock::new(Vec::new()),
+                    seed: AtomicU64::new(0),
+                })
+            }
+
+            pub fn set_seed(&self, seed: u64) {
+                self.seed.store(seed, Ordering::Relaxed);
             }
         }
     };

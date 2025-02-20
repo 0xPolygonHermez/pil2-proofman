@@ -4,6 +4,7 @@ use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
 use p3_field::Field;
+use proofman_starks_lib_c::get_buffer_size_contribution_air_c;
 use proofman_util::create_buffer_fast;
 use transcript::FFITranscript;
 
@@ -84,6 +85,7 @@ pub struct ProofCtx<F> {
     pub custom_commits_fixed: HashMap<String, PathBuf>,
     pub dctx: RwLock<DistributionCtx>,
     pub max_prover_buffer_size: u64,
+    pub max_contribution_air_buffer_size: u64,
 }
 
 impl<F: Field> ProofCtx<F> {
@@ -116,6 +118,7 @@ impl<F: Field> ProofCtx<F> {
             weights,
             options,
             max_prover_buffer_size: 0,
+            max_contribution_air_buffer_size: 0,
         }
     }
 
@@ -139,7 +142,7 @@ impl<F: Field> ProofCtx<F> {
     pub fn set_buff_helper(&mut self, sctx: &SetupCtx<F>) {
         let mut buff_helper_size = 0;
         let mut prover_buffer_size = 0;
-
+        let mut max_contribution_air_buffer_size = 0;
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id);
@@ -151,11 +154,17 @@ impl<F: Field> ProofCtx<F> {
                 if setup.prover_buffer_size > prover_buffer_size {
                     prover_buffer_size = setup.prover_buffer_size;
                 }
+
+                let contribution_air_buffer = get_buffer_size_contribution_air_c(setup.p_setup.p_stark_info);
+                if contribution_air_buffer > max_contribution_air_buffer_size {
+                    max_contribution_air_buffer_size = contribution_air_buffer;
+                }
             }
         }
 
         *self.buff_helper.values.write().unwrap() = create_buffer_fast(buff_helper_size);
         self.max_prover_buffer_size = prover_buffer_size;
+        self.max_contribution_air_buffer_size = max_contribution_air_buffer_size;
     }
 
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
