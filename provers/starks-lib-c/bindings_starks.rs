@@ -689,6 +689,18 @@ extern "C" {
     ) -> bool;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z22stark_verify_from_filePcPvS0_S_S0_S0_S0_"]
+    pub fn stark_verify_from_file(
+        proof: *mut ::std::os::raw::c_char,
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        pExpressionsBin: *mut ::std::os::raw::c_void,
+        verkey: *mut ::std::os::raw::c_char,
+        pPublics: *mut ::std::os::raw::c_void,
+        pProofValues: *mut ::std::os::raw::c_void,
+        challenges: *mut ::std::os::raw::c_void,
+    ) -> bool;
+}
+extern "C" {
     #[link_name = "\u{1}_Z12save_to_filePvmS_mPc"]
     pub fn save_to_file(
         buffer: *mut ::std::os::raw::c_void,
@@ -716,7 +728,6 @@ extern "C" {
     #[link_name = "\u{1}_Z11free_bufferPv"]
     pub fn free_buffer(buffer: *mut ::std::os::raw::c_void);
 }
-
 extern "C" {
     #[link_name = "\u{1}_Z20write_fixed_cols_binPcS_S_mmPv"]
     pub fn write_fixed_cols_bin(

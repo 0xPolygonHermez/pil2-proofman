@@ -8,8 +8,7 @@ use colored::Colorize;
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
 
-use proofman::verify_proof;
-use proofman_starks_lib_c::get_zkin_ptr_c;
+use proofman::verify_proof_from_file;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -42,8 +41,6 @@ impl VerifyStark {
 
         initialize_logger(self.verbose.into());
 
-        let p_proof = get_zkin_ptr_c(&self.proof.clone());
-
         let publics = if let Some(publics) = &self.public_inputs {
             let mut contents = String::new();
             let mut file = File::open(publics).unwrap();
@@ -58,8 +55,8 @@ impl VerifyStark {
             None
         };
 
-        let valid = verify_proof::<Goldilocks>(
-            p_proof,
+        let valid = verify_proof_from_file::<Goldilocks>(
+            self.proof.clone(),
             self.stark_info.clone(),
             self.verifier_bin.clone(),
             self.verkey.clone(),

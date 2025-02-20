@@ -853,6 +853,20 @@ bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *v
     }
 }
 
+bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
+    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
+    bool vadcop = challenges == nullptr ? false : true;
+    StarkInfo starkInfo = *((StarkInfo *)pStarkInfo);
+    json jProof;
+    file2json(proofFile, jProof);
+    if (starkInfo.starkStruct.verificationHashType == "GL") {
+        return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    } else {
+        return starkVerify<RawFr::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    }
+}
+
+
 // Debug circom
 // =================================================================================
 void save_to_file(void *buffer, uint64_t bufferSize, void* publics, uint64_t publicsSize, char* name) {
