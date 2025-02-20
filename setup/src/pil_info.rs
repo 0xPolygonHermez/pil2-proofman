@@ -59,7 +59,7 @@ pub async fn pil_info(
             new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
         } else {
             im_info = calculate_intermediate_polynomials(
-                &expressions,
+                &mut expressions,
                 res["cExpId"].as_u64().unwrap() as usize,
                 max_deg,
                 res["qDim"].as_i64().unwrap(),

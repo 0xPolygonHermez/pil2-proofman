@@ -55,9 +55,14 @@ fn _calculate_im_pols(
         "mul" => {
             let max_deg_here = exp["expDeg"].as_i64().unwrap_or(0);
             if let Some(values) = exp["values"].as_array_mut() {
-                let (left_slice, right_slice) = values.split_at_mut(1);
-                let left = &mut left_slice[0];
-                let right = &mut right_slice[0];
+                // Safely extract left and right without split_at_mut
+                if values.len() < 2 {
+                    return (None, -1); // Invalid structure
+                }
+                let (left, right) = {
+                    let (left, rest) = values.split_at_mut(1);
+                    (&mut left[0], &mut rest[0])
+                };
 
                 // Handle constants in multiplication
                 if !["add", "mul", "sub", "exp"].contains(&left["op"].as_str().unwrap_or(""))
@@ -124,14 +129,22 @@ fn _calculate_im_pols(
                 let d = res[1].as_i64().unwrap();
                 (Some(e), d)
             } else {
-                _calculate_im_pols(
-                    expressions,
-                    &mut expressions[exp_id],
-                    im_pols.clone(),
-                    absolute_max,
-                    absolute_max,
-                    abs_max_d,
-                )
+                // Scoped mutable borrow for expressions[exp_id]
+                let e_result = {
+                    let mut exp_at_id = expressions[exp_id].clone();
+                    let exp_ref = &mut exp_at_id;
+                    let res = _calculate_im_pols(
+                        expressions,
+                        exp_ref,
+                        im_pols.clone(),
+                        absolute_max,
+                        absolute_max,
+                        abs_max_d,
+                    );
+                    expressions[exp_id] = exp_at_id;
+                    res
+                };
+                e_result
             };
 
             if let Some(e) = e_opt {
