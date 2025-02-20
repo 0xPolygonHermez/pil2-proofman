@@ -100,11 +100,11 @@ trace!(RangeCheck4Trace<F> {
 },  3, 0, 64 );
 
 trace!(U16AirFixed<F> {
- U16: F, __L1__: F,
+ RANGE: [F; 1], __L1__: F,
 },  3, 1, 65536 );
 
 trace!(U16AirTrace<F> {
- mul: F,
+ mul: [F; 1],
 },  3, 1, 65536 );
 
 trace!(MultiRangeCheck1Fixed<F> {
@@ -148,11 +148,11 @@ trace!(RangeCheckMixTrace<F> {
 },  8, 0, 64 );
 
 trace!(U8AirFixed<F> {
- U8: F, __L1__: F,
+ RANGE: [F; 1], __L1__: F,
 },  9, 0, 256 );
 
 trace!(U8AirTrace<F> {
- mul: F,
+ mul: [F; 1],
 },  9, 0, 256 );
 
 trace!(SpecifiedRangesFixed<F> {

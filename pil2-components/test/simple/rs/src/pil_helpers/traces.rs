@@ -50,20 +50,20 @@ trace!(SimpleRightTrace<F> {
 },  0, 1, 8 );
 
 trace!(U8AirFixed<F> {
- U8: F, __L1__: F,
-},  0, 2, 256 );
+ RANGE: [F; 2], __L1__: F,
+},  0, 2, 128 );
 
 trace!(U8AirTrace<F> {
- mul: F,
-},  0, 2, 256 );
+ mul: [F; 2],
+},  0, 2, 128 );
 
 trace!(U16AirFixed<F> {
- U16: F, __L1__: F,
-},  0, 3, 65536 );
+ RANGE: [F; 2], __L1__: F,
+},  0, 3, 32768 );
 
 trace!(U16AirTrace<F> {
- mul: F,
-},  0, 3, 65536 );
+ mul: [F; 2],
+},  0, 3, 32768 );
 
 trace!(SpecifiedRangesFixed<F> {
  RANGE: [F; 11], __L1__: F,

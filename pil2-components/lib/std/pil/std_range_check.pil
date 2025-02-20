@@ -47,8 +47,27 @@ require "std_lookup.pil";
  */
 
 const int MAX_RANGE_LEN = (PRIME - 1) / 2;
+
+int MAX_U8_BITS = 8;
+int MAX_U16_BITS = 16;
 int MAX_SPECIFIED_BITS = -1; // -1 indicates that the bits is specified on demand
                              // and is set to be the maximum of all specified ranges
+
+function set_max_u8_bits(const int bits) {
+    if (bits < 0 || bits > 8) {
+        error(`The u8 bits should be between 0 and 8, got ${bits} instead`);
+    }
+
+    MAX_U8_BITS = bits;
+}
+
+function set_max_u16_bits(const int bits) {
+    if (bits < 0 || bits > 16) {
+        error(`The u16 bits should be between 0 and 16, got ${bits} instead`);
+    }
+
+    MAX_U16_BITS = bits;
+}
 
 function set_max_specified_bits(const int bits) {
     if (bits < 0) {
@@ -80,33 +99,75 @@ private function get_opid(const int min, const int max, const int predefined): i
 }
 
 airtemplate U8Air(const int N = 2**8) {
-    if (N != 2**8) {
-        error(`The number of rows N should be 2**8 to use the predefined range U8, got N=${N} instead`);
-    }
-
     // save the airgroup id and air id of the table for latter use
     proof.std.u8.airgroup_id = AIRGROUP_ID;
     proof.std.u8.air_id = AIR_ID;
 
-    col fixed U8 = [0..MASK_8];
+    const int range_size = P2_8;
+    const int col_num = (range_size + N - 1) / N;
+    int mins[col_num];
+    int maxs[col_num];
+    // Divide by taking a col [0,MASK_8] to n cols [0,N-1], [N,2N-1], ..., [(n-1)N,MASK_8]
+    for (int i = 0; i < col_num; i++) {
+        mins[i] = i * N;
+        maxs[i] = (i == col_num - 1) ? MASK_8 : (i + 1) * N - 1;
+    }
 
-    col witness mul;
-    lookup_proves(U8AIR_OPID, [U8], mul, PIOP_NAME_RANGE_CHECK);
+    col fixed RANGE[col_num];
+
+    col witness mul[col_num];
+    for (int i = 0; i < col_num; i++) {
+        const int min = mins[i];
+        const int max = maxs[i];
+
+        // Sanity check
+        if (N < max - min + 1) {
+            error(`The range [min,max]=[${min},${max}] is too big, the maximum range length is ${N}`);
+        }
+
+        if (min == max) {
+            RANGE[i] = [min...];
+        } else {
+            RANGE[i] = [min..max-1,max...];
+        }
+        lookup_proves(U8AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
+    }
 }
 
 airtemplate U16Air(const int N = 2**16) {
-    if (N != 2**16) {
-        error(`The number of rows N should be 2**16 to use the predefined range U16, got N=${N} instead`);
-    }
-
     // save the airgroup id and air id of the table for latter use
     proof.std.u16.airgroup_id = AIRGROUP_ID;
     proof.std.u16.air_id = AIR_ID;
 
-    col fixed U16 = [0..MASK_16];
+    const int range_size = P2_16;
+    const int col_num = (range_size + N - 1) / N;
+    int mins[col_num];
+    int maxs[col_num];
+    // Divide by taking a col [0,MASK_16] to n cols [0,N-1], [N,2N-1], ..., [(n-1)N,MASK_16]
+    for (int i = 0; i < col_num; i++) {
+        mins[i] = i * N;
+        maxs[i] = (i == col_num - 1) ? MASK_16 : (i + 1) * N - 1;
+    }
 
-    col witness mul;
-    lookup_proves(U16AIR_OPID, [U16], mul, PIOP_NAME_RANGE_CHECK);
+    col fixed RANGE[col_num];
+
+    col witness mul[col_num];
+    for (int i = 0; i < col_num; i++) {
+        const int min = mins[i];
+        const int max = maxs[i];
+
+        // Sanity check
+        if (N < max - min + 1) {
+            error(`The range [min,max]=[${min},${max}] is too big, the maximum range length is ${N}`);
+        }
+
+        if (min == max) {
+            RANGE[i] = [min...];
+        } else {
+            RANGE[i] = [min..max-1,max...];
+        }
+        lookup_proves(U16AIR_OPID, [RANGE[i]], mul[i], PIOP_NAME_RANGE_CHECK);
+    }
 }
 
 airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_count, const int init_mins[], const int init_maxs[]) {
@@ -548,13 +609,20 @@ private function declare_predefined_airs() {
             int air_id = 0;
         }
 
+        int u8_air_n = 2**8;
+        if (MAX_U8_BITS >= 0 && MAX_U8_BITS <= 8) {
+            u8_air_n = 2**MAX_U8_BITS;
+        } else {
+            error(`The u8 bits should be between 0 and 8, got ${MAX_U8_BITS} instead`);
+        }
+
         if (num_u8_airgroup == 1){
             // If the U8Air is needed only once, we instantiate it in the (single) callable airgroup
-            U8Air();
+            U8Air(N: u8_air_n);
         } else {
             // If the U8Air is needed more than once, we instantiate it in its own airgroup
             airgroup U8Air {
-                U8Air();
+                U8Air(N: u8_air_n);
             }
         }
     }
@@ -565,13 +633,20 @@ private function declare_predefined_airs() {
             int air_id = 0;
         }
 
+        int u16_air_n = 2**16;
+        if (MAX_U16_BITS >= 0 && MAX_U16_BITS <= 16) {
+            u16_air_n = 2**MAX_U16_BITS;
+        } else {
+            error(`The u16 bits should be between 0 and 16, got ${MAX_U16_BITS} instead`);
+        }
+
         if (num_u16_airgroup == 1){
             // If the U16Air is needed only once, we instantiate it in the (single) callable airgroup
-            U16Air();
+            U16Air(N: u16_air_n);
         } else {
             // If the U16Air is needed more than once, we instantiate it in its own airgroup
             airgroup U16Air {
-                U16Air();
+                U16Air(N: u16_air_n);
             }
         }
     }
