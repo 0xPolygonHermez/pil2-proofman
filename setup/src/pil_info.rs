@@ -21,7 +21,7 @@ pub async fn pil_info(
     let mut pil_clone = pil.clone();
     let info_pil = prepare_pil(f, &mut pil_clone, stark_struct, pil2, &options);
 
-    let expressions = info_pil["expressions"].as_array().unwrap().clone();
+    let mut expressions = info_pil["expressions"].as_array().unwrap().clone();
     let mut constraints = info_pil["constraints"].as_array().unwrap().clone();
     let hints = info_pil["hints"].as_array().unwrap().clone();
     let mut symbols: Vec<HashMap<String, Value>> = info_pil["symbols"]

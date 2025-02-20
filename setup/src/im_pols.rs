@@ -227,16 +227,21 @@ pub fn calculate_intermediate_polynomials(
     );
     println!("------------------------------------------------------------");
 
-    let c_exp = &mut expressions[c_exp_id];
+    // Clone the expression to avoid borrowing conflicts
+    let mut c_exp = expressions[c_exp_id].clone();
 
-    let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, c_exp, d);
+    // First calculation
+    let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, &mut c_exp, d);
     let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg, q_dim);
     d += 1;
 
     while !im_exps.is_empty() && d <= max_q_deg {
         println!("------------------------------------------------------------");
 
-        let (im_exps_p, q_deg_p) = calculate_im_pols(expressions, c_exp, d);
+        // Clone c_exp again for the new calculation
+        let mut c_exp_clone = c_exp.clone();
+
+        let (im_exps_p, q_deg_p) = calculate_im_pols(expressions, &mut c_exp_clone, d);
         let new_added_basefield_cols = calculate_added_cols(d, expressions, &im_exps_p, q_deg_p, q_dim);
         d += 1;
 
@@ -246,6 +251,9 @@ pub fn calculate_intermediate_polynomials(
             added_basefield_cols = new_added_basefield_cols;
             im_exps = im_exps_p.clone();
             q_deg = q_deg_p;
+
+            // Update the main c_exp with the latest changes
+            c_exp = c_exp_clone;
         }
 
         if im_exps_p.is_empty() {
