@@ -41,7 +41,7 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         // Get and store the ranges
-        let num_cols = (P2_8 + num_rows - 1) / num_rows;
+        let num_cols = P2_8.div_ceil(num_rows);
         let mins = (0..num_cols).into_par_iter().map(|i| (i * num_rows) as Min).collect();
 
         let multiplicities = (0..num_cols)
