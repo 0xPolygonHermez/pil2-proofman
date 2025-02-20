@@ -165,6 +165,11 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void, recursive: bool) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_map_totaln_custom_commits_fixed_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n_custom_commits_fixed(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn stark_info_free_c(p_stark_info: *mut c_void) {
     unsafe {
         stark_info_free(p_stark_info);
@@ -335,27 +340,43 @@ pub fn get_hint_field_sizes_c(
 pub fn mul_hint_fields_c(
     p_setup_ctx: *mut c_void,
     p_steps_params: *mut u8,
-    hint_id: u64,
-    hint_field_dest: &str,
-    hint_field_name1: &str,
-    hint_field_name2: &str,
-    hint_options1: *mut u8,
-    hint_options2: *mut u8,
-) -> u64 {
-    let field_dest = CString::new(hint_field_dest).unwrap();
-    let field_name1 = CString::new(hint_field_name1).unwrap();
-    let field_name2 = CString::new(hint_field_name2).unwrap();
+    n_hints: u64,
+    hint_id: *mut u64,
+    hint_field_dest: Vec<&str>,
+    hint_field_name1: Vec<&str>,
+    hint_field_name2: Vec<&str>,
+    hint_options1: *mut *mut u8,
+    hint_options2: *mut *mut u8,
+) {
+    use std::os::raw::c_char;
+
+    let c_hint_field_dest: Vec<CString> = hint_field_dest.iter().map(|&s| CString::new(s).unwrap()).collect();
+
+    let c_hint_field_name1: Vec<CString> = hint_field_name1.iter().map(|&s| CString::new(s).unwrap()).collect();
+
+    let c_hint_field_name2: Vec<CString> = hint_field_name2.iter().map(|&s| CString::new(s).unwrap()).collect();
+
+    // Convert Vec<CString> to Vec<*mut c_char>
+    let mut hint_field_dest_ptrs: Vec<*mut c_char> =
+        c_hint_field_dest.iter().map(|s| s.as_ptr() as *mut c_char).collect();
+
+    let mut hint_field_name1_ptrs: Vec<*mut c_char> =
+        c_hint_field_name1.iter().map(|s| s.as_ptr() as *mut c_char).collect();
+
+    let mut hint_field_name2_ptrs: Vec<*mut c_char> =
+        c_hint_field_name2.iter().map(|s| s.as_ptr() as *mut c_char).collect();
 
     unsafe {
         mul_hint_fields(
             p_setup_ctx,
             p_steps_params as *mut std::os::raw::c_void,
+            n_hints,
             hint_id,
-            field_dest.as_ptr() as *mut std::os::raw::c_char,
-            field_name1.as_ptr() as *mut std::os::raw::c_char,
-            field_name2.as_ptr() as *mut std::os::raw::c_char,
-            hint_options1 as *mut std::os::raw::c_void,
-            hint_options2 as *mut std::os::raw::c_void,
+            hint_field_dest_ptrs.as_mut_ptr(),
+            hint_field_name1_ptrs.as_mut_ptr(),
+            hint_field_name2_ptrs.as_mut_ptr(),
+            hint_options1 as *mut *mut std::os::raw::c_void,
+            hint_options2 as *mut *mut std::os::raw::c_void,
         )
     }
 }
@@ -553,22 +574,17 @@ pub fn extend_and_merkelize_custom_commit_c(
     commit_id: u64,
     step: u64,
     buffer: *mut u8,
-    buffer_ext: *mut u8,
     p_proof: *mut c_void,
     p_buff_helper: *mut u8,
-    buffer_file: &str,
 ) {
-    let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
         extend_and_merkelize_custom_commit(
             p_starks,
             commit_id,
             step,
             buffer as *mut std::os::raw::c_void,
-            buffer_ext as *mut std::os::raw::c_void,
             p_proof,
             p_buff_helper as *mut std::os::raw::c_void,
-            buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
         );
     }
 }
@@ -577,9 +593,7 @@ pub fn extend_and_merkelize_custom_commit_c(
 pub fn load_custom_commit_c(
     p_starks: *mut c_void,
     commit_id: u64,
-    step: u64,
     buffer: *mut u8,
-    buffer_ext: *mut u8,
     p_proof: *mut c_void,
     buffer_file: &str,
 ) {
@@ -588,11 +602,33 @@ pub fn load_custom_commit_c(
         load_custom_commit(
             p_starks,
             commit_id,
-            step,
             buffer as *mut std::os::raw::c_void,
-            buffer_ext as *mut std::os::raw::c_void,
             p_proof,
             buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn write_custom_commit_c(
+    root: *mut u8,
+    n: u64,
+    n_extended: u64,
+    n_cols: u64,
+    buffer: *mut u8,
+    buffer_file: &str,
+    check: bool,
+) {
+    let buffer_file_name = CString::new(buffer_file).unwrap();
+    unsafe {
+        write_custom_commit(
+            root as *mut std::os::raw::c_void,
+            n,
+            n_extended,
+            n_cols,
+            buffer as *mut std::os::raw::c_void,
+            buffer_file_name.as_ptr() as *mut std::os::raw::c_char,
+            check,
         );
     }
 }
@@ -1144,6 +1180,35 @@ pub fn stark_verify_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn stark_verify_from_file_c(
+    verkey: &str,
+    proof: &str,
+    p_stark_info: *mut c_void,
+    p_expressions_bin: *mut c_void,
+    p_publics: *mut u8,
+    p_proof_values: *mut u8,
+    p_challenges: *mut u8,
+) -> bool {
+    let verkey_file = CString::new(verkey).unwrap();
+    let verkey_file_ptr = verkey_file.as_ptr() as *mut std::os::raw::c_char;
+
+    let proof_file = CString::new(proof).unwrap();
+    let proof_file_ptr = proof_file.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        stark_verify_from_file(
+            proof_file_ptr,
+            p_stark_info,
+            p_expressions_bin,
+            verkey_file_ptr,
+            p_publics as *mut c_void,
+            p_proof_values as *mut c_void,
+            p_challenges as *mut c_void,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn save_file_c(p_buffer: *mut u8, buffer_size: u64, p_publics: *mut u8, publics_size: u64, file_name: &str) {
     let file = CString::new(file_name).unwrap();
     let file_ptr = file.as_ptr() as *mut std::os::raw::c_char;
@@ -1321,6 +1386,12 @@ pub fn get_map_totaln_c(_p_stark_info: *mut c_void, _recursive: bool) -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn get_map_totaln_custom_commits_fixed_c(_p_stark_info: *mut c_void) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
+    100000000
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn get_custom_commit_id_c(_p_stark_info: *mut c_void, _name: &str) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_custom_commit_id: This is a mock call because there is no linked library");
     100000000
@@ -1432,15 +1503,15 @@ pub fn get_hint_field_values_c(_p_setup_ctx: *mut c_void, _hint_id: u64, _hint_f
 pub fn mul_hint_fields_c(
     _p_setup_ctx: *mut c_void,
     _p_steps_params: *mut u8,
-    _hint_id: u64,
-    _hint_field_dest: &str,
-    _hint_field_name1: &str,
-    _hint_field_name2: &str,
-    _hint_options1: *mut u8,
-    _hint_options2: *mut u8,
-) -> u64 {
+    _n_hints: u64,
+    _hint_id: *mut u64,
+    _hint_field_dest: Vec<&str>,
+    _hint_field_name1: Vec<&str>,
+    _hint_field_name2: Vec<&str>,
+    _hint_options1: *mut *mut u8,
+    _hint_options2: *mut *mut u8,
+) {
     trace!("{}: ··· {}", "ffi     ", "mul_hint_fields: This is a mock call because there is no linked library");
-    0
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1553,10 +1624,8 @@ pub fn extend_and_merkelize_custom_commit_c(
     _commit_id: u64,
     _step: u64,
     _buffer: *mut u8,
-    _buffer_ext: *mut u8,
     _p_proof: *mut c_void,
     _p_buff_helper: *mut u8,
-    _tree_file: &str,
 ) {
     trace!(
         "{}: ··· {}",
@@ -1569,13 +1638,24 @@ pub fn extend_and_merkelize_custom_commit_c(
 pub fn load_custom_commit_c(
     _p_starks: *mut c_void,
     _commit_id: u64,
-    _step: u64,
     _buffer: *mut u8,
-    _buffer_ext: *mut u8,
     _p_proof: *mut c_void,
     _tree_file: &str,
 ) {
     trace!("{}: ··· {}", "ffi     ", "load_custom_commit: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn write_custom_commit_c(
+    _root: *mut u8,
+    _n: u64,
+    _n_extended: u64,
+    _n_cols: u64,
+    _buffer: *mut u8,
+    _buffer_file: &str,
+    _check: bool,
+) {
+    trace!("{}: ··· {}", "ffi     ", "write_custom_commit: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1973,6 +2053,24 @@ pub fn stark_verify_c(
     _p_challenges: *mut u8,
 ) -> bool {
     trace!("{}: ··· {}", "ffi     ", "stark_verify_c: This is a mock call because there is no linked library");
+    true
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn stark_verify_from_file_c(
+    _verkey: &str,
+    _proof: &str,
+    _p_stark_info: *mut c_void,
+    _p_expressions_bin: *mut c_void,
+    _p_publics: *mut u8,
+    _p_proof_values: *mut u8,
+    _p_challenges: *mut u8,
+) -> bool {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "stark_verify_from_file_c: This is a mock call because there is no linked library"
+    );
     true
 }
 

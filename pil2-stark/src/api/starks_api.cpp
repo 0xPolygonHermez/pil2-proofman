@@ -264,6 +264,12 @@ uint64_t get_map_total_n(void *pStarkInfo, bool recursive)
     return starkInfo->mapTotalN;
 }
 
+uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
+{
+    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
+    return starkInfo->mapTotalNCustomCommitsFixed;
+}
+
 void stark_info_free(void *pStarkInfo)
 {
     auto starkInfo = (StarkInfo *)pStarkInfo;
@@ -363,9 +369,24 @@ void get_hint_field_sizes(void *pSetupCtx, void* hintFieldValues, uint64_t hintI
     getHintFieldSizes(*(SetupCtx *)pSetupCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
 
-uint64_t mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2) 
+void mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t nHints, uint64_t *hintId, char **hintFieldNameDest, char **hintFieldName1, char **hintFieldName2, void** hintOptions1, void **hintOptions2) 
 {
-    return multiplyHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldName1), string(hintFieldName2), *(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2);
+
+    std::vector<std::string> hintFieldNameDests(nHints);
+    std::vector<std::string> hintFieldNames1(nHints);
+    std::vector<std::string> hintFieldNames2(nHints);
+    std::vector<HintFieldOptions> hintOptions1Vec(nHints);
+    std::vector<HintFieldOptions> hintOptions2Vec(nHints);
+
+    for (uint64_t i = 0; i < nHints; ++i) {
+        hintFieldNameDests[i] = hintFieldNameDest[i];
+        hintFieldNames1[i] = hintFieldName1[i];
+        hintFieldNames2[i] = hintFieldName2[i];
+        hintOptions1Vec[i] = *(HintFieldOptions *)hintOptions1[i];
+        hintOptions2Vec[i] = *(HintFieldOptions *)hintOptions2[i];
+    }
+
+    return multiplyHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, nHints, hintId, hintFieldNameDests.data(), hintFieldNames1.data(), hintFieldNames2.data(), hintOptions1Vec.data(), hintOptions2Vec.data());
 }
 
 void acc_hint_field(void *pSetupCtx, void* stepsParams, void *pBuffHelper, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add) {
@@ -429,16 +450,39 @@ void calculate_impols_expressions(void *pStarks, uint64_t step, void* stepsParam
     starks->calculateImPolsExpressions(step, *(StepsParams *)stepsParams);
 }
 
-void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void* bufferExt, void *pProof, void *pBuffHelper, char *bufferFile)
+void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void* buffer, void *pProof, void *pBuffHelper)
 {
     Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->extendAndMerkelizeCustomCommit(commitId, step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)bufferExt, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper, string(bufferFile));
+    starks->extendAndMerkelizeCustomCommit(commitId, step, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper);
 }
 
-void load_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *buffer, void *bufferExt, void *pProof, char *bufferFile)
+void load_custom_commit(void *pStarks, uint64_t commitId, void *buffer, void *pProof, char *bufferFile)
 {
     Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->loadCustomCommit(commitId, step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)bufferExt, *(FRIProof<Goldilocks::Element> *)pProof, string(bufferFile));
+    starks->loadCustomCommit(commitId, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, string(bufferFile));
+}
+
+void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check)
+{   
+    MerkleTreeGL mt(2, true, NExtended, nCols, true, true);
+
+    NTT_Goldilocks ntt(N);
+    ntt.extendPol(mt.source, (Goldilocks::Element *)buffer, NExtended, N, nCols);
+    
+    mt.merkelize();
+    
+    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
+    mt.getRoot(&rootGL[0]);
+
+    if(!check) {
+        std::string buffFile = string(bufferFile);
+        ofstream fw(buffFile.c_str(), std::fstream::out | std::fstream::binary);
+        writeFileParallel(buffFile, root, 32, 0);
+        writeFileParallel(buffFile, buffer, N * nCols * sizeof(Goldilocks::Element), 32);
+        writeFileParallel(buffFile, mt.source, NExtended * nCols * sizeof(Goldilocks::Element), 32 + N * nCols * sizeof(Goldilocks::Element));
+        writeFileParallel(buffFile, mt.nodes, mt.numNodes * sizeof(Goldilocks::Element), 32 + (NExtended + N) * nCols * sizeof(Goldilocks::Element));
+        fw.close();
+    }
 }
 
 void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trace, void *buffer, void *pProof, void *pBuffHelper) {
@@ -808,6 +852,20 @@ bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *v
         return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
     }
 }
+
+bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
+    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
+    bool vadcop = challenges == nullptr ? false : true;
+    StarkInfo starkInfo = *((StarkInfo *)pStarkInfo);
+    json jProof;
+    file2json(proofFile, jProof);
+    if (starkInfo.starkStruct.verificationHashType == "GL") {
+        return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    } else {
+        return starkVerify<RawFr::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+    }
+}
+
 
 // Debug circom
 // =================================================================================

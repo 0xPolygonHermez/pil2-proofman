@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use rayon::prelude::*;
 
@@ -24,7 +21,7 @@ use crate::{
 };
 
 pub struct StdProd<F: PrimeField> {
-    stage_wc: Option<Mutex<u32>>,
+    stage_wc: Option<u32>,
     _phantom: std::marker::PhantomData<F>,
 }
 
@@ -48,7 +45,7 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
                     // Get the "stage_wc" hint
                     let stage_wc =
                         get_global_hint_field_constant_as::<u32, F>(sctx.clone(), std_prod_users_id[0], "stage_wc");
-                    Some(Mutex::new(stage_wc))
+                    Some(stage_wc)
                 }
             },
             _phantom: std::marker::PhantomData,
@@ -263,7 +260,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
             return;
         }
 
-        if stage == *stage_wc.unwrap().lock().unwrap() {
+        if stage == *stage_wc.unwrap() {
             // Get the number of product check users and their airgroup and air IDs
             let std_prod_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users")[0];
 

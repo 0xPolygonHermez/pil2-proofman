@@ -333,7 +333,7 @@ void getHintField(
                 memset((uint8_t *)hintFieldInfo.values, 0, hintFieldInfo.size * sizeof(Goldilocks::Element));
             }
         } else if(hintFieldVal.operand == opType::custom) {
-            getPolynomial(setupCtx, params.pCustomCommits[hintFieldVal.commitId], hintFieldInfo.values, setupCtx.starkInfo.customCommitsMap[hintFieldVal.commitId][hintFieldVal.id], hintFieldVal.rowOffsetIndex, "custom");
+            getPolynomial(setupCtx, &params.pCustomCommitsFixed[setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[hintFieldVal.commitId].name + "0", false)]], hintFieldInfo.values, setupCtx.starkInfo.customCommitsMap[hintFieldVal.commitId][hintFieldVal.id], hintFieldVal.rowOffsetIndex, "custom");
             if(hintOptions.inverse) {
                 zklog.error("Inverse not supported still for polynomials");
                 exitProcess();
@@ -489,6 +489,8 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
         destStruct.addNumber(hintFieldVal.value, hintFieldOptions.inverse);
     } else if(hintFieldVal.operand == opType::tmp) {
         destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[hintFieldVal.id], hintFieldOptions.inverse);
+    } else if(hintFieldVal.operand == opType::airvalue) {
+        destStruct.addAirValue(setupCtx.starkInfo.airValuesMap[hintFieldVal.id], hintFieldVal.id, hintFieldOptions.inverse);   
     } else {
         zklog.error("Op type " + to_string(hintFieldVal.operand) + "is not considered yet.");
         exitProcess();
@@ -497,6 +499,7 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
 }
 
 void opHintFields(SetupCtx& setupCtx, StepsParams& params, std::vector<Dest> &dests) {
+
 #ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
 #elif defined(__AVX2__)
@@ -509,33 +512,76 @@ void opHintFields(SetupCtx& setupCtx, StepsParams& params, std::vector<Dest> &de
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
 }
 
-uint64_t multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldName1, std::string hintFieldName2,  HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2) {
+void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2) {
     if(setupCtx.expressionsBin.hints.size() == 0) {
         zklog.error("No hints were found.");
         exitProcess();
         exit(-1);
     }
 
-    Hint hint = setupCtx.expressionsBin.hints[hintId];
+    std::vector<Dest> dests;
 
-    auto hintFieldDest = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldNameDest](const HintField& hintField) {
-        return hintField.name == hintFieldNameDest;
-    });
-    HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
+    for(uint64_t i = 0; i < nHints; ++i) {
+        Hint hint = setupCtx.expressionsBin.hints[hintId[i]];
 
-    uint64_t offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
-    Goldilocks::Element *buff = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos];
-    
-    Dest destStruct(buff, offset);
+        std::string hintDest = hintFieldNameDest[i];
+        auto hintFieldDest = std::find_if(hint.fields.begin(), hint.fields.end(), [hintDest](const HintField& hintField) {
+            return hintField.name == hintDest;
+        });
+        HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
-    addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
-    addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
+        Goldilocks::Element *buff;
+        uint64_t offset = 0;
+        uint64_t nRows;
+        if(hintFieldDestVal.operand == opType::cm) {
+            offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
+            buff = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos];
+            nRows = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        } else if (hintFieldDestVal.operand == opType::airvalue) {
+    #ifdef __AVX512__
+        nRows = 8;
+    #elif defined(__AVX2__)
+        nRows = 4;
+    #else
+        nRows = 1;
+    #endif
 
-    std::vector<Dest> dests = {destStruct};
+            buff = new Goldilocks::Element[FIELD_EXTENSION*nRows];
+        } else {
+            zklog.error("Only committed pols and airvalues can be set");
+            exitProcess();
+            exit(-1);
+        }
+
+        Dest destStruct(buff, nRows, offset);
+
+        addHintField(setupCtx, params, hintId[i], destStruct, hintFieldName1[i], hintOptions1[i]);
+        addHintField(setupCtx, params, hintId[i], destStruct, hintFieldName2[i], hintOptions2[i]);
+
+        dests.push_back(destStruct);
+    }
 
     opHintFields(setupCtx, params, dests);
 
-    return hintFieldDestVal.id;
+    for(uint64_t i = 0; i < nHints; ++i) {
+        Hint hint = setupCtx.expressionsBin.hints[hintId[i]];
+
+        std::string hintDest = hintFieldNameDest[i];
+        auto hintFieldDest = std::find_if(hint.fields.begin(), hint.fields.end(), [hintDest](const HintField& hintField) {
+            return hintField.name == hintDest;
+        });
+        HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
+
+        if(hintFieldDestVal.operand == opType::airvalue) {
+            uint64_t pos = 0;
+            uint64_t dim = setupCtx.starkInfo.airValuesMap[hintFieldDestVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
+            for(uint64_t i = 0; i < hintFieldDestVal.id; ++i) {
+                pos += setupCtx.starkInfo.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+            }
+            std::memcpy(&params.airValues[pos], dests[i].dest, dim * sizeof(Goldilocks::Element));
+            delete[] dests[i].dest;
+        }
+    }
 }
 
 void accHintField(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element *pBuffHelper, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName, bool add) {
@@ -553,7 +599,7 @@ void accHintField(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element *
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
     Goldilocks::Element *vals = pBuffHelper;
     
-    Dest destStruct(vals, 0);
+    Dest destStruct(vals, 1 << setupCtx.starkInfo.starkStruct.nBits, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName, hintOptions);
 
     std::vector<Dest> dests = {destStruct};
@@ -602,7 +648,7 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Eleme
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
     Goldilocks::Element *vals = pBuffHelper;
     
-    Dest destStruct(vals, 0);
+    Dest destStruct(vals,  1 << setupCtx.starkInfo.starkStruct.nBits, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
 
@@ -641,7 +687,7 @@ uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t h
 
     Goldilocks::Element vals[3];
     
-    Dest destStruct(vals, 0);
+    Dest destStruct(vals, 1, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
 

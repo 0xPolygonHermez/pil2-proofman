@@ -753,13 +753,14 @@ pub fn mul_hint_fields<F: Field + Field>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
     air_instance: &mut AirInstance<F>,
-    hint_id: usize,
-    hint_field_dest: &str,
-    hint_field_name1: &str,
-    options1: HintFieldOptions,
-    hint_field_name2: &str,
-    options2: HintFieldOptions,
-) -> u64 {
+    n_hints: u64,
+    hint_ids: Vec<u64>,
+    hint_field_dest: Vec<&str>,
+    hint_field_name1: Vec<&str>,
+    mut options1: Vec<HintFieldOptions>,
+    hint_field_name2: Vec<&str>,
+    mut options2: Vec<HintFieldOptions>,
+) {
     let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
     let steps_params = StepsParams {
@@ -774,20 +775,24 @@ pub fn mul_hint_fields<F: Field + Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: setup.get_const_ptr(),
         p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
+
+    let mut hint_options1: Vec<*mut u8> = options1.iter_mut().map(|s| s as *mut HintFieldOptions as *mut u8).collect();
+
+    let mut hint_options2: Vec<*mut u8> = options2.iter_mut().map(|s| s as *mut HintFieldOptions as *mut u8).collect();
 
     mul_hint_fields_c(
         (&setup.p_setup).into(),
         (&steps_params).into(),
-        hint_id as u64,
+        n_hints,
+        hint_ids.as_ptr() as *mut u64,
         hint_field_dest,
         hint_field_name1,
         hint_field_name2,
-        (&options1).into(),
-        (&options2).into(),
-    )
+        hint_options1.as_mut_ptr(),
+        hint_options2.as_mut_ptr(),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -815,8 +820,7 @@ pub fn acc_hint_field<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: setup.get_const_ptr(),
         p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     acc_hint_field_c(
@@ -864,8 +868,7 @@ pub fn acc_mul_hint_fields<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: setup.get_const_ptr(),
         p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     acc_mul_hint_fields_c(
@@ -915,8 +918,7 @@ pub fn update_airgroupvalue<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: setup.get_const_ptr(),
         p_const_tree: setup.get_const_tree_ptr(),
-        custom_commits: air_instance.get_custom_commits_ptr(),
-        custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     update_airgroupvalue_c(
@@ -958,8 +960,7 @@ fn get_hint_f<F: Field>(
             xdivxsub: std::ptr::null_mut(),
             p_const_pols: setup.get_const_ptr(),
             p_const_tree: setup.get_const_tree_ptr(),
-            custom_commits: air_instance.get_custom_commits_ptr(),
-            custom_commits_extended: air_instance.get_custom_commits_extended_ptr(),
+            custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
         }
     } else {
         StepsParams::default()
@@ -1207,8 +1208,7 @@ pub fn set_hint_field<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
-        custom_commits: [std::ptr::null_mut(); 10],
-        custom_commits_extended: [std::ptr::null_mut(); 10],
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
@@ -1241,8 +1241,7 @@ pub fn set_hint_field_val<F: Field>(
         xdivxsub: std::ptr::null_mut(),
         p_const_pols: std::ptr::null_mut(),
         p_const_tree: std::ptr::null_mut(),
-        custom_commits: [std::ptr::null_mut(); 10],
-        custom_commits_extended: [std::ptr::null_mut(); 10],
+        custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
     };
 
     let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);

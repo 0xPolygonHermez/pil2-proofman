@@ -159,6 +159,7 @@ public:
     bool verify = false;
 
     uint64_t mapTotalN;
+    uint64_t mapTotalNCustomCommitsFixed;
     
     /* Constructor */
     StarkInfo(string file, bool verify = false);

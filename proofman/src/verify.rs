@@ -1,6 +1,6 @@
 use p3_field::Field;
 
-use proofman_starks_lib_c::{stark_info_new_c, expressions_bin_new_c, stark_verify_c};
+use proofman_starks_lib_c::{stark_info_new_c, expressions_bin_new_c, stark_verify_c, stark_verify_from_file_c};
 
 use colored::*;
 
@@ -14,6 +14,44 @@ use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use std::os::raw::c_void;
 
 use crate::verify_global_constraints_proof;
+
+pub fn verify_proof_from_file<F: Field>(
+    proof_file: String,
+    stark_info_path: String,
+    expressions_bin_path: String,
+    verkey_path: String,
+    publics: Option<Vec<F>>,
+    proof_values: Option<Vec<F>>,
+    challenges: Option<Vec<F>>,
+) -> bool {
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true);
+    let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+
+    let proof_challenges_ptr = match challenges {
+        Some(ref challenges) => challenges.as_ptr() as *mut u8,
+        None => std::ptr::null_mut(),
+    };
+
+    let publics_ptr = match publics {
+        Some(ref publics) => publics.as_ptr() as *mut u8,
+        None => std::ptr::null_mut(),
+    };
+
+    let proof_values_ptr = match proof_values {
+        Some(ref proof_values) => proof_values.as_ptr() as *mut u8,
+        None => std::ptr::null_mut(),
+    };
+
+    stark_verify_from_file_c(
+        &verkey_path,
+        &proof_file,
+        p_stark_info,
+        p_expressions_bin,
+        publics_ptr,
+        proof_values_ptr,
+        proof_challenges_ptr,
+    )
+}
 
 pub fn verify_proof<F: Field>(
     p_proof: *mut c_void,

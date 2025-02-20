@@ -1,7 +1,4 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Arc};
 
 use rayon::prelude::*;
 
@@ -24,7 +21,7 @@ use crate::{
 };
 
 pub struct StdSum<F: PrimeField> {
-    stage_wc: Option<Mutex<u32>>,
+    stage_wc: Option<u32>,
     _phantom: std::marker::PhantomData<F>,
 }
 
@@ -48,7 +45,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                     // Get the "stage_wc" hint
                     let stage_wc =
                         get_global_hint_field_constant_as::<u32, F>(sctx.clone(), std_sum_users_id[0], "stage_wc");
-                    Some(Mutex::new(stage_wc))
+                    Some(stage_wc)
                 }
             },
             _phantom: std::marker::PhantomData,
@@ -276,7 +273,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
             return;
         }
 
-        if stage == *stage_wc.unwrap().lock().unwrap() {
+        if stage == *stage_wc.unwrap() {
             // Get the number of sum check users and their airgroup and air IDs
             let std_sum_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users")[0];
 
@@ -311,20 +308,25 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     log::debug!("{}: ··· Computing witness for AIR '{}' at stage {}", Self::MY_NAME, air_name, stage);
 
                     let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
+                    let im_airval_hints = get_hint_ids_by_name(p_expressions_bin, "im_airval");
                     let gsum_hints = get_hint_ids_by_name(p_expressions_bin, "gsum_col");
 
-                    // Populate the im columns
-                    for hint in im_hints {
+                    let im_total_hints: Vec<u64> = im_hints.iter().chain(im_airval_hints.iter()).cloned().collect();
+
+                    let n_im_total_hints = im_total_hints.len();
+
+                    if !im_total_hints.is_empty() {
                         mul_hint_fields::<F>(
                             &sctx,
                             &pctx,
                             air_instance,
-                            hint as usize,
-                            "reference",
-                            "numerator",
-                            HintFieldOptions::default(),
-                            "denominator",
-                            HintFieldOptions::inverse(),
+                            im_total_hints.len() as u64,
+                            im_total_hints,
+                            vec!["reference"; n_im_total_hints],
+                            vec!["numerator"; n_im_total_hints],
+                            vec![HintFieldOptions::default(); n_im_total_hints],
+                            vec!["denominator"; n_im_total_hints],
+                            vec![HintFieldOptions::inverse(); n_im_total_hints],
                         );
                     }
 

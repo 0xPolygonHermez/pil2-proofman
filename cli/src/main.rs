@@ -2,6 +2,7 @@ use std::process::exit;
 
 use clap::{Parser, Subcommand};
 mod commands;
+use commands::gen_custom_commits_fixed::GenCustomCommitsFixedCmd;
 use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
 use commands::prove::ProveCmd;
@@ -26,6 +27,7 @@ pub enum Commands {
     VerifyConstraints(VerifyConstraintsCmd),
     VerifyStark(VerifyStark),
     GetConstraints(GetConstraintsCmd),
+    GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
 }
 
 fn main() {
@@ -39,6 +41,7 @@ fn main() {
         Commands::Prove(args) => args.run(),
         Commands::PilHelpers(args) => args.run(),
         Commands::VerifyConstraints(args) => args.run(),
+        Commands::GenCustomCommitsFixed(args) => args.run(),
         Commands::GetConstraints(args) => args.run(),
         Commands::VerifyStark(args) => args.run(),
     };

@@ -79,7 +79,7 @@ struct StdDebugMode {
     #[serde(default)]
     opids: Option<Vec<u64>>,
     #[serde(default)]
-    n_print: Option<usize>,
+    n_vals: Option<usize>,
     #[serde(default)]
     print_to_file: bool,
     #[serde(default = "default_fast_mode")]
@@ -215,7 +215,7 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         StdMode::new(
             ModeName::Debug,
             mode.opids.unwrap_or_default(),
-            mode.n_print.unwrap_or(DEFAULT_PRINT_VALS),
+            mode.n_vals.unwrap_or(DEFAULT_PRINT_VALS),
             mode.print_to_file,
             fast_mode,
         )

@@ -36,8 +36,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         xDivXSub : nullptr,
         pConstPolsAddress: pConstPols,
         pConstPolsExtendedTreeAddress: pConstTree,
-        pCustomCommits:  {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
-        pCustomCommitsExtended:  {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr},
+        pCustomCommitsFixed:  nullptr,
     };
 
     //--------------------------------
@@ -88,7 +87,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
     uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
 
-    Dest destStruct(res);
+    Dest destStruct(res, N);
     destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[numFieldId]);
     destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[denFieldId], true);
     std::vector<Dest> dests = {destStruct};
