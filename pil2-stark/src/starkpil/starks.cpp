@@ -77,6 +77,12 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
 
     NTT_Goldilocks ntt(N);
     treesGL[step - 1]->setSource(pBuffExtended);
+    if (setupCtx.starkInfo.starkStruct.verificationHashType == "GL")
+    {
+        Goldilocks::Element *pBuffNodesGL = &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)]];
+        ElementType *pBuffNodes = (ElementType *)pBuffNodesGL;
+        treesGL[step - 1]->setNodes(pBuffNodes);
+    }
 
 #ifdef __USE_CUDA__
     // Aqui falta definir l'id de la device
@@ -98,13 +104,6 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
         ntt.extendPol(pBuffExtended, pBuff, NExtended, N, nCols);
     }
 
-    treesGL[step - 1]->setSource(pBuffExtended);
-    if (setupCtx.starkInfo.starkStruct.verificationHashType == "GL")
-    {
-        Goldilocks::Element *pBuffNodesGL = &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)]];
-        ElementType *pBuffNodes = (ElementType *)pBuffNodesGL;
-        treesGL[step - 1]->setNodes(pBuffNodes);
-    }
     treesGL[step - 1]->merkelize();
 #endif
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
