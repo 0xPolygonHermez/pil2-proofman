@@ -24,8 +24,8 @@ pub struct ProveCmd {
     /// ROM file path
     /// This is the path to the ROM file that the witness computation dynamic library will use
     /// to generate the witness.
-    #[clap(short, long)]
-    pub rom: Option<PathBuf>,
+    #[clap(short = 'e', long)]
+    pub elf: Option<PathBuf>,
 
     /// Inputs path
     #[clap(short = 'i', long)]
@@ -36,7 +36,7 @@ pub struct ProveCmd {
     pub public_inputs: Option<PathBuf>,
 
     /// Setup folder path
-    #[clap(long)]
+    #[clap(short = 'k', long)]
     pub proving_key: PathBuf,
 
     /// Output dir path
@@ -52,7 +52,7 @@ pub struct ProveCmd {
     #[clap(short = 'f', long, default_value_t = false)]
     pub final_snark: bool,
 
-    #[clap(short = 'k', long, default_value_t = false)]
+    #[clap(short = 'y', long, default_value_t = false)]
     pub verify_proofs: bool,
 
     /// Verbosity (-v, -vv)
@@ -108,7 +108,7 @@ impl ProveCmd {
             match self.field {
                 Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
                     self.witness_lib.clone(),
-                    self.rom.clone(),
+                    self.elf.clone(),
                     self.public_inputs.clone(),
                     self.input_data.clone(),
                     self.proving_key.clone(),
@@ -128,7 +128,7 @@ impl ProveCmd {
             match self.field {
                 Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
                     self.witness_lib.clone(),
-                    self.rom.clone(),
+                    self.elf.clone(),
                     self.public_inputs.clone(),
                     self.input_data.clone(),
                     self.proving_key.clone(),

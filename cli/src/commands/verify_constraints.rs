@@ -21,8 +21,8 @@ pub struct VerifyConstraintsCmd {
     /// ROM file path
     /// This is the path to the ROM file that the witness computation dynamic library will use
     /// to generate the witness.
-    #[clap(short, long)]
-    pub rom: Option<PathBuf>,
+    #[clap(short = 'e', long)]
+    pub elf: Option<PathBuf>,
 
     /// Inputs path
     #[clap(short = 'i', long)]
@@ -33,7 +33,7 @@ pub struct VerifyConstraintsCmd {
     pub public_inputs: Option<PathBuf>,
 
     /// Setup folder path
-    #[clap(long)]
+    #[clap(short = 'k', long)]
     pub proving_key: PathBuf,
 
     #[clap(long, default_value_t = Field::Goldilocks)]
@@ -75,7 +75,7 @@ impl VerifyConstraintsCmd {
         match self.field {
             Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
                 self.witness_lib.clone(),
-                self.rom.clone(),
+                self.elf.clone(),
                 self.public_inputs.clone(),
                 self.input_data.clone(),
                 self.proving_key.clone(),
