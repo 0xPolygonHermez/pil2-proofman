@@ -10,7 +10,6 @@ pilout = { path = "../pilout" }
 proofman-util = { path = "../util" }
 proofman = { path = "../proofman" }
 proofman-common = { path = "../common" }
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 witness = { path = "../witness" }
 blake3 = "1.3.1"
 

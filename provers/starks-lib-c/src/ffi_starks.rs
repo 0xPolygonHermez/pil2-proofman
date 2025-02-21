@@ -1228,6 +1228,35 @@ pub fn stark_verify_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn stark_verify_from_file_c(
+    verkey: &str,
+    proof: &str,
+    p_stark_info: *mut c_void,
+    p_expressions_bin: *mut c_void,
+    p_publics: *mut u8,
+    p_proof_values: *mut u8,
+    p_challenges: *mut u8,
+) -> bool {
+    let verkey_file = CString::new(verkey).unwrap();
+    let verkey_file_ptr = verkey_file.as_ptr() as *mut std::os::raw::c_char;
+
+    let proof_file = CString::new(proof).unwrap();
+    let proof_file_ptr = proof_file.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        stark_verify_from_file(
+            proof_file_ptr,
+            p_stark_info,
+            p_expressions_bin,
+            verkey_file_ptr,
+            p_publics as *mut c_void,
+            p_proof_values as *mut c_void,
+            p_challenges as *mut c_void,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn save_file_c(p_buffer: *mut u8, buffer_size: u64, p_publics: *mut u8, publics_size: u64, file_name: &str) {
     let file = CString::new(file_name).unwrap();
     let file_ptr = file.as_ptr() as *mut std::os::raw::c_char;
@@ -2104,6 +2133,24 @@ pub fn stark_verify_c(
     _p_challenges: *mut u8,
 ) -> bool {
     trace!("{}: ··· {}", "ffi     ", "stark_verify_c: This is a mock call because there is no linked library");
+    true
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn stark_verify_from_file_c(
+    _verkey: &str,
+    _proof: &str,
+    _p_stark_info: *mut c_void,
+    _p_expressions_bin: *mut c_void,
+    _p_publics: *mut u8,
+    _p_proof_values: *mut u8,
+    _p_challenges: *mut u8,
+) -> bool {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "stark_verify_from_file_c: This is a mock call because there is no linked library"
+    );
     true
 }
 

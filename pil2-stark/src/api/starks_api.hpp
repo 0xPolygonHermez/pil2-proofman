@@ -162,6 +162,7 @@
     // Stark Verify
     // =================================================================================
     bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
+    bool stark_verify_from_file(char *proof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
 
     // Debug circom
     // =================================================================================
