@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 /// Computes the intermediate polynomials and their degrees.
-pub fn calculate_im_pols(expressions: &mut [Value], exp: &mut Value, max_deg: i64) -> (Vec<usize>, i64) {
+pub fn calculate_im_pols(expressions: &mut [Value], exp: &mut Value, max_deg: usize) -> (Vec<usize>, usize) {
     let absolute_max = max_deg;
     println!("Absolute max degree: {}", absolute_max);
 
@@ -23,9 +23,9 @@ fn _calculate_im_pols(
     expressions: &mut [Value],
     exp: &mut Value,
     im_pols: &mut Vec<usize>,
-    max_deg: i64,
-    absolute_max: i64,
-) -> (Option<Vec<usize>>, i64) {
+    max_deg: usize,
+    absolute_max: usize,
+) -> (Option<Vec<usize>>, usize) {
     if exp.get("op").is_none() {
         return (Some(im_pols.clone()), 0); // Constants/leaves are degree 0
     }
@@ -41,7 +41,7 @@ fn _calculate_im_pols(
                         im_pols.extend(new_pols);
                         max_d = max_d.max(d);
                     } else {
-                        return (None, -1); // Propagate failure
+                        return (None, 0); // Propagate failure
                     }
                 }
             }
@@ -49,10 +49,10 @@ fn _calculate_im_pols(
         }
 
         "mul" => {
-            let max_deg_here = exp["expDeg"].as_i64().unwrap_or(0);
+            let max_deg_here = exp["expDeg"].as_u64().unwrap_or(0) as usize;
             if let Some(values) = exp["values"].as_array_mut() {
                 if values.len() < 2 {
-                    return (None, -1); // Invalid structure
+                    return (None, 0); // Invalid structure
                 }
                 let (left, right) = {
                     let (left, rest) = values.split_at_mut(1);
@@ -77,7 +77,7 @@ fn _calculate_im_pols(
                 }
 
                 let mut best_pols: Option<Vec<usize>> = None;
-                let mut best_degree = -1;
+                let mut best_degree = None;
 
                 for l in 0..=max_deg {
                     let r = max_deg - l;
@@ -88,24 +88,24 @@ fn _calculate_im_pols(
                             let total_degree = d1 + d2;
                             if best_pols.is_none() || e2.len() < best_pols.as_ref().unwrap().len() {
                                 best_pols = Some(e2.clone());
-                                best_degree = total_degree;
+                                best_degree = Some(total_degree);
                             }
                             if e2.len() == im_pols.len() {
-                                return (Some(e2), best_degree); // Can't do better
+                                return (Some(e2), best_degree.unwrap_or(0)); // Can't do better
                             }
                         }
                     }
                 }
 
-                (best_pols, best_degree)
+                (best_pols, best_degree.unwrap_or(0))
             } else {
-                (None, -1)
+                (None, 0)
             }
         }
 
         "exp" => {
             if max_deg < 1 {
-                return (None, -1); // Can't proceed if degree is less than 1
+                return (None, 0); // Can't proceed if degree is less than 1
             }
 
             let exp_id = exp["id"].as_u64().unwrap() as usize;
@@ -120,7 +120,7 @@ fn _calculate_im_pols(
                 .and_then(|sub| sub.get(&serde_json::to_string(&im_pols).unwrap()))
             {
                 let e = res[0].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
-                let d = res[1].as_i64().unwrap();
+                let d = res[1].as_u64().unwrap() as usize;
                 (Some(e), d)
             } else {
                 let e_result = {
@@ -156,7 +156,7 @@ fn _calculate_im_pols(
                 }
             }
 
-            (None, -1)
+            (None, 0)
         }
 
         _ => {
@@ -164,7 +164,7 @@ fn _calculate_im_pols(
             if exp_deg == 0 {
                 return (Some(im_pols.clone()), 0);
             } else if max_deg < 1 {
-                return (None, -1);
+                return (None, 0);
             } else {
                 return (Some(im_pols.clone()), 1);
             }
@@ -173,12 +173,20 @@ fn _calculate_im_pols(
 }
 
 /// Computes the number of added columns in the base field.
-pub fn calculate_added_cols(max_deg: i64, expressions: &[Value], im_exps: &[usize], q_deg: i64, q_dim: i64) -> i64 {
+pub fn calculate_added_cols(
+    max_deg: usize,
+    expressions: &[Value],
+    im_exps: &[usize],
+    q_deg: usize,
+    q_dim: usize,
+) -> usize {
     let q_cols = std::cmp::max(q_deg, 0) * q_dim; // Clamp q_deg to zero if negative
     let mut im_cols = 0;
 
     for &index in im_exps {
-        if let Some(dim) = expressions.get(index).and_then(|exp| exp.get("dim")).and_then(|d| d.as_i64()) {
+        if let Some(dim) =
+            expressions.get(index).and_then(|exp| exp.get("dim")).and_then(|d| Some(d.as_u64().unwrap() as usize))
+        {
             im_cols += dim;
         }
     }
@@ -200,10 +208,10 @@ pub fn calculate_added_cols(max_deg: i64, expressions: &[Value], im_exps: &[usiz
 pub fn calculate_intermediate_polynomials(
     expressions: &mut [Value],
     c_exp_id: usize,
-    max_q_deg: i64,
-    q_dim: i64,
+    max_q_deg: usize,
+    q_dim: usize,
 ) -> Value {
-    let mut d = 2;
+    let mut d: usize = 2;
 
     println!("-------------------- POSSIBLE DEGREES ----------------------");
     println!(

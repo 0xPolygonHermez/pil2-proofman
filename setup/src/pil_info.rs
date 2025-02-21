@@ -62,7 +62,7 @@ pub async fn pil_info(
                 &mut expressions,
                 res["cExpId"].as_u64().unwrap() as usize,
                 max_deg,
-                res["qDim"].as_i64().unwrap(),
+                res["qDim"].as_u64().unwrap() as usize,
             );
         }
         let im_exps: Vec<usize> =
