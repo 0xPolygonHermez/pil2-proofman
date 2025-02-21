@@ -8,6 +8,9 @@ use std::fs::File;
 use std::fmt::Write;
 use std::io::Read;
 use std::error::Error;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
 use p3_field::AbstractField;
@@ -94,10 +97,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         pctx.set_global_challenge(2, global_challenge.to_vec());
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
-        let mut valid_constraints = true;
+        let valid_constraints = Arc::new(AtomicBool::new(true));
 
         let instances = pctx.dctx_get_instances();
-        let mut airgroup_values_air_instances = Vec::new();
+        let airgroup_values_air_instances = Arc::new(Mutex::new(Vec::new()));
+
+        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+
         for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
             let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
             let (skip, _) = skip_prover_instance(&pctx, instance_id);
@@ -110,11 +116,16 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             wcm.calculate_witness(1, &[instance_id]);
 
+            timer_stop_and_log_info!(GENERATING_WITNESS);
+
+            // Ensure the previous Merkelization is done before continuing
+            if let Some(handle) = merkelize_handle.take() {
+                handle.join().unwrap();
+            }
+
             if !pctx.dctx_is_my_instance(instance_id) {
                 continue;
             }
-
-            timer_stop_and_log_info!(GENERATING_WITNESS);
 
             Self::initialize_air_instance(pctx.clone(), sctx.clone(), instance_id, true);
 
@@ -126,21 +137,39 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 }
             }
 
-            wcm.calculate_witness(2, &[instance_id]);
-            Self::calculate_im_pols(2, sctx.clone(), pctx.clone(), instance_id);
+            let wcm_cloned = wcm.clone();
+            let pctx_cloned = pctx.clone();
+            let sctx_cloned = sctx.clone();
+            let valid_constraints_cloned = valid_constraints.clone();
+            let airgroup_values_air_instances_cloned = airgroup_values_air_instances.clone();
 
-            wcm.debug(&[instance_id]);
+            let verify_constraints = pctx.options.verify_constraints;
+            
+            let airgroup_id2 = *airgroup_id;
+            let air_id2 = *air_id;
+            let air_instance_id2 = air_instance_id;
+            
+            merkelize_handle = Some(std::thread::spawn(move || {
+                wcm_cloned.calculate_witness(2, &[instance_id]);
+                Self::calculate_im_pols(2, sctx_cloned.clone(), pctx_cloned.clone(), instance_id);
 
-            if pctx.options.verify_constraints {
-                valid_constraints = verify_constraints_proof(pctx.clone(), sctx.clone(), instance_id);
-            }
+                wcm_cloned.debug(&[instance_id]);
 
-            airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
-                *airgroup_id,
-                *air_id,
-                air_instance_id,
-            ));
-            pctx.free_instance(instance_id);
+                if verify_constraints {
+                    let valid = verify_constraints_proof(pctx_cloned.clone(), sctx_cloned, instance_id);
+                    valid_constraints_cloned.fetch_and(valid, Ordering::Relaxed);
+                }
+
+                airgroup_values_air_instances_cloned
+                    .lock()
+                    .unwrap()
+                    .push(pctx_cloned.get_air_instance_airgroup_values(airgroup_id2, air_id2, air_instance_id2));
+                pctx_cloned.free_instance(instance_id);
+            }));
+        }
+
+        if let Some(handle) = merkelize_handle {
+            handle.join().unwrap();
         }
 
         wcm.end();
@@ -149,6 +178,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             || !pctx.options.debug_info.debug_global_instances.is_empty();
 
         if check_global_constraints {
+            let airgroup_values_air_instances =
+                Arc::try_unwrap(airgroup_values_air_instances).unwrap().into_inner().unwrap();
             let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone(), airgroup_values_air_instances);
             let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
 
@@ -156,7 +187,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let valid_global_constraints =
                     verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
 
-                if valid_constraints && valid_global_constraints.is_ok() {
+                if valid_constraints.load(Ordering::Relaxed) && valid_global_constraints.is_ok() {
                     return Ok(());
                 } else {
                     return Err("Constraints were not verified".into());
