@@ -118,7 +118,7 @@ pub fn generate_constraint_polynomial(
         ("id".to_string(), json!(xi_id)),
     ]));
 
-    let initial_q_degree = calculate_exp_deg(expressions, c_exp_id, &[], false);
+    let initial_q_degree = calculate_exp_deg(expressions, c_exp_id, &[]);
 
     println!("The maximum constraint degree is {} (without intermediate polynomials)", initial_q_degree);
 }

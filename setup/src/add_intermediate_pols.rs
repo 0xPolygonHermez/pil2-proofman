@@ -198,12 +198,7 @@ pub fn add_intermediate_polynomials(
 
     let vc = e.challenge("std_vc", stage, 3, 0, vc_id);
 
-    let max_deg_expr = calculate_exp_deg(
-        expressions,
-        res["cExpId"].as_u64().unwrap_or(0) as usize,
-        im_exps,
-        false, // cache_values
-    );
+    let max_deg_expr = calculate_exp_deg(expressions, res["cExpId"].as_u64().unwrap_or(0) as usize, im_exps);
 
     if max_deg_expr as i64 > q_deg + 1 {
         panic!(
@@ -213,7 +208,7 @@ pub fn add_intermediate_polynomials(
     }
 
     for &exp_id in im_exps {
-        let im_pol_deg = calculate_exp_deg(expressions, exp_id, im_exps, false);
+        let im_pol_deg = calculate_exp_deg(expressions, exp_id, im_exps);
         if im_pol_deg as i64 > q_deg + 1 {
             panic!(
                 "Intermediate polynomial with id: {} has a higher degree ({}) than the maximum allowed degree ({})",
@@ -298,124 +293,114 @@ pub fn add_intermediate_polynomials(
     }
 }
 
-use std::collections::HashSet;
-
-/// Public function: Keeps the existing API
-pub fn calculate_exp_deg(expressions: &mut [Value], exp_id: usize, im_exps: &[usize], cache_values: bool) -> usize {
-    let mut visited = HashSet::new();
-    calculate_exp_deg_helper(expressions, exp_id, im_exps, cache_values, &mut visited)
+pub fn calculate_exp_deg(expressions: &mut [Value], exp_id: usize, im_exps: &[usize]) -> usize {
+    let mut cache = HashMap::new();
+    calculate_exp_deg_recursive(expressions, exp_id, im_exps, &mut cache)
 }
 
-/// Recursive helper function: Does the actual work
-fn calculate_exp_deg_helper(
+/*
+module.exports.calculateExpDeg = function calculateExpDeg(expressions, exp, imExps = [], cacheValues = false) {
+    if(cacheValues && exp.degree_) return exp.degree_;
+    if (exp.op == "exp") {
+        if (imExps.includes(exp.id)) return 1;
+        let deg = calculateExpDeg(expressions, expressions[exp.id], imExps, cacheValues);
+        if(cacheValues) exp.degree_= deg;
+        return deg;
+    } else if (["x", "const", "cm", "custom"].includes(exp.op) || (exp.op === "Zi" && exp.boundary !== "everyRow")) {
+        return 1;
+    } else if (["number", "public", "challenge", "eval", "airgroupvalue", "airvalue", "proofvalue"].includes(exp.op) || (exp.op === "Zi" && exp.boundary === "everyRow")) {
+        return 0;
+    } else if(exp.op === "neg") {
+        return calculateExpDeg(expressions, exp.values[0], imExps, cacheValues);
+    } else if(["add", "sub", "mul"].includes(exp.op)) {
+        const lhsDeg = calculateExpDeg(expressions, exp.values[0], imExps, cacheValues);
+        const rhsDeg = calculateExpDeg(expressions, exp.values[1], imExps, cacheValues);
+        let deg = exp.op === "mul" ? lhsDeg + rhsDeg : Math.max(lhsDeg, rhsDeg);
+        if(cacheValues) exp.degree_= deg;
+        return deg;
+    } else {
+        throw new Error("Exp op not defined: "+ exp.op);
+    }
+}
+*/
+
+/// Calculates the degree of an expression recursively and caches results.
+pub fn calculate_exp_deg_recursive(
     expressions: &mut [Value],
     exp_id: usize,
     im_exps: &[usize],
-    cache_values: bool,
-    visited: &mut HashSet<usize>,
+    cache: &mut HashMap<usize, usize>,
 ) -> usize {
-    if visited.contains(&exp_id) {
-        println!("⚠️ Possible cycle detected at exp_id {}. Returning 1 instead of 0.", exp_id);
-        return 1;
+    println!("Calculating degree for expression: {}", exp_id);
+    println!("expression: {:?}", expressions[exp_id]);
+    // Check the cache first
+    if let Some(degree) = cache.get(&exp_id) {
+        return *degree;
     }
 
-    visited.insert(exp_id);
-    println!("🔍 Entering calculate_exp_deg for exp_id: {}", exp_id);
-
-    // Clone the expression to avoid borrowing issues
+    // Fetch the expression
     let exp = expressions.get(exp_id).expect("Invalid exp_id index").clone();
-    println!("📜 Processing exp_id {}: {:?}", exp_id, exp);
 
-    if cache_values {
-        if let Some(degree) = exp.get("degree_").and_then(|v| v.as_u64()) {
-            println!("✅ Using cached degree {} for exp_id {}", degree, exp_id);
-            visited.remove(&exp_id);
-            return degree as usize;
-        }
-    }
-
-    let deg = match exp.get("op").and_then(|v| v.as_str()) {
-        Some("exp") => {
-            let id = exp.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            println!("🌀 Recursing into 'exp' op for id {}", id);
-            if im_exps.contains(&id) {
-                println!("✅ id {} found in im_exps, returning 1", id);
-                1
-            } else {
-                calculate_exp_deg_helper(expressions, id, im_exps, cache_values, visited)
-            }
-        }
-        Some("x") | Some("const") | Some("cm") | Some("custom") => {
-            println!("📌 Returning 1 for constant-like op: {}", exp["op"]);
-            1
-        }
-        Some("Zi") => {
-            if exp.get("boundary") == Some(&json!("everyRow")) {
-                println!("📌 Returning 0 for 'Zi' op with 'everyRow' boundary");
-                0
-            } else {
-                println!("📌 Returning 1 for 'Zi' op with other boundary");
-                1
-            }
-        }
-        Some("number")
-        | Some("public")
-        | Some("challenge")
-        | Some("eval")
-        | Some("airgroupvalue")
-        | Some("airvalue") => {
-            println!("📌 Returning 0 for known zero-degree op: {}", exp["op"]);
-            0
-        }
-        Some("neg") => {
-            if let Some(values) = exp.get("values").and_then(|v| v.as_array()) {
-                if let Some(first) = values.first() {
-                    let id = first.get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    println!("🌀 Recursing into 'neg' op for id {}", id);
-                    calculate_exp_deg_helper(expressions, id, im_exps, cache_values, visited)
+    // Match on the operation type
+    if let Some(op) = exp.get("op").and_then(|v| v.as_str()) {
+        let degree = match op {
+            "exp" => {
+                let id = exp.get("id").and_then(|v| v.as_u64()).unwrap() as usize;
+                if im_exps.contains(&id) {
+                    1
                 } else {
-                    println!("⚠️ 'neg' op missing values, returning 0");
-                    0
+                    calculate_exp_deg_recursive(expressions, id, im_exps, cache)
                 }
-            } else {
-                println!("⚠️ 'neg' op has no values array, returning 0");
-                0
             }
-        }
-        Some("add") | Some("sub") | Some("mul") => {
-            let empty_vec = vec![]; // Fix borrowing issue
-            let values = exp.get("values").and_then(|v| v.as_array()).unwrap_or(&empty_vec);
-
-            if values.len() < 2 {
-                println!("⚠️ Binary op '{}' missing operands, returning 0", exp["op"]);
-                return 0;
+            "x" | "const" | "cm" | "custom" => 1,
+            "Zi" => {
+                if exp.get("boundary") == Some(&json!("everyRow")) {
+                    0
+                } else {
+                    1
+                }
             }
-
-            let lhs_id = values[0].get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            let rhs_id = values[1].get("id").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-
-            println!("🌀 Processing '{}' op: exp_id={} -> lhs_id={}, rhs_id={}", exp["op"], exp_id, lhs_id, rhs_id);
-
-            let lhs_deg = calculate_exp_deg_helper(expressions, lhs_id, im_exps, cache_values, visited);
-            let rhs_deg = calculate_exp_deg_helper(expressions, rhs_id, im_exps, cache_values, visited);
-
-            if exp["op"] == "mul" {
-                println!("📌 Returning {} + {} for 'mul' op", lhs_deg, rhs_deg);
-                lhs_deg + rhs_deg
-            } else {
-                println!("📌 Returning max({}, {}) for '{}' op", lhs_deg, rhs_deg, exp["op"]);
-                lhs_deg.max(rhs_deg)
+            "number" | "public" | "challenge" | "eval" | "airgroupvalue" | "airvalue" | "proofvalue" => 0,
+            "neg" => {
+                if let Some(values) = exp.get("values").and_then(|v| v.as_array()) {
+                    if let Some(first) = values.first() {
+                        let id = first.get("id").and_then(|v| v.as_u64()).unwrap() as usize;
+                        calculate_exp_deg_recursive(expressions, id, im_exps, cache)
+                    } else {
+                        panic!("'neg' op missing values");
+                    }
+                } else {
+                    panic!("'neg' op has no values array");
+                }
             }
-        }
-        _ => panic!("❌ Exp op not defined: {:?}", exp),
-    };
+            "add" | "sub" | "mul" => {
+                let empty = vec![];
+                let values = exp.get("values").and_then(|v| v.as_array()).unwrap_or(&empty);
+                if values.len() < 2 {
+                    panic!("Binary op '{}' missing operands", op);
+                }
 
-    if cache_values {
-        println!("📝 Caching degree {} for exp_id {}", deg, exp_id);
-        expressions[exp_id]["degree_"] = json!(deg);
+                println!("values[0]: {:#?}", values[0]);
+                let lhs_id = values[0].get("id").and_then(|v| v.as_u64()).unwrap() as usize;
+                let rhs_id = values[1].get("id").and_then(|v| v.as_u64()).unwrap() as usize;
+
+                let lhs_deg = calculate_exp_deg_recursive(expressions, lhs_id, im_exps, cache);
+                let rhs_deg = calculate_exp_deg_recursive(expressions, rhs_id, im_exps, cache);
+
+                if op == "mul" {
+                    lhs_deg + rhs_deg
+                } else {
+                    lhs_deg.max(rhs_deg)
+                }
+            }
+            _ => panic!("Exp op not defined: {}", op),
+        };
+
+        // Cache the computed degree
+        cache.insert(exp_id, degree);
+
+        degree
+    } else {
+        panic!("Expression missing 'op' field: {:?}", exp);
     }
-
-    visited.remove(&exp_id);
-    println!("✅ Leaving calculate_exp_deg for exp_id {} with degree {}", exp_id, deg);
-    deg
 }

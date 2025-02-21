@@ -3,28 +3,28 @@ use serde_json::{json, Value};
 /// Computes the intermediate polynomials and their degrees.
 pub fn calculate_im_pols(expressions: &mut [Value], exp: &mut Value, max_deg: i64) -> (Vec<usize>, i64) {
     let absolute_max = max_deg;
-    let mut abs_max_d = 0;
+    println!("Absolute max degree: {}", absolute_max);
 
     let mut im_pols = vec![];
 
-    let (im_pols_opt, degree) =
-        _calculate_im_pols(expressions, exp, &mut im_pols, max_deg, absolute_max, &mut abs_max_d);
+    // Remove abs_max_d to match JS behavior
+    let (im_pols_opt, degree) = _calculate_im_pols(expressions, exp, &mut im_pols, max_deg, absolute_max);
 
     let im_pols = im_pols_opt.unwrap_or_else(|| vec![]);
 
-    // Adjust the polynomial degree by subtracting 1, replicating JS behavior
-    let adjusted_degree = std::cmp::max(degree, abs_max_d) - 1;
+    // Adjust the polynomial degree by subtracting 1, matching JS behavior
+    let adjusted_degree = std::cmp::max(degree, 0) - 1;
 
     (im_pols, adjusted_degree)
 }
 
+/// Internal recursive function to compute intermediate polynomials.
 fn _calculate_im_pols(
     expressions: &mut [Value],
     exp: &mut Value,
-    im_pols: &mut Vec<usize>, // Continue using mutable reference
+    im_pols: &mut Vec<usize>,
     max_deg: i64,
     absolute_max: i64,
-    abs_max_d: &mut i64,
 ) -> (Option<Vec<usize>>, i64) {
     if exp.get("op").is_none() {
         return (Some(im_pols.clone()), 0); // Constants/leaves are degree 0
@@ -36,9 +36,9 @@ fn _calculate_im_pols(
 
             if let Some(values) = exp["values"].as_array_mut() {
                 for e in values {
-                    let (new_pols_opt, d) =
-                        _calculate_im_pols(expressions, e, im_pols, max_deg, absolute_max, abs_max_d);
+                    let (new_pols_opt, d) = _calculate_im_pols(expressions, e, im_pols, max_deg, absolute_max);
                     if let Some(new_pols) = new_pols_opt {
+                        im_pols.extend(new_pols);
                         max_d = max_d.max(d);
                     } else {
                         return (None, -1); // Propagate failure
@@ -63,13 +63,13 @@ fn _calculate_im_pols(
                 if !["add", "mul", "sub", "exp"].contains(&left["op"].as_str().unwrap_or(""))
                     && left["expDeg"].as_i64().unwrap_or(0) == 0
                 {
-                    return _calculate_im_pols(expressions, right, im_pols, max_deg, absolute_max, abs_max_d);
+                    return _calculate_im_pols(expressions, right, im_pols, max_deg, absolute_max);
                 }
 
                 if !["add", "mul", "sub", "exp"].contains(&right["op"].as_str().unwrap_or(""))
                     && right["expDeg"].as_i64().unwrap_or(0) == 0
                 {
-                    return _calculate_im_pols(expressions, left, im_pols, max_deg, absolute_max, abs_max_d);
+                    return _calculate_im_pols(expressions, left, im_pols, max_deg, absolute_max);
                 }
 
                 if max_deg_here <= max_deg {
@@ -81,16 +81,15 @@ fn _calculate_im_pols(
 
                 for l in 0..=max_deg {
                     let r = max_deg - l;
-                    let (e1_opt, d1) = _calculate_im_pols(expressions, left, im_pols, l, absolute_max, abs_max_d);
-                    if let Some(e1) = e1_opt {
-                        let (e2_opt, d2) =
-                            _calculate_im_pols(expressions, right, &mut e1.clone(), r, absolute_max, abs_max_d);
+                    let (e1_opt, d1) = _calculate_im_pols(expressions, left, im_pols, l, absolute_max);
+                    if let Some(mut e1) = e1_opt {
+                        let (e2_opt, d2) = _calculate_im_pols(expressions, right, &mut e1, r, absolute_max);
                         if let Some(e2) = e2_opt {
+                            let total_degree = d1 + d2;
                             if best_pols.is_none() || e2.len() < best_pols.as_ref().unwrap().len() {
                                 best_pols = Some(e2.clone());
-                                best_degree = d1 + d2;
+                                best_degree = total_degree;
                             }
-
                             if e2.len() == im_pols.len() {
                                 return (Some(e2), best_degree); // Can't do better
                             }
@@ -114,6 +113,7 @@ fn _calculate_im_pols(
                 return (Some(im_pols.clone()), 1); // Already processed
             }
 
+            // Check cached results
             let (e_opt, d) = if let Some(res) = exp
                 .get("res")
                 .and_then(|res| res.get(absolute_max.to_string()))
@@ -123,11 +123,11 @@ fn _calculate_im_pols(
                 let d = res[1].as_i64().unwrap();
                 (Some(e), d)
             } else {
-                // Scoped mutable borrow for expressions[exp_id]
                 let e_result = {
                     let mut exp_at_id = expressions[exp_id].clone();
                     let exp_ref = &mut exp_at_id;
-                    let res = _calculate_im_pols(expressions, exp_ref, im_pols, absolute_max, absolute_max, abs_max_d);
+                    let res = _calculate_im_pols(expressions, exp_ref, im_pols, absolute_max, absolute_max);
+
                     expressions[exp_id] = exp_at_id;
                     res
                 };
@@ -135,15 +135,12 @@ fn _calculate_im_pols(
             };
 
             if let Some(e) = e_opt {
-                if d > max_deg {
-                    if d > *abs_max_d {
-                        *abs_max_d = d;
-                    }
+                if d >= max_deg {
                     let mut new_pols = e.clone();
-                    new_pols.push(exp_id);
-                    im_pols.extend(new_pols.clone());
-                    return (Some(new_pols), 1);
+                    new_pols.push(exp_id); // Add current exp_id as intermediate poly
+                    return (Some(new_pols), 1); // Force degree to 1
                 } else {
+                    // Caching logic
                     if exp.get("res").is_none() {
                         exp.as_object_mut().unwrap().insert("res".to_string(), serde_json::json!({}));
                     }
