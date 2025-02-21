@@ -30,7 +30,7 @@ pub struct MaxSizes {
 }
 
 pub fn wait_for_keyword(keyword: &str) {
-    let mut input = String::new();
+    //let mut input = String::new();
     /*loop {
         print!("Type '{}' to continue: ", keyword);
         io::stdout().flush().unwrap(); // Ensure the prompt is printed immediately
