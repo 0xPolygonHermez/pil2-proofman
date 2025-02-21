@@ -5,7 +5,10 @@ pub fn calculate_im_pols(expressions: &mut [Value], exp: &mut Value, max_deg: i6
     let absolute_max = max_deg;
     let mut abs_max_d = 0;
 
-    let (im_pols_opt, degree) = _calculate_im_pols(expressions, exp, vec![], max_deg, absolute_max, &mut abs_max_d);
+    let mut im_pols = vec![];
+
+    let (im_pols_opt, degree) =
+        _calculate_im_pols(expressions, exp, &mut im_pols, max_deg, absolute_max, &mut abs_max_d);
 
     let im_pols = im_pols_opt.unwrap_or_else(|| vec![]);
 
@@ -19,37 +22,36 @@ pub fn calculate_im_pols(expressions: &mut [Value], exp: &mut Value, max_deg: i6
 fn _calculate_im_pols(
     expressions: &mut [Value],
     exp: &mut Value,
-    im_pols: Vec<usize>,
+    im_pols: &mut Vec<usize>,
     max_deg: i64,
     absolute_max: i64,
     abs_max_d: &mut i64,
 ) -> (Option<Vec<usize>>, i64) {
-    println!("Visiting node: {:?}", exp);
-    println!("Current max_deg: {}, absolute_max: {}", max_deg, absolute_max);
-    println!("Intermediate polynomials so far: {:?}", im_pols);
+    //println!("Visiting node: {:?}", exp);
+    //println!("Current max_deg: {}, absolute_max: {}", max_deg, absolute_max);
+    //println!("Intermediate polynomials so far: {:?}", im_pols);
 
     if exp.get("op").is_none() {
-        return (Some(im_pols), 0); // Constants/leaves are degree 0
+        return (Some(im_pols.clone()), 0); // Constants/leaves are degree 0
     }
 
     match exp["op"].as_str().unwrap() {
         "add" | "sub" => {
             let mut max_d = 0;
-            let mut updated_pols = im_pols.clone();
 
             if let Some(values) = exp["values"].as_array_mut() {
                 for e in values {
                     let (new_pols_opt, d) =
-                        _calculate_im_pols(expressions, e, updated_pols.clone(), max_deg, absolute_max, abs_max_d);
+                        _calculate_im_pols(expressions, e, im_pols, max_deg, absolute_max, abs_max_d);
                     if let Some(new_pols) = new_pols_opt {
-                        updated_pols = new_pols;
+                        im_pols.extend(new_pols);
                         max_d = max_d.max(d);
                     } else {
                         return (None, -1); // Propagate failure
                     }
                 }
             }
-            (Some(updated_pols), max_d)
+            (Some(im_pols.clone()), max_d)
         }
 
         "mul" => {
@@ -78,7 +80,7 @@ fn _calculate_im_pols(
                 }
 
                 if max_deg_here <= max_deg {
-                    return (Some(im_pols), max_deg_here);
+                    return (Some(im_pols.clone()), max_deg_here);
                 }
 
                 let mut best_pols: Option<Vec<usize>> = None;
@@ -86,11 +88,9 @@ fn _calculate_im_pols(
 
                 for l in 0..=max_deg {
                     let r = max_deg - l;
-                    let (e1_opt, d1) =
-                        _calculate_im_pols(expressions, left, im_pols.clone(), l, absolute_max, abs_max_d);
-                    if let Some(e1) = e1_opt {
-                        let (e2_opt, d2) =
-                            _calculate_im_pols(expressions, right, e1.clone(), r, absolute_max, abs_max_d);
+                    let (e1_opt, d1) = _calculate_im_pols(expressions, left, im_pols, l, absolute_max, abs_max_d);
+                    if let Some(mut e1) = e1_opt {
+                        let (e2_opt, d2) = _calculate_im_pols(expressions, right, &mut e1, r, absolute_max, abs_max_d);
                         if let Some(e2) = e2_opt {
                             if best_pols.is_none() || e2.len() < best_pols.as_ref().unwrap().len() {
                                 best_pols = Some(e2.clone());
@@ -117,7 +117,7 @@ fn _calculate_im_pols(
 
             let exp_id = exp["id"].as_u64().unwrap() as usize;
             if im_pols.contains(&exp_id) {
-                return (Some(im_pols), 1); // Already processed
+                return (Some(im_pols.clone()), 1); // Already processed
             }
 
             let (e_opt, d) = if let Some(res) = exp
@@ -133,14 +133,7 @@ fn _calculate_im_pols(
                 let e_result = {
                     let mut exp_at_id = expressions[exp_id].clone();
                     let exp_ref = &mut exp_at_id;
-                    let res = _calculate_im_pols(
-                        expressions,
-                        exp_ref,
-                        im_pols.clone(),
-                        absolute_max,
-                        absolute_max,
-                        abs_max_d,
-                    );
+                    let res = _calculate_im_pols(expressions, exp_ref, im_pols, absolute_max, absolute_max, abs_max_d);
                     expressions[exp_id] = exp_at_id;
                     res
                 };
@@ -149,10 +142,13 @@ fn _calculate_im_pols(
 
             if let Some(e) = e_opt {
                 if d > max_deg {
-                    *abs_max_d = (*abs_max_d).max(d);
+                    // Update abs_max_d to match JS behavior
+                    if d > *abs_max_d {
+                        *abs_max_d = d;
+                    }
                     let mut new_pols = e.clone();
-                    new_pols.push(exp_id);
-                    return (Some(new_pols), 1); // Force degree 1 if exceeded
+                    new_pols.push(exp_id); // Add current exp_id as intermediate poly
+                    return (Some(new_pols), 1); // Force degree to 1
                 } else {
                     // Caching logic
                     if exp.get("res").is_none() {
@@ -176,11 +172,11 @@ fn _calculate_im_pols(
         _ => {
             let exp_deg = exp["expDeg"].as_i64().unwrap_or(0);
             if exp_deg == 0 {
-                return (Some(im_pols), 0);
+                return (Some(im_pols.clone()), 0);
             } else if max_deg < 1 {
                 return (None, -1);
             } else {
-                return (Some(im_pols), 1);
+                return (Some(im_pols.clone()), 1);
             }
         }
     }
