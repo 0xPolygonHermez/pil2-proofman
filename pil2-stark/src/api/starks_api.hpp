@@ -28,8 +28,8 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t *hintIds, char *hintN
 
 // Stark Info
 // ========================================================================================
-void *stark_info_new(char *filename, bool verifier);
-uint64_t get_map_total_n(void *pStarkInfo, bool recursive);
+void *stark_info_new(char *filename, bool recursive, bool verifier);
+uint64_t get_map_total_n(void *pStarkInfo);
 uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
 
 void stark_info_free(void *pStarkInfo);

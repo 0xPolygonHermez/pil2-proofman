@@ -179,12 +179,10 @@ fn find_source_files(dir: &Path) -> Vec<PathBuf> {
                     {
                         source_files.push(path);
                     }
-                } else {
-                    if (ext == "cpp" || ext == "h" || ext == "hpp" || ext == "asm")
-                        && path.file_name() != Some(std::ffi::OsStr::new("starks_lib.h"))
-                    {
-                        source_files.push(path);
-                    }
+                } else if (ext == "cpp" || ext == "h" || ext == "hpp" || ext == "asm")
+                    && path.file_name() != Some(std::ffi::OsStr::new("starks_lib.h"))
+                {
+                    source_files.push(path);
                 }
             }
         }

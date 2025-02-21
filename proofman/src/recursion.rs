@@ -61,7 +61,7 @@ pub fn discover_max_sizes<F: Field>(pctx: &ProofCtx<F>, setups: Arc<SetupsVadcop
         max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm3"]); //rick: to be solved
         max_const_pols = max_const_pols.max(setup.stark_info.n_constants);
         max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
-        max_trace_area = max_trace_area.max(get_map_totaln_c(setup.p_setup.p_stark_info, true));
+        max_trace_area = max_trace_area.max(setup.prover_buffer_size);
         max_const_tree_size = max_const_tree_size.max(get_const_tree_size_c(setup.p_setup.p_stark_info));
     };
 
