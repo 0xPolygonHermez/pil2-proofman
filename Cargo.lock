@@ -354,7 +354,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fibonacci-square"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "env_logger",
  "log",
@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "pil-std-lib"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "colored",
  "log",
@@ -793,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "pilout"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "log",
@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "colored",
  "env_logger",
@@ -866,7 +866,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "blake3",
  "clap",
@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "env_logger",
  "log",
@@ -908,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-hints"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "log",
  "p3-field",
@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -929,14 +929,14 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "proofman-util"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "colored",
  "p3-field",
@@ -1169,7 +1169,7 @@ checksum = "3c5e1a9a646d36c3599cd173a41282daf47c44583ad367b8e6837255952e5c67"
 
 [[package]]
 name = "stark"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "log",
  "p3-field",
@@ -1297,7 +1297,7 @@ dependencies = [
 
 [[package]]
 name = "transcript"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "proofman-starks-lib-c",
 ]
@@ -1516,7 +1516,7 @@ dependencies = [
 
 [[package]]
 name = "witness"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "colored",
  "env_logger",
