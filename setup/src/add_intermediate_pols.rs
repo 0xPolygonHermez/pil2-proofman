@@ -295,7 +295,7 @@ pub fn add_intermediate_polynomials(
 
 pub fn calculate_exp_deg(expressions: &mut [Value], exp_id: usize, im_exps: &[usize]) -> usize {
     let mut cache = HashMap::new();
-    calculate_exp_deg_recursive(expressions, exp_id, im_exps, &mut cache)
+    calculate_exp_deg_recursive(expressions, &expressions[exp_id], im_exps, &mut cache)
 }
 
 /*
@@ -326,20 +326,16 @@ module.exports.calculateExpDeg = function calculateExpDeg(expressions, exp, imEx
 
 /// Calculates the degree of an expression recursively and caches results.
 pub fn calculate_exp_deg_recursive(
-    expressions: &mut [Value],
-    exp_id: usize,
+    expressions: &[Value],
+    exp: &Value,
     im_exps: &[usize],
     cache: &mut HashMap<usize, usize>,
 ) -> usize {
-    println!("Calculating degree for expression: {}", exp_id);
-    println!("expression: {:?}", expressions[exp_id]);
+    let exp_id = exp["id"].as_u64().unwrap_or(0) as usize;
     // Check the cache first
     if let Some(degree) = cache.get(&exp_id) {
         return *degree;
     }
-
-    // Fetch the expression
-    let exp = expressions.get(exp_id).expect("Invalid exp_id index").clone();
 
     // Match on the operation type
     if let Some(op) = exp.get("op").and_then(|v| v.as_str()) {
@@ -349,7 +345,7 @@ pub fn calculate_exp_deg_recursive(
                 if im_exps.contains(&id) {
                     1
                 } else {
-                    calculate_exp_deg_recursive(expressions, id, im_exps, cache)
+                    calculate_exp_deg_recursive(expressions, &expressions[id], im_exps, cache)
                 }
             }
             "x" | "const" | "cm" | "custom" => 1,
@@ -364,8 +360,7 @@ pub fn calculate_exp_deg_recursive(
             "neg" => {
                 if let Some(values) = exp.get("values").and_then(|v| v.as_array()) {
                     if let Some(first) = values.first() {
-                        let id = first.get("id").and_then(|v| v.as_u64()).unwrap() as usize;
-                        calculate_exp_deg_recursive(expressions, id, im_exps, cache)
+                        calculate_exp_deg_recursive(expressions, first, im_exps, cache)
                     } else {
                         panic!("'neg' op missing values");
                     }
@@ -380,12 +375,8 @@ pub fn calculate_exp_deg_recursive(
                     panic!("Binary op '{}' missing operands", op);
                 }
 
-                println!("values[0]: {:#?}", values[0]);
-                let lhs_id = values[0].get("id").and_then(|v| v.as_u64()).unwrap() as usize;
-                let rhs_id = values[1].get("id").and_then(|v| v.as_u64()).unwrap() as usize;
-
-                let lhs_deg = calculate_exp_deg_recursive(expressions, lhs_id, im_exps, cache);
-                let rhs_deg = calculate_exp_deg_recursive(expressions, rhs_id, im_exps, cache);
+                let lhs_deg = calculate_exp_deg_recursive(expressions, &values[0], im_exps, cache);
+                let rhs_deg = calculate_exp_deg_recursive(expressions, &values[1], im_exps, cache);
 
                 if op == "mul" {
                     lhs_deg + rhs_deg
