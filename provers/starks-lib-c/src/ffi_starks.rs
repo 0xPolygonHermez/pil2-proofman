@@ -151,17 +151,17 @@ pub fn fri_proof_free_c(p_fri_proof: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn stark_info_new_c(filename: &str, verify: bool) -> *mut c_void {
+pub fn stark_info_new_c(filename: &str, recursive: bool, verify: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, verify)
+        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, recursive, verify)
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_map_totaln_c(p_stark_info: *mut c_void, recursive: bool) -> u64 {
-    unsafe { get_map_total_n(p_stark_info, recursive) }
+pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n(p_stark_info) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1351,13 +1351,13 @@ pub fn free_provers_c(_n_proofs: u64, _p_starks: *mut *mut c_void, _fri_proofs: 
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn stark_info_new_c(_filename: &str, _verify: bool) -> *mut c_void {
+pub fn stark_info_new_c(_filename: &str, _recursive: bool, _verify: bool) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_map_totaln_c(_p_stark_info: *mut c_void, _recursive: bool) -> u64 {
+pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
     100000000
 }

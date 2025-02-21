@@ -162,12 +162,12 @@ public:
     uint64_t mapTotalNCustomCommitsFixed;
     
     /* Constructor */
-    StarkInfo(string file, bool verify = false);
+    StarkInfo(string file, bool recursive = false, bool verify = false);
 
     /* Loads data from a json object */
-    void load (json j, bool verify = false);
+    void load (json j, bool recursive = false, bool verify = false);
 
-    void setMapOffsets();
+    void setMapOffsets(bool recursive_);
 
     uint64_t getNumNodesMT(uint64_t height);
 

@@ -4,15 +4,15 @@
 #include "zklog.hpp"
 #include "exit_process.hpp"
 
-StarkInfo::StarkInfo(string file, bool verify_)
+StarkInfo::StarkInfo(string file, bool recursive_, bool verify_)
 {
     // Load contents from json file
     json starkInfoJson;
     file2json(file, starkInfoJson);
-    load(starkInfoJson, verify_);
+    load(starkInfoJson, recursive_, verify_);
 }
 
-void StarkInfo::load(json j, bool verify_)
+void StarkInfo::load(json j, bool recursive_, bool verify_)
 {
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
@@ -281,11 +281,11 @@ void StarkInfo::load(json j, bool verify_)
     }
     else
     {
-        setMapOffsets();
+        setMapOffsets(recursive_);
     }
 }
 
-void StarkInfo::setMapOffsets()
+void StarkInfo::setMapOffsets(bool recursive_)
 {
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
@@ -366,6 +366,8 @@ void StarkInfo::setMapOffsets()
             mapTotalN += numNodes;
         }
     }
+
+    if (recursive_) addMemoryRecursive();
 }
 
 void StarkInfo::addMemoryRecursive()

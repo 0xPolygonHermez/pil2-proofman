@@ -105,12 +105,16 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPcb"]
-    pub fn stark_info_new(filename: *mut ::std::os::raw::c_char, verifier: bool) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z14stark_info_newPcbb"]
+    pub fn stark_info_new(
+        filename: *mut ::std::os::raw::c_char,
+        recursive: bool,
+        verifier: bool,
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15get_map_total_nPvb"]
-    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void, recursive: bool) -> u64;
+    #[link_name = "\u{1}_Z15get_map_total_nPv"]
+    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z36get_map_total_n_custom_commits_fixedPv"]
@@ -581,16 +585,6 @@ extern "C" {
     pub fn print_row(pSetupCtx: *mut ::std::os::raw::c_void, buffer: *mut ::std::os::raw::c_void, stage: u64, row: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z16print_expressionPvS_mmm"]
-    pub fn print_expression(
-        pSetupCtx: *mut ::std::os::raw::c_void,
-        pol: *mut ::std::os::raw::c_void,
-        dim: u64,
-        first_value: u64,
-        last_value: u64,
-    );
-}
-extern "C" {
     #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_S0_bS_"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
@@ -598,7 +592,7 @@ extern "C" {
         airgroupId: u64,
         airId: u64,
         instanceId: u64,
-        witness: *mut ::std::os::raw::c_void,
+        trace: *mut ::std::os::raw::c_void,
         aux_trace: *mut ::std::os::raw::c_void,
         pConstPols: *mut ::std::os::raw::c_void,
         pConstTree: *mut ::std::os::raw::c_void,
@@ -727,7 +721,6 @@ extern "C" {
     #[link_name = "\u{1}_Z11free_bufferPv"]
     pub fn free_buffer(buffer: *mut ::std::os::raw::c_void);
 }
-
 extern "C" {
     #[link_name = "\u{1}_Z20write_fixed_cols_binPcS_S_mmPv"]
     pub fn write_fixed_cols_bin(
@@ -746,6 +739,8 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z19set_omp_num_threadsm"]
     pub fn set_omp_num_threads(num_threads: u64);
+}
+extern "C" {
     #[link_name = "\u{1}_Z25gen_device_commit_buffersPv"]
     pub fn gen_device_commit_buffers(maxSizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 }
