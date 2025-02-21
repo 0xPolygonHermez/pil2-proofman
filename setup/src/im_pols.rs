@@ -61,13 +61,13 @@ fn _calculate_im_pols(
 
                 // Handle constants in multiplication
                 if !["add", "mul", "sub", "exp"].contains(&left["op"].as_str().unwrap_or(""))
-                    && left["expDeg"].as_i64().unwrap_or(0) == 0
+                    && left["expDeg"].as_u64().unwrap_or(0) == 0
                 {
                     return _calculate_im_pols(expressions, right, im_pols, max_deg, absolute_max);
                 }
 
                 if !["add", "mul", "sub", "exp"].contains(&right["op"].as_str().unwrap_or(""))
-                    && right["expDeg"].as_i64().unwrap_or(0) == 0
+                    && right["expDeg"].as_u64().unwrap_or(0) == 0
                 {
                     return _calculate_im_pols(expressions, left, im_pols, max_deg, absolute_max);
                 }
@@ -160,7 +160,7 @@ fn _calculate_im_pols(
         }
 
         _ => {
-            let exp_deg = exp["expDeg"].as_i64().unwrap_or(0);
+            let exp_deg = exp["expDeg"].as_u64().unwrap() as usize;
             if exp_deg == 0 {
                 return (Some(im_pols.clone()), 0);
             } else if max_deg < 1 {
