@@ -10,7 +10,6 @@ use proofman_common::{ProofCtx, ProofType};
 
 use std::os::raw::c_void;
 
-
 pub fn verify_proof_from_file<F: Field>(
     proof_file: String,
     stark_info_path: String,
