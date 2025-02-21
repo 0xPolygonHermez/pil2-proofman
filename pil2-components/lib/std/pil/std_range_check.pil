@@ -77,6 +77,16 @@ function set_max_specified_bits(const int bits) {
     MAX_SPECIFIED_BITS = bits;
 }
 
+function set_max_std_tables_bits(const int bits) {
+    if (bits < 0) {
+        error(`The input bits should be greater than or equal to 0, got ${bits} instead`);
+    }
+
+    set_max_u8_bits(bits > 8 ? 8 : bits);
+    set_max_u16_bits(bits > 16 ? 16 : bits);
+    set_max_specified_bits(bits);
+}
+
 const int U8AIR_OPID = 100;
 const int U16AIR_OPID = 101;
 
