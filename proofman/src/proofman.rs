@@ -97,80 +97,42 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         pctx.set_global_challenge(2, global_challenge.to_vec());
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
-        let valid_constraints = Arc::new(AtomicBool::new(true));
-
         let instances = pctx.dctx_get_instances();
         let airgroup_values_air_instances = Arc::new(Mutex::new(Vec::new()));
-
+        let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
-            let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
+            let is_my_instance = pctx.dctx_is_my_instance(instance_id);
             let (skip, _) = skip_prover_instance(&pctx, instance_id);
 
-            timer_start_info!(GENERATING_WITNESS);
-
-            if skip || (!all && !pctx.dctx_is_my_instance(instance_id)) {
+            if skip || (!all && !is_my_instance) {
                 continue;
             };
 
             wcm.calculate_witness(1, &[instance_id]);
 
-            timer_stop_and_log_info!(GENERATING_WITNESS);
-
-            // Ensure the previous Merkelization is done before continuing
+            // Join the previous thread (if any) before starting a new one
             if let Some(handle) = merkelize_handle.take() {
                 handle.join().unwrap();
             }
 
-            if !pctx.dctx_is_my_instance(instance_id) {
-                continue;
-            }
-
-            Self::initialize_air_instance(pctx.clone(), sctx.clone(), instance_id, true);
-
-            #[cfg(feature = "diagnostic")]
-            {
-                let invalid_initialization = Self::diagnostic_instance(pctx.clone(), sctx.clone(), instance_id);
-                if invalid_initialization {
-                    return Err("Invalid initialization".into());
-                }
-            }
-
-            let wcm_cloned = wcm.clone();
-            let pctx_cloned = pctx.clone();
-            let sctx_cloned = sctx.clone();
-            let valid_constraints_cloned = valid_constraints.clone();
-            let airgroup_values_air_instances_cloned = airgroup_values_air_instances.clone();
-
-            let verify_constraints = pctx.options.verify_constraints;
-            
-            let airgroup_id2 = *airgroup_id;
-            let air_id2 = *air_id;
-            let air_instance_id2 = air_instance_id;
-            
-            merkelize_handle = Some(std::thread::spawn(move || {
-                wcm_cloned.calculate_witness(2, &[instance_id]);
-                Self::calculate_im_pols(2, sctx_cloned.clone(), pctx_cloned.clone(), instance_id);
-
-                wcm_cloned.debug(&[instance_id]);
-
-                if verify_constraints {
-                    let valid = verify_constraints_proof(pctx_cloned.clone(), sctx_cloned, instance_id);
-                    valid_constraints_cloned.fetch_and(valid, Ordering::Relaxed);
-                }
-
-                airgroup_values_air_instances_cloned
-                    .lock()
-                    .unwrap()
-                    .push(pctx_cloned.get_air_instance_airgroup_values(airgroup_id2, air_id2, air_instance_id2));
-                pctx_cloned.free_instance(instance_id);
-            }));
+            merkelize_handle = is_my_instance.then(|| {
+                Self::verify_proof_constraints_stage_2(
+                    pctx.clone(),
+                    sctx.clone(),
+                    wcm.clone(),
+                    valid_constraints.clone(),
+                    airgroup_values_air_instances.clone(),
+                    instance_id,
+                    *airgroup_id,
+                    *air_id,
+                    pctx.dctx_find_air_instance_id(instance_id),
+                )
+            });
         }
 
-        if let Some(handle) = merkelize_handle {
-            handle.join().unwrap();
-        }
+        merkelize_handle.map(|handle| handle.join().unwrap());
 
         wcm.end();
 
@@ -196,6 +158,47 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
 
         Ok(())
+    }
+
+    fn verify_proof_constraints_stage_2(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        wcm: Arc<WitnessManager<F>>,
+        valid_constraints: Arc<AtomicBool>,
+        airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
+        instance_id: usize,
+        airgroup_id: usize,
+        air_id: usize,
+        air_instance_id: usize,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            Self::initialize_air_instance(pctx.clone(), sctx.clone(), instance_id, true);
+
+            #[cfg(feature = "diagnostic")]
+            {
+                let invalid_initialization = Self::diagnostic_instance(pctx.clone(), sctx.clone(), instance_id);
+                if invalid_initialization {
+                    return Some(Err("Invalid initialization".into()));
+                }
+            }
+
+            wcm.calculate_witness(2, &[instance_id]);
+            Self::calculate_im_pols(2, sctx.clone(), pctx.clone(), instance_id);
+
+            wcm.debug(&[instance_id]);
+
+            if pctx.options.verify_constraints {
+                let valid = verify_constraints_proof(pctx.clone(), sctx, instance_id);
+                valid_constraints.fetch_and(valid, Ordering::Relaxed);
+            }
+
+            airgroup_values_air_instances.lock().unwrap().push(pctx.get_air_instance_airgroup_values(
+                airgroup_id,
+                air_id,
+                air_instance_id,
+            ));
+            pctx.free_instance(instance_id);
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
