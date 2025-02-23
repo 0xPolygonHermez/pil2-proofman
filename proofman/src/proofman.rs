@@ -112,50 +112,58 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         #[cfg(feature = "diagnostic")]
         {
-            let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
-            let instances = pctx.dctx_get_instances();
-            let my_instances = pctx.dctx_get_my_instances();
-            let mut missing_initialization = false;
-            for instance_id in my_instances.iter() {
-                let (airgroup_id, air_id) = instances[*instance_id];
-                let air_instance = air_instances.get(instance_id).unwrap();
-                let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
-                let air_name = pctx.global_info.airs[airgroup_id][air_id].clone().name;
-                let setup = setups.sctx.get_setup(airgroup_id, air_id);
-                let cm_pols_map = setup.stark_info.cm_pols_map.as_ref().unwrap();
-                let n_cols = *setup.stark_info.map_sections_n.get("cm1").unwrap() as usize;
+            // The `cfg!(feature = "diagnostic")` check is always true when this feature is enabled.
+            // However, it is explicitly included to prevent Clippy from detecting unreachable code.
+            if cfg!(feature = "diagnostic") {
+                let air_instances = pctx.air_instance_repo.air_instances.read().unwrap();
+                let instances = pctx.dctx_get_instances();
+                let my_instances = pctx.dctx_get_my_instances();
+                let mut missing_initialization = false;
+                for instance_id in my_instances.iter() {
+                    let (airgroup_id, air_id) = instances[*instance_id];
+                    let air_instance = air_instances.get(instance_id).unwrap();
+                    let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
+                    let air_name = pctx.global_info.airs[airgroup_id][air_id].clone().name;
+                    let setup = setups.sctx.get_setup(airgroup_id, air_id);
+                    let cm_pols_map = setup.stark_info.cm_pols_map.as_ref().unwrap();
+                    let n_cols = *setup.stark_info.map_sections_n.get("cm1").unwrap() as usize;
 
-                let len = air_instance.trace.len();
-                let vals = unsafe { std::slice::from_raw_parts(air_instance.get_trace_ptr() as *mut u64, len) };
+                    let len = air_instance.trace.len();
+                    let vals = unsafe { std::slice::from_raw_parts(air_instance.get_trace_ptr() as *mut u64, len) };
 
-                for (pos, val) in vals.iter().enumerate() {
-                    if *val == u64::MAX - 1 {
-                        let row = pos / n_cols;
-                        let col_id = pos % n_cols;
-                        let col = cm_pols_map.get(col_id).unwrap();
-                        let col_name = if !col.lengths.is_empty() {
-                            let lengths = col.lengths.iter().map(|l| format!("[{}]", l)).collect::<String>();
-                            &format!("{}{}", col.name, lengths)
-                        } else {
-                            &col.name
-                        };
-                        log::warn!(
-                            "{}: Missing initialization {} at row {} of {} in instance {}",
-                            Self::MY_NAME,
-                            col_name,
-                            row,
-                            air_name,
-                            air_instance_id,
-                        );
-                        missing_initialization = true;
+                    for (pos, val) in vals.iter().enumerate() {
+                        if *val == u64::MAX - 1 {
+                            let row = pos / n_cols;
+                            let col_id = pos % n_cols;
+                            let col = cm_pols_map.get(col_id).unwrap();
+                            let col_name = if !col.lengths.is_empty() {
+                                use std::fmt::Write;
+                                let lengths = col.lengths.iter().fold(String::new(), |mut acc, l| {
+                                    write!(&mut acc, "[{}]", l).unwrap();
+                                    acc
+                                });
+                                &format!("{}{}", col.name, lengths)
+                            } else {
+                                &col.name
+                            };
+                            log::warn!(
+                                "{}: Missing initialization {} at row {} of {} in instance {}",
+                                Self::MY_NAME,
+                                col_name,
+                                row,
+                                air_name,
+                                air_instance_id,
+                            );
+                            missing_initialization = true;
+                        }
                     }
                 }
-            }
-            if missing_initialization {
-                return Err("Missing initialization".into());
-            } else {
-                log::info!("{}: Witness Initialization is done properly", Self::MY_NAME);
-                return Ok(());
+                if missing_initialization {
+                    return Err("Missing initialization".into());
+                } else {
+                    log::info!("{}: Witness Initialization is done properly", Self::MY_NAME);
+                    return Ok(());
+                }
             }
         }
 
