@@ -12,18 +12,18 @@ use crate::ProofType;
 
 pub struct SetupsVadcop<F: Clone> {
     pub sctx: Arc<SetupCtx<F>>,
-    pub sctx_compressor: Option<Arc<SetupCtx<F>>>,
-    pub sctx_recursive1: Option<Arc<SetupCtx<F>>>,
-    pub sctx_recursive2: Option<Arc<SetupCtx<F>>>,
-    pub setup_vadcop_final: Option<Arc<Setup<F>>>,
-    pub setup_recursivef: Option<Arc<Setup<F>>>,
+    pub sctx_compressor: Option<SetupCtx<F>>,
+    pub sctx_recursive1: Option<SetupCtx<F>>,
+    pub sctx_recursive2: Option<SetupCtx<F>>,
+    pub setup_vadcop_final: Option<Setup<F>>,
+    pub setup_recursivef: Option<Setup<F>>,
 }
 
 impl<F: Clone> SetupsVadcop<F> {
     pub fn new(global_info: &GlobalInfo, verify_constraints: bool, aggregation: bool, final_snark: bool) -> Self {
         info!("Initializing setups");
         timer_start_info!(INITIALIZING_BASIC_SETUP);
-        let sctx = SetupCtx::<F>::new(global_info, &ProofType::Basic, verify_constraints);
+        let sctx = SetupCtx::new(global_info, &ProofType::Basic, verify_constraints);
         timer_stop_and_log_info!(INITIALIZING_BASIC_SETUP);
         if aggregation {
             timer_start_info!(INITIALIZING_AGGREGATION_SETUP);
@@ -31,22 +31,22 @@ impl<F: Clone> SetupsVadcop<F> {
 
             timer_start_debug!(INITIALIZING_SETUP_COMPRESSOR);
             info!(" ··· Initializing setups compressor");
-            let sctx_compressor = SetupCtx::<F>::new(global_info, &ProofType::Compressor, false);
+            let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, false);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_COMPRESSOR);
 
             timer_start_debug!(INITIALIZING_SETUP_RECURSIVE1);
             info!(" ··· Initializing setups recursive1");
-            let sctx_recursive1 = SetupCtx::<F>::new(global_info, &ProofType::Recursive1, false);
+            let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, false);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVE1);
 
             timer_start_debug!(INITIALIZING_SETUP_RECURSIVE2);
             info!(" ··· Initializing setups recursive2");
-            let sctx_recursive2 = SetupCtx::<F>::new(global_info, &ProofType::Recursive2, false);
+            let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, false);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVE2);
 
             timer_start_debug!(INITIALIZING_SETUP_VADCOP_FINAL);
             info!(" ··· Initializing setups vadcop final");
-            let setup_vadcop_final = Setup::<F>::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints);
+            let setup_vadcop_final = Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints);
             timer_stop_and_log_debug!(INITIALIZING_SETUP_VADCOP_FINAL);
             timer_stop_and_log_info!(INITIALIZING_AGGREGATION_SETUP);
 
@@ -55,18 +55,17 @@ impl<F: Clone> SetupsVadcop<F> {
                 timer_start_debug!(INITIALIZING_SETUP_RECURSION);
                 timer_start_debug!(INITIALIZING_SETUP_RECURSIVEF);
                 info!(" ··· Initializing setups recursivef");
-                setup_recursivef =
-                    Some(Arc::new(Setup::<F>::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints)));
+                setup_recursivef = Some(Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints));
                 timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVEF);
                 timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSION);
             }
 
             SetupsVadcop {
                 sctx: Arc::new(sctx),
-                sctx_compressor: Some(Arc::new(sctx_compressor)),
-                sctx_recursive1: Some(Arc::new(sctx_recursive1)),
-                sctx_recursive2: Some(Arc::new(sctx_recursive2)),
-                setup_vadcop_final: Some(Arc::new(setup_vadcop_final)),
+                sctx_compressor: Some(sctx_compressor),
+                sctx_recursive1: Some(sctx_recursive1),
+                sctx_recursive2: Some(sctx_recursive2),
+                setup_vadcop_final: Some(setup_vadcop_final),
                 setup_recursivef,
             }
         } else {
@@ -139,7 +138,7 @@ pub struct SetupCtx<F: Clone> {
 impl<F: Clone> SetupCtx<F> {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool) -> Self {
         SetupCtx {
-            setup_repository: SetupRepository::<F>::new(global_info, setup_type, verify_constraints),
+            setup_repository: SetupRepository::new(global_info, setup_type, verify_constraints),
             setup_type: setup_type.clone(),
         }
     }

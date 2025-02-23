@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use proofman_starks_lib_c::{
     get_n_constraints_c, get_constraints_lines_sizes_c, get_constraints_lines_c, get_n_global_constraints_c,
     get_global_constraints_lines_sizes_c, get_global_constraints_lines_c,
@@ -36,7 +34,7 @@ pub struct GlobalConstraintInfo {
     pub value: [u64; 3usize],
 }
 
-pub fn get_constraints_lines_str<F: Clone>(sctx: Arc<SetupCtx<F>>, airgroup_id: usize, air_id: usize) -> Vec<String> {
+pub fn get_constraints_lines_str<F: Clone>(sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize) -> Vec<String> {
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let p_setup = (&setup.p_setup).into();
@@ -64,7 +62,7 @@ pub fn get_constraints_lines_str<F: Clone>(sctx: Arc<SetupCtx<F>>, airgroup_id: 
     constraints_lines_str
 }
 
-pub fn get_global_constraints_lines_str<F: Clone>(sctx: Arc<SetupCtx<F>>) -> Vec<String> {
+pub fn get_global_constraints_lines_str<F: Clone>(sctx: &SetupCtx<F>) -> Vec<String> {
     let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
 
     let mut global_constraints_sizes = vec![0u64; n_global_constraints as usize];

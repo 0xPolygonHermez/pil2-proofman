@@ -970,7 +970,7 @@ fn get_hint_f<F: Field>(
 
     let mut hint_field_values: Vec<HintFieldInfo<F>> = vec![HintFieldInfo::default(); n_hints_values as usize];
 
-    let mut hint_field_values_c = HintFieldInfoC::<F>::from_hint_field_info_vec(&mut hint_field_values);
+    let mut hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     let mut hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
     get_hint_field_sizes_c(
@@ -981,13 +981,13 @@ fn get_hint_f<F: Field>(
         (&options).into(),
     );
 
-    HintFieldInfoC::<F>::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
+    HintFieldInfoC::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
 
     for hint_field_value in hint_field_values.iter_mut() {
         hint_field_value.init_buffers(options.initialize_zeros);
     }
 
-    hint_field_values_c = HintFieldInfoC::<F>::from_hint_field_info_vec(&mut hint_field_values);
+    hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
     get_hint_field_c(
@@ -1246,7 +1246,7 @@ pub fn set_hint_field_val<F: Field>(
 
     let setup = sctx.get_setup(air_instance.airgroup_id, air_instance.air_id);
 
-    let mut value_array: Vec<F> = Vec::new();
+    let mut value_array = Vec::new();
 
     match value {
         HintFieldOutput::Field(val) => {

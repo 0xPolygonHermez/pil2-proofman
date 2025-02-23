@@ -4,13 +4,12 @@ use crate::{
 };
 use proofman_starks_lib_c::set_log_level_c;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::collections::HashMap;
 use p3_field::Field;
 use serde::Deserialize;
 use std::fs;
 
-pub fn add_air_instance<F: Field>(air_instance: AirInstance<F>, pctx: Arc<ProofCtx<F>>) -> bool {
+pub fn add_air_instance<F: Field>(air_instance: AirInstance<F>, pctx: &ProofCtx<F>) -> bool {
     let (is_mine, gid) = pctx.dctx.write().unwrap().add_instance(
         air_instance.airgroup_id,
         air_instance.air_id,

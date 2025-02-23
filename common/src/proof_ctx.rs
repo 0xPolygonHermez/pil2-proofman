@@ -271,7 +271,7 @@ impl<F: Field> ProofCtx<F> {
 
     pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: Vec<Vec<u64>>) -> Vec<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
-        dctx.distribute_airgroupvalues::<F>(airgroup_values, &self.global_info)
+        dctx.distribute_airgroupvalues(airgroup_values, &self.global_info)
     }
 
     pub fn dctx_close(&self) {

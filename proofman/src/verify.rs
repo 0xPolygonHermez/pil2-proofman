@@ -1,16 +1,9 @@
 use p3_field::Field;
-
 use proofman_starks_lib_c::{stark_info_new_c, expressions_bin_new_c, stark_verify_c, stark_verify_from_file_c};
-
 use colored::*;
-
-use std::sync::Arc;
-
 use proofman_common::{ProofCtx, ProofType, Prover, SetupCtx, get_global_constraints_lines_str};
-
 use proofman_hints::aggregate_airgroupvals;
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
-
 use std::os::raw::c_void;
 
 use crate::verify_global_constraints_proof;
@@ -94,8 +87,8 @@ pub fn verify_proof<F: Field>(
 pub fn verify_basic_proofs<F: Field>(
     provers: &mut [Box<dyn Prover<F>>],
     proves: Vec<*mut c_void>,
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
 ) -> bool {
     const MY_NAME: &str = "Verify  ";
     timer_start_info!(VERIFYING_BASIC_PROOFS);
@@ -149,14 +142,14 @@ pub fn verify_basic_proofs<F: Field>(
     let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
         || !pctx.options.debug_info.debug_global_instances.is_empty();
 
-    let airgroupvalues_u64 = aggregate_airgroupvals(pctx.clone());
+    let airgroupvalues_u64 = aggregate_airgroupvals(pctx);
 
     let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
     if pctx.dctx_get_rank() == 0 && check_global_constraints {
-        let global_constraints = verify_global_constraints_proof(pctx.clone(), sctx.clone(), airgroupvalues);
+        let global_constraints = verify_global_constraints_proof(pctx, sctx, airgroupvalues);
         let mut valid_global_constraints = true;
 
-        let global_constraints_lines = get_global_constraints_lines_str(sctx.clone());
+        let global_constraints_lines = get_global_constraints_lines_str(sctx);
 
         for idx in 0..global_constraints.len() {
             let constraint = global_constraints[idx];

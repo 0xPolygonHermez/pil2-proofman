@@ -22,3 +22,4 @@ rayon.workspace = true
 default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
 distributed = ["dep:mpi"]
+diagnostic = ["proofman-macros/diagnostic"]
