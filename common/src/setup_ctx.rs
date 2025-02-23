@@ -12,11 +12,11 @@ use crate::ProofType;
 
 pub struct SetupsVadcop<F: Clone> {
     pub sctx: Arc<SetupCtx<F>>,
-    pub sctx_compressor: Option<Arc<SetupCtx<F>>>,
-    pub sctx_recursive1: Option<Arc<SetupCtx<F>>>,
-    pub sctx_recursive2: Option<Arc<SetupCtx<F>>>,
-    pub setup_vadcop_final: Option<Arc<Setup<F>>>,
-    pub setup_recursivef: Option<Arc<Setup<F>>>,
+    pub sctx_compressor: Option<SetupCtx<F>>,
+    pub sctx_recursive1: Option<SetupCtx<F>>,
+    pub sctx_recursive2: Option<SetupCtx<F>>,
+    pub setup_vadcop_final: Option<Setup<F>>,
+    pub setup_recursivef: Option<Setup<F>>,
 }
 
 impl<F: Clone> SetupsVadcop<F> {
@@ -55,18 +55,17 @@ impl<F: Clone> SetupsVadcop<F> {
                 timer_start_debug!(INITIALIZING_SETUP_RECURSION);
                 timer_start_debug!(INITIALIZING_SETUP_RECURSIVEF);
                 info!(" ··· Initializing setups recursivef");
-                setup_recursivef =
-                    Some(Arc::new(Setup::<F>::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints)));
+                setup_recursivef = Some(Setup::<F>::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints));
                 timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSIVEF);
                 timer_stop_and_log_debug!(INITIALIZING_SETUP_RECURSION);
             }
 
             SetupsVadcop {
                 sctx: Arc::new(sctx),
-                sctx_compressor: Some(Arc::new(sctx_compressor)),
-                sctx_recursive1: Some(Arc::new(sctx_recursive1)),
-                sctx_recursive2: Some(Arc::new(sctx_recursive2)),
-                setup_vadcop_final: Some(Arc::new(setup_vadcop_final)),
+                sctx_compressor: Some(sctx_compressor),
+                sctx_recursive1: Some(sctx_recursive1),
+                sctx_recursive2: Some(sctx_recursive2),
+                setup_vadcop_final: Some(setup_vadcop_final),
                 setup_recursivef,
             }
         } else {

@@ -2,7 +2,6 @@ use libloading::{Library, Symbol};
 use p3_field::Field;
 use std::ffi::CString;
 use std::fs::File;
-use std::sync::Arc;
 use proofman_starks_lib_c::*;
 use std::path::{Path, PathBuf};
 use std::io::Read;
@@ -28,15 +27,15 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 pub fn aggregate_proofs<F: Field>(
     name: &str,
-    pctx_aggregation: Arc<ProofCtx<F>>,
-    setups: Arc<SetupsVadcop<F>>,
+    pctx_aggregation: &ProofCtx<F>,
+    setups: &SetupsVadcop<F>,
     proofs: Vec<*mut c_void>,
     output_dir_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("{}: ··· Generating aggregated proofs", name);
 
     let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
-        get_buff_sizes(pctx_aggregation.clone(), setups.clone())?;
+        get_buff_sizes(&pctx_aggregation, &setups)?;
     let mut circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
     let publics: Vec<F> = create_buffer_fast(publics_size);
     let trace: Vec<F> = create_buffer_fast(trace_size);
@@ -45,10 +44,10 @@ pub fn aggregate_proofs<F: Field>(
     timer_start_info!(GENERATING_AGGREGATION_PROOFS);
     pctx_aggregation.dctx.read().unwrap().barrier();
     timer_start_info!(GENERATING_RECURSIVE2_PROOFS);
-    let sctx_recursive2 = setups.sctx_recursive2.clone();
+    let sctx_recursive2 = &setups.sctx_recursive2;
     let recursive2_proof = generate_vadcop_recursive2_proof(
         &pctx_aggregation,
-        sctx_recursive2.as_ref().unwrap().clone(),
+        sctx_recursive2.as_ref().unwrap(),
         &proofs,
         &mut circom_witness,
         &publics,
@@ -61,11 +60,11 @@ pub fn aggregate_proofs<F: Field>(
 
     pctx_aggregation.dctx.read().unwrap().barrier();
     if pctx_aggregation.dctx_get_rank() == 0 {
-        let setup_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
+        let setup_final = setups.setup_vadcop_final.as_ref().unwrap();
         timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
         let final_proof = generate_vadcop_final_proof(
             &pctx_aggregation,
-            setup_final.clone(),
+            &setup_final,
             recursive2_proof,
             &mut circom_witness,
             &publics,
@@ -82,7 +81,7 @@ pub fn aggregate_proofs<F: Field>(
             timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
             let recursivef_proof = generate_recursivef_proof(
                 &pctx_aggregation,
-                setups.setup_recursivef.as_ref().unwrap().clone(),
+                setups.setup_recursivef.as_ref().unwrap(),
                 final_proof,
                 &mut circom_witness,
                 &publics,
@@ -247,7 +246,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 #[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_recursive2_proof<F: Field>(
     pctx: &ProofCtx<F>,
-    sctx: Arc<SetupCtx<F>>,
+    sctx: &SetupCtx<F>,
     proofs: &[*mut c_void],
     circom_witness: &mut [F],
     publics: &[F],
@@ -436,7 +435,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 #[allow(clippy::too_many_arguments)]
 pub fn generate_vadcop_final_proof<F: Field>(
     pctx: &ProofCtx<F>,
-    setup: Arc<Setup<F>>,
+    setup: &Setup<F>,
     proof: *mut c_void,
     circom_witness: &mut [F],
     publics: &[F],
@@ -483,7 +482,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
 #[allow(clippy::too_many_arguments)]
 pub fn generate_recursivef_proof<F: Field>(
     pctx: &ProofCtx<F>,
-    setup: Arc<Setup<F>>,
+    setup: &Setup<F>,
     proof: *mut c_void,
     circom_witness: &mut [F],
     publics: &[F],
@@ -637,8 +636,8 @@ fn generate_witness<F: Field>(
 }
 
 pub fn get_buff_sizes<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    setups: Arc<SetupsVadcop<F>>,
+    pctx: &ProofCtx<F>,
+    setups: &SetupsVadcop<F>,
 ) -> Result<(usize, usize, usize, usize), Box<dyn std::error::Error>> {
     let mut witness_size = 0;
     let mut publics = 0;

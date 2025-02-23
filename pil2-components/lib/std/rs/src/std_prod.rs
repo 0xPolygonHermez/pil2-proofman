@@ -32,12 +32,7 @@ pub struct StdProd<F: PrimeField> {
 impl<F: PrimeField> AirComponent<F> for StdProd<F> {
     const MY_NAME: &'static str = "STD Prod";
 
-    fn new(
-        _pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        _airgroup_id: Option<usize>,
-        _air_id: Option<usize>,
-    ) -> Arc<Self> {
+    fn new(_pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, _airgroup_id: Option<usize>, _air_id: Option<usize>) -> Arc<Self> {
         // Retrieve the std_prod_users hint ID
         let std_prod_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");
 
@@ -47,8 +42,7 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
                 true => None,
                 false => {
                     // Get the "stage_wc" hint
-                    let stage_wc =
-                        get_global_hint_field_constant_as::<u32, F>(sctx.clone(), std_prod_users_id[0], "stage_wc");
+                    let stage_wc = get_global_hint_field_constant_as::<u32, F>(&sctx, std_prod_users_id[0], "stage_wc");
                     Some(stage_wc)
                 }
             },
@@ -284,9 +278,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
             // Get the number of product check users and their airgroup and air IDs
             let std_prod_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users")[0];
 
-            let num_users = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), std_prod_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), std_prod_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), std_prod_users, "air_ids", false);
+            let num_users = get_global_hint_field_constant_as::<usize, F>(&sctx, std_prod_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_prod_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_prod_users, "air_ids", false);
 
             let instances = pctx.dctx_get_instances();
 
@@ -364,9 +358,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
         if !std_prod_users_vec.is_empty() {
             let std_prod_users = std_prod_users_vec[0];
 
-            let num_users = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), std_prod_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), std_prod_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), std_prod_users, "air_ids", false);
+            let num_users = get_global_hint_field_constant_as::<usize, F>(&sctx, std_prod_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_prod_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_prod_users, "air_ids", false);
 
             let instances = pctx.dctx_get_instances();
             let my_instances = pctx.dctx_get_my_instances();

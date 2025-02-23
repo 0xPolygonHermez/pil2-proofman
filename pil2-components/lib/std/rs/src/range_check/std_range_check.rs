@@ -61,9 +61,9 @@ impl<F: PrimeField> StdRangeCheck<F> {
 
         // Process range check users
         if let Some(std_rc_users) = get_hint_ids_by_name(sctx.get_global_bin(), "std_rc_users").first() {
-            let num_users = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), *std_rc_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), *std_rc_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), *std_rc_users, "air_ids", false);
+            let num_users = get_global_hint_field_constant_as::<usize, F>(&sctx, *std_rc_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a::<F>(&sctx, *std_rc_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a::<F>(&sctx, *std_rc_users, "air_ids", false);
 
             for i in 0..num_users {
                 let airgroup_id = extract_field_element_as_usize(&airgroup_ids.values[i], "airgroup_id");
@@ -84,9 +84,9 @@ impl<F: PrimeField> StdRangeCheck<F> {
             if hints.is_empty() {
                 return None;
             }
-            let airgroup_id = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), hints[0], "airgroup_id");
-            let air_id = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), hints[0], "air_id");
-            Some(T::new(pctx.clone(), sctx.clone(), Some(airgroup_id), Some(air_id)))
+            let airgroup_id = get_global_hint_field_constant_as::<usize, F>(&sctx, hints[0], "airgroup_id");
+            let air_id = get_global_hint_field_constant_as::<usize, F>(&sctx, hints[0], "air_id");
+            Some(T::new(&pctx, &sctx, Some(airgroup_id), Some(air_id)))
         }
     }
 

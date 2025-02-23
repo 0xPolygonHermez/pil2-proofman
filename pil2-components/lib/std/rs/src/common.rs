@@ -11,23 +11,17 @@ use proofman_hints::{
 pub trait AirComponent<F: Clone> {
     const MY_NAME: &'static str;
 
-    fn new(
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        airgroup_id: Option<usize>,
-        air_id: Option<usize>,
-    ) -> Arc<Self>;
+    fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self>;
 }
 
 // Helper to extract hint fields
-pub fn get_global_hint_field_constant_as<T, F>(sctx: Arc<SetupCtx<F>>, hint_id: u64, field_name: &str) -> T
+pub fn get_global_hint_field_constant_as<T, F>(sctx: &SetupCtx<F>, hint_id: u64, field_name: &str) -> T
 where
     T: TryFrom<u64>,
     T::Error: std::fmt::Debug,
     F: PrimeField,
 {
-    let HintFieldValue::Field(field_value) = get_hint_field_constant_gc::<F>(sctx.clone(), hint_id, field_name, false)
-    else {
+    let HintFieldValue::Field(field_value) = get_hint_field_constant_gc::<F>(&sctx, hint_id, field_name, false) else {
         panic!("Hint '{}' for field '{}' must be a field element", hint_id, field_name);
     };
 

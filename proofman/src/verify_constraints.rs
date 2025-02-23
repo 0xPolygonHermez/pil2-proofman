@@ -3,9 +3,6 @@ use proofman_starks_lib_c::{
     get_n_constraints_c, get_n_global_constraints_c, verify_global_constraints_c, verify_constraints_c,
 };
 use std::cmp;
-
-use std::sync::Arc;
-
 use proofman_common::{
     get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, ConstraintInfo,
     GlobalConstraintInfo, ProofCtx, SetupCtx,
@@ -15,11 +12,7 @@ use std::os::raw::c_void;
 
 use colored::*;
 
-pub fn verify_constraints<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
-    global_id: usize,
-) -> Vec<ConstraintInfo> {
+pub fn verify_constraints<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global_id: usize) -> Vec<ConstraintInfo> {
     let instances = pctx.dctx_get_instances();
     let (airgroup_id, air_id, _) = instances[global_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
@@ -49,8 +42,8 @@ pub fn verify_constraints<F: Field>(
 }
 
 pub fn verify_global_constraints_proof<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
     airgroupvalues: Vec<Vec<F>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     const MY_NAME: &str = "GlCstVfy";
@@ -83,7 +76,7 @@ pub fn verify_global_constraints_proof<F: Field>(
 
     let mut valid_global_constraints = true;
 
-    let global_constraints_lines = get_global_constraints_lines_str(sctx.clone());
+    let global_constraints_lines = get_global_constraints_lines_str(sctx);
 
     for idx in 0..global_constraints.len() {
         let constraint = global_constraints[idx];
@@ -138,12 +131,12 @@ pub fn verify_global_constraints_proof<F: Field>(
     }
 }
 
-pub fn verify_constraints_proof<F: Field>(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_id: usize) -> bool {
+pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize) -> bool {
     const MY_NAME: &str = "CstrVrfy";
 
     let instances = pctx.dctx_get_instances();
 
-    let constraints = verify_constraints::<F>(pctx.clone(), sctx.clone(), instance_id);
+    let constraints = verify_constraints::<F>(pctx, sctx, instance_id);
 
     let (airgroup_id, air_id, _) = instances[instance_id];
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
@@ -164,7 +157,7 @@ pub fn verify_constraints_proof<F: Field>(pctx: Arc<ProofCtx<F>>, sctx: Arc<Setu
 
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
-    let constraints_lines = get_constraints_lines_str(sctx.clone(), airgroup_id, air_id);
+    let constraints_lines = get_constraints_lines_str(sctx, airgroup_id, air_id);
 
     let mut valid_constraints_instance = true;
     let skipping = "is skipped".bright_yellow();

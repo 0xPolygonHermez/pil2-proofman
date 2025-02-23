@@ -24,8 +24,8 @@ impl<F: PrimeField> Std<F> {
         log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
-        let std_prod = StdProd::new(wcm.get_pctx(), wcm.get_sctx(), None, None);
-        let std_sum = StdSum::new(wcm.get_pctx(), wcm.get_sctx(), None, None);
+        let std_prod = StdProd::new(&wcm.get_pctx(), &wcm.get_sctx(), None, None);
+        let std_sum = StdSum::new(&wcm.get_pctx(), &wcm.get_sctx(), None, None);
         let range_check = StdRangeCheck::new(wcm.get_pctx(), wcm.get_sctx());
 
         Self::register_std(wcm.clone(), std_prod.clone(), std_sum.clone(), range_check.clone());

@@ -42,15 +42,14 @@ impl GetConstraintsCmd {
                     .bright_white()
                     .bold()
                 );
-                let constraints_lines: Vec<String> =
-                    get_constraints_lines_str(setups.sctx.clone(), airgroup_id, air_id);
+                let constraints_lines: Vec<String> = get_constraints_lines_str(&setups.sctx, airgroup_id, air_id);
                 for (idx, line) in constraints_lines.iter().enumerate() {
                     log::info!("{}:         · Constraint #{} : {}", Self::MY_NAME, idx, line);
                 }
             }
         }
 
-        let global_constraints_lines = get_global_constraints_lines_str(setups.sctx.clone());
+        let global_constraints_lines = get_global_constraints_lines_str(&setups.sctx);
 
         log::info!("{}", format!("{}:     ► Global Constraints", Self::MY_NAME,).bright_white().bold());
         for (idx, line) in global_constraints_lines.iter().enumerate() {

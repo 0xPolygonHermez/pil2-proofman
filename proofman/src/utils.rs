@@ -2,7 +2,7 @@ use log::info;
 use p3_field::PrimeField;
 use std::fs;
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf};
 
 use colored::*;
 
@@ -10,7 +10,7 @@ use std::error::Error;
 
 use proofman_common::{format_bytes, ProofCtx, SetupsVadcop};
 
-pub fn print_summary_info<F: PrimeField>(name: &str, pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
+pub fn print_summary_info<F: PrimeField>(name: &str, pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) {
     let mpi_rank = pctx.dctx_get_rank();
     let n_processes = pctx.dctx_get_n_processes();
 
@@ -27,15 +27,15 @@ pub fn print_summary_info<F: PrimeField>(name: &str, pctx: Arc<ProofCtx<F>>, set
     }
 
     if mpi_rank == 0 {
-        print_summary::<F>(name, pctx.clone(), setups.clone(), true);
+        print_summary::<F>(name, pctx, setups, true);
     }
 
     if n_processes > 1 {
-        print_summary::<F>(name, pctx.clone(), setups.clone(), false);
+        print_summary::<F>(name, pctx, setups, false);
     }
 }
 
-pub fn print_summary<F: PrimeField>(name: &str, pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>, global: bool) {
+pub fn print_summary<F: PrimeField>(name: &str, pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>, global: bool) {
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();

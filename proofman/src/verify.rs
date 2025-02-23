@@ -4,8 +4,6 @@ use proofman_starks_lib_c::{stark_info_new_c, expressions_bin_new_c, stark_verif
 
 use colored::*;
 
-use std::sync::Arc;
-
 use proofman_common::{ProofCtx, ProofType};
 
 use std::os::raw::c_void;
@@ -86,7 +84,7 @@ pub fn verify_proof<F: Field>(
     )
 }
 
-pub fn verify_basic_proof<F: Field>(pctx: Arc<ProofCtx<F>>, instance_id: usize, proof: *mut c_void) -> bool {
+pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proof: *mut c_void) -> bool {
     const MY_NAME: &str = "Verify  ";
     let mut is_valid = true;
 
