@@ -27,11 +27,11 @@ pub fn print_summary_info<F: PrimeField>(name: &str, pctx: &ProofCtx<F>, setups:
     }
 
     if mpi_rank == 0 {
-        print_summary::<F>(name, pctx, setups, true);
+        print_summary(name, pctx, setups, true);
     }
 
     if n_processes > 1 {
-        print_summary::<F>(name, pctx, setups, false);
+        print_summary(name, pctx, setups, false);
     }
 }
 

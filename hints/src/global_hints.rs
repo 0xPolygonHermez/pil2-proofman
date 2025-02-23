@@ -6,14 +6,14 @@ use proofman_starks_lib_c::{
 };
 use std::ffi::c_void;
 
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use proofman_common::{skip_prover_instance, ExtensionField, ProofCtx, SetupCtx};
 
-pub fn aggregate_airgroupvals<F: Field>(pctx: &ProofCtx<F>, airgroup_values: Vec<Vec<F>>) -> Vec<Vec<u64>> {
+pub fn aggregate_airgroupvals<F: Field>(pctx: &ProofCtx<F>, airgroup_values: &[Vec<F>]) -> Vec<Vec<u64>> {
     const FIELD_EXTENSION: usize = 3;
 
-    let mut airgroupvalues: Vec<Vec<F>> = Vec::new();
+    let mut airgroupvalues = Vec::new();
     for agg_types in pctx.global_info.agg_types.iter() {
         let mut values = vec![F::zero(); agg_types.len() * FIELD_EXTENSION];
         for (idx, agg_type) in agg_types.iter().enumerate() {
@@ -58,7 +58,7 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: &ProofCtx<F>, airgroup_values: Vec
         }
     }
 
-    let mut airgroupvalues_u64: Vec<Vec<u64>> = Vec::new();
+    let mut airgroupvalues_u64 = Vec::new();
     for (id, agg_types) in pctx.global_info.agg_types.iter().enumerate() {
         let mut values = vec![0; agg_types.len() * FIELD_EXTENSION];
         for idx in 0..agg_types.len() {
@@ -84,9 +84,9 @@ fn get_global_hint_f<F: Field>(
 ) -> Vec<HintFieldInfo<F>> {
     let n_hints_values = get_hint_field_global_constraints_values_c(sctx.get_global_bin(), hint_id, hint_field_name);
 
-    let mut hint_field_values: Vec<HintFieldInfo<F>> = vec![HintFieldInfo::default(); n_hints_values as usize];
+    let mut hint_field_values = vec![HintFieldInfo::default(); n_hints_values as usize];
 
-    let mut hint_field_values_c = HintFieldInfoC::<F>::from_hint_field_info_vec(&mut hint_field_values);
+    let mut hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     let mut hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
     get_hint_field_global_constraints_sizes_c(
@@ -98,13 +98,13 @@ fn get_global_hint_f<F: Field>(
         print_expression,
     );
 
-    HintFieldInfoC::<F>::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
+    HintFieldInfoC::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
 
     for hint_field_value in hint_field_values.iter_mut() {
         hint_field_value.init_buffers(true);
     }
 
-    hint_field_values_c = HintFieldInfoC::<F>::from_hint_field_info_vec(&mut hint_field_values);
+    hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
     let publics = if let Some(ref pctx) = pctx { pctx.get_publics_ptr() } else { std::ptr::null_mut() };
@@ -125,7 +125,7 @@ fn get_global_hint_f<F: Field>(
                 ));
             }
         }
-        let mut airgroupvals = aggregate_airgroupvals(&pctx, airgroup_values_air_instances);
+        let mut airgroupvals = aggregate_airgroupvals(&pctx, &airgroup_values_air_instances);
         let mut airgroup_values_ptrs: Vec<*mut u64> = airgroupvals
             .iter_mut() // Iterate mutably over the inner Vecs
             .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
@@ -176,7 +176,7 @@ pub fn get_hint_field_gc_constant_a<F: Field>(
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValuesVec<F> {
-    let hint_infos: Vec<HintFieldInfo<F>> = get_global_hint_f(None, &sctx, hint_id, hint_field_name, print_expression);
+    let hint_infos = get_global_hint_f(None, &sctx, hint_id, hint_field_name, print_expression);
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
@@ -248,8 +248,7 @@ pub fn get_hint_field_gc_a<F: Field>(
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValuesVec<F> {
-    let hint_infos: Vec<HintFieldInfo<F>> =
-        get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression);
+    let hint_infos = get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression);
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
@@ -301,7 +300,7 @@ pub fn set_hint_field_gc<F: Field>(
     hint_field_name: &str,
     value: HintFieldOutput<F>,
 ) {
-    let mut value_array: Vec<F> = Vec::new();
+    let mut value_array = Vec::new();
 
     match value {
         HintFieldOutput::Field(val) => {

@@ -724,7 +724,7 @@ impl HintCol {
             }
             HintFieldType::Column => HintFieldValue::Column(hint_field.values.to_vec()),
             HintFieldType::ColumnExtended => {
-                let mut extended_vec: Vec<ExtensionField<F>> = Vec::with_capacity(hint_field.size as usize / 3);
+                let mut extended_vec = Vec::with_capacity(hint_field.size as usize / 3);
                 for chunk in hint_field.values.chunks(3) {
                     extended_vec.push(ExtensionField { value: [chunk[0], chunk[1], chunk[2]] });
                 }
@@ -914,7 +914,7 @@ fn get_hint_f<F: Field>(
 
     let mut hint_field_values: Vec<HintFieldInfo<F>> = vec![HintFieldInfo::default(); n_hints_values as usize];
 
-    let mut hint_field_values_c = HintFieldInfoC::<F>::from_hint_field_info_vec(&mut hint_field_values);
+    let mut hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     let mut hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
     get_hint_field_sizes_c(
@@ -925,13 +925,13 @@ fn get_hint_f<F: Field>(
         (&options).into(),
     );
 
-    HintFieldInfoC::<F>::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
+    HintFieldInfoC::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
 
     for hint_field_value in hint_field_values.iter_mut() {
         hint_field_value.init_buffers(options.initialize_zeros);
     }
 
-    hint_field_values_c = HintFieldInfoC::<F>::from_hint_field_info_vec(&mut hint_field_values);
+    hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
     get_hint_field_c(
@@ -981,7 +981,7 @@ pub fn get_hint_field_a<F: Field>(
     let instances = pctx.dctx_get_instances();
     let (airgroup_id, air_id, _) = instances[instance_id];
 
-    let hint_infos: Vec<HintFieldInfo<F>> =
+    let hint_infos =
         get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
 
     let mut hint_field_values = Vec::new();
@@ -1010,7 +1010,7 @@ pub fn get_hint_field_m<F: Field>(
     let instances = pctx.dctx_get_instances();
     let (airgroup_id, air_id, _) = instances[instance_id];
 
-    let hint_infos: Vec<HintFieldInfo<F>> =
+    let hint_infos =
         get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
@@ -1043,8 +1043,7 @@ pub fn get_hint_field_constant<F: Field>(
 ) -> HintFieldValue<F> {
     options.compilation_time = true;
 
-    let hint_info: Vec<HintFieldInfo<F>> =
-        get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
+    let hint_info = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
 
     if hint_info[0].matrix_size != 0 {
         panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
@@ -1067,8 +1066,7 @@ pub fn get_hint_field_constant_a<F: Field>(
 ) -> HintFieldValuesVec<F> {
     options.compilation_time = true;
 
-    let hint_infos: Vec<HintFieldInfo<F>> =
-        get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
+    let hint_infos = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
@@ -1095,8 +1093,7 @@ pub fn get_hint_field_constant_m<F: Field>(
 ) -> HintFieldValues<F> {
     options.compilation_time = true;
 
-    let hint_infos: Vec<HintFieldInfo<F>> =
-        get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
+    let hint_infos = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
@@ -1155,7 +1152,7 @@ pub fn set_hint_field_val<F: Field>(
 
     let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
 
-    let mut value_array: Vec<F> = Vec::new();
+    let mut value_array = Vec::new();
 
     match value {
         HintFieldOutput::Field(val) => {

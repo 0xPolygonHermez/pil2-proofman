@@ -42,7 +42,7 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
                 true => None,
                 false => {
                     // Get the "stage_wc" hint
-                    let stage_wc = get_global_hint_field_constant_as::<u32, F>(&sctx, std_prod_users_id[0], "stage_wc");
+                    let stage_wc = get_global_hint_field_constant_as(&sctx, std_prod_users_id[0], "stage_wc");
                     Some(stage_wc)
                 }
             },
@@ -88,7 +88,7 @@ impl<F: PrimeField> StdProd<F> {
         // Process each debug hint
         for &hint in debug_data_hints.iter() {
             // Extract hint fields
-            let name_piop = get_hint_field_constant_as_string::<F>(
+            let name_piop = get_hint_field_constant_as_string(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -97,7 +97,7 @@ impl<F: PrimeField> StdProd<F> {
                 HintFieldOptions::default(),
             );
 
-            let name_expr = get_hint_field_constant_a_as_string::<F>(
+            let name_expr = get_hint_field_constant_a_as_string(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -106,7 +106,7 @@ impl<F: PrimeField> StdProd<F> {
                 HintFieldOptions::default(),
             );
 
-            let opid = get_hint_field_constant_as_field::<F>(
+            let opid = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -127,7 +127,7 @@ impl<F: PrimeField> StdProd<F> {
                 continue;
             }
 
-            let is_global = get_hint_field_constant_as_field::<F>(
+            let is_global = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -136,22 +136,14 @@ impl<F: PrimeField> StdProd<F> {
                 HintFieldOptions::default(),
             );
 
-            let proves =
-                get_hint_field::<F>(sctx, pctx, instance_id, hint as usize, "proves", HintFieldOptions::default());
+            let proves = get_hint_field(sctx, pctx, instance_id, hint as usize, "proves", HintFieldOptions::default());
 
-            let sel: HintFieldValue<F> =
-                get_hint_field::<F>(sctx, pctx, instance_id, hint as usize, "selector", HintFieldOptions::default());
+            let sel = get_hint_field(sctx, pctx, instance_id, hint as usize, "selector", HintFieldOptions::default());
 
-            let expressions = get_hint_field_a::<F>(
-                sctx,
-                pctx,
-                instance_id,
-                hint as usize,
-                "expressions",
-                HintFieldOptions::default(),
-            );
+            let expressions =
+                get_hint_field_a(sctx, pctx, instance_id, hint as usize, "expressions", HintFieldOptions::default());
 
-            let deg_expr = get_hint_field_constant_as_field::<F>(
+            let deg_expr = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -160,7 +152,7 @@ impl<F: PrimeField> StdProd<F> {
                 HintFieldOptions::default(),
             );
 
-            let deg_sel = get_hint_field_constant_as_field::<F>(
+            let deg_sel = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -278,9 +270,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
             // Get the number of product check users and their airgroup and air IDs
             let std_prod_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users")[0];
 
-            let num_users = get_global_hint_field_constant_as::<usize, F>(&sctx, std_prod_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_prod_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_prod_users, "air_ids", false);
+            let num_users = get_global_hint_field_constant_as(&sctx, std_prod_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a(&sctx, std_prod_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a(&sctx, std_prod_users, "air_ids", false);
 
             let instances = pctx.dctx_get_instances();
 
@@ -316,7 +308,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
 
                     // This call calculates "numerator" / "denominator" and accumulates it into "reference". Its last value is stored into "result"
                     // Alternatively, this could be done using get_hint_field and set_hint_field methods and calculating the operations in Rust,
-                    acc_mul_hint_fields::<F>(
+                    acc_mul_hint_fields(
                         &sctx,
                         &pctx,
                         *instance_id,
@@ -330,7 +322,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
                         false,
                     );
 
-                    update_airgroupvalue::<F>(
+                    update_airgroupvalue(
                         &sctx,
                         &pctx,
                         *instance_id,
@@ -358,9 +350,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
         if !std_prod_users_vec.is_empty() {
             let std_prod_users = std_prod_users_vec[0];
 
-            let num_users = get_global_hint_field_constant_as::<usize, F>(&sctx, std_prod_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_prod_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_prod_users, "air_ids", false);
+            let num_users = get_global_hint_field_constant_as(&sctx, std_prod_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a(&sctx, std_prod_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a(&sctx, std_prod_users, "air_ids", false);
 
             let instances = pctx.dctx_get_instances();
             let my_instances = pctx.dctx_get_my_instances();

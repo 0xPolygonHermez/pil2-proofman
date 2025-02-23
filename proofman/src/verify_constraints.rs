@@ -136,7 +136,7 @@ pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
 
     let instances = pctx.dctx_get_instances();
 
-    let constraints = verify_constraints::<F>(pctx, sctx, instance_id);
+    let constraints = verify_constraints(pctx, sctx, instance_id);
 
     let (airgroup_id, air_id, _) = instances[instance_id];
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;

@@ -319,7 +319,7 @@ impl<F: Field> ProofCtx<F> {
 
     pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: Vec<Vec<u64>>) -> Vec<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
-        dctx.distribute_airgroupvalues::<F>(airgroup_values, &self.global_info)
+        dctx.distribute_airgroupvalues(airgroup_values, &self.global_info)
     }
 
     pub fn dctx_close(&self) {
@@ -336,7 +336,7 @@ impl<F: Field> ProofCtx<F> {
         self.public_inputs.values.write().unwrap()[public_id] = F::from_canonical_u64(value);
     }
 
-    pub fn set_global_challenge(&self, stage: usize, global_challenge: Vec<F>) {
+    pub fn set_global_challenge(&self, stage: usize, global_challenge: &[F]) {
         let mut global_challenge_guard = self.global_challenge.values.write().unwrap();
         global_challenge_guard[0] = global_challenge[0];
         global_challenge_guard[1] = global_challenge[1];
@@ -354,7 +354,7 @@ impl<F: Field> ProofCtx<F> {
         }
     }
 
-    pub fn set_challenge(&self, index: usize, challenge: Vec<F>) {
+    pub fn set_challenge(&self, index: usize, challenge: &[F]) {
         let mut challenges_guard = self.challenges.values.write().unwrap();
         challenges_guard[index] = challenge[0];
         challenges_guard[index + 1] = challenge[1];

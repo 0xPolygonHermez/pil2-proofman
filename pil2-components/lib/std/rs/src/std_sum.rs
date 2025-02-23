@@ -42,7 +42,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                 true => None,
                 false => {
                     // Get the "stage_wc" hint
-                    let stage_wc = get_global_hint_field_constant_as::<u32, F>(&sctx, std_sum_users_id[0], "stage_wc");
+                    let stage_wc = get_global_hint_field_constant_as(&sctx, std_sum_users_id[0], "stage_wc");
                     Some(stage_wc)
                 }
             },
@@ -87,7 +87,7 @@ impl<F: PrimeField> StdSum<F> {
         // Process each debug hint
         for &hint in debug_data_hints.iter() {
             // Extract hint fields
-            let name_piop = get_hint_field_constant_as_string::<F>(
+            let name_piop = get_hint_field_constant_as_string(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -96,7 +96,7 @@ impl<F: PrimeField> StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            let name_expr = get_hint_field_constant_a_as_string::<F>(
+            let name_expr = get_hint_field_constant_a_as_string(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -105,10 +105,9 @@ impl<F: PrimeField> StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            let busid =
-                get_hint_field::<F>(sctx, pctx, instance_id, hint as usize, "busid", HintFieldOptions::default());
+            let busid = get_hint_field(sctx, pctx, instance_id, hint as usize, "busid", HintFieldOptions::default());
 
-            let is_global = get_hint_field_constant_as_field::<F>(
+            let is_global = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -117,22 +116,14 @@ impl<F: PrimeField> StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            let proves =
-                get_hint_field::<F>(sctx, pctx, instance_id, hint as usize, "proves", HintFieldOptions::default());
+            let proves = get_hint_field(sctx, pctx, instance_id, hint as usize, "proves", HintFieldOptions::default());
 
-            let mul =
-                get_hint_field::<F>(sctx, pctx, instance_id, hint as usize, "selector", HintFieldOptions::default());
+            let mul = get_hint_field(sctx, pctx, instance_id, hint as usize, "selector", HintFieldOptions::default());
 
-            let expressions = get_hint_field_a::<F>(
-                sctx,
-                pctx,
-                instance_id,
-                hint as usize,
-                "expressions",
-                HintFieldOptions::default(),
-            );
+            let expressions =
+                get_hint_field_a(sctx, pctx, instance_id, hint as usize, "expressions", HintFieldOptions::default());
 
-            let deg_expr = get_hint_field_constant_as_field::<F>(
+            let deg_expr = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -141,7 +132,7 @@ impl<F: PrimeField> StdSum<F> {
                 HintFieldOptions::default(),
             );
 
-            let deg_mul = get_hint_field_constant_as_field::<F>(
+            let deg_mul = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -291,9 +282,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
             // Get the number of sum check users and their airgroup and air IDs
             let std_sum_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users")[0];
 
-            let num_users = get_global_hint_field_constant_as::<usize, F>(&sctx, std_sum_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_sum_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_sum_users, "air_ids", false);
+            let num_users = get_global_hint_field_constant_as(&sctx, std_sum_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "air_ids", false);
 
             let instances = pctx.dctx_get_instances();
 
@@ -327,7 +318,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                     let n_im_total_hints = im_total_hints.len();
 
                     if !im_total_hints.is_empty() {
-                        mul_hint_fields::<F>(
+                        mul_hint_fields(
                             &sctx,
                             &pctx,
                             *instance_id,
@@ -350,7 +341,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
 
                     // This call accumulates "expression" into "reference" expression and stores its last value to "result"
                     // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust,
-                    acc_mul_hint_fields::<F>(
+                    acc_mul_hint_fields(
                         &sctx,
                         &pctx,
                         *instance_id,
@@ -364,7 +355,7 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
                         true,
                     );
 
-                    update_airgroupvalue::<F>(
+                    update_airgroupvalue(
                         &sctx,
                         &pctx,
                         *instance_id,
@@ -391,9 +382,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
         if !std_sum_users_vec.is_empty() {
             let std_sum_users = std_sum_users_vec[0];
 
-            let num_users = get_global_hint_field_constant_as::<usize, F>(&sctx, std_sum_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_sum_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a::<F>(&sctx, std_sum_users, "air_ids", false);
+            let num_users = get_global_hint_field_constant_as(&sctx, std_sum_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "air_ids", false);
 
             let instances = pctx.dctx_get_instances();
             let my_instances = pctx.dctx_get_my_instances();

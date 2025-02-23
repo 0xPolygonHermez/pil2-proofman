@@ -43,7 +43,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
 
         if !specified_hints.is_empty() {
             for hint in specified_hints[1..].iter() {
-                let predefined = get_hint_field_constant::<F>(
+                let predefined = get_hint_field_constant(
                     &sctx,
                     airgroup_id,
                     air_id,
@@ -51,7 +51,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                     "predefined",
                     HintFieldOptions::default(),
                 );
-                let min = get_hint_field_constant::<F>(
+                let min = get_hint_field_constant(
                     &sctx,
                     airgroup_id,
                     air_id,
@@ -59,7 +59,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                     "min",
                     HintFieldOptions::default(),
                 );
-                let min_neg = get_hint_field_constant::<F>(
+                let min_neg = get_hint_field_constant(
                     &sctx,
                     airgroup_id,
                     air_id,
@@ -67,7 +67,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                     "min_neg",
                     HintFieldOptions::default(),
                 );
-                let max = get_hint_field_constant::<F>(
+                let max = get_hint_field_constant(
                     &sctx,
                     airgroup_id,
                     air_id,
@@ -75,7 +75,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                     "max",
                     HintFieldOptions::default(),
                 );
-                let max_neg = get_hint_field_constant::<F>(
+                let max_neg = get_hint_field_constant(
                     &sctx,
                     airgroup_id,
                     air_id,
@@ -212,7 +212,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
 
             if pctx.dctx_is_my_instance(instance_id) {
                 let buffer_size = self.num_cols * self.num_rows;
-                let mut buffer = create_buffer_fast::<F>(buffer_size);
+                let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
                         chunk[col] = F::from_canonical_u64(vec[row].load(Ordering::Relaxed));

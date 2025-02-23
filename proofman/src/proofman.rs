@@ -88,13 +88,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx.dctx_close();
 
-        let transcript: FFITranscript = FFITranscript::new(2, true);
+        let transcript = FFITranscript::new(2, true);
         let dummy_element = [F::zero(), F::one(), F::two(), F::neg_one()];
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
         let global_challenge = [F::zero(); 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
-        pctx.set_global_challenge(2, global_challenge.to_vec());
+        pctx.set_global_challenge(2, &global_challenge);
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
         let instances = pctx.dctx_get_instances();
@@ -142,7 +142,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         if check_global_constraints {
             let airgroup_values_air_instances =
                 Arc::try_unwrap(airgroup_values_air_instances).unwrap().into_inner().unwrap();
-            let airgroupvalues_u64 = aggregate_airgroupvals(&pctx, airgroup_values_air_instances);
+            let airgroupvalues_u64 = aggregate_airgroupvals(&pctx, &airgroup_values_air_instances);
             let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
 
             if pctx.dctx_get_rank() == 0 {
@@ -283,10 +283,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
-            let circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
-            let publics: Vec<F> = create_buffer_fast(publics_size);
-            let trace: Vec<F> = create_buffer_fast(trace_size);
-            let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
+            let circom_witness = create_buffer_fast(circom_witness_size);
+            let publics = create_buffer_fast(publics_size);
+            let trace = create_buffer_fast(trace_size);
+            let prover_buffer = create_buffer_fast(prover_buffer_size);
             (circom_witness, publics, trace, prover_buffer)
         } else {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new())
@@ -374,7 +374,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
         let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-        let global_info_file: &str = global_info_path.to_str().unwrap();
+        let global_info_file = global_info_path.to_str().unwrap();
 
         save_challenges_c(pctx.get_challenges_ptr(), global_info_file, output_dir_path.to_string_lossy().as_ref());
         save_proof_values_c(pctx.get_proof_values_ptr(), global_info_file, output_dir_path.to_string_lossy().as_ref());
@@ -389,7 +389,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 || !pctx.options.debug_info.debug_global_instances.is_empty();
 
             if check_global_constraints {
-                let airgroupvalues_u64 = aggregate_airgroupvals(&pctx, airgroup_values_air_instances);
+                let airgroupvalues_u64 = aggregate_airgroupvals(&pctx, &airgroup_values_air_instances);
                 let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
 
                 if pctx.dctx_get_rank() == 0 {
@@ -407,7 +407,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
         }
 
-        let agg_proof = aggregate_proofs(Self::MY_NAME, &pctx, &setups, proofs, output_dir_path);
+        let agg_proof = aggregate_proofs(Self::MY_NAME, &pctx, &setups, &proofs, output_dir_path);
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
         agg_proof
@@ -437,7 +437,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             options.verify_constraints,
         )?;
 
-        let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options);
+        let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options);
 
         let setups = Arc::new(SetupsVadcop::new(
             &pctx.global_info,
@@ -498,7 +498,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 values.push(value);
             }
             if !values.is_empty() {
-                let value = Self::hash_b_tree(values);
+                let value = Self::hash_b_tree(&values);
                 transcript.add_elements(value.as_ptr() as *mut u8, value.len());
             }
         }
@@ -506,7 +506,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let global_challenge = [F::zero(); 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
-        pctx.set_global_challenge(2, global_challenge.to_vec());
+        pctx.set_global_challenge(2, &global_challenge);
     }
 
     #[allow(dead_code)]
@@ -631,10 +631,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 let setup = setups.sctx.get_setup(airgroup_id, air_id);
                 for custom_commit in &setup.stark_info.custom_commits {
                     if custom_commit.stage_widths[0] > 0 {
-                        let custom_commit_name = &custom_commit.name;
-
                         // Handle the possibility that this returns None
-                        let custom_file_path = pctx.get_custom_commits_fixed_buffer(custom_commit_name)?;
+                        let custom_file_path = pctx.get_custom_commits_fixed_buffer(&custom_commit.name)?;
 
                         let mut file = File::open(custom_file_path)?;
                         let mut root_bytes = [0u8; 32];
@@ -658,14 +656,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             info!("{}: Initializing setup fixed pols aggregation", Self::MY_NAME);
 
-            let global_info = pctx.global_info.clone();
-
             let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
             info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
             timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
 
             airs.iter().for_each(|&(airgroup_id, air_id)| {
-                if global_info.get_air_has_compressor(airgroup_id, air_id) {
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id);
                     setup.load_const_pols();
                 }
@@ -684,7 +680,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
             timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
             info!("{}: ··· Initializing setup fixed pols recursive2", Self::MY_NAME);
-            let n_airgroups = global_info.air_groups.len();
+            let n_airgroups = pctx.global_info.air_groups.len();
             for airgroup in 0..n_airgroups {
                 let setup = sctx_recursive2.get_setup(airgroup, 0);
                 setup.load_const_pols();
@@ -741,14 +737,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             info!("{}: Initializing setup fixed tree aggregation", Self::MY_NAME);
 
-            let global_info = pctx.global_info.clone();
-
             let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
             info!("{}: ··· Initializing setup fixed tree compressor", Self::MY_NAME);
             timer_start_trace!(INITIALIZE_CONST_TREE_COMPRESSOR);
 
             airs.iter().for_each(|&(airgroup_id, air_id)| {
-                if global_info.get_air_has_compressor(airgroup_id, air_id) {
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id);
                     setup.load_const_pols_tree();
                 }
@@ -767,7 +761,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
             timer_start_trace!(INITIALIZE_CONST_TREE_RECURSIVE2);
             info!("{}: ··· Initializing setup fixed tree recursive2", Self::MY_NAME);
-            let n_airgroups = global_info.air_groups.len();
+            let n_airgroups = pctx.global_info.air_groups.len();
             for airgroup in 0..n_airgroups {
                 let setup = sctx_recursive2.get_setup(airgroup, 0);
                 setup.load_const_pols_tree();
@@ -816,16 +810,16 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         });
 
         if pctx.options.aggregation {
-            let global_info = pctx.global_info.clone();
             let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
             airs.iter().for_each(|&(airgroup_id, air_id)| {
-                if global_info.get_air_has_compressor(airgroup_id, air_id) {
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id);
                     if pctx.dctx_is_min_rank_owner(airgroup_id, air_id) && setup.to_write_tree() {
                         setup.write_const_tree();
                     }
                 }
             });
+
             let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
             airs.iter().for_each(|&(airgroup_id, air_id)| {
                 let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
@@ -836,7 +830,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             if pctx.dctx_get_rank() == 0 {
                 let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
-                let n_airgroups = global_info.air_groups.len();
+                let n_airgroups = pctx.global_info.air_groups.len();
                 for airgroup in 0..n_airgroups {
                     let setup = sctx_recursive2.get_setup(airgroup, 0);
                     if pctx.dctx_is_min_rank_owner(airgroup, 0) && setup.to_write_tree() {
@@ -898,7 +892,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut value = vec![Goldilocks::zero(); n_field_elements];
 
-        let n_airvalues: usize = setup
+        let n_airvalues = setup
             .stark_info
             .airvalues_map
             .as_ref()
@@ -941,7 +935,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
     }
 
-    fn hash_b_tree(values: Vec<Vec<F>>) -> Vec<F> {
+    fn hash_b_tree(values: &[Vec<F>]) -> Vec<F> {
         if values.len() == 1 {
             return values[0].clone();
         }
@@ -974,6 +968,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             result.push(values[values.len() - 1].clone());
         }
 
-        Self::hash_b_tree(result)
+        Self::hash_b_tree(&result)
     }
 }
