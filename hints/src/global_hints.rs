@@ -5,12 +5,11 @@ use proofman_starks_lib_c::{
     get_hint_field_global_constraints_c, set_hint_field_global_constraints_c,
 };
 use std::ffi::c_void;
-
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use proofman_common::{ExtensionField, ProofCtx, SetupCtx};
 
-pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>> {
+pub fn aggregate_airgroupvals<F: Field>(pctx: &ProofCtx<F>) -> Vec<Vec<u64>> {
     const FIELD_EXTENSION: usize = 3;
 
     let mut airgroupvalues: Vec<Vec<F>> = Vec::new();
@@ -71,8 +70,8 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>>
 }
 
 fn get_global_hint_f<F: Field>(
-    pctx: Option<Arc<ProofCtx<F>>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: Option<&ProofCtx<F>>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -102,11 +101,11 @@ fn get_global_hint_f<F: Field>(
     hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
-    let publics = if let Some(ref pctx) = pctx { pctx.get_publics_ptr() } else { std::ptr::null_mut() };
-    let challenges = if let Some(ref pctx) = pctx { pctx.get_challenges_ptr() } else { std::ptr::null_mut() };
-    let proof_values = if let Some(ref pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
-    let airgroup_values = if let Some(ref pctx) = pctx {
-        let mut airgroupvals = aggregate_airgroupvals(pctx.clone());
+    let publics = if let Some(pctx) = pctx { pctx.get_publics_ptr() } else { std::ptr::null_mut() };
+    let challenges = if let Some(pctx) = pctx { pctx.get_challenges_ptr() } else { std::ptr::null_mut() };
+    let proof_values = if let Some(pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
+    let airgroup_values = if let Some(pctx) = pctx {
+        let mut airgroupvals = aggregate_airgroupvals(pctx);
         let mut airgroup_values_ptrs: Vec<*mut u64> = airgroupvals
             .iter_mut() // Iterate mutably over the inner Vecs
             .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
@@ -132,7 +131,7 @@ fn get_global_hint_f<F: Field>(
     hint_field_values
 }
 pub fn get_hint_field_constant_gc<F: Field>(
-    sctx: Arc<SetupCtx<F>>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -151,7 +150,7 @@ pub fn get_hint_field_constant_gc<F: Field>(
 }
 
 pub fn get_hint_field_gc_constant_a<F: Field>(
-    sctx: Arc<SetupCtx<F>>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -174,7 +173,7 @@ pub fn get_hint_field_gc_constant_a<F: Field>(
 }
 
 pub fn get_hint_field_constant_gc_m<F: Field>(
-    sctx: Arc<SetupCtx<F>>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -202,8 +201,8 @@ pub fn get_hint_field_constant_gc_m<F: Field>(
 }
 
 pub fn get_hint_field_gc<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -222,8 +221,8 @@ pub fn get_hint_field_gc<F: Field>(
 }
 
 pub fn get_hint_field_gc_a<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -246,8 +245,8 @@ pub fn get_hint_field_gc_a<F: Field>(
 }
 
 pub fn get_hint_field_gc_m<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -275,8 +274,8 @@ pub fn get_hint_field_gc_m<F: Field>(
 }
 
 pub fn set_hint_field_gc<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     value: HintFieldOutput<F>,

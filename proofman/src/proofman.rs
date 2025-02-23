@@ -74,7 +74,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             pctx.options.aggregation,
             pctx.options.final_snark,
         ));
-        let sctx: Arc<SetupCtx<F>> = setups.sctx.clone();
+        let sctx = setups.sctx.clone();
 
         pctx.set_weights(&sctx);
 
@@ -95,11 +95,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Self::initialize_witness(witness_lib_path, wcm.clone())?;
         pctx.dctx_barrier();
 
-        Self::print_summary_info(pctx.clone(), setups.clone());
+        Self::print_summary_info(&pctx, &setups);
 
         pctx.dctx_assign_instances();
 
-        Self::initialize_fixed_pols(setups.clone(), pctx.clone())?;
+        Self::initialize_fixed_pols(&setups, &pctx)?;
         pctx.dctx_barrier();
 
         wcm.calculate_witness(1);
@@ -170,9 +170,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         if !pctx.options.verify_constraints {
             timer_start_info!(INITIALIZING_PROOFMAN_2);
 
-            Self::initialize_fixed_pols_tree(setups.clone(), pctx.clone());
+            Self::initialize_fixed_pols_tree(&setups, &pctx);
             pctx.dctx_barrier();
-            Self::write_fixed_pols_tree(setups.clone(), pctx.clone());
+            Self::write_fixed_pols_tree(&setups, &pctx);
             pctx.dctx_barrier();
 
             timer_stop_and_log_info!(INITIALIZING_PROOFMAN_2);
@@ -183,7 +183,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_start_info!(GENERATING_PROOF);
 
         let mut provers: Vec<Box<dyn Prover<F>>> = Vec::new();
-        Self::initialize_provers(sctx.clone(), &mut provers, pctx.clone());
+        Self::initialize_provers(&sctx, &mut provers, &pctx);
 
         if provers.is_empty() {
             return Err("No instances found".into());
@@ -193,7 +193,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_start_info!(LOAD_CUSTOM_COMMITS_STAGE_0);
         for prover in provers.iter_mut() {
-            prover.commit_custom_commits_stage(0, pctx.clone());
+            prover.commit_custom_commits_stage(0, &pctx);
         }
 
         timer_stop_and_log_info!(LOAD_CUSTOM_COMMITS_STAGE_0);
@@ -201,7 +201,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         // Commit stages
         let num_commit_stages = pctx.global_info.n_challenges.len() as u32;
         for stage in 1..=num_commit_stages {
-            Self::get_challenges(stage, &mut provers, pctx.clone(), &transcript);
+            Self::get_challenges(stage, &mut provers, &pctx, &transcript);
             if stage != 1 {
                 timer_start_info!(CALCULATING_WITNESS);
                 info!("{}: Calculating witness stage {}", Self::MY_NAME, stage);
@@ -209,23 +209,23 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_stop_and_log_info!(CALCULATING_WITNESS);
             }
 
-            Self::calculate_stage(stage, &mut provers, sctx.clone(), pctx.clone());
+            Self::calculate_stage(stage, &mut provers, &sctx, &pctx);
 
             if !pctx.options.verify_constraints {
                 timer_start_trace!(STARK_COMMIT_STAGE_, stage);
-                Self::commit_stage(stage, &mut provers, pctx.clone());
+                Self::commit_stage(stage, &mut provers, &pctx);
                 timer_stop_and_log_trace!(STARK_COMMIT_STAGE_, stage);
             }
 
             if !pctx.options.verify_constraints || stage < num_commit_stages {
-                Self::calculate_challenges(stage, &mut provers, pctx.clone(), &mut transcript);
+                Self::calculate_challenges(stage, &mut provers, &pctx, &mut transcript);
             }
         }
 
         wcm.debug();
 
         if pctx.options.verify_constraints {
-            return verify_constraints_proof(pctx.clone(), sctx.clone(), &mut provers);
+            return verify_constraints_proof(&pctx, &sctx, &mut provers);
         }
 
         let pctx_ = pctx.clone();
@@ -237,26 +237,26 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         });
 
         // Compute Quotient polynomial
-        Self::get_challenges(num_commit_stages + 1, &mut provers, pctx.clone(), &transcript);
-        Self::calculate_stage(num_commit_stages + 1, &mut provers, sctx.clone(), pctx.clone());
-        Self::commit_stage(num_commit_stages + 1, &mut provers, pctx.clone());
-        Self::calculate_challenges(num_commit_stages + 1, &mut provers, pctx.clone(), &mut transcript);
+        Self::get_challenges(num_commit_stages + 1, &mut provers, &pctx, &transcript);
+        Self::calculate_stage(num_commit_stages + 1, &mut provers, &sctx, &pctx);
+        Self::commit_stage(num_commit_stages + 1, &mut provers, &pctx);
+        Self::calculate_challenges(num_commit_stages + 1, &mut provers, &pctx, &mut transcript);
 
         // Compute openings
-        Self::opening_stages(&mut provers, pctx.clone(), sctx.clone(), &mut transcript);
+        Self::opening_stages(&mut provers, &pctx, &sctx, &mut transcript);
 
         //pctx.dctx_barrier();
         timer_stop_and_log_info!(GENERATING_PROOF);
 
         //Generate proves_out
-        let proves_out = Self::get_proofs(&mut provers, pctx.clone(), output_dir_path.to_string_lossy().as_ref());
+        let proves_out = Self::get_proofs(&mut provers, &pctx, output_dir_path.to_string_lossy().as_ref());
 
         let mut valid_proofs = true;
         if !pctx.options.aggregation && pctx.options.verify_proofs {
-            valid_proofs = verify_basic_proofs(&mut provers, proves_out.clone(), pctx.clone(), sctx.clone());
+            valid_proofs = verify_basic_proofs(&mut provers, proves_out.clone(), &pctx, &sctx);
         }
 
-        Self::free_provers(&mut provers, pctx.clone());
+        Self::free_provers(&mut provers, &pctx);
 
         if !pctx.options.aggregation {
             if valid_proofs {
@@ -281,7 +281,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         info!("{}: ··· Generating aggregated proofs", Self::MY_NAME);
 
         let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
-            get_buff_sizes(pctx_aggregation.clone(), setups.clone())?;
+            get_buff_sizes(&pctx_aggregation, &setups)?;
         let mut circom_witness = create_buffer_fast(circom_witness_size);
         let publics = create_buffer_fast(publics_size);
         let trace = create_buffer_fast(trace_size);
@@ -291,7 +291,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);
         let recursive1_proofs = generate_vadcop_recursive1_proof(
             &pctx_aggregation,
-            setups.clone(),
+            &setups,
             &proves_out,
             &mut circom_witness,
             &publics,
@@ -304,10 +304,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         pctx_aggregation.dctx.read().unwrap().barrier();
         timer_start_info!(GENERATING_RECURSIVE2_PROOFS);
-        let sctx_recursive2 = setups.sctx_recursive2.clone();
+        let sctx_recursive2 = &setups.sctx_recursive2;
         let recursive2_proof = generate_vadcop_recursive2_proof(
             &pctx_aggregation,
-            sctx_recursive2.as_ref().unwrap().clone(),
+            sctx_recursive2.as_ref().unwrap(),
             &recursive1_proofs,
             &mut circom_witness,
             &publics,
@@ -321,11 +321,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         pctx_aggregation.dctx.read().unwrap().barrier();
         let mpi_rank = pctx.dctx_get_rank();
         if mpi_rank == 0 {
-            let setup_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
+            let setup_final = setups.setup_vadcop_final.as_ref().unwrap();
             timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
             let final_proof = generate_vadcop_final_proof(
                 &pctx_aggregation,
-                setup_final.clone(),
+                setup_final,
                 recursive2_proof,
                 &mut circom_witness,
                 &publics,
@@ -342,7 +342,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
                 let recursivef_proof = generate_recursivef_proof(
                     &pctx_aggregation,
-                    setups.setup_recursivef.as_ref().unwrap().clone(),
+                    setups.setup_recursivef.as_ref().unwrap(),
                     final_proof,
                     &mut circom_witness,
                     &publics,
@@ -417,37 +417,31 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Ok(())
     }
 
-    fn initialize_provers(sctx: Arc<SetupCtx<F>>, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: Arc<ProofCtx<F>>) {
+    fn initialize_provers(sctx: &SetupCtx<F>, provers: &mut Vec<Box<dyn Prover<F>>>, pctx: &ProofCtx<F>) {
         timer_start_debug!(INITIALIZE_PROVERS);
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
         for instance_id in my_instances.iter() {
             let (airgroup_id, air_id) = instances[*instance_id];
             let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
-            let (skip, constraints_skip) = skip_prover_instance(&pctx, *instance_id);
+            let (skip, constraints_skip) = skip_prover_instance(pctx, *instance_id);
             if skip {
                 continue;
             };
-            let prover = Box::new(StarkProver::new(
-                sctx.clone(),
-                airgroup_id,
-                air_id,
-                air_instance_id,
-                *instance_id,
-                constraints_skip,
-            ));
+            let prover =
+                Box::new(StarkProver::new(&sctx, airgroup_id, air_id, air_instance_id, *instance_id, constraints_skip));
 
             provers.push(prover);
         }
 
         for prover in provers.iter_mut() {
-            prover.build(pctx.clone());
+            prover.build(pctx);
         }
 
         let mut buff_helper_size = 0_usize;
 
         for prover in provers.iter_mut() {
-            let buff_helper_prover_size = prover.get_buff_helper_size(pctx.clone());
+            let buff_helper_prover_size = prover.get_buff_helper_size(pctx);
             if buff_helper_prover_size > buff_helper_size {
                 buff_helper_size = buff_helper_prover_size;
             }
@@ -459,7 +453,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_debug!(INITIALIZE_PROVERS);
     }
 
-    fn initialize_fixed_pols(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) -> Result<(), Box<dyn Error>> {
+    fn initialize_fixed_pols(setups: &SetupsVadcop<F>, pctx: &ProofCtx<F>) -> Result<(), Box<dyn Error>> {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_info!(INITIALIZE_CONST_POLS);
 
@@ -515,7 +509,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             let global_info = pctx.global_info.clone();
 
-            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
+            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
             info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
             timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
 
@@ -527,7 +521,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
 
-            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
+            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
             timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
             info!("{}: ··· Initializing setup fixed pols recursive1", Self::MY_NAME);
             airs.iter().for_each(|&(airgroup_id, air_id)| {
@@ -536,7 +530,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
 
-            let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
+            let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
             timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
             info!("{}: ··· Initializing setup fixed pols recursive2", Self::MY_NAME);
             let n_airgroups = global_info.air_groups.len();
@@ -547,14 +541,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
 
             if pctx.dctx_get_rank() == 0 {
-                let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
+                let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
                 timer_start_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
                 info!("{}: ··· Initializing setup fixed pols vadcop final", Self::MY_NAME);
                 setup_vadcop_final.load_const_pols();
                 timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
 
                 if pctx.options.final_snark {
-                    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
+                    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
                     timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
                     info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
                     setup_recursivef.load_const_pols();
@@ -567,7 +561,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Ok(())
     }
 
-    fn initialize_fixed_pols_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
+    fn initialize_fixed_pols_tree(setups: &SetupsVadcop<F>, pctx: &ProofCtx<F>) {
         info!("{}: Initializing setup fixed pols", Self::MY_NAME);
         timer_start_info!(INITIALIZE_CONST_POLS);
 
@@ -598,7 +592,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             let global_info = pctx.global_info.clone();
 
-            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
+            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
             info!("{}: ··· Initializing setup fixed pols compressor", Self::MY_NAME);
             timer_start_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
 
@@ -610,7 +604,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_COMPRESSOR);
 
-            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
+            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
             timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
             info!("{}: ··· Initializing setup fixed pols recursive1", Self::MY_NAME);
             airs.iter().for_each(|&(airgroup_id, air_id)| {
@@ -619,7 +613,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             });
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE1);
 
-            let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
+            let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
             timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
             info!("{}: ··· Initializing setup fixed pols recursive2", Self::MY_NAME);
             let n_airgroups = global_info.air_groups.len();
@@ -630,14 +624,14 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_RECURSIVE2);
 
             if pctx.dctx_get_rank() == 0 {
-                let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
+                let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
                 timer_start_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
                 info!("{}: ··· Initializing setup fixed pols vadcop final", Self::MY_NAME);
                 setup_vadcop_final.load_const_pols_tree();
                 timer_stop_and_log_trace!(INITIALIZE_CONST_POLS_VADCOP_FINAL);
 
                 if pctx.options.final_snark {
-                    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
+                    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
                     timer_start_trace!(INITIALIZE_CONST_POLS_RECURSIVE_FINAL);
                     info!("{}: ··· Initializing setup fixed pols recursive final", Self::MY_NAME);
                     setup_recursivef.load_const_pols_tree();
@@ -648,7 +642,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
     }
 
-    fn write_fixed_pols_tree(setups: Arc<SetupsVadcop<F>>, pctx: Arc<ProofCtx<F>>) {
+    fn write_fixed_pols_tree(setups: &SetupsVadcop<F>, pctx: &ProofCtx<F>) {
         timer_start_info!(WRITE_CONST_TREE);
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -672,7 +666,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         if pctx.options.aggregation {
             let global_info = pctx.global_info.clone();
-            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap().clone();
+            let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
             airs.iter().for_each(|&(airgroup_id, air_id)| {
                 if global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = sctx_compressor.get_setup(airgroup_id, air_id);
@@ -681,7 +675,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     }
                 }
             });
-            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap().clone();
+            let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
             airs.iter().for_each(|&(airgroup_id, air_id)| {
                 let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
                 if pctx.dctx_is_min_rank_owner(airgroup_id, air_id) && setup.to_write_tree() {
@@ -690,7 +684,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             });
 
             if pctx.dctx_get_rank() == 0 {
-                let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap().clone();
+                let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
                 let n_airgroups = global_info.air_groups.len();
                 for airgroup in 0..n_airgroups {
                     let setup = sctx_recursive2.get_setup(airgroup, 0);
@@ -699,13 +693,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     }
                 }
 
-                let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap().clone();
+                let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
                 if setup_vadcop_final.to_write_tree() {
                     setup_vadcop_final.write_const_tree();
                 }
 
                 if pctx.options.final_snark {
-                    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap().clone();
+                    let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
                     if setup_recursivef.to_write_tree() {
                         setup_recursivef.write_const_tree();
                     }
@@ -716,30 +710,25 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(WRITE_CONST_TREE);
     }
 
-    pub fn calculate_stage(
-        stage: u32,
-        provers: &mut [Box<dyn Prover<F>>],
-        sctx: Arc<SetupCtx<F>>,
-        pctx: Arc<ProofCtx<F>>,
-    ) {
+    pub fn calculate_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) {
         if stage as usize == pctx.global_info.n_challenges.len() + 1 {
             info!("{}: Calculating Quotient Polynomials", Self::MY_NAME);
             timer_start_info!(CALCULATING_QUOTIENT_POLYNOMIAL);
             for prover in provers.iter_mut() {
-                prover.calculate_stage(stage, sctx.clone(), pctx.clone());
+                prover.calculate_stage(stage, sctx, pctx);
             }
             timer_stop_and_log_info!(CALCULATING_QUOTIENT_POLYNOMIAL);
         } else {
             info!("{}: Calculating stage {}", Self::MY_NAME, stage);
             timer_start_info!(CALCULATING_STAGE);
             for prover in provers.iter_mut() {
-                prover.calculate_stage(stage, sctx.clone(), pctx.clone());
+                prover.calculate_stage(stage, sctx, pctx);
             }
             timer_stop_and_log_info!(CALCULATING_STAGE);
         }
     }
 
-    pub fn commit_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], pctx: Arc<ProofCtx<F>>) {
+    pub fn commit_stage(stage: u32, provers: &mut [Box<dyn Prover<F>>], pctx: &ProofCtx<F>) {
         if stage as usize == pctx.global_info.n_challenges.len() + 1 {
             info!("{}: Committing stage Q", Self::MY_NAME);
         } else {
@@ -748,7 +737,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_start_info!(COMMITING_STAGE);
         for prover in provers.iter_mut() {
-            prover.commit_stage(stage, pctx.clone());
+            prover.commit_stage(stage, pctx);
         }
         timer_stop_and_log_info!(COMMITING_STAGE);
     }
@@ -791,7 +780,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     fn calculate_challenges(
         stage: u32,
         provers: &mut [Box<dyn Prover<F>>],
-        pctx: Arc<ProofCtx<F>>,
+        pctx: &ProofCtx<F>,
         transcript: &mut FFITranscript,
     ) {
         timer_start_debug!(CALCULATING_CHALLENGES);
@@ -814,7 +803,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut roots: Vec<u64> = vec![0; 4 * provers.len()];
         for (i, prover) in provers.iter_mut().enumerate() {
             // Important we need the roots in u64 in order to distribute them
-            let values = prover.get_transcript_values_u64(stage as u64, pctx.clone());
+            let values = prover.get_transcript_values_u64(stage as u64, pctx);
             if values.is_empty() {
                 panic!("No transcript values found for prover {}", i);
             }
@@ -846,7 +835,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     fn get_challenges(
         stage: u32,
         provers: &mut [Box<dyn Prover<F>>],
-        pctx: Arc<ProofCtx<F>>,
+        pctx: &ProofCtx<F>,
         transcript: &FFITranscript,
     ) -> Vec<Vec<F>> {
         provers[0].get_challenges(stage, pctx, transcript)
@@ -854,8 +843,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
     pub fn opening_stages(
         provers: &mut [Box<dyn Prover<F>>],
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
 
         transcript: &mut FFITranscript,
     ) {
@@ -864,26 +853,26 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         // Calculate evals
         timer_start_debug!(CALCULATING_EVALS);
         let challenges =
-            Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 2, provers, pctx.clone(), transcript);
+            Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 2, provers, pctx, transcript);
         let xi_challenge = challenges[0].clone();
         for group_idx in pctx.dctx_get_my_air_groups() {
-            provers[group_idx[0]].calculate_lev(pctx.clone(), xi_challenge.clone());
+            provers[group_idx[0]].calculate_lev(pctx, xi_challenge.clone());
             for idx in group_idx.iter() {
-                provers[*idx].opening_stage(1, sctx.clone(), pctx.clone());
+                provers[*idx].opening_stage(1, sctx, pctx);
             }
         }
 
         timer_stop_and_log_debug!(CALCULATING_EVALS);
-        Self::calculate_challenges(num_commit_stages + 2, provers, pctx.clone(), transcript);
+        Self::calculate_challenges(num_commit_stages + 2, provers, pctx, transcript);
 
         // Calculate fri polynomial
-        Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 3, provers, pctx.clone(), transcript);
+        Self::get_challenges(pctx.global_info.n_challenges.len() as u32 + 3, provers, pctx, transcript);
         info!("{}: Calculating FRI Polynomials", Self::MY_NAME);
         timer_start_info!(CALCULATING_FRI_POLINOMIAL);
         for group_idx in pctx.dctx_get_my_air_groups().iter() {
-            provers[group_idx[0]].calculate_xdivxsub(pctx.clone(), xi_challenge.clone());
+            provers[group_idx[0]].calculate_xdivxsub(pctx, xi_challenge.clone());
             for idx in group_idx.iter() {
-                provers[*idx].opening_stage(2, sctx.clone(), pctx.clone());
+                provers[*idx].opening_stage(2, sctx, pctx);
             }
         }
         timer_stop_and_log_info!(CALCULATING_FRI_POLINOMIAL);
@@ -897,7 +886,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             Self::get_challenges(
                 pctx.global_info.n_challenges.len() as u32 + 4 + opening_id,
                 provers,
-                pctx.clone(),
+                pctx,
                 transcript,
             );
             if opening_id == num_opening_stages - 1 {
@@ -917,13 +906,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 );
             }
             for prover in provers.iter_mut() {
-                prover.opening_stage(opening_id + 3, sctx.clone(), pctx.clone());
+                prover.opening_stage(opening_id + 3, sctx, pctx);
             }
             if opening_id < num_opening_stages {
                 Self::calculate_challenges(
                     pctx.global_info.n_challenges.len() as u32 + 4 + opening_id,
                     provers,
-                    pctx.clone(),
+                    pctx,
                     transcript,
                 );
             }
@@ -932,7 +921,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(CALCULATING_FRI);
     }
 
-    fn get_proofs(provers: &mut [Box<dyn Prover<F>>], pctx: Arc<ProofCtx<F>>, output_dir: &str) -> Vec<*mut c_void> {
+    fn get_proofs(provers: &mut [Box<dyn Prover<F>>], pctx: &ProofCtx<F>, output_dir: &str) -> Vec<*mut c_void> {
         timer_start_info!(GET_PROOFS);
         let mut proofs = Vec::new();
 
@@ -977,7 +966,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         proves
     }
 
-    fn free_provers(provers: &mut [Box<dyn Prover<F>>], pctx: Arc<ProofCtx<F>>) {
+    fn free_provers(provers: &mut [Box<dyn Prover<F>>], pctx: &ProofCtx<F>) {
         timer_start_info!(FREE_PROVERS);
         let mut proofs = Vec::new();
         let mut starks = Vec::new();
@@ -1007,7 +996,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(FREE_PROVERS);
     }
 
-    pub fn print_summary_info(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>) {
+    pub fn print_summary_info(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) {
         let mpi_rank = pctx.dctx_get_rank();
         let n_processes = pctx.dctx_get_n_processes();
 
@@ -1024,15 +1013,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
 
         if mpi_rank == 0 {
-            Self::print_summary(pctx.clone(), setups.clone(), true);
+            Self::print_summary(pctx, setups, true);
         }
 
         if n_processes > 1 {
-            Self::print_summary(pctx.clone(), setups.clone(), false);
+            Self::print_summary(pctx, setups, false);
         }
     }
 
-    pub fn print_summary(pctx: Arc<ProofCtx<F>>, setups: Arc<SetupsVadcop<F>>, global: bool) {
+    pub fn print_summary(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>, global: bool) {
         let mut air_info = HashMap::new();
 
         let mut air_instances = HashMap::new();

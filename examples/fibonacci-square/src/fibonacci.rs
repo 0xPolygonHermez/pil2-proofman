@@ -58,7 +58,7 @@ impl<F: PrimeField64 + Copy> WitnessComponent<F> for FibonacciSquare<F> {
         air_values.fibo3 = [F::from_canonical_u64(5), F::from_canonical_u64(5), F::from_canonical_u64(5)];
 
         let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace).with_air_values(&mut air_values));
-        add_air_instance::<F>(air_instance, pctx.clone());
+        add_air_instance::<F>(air_instance, &pctx);
     }
 
     fn gen_custom_commits_fixed(

@@ -28,12 +28,7 @@ pub struct StdSum<F: PrimeField> {
 impl<F: PrimeField> AirComponent<F> for StdSum<F> {
     const MY_NAME: &'static str = "STD Sum ";
 
-    fn new(
-        _pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        _airgroup_id: Option<usize>,
-        _air_id: Option<usize>,
-    ) -> Arc<Self> {
+    fn new(_pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, _airgroup_id: Option<usize>, _air_id: Option<usize>) -> Arc<Self> {
         // Retrieve the std_sum_users hint ID
         let std_sum_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users");
 
@@ -43,8 +38,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                 true => None,
                 false => {
                     // Get the "stage_wc" hint
-                    let stage_wc: u32 =
-                        get_global_hint_field_constant_as(sctx.clone(), std_sum_users_id[0], "stage_wc");
+                    let stage_wc: u32 = get_global_hint_field_constant_as(sctx, std_sum_users_id[0], "stage_wc");
                     Some(stage_wc)
                 }
             },
@@ -268,9 +262,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
             // Get the number of sum check users and their airgroup and air IDs
             let std_sum_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users")[0];
 
-            let num_users: usize = get_global_hint_field_constant_as(sctx.clone(), std_sum_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a(sctx.clone(), std_sum_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a(sctx.clone(), std_sum_users, "air_ids", false);
+            let num_users: usize = get_global_hint_field_constant_as(&sctx, std_sum_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "air_ids", false);
 
             // Process each sum check user
             for i in 0..num_users {
@@ -371,9 +365,9 @@ impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
         if !std_sum_users_vec.is_empty() {
             let std_sum_users = std_sum_users_vec[0];
 
-            let num_users: usize = get_global_hint_field_constant_as(sctx.clone(), std_sum_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a(sctx.clone(), std_sum_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a(sctx.clone(), std_sum_users, "air_ids", false);
+            let num_users: usize = get_global_hint_field_constant_as(&sctx, std_sum_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "air_ids", false);
 
             let fast_mode = pctx.options.debug_info.std_mode.fast_mode;
 

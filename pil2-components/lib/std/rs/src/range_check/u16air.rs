@@ -20,14 +20,10 @@ pub struct U16Air<F: Field> {
 impl<F: PrimeField> AirComponent<F> for U16Air<F> {
     const MY_NAME: &'static str = "U16Air   ";
 
-    fn new(
-        _pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx<F>>,
-        airgroup_id: Option<usize>,
-        air_id: Option<usize>,
-    ) -> Arc<Self> {
+    fn new(_pctx: &ProofCtx<F>, _sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
         let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
         let air_id = air_id.expect("Air ID must be provided");
+
         Arc::new(Self {
             airgroup_id,
             air_id,
