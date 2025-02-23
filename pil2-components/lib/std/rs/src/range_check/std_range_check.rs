@@ -61,9 +61,9 @@ impl<F: PrimeField> StdRangeCheck<F> {
 
         // Process range check users
         if let Some(std_rc_users) = get_hint_ids_by_name(sctx.get_global_bin(), "std_rc_users").first() {
-            let num_users = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), *std_rc_users, "num_users");
-            let airgroup_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), *std_rc_users, "airgroup_ids", false);
-            let air_ids = get_hint_field_gc_constant_a::<F>(sctx.clone(), *std_rc_users, "air_ids", false);
+            let num_users: usize = get_global_hint_field_constant_as(sctx.clone(), *std_rc_users, "num_users");
+            let airgroup_ids = get_hint_field_gc_constant_a(sctx.clone(), *std_rc_users, "airgroup_ids", false);
+            let air_ids = get_hint_field_gc_constant_a(sctx.clone(), *std_rc_users, "air_ids", false);
 
             for i in 0..num_users {
                 let airgroup_id = extract_field_element_as_usize(&airgroup_ids.values[i], "airgroup_id");
@@ -84,8 +84,8 @@ impl<F: PrimeField> StdRangeCheck<F> {
             if hints.is_empty() {
                 return None;
             }
-            let airgroup_id = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), hints[0], "airgroup_id");
-            let air_id = get_global_hint_field_constant_as::<usize, F>(sctx.clone(), hints[0], "air_id");
+            let airgroup_id: usize = get_global_hint_field_constant_as(sctx.clone(), hints[0], "airgroup_id");
+            let air_id: usize = get_global_hint_field_constant_as(sctx.clone(), hints[0], "air_id");
             Some(T::new(pctx.clone(), sctx.clone(), Some(airgroup_id), Some(air_id)))
         }
     }
@@ -97,7 +97,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
         let rc_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "range_def");
 
         for hint in rc_hints {
-            let predefined = get_hint_field_constant_as_field::<F>(
+            let predefined = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -106,7 +106,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
                 HintFieldOptions::default(),
             );
 
-            let min = get_hint_field_constant_as_field::<F>(
+            let min = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -115,7 +115,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
                 HintFieldOptions::default(),
             );
 
-            let min_neg = get_hint_field_constant_as_field::<F>(
+            let min_neg = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -124,7 +124,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
                 HintFieldOptions::default(),
             );
 
-            let max = get_hint_field_constant_as_field::<F>(
+            let max = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -133,7 +133,7 @@ impl<F: PrimeField> StdRangeCheck<F> {
                 HintFieldOptions::default(),
             );
 
-            let max_neg = get_hint_field_constant_as_field::<F>(
+            let max_neg = get_hint_field_constant_as_field(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -142,14 +142,9 @@ impl<F: PrimeField> StdRangeCheck<F> {
                 HintFieldOptions::default(),
             );
 
-            let HintFieldValue::String(r#type) = get_hint_field_constant::<F>(
-                sctx,
-                airgroup_id,
-                air_id,
-                hint as usize,
-                "type",
-                HintFieldOptions::default(),
-            ) else {
+            let HintFieldValue::String(r#type) =
+                get_hint_field_constant(sctx, airgroup_id, air_id, hint as usize, "type", HintFieldOptions::default())
+            else {
                 log::error!("Type hint must be a string");
                 panic!();
             };

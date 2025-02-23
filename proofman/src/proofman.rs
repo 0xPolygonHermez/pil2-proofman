@@ -66,9 +66,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             options.verify_constraints,
         )?;
 
-        let mut pctx: ProofCtx<F> = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options);
+        let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options);
 
-        let setups = Arc::new(SetupsVadcop::<F>::new(
+        let setups = Arc::new(SetupsVadcop::new(
             &pctx.global_info,
             pctx.options.verify_constraints,
             pctx.options.aggregation,
@@ -274,10 +274,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
             get_buff_sizes(pctx_aggregation.clone(), setups.clone())?;
-        let mut circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
-        let publics: Vec<F> = create_buffer_fast(publics_size);
-        let trace: Vec<F> = create_buffer_fast(trace_size);
-        let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
+        let mut circom_witness = create_buffer_fast(circom_witness_size);
+        let publics = create_buffer_fast(publics_size);
+        let trace = create_buffer_fast(trace_size);
+        let prover_buffer = create_buffer_fast(prover_buffer_size);
 
         timer_start_info!(GENERATING_AGGREGATION_PROOFS);
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOFS);

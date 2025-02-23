@@ -602,7 +602,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
     }
 
     fn get_proof_challenges(&self, global_steps: Vec<usize>, global_challenges: Vec<F>) -> Vec<F> {
-        let mut challenges: Vec<F> = Vec::new();
+        let mut challenges = Vec::new();
 
         let n_challenges_stages = self.stark_info.challenges_map.as_ref().unwrap().len();
         for ch in 0..n_challenges_stages {

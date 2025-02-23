@@ -55,7 +55,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
             let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Compressor);
 
-            generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, proofs[idx], 18)?;
+            generate_witness(circom_witness, trace, publics, &setup_path, setup, proofs[idx], 18)?;
 
             log::info!(
                 "{}: {}",
@@ -105,7 +105,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
 
         let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1);
 
-        generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, zkin, 18)?;
+        generate_witness(circom_witness, trace, publics, &setup_path, setup, zkin, 18)?;
 
         log::info!(
             "{}: {}",
@@ -236,7 +236,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
 
                         let setup_path = pctx.global_info.get_air_setup_path(airgroup, 0, &ProofType::Recursive2);
 
-                        generate_witness::<F>(
+                        generate_witness(
                             circom_witness,
                             trace,
                             publics,
@@ -353,7 +353,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
 
     let setup_path = pctx.global_info.get_setup_path("vadcop_final");
 
-    generate_witness::<F>(circom_witness, trace, publics, &setup_path, &setup, proof, 18)?;
+    generate_witness(circom_witness, trace, publics, &setup_path, &setup, proof, 18)?;
 
     let proof_file = output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().into_owned();
 
@@ -400,7 +400,7 @@ pub fn generate_recursivef_proof<F: Field>(
 
     let setup_path = pctx.global_info.get_setup_path("recursivef");
 
-    generate_witness::<F>(circom_witness, trace, publics, &setup_path, &setup, proof, 12)?;
+    generate_witness(circom_witness, trace, publics, &setup_path, &setup, proof, 12)?;
 
     let proof_file = match pctx.options.debug_info.save_proofs_to_file {
         true => output_dir_path.join("proofs/recursivef.json").to_string_lossy().into_owned(),
@@ -592,7 +592,7 @@ pub fn get_buff_sizes<F: Field>(
     if pctx.options.final_snark {
         let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
         let setup_path = pctx.global_info.get_setup_path("recursivef");
-        let sizes = get_size::<F>(&setup_path, setup_recursivef, 12)?;
+        let sizes = get_size(&setup_path, setup_recursivef, 12)?;
         witness_size = witness_size.max(sizes.0);
         publics = publics.max(sizes.1);
         buffer = buffer.max(sizes.2);
