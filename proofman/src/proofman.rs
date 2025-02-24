@@ -255,10 +255,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         timer_start_info!(GENERATING_PROOFS);
 
-        let mut values = vec![0; my_instances.len() * 4];
+        let values = Arc::new(Mutex::new(vec![0; my_instances.len() * 4]));
 
         let aux_trace_contribution: Vec<F> = create_buffer_fast(pctx.max_contribution_air_buffer_size as usize);
-        let aux_trace_contribution_ptr = aux_trace_contribution.as_ptr() as *mut u8;
+        let aux_trace_contribution = Arc::new(aux_trace_contribution);
+
+        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !all && !pctx.dctx_is_my_instance(instance_id) {
                 continue;
@@ -270,14 +273,24 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 continue;
             }
 
-            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, aux_trace_contribution_ptr);
-            if !all {
-                pctx.free_instance(instance_id);
+            // Join the previous thread (if any) before starting a new one
+            if let Some(handle) = merkelize_handle.take() {
+                handle.join().unwrap();
             }
-            for id in 0..4 {
-                values[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = value[id];
-            }
+
+            merkelize_handle = Some(Self::generate_proof_stage(
+                instance_id,
+                pctx.clone(),
+                sctx.clone(),
+                aux_trace_contribution.clone(),
+                *all,
+                values.clone(),
+            ));
         }
+
+        merkelize_handle.map(|handle| handle.join().unwrap());
+
+        let values = Arc::try_unwrap(values).unwrap().into_inner().unwrap();
 
         Self::calculate_global_challenge(&pctx, values);
 
@@ -411,6 +424,28 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
         agg_proof
+    }
+
+    fn generate_proof_stage(
+        instance_id: usize,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        aux_trace_contribution_ptr: Arc<Vec<F>>,
+        all: bool,
+        values: Arc<Mutex<Vec<u64>>>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
+            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr);
+
+            if !all {
+                pctx.free_instance(instance_id);
+            }
+
+            for id in 0..4 {
+                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = value[id];
+            }
+        })
     }
 
     #[allow(clippy::type_complexity)]
