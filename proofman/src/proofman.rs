@@ -281,7 +281,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 handle.join().unwrap();
             }
 
-            merkelize_handle = Some(Self::generate_proof_stage(
+            merkelize_handle = Some(Self::generate_proof_witness(
                 instance_id,
                 pctx.clone(),
                 sctx.clone(),
@@ -301,10 +301,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
-            let circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
-            let publics: Vec<F> = create_buffer_fast(publics_size);
-            let trace: Vec<F> = create_buffer_fast(trace_size);
-            let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
+            let circom_witness= create_buffer_fast(circom_witness_size);
+            let publics = create_buffer_fast(publics_size);
+            let trace = create_buffer_fast(trace_size);
+            let prover_buffer = create_buffer_fast(prover_buffer_size);
             (circom_witness, publics, trace, prover_buffer)
         } else {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new())
@@ -318,7 +318,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
         let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
 
-        // let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
 
         let circom_witness = Arc::new(circom_witness);
         let publics = Arc::new(publics);
@@ -336,25 +336,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_stop_and_log_info!(GENERATING_WITNESS);
             }
 
-            // merkelize_handle = Some(Self::fun_name(
-            //     proofs.clone(),
-            //     valid_proofs.clone(),
-            //     pctx.clone(),
-            //     sctx.clone(),
-            //     instance_id,
-            //     *airgroup_id,
-            //     *air_id,
-            //     output_dir_path.clone(),
-            //     aux_trace.clone(),
-            //     airgroup_values_air_instances.clone(),
-            //     setups.clone(),
-            //     circom_witness.clone(),
-            //     publics.clone(),
-            //     trace.clone(),
-            //     prover_buffer.clone(),
-            // ));
-
-            Self::fun_name(
+            merkelize_handle = Some(Self::generate_proof_xxx(
                 proofs.clone(),
                 valid_proofs.clone(),
                 pctx.clone(),
@@ -370,12 +352,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 publics.clone(),
                 trace.clone(),
                 prover_buffer.clone(),
-            )
+            ));
         }
 
-        // if let Some(handle) = merkelize_handle {
-        //     handle.join().unwrap();
-        // }
+        if let Some(handle) = merkelize_handle {
+            handle.join().unwrap();
+        }
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
@@ -423,7 +405,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         agg_proof
     }
 
-    fn generate_proof_stage(
+    fn generate_proof_witness(
         instance_id: usize,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
@@ -446,7 +428,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn fun_name(
+    fn generate_proof_xxx(
         proofs: Arc<Mutex<Vec<Vec<u64>>>>,
         valid_proofs: Arc<AtomicBool>,
         pctx: Arc<ProofCtx<F>>,
@@ -462,9 +444,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         publics: Arc<Vec<F>>,
         trace: Arc<Vec<F>>,
         prover_buffer: Arc<Vec<F>>,
-    // ) -> std::thread::JoinHandle<()> {
-    ) {
-        // std::thread::spawn(move || {
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
             Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
 
             let setup = sctx.get_setup(airgroup_id, air_id);
@@ -533,7 +514,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof;
                 timer_stop_and_log_info!(GENERATING_PROOF);
             }
-        // })
+        })
     }
 
     #[allow(clippy::type_complexity)]
@@ -608,7 +589,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let all_roots = pctx.dctx_distribute_roots(values);
 
-        // add challenges to transcript in order
+        // Add challenges to transcript in order
         for group_idxs in pctx.dctx_get_my_groups() {
             let mut values = Vec::new();
             for idx in group_idxs.iter() {
