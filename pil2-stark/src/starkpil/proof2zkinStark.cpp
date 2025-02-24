@@ -5,6 +5,152 @@
 #include "proof2zkinStark.hpp"
 using namespace std;
 
+json pointer2json(uint64_t *pointer, StarkInfo& starkInfo) {
+    json j = json::object();
+    
+    uint64_t p = 0;
+
+    if(starkInfo.airgroupValuesMap.size() > 0) {
+        j["airgroupvalues"] = json::array();
+        for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
+            j["airgroupvalues"][i] = json::array();
+            for (uint64_t k = 0; k < FIELD_EXTENSION; k++)
+            {
+                j["airgroupvalues"][i][k] = std::to_string(pointer[p++]);
+            }
+        }
+    }
+
+
+    if(starkInfo.airValuesMap.size() > 0) {
+        j["airvalues"] = json::array();
+        for (uint i = 0; i < starkInfo.airValuesMap.size(); i++)
+        {
+            j["airvalues"][i] = json::array();
+            for (uint k = 0; k < FIELD_EXTENSION; k++)
+            {
+                j["airvalues"][i][k] = std::to_string(pointer[p++]);
+            }
+        }
+    }
+
+    for(uint64_t i = 0; i < starkInfo.nStages + 1; i++) {
+         j["root" + to_string(i + 1)] = json::array();
+        for (uint64_t k = 0; k < 4; k++)
+        {
+            j["root" + to_string(i + 1)][k] = std::to_string(pointer[p++]);
+        }
+    }
+
+    j["evals"] = json::array();
+    for (uint i = 0; i < starkInfo.evMap.size(); i++)
+    {
+        j["evals"][i] = json::array();
+        for (uint k = 0; k < FIELD_EXTENSION; k++)
+        {
+            j["evals"][i][k] = std::to_string(pointer[p++]);
+        }
+    }
+    
+    j["s0_valsC"] = json::array();
+    for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+        j["s0_valsC"][i] = json::array();
+        for(uint64_t l = 0; l < starkInfo.nConstants; l++) {
+            j["s0_valsC"][i][l] = std::to_string(pointer[p++]);
+        }
+    }
+
+    j["s0_siblingsC"] = json::array();
+    for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+        j["s0_siblingsC"][i] = json::array();
+        for(uint64_t l = 0; l < starkInfo.starkStruct.steps[0].nBits; ++l) {
+            j["s0_siblingsC"][i][l] = json::array();
+            for(uint64_t k = 0; k < 4; ++k) {
+                j["s0_siblingsC"][i][l][k] = std::to_string(pointer[p++]);
+            }
+        }
+    }
+
+    for(uint64_t i = 0; i < starkInfo.customCommits.size(); ++i) {
+        j["s0_siblings_" + starkInfo.customCommits[i].name + "_0"] = json::array();
+        j["s0_vals_" + starkInfo.customCommits[i].name + "_0"] = json::array();
+    }
+
+    for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            for(uint64_t l = 0; l < starkInfo.mapSectionsN[starkInfo.customCommits[c].name + "0"]; l++) {
+                j["s0_vals_" + starkInfo.customCommits[c].name + "_0"][i][l] = std::to_string(pointer[p++]);
+            }
+        }
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            for(uint64_t l = 0; l < starkInfo.starkStruct.steps[0].nBits; ++l) {
+                for(uint64_t k = 0; k < 4; ++k) {
+                    j["s0_siblings_" + starkInfo.customCommits[c].name + "_0"][i][l][k] = std::to_string(pointer[p++]);
+                }
+            }
+        }
+    }
+
+    for(uint64_t i = 0; i < starkInfo.nStages + 1; ++i) {
+        uint64_t stage = i + 1;
+        j["s0_siblings" + to_string(stage)] = json::array();
+        j["s0_vals" + to_string(stage)] = json::array();
+    }
+
+    for (uint64_t s = 0; s < starkInfo.nStages + 1; ++s) {
+        uint64_t stage = s + 1;
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            for(uint64_t l = 0; l < starkInfo.mapSectionsN["cm" + to_string(stage)]; l++) {
+                j["s0_vals" + to_string(stage)][i][l] = std::to_string(pointer[p++]);
+            }
+        }
+
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            for(uint64_t l = 0; l < starkInfo.starkStruct.steps[0].nBits; ++l) {
+                for(uint64_t k = 0; k < 4; ++k) {
+                    j["s0_siblings" + to_string(stage)][i][l][k] = std::to_string(pointer[p++]);
+                }
+            }
+        }
+    }
+
+    for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+        j["s" + std::to_string(step) + "_root"] = json::array();
+        for(uint64_t i = 0; i < 4; i++) {
+            j["s" + std::to_string(step) + "_root"][i] = std::to_string(pointer[p++]);
+        }
+    }
+
+    for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            j["s" + std::to_string(step) + "_vals"][i] = json::array();
+            for(uint64_t l = 0; l < uint64_t(1 << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION; l++) {
+                j["s" + std::to_string(step) + "_vals"][i][l] = std::to_string(pointer[p++]);
+            }
+        }
+
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            j["s" + std::to_string(step) + "_siblings"][i] = json::array();
+            for(uint64_t l = 0; l < starkInfo.starkStruct.steps[step].nBits; ++l) {
+                for(uint64_t k = 0; k < 4; ++k) {
+                    j["s" + std::to_string(step) + "_siblings"][i][l][k] = std::to_string(pointer[p++]);
+                }
+            }
+        }
+    }
+
+    j["finalPol"] = json::array();
+    for (uint64_t i = 0; i < uint64_t (1 << (starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits)); i++)
+    {
+        j["finalPol"][i] = json::array();
+        for(uint64_t l = 0; l < FIELD_EXTENSION; l++) {
+            j["finalPol"][i][l] = std::to_string(pointer[p++]);
+        }
+    }
+    return j;
+}
+
+
 json joinzkin(json &zkin1, json &zkin2, json &verKey, StarkInfo &starkInfo)
 {
 
@@ -115,7 +261,7 @@ json joinzkin(json &zkin1, json &zkin2, json &verKey, StarkInfo &starkInfo)
     return zkinOut;
 }
 
-json publics2zkin(json &zkin_, Goldilocks::Element* publics, json& globalInfo, uint64_t airgroupId) {
+json publics2zkin(json &zkin_, uint64_t nPublics, Goldilocks::Element* publics, json& globalInfo, uint64_t airgroupId) {
     json zkin = json::object();
     zkin = zkin_;
 
@@ -148,10 +294,25 @@ json publics2zkin(json &zkin_, Goldilocks::Element* publics, json& globalInfo, u
         }
     }
 
+    if(globalInfo["proofValuesMap"].size() > 0) {
+        zkin["proofValues"] = json::array();
+        for(uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); ++i) {
+            zkin["proofValues"][i] = json::array();
+            cout << i << endl;
+            for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
+                            cout << k << endl;
+
+                zkin["proofValues"][i][k] = Goldilocks::toString(publics[p++]);
+            }
+        }
+    }
+
     zkin["globalChallenge"] = json::array();
     for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
         zkin["globalChallenge"][k] = Goldilocks::toString(publics[p++]);
     }
+
+    cout << p << " vs " << nPublics << endl;
 
     return zkin;
 }
@@ -179,10 +340,8 @@ json joinzkinfinal(json& globalInfo, Goldilocks::Element* publics, Goldilocks::E
 
     if(globalInfo["proofValuesMap"].size() > 0) {
         uint64_t p = 0;
-        zkinFinal["proofValues"] = json::array();
         for (uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); i++)
         {
-            zkinFinal["proofValues"][i] = json::array();
             if(globalInfo["proofValuesMap"][i]["stage"] == 1) {
                 zkinFinal["proofValues"][i][0] = Goldilocks::toString(proofValues[p++]);
                 zkinFinal["proofValues"][i][1] = "0";
@@ -243,7 +402,7 @@ json joinzkinfinal(json& globalInfo, Goldilocks::Element* publics, Goldilocks::E
     return zkinFinal;
 }
 
-json joinzkinrecursive2(json& globalInfo, uint64_t airgroupId, Goldilocks::Element* publics, Goldilocks::Element* globalChallenge, json &zkin1, json &zkin2, StarkInfo &starkInfo) {
+json joinzkinrecursive2(json& globalInfo, uint64_t airgroupId, Goldilocks::Element* publics, Goldilocks::Element* proofValues, Goldilocks::Element* globalChallenge, json &zkin1, json &zkin2, StarkInfo &starkInfo) {
     json zkinRecursive2 = json::object();
 
     uint64_t nStages = starkInfo.nStages + 1;
@@ -251,6 +410,20 @@ json joinzkinrecursive2(json& globalInfo, uint64_t airgroupId, Goldilocks::Eleme
     for (uint64_t i = 0; i < globalInfo["nPublics"]; i++)
     {
         zkinRecursive2["publics"][i] = Goldilocks::toString(publics[i]);
+    }
+
+    uint64_t p = 0;
+    for (uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); i++)
+    {
+        if(globalInfo["proofValuesMap"][i]["stage"] == 1) {
+            zkinRecursive2["proofValues"][i][0] = Goldilocks::toString(proofValues[p++]);
+            zkinRecursive2["proofValues"][i][1] = "0";
+            zkinRecursive2["proofValues"][i][2] = "0";
+        } else {
+            zkinRecursive2["proofValues"][i][0] = Goldilocks::toString(proofValues[p++]);
+            zkinRecursive2["proofValues"][i][1] = Goldilocks::toString(proofValues[p++]);
+            zkinRecursive2["proofValues"][i][2] = Goldilocks::toString(proofValues[p++]);
+        }
     }
 
     zkinRecursive2["globalChallenge"] = json::array();

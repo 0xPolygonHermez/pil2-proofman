@@ -859,6 +859,8 @@ dependencies = [
  "libloading",
  "log",
  "mpi",
+ "num-bigint",
+ "num-traits",
  "p3-field",
  "p3-goldilocks",
  "proofman-common",

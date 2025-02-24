@@ -132,7 +132,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             });
         }
 
-        merkelize_handle.map(|handle| handle.join().unwrap());
+        if let Some(handle) = merkelize_handle {
+            handle.join().unwrap()
+        }
 
         wcm.end();
 
@@ -289,7 +291,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             ));
         }
 
-        merkelize_handle.map(|handle| handle.join().unwrap());
+        if let Some(handle) = merkelize_handle {
+            handle.join().unwrap()
+        }
 
         let values = Arc::try_unwrap(values).unwrap().into_inner().unwrap();
 
@@ -310,11 +314,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let aux_trace = Arc::new(aux_trace);
 
         let valid_proofs = Arc::new(AtomicBool::new(true));
-        let proofs = Arc::new(Mutex::new(Vec::new()));
-        let airgroup_values_air_instances = Vec::new();
+        let proofs = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
+        let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
         let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
 
-        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+        // let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
 
         let circom_witness = Arc::new(circom_witness);
         let publics = Arc::new(publics);
@@ -332,7 +336,26 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_stop_and_log_info!(GENERATING_WITNESS);
             }
 
-            merkelize_handle = Some(Self::fun_name(
+            // merkelize_handle = Some(Self::fun_name(
+            //     proofs.clone(),
+            //     valid_proofs.clone(),
+            //     pctx.clone(),
+            //     sctx.clone(),
+            //     instance_id,
+            //     *airgroup_id,
+            //     *air_id,
+            //     output_dir_path.clone(),
+            //     aux_trace.clone(),
+            //     airgroup_values_air_instances.clone(),
+            //     setups.clone(),
+            //     circom_witness.clone(),
+            //     publics.clone(),
+            //     trace.clone(),
+            //     prover_buffer.clone(),
+            // ));
+
+            Self::fun_name(
+                proofs.clone(),
                 valid_proofs.clone(),
                 pctx.clone(),
                 sctx.clone(),
@@ -347,10 +370,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 publics.clone(),
                 trace.clone(),
                 prover_buffer.clone(),
-            ));
+            )
         }
 
-        merkelize_handle.map(|handle| handle.join().unwrap());
+        // if let Some(handle) = merkelize_handle {
+        //     handle.join().unwrap();
+        // }
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
@@ -414,14 +439,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 pctx.free_instance(instance_id);
             }
 
-            for id in 0..4 {
-                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = value[id];
+            for (id, value) in value.iter().enumerate().take(4) {
+                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = *value;
             }
         })
     }
 
     #[allow(clippy::too_many_arguments)]
     fn fun_name(
+        proofs: Arc<Mutex<Vec<Vec<u64>>>>,
         valid_proofs: Arc<AtomicBool>,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
@@ -436,8 +462,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         publics: Arc<Vec<F>>,
         trace: Arc<Vec<F>>,
         prover_buffer: Arc<Vec<F>>,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
+    // ) -> std::thread::JoinHandle<()> {
+    ) {
+        // std::thread::spawn(move || {
             Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
 
             let setup = sctx.get_setup(airgroup_id, air_id);
@@ -458,22 +485,25 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 false => String::from(""),
             };
 
-            let proof = gen_proof_c(
+            let mut proof: Vec<u64> = create_buffer_fast(setup.proof_size as usize);
+
+            gen_proof_c(
                 p_setup,
                 p_steps_params,
                 pctx.get_buff_helper_ptr(),
                 pctx.get_global_challenge_ptr(),
+                proof.as_mut_ptr(),
                 &proof_file,
                 airgroup_id as u64,
-                airgroup_id as u64,
+                air_id as u64,
                 air_instance_id as u64,
             );
 
-            airgroup_values_air_instances.lock().unwrap().push(pctx.get_air_instance_airgroup_values(
+            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = pctx.get_air_instance_airgroup_values(
                 airgroup_id,
-                airgroup_id,
+                air_id,
                 air_instance_id,
-            ));
+            );
 
             timer_start_info!(FREE_INSTANCE);
             pctx.free_instance(instance_id);
@@ -485,7 +515,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     &pctx,
                     &setups,
                     instance_id,
-                    proof,
+                    &proof,
                     &circom_witness,
                     &publics,
                     &trace,
@@ -493,15 +523,17 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     output_dir_path,
                 )
                 .expect("Failed to generate recursive proof");
-                // proofs_cloned.lock().unwrap().push(proof_recursive);
+                proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof_recursive;
                 timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
                 timer_stop_and_log_info!(GENERATING_PROOF);
             } else {
-                // proofs_cloned.lock().unwrap().push(proof);
+                if pctx.options.verify_proofs {
+                    valid_proofs.fetch_and(verify_basic_proof(&pctx, instance_id, &proof), Ordering::Relaxed);
+                }
+                proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof;
                 timer_stop_and_log_info!(GENERATING_PROOF);
-                valid_proofs.fetch_and(verify_basic_proof(&pctx, instance_id, proof), Ordering::Relaxed);
             }
-        })
+        // })
     }
 
     #[allow(clippy::type_complexity)]

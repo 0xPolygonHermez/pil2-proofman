@@ -15,7 +15,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 #[cfg(feature = "distributed")]
 use proofman_starks_lib_c::*;
-use std::ffi::c_void;
 
 use p3_field::Field;
 
@@ -580,7 +579,7 @@ impl DistributionCtx {
         }
     }
     #[allow(unused_variables)]
-    pub fn distribute_recursive2_proofs(&mut self, alives: &[usize], proofs: &mut [Vec<Option<*mut c_void>>]) {
+    pub fn distribute_recursive2_proofs(&mut self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
         #[cfg(feature = "distributed")]
         {
             // Count number of aggregations that will be done
@@ -594,7 +593,7 @@ impl DistributionCtx {
             // ngroups, ..., ngroups + 2*n_aggregations - 1: proofs that need to be sent to the owner of the aggregation task
 
             for (group_idx, &alive) in alives.iter().enumerate() {
-                let group_proofs: &mut Vec<Option<*mut c_void>> = &mut proofs[group_idx];
+                let group_proofs: &mut Vec<Option<Vec<u64>>> = &mut proofs[group_idx];
                 let n_aggs_group = alive / 2;
 
                 if n_aggs_group == 0 {

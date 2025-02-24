@@ -30,6 +30,7 @@
     // ========================================================================================
     void *stark_info_new(char* filename, bool verifier);
     uint64_t get_buffer_size_contribution_air(void *pStarkInfo);
+    uint64_t get_proof_size(void *pStarkInfo);
     uint64_t get_map_total_n(void *pStarkInfo, bool recursive);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
 
@@ -133,23 +134,23 @@
     // =================================================================================
     void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row);
     
-    // Gen proof
+    // Gen proof && Recursive Proof
     // =================================================================================
-    void *gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, char *proofFile);
+    void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, uint64_t* proofBuffer, char *proofFile);
+    void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop);
+    void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
+    void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file);
 
     // Recursive proof
     // =================================================================================
-    void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char *proof_file, bool vadcop);
     void *get_zkin_ptr(char *zkin_file);
-    void *add_recursive2_verkey(void *pZkin, char* recursive2VerKeyFilename);
-    void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPublics, void* pChallenges, void *zkin1, void *zkin2, void *starkInfoRecursive2);
+    void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPublics, void* pProofValues, void* pChallenges, void *zkin1, void *zkin2, void *starkInfoRecursive2);
     void *join_zkin_final(void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, void **zkinRecursive2, void **starkInfoRecursive2);
     char *get_serialized_proof(void *zkin, uint64_t* size);
     void *deserialize_zkin_proof(char* serialized_proof);
     void *get_zkin_proof(char* zkin);
     void zkin_proof_free(void *pZkinProof);
     void serialized_proof_free(char *zkinCStr);
-    void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
 
     // Final proof
     // =================================================================================
@@ -161,7 +162,8 @@
 
     // Stark Verify
     // =================================================================================
-    bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
+    bool stark_verify(uint64_t* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
+    bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics);
     bool stark_verify_from_file(char *proof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
 
     // Debug circom

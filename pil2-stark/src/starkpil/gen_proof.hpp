@@ -40,7 +40,7 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void *genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, std::string proofFile) {
+void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, uint64_t *proofBuffer, std::string proofFile) {
     TimerStart(STARK_PROOF);
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
@@ -220,36 +220,35 @@ void *genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t
 
     TimerStopAndLog(STARK_STEP_FRI);
 
-    nlohmann::json zkin = proof.proof.proof2json();
+    proof.proof.proof2pointer(proofBuffer);
 
-    for (uint64_t i = 0; i < setupCtx.starkInfo.nPublics; i++)
-    {
-        zkin["publics"][i] = Goldilocks::toString(params.publicInputs[i]);
-    }
+    // nlohmann::json zkin = proof.proof.proof2json();
+    // for (uint64_t i = 0; i < setupCtx.starkInfo.nPublics; i++)
+    // {
+    //     zkin["publics"][i] = Goldilocks::toString(params.publicInputs[i]);
+    // }
 
-    uint64_t p = 0;
-    for (uint64_t i = 0; i < setupCtx.starkInfo.proofValuesMap.size(); i++)
-    {
-        if(setupCtx.starkInfo.proofValuesMap[i].stage == 1) {
-            zkin["proofvalues"][i][0] = Goldilocks::toString(params.proofValues[p++]);
-            zkin["proofvalues"][i][1] = "0";
-            zkin["proofvalues"][i][2] = "0";
-        } else {
-            zkin["proofvalues"][i][0] = Goldilocks::toString(params.proofValues[p++]);
-            zkin["proofvalues"][i][1] = Goldilocks::toString(params.proofValues[p++]);
-            zkin["proofvalues"][i][2] = Goldilocks::toString(params.proofValues[p++]);
-        }
-    }
+    // uint64_t p = 0;
+    // for (uint64_t i = 0; i < setupCtx.starkInfo.proofValuesMap.size(); i++)
+    // {
+    //     if(setupCtx.starkInfo.proofValuesMap[i].stage == 1) {
+    //         zkin["proofValues"][i][0] = Goldilocks::toString(params.proofValues[p++]);
+    //         zkin["proofValues"][i][1] = "0";
+    //         zkin["proofValues"][i][2] = "0";
+    //     } else {
+    //         zkin["proofValues"][i][0] = Goldilocks::toString(params.proofValues[p++]);
+    //         zkin["proofValues"][i][1] = Goldilocks::toString(params.proofValues[p++]);
+    //         zkin["proofValues"][i][2] = Goldilocks::toString(params.proofValues[p++]);
+    //     }
+    // }
 
-    for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
-        zkin["globalChallenge"][k] = Goldilocks::toString(globalChallenge[k]);
-    }
+    // for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
+    //     zkin["globalChallenge"][k] = Goldilocks::toString(globalChallenge[k]);
+    // }
 
-    TimerStopAndLog(STARK_PROOF);
+    // if(!proofFile.empty()) {
+    //     json2file(zkin, proofFile);
+    // }
 
-    if(!proofFile.empty()) {
-        json2file(zkin, proofFile);
-    }
-    
-    return (void *) new nlohmann::json(zkin);
+    TimerStopAndLog(STARK_PROOF);    
 }
