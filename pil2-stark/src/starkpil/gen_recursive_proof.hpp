@@ -100,6 +100,11 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     Goldilocks3::copy((Goldilocks3::Element *)&gprod[0], &Goldilocks3::one());
     for(uint64_t i = 1; i < N; ++i) {
         Goldilocks3::mul((Goldilocks3::Element *)&gprod[i * FIELD_EXTENSION], (Goldilocks3::Element *)&gprod[(i - 1) * FIELD_EXTENSION], (Goldilocks3::Element *)&res[(i - 1) * FIELD_EXTENSION]);
+        if(i == 37){
+            std::cout << "rick gprod [0]: " << gprod[i * FIELD_EXTENSION].fe << std::endl;
+            std::cout << "rick gprod [1]: " << gprod[i * FIELD_EXTENSION + 1].fe << std::endl;
+            std::cout << "rick gprod [2]: " << gprod[i * FIELD_EXTENSION + 2].fe << std::endl;
+        }
     }
 
     Polinomial gprodTransposedPol;
@@ -136,6 +141,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], nFieldElements);
     TimerStopAndLog(STARK_STEP_Q);
+    exit(0);
 
     TimerStart(STARK_STEP_EVALS);
 

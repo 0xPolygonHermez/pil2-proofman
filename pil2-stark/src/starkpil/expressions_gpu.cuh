@@ -1010,459 +1010,679 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
                     }
                     case 6:
                     {
+                        // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: proofvalue1
+                        /*Goldilocks::op_gpu(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack],false, &proofValues[args[i_args + 4] * nrowsPack * FIELD_EXTENSION], true);*/
+                        assert(false);
+                        i_args += 5;
+                        break;
+                    }
+                    case 7:
+                    {
                         // COPY tmp1 to tmp1
                         gl64_t::copy_gpu(&tmp1[args[i_args] * nrowsPack], &tmp1[args[i_args + 1] * nrowsPack], false);
                         i_args += 2;
                         break;
                     }
-                    case 7:
+                    case 8:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: tmp1
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &tmp1[args[i_args + 3] * nrowsPack], false);
                         i_args += 4;
                         break;
                     }
-                    case 8:
+                    case 9:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: public
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &publics[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 9:
+                    case 10:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: number
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &numbers[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 10:
+                    case 11:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: airvalue1
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], false, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 11:
+                    case 12:
+                        {
+                            // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: proofvalue1
+                            /*Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &tmp1[args[i_args + 2] * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                            i_args += 4;*/
+                            assert(false);
+                            break;
+                    }
+                    case 13:
                     {
                         // COPY public to tmp1
                         gl64_t::copy_gpu(&tmp1[args[i_args] * nrowsPack], &publics[args[i_args + 1]], true);
                         i_args += 2;
                         break;
                     }
-                    case 12:
+                    case 14:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: public
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2]], true, &publics[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 13:
+                    case 15:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: number
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2]], true, &numbers[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 14:
+                    case 16:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: airvalue1
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2]], true, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 15:
+                    case 17:
+                        {
+                            // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: proofvalue1
+                            /*Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &publics[args[i_args + 2] * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);*/
+                            assert(false);
+                            i_args += 4;
+                            break;
+                        }
+                    case 18:
                     {
                         // COPY number to tmp1
                         gl64_t::copy_gpu(&tmp1[args[i_args] * nrowsPack], &numbers[args[i_args + 1]], true);
                         i_args += 2;
                         break;
                     }
-                    case 16:
+                    case 19:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: number
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &numbers[args[i_args + 2]], true, &numbers[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 17:
+                    case 20:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: airvalue1
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &numbers[args[i_args + 2]], true, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 18:
+                    case 21:
+                    {
+                        // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: proofvalue1
+                        /*Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &numbers_[args[i_args + 2] * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                        i_args += 4;*/
+                        assert(false);
+                        break;
+                    }
+                    case 22:
                     {
                         // COPY airvalue1 to tmp1
                         gl64_t::copy_gpu(&tmp1[args[i_args] * nrowsPack], &airValues[args[i_args + 1] * FIELD_EXTENSION], true);
                         i_args += 2;
                         break;
                     }
-                    case 19:
+                    case 23:
                     {
                         // OPERATION WITH DEST: tmp1 - SRC0: airvalue1 - SRC1: airvalue1
                         gl64_t::op_gpu(args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &airValues[args[i_args + 2] * FIELD_EXTENSION], true, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 20:
+                    case 24:
+                    {
+                        // OPERATION WITH DEST: tmp1 - SRC0: airvalue1 - SRC1: proofvalue1
+                        /*Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &airValues[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);*/
+                        assert(false);
+                        i_args += 4;
+                        break;
+                    }
+                    case 25:
+                    {
+                        // COPY proofvalue1 to tmp1
+                        /*Goldilocks::copy_pack(nrowsPack, &tmp1[args[i_args] * nrowsPack], &proofValues[args[i_args + 1] * nrowsPack * FIELD_EXTENSION]);
+                        i_args += 2;*/
+                        assert(false);
+                        break;
+                    }
+                    case 26:
+                    {
+                        // OPERATION WITH DEST: tmp1 - SRC0: proofvalue1 - SRC1: proofvalue1
+                        /*Goldilocks::op_pack(nrowsPack, args[i_args], &tmp1[args[i_args + 1] * nrowsPack], &proofValues[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                        i_args += 4;*/
+                        assert(false);
+                        break;
+                    }
+                    case 27:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: commit1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack], false);
                         i_args += 6;
                         break;
                     }
-                    case 21:
+                    case 28:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: tmp1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &tmp1[args[i_args + 4] * nrowsPack], false);
                         i_args += 5;
                         break;
                     }
-                    case 22:
+                    case 29:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: public
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &publics[args[i_args + 4]], true);
                         i_args += 5;
                         break;
                     }
-                    case 23:
+                    case 30:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: number
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &numbers[args[i_args + 4]], true);
                         i_args += 5;
                         break;
                     }
-                    case 24:
+                    case 31:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airvalue1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airValues[args[i_args + 4] * FIELD_EXTENSION], true);
                         i_args += 5;
                         break;
                     }
-                    case 25:
+                    case 32:
+                        {
+                            // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: proofvalue1
+                            /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &proofValues[args[i_args + 4] * nrowsPack * FIELD_EXTENSION]);
+                            i_args += 5;*/
+                            assert(false);
+                            break;
+                        }
+                    case 33:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: commit1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
                         i_args += 5;
                         break;
                     }
-                    case 26:
+                    case 34:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: tmp1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &tmp1[args[i_args + 3] * nrowsPack], false);
                         i_args += 4;
                         break;
                     }
-                    case 27:
+                    case 35:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: public
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &publics[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 28:
+                    case 36:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: number
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &numbers[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 29:
+                    case 37:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airvalue1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 30:
+                    case 38:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: proofvalue1
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);*/
+                        assert(false);
+                        i_args += 4;
+                        break;
+                    }
+                    case 39:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: commit1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
                         i_args += 5;
                         break;
                     }
-                    case 31:
+                    case 40:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: tmp1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &tmp1[args[i_args + 3] * nrowsPack], false);
                         i_args += 4;
                         break;
                     }
-                    case 32:
+                    case 41:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: public
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &publics[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 33:
+                    case 42:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: number
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 34:
+                    case 43:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airvalue1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 35:
+                    case 44:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: proofvalue1
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                        i_args += 4;*/
+                        assert(false);
+                        break;
+                    }
+                    case 45:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: commit1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
                         i_args += 5;
                         break;
                     }
-                    case 36:
+                    case 46:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: tmp1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION], true, &tmp1[args[i_args + 3] * nrowsPack], false);
                         i_args += 4;
                         break;
                     }
-                    case 37:
+                    case 47:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: public
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION], true, &publics[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 38:
+                    case 48:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: number
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 39:
+                    case 49:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airvalue1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION], true, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 40:
+                    case 50:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: proofvalue1
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);*/
+                        assert(false);
+                        i_args += 4;
+                        break;
+                    }
+                    case 51:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: commit1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2] * FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
                         i_args += 5;
                         break;
                     }
-                    case 41:
+                    case 52:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: tmp1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2] * FIELD_EXTENSION], true, &tmp1[args[i_args + 3] * nrowsPack], false);
                         i_args += 4;
                         break;
                     }
-                    case 42:
+                    case 53:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: public
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2] * FIELD_EXTENSION], true, &publics[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 43:
+                    case 54:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: number
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2] * FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 44:
+                    case 55:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: airvalue1
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2] * FIELD_EXTENSION], true, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 45:
+                    case 56:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: proofvalue1
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);*/
+                        assert(false);
+                        i_args += 4;
+                        break;
+                    }
+                    case 57:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: commit1
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack]);*/
+                        assert(false);
+                        i_args += 5;
+                        break;
+                    }
+                    case 58:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: tmp1
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &tmp1[args[i_args + 3] * nrowsPack]);
+                        i_args += 4;*/
+                        assert(false);
+                        break;
+                    }
+                    case 59:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: public
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &publics[args[i_args + 3] * nrowsPack]);
+                        i_args += 4;*/
+                        assert(false);
+                        break;
+                    }
+                    case 60:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: number
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &numbers_[args[i_args + 3] * nrowsPack]);
+                        i_args += 4;*/
+                        assert(false);
+                        break;
+                    }
+                    case 61:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: airvalue1
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 3] * FIELD_EXTENSION * nrowsPack]);
+                        i_args += 4;*/
+                        assert(false);
+                        break;
+                    }
+                    case 62:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: proofvalue1
+                        /*Goldilocks3::op_31_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                        i_args += 4;*/
+                        assert(false);
+                        break;
+                    }
+                    case 63:
                     {
                         // COPY commit3 to tmp3
                         Goldilocks3GPU::copy_gpu(&tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], false);
                         i_args += 3;
                         break;
                     }
-                    case 46:
+                    case 64:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: commit3
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &bufferT_[(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack], false);
                         i_args += 6;
                         break;
                     }
-                    case 47:
+                    case 65:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: tmp3
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &tmp3[args[i_args + 4] * nrowsPack * FIELD_EXTENSION], false);
                         i_args += 5;
                         break;
                     }
-                    case 48:
+                    case 66:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: challenge
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &challenges[args[i_args + 4] * FIELD_EXTENSION], true);
                         i_args += 5;
                         break;
                     }
-                    case 49:
+                    case 67:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airgroupvalue
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airgroupValues[args[i_args + 4] * FIELD_EXTENSION], true);
                         i_args += 5;
                         break;
                     }
-                    case 50:
+                    case 68:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airvalue3
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &airValues[args[i_args + 4] * FIELD_EXTENSION], true);
                         i_args += 5;
                         break;
                     }
-                    case 51:
+                    case 69:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: proofvalue3
+                        /*Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &proofValues[args[i_args + 4] * nrowsPack * FIELD_EXTENSION]);
+                        i_args += 5;*/
+                        assert(false);
+                        break;
+                    }
+                    case 70:
                     {
                         // COPY tmp3 to tmp3
                         Goldilocks3GPU::copy_gpu(&tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], false);
                         i_args += 2;
                         break;
                     }
-                    case 52:
+                    case 71:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: tmp3
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &tmp3[args[i_args + 3] * nrowsPack * FIELD_EXTENSION], false);
                         i_args += 4;
                         break;
                     }
-                    case 53:
+                    case 72:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: challenge
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &challenges[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 54:
+                    case 73:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airgroupvalue
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &airgroupValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 55:
+                    case 74:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airvalue3
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 56:
+                    case 75:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: proofvalue3
+                        /*Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);*/
+                        i_args += 4;
+                        assert(false);
+                        break;
+                    }
+                    case 76:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: challenge
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &challenges[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 57:
+                    case 77:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airgroupvalue
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &airgroupValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 58:
+                    case 78:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airvalue3
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 59:
+                    case 79:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: proofvalue3
+                        /*Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);
+                        i_args += 4;*/
+                        assert(false);
+                        break;
+                    }
+                    case 80:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airgroupvalue
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION], true, &airgroupValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 60:
+                    case 81:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airvalue3
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION], true, &airValues[args[i_args + 3] * FIELD_EXTENSION * nrowsPack], LDBL_TRUE_MIN);
                         i_args += 4;
                         break;
                     }
-                    case 61:
+                    case 82:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: proofvalue3
+                        /*Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);*/
+                        i_args += 4;
+                        assert(false);
+                        break;
+                    }
+                    case 83:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: airvalue3
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2] * FIELD_EXTENSION], true, &airValues[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
-                    case 62:
+                    case 84:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: proofvalue3
+                        /*Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);*/
+                        assert(false);
+                        i_args += 4;
+                        break;
+                    }
+                    case 85:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: proofvalue3
+                        /*Goldilocks3::op_pack(nrowsPack, args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], &proofValues[args[i_args + 3] * nrowsPack * FIELD_EXTENSION]);*/
+                        assert(false);
+                        i_args += 4;
+                        break;
+                    }
+                    case 86:
                     {
                         // COPY eval to tmp3
                         Goldilocks3GPU::copy_gpu(&tmp3[args[i_args] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 1] * FIELD_EXTENSION], true);
                         i_args += 2;
                         break;
                     }
-                    case 63:
+                    case 87:
                     {
-                        // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: eval
-                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &evals[args[i_args + 3] * FIELD_EXTENSION], true);
+                        // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: tmp1
+                        Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], true, &tmp1[args[i_args + 3] * nrowsPack], false);
                         i_args += 4;
                         break;
                     }
-                    case 64:
+                    case 88:
                     {
-                        // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: eval
-                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &evals[args[i_args + 3] * FIELD_EXTENSION], true);
+                        // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: airvalue1
+                        Goldilocks3GPU::op_31_gpu( args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], true, &airValues[args[i_args + 3] * FIELD_EXTENSION * nrowsPack], true);
                         i_args += 4;
                         break;
                     }
-                    case 65:
+                    case 89:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: commit1
-                        Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2] * FIELD_EXTENSION], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
+                        Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], true, &bufferT_[(nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]) * nrowsPack], false);
                         i_args += 5;
                         break;
                     }
-                    case 66:
-                    {
-                        // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: eval
-                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &evals[args[i_args + 4] * FIELD_EXTENSION], true);
-                        i_args += 5;
-                        break;
-                    }
-                    case 67:
-                    {
-                        // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: eval
-                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2] * FIELD_EXTENSION], true, &evals[args[i_args + 3] * FIELD_EXTENSION], true);
-                        i_args += 4;
-                        break;
-                    }
-                    case 68:
-                    {
-                        // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: public
-                        Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2] * FIELD_EXTENSION], true, &publics[args[i_args + 3]], true);
-                        i_args += 4;
-                        break;
-                    }
-                    case 69:
+                    case 90:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: number
                         Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2] * FIELD_EXTENSION], true, &numbers[args[i_args + 3]], true);
                         i_args += 4;
                         break;
                     }
-                    case 70:
+                    case 91:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: public
+                        Goldilocks3GPU::op_31_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2] * FIELD_EXTENSION], true, &publics[args[i_args + 3]], true);
+                        i_args += 4;
+                        break;
+                    }
+                    case 92:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: eval
+                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &tmp3[args[i_args + 2] * nrowsPack * FIELD_EXTENSION], false, &evals[args[i_args + 3] * FIELD_EXTENSION], true);
+                        i_args += 4;
+                        break;
+                    }
+                    case 93:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: eval
+                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &evals[args[i_args + 4] * FIELD_EXTENSION], true);
+                        i_args += 5;
+                        break;
+                    }
+                    case 94:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: eval
+                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &challenges[args[i_args + 2] * FIELD_EXTENSION], true, &evals[args[i_args + 3] * FIELD_EXTENSION], true);
+                        i_args += 4;
+                        break;
+                    }
+                    case 95:
                     {
                         // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: eval
                         Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airgroupValues[args[i_args + 2] * FIELD_EXTENSION], true, &evals[args[i_args + 3] * FIELD_EXTENSION], true);
                         i_args += 4;
                         break;
                     }
+                    case 96:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: eval
+                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &airValues[args[i_args + 2] * FIELD_EXTENSION * nrowsPack], true,  &evals[args[i_args + 3] * FIELD_EXTENSION * nrowsPack], true);
+                        i_args += 4;
+                        break;
+                    }
+                    case 97:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: eval
+                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &bufferT_[(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], false, &evals[args[i_args + 4] * FIELD_EXTENSION], true);
+                        i_args += 5;
+                        break;
+                    }                    
+                    case 98:
+                    {
+                        // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: eval
+                        Goldilocks3GPU::op_gpu(args[i_args], &tmp3[args[i_args + 1] * nrowsPack * FIELD_EXTENSION], &evals[args[i_args + 2] * FIELD_EXTENSION], true, &evals[args[i_args + 3] * FIELD_EXTENSION], true);
+                        i_args += 4;
+                        break;
+                    }                    
                     default:
                     {
                         // std::cout << " Wrong operation!" << std::endl;
@@ -1502,7 +1722,6 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
 
             if (dests[j].nParams == 2)
             {
-                // rick: this has not been tested with fibonacci example
                 multiplyPolynomials__(d_deviceArgs, dests[j], destVals);
             }
 #if 0

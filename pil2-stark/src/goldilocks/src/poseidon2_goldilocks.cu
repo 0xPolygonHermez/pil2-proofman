@@ -1260,8 +1260,9 @@ __device__ __forceinline__ void poseidon2_load(const uint64_t *in, uint32_t col,
 
 #pragma unroll
     for (uint32_t i = 0; i < RATE; i++, in += row_stride)
-        if (i < ncols)
+        if (i < ncols){
             r[i] = __ldcv((uint64_t *)in);
+        }
 
     __syncwarp();
 
@@ -1310,7 +1311,17 @@ __device__ __forceinline__ void poseidon2_hash_loop(const uint64_t *__restrict__
                     scratchpad[i * blockDim.x + threadIdx.x].set_val(0);
                 }
             }
+            /*if(blockIdx.x == 0 && threadIdx.x == 0){
+                for (uint32_t i = 0; i < SPONGE_WIDTH; i++)
+                    printf("tmp abans[%d] = %lu col=%d ncols=%d\n", i, scratchpad[i * blockDim.x + threadIdx.x].get_val(), col, ncols);
+            }*/
             poseidon2_hash();
+            
+            /*if(blockIdx.x == 0 && threadIdx.x == 0){
+                for (uint32_t i = 0; i < CAPACITY; i++)
+                    printf("tmp[%d] = %lu col=%d ncols=%d\n", i, scratchpad[i * blockDim.x + threadIdx.x].get_val(), col, ncols);
+            }*/
+
             if ((col += RATE) >= ncols)
                 break;
 

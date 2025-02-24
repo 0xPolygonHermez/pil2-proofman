@@ -185,6 +185,11 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     {
         nttExtended.INTT(pBuff, pBuff, NExtended, qDim);
     }
+    for(int k=0; k<qDim; k++){
+        std::cout << "pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
+    }
+
+    
     for (uint64_t p = 0; p < qDeg; p++)
     {
 #pragma omp parallel for
@@ -203,6 +208,9 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     else
     {
         nttExtended.NTT(cmQ, cmQ, NExtended, nCols);
+    }
+    for(int k=0; k<nCols; k++){
+        std::cout << "cmQ[" << k << "] = " << cmQ[k].fe << std::endl;
     }
 
     treesGL[step - 1]->setSource(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), true)]]);
@@ -232,7 +240,7 @@ void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_trace, uint6
     uint64_t qDeg = setupCtx.starkInfo.qDeg;
     uint64_t qDim = setupCtx.starkInfo.qDim;
     NTT_Goldilocks nttExtended(NExtended);
-
+    std::cout<<"holaaaaa ncols "<<nCols<<std::endl;
     if (nCols > 0)
     {
         nttExtended.computeQ_inplace(d_tree, offset_cmQ, offset_q, qDeg, qDim, setupCtx.proverHelpers.S, N, NExtended, nCols, d_buffers);
