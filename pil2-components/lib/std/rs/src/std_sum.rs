@@ -42,7 +42,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
                 true => None,
                 false => {
                     // Get the "stage_wc" hint
-                    let stage_wc = get_global_hint_field_constant_as(&sctx, std_sum_users_id[0], "stage_wc");
+                    let stage_wc = get_global_hint_field_constant_as(sctx, std_sum_users_id[0], "stage_wc");
                     Some(stage_wc)
                 }
             },

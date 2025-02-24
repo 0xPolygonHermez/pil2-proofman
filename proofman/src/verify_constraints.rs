@@ -17,7 +17,7 @@ pub fn verify_constraints<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, glob
     let (airgroup_id, air_id, _) = instances[global_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(&sctx, global_id, false);
+    let steps_params = pctx.get_air_instance_params(sctx, global_id, false);
 
     let p_setup = (&setup.p_setup).into();
 
@@ -25,7 +25,7 @@ pub fn verify_constraints<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, glob
 
     let mut constraints_info = vec![ConstraintInfo::default(); n_constraints as usize];
 
-    let (skip, constraints_skip) = skip_prover_instance(&pctx, global_id);
+    let (skip, constraints_skip) = skip_prover_instance(pctx, global_id);
 
     if !skip {
         if !constraints_skip.is_empty() {
@@ -141,7 +141,7 @@ pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
     let (airgroup_id, air_id, _) = instances[instance_id];
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
-    let (skip, _) = skip_prover_instance(&pctx, instance_id);
+    let (skip, _) = skip_prover_instance(pctx, instance_id);
     if skip {
         log::info!(
             "{}",

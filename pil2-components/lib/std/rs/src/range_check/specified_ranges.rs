@@ -44,7 +44,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
         if !specified_hints.is_empty() {
             for hint in specified_hints[1..].iter() {
                 let predefined = get_hint_field_constant(
-                    &sctx,
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,
@@ -52,7 +52,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                     HintFieldOptions::default(),
                 );
                 let min = get_hint_field_constant(
-                    &sctx,
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,
@@ -60,7 +60,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                     HintFieldOptions::default(),
                 );
                 let min_neg = get_hint_field_constant(
-                    &sctx,
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,
@@ -68,7 +68,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                     HintFieldOptions::default(),
                 );
                 let max = get_hint_field_constant(
-                    &sctx,
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,
@@ -76,7 +76,7 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                     HintFieldOptions::default(),
                 );
                 let max_neg = get_hint_field_constant(
-                    &sctx,
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,

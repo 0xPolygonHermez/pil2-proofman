@@ -159,6 +159,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn verify_proof_constraints_stage(
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
@@ -294,22 +295,32 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         Self::calculate_global_challenge(&pctx, values);
 
-        let (mut circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
+        let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
-            let circom_witness = create_buffer_fast(circom_witness_size);
-            let publics = create_buffer_fast(publics_size);
-            let trace = create_buffer_fast(trace_size);
-            let prover_buffer = create_buffer_fast(prover_buffer_size);
+            let circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
+            let publics: Vec<F> = create_buffer_fast(publics_size);
+            let trace: Vec<F> = create_buffer_fast(trace_size);
+            let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
             (circom_witness, publics, trace, prover_buffer)
         } else {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new())
         };
 
         let aux_trace: Vec<F> = create_buffer_fast(pctx.max_prover_buffer_size as usize);
+        let aux_trace = Arc::new(aux_trace);
 
-        let mut valid_proofs = false;
-        let mut proofs = Vec::new();
-        let mut airgroup_values_air_instances = Vec::new();
+        let valid_proofs = Arc::new(AtomicBool::new(true));
+        let proofs = Arc::new(Mutex::new(Vec::new()));
+        let airgroup_values_air_instances = Vec::new();
+        let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
+
+        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+
+        let circom_witness = Arc::new(circom_witness);
+        let publics = Arc::new(publics);
+        let trace = Arc::new(trace);
+        let prover_buffer = Arc::new(prover_buffer);
+
         for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
             if !pctx.dctx_is_my_instance(instance_id) {
                 continue;
@@ -320,69 +331,26 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 wcm.calculate_witness(1, &[instance_id]);
                 timer_stop_and_log_info!(GENERATING_WITNESS);
             }
-            Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
 
-            let setup = sctx.get_setup(*airgroup_id, *air_id);
-            let p_setup = (&setup.p_setup).into();
-            let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
-            let air_instance_name = &pctx.global_info.airs[*airgroup_id][*air_id].name;
-            timer_start_info!(GENERATING_PROOF);
-
-            let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
-            steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
-
-            let p_steps_params = (&steps_params).into();
-
-            let output_file_path = output_dir_path.join(format!("proofs/{}_{}.json", air_instance_name, instance_id));
-
-            let proof_file = match pctx.options.debug_info.save_proofs_to_file {
-                true => output_file_path.to_string_lossy().into_owned(),
-                false => String::from(""),
-            };
-
-            let proof = gen_proof_c(
-                p_setup,
-                p_steps_params,
-                pctx.get_buff_helper_ptr(),
-                pctx.get_global_challenge_ptr(),
-                &proof_file,
-                *airgroup_id as u64,
-                *air_id as u64,
-                air_instance_id as u64,
-            );
-
-            airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
+            merkelize_handle = Some(Self::fun_name(
+                valid_proofs.clone(),
+                pctx.clone(),
+                sctx.clone(),
+                instance_id,
                 *airgroup_id,
                 *air_id,
-                air_instance_id,
+                output_dir_path.clone(),
+                aux_trace.clone(),
+                airgroup_values_air_instances.clone(),
+                setups.clone(),
+                circom_witness.clone(),
+                publics.clone(),
+                trace.clone(),
+                prover_buffer.clone(),
             ));
-
-            timer_start_info!(FREE_INSTANCE);
-            pctx.free_instance(instance_id);
-            timer_stop_and_log_info!(FREE_INSTANCE);
-
-            if pctx.options.aggregation {
-                timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
-                let proof_recursive = generate_vadcop_recursive1_proof(
-                    &pctx,
-                    &setups,
-                    instance_id,
-                    proof,
-                    &mut circom_witness,
-                    &publics,
-                    &trace,
-                    &prover_buffer,
-                    output_dir_path.clone(),
-                )?;
-                proofs.push(proof_recursive);
-                timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
-                timer_stop_and_log_info!(GENERATING_PROOF);
-            } else {
-                proofs.push(proof);
-                timer_stop_and_log_info!(GENERATING_PROOF);
-                valid_proofs = verify_basic_proof(&pctx, instance_id, proof);
-            }
         }
+
+        merkelize_handle.map(|handle| handle.join().unwrap());
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
@@ -397,6 +365,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             output_dir_path.to_string_lossy().as_ref(),
         );
 
+        let airgroup_values_air_instances =
+            Arc::try_unwrap(airgroup_values_air_instances).unwrap().into_inner().unwrap();
+
         if !pctx.options.aggregation {
             let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
                 || !pctx.options.debug_info.debug_global_instances.is_empty();
@@ -408,18 +379,19 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 if pctx.dctx_get_rank() == 0 {
                     let valid_global_constraints = verify_global_constraints_proof(&pctx, &sctx, airgroupvalues);
                     if valid_global_constraints.is_err() {
-                        valid_proofs = false;
+                        valid_proofs.store(false, Ordering::Relaxed);
                     }
                 }
             }
 
-            if valid_proofs {
+            if valid_proofs.load(Ordering::Relaxed) {
                 return Ok(());
             } else {
                 return Err("Basic proofs were not verified".into());
             }
         }
 
+        let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
         let agg_proof = aggregate_proofs(Self::MY_NAME, &pctx, &setups, &proofs, output_dir_path);
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
@@ -444,6 +416,90 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
             for id in 0..4 {
                 values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = value[id];
+            }
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fun_name(
+        valid_proofs: Arc<AtomicBool>,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        instance_id: usize,
+        airgroup_id: usize,
+        air_id: usize,
+        output_dir_path: PathBuf,
+        aux_trace: Arc<Vec<F>>,
+        airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
+        setups: Arc<SetupsVadcop<F>>,
+        circom_witness: Arc<Vec<F>>,
+        publics: Arc<Vec<F>>,
+        trace: Arc<Vec<F>>,
+        prover_buffer: Arc<Vec<F>>,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
+
+            let setup = sctx.get_setup(airgroup_id, air_id);
+            let p_setup: *mut c_void = (&setup.p_setup).into();
+            let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
+            let air_instance_name = &pctx.global_info.airs[airgroup_id][airgroup_id].name;
+            timer_start_info!(GENERATING_PROOF);
+
+            let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
+            steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
+
+            let p_steps_params: *mut u8 = (&steps_params).into();
+
+            let output_file_path = output_dir_path.join(format!("proofs/{}_{}.json", air_instance_name, instance_id));
+
+            let proof_file = match pctx.options.debug_info.save_proofs_to_file {
+                true => output_file_path.to_string_lossy().into_owned(),
+                false => String::from(""),
+            };
+
+            let proof = gen_proof_c(
+                p_setup,
+                p_steps_params,
+                pctx.get_buff_helper_ptr(),
+                pctx.get_global_challenge_ptr(),
+                &proof_file,
+                airgroup_id as u64,
+                airgroup_id as u64,
+                air_instance_id as u64,
+            );
+
+            airgroup_values_air_instances.lock().unwrap().push(pctx.get_air_instance_airgroup_values(
+                airgroup_id,
+                airgroup_id,
+                air_instance_id,
+            ));
+
+            timer_start_info!(FREE_INSTANCE);
+            pctx.free_instance(instance_id);
+            timer_stop_and_log_info!(FREE_INSTANCE);
+
+            if pctx.options.aggregation {
+                timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
+                let proof_recursive = generate_vadcop_recursive1_proof(
+                    &pctx,
+                    &setups,
+                    instance_id,
+                    proof,
+                    &circom_witness,
+                    &publics,
+                    &trace,
+                    &prover_buffer,
+                    output_dir_path,
+                )
+                .expect("Failed to generate recursive proof");
+                // proofs_cloned.lock().unwrap().push(proof_recursive);
+                timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
+                timer_stop_and_log_info!(GENERATING_PROOF);
+            } else {
+                // proofs_cloned.lock().unwrap().push(proof);
+                timer_stop_and_log_info!(GENERATING_PROOF);
+                valid_proofs.fetch_and(verify_basic_proof(&pctx, instance_id, proof), Ordering::Relaxed);
             }
         })
     }
@@ -895,7 +951,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let (airgroup_id, air_id, _) = instances[instance_id];
         let setup = sctx.get_setup(airgroup_id, air_id);
 
-        let steps_params = pctx.get_air_instance_params(&sctx, instance_id, false);
+        let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
 
         calculate_impols_expressions_c((&setup.p_setup).into(), stage as u64, (&steps_params).into());
     }

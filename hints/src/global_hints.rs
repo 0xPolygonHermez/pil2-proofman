@@ -107,10 +107,10 @@ fn get_global_hint_f<F: Field>(
     hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
-    let publics = if let Some(ref pctx) = pctx { pctx.get_publics_ptr() } else { std::ptr::null_mut() };
-    let challenges = if let Some(ref pctx) = pctx { pctx.get_challenges_ptr() } else { std::ptr::null_mut() };
-    let proof_values = if let Some(ref pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
-    let airgroup_values = if let Some(ref pctx) = pctx {
+    let publics = if let Some(pctx) = pctx { pctx.get_publics_ptr() } else { std::ptr::null_mut() };
+    let challenges = if let Some(pctx) = pctx { pctx.get_challenges_ptr() } else { std::ptr::null_mut() };
+    let proof_values = if let Some(pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
+    let airgroup_values = if let Some(pctx) = pctx {
         let mut airgroup_values_air_instances = Vec::new();
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -125,7 +125,7 @@ fn get_global_hint_f<F: Field>(
                 ));
             }
         }
-        let mut airgroupvals = aggregate_airgroupvals(&pctx, &airgroup_values_air_instances);
+        let mut airgroupvals = aggregate_airgroupvals(pctx, &airgroup_values_air_instances);
         let mut airgroup_values_ptrs: Vec<*mut u64> = airgroupvals
             .iter_mut() // Iterate mutably over the inner Vecs
             .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
@@ -157,7 +157,7 @@ pub fn get_hint_field_constant_gc<F: Field>(
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValue<F> {
-    let hint_info = get_global_hint_f(None, &sctx, hint_id, hint_field_name, print_expression);
+    let hint_info = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression);
 
     if hint_info[0].matrix_size != 0 {
         panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
@@ -176,7 +176,7 @@ pub fn get_hint_field_gc_constant_a<F: Field>(
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValuesVec<F> {
-    let hint_infos = get_global_hint_f(None, &sctx, hint_id, hint_field_name, print_expression);
+    let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression);
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
@@ -199,7 +199,7 @@ pub fn get_hint_field_constant_gc_m<F: Field>(
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValues<F> {
-    let hint_infos = get_global_hint_f(None, &sctx, hint_id, hint_field_name, print_expression);
+    let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression);
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
@@ -228,7 +228,7 @@ pub fn get_hint_field_gc<F: Field>(
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValue<F> {
-    let hint_info = get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression);
+    let hint_info = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression);
 
     if hint_info[0].matrix_size != 0 {
         panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);

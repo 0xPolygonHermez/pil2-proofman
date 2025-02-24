@@ -21,7 +21,7 @@ where
     T::Error: std::fmt::Debug,
     F: PrimeField,
 {
-    let HintFieldValue::Field(field_value) = get_hint_field_constant_gc(&sctx, hint_id, field_name, false) else {
+    let HintFieldValue::Field(field_value) = get_hint_field_constant_gc(sctx, hint_id, field_name, false) else {
         panic!("Hint '{}' for field '{}' must be a field element", hint_id, field_name);
     };
 

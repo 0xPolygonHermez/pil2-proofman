@@ -34,8 +34,7 @@ pub fn aggregate_proofs<F: Field>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("{}: ··· Generating aggregated proofs", name);
 
-    let (circom_witness_size, publics_size, trace_size, prover_buffer_size) =
-        get_buff_sizes(&pctx_aggregation, &setups)?;
+    let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(pctx_aggregation, setups)?;
     let mut circom_witness = create_buffer_fast(circom_witness_size);
     let publics = create_buffer_fast(publics_size);
     let trace = create_buffer_fast(trace_size);
@@ -46,9 +45,9 @@ pub fn aggregate_proofs<F: Field>(
     timer_start_info!(GENERATING_RECURSIVE2_PROOFS);
     let sctx_recursive2 = &setups.sctx_recursive2;
     let recursive2_proof = generate_vadcop_recursive2_proof(
-        &pctx_aggregation,
+        pctx_aggregation,
         sctx_recursive2.as_ref().unwrap(),
-        &proofs,
+        proofs,
         &mut circom_witness,
         &publics,
         &trace,
@@ -63,8 +62,8 @@ pub fn aggregate_proofs<F: Field>(
         let setup_final = setups.setup_vadcop_final.as_ref().unwrap();
         timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
         let final_proof = generate_vadcop_final_proof(
-            &pctx_aggregation,
-            &setup_final,
+            pctx_aggregation,
+            setup_final,
             recursive2_proof,
             &mut circom_witness,
             &publics,
@@ -80,7 +79,7 @@ pub fn aggregate_proofs<F: Field>(
         if pctx_aggregation.options.final_snark {
             timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
             let recursivef_proof = generate_recursivef_proof(
-                &pctx_aggregation,
+                pctx_aggregation,
                 setups.setup_recursivef.as_ref().unwrap(),
                 final_proof,
                 &mut circom_witness,
@@ -92,7 +91,7 @@ pub fn aggregate_proofs<F: Field>(
             timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
             timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-            let _ = generate_fflonk_snark_proof(&pctx_aggregation, recursivef_proof, output_dir_path.clone());
+            let _ = generate_fflonk_snark_proof(pctx_aggregation, recursivef_proof, output_dir_path.clone());
             timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
         } else {
             let setup_path = pctx_aggregation.global_info.get_setup_path("vadcop_final");
@@ -131,7 +130,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     setups: &SetupsVadcop<F>,
     global_idx: usize,
     proof: *mut c_void,
-    circom_witness: &mut [F],
+    circom_witness: &[F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
@@ -452,7 +451,7 @@ pub fn generate_vadcop_final_proof<F: Field>(
 
     let setup_path = pctx.global_info.get_setup_path("vadcop_final");
 
-    generate_witness(circom_witness, trace, publics, &setup_path, &setup, proof, 18)?;
+    generate_witness(circom_witness, trace, publics, &setup_path, setup, proof, 18)?;
 
     let proof_file = output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().into_owned();
 
@@ -499,7 +498,7 @@ pub fn generate_recursivef_proof<F: Field>(
 
     let setup_path = pctx.global_info.get_setup_path("recursivef");
 
-    generate_witness(circom_witness, trace, publics, &setup_path, &setup, proof, 12)?;
+    generate_witness(circom_witness, trace, publics, &setup_path, setup, proof, 12)?;
 
     let proof_file = match pctx.options.debug_info.save_proofs_to_file {
         true => output_dir_path.join("proofs/recursivef.json").to_string_lossy().into_owned(),
@@ -580,7 +579,7 @@ pub fn generate_fflonk_snark_proof<F: Field>(
 }
 
 fn generate_witness<F: Field>(
-    witness: &mut [F],
+    witness: &[F],
     buffer: &[F],
     publics: &[F],
     setup_path: &Path,

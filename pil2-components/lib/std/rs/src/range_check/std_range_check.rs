@@ -84,9 +84,9 @@ impl<F: PrimeField> StdRangeCheck<F> {
             if hints.is_empty() {
                 return None;
             }
-            let airgroup_id = get_global_hint_field_constant_as(&sctx, hints[0], "airgroup_id");
-            let air_id = get_global_hint_field_constant_as(&sctx, hints[0], "air_id");
-            Some(T::new(&pctx, &sctx, Some(airgroup_id), Some(air_id)))
+            let airgroup_id = get_global_hint_field_constant_as(sctx, hints[0], "airgroup_id");
+            let air_id = get_global_hint_field_constant_as(sctx, hints[0], "air_id");
+            Some(T::new(pctx, sctx, Some(airgroup_id), Some(air_id)))
         }
     }
 
