@@ -344,7 +344,7 @@ public:
                         airgroupValues[(i*FIELD_EXTENSION + 2)*nrowsPack + j] = params.airgroupValues[p + 2];
                     }
                 }
-                if(setupCtx.starkInfo.proofValuesMap[i].stage == 1) {
+                if(setupCtx.starkInfo.airgroupValuesMap[i].stage == 1) {
                     p += 1;
                 } else {
                     p += 3;
@@ -390,7 +390,7 @@ public:
                         airValues[(i*FIELD_EXTENSION + 2)*nrowsPack + j] = params.airValues[p + 2];
                     }
                 }
-                if(setupCtx.starkInfo.proofValuesMap[i].stage == 1) {
+                if(setupCtx.starkInfo.airValuesMap[i].stage == 1) {
                     p += 1;
                 } else {
                     p += 3;
