@@ -76,72 +76,6 @@ pub fn fri_proof_set_air_values_c(p_fri_proof: *mut c_void, p_air_values: *mut u
     unsafe { fri_proof_set_airvalues(p_fri_proof, p_air_values as *mut std::os::raw::c_void) }
 }
 
-#[cfg(not(feature = "no_lib_link"))]
-#[allow(clippy::too_many_arguments)]
-pub fn fri_proof_get_zkinproofs_c(
-    n_proofs: u64,
-    proofs: *mut *mut c_void,
-    fri_proofs: *mut *mut c_void,
-    p_publics: *mut u8,
-    p_proof_values: *mut u8,
-    p_challenges: *mut u8,
-    global_info_file: &str,
-    output_dir_file: &str,
-) {
-    let global_info_file_name = CString::new(global_info_file).unwrap();
-    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-    let file_dir = CString::new(output_dir_file).unwrap();
-    let file_ptr = file_dir.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe {
-        fri_proof_get_zkinproofs(
-            n_proofs,
-            proofs,
-            fri_proofs,
-            p_publics as *mut std::os::raw::c_void,
-            p_proof_values as *mut std::os::raw::c_void,
-            p_challenges as *mut std::os::raw::c_void,
-            global_info_file_ptr,
-            file_ptr,
-        );
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-#[allow(clippy::too_many_arguments)]
-pub fn fri_proof_get_zkinproof_c(
-    p_fri_proof: *mut c_void,
-    p_publics: *mut u8,
-    p_challenges: *mut u8,
-    p_proof_values: *mut u8,
-    global_info_file: &str,
-    output_dir_file: &str,
-) -> *mut c_void {
-    let global_info_file_name = CString::new(global_info_file).unwrap();
-    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-    let file_dir = CString::new(output_dir_file).unwrap();
-    let file_ptr = file_dir.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe {
-        fri_proof_get_zkinproof(
-            p_fri_proof,
-            p_publics as *mut std::os::raw::c_void,
-            p_challenges as *mut std::os::raw::c_void,
-            p_proof_values as *mut std::os::raw::c_void,
-            global_info_file_ptr,
-            file_ptr,
-        )
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn fri_proof_free_zkinproof_c(p_fri_proof: *mut c_void) {
-    unsafe {
-        fri_proof_free_zkinproof(p_fri_proof);
-    }
-}
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn fri_proof_free_c(p_fri_proof: *mut c_void) {
@@ -985,13 +919,6 @@ pub fn set_hint_field_global_constraints_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn print_row_c(p_setup_ctx: *mut c_void, buffer: *mut u8, stage: u64, row: u64) {
-    unsafe {
-        print_row(p_setup_ctx, buffer as *mut std::os::raw::c_void, stage, row);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn gen_proof_c(
     p_setup: *mut c_void,
@@ -1099,102 +1026,6 @@ pub fn gen_recursive_proof_final_c(
             p_public_inputs as *mut std::os::raw::c_void,
             proof_file_ptr,
         )
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_zkin_ptr_c(zkin_file: &str) -> *mut c_void {
-    let zkin_file_name = CString::new(zkin_file).unwrap();
-    let zkin_file_ptr = zkin_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe { get_zkin_ptr(zkin_file_ptr) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn join_zkin_final_c(
-    p_publics: *mut u8,
-    p_proof_values: *mut u8,
-    p_challenges: *mut u8,
-    global_info_file: &str,
-    zkin_recursive2: *mut *mut c_void,
-    stark_info_recursive2: *mut *mut c_void,
-) -> *mut c_void {
-    let global_info_file_name = CString::new(global_info_file).unwrap();
-    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe {
-        join_zkin_final(
-            p_publics as *mut std::os::raw::c_void,
-            p_proof_values as *mut std::os::raw::c_void,
-            p_challenges as *mut std::os::raw::c_void,
-            global_info_file_ptr,
-            zkin_recursive2,
-            stark_info_recursive2,
-        )
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-#[allow(clippy::too_many_arguments)]
-pub fn join_zkin_recursive2_c(
-    airgroup_id: u64,
-    p_publics: *mut u8,
-    p_proof_values: *mut u8,
-    p_challenges: *mut u8,
-    global_info_file: &str,
-    zkin1: *mut c_void,
-    zkin2: *mut c_void,
-    stark_info_recursive2: *mut c_void,
-) -> *mut c_void {
-    let global_info_file_name = CString::new(global_info_file).unwrap();
-    let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
-
-    unsafe {
-        join_zkin_recursive2(
-            global_info_file_ptr,
-            airgroup_id,
-            p_publics as *mut std::os::raw::c_void,
-            p_proof_values as *mut std::os::raw::c_void,
-            p_challenges as *mut std::os::raw::c_void,
-            zkin1,
-            zkin2,
-            stark_info_recursive2,
-        )
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_serialized_proof_c(zkin: *mut c_void) -> (*mut std::os::raw::c_char, u64) {
-    unsafe {
-        let size: Box<u64> = Box::new(0);
-        let size_ptr: *mut u64 = Box::into_raw(size);
-        let ptr = get_serialized_proof(zkin, size_ptr);
-        let size: Box<u64> = Box::from_raw(size_ptr);
-        (ptr, *size)
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn deserialize_zkin_proof_c(zkin_cstr: *mut std::os::raw::c_char) -> *mut c_void {
-    unsafe { deserialize_zkin_proof(zkin_cstr) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_zkin_proof_c(zkin: *mut std::os::raw::c_char) -> *mut c_void {
-    unsafe { get_zkin_proof(zkin) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn zkin_proof_free_c(p_zkin_proof: *mut c_void) {
-    unsafe {
-        zkin_proof_free(p_zkin_proof);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn serialized_proof_free_c(zkin_cstr: *mut std::os::raw::c_char) {
-    unsafe {
-        serialized_proof_free(zkin_cstr);
     }
 }
 
@@ -1333,18 +1164,6 @@ pub fn read_from_file_c(p_buffer: *mut u8, buffer_size: u64, p_publics: *mut u8,
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn create_buffer_c(size: u64) -> *mut c_void {
-    unsafe { create_buffer(size) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn free_buffer_c(buffer: *mut u8) {
-    unsafe {
-        free_buffer(buffer as *mut c_void);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn write_fixed_cols_bin_c(
     binfile: &str,
     airgroup: &str,
@@ -1422,48 +1241,6 @@ pub fn fri_proof_set_air_values_c(_p_fri_proof: *mut c_void, _p_params: *mut u8)
         "{}: ··· {}",
         "ffi     ",
         "fri_proof_set_air_values: This is a mock call because there is no linked library"
-    );
-}
-
-#[cfg(feature = "no_lib_link")]
-#[allow(clippy::too_many_arguments)]
-pub fn fri_proof_get_zkinproofs_c(
-    _n_proofs: u64,
-    _proofs: *mut *mut c_void,
-    _fri_proofs: *mut *mut c_void,
-    _p_publics: *mut u8,
-    _p_proof_values: *mut u8,
-    _p_challenges: *mut u8,
-    _global_info_file: &str,
-    _output_dir_file: &str,
-) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "fri_proof_get_zkinproofs: This is a mock call because there is no linked library"
-    );
-}
-
-#[cfg(feature = "no_lib_link")]
-#[allow(clippy::too_many_arguments)]
-pub fn fri_proof_get_zkinproof_c(
-    _p_fri_proof: *mut c_void,
-    _p_publics: *mut u8,
-    _p_challenges: *mut u8,
-    _p_proof_values: *mut u8,
-    _global_info_file: &str,
-    _output_dir_file: &str,
-) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "fri_proof_get_zkinproof: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn fri_proof_free_zkinproof_c(_p_fri_proof: *mut c_void) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "fri_proof_free_zkinproof: This is a mock call because there is no linked library"
     );
 }
 
@@ -2052,11 +1829,6 @@ pub fn set_hint_field_global_constraints_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn print_row_c(_p_setup_ctx: *mut c_void, _buffer: *mut u8, _stage: u64, _row: u64) {
-    trace!("{}: ··· {}", "ffi     ", "print_row: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
 pub fn gen_proof_c(
     _p_setup_ctx: *mut c_void,
@@ -2113,69 +1885,6 @@ pub fn gen_recursive_proof_final_c(
         "gen_recursive_proof_final: This is a mock call because there is no linked library"
     );
     std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn get_zkin_ptr_c(_zkin_file: &str) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "get_zkin_ptr: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-#[allow(clippy::too_many_arguments)]
-pub fn join_zkin_recursive2_c(
-    _airgroup_id: u64,
-    _p_publics: *mut u8,
-    _p_proof_values: *mut u8,
-    _p_challenges: *mut u8,
-    _global_info_file: &str,
-    _zkin1: *mut c_void,
-    _zkin2: *mut c_void,
-    _stark_info_recursive2: *mut c_void,
-) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "join_zkin_recursive2: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn join_zkin_final_c(
-    _p_publics: *mut u8,
-    _p_proof_values: *mut u8,
-    _p_challenges: *mut u8,
-    _global_info_file: &str,
-    _zkin_recursive2: *mut *mut c_void,
-    _stark_info_recursive2: *mut *mut c_void,
-) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "join_zkin_final: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn get_serialized_proof_c(_zkin: *mut c_void) -> (*mut std::os::raw::c_char, u64) {
-    trace!("{}: ··· {}", "ffi     ", "get_serialized_proof: This is a mock call because there is no linked library");
-    (std::ptr::null_mut(), 0)
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn deserialize_zkin_proof_c(_zkin_cstr: *mut std::os::raw::c_char) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "deserialize_zkin_proof: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn get_zkin_proof_c(_zkin_file: *mut std::os::raw::c_char) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "get_zkin_proof: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn zkin_proof_free_c(_p_zkin_proof: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "zkin_proof_free: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn serialized_proof_free_c(_zkin_cstr: *mut std::os::raw::c_char) {
-    trace!("{}: ··· {}", "ffi     ", "serialized_proof_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
