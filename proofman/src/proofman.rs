@@ -456,7 +456,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let setup = sctx.get_setup(airgroup_id, air_id);
             let p_setup: *mut c_void = (&setup.p_setup).into();
             let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
-            let air_instance_name = &pctx.global_info.airs[airgroup_id][airgroup_id].name;
+            let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
             timer_start_info!(GENERATING_PROOF);
 
             let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
