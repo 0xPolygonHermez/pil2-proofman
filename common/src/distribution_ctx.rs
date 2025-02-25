@@ -578,6 +578,7 @@ impl DistributionCtx {
             }
         }
     }
+    
     #[allow(unused_variables)]
     pub fn distribute_recursive2_proofs(&mut self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
         #[cfg(feature = "distributed")]

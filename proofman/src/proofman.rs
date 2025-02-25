@@ -100,7 +100,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let instances = pctx.dctx_get_instances();
         let airgroup_values_air_instances = Arc::new(Mutex::new(Vec::new()));
         let valid_constraints = Arc::new(AtomicBool::new(true));
-        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
             let is_my_instance = pctx.dctx_is_my_instance(instance_id);
@@ -113,11 +113,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             wcm.calculate_witness(1, &[instance_id]);
 
             // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = merkelize_handle.take() {
+            if let Some(handle) = thread_handle.take() {
                 handle.join().unwrap();
             }
 
-            merkelize_handle = is_my_instance.then(|| {
+            thread_handle = is_my_instance.then(|| {
                 Self::verify_proof_constraints_stage(
                     pctx.clone(),
                     sctx.clone(),
@@ -132,7 +132,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             });
         }
 
-        if let Some(handle) = merkelize_handle {
+        if let Some(handle) = thread_handle {
             handle.join().unwrap()
         }
 
@@ -263,7 +263,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let aux_trace_contribution: Vec<F> = create_buffer_fast(pctx.max_contribution_air_buffer_size as usize);
         let aux_trace_contribution = Arc::new(aux_trace_contribution);
 
-        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !all && !pctx.dctx_is_my_instance(instance_id) {
@@ -277,11 +277,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
 
             // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = merkelize_handle.take() {
+            if let Some(handle) = thread_handle.take() {
                 handle.join().unwrap();
             }
 
-            merkelize_handle = Some(Self::generate_proof_witness(
+            thread_handle = Some(Self::get_contribution(
                 instance_id,
                 pctx.clone(),
                 sctx.clone(),
@@ -291,7 +291,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             ));
         }
 
-        if let Some(handle) = merkelize_handle {
+        if let Some(handle) = thread_handle {
             handle.join().unwrap()
         }
 
@@ -301,7 +301,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
-            let circom_witness= create_buffer_fast(circom_witness_size);
+            let circom_witness = create_buffer_fast(circom_witness_size);
             let publics = create_buffer_fast(publics_size);
             let trace = create_buffer_fast(trace_size);
             let prover_buffer = create_buffer_fast(prover_buffer_size);
@@ -318,7 +318,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
         let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
 
-        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         let circom_witness = Arc::new(circom_witness);
         let publics = Arc::new(publics);
@@ -336,7 +336,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_stop_and_log_info!(GENERATING_WITNESS);
             }
 
-            merkelize_handle = Some(Self::generate_proof_xxx(
+            // Join the previous thread (if any) before starting a new one
+            if let Some(handle) = thread_handle.take() {
+                handle.join().unwrap();
+            }
+
+            thread_handle = Some(Self::generate_proof_thread(
                 proofs.clone(),
                 valid_proofs.clone(),
                 pctx.clone(),
@@ -355,7 +360,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             ));
         }
 
-        if let Some(handle) = merkelize_handle {
+        if let Some(handle) = thread_handle {
             handle.join().unwrap();
         }
 
@@ -405,7 +410,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         agg_proof
     }
 
-    fn generate_proof_witness(
+    fn get_contribution(
         instance_id: usize,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
@@ -428,7 +433,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn generate_proof_xxx(
+    fn generate_proof_thread(
         proofs: Arc<Mutex<Vec<Vec<u64>>>>,
         valid_proofs: Arc<AtomicBool>,
         pctx: Arc<ProofCtx<F>>,
@@ -480,11 +485,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 air_instance_id as u64,
             );
 
-            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = pctx.get_air_instance_airgroup_values(
-                airgroup_id,
-                air_id,
-                air_instance_id,
-            );
+            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
+                pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
 
             timer_start_info!(FREE_INSTANCE);
             pctx.free_instance(instance_id);
