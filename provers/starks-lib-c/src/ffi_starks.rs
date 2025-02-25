@@ -54,7 +54,6 @@ pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output
     }
 }
 
-
 #[cfg(not(feature = "no_lib_link"))]
 pub fn stark_info_new_c(filename: &str, verify: bool) -> *mut c_void {
     unsafe {
@@ -926,7 +925,6 @@ pub fn stark_verify_from_file_c(
         )
     }
 }
-
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn write_fixed_cols_bin_c(
