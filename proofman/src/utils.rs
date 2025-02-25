@@ -323,7 +323,7 @@ pub fn add_publics_circom<F: PrimeField>(
         let mut file = File::open(recursive2_verkey).expect("Unable to open file");
         let mut json_str = String::new();
         file.read_to_string(&mut json_str).expect("Unable to read file");
-        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("REASON");
+        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse json");
         for i in 0..4 {
             proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len() + 3 + i] = vk[i];
         }

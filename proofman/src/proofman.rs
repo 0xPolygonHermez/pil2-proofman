@@ -1015,7 +1015,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut file = File::open(&verkey).expect("Unable to open file");
         let mut json_str = String::new();
         file.read_to_string(&mut json_str).expect("Unable to read file");
-        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("REASON");
+        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
         for j in 0..n_field_elements {
             values_hash[j] = F::from_canonical_u64(vk[j]);
             values_hash[j + n_field_elements] = root[j];
