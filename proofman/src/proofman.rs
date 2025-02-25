@@ -318,12 +318,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
         let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
 
-        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
-
         let circom_witness = Arc::new(circom_witness);
         let publics = Arc::new(publics);
         let trace = Arc::new(trace);
         let prover_buffer = Arc::new(prover_buffer);
+
+        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
             if !pctx.dctx_is_my_instance(instance_id) {
