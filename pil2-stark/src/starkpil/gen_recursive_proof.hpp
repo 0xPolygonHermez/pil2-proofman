@@ -247,6 +247,9 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         return (void *) new nlohmann::json(zkin);
     } else {
         proofBuffer = proof.proof.proof2pointer(proofBuffer);
+        if(!proofFile.empty()) {
+            json2file(pointer2json(proofBuffer, setupCtx.starkInfo), proofFile);
+        }
     }
 
     TimerStopAndLog(STARK_PROOF);
