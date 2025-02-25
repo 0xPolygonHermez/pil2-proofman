@@ -24,6 +24,6 @@ serde_derive.workspace = true
 
 [features]
 default = []
-no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
+no_lib_link = ["proofman-common/no_lib_link"]
 distributed = ["proofman-common/distributed"]
 

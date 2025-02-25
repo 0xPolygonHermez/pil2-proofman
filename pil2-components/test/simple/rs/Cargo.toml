@@ -11,7 +11,6 @@ proofman.workspace = true
 proofman-common.workspace = true
 proofman-macros.workspace = true
 proofman-cli.workspace = true
-proofman-starks-lib-c.workspace = true
 pilout.workspace = true
 witness.workspace = true
 pil-std-lib = { path = "../../../lib/std/rs" }
@@ -26,6 +25,6 @@ rayon.workspace = true
 
 [features]
 default = []
-no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
+no_lib_link = ["proofman-common/no_lib_link"]
 diagnostic = ["proofman-macros/diagnostic"]
 debug = []

@@ -76,7 +76,6 @@ pub fn fri_proof_set_air_values_c(p_fri_proof: *mut c_void, p_air_values: *mut u
     unsafe { fri_proof_set_airvalues(p_fri_proof, p_air_values as *mut std::os::raw::c_void) }
 }
 
-
 #[cfg(not(feature = "no_lib_link"))]
 pub fn fri_proof_free_c(p_fri_proof: *mut c_void) {
     unsafe {
