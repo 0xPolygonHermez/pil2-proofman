@@ -77,55 +77,6 @@ void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir) 
 
 
 
-void *fri_proof_new(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId)
-{
-    SetupCtx setupCtx = *(SetupCtx *)pSetupCtx;
-    FRIProof<Goldilocks::Element> *friProof = new FRIProof<Goldilocks::Element>(setupCtx.starkInfo, airgroupId, airId, instanceId);
-
-    return friProof;
-}
-
-
-void fri_proof_get_tree_root(void *pFriProof, void* root, uint64_t tree_index)
-{
-    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
-    FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
-    for(uint64_t i = 0; i < friProof->proof.fri.treesFRI[tree_index].nFieldElements; ++i) {
-        rootGL[i] = friProof->proof.fri.treesFRI[tree_index].root[i];
-    }
-}
-
-void fri_proof_set_airgroupvalues(void *pFriProof, void *airgroupValues)
-{
-    FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
-    friProof->proof.setAirgroupValues((Goldilocks::Element *)airgroupValues);
-}
-
-void fri_proof_set_airvalues(void *pFriProof, void *airValues)
-{
-    FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
-    friProof->proof.setAirValues((Goldilocks::Element *)airValues);
-}
-
-void fri_proof_free(void *pFriProof)
-{
-    FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
-    delete friProof;
-}
-
-void proofs_free(uint64_t nProofs, void **pStarks, void **pFriProofs, bool background) {
-
-#pragma omp parallel for
-    for (uint64_t i = 0; i < nProofs; ++i) {
-        FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProofs[i];
-        Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks[i];
-
-        delete friProof;
-        delete starks;
-    }
-}
-
-
 // SetupCtx
 // ========================================================================================
 
@@ -319,37 +270,6 @@ uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hi
 // Starks
 // ========================================================================================
 
-void *starks_new(void *pSetupCtx, void* pConstTree)
-{
-    return new Starks<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, (Goldilocks::Element*) pConstTree);
-}
-
-void starks_free(void *pStarks)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    delete starks;
-}
-
-void treesGL_get_root(void *pStarks, uint64_t index, void *dst)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-
-    starks->ffi_treesGL_get_root(index, (Goldilocks::Element *)dst);
-}
-
-void calculate_fri_polynomial(void *pStarks, void* stepsParams)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->calculateFRIPolynomial(*(StepsParams *)stepsParams);
-}
-
-
-void calculate_quotient_polynomial(void *pStarks, void* stepsParams)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->calculateQuotientPolynomial(*(StepsParams *)stepsParams);
-}
-
 void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams)
 {
      SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
@@ -377,12 +297,6 @@ void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsPar
 #endif
 
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
-}
-
-void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void* buffer, void *pProof, void *pBuffHelper)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->extendAndMerkelizeCustomCommit(commitId, step, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper);
 }
 
 void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile)
@@ -422,20 +336,6 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
     }
 }
 
-void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trace, void *buffer, void *pProof, void *pBuffHelper) {
-    // type == 1 => Goldilocks
-    // type == 2 => BN128
-    switch (elementType)
-    {
-    case 1:
-        ((Starks<Goldilocks::Element> *)pStarks)->commitStage(step, (Goldilocks::Element *)trace, (Goldilocks::Element *)buffer, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)pBuffHelper);
-        break;
-    default:
-        cerr << "Invalid elementType: " << elementType << endl;
-        break;
-    }
-}
-
 void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace) {
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
@@ -453,67 +353,12 @@ void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *roo
     mt.getRoot(rootGL);
 }
 
-void compute_lev(void *pStarks, void *xiChallenge, void* LEv) {
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->computeLEv((Goldilocks::Element *)xiChallenge, (Goldilocks::Element *)LEv);
-}
-
-void compute_evals(void *pStarks, void *params, void *LEv, void *pProof)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->computeEvals(*(StepsParams *)params, (Goldilocks::Element *)LEv, *(FRIProof<Goldilocks::Element> *)pProof);
-}
-
-void calculate_xdivxsub(void *pStarks, void* xiChallenge, void *xDivXSub)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    starks->calculateXDivXSub((Goldilocks::Element *)xiChallenge, (Goldilocks::Element *)xDivXSub);
-}
-
-void *get_fri_pol(void *pStarkInfo, void *buffer)
-{
-    StarkInfo starkInfo = *(StarkInfo *)pStarkInfo;
-    auto pols = (Goldilocks::Element *)buffer;
-    
-    return &pols[starkInfo.mapOffsets[std::make_pair("f", true)]];
-}
-
 void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements)
 {
     TranscriptGL transcriptHash(2, true);
     transcriptHash.put((Goldilocks::Element *)pBuffer, nElements);
     transcriptHash.getState((Goldilocks::Element *)pValue);
 
-}
-
-// FRI
-// =================================================================================
-
-void compute_fri_folding(uint64_t step, void *buffer, void *pChallenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits)
-{
-    FRI<Goldilocks::Element>::fold(step, (Goldilocks::Element *)buffer, (Goldilocks::Element *)pChallenge, nBitsExt, prevBits, currentBits);
-}
-
-void compute_fri_merkelize(void *pStarks, void *pProof, uint64_t step, void *buffer, uint64_t currentBits, uint64_t nextBits)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    FRI<Goldilocks::Element>::merkelize(step, *(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)buffer, starks->treesFRI[step], currentBits, nextBits);
-}
-
-void compute_queries(void *pStarks, void *pProof, uint64_t *friQueries, uint64_t nQueries, uint64_t nTrees)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    FRI<Goldilocks::Element>::proveQueries(friQueries, nQueries, *(FRIProof<Goldilocks::Element> *)pProof, starks->treesGL, nTrees);
-}
-
-void compute_fri_queries(void *pStarks, void *pProof, uint64_t *friQueries, uint64_t nQueries, uint64_t step, uint64_t currentBits)
-{
-    Starks<Goldilocks::Element> *starks = (Starks<Goldilocks::Element> *)pStarks;
-    FRI<Goldilocks::Element>::proveFRIQueries(friQueries, nQueries, step, currentBits, *(FRIProof<Goldilocks::Element> *)pProof, starks->treesFRI[step - 1]);
-}
-
-void set_fri_final_pol(void *pProof, void *buffer, uint64_t nBits) {
-    FRI<Goldilocks::Element>::setFinalPol(*(FRIProof<Goldilocks::Element> *)pProof, (Goldilocks::Element *)buffer, nBits);
 }
 
 // Transcript
@@ -554,11 +399,6 @@ void get_challenge(void *pTranscript, void *pElement)
     transcript->getField((uint64_t *)&challenge);
 }
 
-void get_permutations(void *pTranscript, uint64_t *res, uint64_t n, uint64_t nBits)
-{
-    TranscriptGL *transcript = (TranscriptGL *)pTranscript;
-    transcript->getPermutations(res, n, nBits);
-}
 
 // Constraints
 // =================================================================================
@@ -723,38 +563,6 @@ bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pExpression
         return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
     } else {
         return starkVerify<RawFr::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
-    }
-}
-
-
-// Debug circom
-// =================================================================================
-void save_to_file(void *buffer, uint64_t bufferSize, void* publics, uint64_t publicsSize, char* name) {
-    json j;
-    Goldilocks::Element *buff = (Goldilocks::Element *)buffer;
-    for(uint64_t i = 0; i < bufferSize; ++i) {
-        j["buffer"][i] = Goldilocks::toString(buff[i]);
-    }
-
-    Goldilocks::Element *pubs = (Goldilocks::Element *)publics;
-    for(uint64_t i = 0; i < publicsSize; ++i) {
-        j["publics"][i] = Goldilocks::toString(pubs[i]);
-    }
-
-    json2file(j, string(name));
-}
-
-void read_from_file(void* buffer, uint64_t bufferSize, void* publics, uint64_t publicsSize, char* name) {
-    json j;
-    file2json(string(name), j);
-    Goldilocks::Element *buff = (Goldilocks::Element *)buffer;
-    for(uint64_t i = 0; i < bufferSize; ++i) {
-        buff[i] = Goldilocks::fromString(j["buffer"][i]);
-    }
-
-    Goldilocks::Element *pubs = (Goldilocks::Element *)publics;
-    for(uint64_t i = 0; i < publicsSize; ++i) {
-        pubs[i] = Goldilocks::fromString(j["publics"][i]);
     }
 }
 

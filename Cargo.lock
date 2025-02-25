@@ -870,7 +870,6 @@ dependencies = [
  "proofman-util",
  "rayon",
  "serde_json",
- "stark",
  "transcript",
  "witness",
 ]
@@ -1177,22 +1176,6 @@ name = "smallvec"
 version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fcf8323ef1faaee30a44a340193b1ac6814fd9b7b4e88e9d4519a3e4abe1cfd"
-
-[[package]]
-name = "stark"
-version = "0.4.0"
-dependencies = [
- "log",
- "p3-field",
- "p3-goldilocks",
- "proofman-common",
- "proofman-starks-lib-c",
- "proofman-util",
- "serde",
- "serde_derive",
- "serde_json",
- "transcript",
-]
 
 [[package]]
 name = "strength_reduce"

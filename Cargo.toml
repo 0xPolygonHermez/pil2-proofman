@@ -6,7 +6,6 @@ members = [
     "pilout",
     "proofman",
     "macros",
-    "provers/stark",
     "provers/starks-lib-c",
     "transcript",
     "witness",

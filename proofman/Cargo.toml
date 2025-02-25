@@ -8,7 +8,6 @@ proofman-common = { path = "../common" }
 proofman-macros = { path = "../macros" }
 proofman-hints = { path = "../hints" }
 proofman-util = { path = "../util" }
-stark = { path = "../provers/stark" }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 transcript = { path = "../transcript" }
 witness = { path = "../witness" }

@@ -8,15 +8,6 @@
     void save_publics(unsigned long numPublicInputs, void *pPublicInputs, char *fileDir);
     void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir);
 
-    // FRIProof
-    // ========================================================================================
-    void *fri_proof_new(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId);
-    void fri_proof_get_tree_root(void *pFriProof, void* root, uint64_t tree_index);
-    void fri_proof_set_airgroupvalues(void *pFriProof, void *airgroupValues);
-    void fri_proof_set_airvalues(void *pFriProof, void *airValues);
-    void fri_proof_free(void *pFriProof);
-
-    void proofs_free(uint64_t nProofs, void **pStarks, void **pFriProofs, bool background);
 
     // SetupCtx
     // ========================================================================================
@@ -66,39 +57,13 @@
 
     // Starks
     // ========================================================================================
-    void *starks_new(void *pSetupCtx, void *pConstTree);
-    void starks_free(void *pStarks);
-
-    void treesGL_get_root(void *pStarks, uint64_t index, void *root);
-
-    void calculate_xdivxsub(void *pStarks, void* xiChallenge, void *xDivXSub);
-    void *get_fri_pol(void *pStarkInfo, void *buffer);
-
-    void calculate_fri_polynomial(void *pStarks, void* stepsParams);
-    void calculate_quotient_polynomial(void *pStarks, void* stepsParams);
     void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams);
-
-    void extend_and_merkelize_custom_commit(void *pStarks, uint64_t commitId, uint64_t step, void *bufferExt, void *pProof, void *pBuffHelper);
     
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
     void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check);
 
-    void commit_stage(void *pStarks, uint32_t elementType, uint64_t step, void *trace, void *buffer, void *pProof, void *pBuffHelper);
-    
-    void compute_lev(void *pStarks, void *xiChallenge, void* LEv);
-    void compute_evals(void *pStarks, void *params, void *LEv, void *pProof);
-
     void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace);
     void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements);
-
-    // FRI 
-    // =================================================================================
-
-    void compute_fri_folding(uint64_t step, void *buffer, void *pChallenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits);
-    void compute_fri_merkelize(void *pStarks, void *pProof, uint64_t step, void *buffer, uint64_t currentBits, uint64_t nextBits);
-    void compute_queries(void *pStarks, void *pProof, uint64_t *friQueries, uint64_t nQueries, uint64_t nTrees);
-    void compute_fri_queries(void *pStarks, void *pProof, uint64_t *friQueries, uint64_t nQueries, uint64_t step, uint64_t currentBits);
-    void set_fri_final_pol(void *pProof, void *buffer, uint64_t nBits);
 
     // Transcript
     // =================================================================================
@@ -107,7 +72,6 @@
     void transcript_add_polinomial(void *pTranscript, void *pPolinomial);
     void transcript_free(void *pTranscript);
     void get_challenge(void *pTranscript, void *pElement);
-    void get_permutations(void *pTranscript, uint64_t *res, uint64_t n, uint64_t nBits);
 
     // Constraints
     // =================================================================================
@@ -147,11 +111,6 @@
     bool stark_verify(uint64_t* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
     bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics);
     bool stark_verify_from_file(char *proof, void *pStarkInfo, void *pExpressionsBin, char *verkey, void *pPublics, void *pProofValues, void *challenges);
-
-    // Debug circom
-    // =================================================================================
-    void save_to_file(void *buffer, uint64_t bufferSize, void* publics, uint64_t publicsSize, char* name);
-    void read_from_file(void* buffer, uint64_t bufferSize, void* publics, uint64_t publicsSize, char* name);
 
     // Fixed cols
     // =================================================================================
