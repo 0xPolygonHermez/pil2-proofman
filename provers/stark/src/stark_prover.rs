@@ -190,7 +190,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 .stark_info
                 .cm_pols_map
                 .as_ref()
-                .expect("REASON")
+                .unwrap()
                 .iter()
                 .any(|cm_pol| cm_pol.stage == stage_id as u64 && cm_pol.im_pol)
             {
@@ -352,7 +352,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
                 let mut file = File::open(&verkey).expect("Unable to open file");
                 let mut json_str = String::new();
                 file.read_to_string(&mut json_str).expect("Unable to read file");
-                let vk: Vec<u64> = serde_json::from_str(&json_str).expect("REASON");
+                let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
                 for j in 0..self.n_field_elements {
                     values_hash[j] = F::from_canonical_u64(vk[j]);
                 }
@@ -470,7 +470,7 @@ impl<F: Field> Prover<F> for StarkProver<F> {
         }
 
         for s in self.stark_info.stark_struct.steps.clone().into_iter() {
-            let step_index = global_steps.iter().position(|step| *step == s.n_bits as usize).expect("REASON");
+            let step_index = global_steps.iter().position(|step| *step == s.n_bits as usize).expect("Step not found");
             challenges.push(global_challenges[(n_challenges_stages + step_index) * Self::FIELD_EXTENSION]);
             challenges.push(global_challenges[(n_challenges_stages + step_index) * Self::FIELD_EXTENSION + 1]);
             challenges.push(global_challenges[(n_challenges_stages + step_index) * Self::FIELD_EXTENSION + 2]);

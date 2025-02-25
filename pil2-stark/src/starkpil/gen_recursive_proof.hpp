@@ -1,7 +1,7 @@
 #include "starks.hpp"
 
 template <typename ElementType>
-void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, bool vadcop) {
+void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, bool vadcop) {
     TimerStart(STARK_PROOF);
 
     FRIProof<ElementType> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
@@ -228,22 +228,29 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     TimerStopAndLog(STARK_STEP_FRI);
 
-    nlohmann::json zkin = proof.proof.proof2json();
-    
-TimerStopAndLog(STARK_PROOF);
 
-    if(vadcop) {
-        zkin = publics2zkin(zkin, publicInputs, globalInfo, airgroupId);
-    } else {
-        zkin["publics"] = json::array();
-        for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
-            zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
+    if (setupCtx.starkInfo.starkStruct.verificationHashType == "BN128") {
+        nlohmann::json zkin = proof.proof.proof2json();
+        if(vadcop) {
+            zkin = publics2zkin(zkin, setupCtx.starkInfo.nPublics, publicInputs, globalInfo, airgroupId);
+        } else {
+            zkin["publics"] = json::array();
+            for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
+                zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
+            }
         }
+
+        if(!proofFile.empty()) {
+            json2file(zkin, proofFile);
+        }
+
+        return (void *) new nlohmann::json(zkin);
+    } else {
+        proofBuffer = proof.proof.proof2pointer(proofBuffer);
     }
 
-    if(!proofFile.empty()) {
-        json2file(zkin, proofFile);
-    }
+    TimerStopAndLog(STARK_PROOF);
+
     
-    return (void *) new nlohmann::json(zkin);
+    return nullptr;
 }

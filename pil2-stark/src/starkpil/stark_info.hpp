@@ -161,6 +161,8 @@ public:
     uint64_t mapTotalN;
     uint64_t mapTotalNCustomCommitsFixed;
     
+    uint64_t proofSize;
+
     /* Constructor */
     StarkInfo(string file, bool verify = false);
 
@@ -168,6 +170,8 @@ public:
     void load (json j, bool verify = false);
 
     void setMapOffsets();
+
+    void getProofSize();
 
     uint64_t getNumNodesMT(uint64_t height);
 

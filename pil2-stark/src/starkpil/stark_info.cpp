@@ -224,6 +224,8 @@ void StarkInfo::load(json j, bool verify_)
         mapSectionsN[it.key()] = it.value();
     }
 
+    getProofSize();
+
     if(verify_) {
         verify = verify_;
         mapTotalN = 0;
@@ -244,6 +246,38 @@ void StarkInfo::load(json j, bool verify_)
     } else {
         setMapOffsets();
     }
+}
+
+void StarkInfo::getProofSize() {
+    proofSize = 0;
+    proofSize += airgroupValuesMap.size() * FIELD_EXTENSION;
+    proofSize += airValuesMap.size() * FIELD_EXTENSION;
+
+    proofSize += (nStages + 1) * 4; // Roots
+
+    proofSize += evMap.size() * FIELD_EXTENSION; // Evals
+
+    proofSize += starkStruct.nQueries * nConstants; // Constants Values
+    proofSize += starkStruct.nQueries * starkStruct.nBitsExt * 4; // Siblings Constants Values
+
+    for(uint64_t i = 0; i < customCommits.size(); ++i) {
+        proofSize += starkStruct.nQueries * mapSectionsN[customCommits[i].name + "0"]; // Custom Commits Values
+        proofSize += starkStruct.nQueries * starkStruct.nBitsExt * 4; // Siblings Custom Commits Values
+    }
+
+    for(uint64_t i = 0; i < nStages + 1; ++i) {
+        proofSize += starkStruct.nQueries * mapSectionsN["cm" + to_string(i+1)];
+        proofSize += starkStruct.nQueries * starkStruct.nBitsExt * 4;
+    }
+
+    proofSize += (starkStruct.steps.size() - 1) * 4; // Roots
+
+    for(uint64_t i = 1; i < starkStruct.steps.size(); ++i) {
+        proofSize += starkStruct.nQueries * (1 << (starkStruct.steps[i-1].nBits - starkStruct.steps[i].nBits))*FIELD_EXTENSION;
+        proofSize += starkStruct.nQueries * starkStruct.steps[i].nBits * 4;
+    }
+
+    proofSize += (1 << starkStruct.steps[starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION;
 }
 
 void StarkInfo::setMapOffsets() {

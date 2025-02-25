@@ -1,49 +1,35 @@
+## ⚠️ Disclaimer: Software Under Development ⚠️
+
+This software is currently under **active development** and has not been audited for security or correctness.
+
+Please be aware of the following:
+* The software is **not fully tested**.
+* **Do not use it in production environments** until a stable production release is available. 🚧
+* Additional functionalities and optimizations **are planned for future releases**.
+* Future updates may introduce breaking **backward compatible changes** as development progresses.
+
+If you encounter any errors or unexpected behavior, please report them. Your feedback is highly appreciated in improving the software.
+
 # Proofs Manager
-This is the Proofs Manager repository, an implementation of a versatile proofs manager.
 
-The Proof Manager is an adaptable Proof Manager designed to assist in the creation of proofs from a PIL2 pilout-formatted file. It is designed to be used in conjunction with the [PIL2](https://github.com/0xPolygonHermez/pilcom) compiler.
+The Proof Manager is an adaptable Proof Manager designed to assist in the creation of proofs from a PIL2 pilout-formatted file. It is designed to be used in conjunction with the [PIL2](https://github.com/0xPolygonHermez/pilcom) compiler and proofman-js [pil2-proofman-js](https://github.com/0xPolygonHermez/pil2-proofman-js) to generate the setup.
 
-# Setting Up a Configuration File for Your Software
+## License
 
-The configuration file must be in json format and will contain essential settings and parameters necessary for the proper functioning of your software.
+All crates in this monorepo are licensed under one of the following options:
 
-## Fields
+- The Apache License, Version 2.0 (see LICENSE-APACHE or http://www.apache.org/licenses/LICENSE-2.0)
 
-Mandatory fields are essential settings that must be included in the configuration file for your software to run correctly. They provide crucial information required by the software to perform its core functions. Let's examine the mandatory fields required for your configuration file (* = mandatory fields):
+- The MIT License (see LICENSE-MIT or http://opensource.org/licenses/MIT)
 
-- **name***: Specifies the name of the configuration.
-- **pilout***: Specifies the path to the pilout binary file.
-- **executors**: Specifies the configuration for executors. This field allows users to define custom executor configurations if needed.
-- **prover**: Specifies the configuration for the prover. Users can customize the prover settings based on their requirements.
-- **meta**: Specifies the meta configuration. This field enables users to include additional meta information if necessary.
-- **debug**: Specifies whether debug mode is enabled. This field is optional and defaults to `false` if not specified.
-- **only_check**: Specifies whether only check mode is enabled. This field is optional and defaults to `false` if not specified.
+You may choose either license at your discretion.
 
-**meta**, **executors** and prover **fields**, can be specified either as a JSON object containing prover configuration settings directly or as a string representing a path filename to a separate JSON file containing prover configuration. Using a string path allows users to manage prover configurations separately, facilitating better organization and management of configuration data, especially for complex or extensive prover configurations.
+## Acknowledgements
 
-## Example
+ProofMan is a collaborative effort made possible by the contributions of researchers, engineers, and developers dedicated to advancing zero-knowledge technology.
 
-Here's an example configuration file demonstrating the mandatory and optional fields:
+We extend our gratitude to the [Polygon zkEVM](https://github.com/0xpolygonhermez) and [Plonky3](https://github.com/Plonky3/Plonky3) teams for their foundational work in zero-knowledge proving systems.
 
-```json
-{
-    "name": "MyConfig",
-    "pilout": "my_pilout",
-    "executors": "path_to_executors_config.json",
-    "prover": {
-        "variant": "stark",
-        "lib": "mock_value"
-    },
-    "meta": {
-        "mock_key": "mock_value"
-    },
-    "debug": true,
-    "only_check": false
-}
+Additionally, we acknowledge the efforts of the open-source cryptography and ZK research communities, whose insights and contributions continue to shape the evolution of efficient and scalable zero-knowledge technologies.
 
-## Distributed Execution
-
-Here's an example of distributes execution
-
-mpirun --bind-to none -np 2 -x OMP_NUM_THREADS=128 target/release/proofman-cli  prove --witness-lib ../zisk/target/release/libzisk_witness.so --elf ../zisk/emulator/benches/data/my.elf -i ../zisk/emulator/benches/data/input.bin --proving-key ../zisk/build/provingKey -o ./tmp
-
+🚀 Special thanks to all contributors who have helped develop, refine, and improve ProofMan!

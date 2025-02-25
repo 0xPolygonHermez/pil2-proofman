@@ -107,21 +107,6 @@ void fri_proof_set_airvalues(void *pFriProof, void *airValues)
     friProof->proof.setAirValues((Goldilocks::Element *)airValues);
 }
 
-void fri_proof_get_zkinproofs(uint64_t nProofs, void **proofs, void **pFriProofs, void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, char *fileDir) {
-    return;
-}
-
-
-void *fri_proof_get_zkinproof(void *pFriProof, void* pPublics, void* pChallenges, void *pProofValues, char* globalInfoFile, char *fileDir)
-{
-    return nullptr;  
-}
-
-void fri_proof_free_zkinproof(void *pZkinProof){
-    nlohmann::json* zkin = (nlohmann::json*) pZkinProof;
-    delete zkin;
-}
-
 void fri_proof_free(void *pFriProof)
 {
     FRIProof<Goldilocks::Element> *friProof = (FRIProof<Goldilocks::Element> *)pFriProof;
@@ -162,6 +147,11 @@ void *stark_info_new(char *filename, bool verify)
     auto starkInfo = new StarkInfo(filename, verify);
 
     return starkInfo;
+}
+
+uint64_t get_proof_size(void *pStarkInfo) {
+    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
+    return starkInfo->proofSize;
 }
 
 uint64_t get_map_total_n(void *pStarkInfo, bool recursive)
@@ -652,114 +642,26 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
     return setHintFieldGlobalConstraint(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)proofValues, (Goldilocks::Element *)values, hintId, string(hintFieldName));
 }
 
-// Debug functions
-// =================================================================================  
-
-void print_row(void *pSetupCtx, void *buffer, uint64_t stage, uint64_t row) {
-    printRow(*(SetupCtx *)pSetupCtx, (Goldilocks::Element *)buffer, stage, row);
-}
-
 // Gen proof
 // =================================================================================
-void *gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, char *proofFile) {
-    return genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, (Goldilocks::Element *)pBuffHelper, string(proofFile));
-
+void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, uint64_t* proofBuffer, char *proofFile) {
+    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, (Goldilocks::Element *)pBuffHelper, proofBuffer, string(proofFile));
 }
 
 // Recursive proof
 // ================================================================================= 
-void *gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file, bool vadcop) {
+void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    auto setup = *(SetupCtx *)pSetupCtx;
-    if(setup.starkInfo.starkStruct.verificationHashType == "GL") {
-        return genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), vadcop);
-    } else {
-        return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId,  airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, string(proof_file), false);
-    }
+    genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), vadcop);
 }
 
-void *get_zkin_ptr(char *zkin_file) {
-    json zkin;
-    file2json(zkin_file, zkin);
-
-    return (void *) new nlohmann::json(zkin);
-}
-
-void *add_recursive2_verkey(void *pZkin, char* recursive2VerKeyFilename) {
-    json recursive2VerkeyJson;
-    file2json(recursive2VerKeyFilename, recursive2VerkeyJson);
-
-    Goldilocks::Element recursive2Verkey[4];
-    for (uint64_t i = 0; i < 4; i++)
-    {
-        recursive2Verkey[i] = Goldilocks::fromU64(recursive2VerkeyJson[i]);
-    }
-
-    json zkin = addRecursive2VerKey(*(nlohmann::json*) pZkin, recursive2Verkey);
-    return (void *) new nlohmann::json(zkin);
-}
-
-void *join_zkin_recursive2(char* globalInfoFile, uint64_t airgroupId, void* pPublics, void* pChallenges, void *zkin1, void *zkin2, void *starkInfoRecursive2) {
+void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    Goldilocks::Element *publics = (Goldilocks::Element *)pPublics;
-    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
-
-    json zkinRecursive2 = joinzkinrecursive2(globalInfo, airgroupId, publics, challenges, *(nlohmann::json *)zkin1, *(nlohmann::json *)zkin2, *(StarkInfo *)starkInfoRecursive2);
-
-    return (void *) new nlohmann::json(zkinRecursive2);
-}
-
-void *join_zkin_final(void* pPublics, void *pProofValues, void* pChallenges, char* globalInfoFile, void **zkinRecursive2, void **starkInfoRecursive2) {
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
-    Goldilocks::Element *publics = (Goldilocks::Element *)pPublics;
-    Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
-    Goldilocks::Element *proofValues = (Goldilocks::Element *)pProofValues;
-
-    json zkinFinal = joinzkinfinal(globalInfo, publics, proofValues, challenges, zkinRecursive2, starkInfoRecursive2);
-
-    return (void *) new nlohmann::json(zkinFinal);    
-}
-
-char *get_serialized_proof(void *zkin, uint64_t* size){
-    nlohmann::json* zkinJson = (nlohmann::json*) zkin;
-    string zkinStr = zkinJson->dump();
-    char *zkinCStr = new char[zkinStr.length() + 1];
-    strcpy(zkinCStr, zkinStr.c_str());
-    *size = zkinStr.length()+1;
-    return zkinCStr;
-}
-
-void *deserialize_zkin_proof(char* serialized_proof) {
-    nlohmann::json* zkinJson = new nlohmann::json();
-    try {
-        *zkinJson = nlohmann::json::parse(serialized_proof);
-    } catch (const nlohmann::json::parse_error& e) {
-        std::cerr << "[ERROR] JSON parse error in deserialize_zkin_proof(): " << e.what() << std::endl;
-        delete zkinJson;
-        return nullptr;
-    }
-    return (void *) zkinJson;
-}
-
-void *get_zkin_proof(char* zkin) {
-    nlohmann::json zkinJson;
-    file2json(zkin, zkinJson);
-    return (void *) new nlohmann::json(zkinJson);
-}
-
-void zkin_proof_free(void *pZkinProof) {
-    nlohmann::json* zkin = (nlohmann::json*) pZkinProof;
-    delete zkin;
-}
-
-void serialized_proof_free(char *zkinCStr) {
-    delete[] zkinCStr;
+    return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId,  airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file), false);
 }
 
 void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
@@ -798,15 +700,17 @@ void setLogLevel(uint64_t level) {
 
 // Stark Verify
 // =================================================================================
-bool stark_verify(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
+bool stark_verify(uint64_t* proof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
     Goldilocks::Element *challenges = (Goldilocks::Element *)pChallenges;
     bool vadcop = challenges == nullptr ? false : true;
-    StarkInfo starkInfo = *((StarkInfo *)pStarkInfo);
-    if (starkInfo.starkStruct.verificationHashType == "GL") {
-        return starkVerify<Goldilocks::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
-    } else {
-        return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
-    }
+    StarkInfo starkInfo = *(StarkInfo *)pStarkInfo;
+    json jProof = pointer2json(proof, starkInfo);
+    return starkVerify<Goldilocks::Element>(jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, (Goldilocks::Element *)pProofValues, vadcop, (Goldilocks::Element *)pChallenges);
+}
+
+bool stark_verify_bn128(void* jProof, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics) {
+    return starkVerify<RawFr::Element>(*(nlohmann::json*) jProof, *(StarkInfo *)pStarkInfo, *(ExpressionsBin *)pExpressionsBin, string(verkeyFile), (Goldilocks::Element *)pPublics, nullptr, false, nullptr);
+
 }
 
 bool stark_verify_from_file(char* proofFile, void *pStarkInfo, void *pExpressionsBin, char *verkeyFile, void *pPublics, void *pProofValues, void *pChallenges) {
@@ -854,16 +758,6 @@ void read_from_file(void* buffer, uint64_t bufferSize, void* publics, uint64_t p
     }
 }
 
-void *create_buffer(uint64_t size) {
-    Goldilocks::Element *buffer = new Goldilocks::Element[size];
-    cout << buffer << std::endl;
-    return (void *)buffer;
-}
-
-void free_buffer(void *buffer) {
-    cout <<  (Goldilocks::Element *)buffer << endl;
-    delete[] (Goldilocks::Element *)buffer;
-}
 
 // Fixed cols
 // =================================================================================

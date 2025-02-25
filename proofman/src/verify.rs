@@ -1,6 +1,8 @@
 use p3_field::Field;
 
-use proofman_starks_lib_c::{stark_info_new_c, expressions_bin_new_c, stark_verify_c, stark_verify_from_file_c};
+use proofman_starks_lib_c::{
+    stark_info_new_c, expressions_bin_new_c, stark_verify_c, stark_verify_bn128_c, stark_verify_from_file_c,
+};
 
 use colored::*;
 
@@ -47,7 +49,7 @@ pub fn verify_proof_from_file<F: Field>(
 }
 
 pub fn verify_proof<F: Field>(
-    p_proof: *mut c_void,
+    p_proof: *mut u64,
     stark_info_path: String,
     expressions_bin_path: String,
     verkey_path: String,
@@ -84,7 +86,25 @@ pub fn verify_proof<F: Field>(
     )
 }
 
-pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proof: *mut c_void) -> bool {
+pub fn verify_proof_bn128<F: Field>(
+    p_proof: *mut c_void,
+    stark_info_path: String,
+    expressions_bin_path: String,
+    verkey_path: String,
+    publics: Option<Vec<F>>,
+) -> bool {
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true);
+    let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+
+    let publics_ptr = match publics {
+        Some(ref publics) => publics.as_ptr() as *mut u8,
+        None => std::ptr::null_mut(),
+    };
+
+    stark_verify_bn128_c(&verkey_path, p_proof, p_stark_info, p_expressions_bin, publics_ptr)
+}
+
+pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proof: &[u64]) -> bool {
     const MY_NAME: &str = "Verify  ";
     let mut is_valid = true;
 
@@ -100,7 +120,7 @@ pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proo
     let verkey_path = setup_path.display().to_string() + ".verkey.json";
 
     let is_valid_proof = verify_proof(
-        proof,
+        proof.as_ptr() as *mut u64,
         stark_info_path,
         expressions_bin_path,
         verkey_path,

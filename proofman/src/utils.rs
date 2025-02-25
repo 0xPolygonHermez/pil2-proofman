@@ -1,6 +1,8 @@
 use log::info;
 use p3_field::PrimeField;
-use std::fs;
+use num_traits::ToPrimitive;
+use std::fs::{self, File};
+use std::io::Read;
 
 use std::{collections::HashMap, path::PathBuf};
 
@@ -272,4 +274,69 @@ pub fn check_paths(
     }
 
     Ok(())
+}
+
+pub fn add_publics_circom<F: PrimeField>(
+    proof: &mut [u64],
+    initial_index: usize,
+    pctx: &ProofCtx<F>,
+    recursive2_verkey: &str,
+    add_root_agg: bool,
+) {
+    let init_index = initial_index;
+
+    let publics = pctx.get_publics();
+    for p in 0..pctx.global_info.n_publics {
+        proof[init_index + p] = (publics[p].as_canonical_biguint()).to_u64().unwrap();
+    }
+
+    let proof_values = pctx.get_proof_values();
+    let proof_values_map = pctx.global_info.proof_values_map.as_ref().unwrap();
+    let mut p = 0;
+    for (idx, proof_value_map) in proof_values_map.iter().enumerate() {
+        if proof_value_map.stage == 1 {
+            proof[init_index + pctx.global_info.n_publics + 3 * idx] =
+                (proof_values[p].as_canonical_biguint()).to_u64().unwrap();
+            proof[init_index + pctx.global_info.n_publics + 3 * idx + 1] = 0;
+            proof[init_index + pctx.global_info.n_publics + 3 * idx + 2] = 0;
+            p += 1;
+        } else {
+            proof[init_index + pctx.global_info.n_publics + 3 * idx] =
+                (proof_values[p].as_canonical_biguint()).to_u64().unwrap();
+            proof[init_index + pctx.global_info.n_publics + 3 * idx + 1] =
+                (proof_values[p + 1].as_canonical_biguint()).to_u64().unwrap();
+            proof[init_index + pctx.global_info.n_publics + 3 * idx + 2] =
+                (proof_values[p + 2].as_canonical_biguint()).to_u64().unwrap();
+            p += 3;
+        }
+    }
+
+    let global_challenge = pctx.get_global_challenge();
+    proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len()] =
+        (global_challenge[0].as_canonical_biguint()).to_u64().unwrap();
+    proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len() + 1] =
+        (global_challenge[1].as_canonical_biguint()).to_u64().unwrap();
+    proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len() + 2] =
+        (global_challenge[2].as_canonical_biguint()).to_u64().unwrap();
+
+    if add_root_agg {
+        let mut file = File::open(recursive2_verkey).expect("Unable to open file");
+        let mut json_str = String::new();
+        file.read_to_string(&mut json_str).expect("Unable to read file");
+        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse json");
+        for i in 0..4 {
+            proof[init_index + pctx.global_info.n_publics + 3 * proof_values_map.len() + 3 + i] = vk[i];
+        }
+    }
+}
+
+pub fn add_publics_aggregation<F: PrimeField>(
+    proof: &mut [u64],
+    initial_index: usize,
+    publics: &[F],
+    n_publics: usize,
+) {
+    for p in 0..n_publics {
+        proof[initial_index + p] = (publics[p].as_canonical_biguint()).to_u64().unwrap();
+    }
 }

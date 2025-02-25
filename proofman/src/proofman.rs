@@ -100,7 +100,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let instances = pctx.dctx_get_instances();
         let airgroup_values_air_instances = Arc::new(Mutex::new(Vec::new()));
         let valid_constraints = Arc::new(AtomicBool::new(true));
-        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
             let is_my_instance = pctx.dctx_is_my_instance(instance_id);
@@ -113,11 +113,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             wcm.calculate_witness(1, &[instance_id]);
 
             // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = merkelize_handle.take() {
+            if let Some(handle) = thread_handle.take() {
                 handle.join().unwrap();
             }
 
-            merkelize_handle = is_my_instance.then(|| {
+            thread_handle = is_my_instance.then(|| {
                 Self::verify_proof_constraints_stage(
                     pctx.clone(),
                     sctx.clone(),
@@ -132,7 +132,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             });
         }
 
-        merkelize_handle.map(|handle| handle.join().unwrap());
+        if let Some(handle) = thread_handle {
+            handle.join().unwrap()
+        }
 
         wcm.end();
 
@@ -261,7 +263,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let aux_trace_contribution: Vec<F> = create_buffer_fast(pctx.max_contribution_air_buffer_size as usize);
         let aux_trace_contribution = Arc::new(aux_trace_contribution);
 
-        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
+        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !all && !pctx.dctx_is_my_instance(instance_id) {
@@ -275,11 +277,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
 
             // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = merkelize_handle.take() {
+            if let Some(handle) = thread_handle.take() {
                 handle.join().unwrap();
             }
 
-            merkelize_handle = Some(Self::generate_proof_stage(
+            thread_handle = Some(Self::get_contribution(
                 instance_id,
                 pctx.clone(),
                 sctx.clone(),
@@ -289,7 +291,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             ));
         }
 
-        merkelize_handle.map(|handle| handle.join().unwrap());
+        if let Some(handle) = thread_handle {
+            handle.join().unwrap()
+        }
 
         let values = Arc::try_unwrap(values).unwrap().into_inner().unwrap();
 
@@ -297,10 +301,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
-            let circom_witness: Vec<F> = create_buffer_fast(circom_witness_size);
-            let publics: Vec<F> = create_buffer_fast(publics_size);
-            let trace: Vec<F> = create_buffer_fast(trace_size);
-            let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
+            let circom_witness = create_buffer_fast(circom_witness_size);
+            let publics = create_buffer_fast(publics_size);
+            let trace = create_buffer_fast(trace_size);
+            let prover_buffer = create_buffer_fast(prover_buffer_size);
             (circom_witness, publics, trace, prover_buffer)
         } else {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new())
@@ -310,16 +314,16 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let aux_trace = Arc::new(aux_trace);
 
         let valid_proofs = Arc::new(AtomicBool::new(true));
-        let proofs = Arc::new(Mutex::new(Vec::new()));
-        let airgroup_values_air_instances = Vec::new();
+        let proofs = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
+        let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
         let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
-
-        let mut merkelize_handle: Option<std::thread::JoinHandle<()>> = None;
 
         let circom_witness = Arc::new(circom_witness);
         let publics = Arc::new(publics);
         let trace = Arc::new(trace);
         let prover_buffer = Arc::new(prover_buffer);
+
+        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
         for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
             if !pctx.dctx_is_my_instance(instance_id) {
@@ -332,7 +336,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 timer_stop_and_log_info!(GENERATING_WITNESS);
             }
 
-            merkelize_handle = Some(Self::fun_name(
+            // Join the previous thread (if any) before starting a new one
+            if let Some(handle) = thread_handle.take() {
+                handle.join().unwrap();
+            }
+
+            thread_handle = Some(Self::generate_proof_thread(
+                proofs.clone(),
                 valid_proofs.clone(),
                 pctx.clone(),
                 sctx.clone(),
@@ -350,7 +360,9 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             ));
         }
 
-        merkelize_handle.map(|handle| handle.join().unwrap());
+        if let Some(handle) = thread_handle {
+            handle.join().unwrap();
+        }
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
@@ -398,7 +410,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         agg_proof
     }
 
-    fn generate_proof_stage(
+    fn get_contribution(
         instance_id: usize,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
@@ -414,14 +426,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 pctx.free_instance(instance_id);
             }
 
-            for id in 0..4 {
-                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = value[id];
+            for (id, value) in value.iter().enumerate().take(4) {
+                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = *value;
             }
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn fun_name(
+    fn generate_proof_thread(
+        proofs: Arc<Mutex<Vec<Vec<u64>>>>,
         valid_proofs: Arc<AtomicBool>,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
@@ -458,22 +471,22 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 false => String::from(""),
             };
 
-            let proof = gen_proof_c(
+            let mut proof: Vec<u64> = create_buffer_fast(setup.proof_size as usize);
+
+            gen_proof_c(
                 p_setup,
                 p_steps_params,
                 pctx.get_buff_helper_ptr(),
                 pctx.get_global_challenge_ptr(),
+                proof.as_mut_ptr(),
                 &proof_file,
                 airgroup_id as u64,
-                airgroup_id as u64,
+                air_id as u64,
                 air_instance_id as u64,
             );
 
-            airgroup_values_air_instances.lock().unwrap().push(pctx.get_air_instance_airgroup_values(
-                airgroup_id,
-                airgroup_id,
-                air_instance_id,
-            ));
+            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
+                pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
 
             timer_start_info!(FREE_INSTANCE);
             pctx.free_instance(instance_id);
@@ -485,7 +498,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     &pctx,
                     &setups,
                     instance_id,
-                    proof,
+                    &proof,
                     &circom_witness,
                     &publics,
                     &trace,
@@ -493,13 +506,15 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                     output_dir_path,
                 )
                 .expect("Failed to generate recursive proof");
-                // proofs_cloned.lock().unwrap().push(proof_recursive);
+                proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof_recursive;
                 timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
                 timer_stop_and_log_info!(GENERATING_PROOF);
             } else {
-                // proofs_cloned.lock().unwrap().push(proof);
+                if pctx.options.verify_proofs {
+                    valid_proofs.fetch_and(verify_basic_proof(&pctx, instance_id, &proof), Ordering::Relaxed);
+                }
+                proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof;
                 timer_stop_and_log_info!(GENERATING_PROOF);
-                valid_proofs.fetch_and(verify_basic_proof(&pctx, instance_id, proof), Ordering::Relaxed);
             }
         })
     }
@@ -576,7 +591,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let all_roots = pctx.dctx_distribute_roots(values);
 
-        // add challenges to transcript in order
+        // Add challenges to transcript in order
         for group_idxs in pctx.dctx_get_my_groups() {
             let mut values = Vec::new();
             for idx in group_idxs.iter() {
@@ -1000,7 +1015,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let mut file = File::open(&verkey).expect("Unable to open file");
         let mut json_str = String::new();
         file.read_to_string(&mut json_str).expect("Unable to read file");
-        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("REASON");
+        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
         for j in 0..n_field_elements {
             values_hash[j] = F::from_canonical_u64(vk[j]);
             values_hash[j + n_field_elements] = root[j];
