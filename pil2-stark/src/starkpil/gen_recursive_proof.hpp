@@ -13,13 +13,13 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     
     Starks<ElementType> starks(setupCtx, pConstTree);
     
-#ifdef __AVX512__
+/*#ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
 #elif defined(__AVX2__)
     ExpressionsAvx expressionsCtx(setupCtx);
-#else
+#else*/
     ExpressionsPack expressionsCtx(setupCtx);
-#endif
+//#endif
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
 
@@ -135,6 +135,22 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
     
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
+
+    Goldilocks::Element *pBuff = &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("q", true)]];
+    uint64_t qDim = setupCtx.starkInfo.qDim;
+    uint64_t check_rows = N;
+    /*for(int k=0; k<check_rows*qDim; k++){
+        std::cout << "pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
+    }*/
+    //hash the input of the NTT
+    Goldilocks::Element *output = new Goldilocks::Element[4];
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    Poseidon2Goldilocks::linear_hash(output, pBuff, qDim*check_rows);
+    //print the output:
+    for(int k=0; k<4; k++){
+        std::cout << "hashed output[" << k << "] = " << output[k].fe << std::endl;
+    }
+    exit(0);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof);

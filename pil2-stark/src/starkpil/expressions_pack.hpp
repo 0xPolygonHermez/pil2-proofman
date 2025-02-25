@@ -593,36 +593,92 @@ public:
                     expressions_params[0] = bufferT_;
                     expressions_params[1] = &tmp1_[omp_get_thread_num()*maxTemp1Size];
                     expressions_params[6] = &tmp3_[omp_get_thread_num()*maxTemp3Size];
+                    uint64_t debug_line = 150528;
+
+                    bool print = (3286 == dests[j].params[k].parserParams.nOps);
 
                     for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
                         switch (ops[kk]) {
                             case 0: {
                                 // COPY dim1 to dim1
                                 Goldilocks::copy_pack(nrowsPack, &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack]);
+                                if( i==debug_line && print ){
+                                    //result
+                                    printf("Case 0\n");                                    
+                                    printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
+                                    printf("Arguments %lu\n", expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack].fe);
+                                    printf("Result: %lu\n", expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack].fe);
+                                }
                                 i_args += 7;
                                 break;
                             }
                             case 1: {
                                 // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
                                 Goldilocks::op_pack(nrowsPack, args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * nrowsPack], &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * nrowsPack]);
+                                if( i==debug_line && print){
+                                    //result
+                                    printf("Case 1\n");
+                                    printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
+                                    printf("Buffer: %d %d %d \n", args[i_args + 1], args[i_args + 4], args[i_args + 8]);
+                                    printf("Arguments: %lu %d %lu %d\n", expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * nrowsPack].fe, args[i_args + 7], expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * nrowsPack].fe, args[i_args + 11]);
+                                    printf("Result: %lu\n", expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].fe);
+                                }
                                 i_args += 12;
                                 break;
                             }
                             case 2: {
                                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
                                 Goldilocks3::op_31_pack(nrowsPack, args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * nrowsPack], &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * nrowsPack]);
+                                
+                                if( i==debug_line && print){
+                                    //result
+                                    printf("Case 2\n");
+                                    printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
+                                    printf("Buffer: %d %d %d \n", args[i_args + 1], args[i_args + 4], args[i_args + 8]);
+                                    printf("Arguments: %lu %lu %lu, %d, %lu %lu %lu,  %d\n", 
+                                        expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * nrowsPack].fe, 
+                                        expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * nrowsPack+1].fe,
+                                        expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * nrowsPack+2].fe,
+                                        args[i_args + 7], 
+                                        expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * nrowsPack].fe,
+                                        expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * nrowsPack+1].fe,
+                                        expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * nrowsPack+2].fe, 
+                                        args[i_args + 11]);
+                                    printf("Result: %lu %lu %lu\n", 
+                                        expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].fe, 
+                                        expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 1].fe,
+                                        expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 2].fe);
+                                }
                                 i_args += 12;
                                 break;
                             }
                             case 3: {
                                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
                                 Goldilocks3::op_pack(nrowsPack, args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * nrowsPack], &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * nrowsPack]);
+                                if(i==debug_line && print){
+                                    //result
+                                    printf("Case 3\n");
+                                    printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
+                                    printf("Result: %lu %lu %lu\n", 
+                                        expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].fe, 
+                                        expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 1].fe,
+                                        expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 2].fe);
+                                }
                                 i_args += 12;
                                 break;
                             }
                             case 4: {
                                 // COPY dim3 to dim3
                                 Goldilocks3::copy_pack(nrowsPack, &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack]);
+                                if(i==debug_line && print){
+                                    //result
+                                    printf("Case 4\n");
+                                    printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
+                                    printf("Result: %lu %lu %lu\n", 
+                                        expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack].fe, 
+                                        expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack + 1].fe,
+                                        expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack + 2].fe);
+                                }
                                 i_args += 7;
                                 break;
                             }

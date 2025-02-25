@@ -177,6 +177,18 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
 
     NTT_Goldilocks nttExtended(NExtended);
 
+    for(int k=0; k<10*qDim; k++){
+        std::cout << "pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
+    }
+    //hash the input of the NTT
+    Goldilocks::Element *output = new Goldilocks::Element[4];
+    PoseidonGoldilocks::linear_hash(output, pBuff, 10*qDim);
+    //print the output:
+    for(int k=0; k<4; k++){
+        std::cout << "hashed output[" << k << "] = " << output[k].fe << std::endl;
+    }
+
+
     if (pBuffHelper != nullptr)
     {
         nttExtended.INTT(pBuff, pBuff, NExtended, qDim, pBuffHelper);
@@ -186,7 +198,7 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
         nttExtended.INTT(pBuff, pBuff, NExtended, qDim);
     }
     for(int k=0; k<qDim; k++){
-        std::cout << "pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
+        std::cout << "sortida pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
     }
 
     
@@ -201,6 +213,10 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
 
     memset(&cmQ[N * qDeg * qDim], 0, (NExtended - N) * qDeg * qDim * sizeof(Goldilocks::Element));
 
+    for(int k=0; k<nCols; k++){
+        std::cout << "cmQ[" << k << "] = " << cmQ[k].fe << std::endl;
+    }
+
     if (pBuffHelper != nullptr)
     {
         nttExtended.NTT(cmQ, cmQ, NExtended, nCols, pBuffHelper);
@@ -210,7 +226,7 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
         nttExtended.NTT(cmQ, cmQ, NExtended, nCols);
     }
     for(int k=0; k<nCols; k++){
-        std::cout << "cmQ[" << k << "] = " << cmQ[k].fe << std::endl;
+        std::cout << "sortida cmQ[" << k << "] = " << cmQ[k].fe << std::endl;
     }
 
     treesGL[step - 1]->setSource(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), true)]]);

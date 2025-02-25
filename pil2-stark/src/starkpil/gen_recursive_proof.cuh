@@ -1086,11 +1086,26 @@ void *genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgr
     std::cout << "Rick fins PUNT13 (Q expressions preparation) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
+    std::cout<<" hola domain size: "<<domainSize<<std::endl;
     expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests3, domainSize);
 
-    //ofload dest_cpu to a local buffer
-    Goldilocks::Element *aux_trace_cpu = new Goldilocks::Element[domainSize * FIELD_EXTENSION];
-    cudaMemcpy(aux_trace_cpu, destStructq.dest_gpu, domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+    uint64_t offset_q = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
+    gl64_t *d_q = d_buffers->d_aux_trace + offset_q;
+    uint32_t qDim = 3;
+    Goldilocks::Element *pBuff = new Goldilocks::Element[qDim * NExtended];
+    CHECKCUDAERR(cudaMemcpy(pBuff, d_q, qDim * sizeof(Goldilocks::Element)*NExtended, cudaMemcpyDeviceToHost));
+    uint64_t check_rows = N;
+    /*for(int k=0; k<check_rows* qDim; k++){
+        std::cout << "pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
+    }*/
+    //hash the input of the NTT
+    Goldilocks::Element *output = new Goldilocks::Element[4];
+    Poseidon2Goldilocks::linear_hash(output, pBuff, qDim * check_rows);
+    //print the output:
+    for(int k=0; k<4; k++){
+        std::cout << "hashed output[" << k << "] = " << output[k].fe << std::endl;
+    }
+    exit(0);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
