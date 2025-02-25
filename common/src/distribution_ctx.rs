@@ -13,8 +13,6 @@ use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 #[cfg(feature = "distributed")]
 use std::sync::atomic::Ordering;
-#[cfg(feature = "distributed")]
-use proofman_starks_lib_c::*;
 
 use p3_field::Field;
 
@@ -603,16 +601,12 @@ impl DistributionCtx {
                         if group_proofs[0].is_none() {
                             // Receive proof from the owner process
                             let tag = group_idx as i32;
-                            let (mut msg, _status) = self.world.any_process().receive_vec_with_tag::<i8>(tag);
-                            group_proofs[0] = Some(deserialize_zkin_proof_c(msg.as_mut_ptr()));
+                            let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag);
+                            group_proofs[0] = Some(msg);
                         }
-                    } else if group_proofs[0].is_some() {
-                        let (ptr, size) = get_serialized_proof_c(group_proofs[0].unwrap());
+                    } else if let Some(proof) = group_proofs[0].take() {
                         let tag = group_idx as i32;
-                        let buffer = unsafe { std::slice::from_raw_parts(ptr as *const i8, size as usize) };
-                        self.world.process_at_rank(0).send_with_tag(buffer, tag);
-                        zkin_proof_free_c(group_proofs[0].unwrap());
-                        group_proofs[0] = None;
+                        self.world.process_at_rank(0).send_with_tag(&proof[..], tag);
                     }
                 }
 
@@ -628,21 +622,16 @@ impl DistributionCtx {
                             if group_proofs[idx].is_none() {
                                 let tag =
                                     if idx == left_idx { i_proof * 2 + n_groups } else { i_proof * 2 + n_groups + 1 };
-                                let (mut msg, _status) =
-                                    self.world.any_process().receive_vec_with_tag::<i8>(tag as i32);
-                                group_proofs[idx] = Some(deserialize_zkin_proof_c(msg.as_mut_ptr()));
+                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
+                                group_proofs[idx] = Some(msg);
                             }
                         }
                     } else if self.n_processes > 1 {
                         for &idx in &[left_idx, right_idx] {
-                            if group_proofs[idx].is_some() {
+                            if let Some(proof) = group_proofs[idx].take() {
                                 let tag =
                                     if idx == left_idx { i_proof * 2 + n_groups } else { i_proof * 2 + n_groups + 1 };
-                                let (ptr, size) = get_serialized_proof_c(group_proofs[idx].unwrap());
-                                let buffer = unsafe { std::slice::from_raw_parts(ptr as *const i8, size as usize) };
-                                self.world.process_at_rank(owner_rank as i32).send_with_tag(buffer, tag as i32);
-                                zkin_proof_free_c(group_proofs[idx].unwrap());
-                                group_proofs[idx] = None;
+                                self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag as i32);
                             }
                         }
                     }

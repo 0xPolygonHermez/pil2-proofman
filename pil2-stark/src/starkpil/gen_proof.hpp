@@ -222,6 +222,10 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     proof.proof.proof2pointer(proofBuffer);
 
+    if(!proofFile.empty()) {
+        json2file(pointer2json(proofBuffer, setupCtx.starkInfo), proofFile);
+    }
+
     // nlohmann::json zkin = proof.proof.proof2json();
     // for (uint64_t i = 0; i < setupCtx.starkInfo.nPublics; i++)
     // {
