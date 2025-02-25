@@ -595,7 +595,7 @@ pub fn generate_fflonk_snark_proof<F: PrimeField>(
         let witness = create_buffer_fast_u8((size_witness * 32) as usize);
         let witness_ptr = witness.as_ptr() as *mut u8;
 
-        let get_witness_final: Symbol<GetWitnessFinalFunc> = library.get(b"getWitnessFinal\0")?;
+        let get_witness_final: Symbol<GetWitnessFinalFunc> = library.get(b"getWitness\0")?;
 
         let nmutex = 128;
         get_witness_final(proof, dat_filename_ptr, witness_ptr as *mut c_void, nmutex);
