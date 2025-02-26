@@ -100,11 +100,6 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     Goldilocks3::copy((Goldilocks3::Element *)&gprod[0], &Goldilocks3::one());
     for(uint64_t i = 1; i < N; ++i) {
         Goldilocks3::mul((Goldilocks3::Element *)&gprod[i * FIELD_EXTENSION], (Goldilocks3::Element *)&gprod[(i - 1) * FIELD_EXTENSION], (Goldilocks3::Element *)&res[(i - 1) * FIELD_EXTENSION]);
-        if(i == 37){
-            std::cout << "rick gprod [0]: " << gprod[i * FIELD_EXTENSION].fe << std::endl;
-            std::cout << "rick gprod [1]: " << gprod[i * FIELD_EXTENSION + 1].fe << std::endl;
-            std::cout << "rick gprod [2]: " << gprod[i * FIELD_EXTENSION + 2].fe << std::endl;
-        }
     }
 
     Polinomial gprodTransposedPol;
@@ -136,28 +131,11 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
 
-    Goldilocks::Element *pBuff = &aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("q", true)]];
-    uint64_t qDim = setupCtx.starkInfo.qDim;
-    uint64_t check_rows = N;
-    /*for(int k=0; k<check_rows*qDim; k++){
-        std::cout << "pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
-    }*/
-    //hash the input of the NTT
-    Goldilocks::Element *output = new Goldilocks::Element[4];
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    Poseidon2Goldilocks::linear_hash(output, pBuff, qDim*check_rows);
-    //print the output:
-    for(int k=0; k<4; k++){
-        std::cout << "hashed output[" << k << "] = " << output[k].fe << std::endl;
-    }
-    exit(0);
-
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], nFieldElements);
     TimerStopAndLog(STARK_STEP_Q);
-    exit(0);
 
     TimerStart(STARK_STEP_EVALS);
 

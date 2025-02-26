@@ -9,8 +9,6 @@ template <typename ElementType>
 void FRI<ElementType>::fold(uint64_t step, Goldilocks::Element* pol, Goldilocks::Element *challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits) {
 
     uint64_t polBits = step == 0 ? nBitsExt : prevBits; // number of bits of the polynomial
-    std::cout<<"polBits: "<<polBits<<std::endl;
-    std::cout<<"colCurrentBits: "<<currentBits<<std::endl;
 
     Goldilocks::Element polShiftInv = Goldilocks::inv(Goldilocks::shift()); // Inverse of the shift 
     
@@ -22,15 +20,11 @@ void FRI<ElementType>::fold(uint64_t step, Goldilocks::Element* pol, Goldilocks:
     }
 
     uint64_t pol2N = 1 << currentBits; // number of elements in the outcoming polynomial
-    std::cout<<"polN: "<<(1 << polBits)<<std::endl;
-    std::cout<<"pol2N: "<<pol2N<<std::endl;
     uint64_t nX = (1 << polBits) / pol2N; // reduction factor
-    std::cout<<"nX: "<<nX<<std::endl;
 
     Goldilocks::Element wi = Goldilocks::inv(Goldilocks::w(polBits)); // Inverse of the root of unity
 
     uint64_t nn = pol2N; 
-    std::cout<<"nn: "<<nn<<std::endl;
     
     u_int64_t maxth = omp_get_max_threads();
     if (maxth > nn) maxth = nn;

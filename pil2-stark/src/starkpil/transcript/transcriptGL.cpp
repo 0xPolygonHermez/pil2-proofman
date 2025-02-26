@@ -5,7 +5,6 @@ void TranscriptGL::put(Goldilocks::Element *input, uint64_t size)
 {
     for (uint64_t i = 0; i < size; i++)
     {
-        std::cout << "input[" << i << "] = " << Goldilocks::toString(input[i]) << std::endl;
         _add1(input[i]);
     }
 }

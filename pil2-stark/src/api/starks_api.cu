@@ -35,7 +35,7 @@ void *gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgr
 
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, trace, sizeWitness, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_constPols, pConstPols, sizeConstPols, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(d_buffers->d_constTree, pConstTree, sizeConstTree, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_constTree, pConstTree, sizeConstTree*sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     time = omp_get_wtime() - time;
     std::cout << "rick genDeviceBuffers time: " << time << std::endl;

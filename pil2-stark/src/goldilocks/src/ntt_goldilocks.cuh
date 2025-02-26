@@ -395,8 +395,6 @@ void ntt_cuda(cudaStream_t stream, gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles
     blockDim = dim3(TPB_NTT);
     gridDim = dim3(8192);
 
-    std::cout << "goal 3: " << log_domain_size << " " << ncols << " " << gridDim.x << " " << blockDim.x << std::endl;
-
 #ifdef GPU_TIMING
     cudaDeviceSynchronize();
     TimerStart(NTT_Core_ReversePermutation);

@@ -193,11 +193,6 @@ __device__ void hash_full_result_seq_2(gl64_t *state, const gl64_t *input, const
 
 __device__ void linear_hash_one_2(gl64_t *output, gl64_t *input, uint32_t size, int tid)
 {
-
-    if (blockIdx.x == 0 && threadIdx.x == 0)
-    {
-        printf(" dins linear_hash_one_2 %u\n", size);
-    }
     u32 remaining = size;
     __shared__ gl64_t GPU_C_SM[118];
     __shared__ gl64_t GPU_D_SM[12];
@@ -265,10 +260,6 @@ __device__ void linear_partial_hash_one_2(gl64_t *input, uint32_t size, gl64_t *
 __global__ void linear_hash_gpu_2_2(uint64_t *output, uint64_t *input, uint32_t size, uint32_t num_rows)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid == 0)
-    {
-        printf("dins linear_hash_gpu_2_2\n");
-    }
     if (tid >= num_rows)
         return;
 
@@ -927,7 +918,6 @@ void Poseidon2Goldilocks::merkletree_cuda_gpudata(Goldilocks::Element *tree, uin
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    std::cout << "  ABANS" << std::endl;
     linear_hash_gpu_2_2<<<actual_blks, actual_tpb>>>(gpu_tree, gpu_input, num_cols * dim, num_rows);
     cudaDeviceSynchronize();
 
@@ -936,7 +926,6 @@ void Poseidon2Goldilocks::merkletree_cuda_gpudata(Goldilocks::Element *tree, uin
     fflush(stdout);
 
     cudaDeviceSynchronize();
-    std::cout << "  ACABA_" << std::endl;
 
     // Build the merkle tree
     uint64_t pending = num_rows;
@@ -1118,7 +1107,6 @@ void Poseidon2Goldilocks::merkletree_cuda_streams(uint64_t **d_tree, uint64_t *d
     int num_streams = 8; // note: must be a power of two
     uint64_t rows_per_stream = num_rows / num_streams;
     uint32_t actual_tpb = TPB;
-    std::cout << "actual_tpb: " << actual_tpb << std::endl;
     if (rows_per_stream < TPB)
     {
         num_streams = 1;

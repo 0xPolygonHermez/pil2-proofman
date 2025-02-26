@@ -138,28 +138,12 @@ void NTT_Goldilocks::computeQ_inplace(uint64_t **d_tree, uint64_t offset_cmQ, ui
     time1 = omp_get_wtime();
     std::cout << "      check rick Time for init_twiddle_factors: " << time1 - time << std::endl;
 
-    Goldilocks::Element *pBuff = new Goldilocks::Element[qDim * NExtended];
-    CHECKCUDAERR(cudaMemcpy(pBuff, d_q, qDim * sizeof(Goldilocks::Element)*NExtended, cudaMemcpyDeviceToHost));
-    for(int k=0; k<10*qDim; k++){
-        std::cout << "pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
-    }
-    //hash the input of the NTT
-    Goldilocks::Element *output = new Goldilocks::Element[4];
-    PoseidonGoldilocks::linear_hash(output, pBuff, qDim * NExtended);
-    //print the output:
-    for(int k=0; k<4; k++){
-        std::cout << "hashed output[" << k << "] = " << output[k].fe << std::endl;
-    }
-
+    
     // Intt
     time = time1;
     ntt_cuda(gpu_stream[gpu_id], d_q, d_buffers->d_r, d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2ext, qDim, true, false);
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
 
-    CHECKCUDAERR(cudaMemcpy(pBuff, d_q, qDim * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-    for(int k=0; k<qDim; k++){
-        std::cout << "sortida pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
-    }
     
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
@@ -176,36 +160,14 @@ void NTT_Goldilocks::computeQ_inplace(uint64_t **d_tree, uint64_t offset_cmQ, ui
 
     time = time1;
 
-    Goldilocks::Element *pBuff_ = new Goldilocks::Element[ncols];
-    CHECKCUDAERR(cudaMemcpy(pBuff_, d_cmQ, ncols * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-    for(int k=0; k<ncols; k++){
-        std::cout << "cmQ[" << k << "] = " << pBuff_[k].fe << std::endl;
-    }
-
     ntt_cuda(gpu_stream[gpu_id], d_cmQ, d_buffers->d_r, d_buffers->d_forwardTwiddleFactors, d_buffers->d_inverseTwiddleFactors, lg2ext, ncols, false, false);
     CHECKCUDAERR(cudaStreamSynchronize(gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
     std::cout << "      check rick Time for ntt_cuda: " << time1 - time << std::endl;
-
-    //print first row of c_cmQ
-    CHECKCUDAERR(cudaMemcpy(pBuff_, d_cmQ, ncols * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-    for(int k=0; k<ncols; k++){
-        std::cout << "sortida cmQ[" << k << "] = " << pBuff_[k].fe << std::endl;
-    }
-
     time = time1;
     // Poseidon2Goldilocks::merkletree_cuda_coalesced(d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
     Poseidon2Goldilocks::merkletree_cuda_streams(d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
-
-    /*Goldilocks::Element *pBuff = new Goldilocks::Element[100];
-    CHECKCUDAERR(cudaMemcpy(pBuff, *d_tree, 100 * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-    // print first 10 rows of qDim
-    for (uint64_t i = 0; i < 100; i++){
-        std::cout << "tree[" << i << "] = " << pBuff[i].fe << std::endl;
-    }
-    
-    exit(0);*/
 
 
     CHECKCUDAERR(cudaDeviceSynchronize());

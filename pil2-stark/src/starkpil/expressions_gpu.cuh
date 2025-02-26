@@ -922,8 +922,8 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
     expressions_params[7] = airgroupValues;
     expressions_params[8] = challenges;
     expressions_params[9] = evals;
-    uint64_t debug_line = 150528;
-    uint64_t debug_thread = 0;
+    //uint64_t debug_line = 150528;
+    //uint64_t debug_thread = 0;
 
     while (chunk_idx < nchunks)
     {
@@ -953,7 +953,7 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
                 }
                 uint8_t *ops = &d_deviceArgs->ops[dests[j].params[k].parserParams.opsOffset];
                 uint16_t *args = &d_deviceArgs->args[dests[j].params[k].parserParams.argsOffset];
-                bool print = (3286 == dests[j].params[k].parserParams.nOps);
+                //bool print = (3286 == dests[j].params[k].parserParams.nOps);
 
             
                 for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
@@ -961,34 +961,48 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
                         case 0: {
                             // COPY dim1 to dim1
                             gl64_t::copy_gpu( &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6])  * nrowsPack + args[i_args + 6]* args[i_args + 5]],args[i_args + 6] );
-                            if(  i==debug_line && threadIdx.x == debug_thread && print){
+                            /*if(  i==debug_line && threadIdx.x == debug_thread && print){
                                 //result
                                 printf("Case 0\n");
                                 printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
                                 printf("Arguments %lu\n", expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack].get_val());
                                 printf("Result: %lu\n", expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack].get_val());
-                            }
+                            }*/
                             i_args += 7;
                             break;
                         }
                         case 1: {
                             // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
+                            /*if( i==debug_line && threadIdx.x == debug_thread && print){
+                                //result                                
+                                printf("Arguments: %lu %d %lu %d\n", 
+                                    expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]].get_val(), 
+                                    args[i_args + 7], 
+                                    expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]].get_val(), 
+                                    args[i_args + 11]);
+                                printf("domainSize: %lu\n", domainSize);
+                            }*/
                             gl64_t::op_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
-                            if( i==debug_line && threadIdx.x == debug_thread && print){
+                            /*if( i==debug_line && threadIdx.x == debug_thread && print){
                                 //result
                                 printf("Case 1\n");
                                 printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
                                 printf("Buffer: %d %d %d \n", args[i_args + 1], args[i_args + 4], args[i_args + 8]);
-                                printf("Arguments: %lu %d %lu %d\n", expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * nrowsPack].get_val(), args[i_args + 7], expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * nrowsPack].get_val(), args[i_args + 11]);
+                                printf("Arguments: %lu %d %lu %d\n", 
+                                    expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]].get_val(), 
+                                    args[i_args + 7], 
+                                    expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]].get_val(), 
+                                    args[i_args + 11]);
                                 printf("Result: %lu\n", expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].get_val());
-                            }
+                                printf("args: %d %d %d %d %d %d %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5], args[i_args + 6], args[i_args + 7], args[i_args + 8], args[i_args + 9], args[i_args + 10], args[i_args + 11]);
+                            }*/
                             i_args += 12;
                             break;
                         }
                         case 2: {
                             // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
                             Goldilocks3GPU::op_31_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
-                            if(  i==debug_line && threadIdx.x == debug_thread && print){
+                            /*if(  i==debug_line && threadIdx.x == debug_thread && print){
                                 //result
                                 printf("Case 2\n");
                                 printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
@@ -1006,14 +1020,14 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
                                     expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].get_val(), 
                                     expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 1].get_val(),
                                     expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 2].get_val());
-                            }
+                            }*/
                             i_args += 12;
                             break;
                         }
                         case 3: {
                             // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
                             Goldilocks3GPU::op_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
-                            if(  i==debug_line && threadIdx.x == debug_thread && print){
+                            /*if(  i==debug_line && threadIdx.x == debug_thread && print){
                                 //result
                                 printf("Case 3\n");
                                 printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
@@ -1021,14 +1035,14 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
                                     expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].get_val(), 
                                     expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 1].get_val(),
                                     expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 2].get_val());
-                            }
+                            }*/
                             i_args += 12;
                             break;
                         }
                         case 4: {
                             // COPY dim3 to dim3
                             Goldilocks3GPU::copy_gpu( &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6])  * nrowsPack + args[i_args + 6]* args[i_args + 5]],args[i_args + 6] );
-                            if(  i==debug_line && threadIdx.x == debug_thread && print){
+                            /*if(  i==debug_line && threadIdx.x == debug_thread && print){
                                 //result
                                 printf("Case 4\n");
                                 printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
@@ -1036,7 +1050,7 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
                                     expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack].get_val(), 
                                     expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack + 1].get_val(),
                                     expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack + 2].get_val());
-                            }
+                            }*/
                             i_args += 7;
                             break;
                         }

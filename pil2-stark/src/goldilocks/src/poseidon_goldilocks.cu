@@ -1088,7 +1088,6 @@ void PoseidonGoldilocks::merkletree_cuda_streams(uint64_t **d_tree, uint64_t *d_
     int num_streams = 8; // note: must be a power of two
     uint64_t rows_per_stream = num_rows / num_streams;
     uint32_t actual_tpb = TPB;
-    std::cout << "actual_tpb: " << actual_tpb << std::endl;
     if (rows_per_stream < TPB)
     {
         num_streams = 1;

@@ -29,19 +29,6 @@ pub struct MaxSizes {
     pub max_const_tree_size: u64,
 }
 
-pub fn wait_for_keyword(keyword: &str) {
-    //let mut input = String::new();
-    /*loop {
-        print!("Type '{}' to continue: ", keyword);
-        io::stdout().flush().unwrap(); // Ensure the prompt is printed immediately
-        io::stdin().read_line(&mut input).unwrap();
-        if input.trim() == keyword {
-            break;
-        }
-        input.clear();
-    }*/
-}
-
 pub fn discover_max_sizes<F: Field>(pctx: &ProofCtx<F>, setups: Arc<SetupsVadcop<F>>) -> MaxSizes {
     let mut max_n_bits = 0;
     let mut max_n_bits_ext = 0;
@@ -115,7 +102,7 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
     prover_buffer: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
-    save_proof: bool,
+    _save_proof: bool,
 ) -> Result<Vec<*mut c_void>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -182,7 +169,6 @@ pub fn generate_vadcop_recursive1_proof<F: Field>(
         }
 
         timer_start_trace!(GENERATE_RECURSIVE1_PROOF);
-        wait_for_keyword("c");
 
         let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
         let p_setup: *mut c_void = (&setup.p_setup).into();
@@ -246,7 +232,7 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
     prover_buffer: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
-    save_proof: bool,
+    _save_proof: bool,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -273,7 +259,6 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
             6) (&gpu_r_[gpu_id], ext_size * sizeof(uint64_t)));
 
     */
-    wait_for_keyword("c");
     // Pre-process data before starting recursion loop
     for airgroup in 0..n_airgroups {
         let instances = &dctx.airgroup_instances[airgroup];
@@ -374,7 +359,6 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
                             format!("··· Generating recursive2 proof for instances of {}", air_instance_name)
                         );
 
-                        wait_for_keyword("c");
                         let zkin = gen_recursive_proof_c(
                             p_setup,
                             trace.as_ptr() as *mut u8,
@@ -427,7 +411,6 @@ pub fn generate_vadcop_recursive2_proof<F: Field>(
         let proofs_recursive2_ptr = proofs_recursive2.as_mut_ptr();
 
         let stark_infos_recursive2_ptr = stark_infos_recursive2.as_mut_ptr();
-        wait_for_keyword("c");
         zkin_final = join_zkin_final_c(
             pctx.get_publics_ptr(),
             pctx.get_proof_values_ptr(),

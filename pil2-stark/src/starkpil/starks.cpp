@@ -177,16 +177,6 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
 
     NTT_Goldilocks nttExtended(NExtended);
 
-    for(int k=0; k<10*qDim; k++){
-        std::cout << "pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
-    }
-    //hash the input of the NTT
-    Goldilocks::Element *output = new Goldilocks::Element[4];
-    PoseidonGoldilocks::linear_hash(output, pBuff, 10*qDim);
-    //print the output:
-    for(int k=0; k<4; k++){
-        std::cout << "hashed output[" << k << "] = " << output[k].fe << std::endl;
-    }
 
 
     if (pBuffHelper != nullptr)
@@ -197,10 +187,6 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     {
         nttExtended.INTT(pBuff, pBuff, NExtended, qDim);
     }
-    for(int k=0; k<qDim; k++){
-        std::cout << "sortida pBuff[" << k << "] = " << pBuff[k].fe << std::endl;
-    }
-
     
     for (uint64_t p = 0; p < qDeg; p++)
     {
@@ -213,10 +199,6 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
 
     memset(&cmQ[N * qDeg * qDim], 0, (NExtended - N) * qDeg * qDim * sizeof(Goldilocks::Element));
 
-    for(int k=0; k<nCols; k++){
-        std::cout << "cmQ[" << k << "] = " << cmQ[k].fe << std::endl;
-    }
-
     if (pBuffHelper != nullptr)
     {
         nttExtended.NTT(cmQ, cmQ, NExtended, nCols, pBuffHelper);
@@ -224,9 +206,6 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     else
     {
         nttExtended.NTT(cmQ, cmQ, NExtended, nCols);
-    }
-    for(int k=0; k<nCols; k++){
-        std::cout << "sortida cmQ[" << k << "] = " << cmQ[k].fe << std::endl;
     }
 
     treesGL[step - 1]->setSource(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), true)]]);
@@ -256,7 +235,6 @@ void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_trace, uint6
     uint64_t qDeg = setupCtx.starkInfo.qDeg;
     uint64_t qDim = setupCtx.starkInfo.qDim;
     NTT_Goldilocks nttExtended(NExtended);
-    std::cout<<"holaaaaa ncols "<<nCols<<std::endl;
     if (nCols > 0)
     {
         nttExtended.computeQ_inplace(d_tree, offset_cmQ, offset_q, qDeg, qDim, setupCtx.proverHelpers.S, N, NExtended, nCols, d_buffers);
