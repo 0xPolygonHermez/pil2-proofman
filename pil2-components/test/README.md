@@ -130,7 +130,7 @@ mkdir -p ./pil2-components/test/std/permutation/build/ \
      --pilout ./pil2-components/test/std/permutation/build/build.pilout \
      --path ./pil2-components/test/std/permutation/rs/src -o \
 && cargo build \
-&& cargo run --bin proofman-cli verify-constraints \
+&& cargo run --features diagnostic --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libpermutation.so \
      --proving-key ./pil2-components/test/std/permutation/build/provingKey \
 && cargo run --bin proofman-cli prove \
@@ -145,7 +145,7 @@ mkdir -p ./pil2-components/test/std/range_check/build/ \
 && rm -rf pil2-components/test/range_check/build/proofs/ \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/range_check/build.pil \
      -I ./pil2-components/lib/std/pil \
-     -o ./pil2-components/test/std/range_check/build/build.pilout \
+-o ./pil2-components/test/std/range_check/build/build.pilout \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/range_check/build/build.pilout \
      -b ./pil2-components/test/std/range_check/build \
@@ -153,9 +153,6 @@ mkdir -p ./pil2-components/test/std/range_check/build/ \
      --pilout ./pil2-components/test/std/range_check/build/build.pilout \
      --path ./pil2-components/test/std/range_check/rs/src -o \
 && cargo build \
-&& cargo run --bin proofman-cli verify-constraints \
-     --witness-lib ./target/debug/librange_check.so \
-     --proving-key ./pil2-components/test/std/range_check/build/provingKey \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/librange_check.so \
      --proving-key ./pil2-components/test/std/range_check/build/provingKey \

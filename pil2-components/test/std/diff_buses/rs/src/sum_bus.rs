@@ -1,35 +1,31 @@
 use std::sync::Arc;
 
-use witness::WitnessComponent;
-use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
+use witness::{WitnessComponent, execute, define_wc};
+use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
 
 use crate::SumBusTrace;
 
-pub struct SumBus;
-
-impl SumBus {
-    const MY_NAME: &'static str = "SumBus  ";
-
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self)
-    }
-}
+define_wc!(SumBus, "SumBus  ");
 
 impl<F: PrimeField> WitnessComponent<F> for SumBus {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let mut trace = SumBusTrace::new();
-        let num_rows = trace.num_rows();
+    execute!(SumBusTrace, 1);
 
-        log::debug!("{}: ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+        if stage == 1 {
+            let mut trace = SumBusTrace::new();
+            let num_rows = trace.num_rows();
 
-        for i in 0..num_rows {
-            trace[i].a = F::from_canonical_usize(i);
-            trace[i].b = trace[i].a;
+            log::debug!("{}: ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+
+            for i in 0..num_rows {
+                trace[i].a = F::from_canonical_usize(i);
+                trace[i].b = trace[i].a;
+            }
+
+            let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
+            pctx.add_air_instance(air_instance, instance_ids[0]);
         }
-
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        add_air_instance::<F>(air_instance, pctx.clone());
     }
 }

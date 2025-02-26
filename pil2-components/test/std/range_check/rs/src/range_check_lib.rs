@@ -5,7 +5,7 @@ use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
-use rand::{distributions::Standard, prelude::Distribution};
+use rand::{distributions::Standard, prelude::Distribution, Rng};
 
 use crate::{
     RangeCheckMix, RangeCheckDynamic1, RangeCheckDynamic2, MultiRangeCheck1, MultiRangeCheck2, RangeCheck1,
@@ -19,6 +19,8 @@ where
     Standard: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
+        let seed = if cfg!(feature = "debug") { 0 } else { rand::thread_rng().gen::<u64>() };
+        
         let std_lib = Std::new(wcm.clone());
         let range_check1 = RangeCheck1::new(std_lib.clone());
         let range_check2 = RangeCheck2::new(std_lib.clone());
@@ -30,6 +32,17 @@ where
         let range_check_dynamic2 = RangeCheckDynamic2::new(std_lib.clone());
         let range_check_mix = RangeCheckMix::new(std_lib.clone());
 
+        range_check1.set_seed(seed);
+        range_check2.set_seed(seed);
+        range_check3.set_seed(seed);
+        range_check4.set_seed(seed);
+        multi_range_check1.set_seed(seed);
+        multi_range_check2.set_seed(seed);
+        range_check_dynamic1.set_seed(seed);
+        range_check_dynamic2.set_seed(seed);
+        range_check_mix.set_seed(seed);
+
+        
         wcm.register_component(range_check1.clone());
         wcm.register_component(range_check2.clone());
         wcm.register_component(range_check3.clone());

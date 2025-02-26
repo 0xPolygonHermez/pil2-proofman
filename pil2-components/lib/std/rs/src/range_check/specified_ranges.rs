@@ -1,6 +1,6 @@
 use core::panic;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 use rayon::prelude::*;
@@ -19,23 +19,18 @@ pub struct SpecifiedRanges<F: PrimeField> {
     // Parameters
     airgroup_id: usize,
     air_id: usize,
-
-    // Inputs
+    instance_id: AtomicU64,
     num_rows: usize,
     num_cols: usize,
     ranges: Vec<Range<F>>,
     multiplicities: Vec<Vec<AtomicU64>>,
+    calculated: AtomicBool,
 }
 
 impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
     const MY_NAME: &'static str = "SpecRang";
 
-    fn new(
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        airgroup_id: Option<usize>,
-        air_id: Option<usize>,
-    ) -> Arc<Self> {
+    fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
         let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
         let air_id = air_id.expect("Air ID must be provided");
 
@@ -48,40 +43,40 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
 
         if !specified_hints.is_empty() {
             for hint in specified_hints[1..].iter() {
-                let predefined = get_hint_field_constant::<F>(
-                    &sctx,
+                let predefined = get_hint_field_constant(
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,
                     "predefined",
                     HintFieldOptions::default(),
                 );
-                let min = get_hint_field_constant::<F>(
-                    &sctx,
+                let min = get_hint_field_constant(
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,
                     "min",
                     HintFieldOptions::default(),
                 );
-                let min_neg = get_hint_field_constant::<F>(
-                    &sctx,
+                let min_neg = get_hint_field_constant(
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,
                     "min_neg",
                     HintFieldOptions::default(),
                 );
-                let max = get_hint_field_constant::<F>(
-                    &sctx,
+                let max = get_hint_field_constant(
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,
                     "max",
                     HintFieldOptions::default(),
                 );
-                let max_neg = get_hint_field_constant::<F>(
-                    &sctx,
+                let max_neg = get_hint_field_constant(
+                    sctx,
                     airgroup_id,
                     air_id,
                     *hint as usize,
@@ -150,13 +145,25 @@ impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
                 .collect();
         }
 
-        Arc::new(Self { airgroup_id, air_id, num_cols, num_rows, ranges, multiplicities })
+        Arc::new(Self {
+            airgroup_id,
+            air_id,
+            instance_id: AtomicU64::new(0),
+            num_cols,
+            num_rows,
+            ranges,
+            multiplicities,
+            calculated: AtomicBool::new(false),
+        })
     }
 }
 
 impl<F: PrimeField> SpecifiedRanges<F> {
     #[inline(always)]
     pub fn update_inputs(&self, value: F, range: Range<F>, multiplicity: F) {
+        if self.calculated.load(Ordering::Relaxed) {
+            return;
+        }
         let val = (value - range.0)
             .as_canonical_biguint()
             .to_usize()
@@ -180,27 +187,32 @@ impl<F: PrimeField> SpecifiedRanges<F> {
 }
 
 impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let (instance_found, _) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+        let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            pctx.dctx_add_instance_no_assign(
-                self.airgroup_id,
-                self.air_id,
-                pctx.get_weight(self.airgroup_id, self.air_id),
-            );
+            instance_id = pctx.add_instance_all(self.airgroup_id, self.air_id);
         }
+
+        self.instance_id.store(instance_id as u64, Ordering::SeqCst);
+        Vec::new()
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) {
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
         if stage == 1 {
-            let (_, instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+            let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
+
+            if !_instance_ids.contains(&instance_id) {
+                return;
+            }
+
+            self.calculated.store(true, Ordering::Relaxed);
 
             pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
 
             if pctx.dctx_is_my_instance(instance_id) {
                 let buffer_size = self.num_cols * self.num_rows;
-                let mut buffer = create_buffer_fast::<F>(buffer_size);
+                let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
                         chunk[col] = F::from_canonical_u64(vec[row].load(Ordering::Relaxed));
