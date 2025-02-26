@@ -19,17 +19,20 @@ impl<F: PrimeField64> Std<F> {
     const MY_NAME: &'static str = "STD     ";
 
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let std_mode = wcm.get_pctx().options.debug_info.std_mode.clone();
+        let pctx = wcm.get_pctx();
+        let sctx = wcm.get_sctx();
+
+        let std_mode = pctx.options.debug_info.std_mode.clone();
         log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
-        let std_prod = StdProd::new(wcm.get_pctx(), wcm.get_sctx(), None, None);
-        let std_sum = StdSum::new(wcm.get_pctx(), wcm.get_sctx(), None, None);
-        let range_check = StdRangeCheck::new(wcm.get_pctx(), wcm.get_sctx());
+        let std_prod = StdProd::new(&pctx, &sctx, None, None);
+        let std_sum = StdSum::new(&pctx, &sctx, None, None);
+        let range_check = StdRangeCheck::new(pctx.clone(), &sctx);
 
-        Self::register_std(wcm.clone(), std_prod.clone(), std_sum.clone(), range_check.clone());
+        Self::register_std(wcm, std_prod.clone(), std_sum.clone(), range_check.clone());
 
-        Arc::new(Self { pctx: wcm.get_pctx(), sctx: wcm.get_sctx(), range_check, std_prod, std_sum })
+        Arc::new(Self { pctx, sctx, range_check, std_prod, std_sum })
     }
 
     pub fn register_std(

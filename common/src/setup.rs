@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use proofman_starks_lib_c::{
     get_const_tree_size_c, prover_helpers_new_c, expressions_bin_new_c, stark_info_new_c, load_const_tree_c,
     load_const_pols_c, calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c, prover_helpers_free_c,
-    get_map_totaln_c, write_const_tree_c, get_map_totaln_custom_commits_fixed_c,
+    get_map_totaln_c, write_const_tree_c, get_map_totaln_custom_commits_fixed_c, get_proof_size_c,
 };
 use proofman_util::create_buffer_fast;
 
@@ -43,6 +43,7 @@ pub struct Setup<F: Clone> {
     pub const_tree: Vec<F>,
     pub prover_buffer_size: u64,
     pub custom_commits_fixed_buffer_size: u64,
+    pub proof_size: u64,
     pub write_const_tree: AtomicBool,
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
@@ -75,11 +76,12 @@ impl<F: Clone> Setup<F> {
             p_prover_helpers,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
+            proof_size,
             const_pols_size,
             const_tree_size,
         ) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
             // If the condition is met, use None for each pointer
-            (StarkInfo::default(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0, 0, 0, 0)
+            (StarkInfo::default(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0, 0, 0, 0, 0)
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
@@ -99,6 +101,7 @@ impl<F: Clone> Setup<F> {
                 get_map_totaln_c(p_stark_info, recursive)
             };
             let custom_commits_fixed_buffer_size = get_map_totaln_custom_commits_fixed_c(p_stark_info);
+            let proof_size = get_proof_size_c(p_stark_info);
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let prover_helpers = prover_helpers_new_c(p_stark_info, recursive);
             let const_pols_size = (stark_info.n_constants * (1 << stark_info.stark_struct.n_bits)) as usize;
@@ -111,6 +114,7 @@ impl<F: Clone> Setup<F> {
                 prover_helpers,
                 prover_buffer_size,
                 custom_commits_fixed_buffer_size,
+                proof_size,
                 const_pols_size,
                 const_pols_tree_size,
             )
@@ -125,6 +129,7 @@ impl<F: Clone> Setup<F> {
             const_tree: create_buffer_fast(const_tree_size),
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
+            proof_size,
             write_const_tree: AtomicBool::new(false),
             setup_path: setup_path.clone(),
             setup_type: setup_type.clone(),

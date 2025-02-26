@@ -12,6 +12,7 @@
         "./provers/starks-lib-c/Cargo.toml",
         "./transcript/Cargo.toml",
         "./util/Cargo.toml",
+        "./witness/Cargo.toml",
         // "examples/fibonacci-square/Cargo.toml",
     ],
     "files.associations": {

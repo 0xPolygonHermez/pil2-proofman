@@ -33,33 +33,6 @@ void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint
 }
 
 template <typename ElementType>
-void Starks<ElementType>::loadCustomCommit(
-    uint64_t commitId,
-    Goldilocks::Element *buffer,
-    FRIProof<ElementType> &proof,
-    std::string bufferFile)
-{   
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-
-    std::string section = setupCtx.starkInfo.customCommits[commitId].name + "0";
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-
-    uint64_t pos = setupCtx.starkInfo.nStages + 2 + commitId;
-    
-    loadFileParallel(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + treesGL[pos]->numNodes) * sizeof(Goldilocks::Element), true, 32);
-
-    treesGL[pos]->setSource(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)]]);
-
-    if (setupCtx.starkInfo.starkStruct.verificationHashType == "GL") {
-        ElementType *pBuffNodes = (ElementType *)&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)] + NExtended * nCols];
-        treesGL[pos]->setNodes(pBuffNodes);
-    }
-
-    treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
-}
-
-template <typename ElementType>
 void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *aux_trace, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
 {   
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;

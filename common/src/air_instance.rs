@@ -120,8 +120,8 @@ pub struct AirInstance<F> {
     pub custom_commits_fixed: Vec<F>,
     pub airgroup_values: Vec<F>,
     pub airvalues: Vec<F>,
+    pub challenges: Vec<F>,
     pub evals: Vec<F>,
-    pub prover_initialized: bool,
 }
 
 impl<F: Field> AirInstance<F> {
@@ -142,7 +142,7 @@ impl<F: Field> AirInstance<F> {
             airgroup_values,
             airvalues,
             evals: Vec::new(),
-            prover_initialized: false,
+            challenges: Vec::new(),
         }
     }
 
@@ -188,6 +188,16 @@ impl<F: Field> AirInstance<F> {
         self.evals.as_ptr() as *mut u8
     }
 
+    pub fn get_challenges_ptr(&self) -> *mut u8 {
+        self.challenges.as_ptr() as *mut u8
+    }
+
+    pub fn set_challenge(&mut self, index: usize, challenge: Vec<F>) {
+        self.challenges[index] = challenge[0];
+        self.challenges[index + 1] = challenge[1];
+        self.challenges[index + 2] = challenge[2];
+    }
+
     pub fn get_airgroup_values_ptr(&self) -> *mut u8 {
         self.airgroup_values.as_ptr() as *mut u8
     }
@@ -206,6 +216,10 @@ impl<F: Field> AirInstance<F> {
 
     pub fn init_evals(&mut self, size: usize) {
         self.evals = vec![F::zero(); size];
+    }
+
+    pub fn init_challenges(&mut self, size: usize) {
+        self.challenges = vec![F::zero(); size];
     }
 
     pub fn init_aux_trace(&mut self, size: usize) {
@@ -233,10 +247,6 @@ impl<F: Field> AirInstance<F> {
 
     pub fn get_custom_commits_fixed_ptr(&self) -> *mut u8 {
         self.custom_commits_fixed.as_ptr() as *mut u8
-    }
-
-    pub fn set_prover_initialized(&mut self) {
-        self.prover_initialized = true;
     }
 
     pub fn clear_trace(&mut self) {

@@ -18,16 +18,16 @@ impl<F: Display> Display for ExtensionField<F> {
 
 impl<F: Field> ExtensionField<F> {
     pub fn zero() -> Self {
-        Self { value: field_to_array::<F>(F::zero()) }
+        Self { value: field_to_array(F::zero()) }
     }
     pub fn one() -> Self {
-        Self { value: field_to_array::<F>(F::one()) }
+        Self { value: field_to_array(F::one()) }
     }
     pub fn two() -> Self {
-        Self { value: field_to_array::<F>(F::two()) }
+        Self { value: field_to_array(F::two()) }
     }
     pub fn neg_one() -> Self {
-        Self { value: field_to_array::<F>(F::neg_one()) }
+        Self { value: field_to_array(F::neg_one()) }
     }
 
     #[inline(always)]
@@ -88,7 +88,7 @@ impl<F: Field> AddAssign<F> for ExtensionField<F> {
 
 impl<F: Field> Sum for ExtensionField<F> {
     fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let zero = Self { value: field_to_array::<F>(F::zero()) };
+        let zero = Self { value: field_to_array(F::zero()) };
         iter.fold(zero, |acc, x| acc + x)
     }
 }
@@ -153,7 +153,7 @@ impl<F: Field> Mul<F> for ExtensionField<F> {
 
 impl<F: Field> Product for ExtensionField<F> {
     fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let one = Self { value: field_to_array::<F>(F::one()) };
+        let one = Self { value: field_to_array(F::one()) };
         iter.fold(one, |acc, x| acc * x)
     }
 }

@@ -12,6 +12,19 @@ using json = nlohmann::json;
 template <typename ElementType>
 std::string toString(const ElementType& element);
 
+template <typename ElementType>
+uint64_t toU64(const ElementType& element);
+
+template<>
+inline uint64_t toU64(const Goldilocks::Element& element) {
+    return Goldilocks::toU64(element);
+}
+
+template<>
+inline uint64_t toU64(const RawFr::Element& element) {
+    throw std::runtime_error("Error: Cannot convert RawFr::Element to U64.");
+}
+
 template<>
 inline std::string toString(const Goldilocks::Element& element) {
     return Goldilocks::toString(element);
@@ -168,6 +181,120 @@ public:
                 p += 3;
             }
         }
+    }
+
+
+    uint64_t *proof2pointer(uint64_t *pointer) {
+        uint64_t p = 0;
+
+        for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
+            for (uint64_t k = 0; k < FIELD_EXTENSION; k++)
+            {
+                pointer[p++] = Goldilocks::toU64(airgroupValues[i][k]);
+            }
+        }
+
+
+        for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); i++) {
+            for (uint64_t k = 0; k < FIELD_EXTENSION; k++)
+            {
+                pointer[p++] = Goldilocks::toU64(airValues[i][k]);
+            }
+        }
+
+        for(uint64_t i = 0; i < starkInfo.nStages + 1; i++) {
+            for (uint64_t k = 0; k < nFieldElements; k++)
+            {
+                pointer[p++] = toU64(roots[i][k]);
+            }
+        }
+
+        for(uint64_t i = 0; i < starkInfo.evMap.size(); i++) {
+            for (uint64_t k = 0; k < FIELD_EXTENSION; k++)
+            {
+                pointer[p++] = Goldilocks::toU64(evals[i][k]);
+            }
+        }
+
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            for(uint64_t l = 0; l < starkInfo.nConstants; l++) {
+                pointer[p++] = Goldilocks::toU64(fri.trees.polQueries[i][starkInfo.nStages + 1].v[l][0]);
+            }
+        }
+
+        for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+            for(uint64_t l = 0; l < starkInfo.starkStruct.steps[0].nBits; ++l) {
+                for(uint64_t k = 0; k < 4; ++k) {
+                    pointer[p++] = toU64(fri.trees.polQueries[i][starkInfo.nStages + 1].mp[l][k]);
+                }
+            }
+        }
+
+        for(uint64_t c = 0; c < starkInfo.customCommits.size(); ++c) {
+            for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+                for(uint64_t l = 0; l < starkInfo.mapSectionsN[starkInfo.customCommits[c].name + "0"]; l++) {
+                    pointer[p++] = Goldilocks::toU64(fri.trees.polQueries[i][starkInfo.nStages + 2 + c].v[l][0]);
+                }
+            }
+            for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+                for(uint64_t l = 0; l < starkInfo.starkStruct.steps[0].nBits; ++l) {
+                    for(uint64_t k = 0; k < 4; ++k) {
+                        pointer[p++] = toU64(fri.trees.polQueries[i][starkInfo.nStages + 2 + c].mp[l][k]);
+                    }
+                }
+            }
+        }
+        
+
+        for (uint64_t s = 0; s < starkInfo.nStages + 1; ++s) {
+            uint64_t stage = s + 1;
+            for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+                for(uint64_t l = 0; l < starkInfo.mapSectionsN["cm" + to_string(stage)]; l++) {
+                    pointer[p++] = Goldilocks::toU64(fri.trees.polQueries[i][s].v[l][0]);
+                }
+            }
+
+            for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+                for(uint64_t l = 0; l < starkInfo.starkStruct.steps[0].nBits; ++l) {
+                    for(uint64_t k = 0; k < 4; ++k) {
+                        pointer[p++] = toU64(fri.trees.polQueries[i][s].mp[l][k]);
+                    }
+                }
+            }
+        }
+        
+
+        for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+             for(uint64_t i = 0; i < nFieldElements; i++) {
+                pointer[p++] = toU64(fri.treesFRI[step - 1].root[i]);
+            }
+        }
+
+        
+        for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+            for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+                for(uint64_t l = 0; l < uint64_t(1 << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION; l++) {
+                    pointer[p++] = Goldilocks::toU64(fri.treesFRI[step - 1].polQueries[i][0].v[l][0]);
+                }
+            }
+
+            for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+                for(uint64_t l = 0; l < starkInfo.starkStruct.steps[step].nBits; ++l) {
+                    for(uint64_t k = 0; k < 4; ++k) {
+                        pointer[p++] = toU64(fri.treesFRI[step - 1].polQueries[i][0].mp[l][k]);
+                    }
+                }
+            }
+        }
+
+        for (uint64_t i = 0; i < uint64_t (1 << (starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits)); i++)
+        {
+            for(uint64_t l = 0; l < FIELD_EXTENSION; l++) {
+                pointer[p++] = Goldilocks::toU64(fri.pol[i][l]);
+            }
+        }
+
+        return pointer;
     }
 
     json proof2json()
@@ -344,5 +471,6 @@ public:
         airId(_airId),
         instanceId(_instanceId) {};
 };
+
 
 #endif

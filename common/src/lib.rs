@@ -1,5 +1,4 @@
 mod air_instance;
-mod air_instances_repository;
 mod verbose_mode;
 mod distribution_ctx;
 mod proof_ctx;
@@ -19,7 +18,6 @@ pub mod prover_helpers;
 pub mod fixed_cols;
 
 pub use air_instance::*;
-pub use air_instances_repository::*;
 pub use verbose_mode::*;
 pub use proof_ctx::*;
 pub use prover::*;
