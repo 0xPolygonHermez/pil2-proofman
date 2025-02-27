@@ -30,7 +30,7 @@ void StarkInfo::load(json j, bool verify_)
             starkStruct.merkleTreeCustom = false;
         }
     } else {
-        starkStruct.merkleTreeArity = 2;
+        starkStruct.merkleTreeArity = 3;
         starkStruct.merkleTreeCustom = true;
     }
     if(j["starkStruct"].contains("hashCommits")) {
@@ -338,7 +338,18 @@ void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, st
 }
 
 uint64_t StarkInfo::getNumNodesMT(uint64_t height) {
-    return height * HASH_SIZE + (height - 1) * HASH_SIZE;
+    uint64_t numNodes = height;
+    uint64_t nodesLevel = height;
+    
+    while (nodesLevel > 1) {
+        uint64_t extraZeros = (starkStruct.merkleTreeArity - (nodesLevel % starkStruct.merkleTreeArity)) % starkStruct.merkleTreeArity;
+        numNodes += extraZeros;
+        uint64_t nextN = (nodesLevel + (starkStruct.merkleTreeArity - 1))/starkStruct.merkleTreeArity;        
+        numNodes += nextN;
+        nodesLevel = nextN;
+    }
+
+    return numNodes * HASH_SIZE;
 }
 
 opType string2opType(const string s) 
