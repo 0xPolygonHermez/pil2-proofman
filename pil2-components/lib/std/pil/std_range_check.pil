@@ -561,7 +561,7 @@ private function declareRangeAir() {
         return;
     }
 
-    const int next_pow2 = 2**(log2(specified_N));
+    int next_pow2 = 2**(log2(specified_N));
     if (next_pow2 < specified_N) {
         next_pow2 *= 2;
     }
