@@ -961,6 +961,8 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
         set_omp_num_threads(num_threads);
     }
 }
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn gen_device_commit_buffers_c(max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
     unsafe { gen_device_commit_buffers(max_sizes) }
 }
@@ -1456,7 +1458,7 @@ pub fn gen_recursive_proof_c(
     _instance_id: u64,
     _vadcop: bool,
     _d_buffers: *mut c_void,
-) -> *mut c_void {
+) {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
 }
 
@@ -1573,12 +1575,14 @@ pub fn get_omp_max_threads() -> u64 {
 #[cfg(feature = "no_lib_link")]
 pub fn set_omp_num_threads(_num_threads: u64) {
     trace!("{}: ··· {}", "ffi     ", "set_omp_num_threads: This is a mock call because there is no linked library");
-    pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
-        trace!(
-            "{}: ··· {}",
-            "ffi     ",
-            "gen_device_commit_buffers: This is a mock call because there is no linked library"
-        );
-        std::ptr::null_mut()
-    }
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "gen_device_commit_buffers: This is a mock call because there is no linked library"
+    );
+    std::ptr::null_mut()
 }

@@ -69,36 +69,30 @@ pub fn discover_max_sizes<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadc
     for instance_id in my_instances {
         let (airgroup_id, air_id, _) = instances[instance_id];
         if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-            let setup = setups
-                .sctx_compressor
-                .as_ref()
-                .unwrap()
-                .get_setup(airgroup_id, air_id);
-            update_max_values(&setup);
+            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+            update_max_values(setup);
         }
 
-        let setup =
-            setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-        update_max_values(&setup);
+        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+        update_max_values(setup);
 
-        let setup =
-            setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id);
-        update_max_values(&setup);
+        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id);
+        update_max_values(setup);
     }
 
     if let Some(setup) = setups.setup_vadcop_final.as_ref() {
-        update_max_values(&setup);
+        update_max_values(setup);
     }
 
     if let Some(setup) = setups.setup_recursivef.as_ref() {
-        update_max_values(&setup);
+        update_max_values(setup);
     }
 
     MaxSizes {
         max_n: 1 << max_n_bits,
         max_n_ext: 1 << max_n_bits_ext,
         max_wit_pols,
-        max_ntt_pols: max_ntt_pols,
+        max_ntt_pols,
         max_const_pols,
         max_n_publics,
         max_trace_area,
@@ -106,24 +100,20 @@ pub fn discover_max_sizes<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadc
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn aggregate_proofs<F: PrimeField>(
     name: &str,
     pctx_aggregation: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     proofs: &[Vec<u64>],
+    circom_witness: &[F],
+    publics: &[F],
+    trace: &[F],
+    prover_buffer: &[F],
     output_dir_path: PathBuf,
+    d_buffers: *mut c_void,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!("{}: ··· Generating aggregated proofs", name);
-
-    let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(pctx_aggregation, setups)?;
-    let mut circom_witness = create_buffer_fast(circom_witness_size);
-    let publics = create_buffer_fast(publics_size);
-    let trace = create_buffer_fast(trace_size);
-    let prover_buffer = create_buffer_fast(prover_buffer_size);
-
-    let max_sizes = discover_max_sizes(&pctx_aggregation, &setups);
-    let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-    let d_buffers = gen_device_commit_buffers_c(max_sizes_ptr);
 
     timer_start_info!(GENERATING_AGGREGATION_PROOFS);
     pctx_aggregation.dctx.read().unwrap().barrier();
@@ -133,10 +123,10 @@ pub fn aggregate_proofs<F: PrimeField>(
         pctx_aggregation,
         sctx_recursive2.as_ref().unwrap(),
         proofs,
-        &mut circom_witness,
-        &publics,
-        &trace,
-        &prover_buffer,
+        circom_witness,
+        publics,
+        trace,
+        prover_buffer,
         output_dir_path.clone(),
         d_buffers,
     )?;
@@ -151,10 +141,10 @@ pub fn aggregate_proofs<F: PrimeField>(
             pctx_aggregation,
             setup_final,
             &recursive2_proof,
-            &mut circom_witness,
-            &publics,
-            &trace,
-            &prover_buffer,
+            circom_witness,
+            publics,
+            trace,
+            prover_buffer,
             output_dir_path.clone(),
             d_buffers,
         )?;
@@ -169,10 +159,10 @@ pub fn aggregate_proofs<F: PrimeField>(
                 pctx_aggregation,
                 setups.setup_recursivef.as_ref().unwrap(),
                 &final_proof,
-                &mut circom_witness,
-                &publics,
-                &trace,
-                &prover_buffer,
+                circom_witness,
+                publics,
+                trace,
+                prover_buffer,
                 output_dir_path.clone(),
             )?;
             timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
@@ -222,6 +212,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField>(
     trace: &[F],
     prover_buffer: &[F],
     output_dir_path: PathBuf,
+    d_buffers: *mut c_void,
 ) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -234,10 +225,6 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField>(
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
 
     let mut recursive_proof: Vec<u64>;
-
-    let max_sizes = discover_max_sizes(&pctx, &setups);
-    let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-    let d_buffers = gen_device_commit_buffers_c(max_sizes_ptr);
 
     let has_compressor = pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
     if has_compressor {
@@ -372,7 +359,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     proofs: &[Vec<u64>],
-    circom_witness: &mut [F],
+    circom_witness: &[F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
@@ -567,7 +554,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField>(
     pctx: &ProofCtx<F>,
     setup: &Setup<F>,
     proof: &[u64],
-    circom_witness: &mut [F],
+    circom_witness: &[F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
@@ -618,7 +605,7 @@ pub fn generate_recursivef_proof<F: PrimeField>(
     pctx: &ProofCtx<F>,
     setup: &Setup<F>,
     proof: &[u64],
-    circom_witness: &mut [F],
+    circom_witness: &[F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
