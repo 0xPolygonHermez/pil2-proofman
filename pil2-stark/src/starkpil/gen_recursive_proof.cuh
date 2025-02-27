@@ -222,6 +222,8 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, u
     cudaDeviceSynchronize();
     time = omp_get_wtime() - time;
     std::cout << "INTT: " << time << std::endl;
+    cudaFree(d_xiChallenge);
+    cudaFree(d_openingPoints);
 }
 
 __global__ void calcXDivXSub(uint64_t xDivXSub_offset, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_x, gl64_t *d_aux_trace, uint64_t NExtended)
@@ -279,6 +281,10 @@ void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xi
     std::cout << "nOpeningPoints: " << nOpeningPoints << std::endl;
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (NExtended + nThreads.y - 1) / nThreads.y);
     calcXDivXSub<<<nBlocks, nThreads>>>(xDivXSub_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, d_x, d_buffers->d_aux_trace, NExtended);
+    
+    cudaFree(d_xiChallenge);
+    cudaFree(d_openingPoints);
+    cudaFree(d_x);
 }
 
 struct EvalInfo
@@ -677,6 +683,7 @@ void merkelizeFRI_inplace(uint64_t step, FRIProof<Goldilocks::Element> &proof, g
     uint64_t tree_size = treeFRI->getNumNodes(treeFRI->height) * sizeof(uint64_t);
     CHECKCUDAERR(cudaMemcpy(treeFRI->get_nodes_ptr(), *d_tree, tree_size, cudaMemcpyDeviceToHost));
     treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
+    cudaFree(d_aux);
 }
 
 __global__ void getTreeTracePols(gl64_t *d_treeTrace, uint64_t traceWidth, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth)
@@ -968,6 +975,8 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
 
+    cudaFree(destStruct.dest_gpu);
+
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
     std::cout << "Rick fins PUNT6 (expressions) " << time - time0 << " " << time - time_prev << std::endl;
@@ -997,6 +1006,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     delete res;
     delete gprod;
+    cudaFree(d_grod);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
@@ -1282,5 +1292,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     if(!proofFile.empty()) {
         json2file(pointer2json(proofBuffer, setupCtx.starkInfo), proofFile);
     }
+
+    cudaFree(d_evals);
 }
 #endif

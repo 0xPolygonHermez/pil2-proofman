@@ -479,6 +479,7 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
     return setHintFieldGlobalConstraint(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)proofValues, (Goldilocks::Element *)values, hintId, string(hintFieldName));
 }
 
+#ifndef __USE_CUDA__
 // Gen proof
 // =================================================================================
 void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, uint64_t* proofBuffer, char *proofFile) {
@@ -487,7 +488,6 @@ void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t in
 
 // Recursive proof
 // ================================================================================= 
-#ifndef __USE_CUDA__
 void *gen_device_commit_buffers(void *max_sizes)
 {
     return NULL;

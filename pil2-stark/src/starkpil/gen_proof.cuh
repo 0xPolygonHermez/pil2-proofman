@@ -1,9 +1,10 @@
-#ifndef GEN_PROOF_H
-#define GEN_PROOF_H
+#ifndef GEN_PROOF_CUH
+#define GEN_PROOF_CUH
 
 #include "starks.hpp"
+#include "hints.hpp"
 
-void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element *pBuffHelper, bool prod) {
+void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element *pBuffHelper, bool prod) {
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
     uint64_t hint[1];
@@ -43,7 +44,7 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, uint64_t *proofBuffer, std::string proofFile) {
+void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, uint64_t *proofBuffer, std::string proofFile) {
     TimerStart(STARK_PROOF);
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
@@ -82,8 +83,8 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         }
     }
 
-    calculateWitnessSTD(setupCtx, params, pBuffHelper, true);
-    calculateWitnessSTD(setupCtx, params, pBuffHelper, false);
+    calculateWitnessSTD_gpu(setupCtx, params, pBuffHelper, true);
+    calculateWitnessSTD_gpu(setupCtx, params, pBuffHelper, false);
 
     
     TimerStart(CALCULATE_IM_POLS);
