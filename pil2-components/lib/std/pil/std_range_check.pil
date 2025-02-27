@@ -562,6 +562,9 @@ private function declareRangeAir() {
     }
 
     const int next_pow2 = 2**(log2(specified_N));
+    if (next_pow2 < specified_N) {
+        next_pow2 *= 2;
+    }
 
     if (num_spec_airgroup == 1) {
         // If the SpecifiedRanges is needed only once, we instantiate it in the (single) callable airgroup
