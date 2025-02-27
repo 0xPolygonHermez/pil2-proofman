@@ -101,7 +101,7 @@ trace!(SpecifiedRangesTrace<F> {
  mul: [F; 1],
 },  0, 2, 256 );
 
-const FibonacciSquareRomHash: &str = "1e66ad0f5817502c1941ce399c54a4a459494f504ebaca93b09dd2cfb26a4743";
+pub const FibonacciSquareRomHash: &str = "1e66ad0f5817502c1941ce399c54a4a459494f504ebaca93b09dd2cfb26a4743";
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
 }, 0, 0, 4194304, 0 );
