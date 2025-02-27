@@ -55,17 +55,17 @@ pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn stark_info_new_c(filename: &str, verify: bool) -> *mut c_void {
+pub fn stark_info_new_c(filename: &str, recursive: bool, verify: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, verify)
+        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, recursive, verify)
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_map_totaln_c(p_stark_info: *mut c_void, recursive: bool) -> u64 {
-    unsafe { get_map_total_n(p_stark_info, recursive) }
+pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n(p_stark_info) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -748,6 +748,7 @@ pub fn gen_recursive_proof_c(
     air_id: u64,
     instance_id: u64,
     vadcop: bool,
+    d_buffers: *mut c_void,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -770,6 +771,7 @@ pub fn gen_recursive_proof_c(
             proof_buffer,
             proof_file_ptr,
             vadcop,
+            d_buffers,
         );
     }
 }
@@ -959,6 +961,10 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
         set_omp_num_threads(num_threads);
     }
 }
+pub fn gen_device_commit_buffers_c(max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+    unsafe { gen_device_commit_buffers(max_sizes) }
+}
+
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -978,7 +984,7 @@ pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _out
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn stark_info_new_c(_filename: &str, _verify: bool) -> *mut c_void {
+pub fn stark_info_new_c(_filename: &str, _recursive: bool, _verify: bool) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -994,7 +1000,7 @@ pub fn get_buffer_size_contribution_air_c(_p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_map_totaln_c(_p_stark_info: *mut c_void, _recursive: bool) -> u64 {
+pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
     100000000
 }
@@ -1449,7 +1455,8 @@ pub fn gen_recursive_proof_c(
     _air_id: u64,
     _instance_id: u64,
     _vadcop: bool,
-) {
+    _d_buffers: *mut c_void,
+) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
 }
 
@@ -1566,4 +1573,12 @@ pub fn get_omp_max_threads() -> u64 {
 #[cfg(feature = "no_lib_link")]
 pub fn set_omp_num_threads(_num_threads: u64) {
     trace!("{}: ··· {}", "ffi     ", "set_omp_num_threads: This is a mock call because there is no linked library");
+    pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+        trace!(
+            "{}: ··· {}",
+            "ffi     ",
+            "gen_device_commit_buffers: This is a mock call because there is no linked library"
+        );
+        std::ptr::null_mut()
+    }
 }

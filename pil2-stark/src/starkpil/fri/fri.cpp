@@ -4,12 +4,13 @@
 #include "timer.hpp"
 #include "zklog.hpp"
 
+
 template <typename ElementType>
 void FRI<ElementType>::fold(uint64_t step, Goldilocks::Element* pol, Goldilocks::Element *challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits) {
 
-    uint64_t polBits = step == 0 ? nBitsExt : prevBits;
+    uint64_t polBits = step == 0 ? nBitsExt : prevBits; // number of bits of the polynomial
 
-    Goldilocks::Element polShiftInv = Goldilocks::inv(Goldilocks::shift());
+    Goldilocks::Element polShiftInv = Goldilocks::inv(Goldilocks::shift()); // Inverse of the shift 
     
     if(step > 0) {
         for (uint64_t j = 0; j < nBitsExt - prevBits; j++)
@@ -18,12 +19,13 @@ void FRI<ElementType>::fold(uint64_t step, Goldilocks::Element* pol, Goldilocks:
         }
     }
 
-    uint64_t pol2N = 1 << currentBits;
-    uint64_t nX = (1 << polBits) / pol2N;
+    uint64_t pol2N = 1 << currentBits; // number of elements in the outcoming polynomial
+    uint64_t nX = (1 << polBits) / pol2N; // reduction factor
 
-    Goldilocks::Element wi = Goldilocks::inv(Goldilocks::w(polBits));
+    Goldilocks::Element wi = Goldilocks::inv(Goldilocks::w(polBits)); // Inverse of the root of unity
 
-    uint64_t nn = ((1 << polBits) / nX);
+    uint64_t nn = pol2N; 
+    
     u_int64_t maxth = omp_get_max_threads();
     if (maxth > nn) maxth = nn;
 #pragma omp parallel num_threads(maxth)
@@ -51,6 +53,7 @@ void FRI<ElementType>::fold(uint64_t step, Goldilocks::Element* pol, Goldilocks:
         u_int64_t ncor = res;
         if (thid < res) ncor = thid;
         for (u_int64_t j = 0; j < ncor; ++j) sinv_ = sinv_ * wi;
+
         for (uint64_t g = init; g < end; g++)
         {
             if (step != 0)
@@ -66,6 +69,8 @@ void FRI<ElementType>::fold(uint64_t step, Goldilocks::Element* pol, Goldilocks:
                 NTT_Goldilocks ntt(nX, 1);
 
                 ntt.INTT(ppar_c, ppar, nX, FIELD_EXTENSION);
+                if(g == init && init == 0){
+                }
                 polMulAxi(ppar_c, nX, sinv_); // Multiplies coefs by 1, shiftInv, shiftInv^2, shiftInv^3, ......
                 evalPol(pol, g, nX, ppar_c, challenge);
                 sinv_ = sinv_ * wi;
@@ -171,7 +176,7 @@ void FRI<ElementType>::evalPol(Goldilocks::Element* res, uint64_t res_idx, uint6
     }
 
     std::memcpy(&res[res_idx * FIELD_EXTENSION], &p[(degree - 1) * FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
-    for (int64_t i = degree - 2; i >= 0; i--)
+    for (int i = degree - 2; i >= 0; i--)
     {
         Goldilocks3::Element aux;
         Goldilocks3::mul(aux, (Goldilocks3::Element &)(res[res_idx * FIELD_EXTENSION]), (Goldilocks3::Element &)x[0]);

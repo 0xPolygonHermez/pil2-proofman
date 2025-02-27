@@ -124,7 +124,7 @@ public:
             result[i] = Goldilocks::fromString(in1[i]);
         }
     }
-    
+
     // ======== COPY =======
 
     static inline void copy(Element &dst, const Element &src)
@@ -143,7 +143,7 @@ public:
     };
 
     // ======== POW ========
-    static inline void pow(Element &result, Element& base, uint64_t exp)
+    static inline void pow(Element &result, Element &base, uint64_t exp)
     {
         one(result);
         Element temp;
@@ -210,7 +210,7 @@ public:
             result[i] = a[i] - b[i];
         }
     }
-    
+
     // ======== NEG ========
     static inline void neg(Element &result, const Element &a)
     {
@@ -312,7 +312,7 @@ public:
 
     static void batchInverse(Element *res, const Element *src, uint64_t size)
     {
-        Element* tmp = new Element[size];
+        Element *tmp = new Element[size];
         copy(tmp[0], src[0]);
 
         for (uint64_t i = 1; i < size; i++)
@@ -338,14 +338,14 @@ public:
 
     /* Pack operations */
 
-    static void copy_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_);
-    static void add_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
-    static void sub_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
+    static void copy_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_);
+    static void add_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
+    static void sub_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
     static void mul_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
     static void mul_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *challenge_, const Goldilocks::Element *challenge_ops_);
-    
-    static void op_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const Goldilocks::Element *b);
-    static void op_31_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const Goldilocks::Element *b);
+
+    static void op_pack(uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const Goldilocks::Element *b);
+    static void op_31_pack(uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const Goldilocks::Element *b);
 
     /* AVX operations */
     static void copy_avx(Element_avx c_, const Element_avx a_);
@@ -353,10 +353,10 @@ public:
     static void sub_avx(Element_avx &c_, const Element_avx a_, const Element_avx b_);
     static void mul_avx(Element_avx &c_, const Element_avx &a_, const Element_avx &b_);
     static void mul_avx(Element_avx &c_, const Element_avx &a_, const Element_avx &challenge_, const Element_avx &challenge_ops_);
-    
+
     static void op_avx(uint64_t op, Element_avx &c_, const Element_avx &a_, const Element_avx &b_);
     static void op_31_avx(uint64_t op, Element_avx &c_, const Element_avx &a_, const __m256i &b_);
-    
+
 #ifdef __AVX512__
 
     /* AVX512 operations */
@@ -365,7 +365,7 @@ public:
     static void sub_avx512(Element_avx512 &c_, const Element_avx512 a_, const Element_avx512 b_);
     static void mul_avx512(Element_avx512 &c_, const Element_avx512 &a_, const Element_avx512 &b_);
     static void mul_avx512(Element_avx512 &c_, const Element_avx512 &a_, const Element_avx512 &challenge_, const Element_avx512 &challenge_ops_);
-    
+
     static void op_avx512(uint64_t op, Element_avx512 &c_, const Element_avx512 &a_, const Element_avx512 &b_);
     static void op_31_avx512(uint64_t op, Element_avx512 &c_, const Element_avx512 &a_, const __m512i &b_);
 

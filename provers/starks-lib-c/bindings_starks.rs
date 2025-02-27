@@ -23,48 +23,6 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z13fri_proof_newPvmmm"]
-    pub fn fri_proof_new(
-        pSetupCtx: *mut ::std::os::raw::c_void,
-        airgroupId: u64,
-        airId: u64,
-        instanceId: u64,
-    ) -> *mut ::std::os::raw::c_void;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z23fri_proof_get_tree_rootPvS_m"]
-    pub fn fri_proof_get_tree_root(
-        pFriProof: *mut ::std::os::raw::c_void,
-        root: *mut ::std::os::raw::c_void,
-        tree_index: u64,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z28fri_proof_set_airgroupvaluesPvS_"]
-    pub fn fri_proof_set_airgroupvalues(
-        pFriProof: *mut ::std::os::raw::c_void,
-        airgroupValues: *mut ::std::os::raw::c_void,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z23fri_proof_set_airvaluesPvS_"]
-    pub fn fri_proof_set_airvalues(pFriProof: *mut ::std::os::raw::c_void, airValues: *mut ::std::os::raw::c_void);
-}
-
-extern "C" {
-    #[link_name = "\u{1}_Z14fri_proof_freePv"]
-    pub fn fri_proof_free(pFriProof: *mut ::std::os::raw::c_void);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z11proofs_freemPPvS0_b"]
-    pub fn proofs_free(
-        nProofs: u64,
-        pStarks: *mut *mut ::std::os::raw::c_void,
-        pFriProofs: *mut *mut ::std::os::raw::c_void,
-        background: bool,
-    );
-}
-extern "C" {
     #[link_name = "\u{1}_Z15n_hints_by_namePvPc"]
     pub fn n_hints_by_name(p_expression_bin: *mut ::std::os::raw::c_void, hintName: *mut ::std::os::raw::c_char)
         -> u64;
@@ -78,8 +36,12 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPcb"]
-    pub fn stark_info_new(filename: *mut ::std::os::raw::c_char, verifier: bool) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z14stark_info_newPcbb"]
+    pub fn stark_info_new(
+        filename: *mut ::std::os::raw::c_char,
+        recursive: bool,
+        verifier: bool,
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z32get_buffer_size_contribution_airPv"]
@@ -90,8 +52,8 @@ extern "C" {
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15get_map_total_nPvb"]
-    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void, recursive: bool) -> u64;
+    #[link_name = "\u{1}_Z15get_map_total_nPv"]
+    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z36get_map_total_n_custom_commits_fixedPv"]
@@ -268,63 +230,11 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z10starks_newPvS_"]
-    pub fn starks_new(
-        pSetupCtx: *mut ::std::os::raw::c_void,
-        pConstTree: *mut ::std::os::raw::c_void,
-    ) -> *mut ::std::os::raw::c_void;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z11starks_freePv"]
-    pub fn starks_free(pStarks: *mut ::std::os::raw::c_void);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z16treesGL_get_rootPvmS_"]
-    pub fn treesGL_get_root(pStarks: *mut ::std::os::raw::c_void, index: u64, root: *mut ::std::os::raw::c_void);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z18calculate_xdivxsubPvS_S_"]
-    pub fn calculate_xdivxsub(
-        pStarks: *mut ::std::os::raw::c_void,
-        xiChallenge: *mut ::std::os::raw::c_void,
-        xDivXSub: *mut ::std::os::raw::c_void,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z11get_fri_polPvS_"]
-    pub fn get_fri_pol(
-        pStarkInfo: *mut ::std::os::raw::c_void,
-        buffer: *mut ::std::os::raw::c_void,
-    ) -> *mut ::std::os::raw::c_void;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z24calculate_fri_polynomialPvS_"]
-    pub fn calculate_fri_polynomial(pStarks: *mut ::std::os::raw::c_void, stepsParams: *mut ::std::os::raw::c_void);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z29calculate_quotient_polynomialPvS_"]
-    pub fn calculate_quotient_polynomial(
-        pStarks: *mut ::std::os::raw::c_void,
-        stepsParams: *mut ::std::os::raw::c_void,
-    );
-}
-extern "C" {
     #[link_name = "\u{1}_Z28calculate_impols_expressionsPvmS_"]
     pub fn calculate_impols_expressions(
         pSetupCtx: *mut ::std::os::raw::c_void,
         step: u64,
         stepsParams: *mut ::std::os::raw::c_void,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z34extend_and_merkelize_custom_commitPvmmS_S_S_"]
-    pub fn extend_and_merkelize_custom_commit(
-        pStarks: *mut ::std::os::raw::c_void,
-        commitId: u64,
-        step: u64,
-        bufferExt: *mut ::std::os::raw::c_void,
-        pProof: *mut ::std::os::raw::c_void,
-        pBuffHelper: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
@@ -349,35 +259,6 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z12commit_stagePvjmS_S_S_S_"]
-    pub fn commit_stage(
-        pStarks: *mut ::std::os::raw::c_void,
-        elementType: u32,
-        step: u64,
-        trace: *mut ::std::os::raw::c_void,
-        buffer: *mut ::std::os::raw::c_void,
-        pProof: *mut ::std::os::raw::c_void,
-        pBuffHelper: *mut ::std::os::raw::c_void,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z11compute_levPvS_S_"]
-    pub fn compute_lev(
-        pStarks: *mut ::std::os::raw::c_void,
-        xiChallenge: *mut ::std::os::raw::c_void,
-        LEv: *mut ::std::os::raw::c_void,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z13compute_evalsPvS_S_S_"]
-    pub fn compute_evals(
-        pStarks: *mut ::std::os::raw::c_void,
-        params: *mut ::std::os::raw::c_void,
-        LEv: *mut ::std::os::raw::c_void,
-        pProof: *mut ::std::os::raw::c_void,
-    );
-}
-extern "C" {
     #[link_name = "\u{1}_Z14commit_witnessmmmPvS_S_"]
     pub fn commit_witness(
         nBits: u64,
@@ -391,53 +272,6 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z14calculate_hashPvS_m"]
     pub fn calculate_hash(pValue: *mut ::std::os::raw::c_void, pBuffer: *mut ::std::os::raw::c_void, nElements: u64);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z19compute_fri_foldingmPvS_mmm"]
-    pub fn compute_fri_folding(
-        step: u64,
-        buffer: *mut ::std::os::raw::c_void,
-        pChallenge: *mut ::std::os::raw::c_void,
-        nBitsExt: u64,
-        prevBits: u64,
-        currentBits: u64,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z21compute_fri_merkelizePvS_mS_mm"]
-    pub fn compute_fri_merkelize(
-        pStarks: *mut ::std::os::raw::c_void,
-        pProof: *mut ::std::os::raw::c_void,
-        step: u64,
-        buffer: *mut ::std::os::raw::c_void,
-        currentBits: u64,
-        nextBits: u64,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z15compute_queriesPvS_Pmmm"]
-    pub fn compute_queries(
-        pStarks: *mut ::std::os::raw::c_void,
-        pProof: *mut ::std::os::raw::c_void,
-        friQueries: *mut u64,
-        nQueries: u64,
-        nTrees: u64,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z19compute_fri_queriesPvS_Pmmmm"]
-    pub fn compute_fri_queries(
-        pStarks: *mut ::std::os::raw::c_void,
-        pProof: *mut ::std::os::raw::c_void,
-        friQueries: *mut u64,
-        nQueries: u64,
-        step: u64,
-        currentBits: u64,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z17set_fri_final_polPvS_m"]
-    pub fn set_fri_final_pol(pProof: *mut ::std::os::raw::c_void, buffer: *mut ::std::os::raw::c_void, nBits: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_newmb"]
@@ -461,10 +295,6 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z13get_challengePvS_"]
     pub fn get_challenge(pTranscript: *mut ::std::os::raw::c_void, pElement: *mut ::std::os::raw::c_void);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z16get_permutationsPvPmmm"]
-    pub fn get_permutations(pTranscript: *mut ::std::os::raw::c_void, res: *mut u64, n: u64, nBits: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z17get_n_constraintsPv"]
@@ -573,7 +403,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_b"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
@@ -588,6 +418,7 @@ extern "C" {
         proofBuffer: *mut u64,
         proof_file: *mut ::std::os::raw::c_char,
         vadcop: bool,
+        d_buffers: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
@@ -619,7 +450,6 @@ extern "C" {
         proof_file: *mut ::std::os::raw::c_char,
     ) -> *mut ::std::os::raw::c_void;
 }
-
 extern "C" {
     #[link_name = "\u{1}_Z21gen_final_snark_proofPvPcS0_"]
     pub fn gen_final_snark_proof(
@@ -667,27 +497,6 @@ extern "C" {
     ) -> bool;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z12save_to_filePvmS_mPc"]
-    pub fn save_to_file(
-        buffer: *mut ::std::os::raw::c_void,
-        bufferSize: u64,
-        publics: *mut ::std::os::raw::c_void,
-        publicsSize: u64,
-        name: *mut ::std::os::raw::c_char,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z14read_from_filePvmS_mPc"]
-    pub fn read_from_file(
-        buffer: *mut ::std::os::raw::c_void,
-        bufferSize: u64,
-        publics: *mut ::std::os::raw::c_void,
-        publicsSize: u64,
-        name: *mut ::std::os::raw::c_char,
-    );
-}
-
-extern "C" {
     #[link_name = "\u{1}_Z20write_fixed_cols_binPcS_S_mmPv"]
     pub fn write_fixed_cols_bin(
         binFile: *mut ::std::os::raw::c_char,
@@ -705,4 +514,8 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z19set_omp_num_threadsm"]
     pub fn set_omp_num_threads(num_threads: u64);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z25gen_device_commit_buffersPv"]
+    pub fn gen_device_commit_buffers(maxSizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 }

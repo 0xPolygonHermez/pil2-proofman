@@ -29,6 +29,83 @@ type GetWitnessFinalFunc =
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
+pub struct MaxSizes {
+    pub max_n: u64,
+    pub max_n_ext: u64,
+    pub max_wit_pols: u64,
+    pub max_ntt_pols: u64,
+    pub max_const_pols: u64,
+    pub max_n_publics: u64,
+    pub max_trace_area: u64,
+    pub max_const_tree_size: u64,
+}
+
+pub fn discover_max_sizes<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> MaxSizes {
+    let mut max_n_bits = 0;
+    let mut max_n_bits_ext = 0;
+    let mut max_wit_pols = 0;
+    let mut max_ntt_pols: u64 = 0;
+    let mut max_const_pols = 0;
+    let mut max_n_publics = 0;
+    let mut max_trace_area = 0;
+    let mut max_const_tree_size = 0;
+
+    let mut update_max_values = |setup: &Setup<F>| {
+        max_n_bits = max_n_bits.max(setup.stark_info.stark_struct.n_bits);
+        max_n_bits_ext = max_n_bits_ext.max(setup.stark_info.stark_struct.n_bits_ext);
+        max_wit_pols = max_wit_pols.max(setup.stark_info.map_sections_n["cm1"]);
+        max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm1"]);
+        max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm2"]);
+        max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm3"]); //rick: to be solved
+        max_const_pols = max_const_pols.max(setup.stark_info.n_constants);
+        max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
+        max_trace_area = max_trace_area.max(setup.prover_buffer_size);
+        max_const_tree_size = max_const_tree_size.max(get_const_tree_size_c(setup.p_setup.p_stark_info));
+    };
+
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
+
+    for instance_id in my_instances {
+        let (airgroup_id, air_id, _) = instances[instance_id];
+        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+            let setup = setups
+                .sctx_compressor
+                .as_ref()
+                .unwrap()
+                .get_setup(airgroup_id, air_id);
+            update_max_values(&setup);
+        }
+
+        let setup =
+            setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+        update_max_values(&setup);
+
+        let setup =
+            setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id);
+        update_max_values(&setup);
+    }
+
+    if let Some(setup) = setups.setup_vadcop_final.as_ref() {
+        update_max_values(&setup);
+    }
+
+    if let Some(setup) = setups.setup_recursivef.as_ref() {
+        update_max_values(&setup);
+    }
+
+    MaxSizes {
+        max_n: 1 << max_n_bits,
+        max_n_ext: 1 << max_n_bits_ext,
+        max_wit_pols,
+        max_ntt_pols: max_ntt_pols,
+        max_const_pols,
+        max_n_publics,
+        max_trace_area,
+        max_const_tree_size,
+    }
+}
+
 pub fn aggregate_proofs<F: PrimeField>(
     name: &str,
     pctx_aggregation: &ProofCtx<F>,
@@ -44,6 +121,10 @@ pub fn aggregate_proofs<F: PrimeField>(
     let trace = create_buffer_fast(trace_size);
     let prover_buffer = create_buffer_fast(prover_buffer_size);
 
+    let max_sizes = discover_max_sizes(&pctx_aggregation, &setups);
+    let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+    let d_buffers = gen_device_commit_buffers_c(max_sizes_ptr);
+
     timer_start_info!(GENERATING_AGGREGATION_PROOFS);
     pctx_aggregation.dctx.read().unwrap().barrier();
     timer_start_info!(GENERATING_RECURSIVE2_PROOFS);
@@ -57,6 +138,7 @@ pub fn aggregate_proofs<F: PrimeField>(
         &trace,
         &prover_buffer,
         output_dir_path.clone(),
+        d_buffers,
     )?;
     timer_stop_and_log_info!(GENERATING_RECURSIVE2_PROOFS);
     info!("{}: Recursive2 proofs generated successfully", name);
@@ -74,6 +156,7 @@ pub fn aggregate_proofs<F: PrimeField>(
             &trace,
             &prover_buffer,
             output_dir_path.clone(),
+            d_buffers,
         )?;
         timer_stop_and_log_info!(GENERATING_VADCOP_FINAL_PROOF);
         info!("{}: VadcopFinal proof generated successfully", name);
@@ -152,6 +235,10 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField>(
 
     let mut recursive_proof: Vec<u64>;
 
+    let max_sizes = discover_max_sizes(&pctx, &setups);
+    let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+    let d_buffers = gen_device_commit_buffers_c(max_sizes_ptr);
+
     let has_compressor = pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
     if has_compressor {
         timer_start_trace!(GENERATING_COMPRESSOR_PROOF);
@@ -198,6 +285,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField>(
             air_id as u64,
             air_instance_id as u64,
             true,
+            d_buffers,
         );
 
         log::info!("{}: ··· Compressor Proof generated.", MY_NAME);
@@ -268,6 +356,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField>(
         air_id as u64,
         air_instance_id as u64,
         true,
+        d_buffers,
     );
 
     log::info!("{}: ··· Recursive1 Proof generated.", MY_NAME);
@@ -288,6 +377,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField>(
     trace: &[F],
     prover_buffer: &[F],
     output_dir_path: PathBuf,
+    d_buffers: *mut c_void,
 ) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -301,6 +391,18 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField>(
 
     let mut null_zkin: Option<Vec<u64>> = None;
 
+    //allocate cuda memory for proofs
+    /*
+        - c function that regurns a structure pointer
+        - required buffers:
+            1) d_witness
+            2) d_trace
+            3) gpu_a[gpu_id], aux_size * sizeof(uint64_t))
+            4) gpu_forward_twiddle_factors[gpu_id], ext_size * sizeof(uint64_t)));
+            5) gpu_inverse_twiddle_factors[gpu_id], ext_size * sizeof(uint64_t)));
+            6) (&gpu_r_[gpu_id], ext_size * sizeof(uint64_t)));
+
+    */
     // Pre-process data before starting recursion loop
     for airgroup in 0..n_airgroups {
         let instances = &dctx.airgroup_instances[airgroup];
@@ -412,6 +514,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField>(
                             0,
                             0,
                             true,
+                            d_buffers,
                         );
 
                         add_publics_aggregation(&mut recursive2_proof, 0, publics, publics_aggregation);
@@ -469,6 +572,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField>(
     trace: &[F],
     prover_buffer: &[F],
     output_dir_path: PathBuf,
+    d_buffers: *mut c_void,
 ) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -501,6 +605,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField>(
         0,
         0,
         false,
+        d_buffers,
     );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);

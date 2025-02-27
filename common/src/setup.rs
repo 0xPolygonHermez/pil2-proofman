@@ -87,8 +87,8 @@ impl<F: Clone> Setup<F> {
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
                 .unwrap_or_else(|_| panic!("Failed to read file {}", &stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
-            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false);
             let recursive = &ProofType::Basic != setup_type;
+            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), recursive, false);
             let prover_buffer_size = if verify_constraints {
                 let mut mem_instance = 0;
                 for stage in 0..stark_info.n_stages {
@@ -98,7 +98,7 @@ impl<F: Clone> Setup<F> {
                 mem_instance += (stark_info.custom_commits_map.len() * (1 << (stark_info.stark_struct.n_bits))) as u64;
                 mem_instance
             } else {
-                get_map_totaln_c(p_stark_info, recursive)
+                get_map_totaln_c(p_stark_info)
             };
             let custom_commits_fixed_buffer_size = get_map_totaln_custom_commits_fixed_c(p_stark_info);
             let proof_size = get_proof_size_c(p_stark_info);

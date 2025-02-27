@@ -17,6 +17,8 @@ struct Params {
     bool batch = true;
     opType op;
     uint64_t value;
+
+    Params(){};
     
     Params(ParserParams& params, bool inverse_ = false, bool batch_ = true) : parserParams(params), inverse(inverse_), batch(batch_), op(opType::tmp) {
         dim = params.destDim;
@@ -38,6 +40,7 @@ struct Params {
 
 struct Dest {
     Goldilocks::Element *dest = nullptr;
+    Goldilocks::Element *dest_gpu = nullptr;
     uint64_t offset = 0;
     uint64_t dim = 1;
     uint64_t domainSize;
@@ -97,6 +100,7 @@ public:
         Dest destStruct(dest, domainSize);
         destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], inverse);
         std::vector<Dest> dests = {destStruct};
+
         calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, compilation_time);
     }
 };

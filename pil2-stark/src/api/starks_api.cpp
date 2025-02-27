@@ -69,7 +69,7 @@ void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir) 
             proofValuesJson[i][1] = Goldilocks::toString(proofValues[p++]);
             proofValuesJson[i][2] = Goldilocks::toString(proofValues[p++]);
         }
-        
+
     }
 
     json2file(proofValuesJson, string(fileDir) + "/proof_values.json");
@@ -93,9 +93,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool verify)
+void *stark_info_new(char *filename, bool recursive, bool verify)
 {
-    auto starkInfo = new StarkInfo(filename, verify);
+    auto starkInfo = new StarkInfo(filename, recursive, verify);
 
     return starkInfo;
 }
@@ -105,12 +105,9 @@ uint64_t get_proof_size(void *pStarkInfo) {
     return starkInfo->proofSize;
 }
 
-uint64_t get_map_total_n(void *pStarkInfo, bool recursive)
+uint64_t get_map_total_n(void *pStarkInfo)
 {
     StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
-    if(recursive) {
-        starkInfo->addMemoryRecursive();
-    }
     return starkInfo->mapTotalN;
 }
 
@@ -166,7 +163,7 @@ uint64_t get_const_tree_size(void *pStarkInfo) {
     } else {
         return constTree.getConstTreeSizeBN128(starkInfo);
     }
-    
+
 };
 
 uint64_t get_const_size(void *pStarkInfo) {
@@ -212,7 +209,7 @@ void expressions_bin_free(void *pExpressionsBin)
 
 // Hints
 // ========================================================================================
-void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions) 
+void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions)
 {
     getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
@@ -226,7 +223,7 @@ void get_hint_field_sizes(void *pSetupCtx, void* hintFieldValues, uint64_t hintI
     getHintFieldSizes(*(SetupCtx *)pSetupCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
 
-void mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t nHints, uint64_t *hintId, char **hintFieldNameDest, char **hintFieldName1, char **hintFieldName2, void** hintOptions1, void **hintOptions2) 
+void mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t nHints, uint64_t *hintId, char **hintFieldNameDest, char **hintFieldName1, char **hintFieldName2, void** hintOptions1, void **hintOptions2)
 {
 
     std::vector<std::string> hintFieldNameDests(nHints);
@@ -262,7 +259,7 @@ uint64_t get_hint_id(void *pSetupCtx, uint64_t hintId, char * hintFieldName) {
     return getHintId(*(SetupCtx *)pSetupCtx, hintId, string(hintFieldName));
 }
 
-uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hintId, char * hintFieldName) 
+uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hintId, char * hintFieldName)
 {
     return setHintField(*(SetupCtx *)pSetupCtx,  *(StepsParams *)params, (Goldilocks::Element *)values, hintId, string(hintFieldName));
 }
@@ -314,14 +311,14 @@ void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *buf
 }
 
 void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check)
-{   
+{
     MerkleTreeGL mt(2, true, NExtended, nCols, true, true);
 
     NTT_Goldilocks ntt(N);
     ntt.extendPol(mt.source, (Goldilocks::Element *)buffer, NExtended, N, nCols);
-    
+
     mt.merkelize();
-    
+
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     mt.getRoot(&rootGL[0]);
 
@@ -452,7 +449,7 @@ void verify_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, voi
 
     verifyGlobalConstraints(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues, (GlobalConstraintInfo *)globalConstraintsInfo);
 }
- 
+
 uint64_t get_hint_field_global_constraints_values(void* p_globalinfo_bin, uint64_t hintId, char* hintFieldName) {
     return getHintFieldGlobalConstraintValues(*(ExpressionsBin*)p_globalinfo_bin, hintId, string(hintFieldName));
 }
@@ -466,7 +463,7 @@ void get_hint_field_global_constraints_sizes(char* globalInfoFile, void* p_globa
 }
 
 
-void get_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void* hintFieldValues, void *publics, void *challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression) 
+void get_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void* hintFieldValues, void *publics, void *challenges, void *proofValues, void **airgroupValues, uint64_t hintId, char *hintFieldName, bool print_expression)
 {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
@@ -474,7 +471,7 @@ void get_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_
     getHintFieldGlobalConstraint(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (HintFieldInfo *)hintFieldValues, (Goldilocks::Element *)publics, (Goldilocks::Element *)challenges, (Goldilocks::Element *)proofValues, (Goldilocks::Element **)airgroupValues, hintId, string(hintFieldName), print_expression);
 }
 
-uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *proofValues, void *values, uint64_t hintId, char *hintFieldName) 
+uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globalinfo_bin, void *proofValues, void *values, uint64_t hintId, char *hintFieldName)
 {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
@@ -490,18 +487,26 @@ void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t in
 
 // Recursive proof
 // ================================================================================= 
-void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop) {
+#ifndef __USE_CUDA__
+void *gen_device_commit_buffers(void *max_sizes)
+{
+    return NULL;
+};
+
+void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
     genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), vadcop);
 }
 
+#endif
+
 void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId,  airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file), false);
+    return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file), false);
 }
 
 void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
@@ -515,23 +520,23 @@ void gen_final_snark_proof(void *circomWitnessFinal, char* zkeyFile, char* outpu
 void setLogLevel(uint64_t level) {
     LogLevel new_level;
     switch(level) {
-        case 0:
-            new_level = DISABLE_LOG;
-            break;
-        case 1:
-        case 2:
-        case 3:
-            new_level = LOG_LEVEL_INFO;
-            break;
-        case 4:
-            new_level = LOG_LEVEL_DEBUG;
-            break;
-        case 5:
-            new_level = LOG_LEVEL_TRACE;
-            break;
-        default:
-            cerr << "Invalid log level: " << level << endl;
-            return;
+    case 0:
+        new_level = DISABLE_LOG;
+        break;
+    case 1:
+    case 2:
+    case 3:
+        new_level = LOG_LEVEL_INFO;
+        break;
+    case 4:
+        new_level = LOG_LEVEL_DEBUG;
+        break;
+    case 5:
+        new_level = LOG_LEVEL_TRACE;
+        break;
+    default:
+        cerr << "Invalid log level: " << level << endl;
+        return;
     }
 
     Logger::getInstance(LOG_TYPE::CONSOLE)->updateLogLevel((LOG_LEVEL)new_level);
