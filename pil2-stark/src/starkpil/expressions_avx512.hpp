@@ -146,7 +146,7 @@ public:
                             uint64_t l = (row + j + nextStrides[o]) % domainSize;
                             bufferT[nrowsPack*o + j] = params.pCustomCommitsFixed[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                         }
-                        Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*o + stage] + (stagePos + d)], &bufferT[nrowsPack*o]);
+                        Goldilocks::load_avx512(bufferT_[nColsStagesAcc[ns*o + stage] + (stagePos + d)], &bufferT[nrowsPack*o]);
                     }
                 }
             }
