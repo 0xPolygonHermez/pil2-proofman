@@ -819,9 +819,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     double time0 = omp_get_wtime();
     double time_prev = time0;
 
-    Goldilocks::Element *aux_trace = nullptr;
     CHECKCUDAERR(cudaMemset(d_buffers->d_aux_trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
-    std::cout << " rick: total meme allocated: " << setupCtx.starkInfo.mapTotalN << std::endl;
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
@@ -857,7 +855,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     StepsParams params = {
         trace : trace,
-        aux_trace : aux_trace,
+        aux_trace : nullptr,
         publicInputs : publicInputs,
         challenges : challenges,
         airgroupValues : nullptr,

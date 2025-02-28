@@ -482,7 +482,7 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
 #ifndef __USE_CUDA__
 // Gen proof
 // =================================================================================
-void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, uint64_t* proofBuffer, char *proofFile) {
+void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, uint64_t* proofBuffer, char *proofFile, void *d_buffers) {
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, (Goldilocks::Element *)pBuffHelper, proofBuffer, string(proofFile));
 }
 

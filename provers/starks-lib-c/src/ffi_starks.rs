@@ -713,6 +713,7 @@ pub fn gen_proof_c(
     airgroup_id: u64,
     air_id: u64,
     instance_id: u64,
+    d_buffers: *mut c_void,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -728,6 +729,7 @@ pub fn gen_proof_c(
             p_buff_helper as *mut std::os::raw::c_void,
             proof_buffer,
             proof_file_ptr,
+            d_buffers,
         );
     }
 }

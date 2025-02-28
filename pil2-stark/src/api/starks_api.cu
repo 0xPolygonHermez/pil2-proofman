@@ -38,11 +38,12 @@ void *gen_device_commit_buffers(void *maxSizes_)
     return (void *)buffers;
 
 }
-void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, uint64_t* proofBuffer, char *proofFile) {
+void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, uint64_t* proofBuffer, char *proofFile, void *d_buffers_) {
 
-    SetupCtx *setupCtx = (SetupCtx *)pSetupCtx;
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    SetupCtx *pSetupCtx = (SetupCtx *)pSetupCtx_;
 
-    genProof_gpu(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, (Goldilocks::Element *)pBuffHelper, proofBuffer, string(proofFile));
+    genProof_gpu(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, (Goldilocks::Element *)pBuffHelper, proofBuffer, string(proofFile), d_buffers);
 }
 
 void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_)

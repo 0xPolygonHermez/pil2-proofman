@@ -3,6 +3,9 @@
 
 #include "starks.hpp"
 #include "hints.hpp"
+#include "cuda_utils.cuh"
+#include "gl64_t.cuh"
+#include "expressions_gpu.cuh"
 
 void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element *pBuffHelper, bool prod) {
     std::string name = prod ? "gprod_col" : "gsum_col";
@@ -44,8 +47,15 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Goldilocks
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, uint64_t *proofBuffer, std::string proofFile) {
+void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers) {
+    
     TimerStart(STARK_PROOF);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    double time0 = omp_get_wtime();
+    double time_prev = time0;
+
+    CHECKCUDAERR(cudaMemset(d_buffers->d_aux_trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
+
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     

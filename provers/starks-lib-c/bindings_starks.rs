@@ -389,7 +389,7 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_S_PmPc"]
+    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_S_PmPcS_"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         airgroupId: u64,
@@ -400,6 +400,7 @@ extern "C" {
         pBuffHelper: *mut ::std::os::raw::c_void,
         proofBuffer: *mut u64,
         proofFile: *mut ::std::os::raw::c_char,
+        d_buffers: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {

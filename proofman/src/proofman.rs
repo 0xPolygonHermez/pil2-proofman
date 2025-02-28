@@ -40,7 +40,7 @@ use proofman_common::{ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop}
 use std::ffi::c_void;
 
 use proofman_util::{
-    create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace,
+    create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace, DeviceBuffer,
 };
 
 pub struct ProofMan<F> {
@@ -330,7 +330,8 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let max_sizes = discover_max_sizes(&pctx, &setups);
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-        let d_buffers = gen_device_commit_buffers_c(max_sizes_ptr);
+        
+        let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
 
         for instance_id in my_instances.iter() {
             let (airgroup_id, air_id, all) = instances[*instance_id];
@@ -357,6 +358,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 output_dir_path.clone(),
                 aux_trace.clone(),
                 airgroup_values_air_instances.clone(),
+                d_buffers.clone(),
             ));
         }
 
@@ -417,7 +419,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 &trace,
                 &prover_buffer,
                 output_dir_path.clone(),
-                d_buffers,
+                d_buffers.lock().unwrap().get_ptr(),
             )
             .expect("Failed to generate recursive proof");
             recursive1_proofs[idx] = proof_recursive;
@@ -433,7 +435,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             &trace,
             &prover_buffer,
             output_dir_path.clone(),
-            d_buffers,
+            d_buffers.lock().unwrap().get_ptr(),
         );
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
@@ -474,6 +476,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
@@ -508,6 +511,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 airgroup_id as u64,
                 air_id as u64,
                 air_instance_id as u64,
+                d_buffers.lock().unwrap().get_ptr(),
             );
 
             airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
