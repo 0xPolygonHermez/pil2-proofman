@@ -423,7 +423,7 @@ __global__ void computeEvals_v2(
     }
 }
 
-void evmap_inplace(StepsParams &params, StepsParams &d_params, uint64_t LEv_offset, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers)
+void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t LEv_offset, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers)
 {
 
     uint64_t extendBits = starks->setupCtx.starkInfo.starkStruct.nBitsExt - starks->setupCtx.starkInfo.starkStruct.nBits;
@@ -455,15 +455,6 @@ void evmap_inplace(StepsParams &params, StepsParams &d_params, uint64_t LEv_offs
     CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfo, size_eval * sizeof(EvalInfo), cudaMemcpyHostToDevice));
     delete[] evalsInfo;
 
-    /*dim3 nThreads(128);
-    dim3 nBlocks((size_eval + nThreads.x - 1) / nThreads.x);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time = omp_get_wtime();
-    computeEvals<<<nBlocks, nThreads>>>(extendBits, size_eval, N, openingsSize, LEv_offset, (gl64_t*)d_params.evals, d_evalsInfo, (gl64_t*)d_buffers->d_aux_trace, (gl64_t*) d_buffers->d_constTree);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    std::cout << "goal computeEvals: " << time << std::endl;*/
-
     dim3 nThreads(256);
     dim3 nBlocks(size_eval);
     CHECKCUDAERR(cudaDeviceSynchronize());
@@ -473,10 +464,10 @@ void evmap_inplace(StepsParams &params, StepsParams &d_params, uint64_t LEv_offs
     time = omp_get_wtime() - time;
     std::cout << "rick computeEvals_v2: " << time << std::endl;
 
-    cudaMemcpy(params.evals, d_params.evals, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+    cudaMemcpy(evals, d_params.evals, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
     cudaFree(d_evalsInfo);
 
-    proof.proof.setEvals(params.evals);
+    proof.proof.setEvals(evals);
 }
 
 __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_twiddles, uint32_t ncols)
@@ -1020,9 +1011,8 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     {
         if (setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == 2)
         {
-            Goldilocks::Element *pols = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.trace : params.aux_trace;
             uint64_t offset_ = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(2), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos;
-            Dest destStruct(&pols[offset_], N, setupCtx.starkInfo.mapSectionsN["cm" + to_string(2)]);
+            Dest destStruct(NULL, N, setupCtx.starkInfo.mapSectionsN["cm" + to_string(2)]);
             destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
             destStruct.dest_gpu = (Goldilocks::Element *)(d_buffers->d_aux_trace + offset_);
             dests2.push_back(destStruct);
@@ -1081,7 +1071,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     {
         domainSize = N;
     }
-    Dest destStructq(&params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], domainSize);
+    Dest destStructq(NULL, domainSize);
     destStructq.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
     destStructq.dest_gpu = (Goldilocks::Element *)(d_buffers->d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]);
     std::vector<Dest> dests3 = {destStructq};
@@ -1140,7 +1130,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     std::cout << "Rick fins PUNT17 (LEv) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
-    evmap_inplace(params, d_params, LEv_offset, proof, &starks, d_buffers);
+    evmap_inplace(evals, d_params, LEv_offset, proof, &starks, d_buffers);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
@@ -1176,7 +1166,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
     uint64_t xDivXSub_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)];
-    // params.xDivXSub = &trace[xDivXSub_offset];
     d_params.xDivXSub = (Goldilocks::Element *)(d_buffers->d_aux_trace + xDivXSub_offset);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
@@ -1202,7 +1191,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     {
         domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
     }
-    Dest destStructf(&params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], domainSize);
+    Dest destStructf(NULL, domainSize);
     destStructf.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
     destStructf.dest_gpu = (Goldilocks::Element *)(d_buffers->d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
     std::vector<Dest> destsf = {destStructf};

@@ -245,7 +245,7 @@ public:
         cudaFree(h_deviceArgs.tmp3);
     }
 
-    void setBufferTInfo(uint64_t domainSize, StepsParams &params, ParserArgs &parserArgs, std::vector<Dest> &dests)
+    void setBufferTInfo(uint64_t domainSize, StepsParams &params,  StepsParams & params_gpu, ParserArgs &parserArgs, std::vector<Dest> &dests)
     {
 
         bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
@@ -333,7 +333,6 @@ public:
         {
             deviceArgs.offsetsStages[i] = offsetsStages[i];
         }
-        deviceArgs.constPols = domainExtended ? &params.pConstPolsExtendedTreeAddress[2] : params.pConstPolsAddress;
         deviceArgs.constPolsSize = setupCtx.starkInfo.nConstants;
         deviceArgs.cmPolsInfoSize = setupCtx.starkInfo.cmPolsMap.size();
         deviceArgs.cmPolsInfo = new uint64_t[deviceArgs.cmPolsInfoSize * 3];
@@ -360,9 +359,6 @@ public:
         deviceArgs.zi = setupCtx.proverHelpers.zi;
         deviceArgs.x_n = setupCtx.proverHelpers.x_n;
         deviceArgs.x_2ns = setupCtx.proverHelpers.x_2ns;
-        deviceArgs.xDivXSub = params.xDivXSub;
-        deviceArgs.trace = params.trace;
-        deviceArgs.aux_trace = params.aux_trace;
 
         // Dests
         deviceArgs.dests = new DestGPU[dests.size()];
@@ -434,124 +430,13 @@ public:
         deviceArgs.nBlocks = nBlocks;
     }
 
-    inline void loadPolynomials(Goldilocks::Element *bufferT_, uint64_t row)
-    {
-
-        uint64_t nOpenings = deviceArgs.nOpenings;
-        uint64_t ns = deviceArgs.ns;
-        bool domainExtended = deviceArgs.domainExtended;
-        uint64_t domainSize = deviceArgs.domainSize;
-        uint64_t nrowsPack = deviceArgs.nrowsPack;
-        Goldilocks::Element *constPols = deviceArgs.constPols;
-        uint64_t constPolsSize = deviceArgs.constPolsSize;
-        uint64_t *nextStrides = deviceArgs.nextStrides;
-        uint64_t *nColsStages = deviceArgs.nColsStages;
-        uint64_t *nColsStagesAcc = deviceArgs.nColsStagesAcc;
-        uint64_t *offsetsStages = deviceArgs.offsetsStages;
-        uint64_t cmPolsInfoSize = deviceArgs.cmPolsInfoSize;
-        uint64_t *cmPolsInfo = deviceArgs.cmPolsInfo;
-        Goldilocks::Element *trace = deviceArgs.trace;
-        Goldilocks::Element *aux_trace = deviceArgs.aux_trace;
-        Goldilocks::Element *zi = deviceArgs.zi;
-        Goldilocks::Element *x_n = deviceArgs.x_n;
-        Goldilocks::Element *x_2ns = deviceArgs.x_2ns;
-        Goldilocks::Element *xDivXSub = deviceArgs.xDivXSub;
-
-        for (uint64_t k = 0; k < constPolsSize; ++k)
-        {
-            for (uint64_t o = 0; o < nOpenings; ++o)
-            {
-                for (uint64_t j = 0; j < nrowsPack; ++j)
-                {
-                    uint64_t l = (row + j + nextStrides[o]) % domainSize;
-                    bufferT_[(nColsStagesAcc[ns * o] + k) * nrowsPack + j] = constPols[l * nColsStages[0] + k];
-                }
-            }
-        }
-
-        for (uint64_t k = 0; k < cmPolsInfoSize; ++k)
-        {
-            uint64_t stage = cmPolsInfo[k * 3];
-            uint64_t stagePos = cmPolsInfo[k * 3 + 1];
-            for (uint64_t d = 0; d < cmPolsInfo[k * 3 + 2]; ++d)
-            {
-                for (uint64_t o = 0; o < nOpenings; ++o)
-                {
-                    for (uint64_t j = 0; j < nrowsPack; ++j)
-                    {
-                        uint64_t l = (row + j + nextStrides[o]) % domainSize;
-                        if (stage == 1 && !domainExtended)
-                        {
-                            bufferT_[(nColsStagesAcc[ns * o + stage] + (stagePos + d)) * nrowsPack + j] = trace[l * nColsStages[stage] + stagePos + d];
-                        }
-                        else
-                        {
-                            bufferT_[(nColsStagesAcc[ns * o + stage] + (stagePos + d)) * nrowsPack + j] = aux_trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
-                        }
-                    }
-                }
-            }
-        }
-        if (deviceArgs.expType == 0)
-        {
-            for (uint64_t d = 0; d < deviceArgs.boundSize; ++d)
-            {
-                for (uint64_t j = 0; j < nrowsPack; ++j)
-                {
-                    bufferT_[(nColsStagesAcc[ns * nOpenings] + d + 1) * nrowsPack + j] = zi[row + j + d * domainSize];
-                }
-            }
-            for (uint64_t j = 0; j < nrowsPack; ++j)
-            {
-                bufferT_[(nColsStagesAcc[ns * nOpenings]) * nrowsPack + j] = x_2ns[row + j];
-            }
-        }
-        else if (deviceArgs.expType == 1)
-        {
-            for (uint64_t d = 0; d < nOpenings; ++d)
-            {
-                for (uint64_t k = 0; k < FIELD_EXTENSION; ++k)
-                {
-                    for (uint64_t j = 0; j < nrowsPack; ++j)
-                    {
-                        bufferT_[(nColsStagesAcc[ns * nOpenings] + d * FIELD_EXTENSION + k) * nrowsPack + j] = xDivXSub[(row + j + d * domainSize) * FIELD_EXTENSION + k];
-                    }
-                }
-            }
-        }
-        else
-        {
-            for (uint64_t j = 0; j < nrowsPack; ++j)
-            {
-                bufferT_[(nColsStagesAcc[ns * nOpenings]) * nrowsPack + j] = x_n[row + j];
-            }
-        }
-    }
-
-    inline void printTmp1(uint64_t row, Goldilocks::Element *tmp)
-    {
-        Goldilocks::Element buff[nrowsPack];
-        Goldilocks::copy_pack(nrowsPack, buff, tmp, false);
-        for (uint64_t i = 0; i < nrowsPack; ++i)
-        {
-            cout << "Value at row " << row + i << " is " << Goldilocks::toString(buff[i]) << endl;
-        }
-    }
-
-    inline void printTmp3(uint64_t row, Goldilocks::Element *tmp)
-    {
-        for (uint64_t i = 0; i < nrowsPack; ++i)
-        {
-            cout << "Value at row " << row + i << " is [" << Goldilocks::toString(tmp[i]) << ", " << Goldilocks::toString(tmp[nrowsPack + i]) << ", " << Goldilocks::toString(tmp[2 * nrowsPack + i]) << "]" << endl;
-        }
-    }
 
     void calculateExpressions_gpu(StepsParams &params, StepsParams &params_gpu, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize)
     {
 
         CHECKCUDAERR(cudaDeviceSynchronize());
         double time = omp_get_wtime();
-        setBufferTInfo(domainSize, params, parserArgs, dests);
+        setBufferTInfo(domainSize, params, params_gpu, parserArgs, dests);
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
         std::cout << "goal2_ setBufferTInfo time: " << time << std::endl;
@@ -595,7 +480,7 @@ public:
 
         CHECKCUDAERR(cudaDeviceSynchronize());
         double time = omp_get_wtime();
-        setBufferTInfo(domainSize, params, parserArgs, dests);
+        setBufferTInfo(domainSize, params, params_gpu, parserArgs, dests);
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
         std::cout << "goal2 setBufferTInfo time: " << time << std::endl;

@@ -32,34 +32,36 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 pub struct MaxSizes {
     pub max_n: u64,
     pub max_n_ext: u64,
-    pub max_wit_pols: u64,
-    pub max_ntt_pols: u64,
-    pub max_const_pols: u64,
-    pub max_n_publics: u64,
     pub max_trace_area: u64,
+    pub max_ntt_area: u64,
+    pub max_const_area: u64,
+    pub max_n_publics: u64,
+    pub max_aux_trace_area: u64,
     pub max_const_tree_size: u64,
 }
 
 pub fn discover_max_sizes<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> MaxSizes {
-    let mut max_n_bits = 0;
-    let mut max_n_bits_ext = 0;
-    let mut max_wit_pols = 0;
-    let mut max_ntt_pols: u64 = 0;
-    let mut max_const_pols = 0;
-    let mut max_n_publics = 0;
+    let mut max_n = 0;
+    let mut max_n_ext = 0;
     let mut max_trace_area = 0;
+    let mut max_ntt_area: u64 = 0;
+    let mut max_const_area = 0;
+    let mut max_n_publics = 0;
+    let mut max_aux_trace_area = 0;
     let mut max_const_tree_size = 0;
 
     let mut update_max_values = |setup: &Setup<F>| {
-        max_n_bits = max_n_bits.max(setup.stark_info.stark_struct.n_bits);
-        max_n_bits_ext = max_n_bits_ext.max(setup.stark_info.stark_struct.n_bits_ext);
-        max_wit_pols = max_wit_pols.max(setup.stark_info.map_sections_n["cm1"]);
-        max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm1"]);
-        max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm2"]);
-        max_ntt_pols = max_ntt_pols.max(setup.stark_info.map_sections_n["cm3"]); //rick: to be solved
-        max_const_pols = max_const_pols.max(setup.stark_info.n_constants);
+        let n = 1 << setup.stark_info.stark_struct.n_bits;
+        let n_extended = 1 << setup.stark_info.stark_struct.n_bits_ext;
+        max_n = max_n.max(n);
+        max_n_ext = max_n_ext.max(n_extended);
+        max_trace_area = max_trace_area.max(setup.stark_info.map_sections_n["cm1"]*n);
+        max_ntt_area = max_ntt_area.max(setup.stark_info.map_sections_n["cm1"]*n_extended);
+        max_ntt_area = max_ntt_area.max(setup.stark_info.map_sections_n["cm2"]*n_extended);
+        max_ntt_area = max_ntt_area.max(setup.stark_info.map_sections_n["cm3"]*n_extended);
+        max_const_area = max_const_area.max(setup.stark_info.n_constants * n);
         max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
-        max_trace_area = max_trace_area.max(setup.prover_buffer_size);
+        max_aux_trace_area = max_aux_trace_area.max(setup.prover_buffer_size);
         max_const_tree_size = max_const_tree_size.max(get_const_tree_size_c(setup.p_setup.p_stark_info));
     };
 
@@ -68,16 +70,23 @@ pub fn discover_max_sizes<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadc
 
     for instance_id in my_instances {
         let (airgroup_id, air_id, _) = instances[instance_id];
-        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+
+        let setup = setups.sctx.as_ref().get_setup(airgroup_id, air_id);
+        update_max_values(setup);
+
+        if pctx.options.aggregation {
+
+            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                update_max_values(setup);
+            }
+
+            let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+            update_max_values(setup);
+
+            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id);
             update_max_values(setup);
         }
-
-        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-        update_max_values(setup);
-
-        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id);
-        update_max_values(setup);
     }
 
     if let Some(setup) = setups.setup_vadcop_final.as_ref() {
@@ -89,13 +98,13 @@ pub fn discover_max_sizes<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadc
     }
 
     MaxSizes {
-        max_n: 1 << max_n_bits,
-        max_n_ext: 1 << max_n_bits_ext,
-        max_wit_pols,
-        max_ntt_pols,
-        max_const_pols,
-        max_n_publics,
+        max_n,
+        max_n_ext,
         max_trace_area,
+        max_ntt_area,
+        max_const_area,
+        max_n_publics,
+        max_aux_trace_area,
         max_const_tree_size,
     }
 }
