@@ -117,13 +117,13 @@ void computeExpressions(DeviceArguments *d_deviceArgs, DeviceArguments *deviceAr
 void copyPolynomial(DeviceArguments *deviceArgs, Goldilocks::Element *destVals, bool inverse, bool batch, uint64_t dim, Goldilocks::Element *tmp);
 void multiplyPolynomials(DeviceArguments *deviceArgs, DestGPU &dest, Goldilocks::Element *destVals);
 void storePolynomial(DeviceArguments *deviceArgs, DestGPU *dests, uint32_t nDests, Goldilocks::Element *destVals, uint64_t row);
-__device__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row, uint32_t idest);
-__device__ void storePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row);
+__device__ __noinline__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row, uint32_t idest);
+__device__ __noinline__ void storePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row);
 __global__ void copyPolynomial_(DeviceArguments *d_deviceArgs, Goldilocks::Element *d_destVals, bool inverse, uint64_t dim, Goldilocks::Element *d_tmp);
-__device__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl64_t *d_destVals, bool inverse, uint64_t dim, gl64_t *d_tmp);
+__device__ __noinline__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl64_t *d_destVals, bool inverse, uint64_t dim, gl64_t *d_tmp);
 __global__ void loadPolynomials_(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock);
-__device__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock);
-__device__ void multiplyPolynomials__(DeviceArguments *deviceArgs, DestGPU &dest, gl64_t *destVals);
+__device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock);
+__device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, DestGPU &dest, gl64_t *destVals);
 __global__ void computeExpressions_(DeviceArguments *d_deviceArgs);
 __global__ void freeDeviceArguments_(DeviceArguments *d_deviceArgs);
 
@@ -603,7 +603,7 @@ public:
     }
 };
 
-__device__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row, uint32_t idest)
+__device__ __noinline__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row, uint32_t idest)
 {
 
     if (d_deviceArgs->dests[idest].dim == 1)
@@ -620,11 +620,11 @@ __device__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *dest
     }
 }
 
-__global__ __launch_bounds__(128, 4) void copyPolynomial_(DeviceArguments *d_deviceArgs, Goldilocks::Element *d_destVals, bool inverse, uint64_t dim, Goldilocks::Element *d_tmp)
+__global__ void copyPolynomial_(DeviceArguments *d_deviceArgs, Goldilocks::Element *d_destVals, bool inverse, uint64_t dim, Goldilocks::Element *d_tmp)
 {
     copyPolynomial__(d_deviceArgs, (gl64_t *)d_destVals, inverse, dim, (gl64_t *)d_tmp);
 }
-__device__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, bool inverse, uint64_t dim, gl64_t *temp)
+__device__ __noinline__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, bool inverse, uint64_t dim, gl64_t *temp)
 {
     int idx = threadIdx.x;
     if (dim == 1)
@@ -659,13 +659,13 @@ __device__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals
         }
     }
 }
-__global__ __launch_bounds__(128, 4) void loadPolynomials_(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
+__global__ void loadPolynomials_(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
 {
 
     loadPolynomials__(d_deviceArgs, row, iBlock);
 }
 
-__device__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
+__device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
 {
 
     uint64_t row_loc = threadIdx.x;
@@ -674,24 +674,15 @@ __device__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, u
     bool domainExtended = d_deviceArgs->domainExtended;
     uint64_t domainSize = d_deviceArgs->domainSize;
     uint64_t nrowsPack = d_deviceArgs->nrowsPack;
-    Goldilocks::Element *constPols = domainExtended ? &d_deviceArgs->constPols[2] : d_deviceArgs->constPols;
-    uint64_t constPolsSize = d_deviceArgs->constPolsSize;
     uint64_t *nextStrides = d_deviceArgs->nextStrides;
     uint64_t *nColsStages = d_deviceArgs->nColsStages;
     uint64_t *nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
-    uint64_t *offsetsStages = d_deviceArgs->offsetsStages;
-    uint64_t cmPolsInfoSize = d_deviceArgs->cmPolsInfoSize;
-    uint64_t *cmPolsInfo = d_deviceArgs->cmPolsInfo;
-    Goldilocks::Element *trace = d_deviceArgs->trace;
-    Goldilocks::Element *aux_trace = d_deviceArgs->aux_trace;
-    Goldilocks::Element *zi = d_deviceArgs->zi;
-    Goldilocks::Element *x_n = d_deviceArgs->x_n;
-    Goldilocks::Element *x_2ns = d_deviceArgs->x_2ns;
-    Goldilocks::Element *xDivXSub = d_deviceArgs->xDivXSub;
     Goldilocks::Element *d_bufferT_ = &d_deviceArgs->bufferT_[iBlock * d_deviceArgs->bufferSize];
 
-    for (uint64_t k = 0; k < constPolsSize; ++k)
+    #pragma unroll 1
+    for (uint64_t k = 0; k < d_deviceArgs->constPolsSize; ++k)
     {
+        Goldilocks::Element *constPols = domainExtended ? &d_deviceArgs->constPols[2] : d_deviceArgs->constPols;
         for (uint64_t o = 0; o < nOpenings; ++o)
         {
             uint64_t l = (row + row_loc + nextStrides[o]) % domainSize;
@@ -699,8 +690,10 @@ __device__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, u
         }
     }
 
-    for (uint64_t k = 0; k < cmPolsInfoSize; ++k)
+    #pragma unroll 1
+    for (uint64_t k = 0; k < d_deviceArgs->cmPolsInfoSize; ++k)
     {
+        uint64_t *cmPolsInfo = d_deviceArgs->cmPolsInfo;
         uint64_t stage = cmPolsInfo[k * 3];
         uint64_t stagePos = cmPolsInfo[k * 3 + 1];
         for (uint64_t d = 0; d < cmPolsInfo[k * 3 + 2]; ++d)
@@ -708,43 +701,45 @@ __device__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, u
             for (uint64_t o = 0; o < nOpenings; ++o)
             {
                 uint64_t l = (row + row_loc + nextStrides[o]) % domainSize;
-                if (stage == 1 && !domainExtended)
+                if (stage == 1 && !d_deviceArgs->domainExtended)
                 {
-                    d_bufferT_[(nColsStagesAcc[ns * o + stage] + (stagePos + d)) * nrowsPack + row_loc] = trace[l * nColsStages[stage] + stagePos + d];
+                    d_bufferT_[(nColsStagesAcc[ns * o + stage] + (stagePos + d)) * nrowsPack + row_loc] = d_deviceArgs->trace[l * nColsStages[stage] + stagePos + d];
                 }
                 else
                 {
-                    d_bufferT_[(nColsStagesAcc[ns * o + stage] + (stagePos + d)) * nrowsPack + row_loc] = aux_trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                    uint64_t *offsetsStages = d_deviceArgs->offsetsStages;
+                    d_bufferT_[(nColsStagesAcc[ns * o + stage] + (stagePos + d)) * nrowsPack + row_loc] = d_deviceArgs->aux_trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                 }
             }
         }
     }
-
     if (d_deviceArgs->expType == 0)
     {
+        #pragma unroll 1
         for (uint64_t d = 0; d < d_deviceArgs->boundSize; ++d)
         {
-            d_bufferT_[(nColsStagesAcc[ns * nOpenings] + d + 1) * nrowsPack + row_loc] = zi[row + row_loc + d * domainSize];
+            d_bufferT_[(nColsStagesAcc[ns * nOpenings] + d + 1) * nrowsPack + row_loc] = d_deviceArgs->zi[row + row_loc + d * domainSize];
         }
-        d_bufferT_[(nColsStagesAcc[ns * nOpenings]) * nrowsPack + row_loc] = x_2ns[row + row_loc];
+        d_bufferT_[(nColsStagesAcc[ns * nOpenings]) * nrowsPack + row_loc] = d_deviceArgs->x_2ns[row + row_loc];
     }
     else if (d_deviceArgs->expType == 1)
     {
+        #pragma unroll 1
         for (uint64_t d = 0; d < nOpenings; ++d)
         {
             for (uint64_t k = 0; k < FIELD_EXTENSION; ++k)
             {
-                d_bufferT_[(nColsStagesAcc[ns * nOpenings] + d * FIELD_EXTENSION + k) * nrowsPack + row_loc] = xDivXSub[(row + row_loc + d * domainSize) * FIELD_EXTENSION + k];
+                d_bufferT_[(nColsStagesAcc[ns * nOpenings] + d * FIELD_EXTENSION + k) * nrowsPack + row_loc] = d_deviceArgs->xDivXSub[(row + row_loc + d * domainSize) * FIELD_EXTENSION + k];
             }
         }
     }
     else
     {
-        d_bufferT_[(nColsStagesAcc[ns * nOpenings]) * nrowsPack + row_loc] = x_n[row + row_loc];
+        d_bufferT_[(nColsStagesAcc[ns * nOpenings]) * nrowsPack + row_loc] = d_deviceArgs->x_n[row + row_loc];
     }
 }
 
-__device__ void multiplyPolynomials__(DeviceArguments *deviceArgs, DestGPU &dest, gl64_t *destVals)
+__device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, DestGPU &dest, gl64_t *destVals)
 {
     if (dest.dim == 1)
     {
@@ -771,171 +766,88 @@ __device__ void multiplyPolynomials__(DeviceArguments *deviceArgs, DestGPU &dest
         gl64_t::copy_gpu(&destVals[2 * deviceArgs->nrowsPack], &vals[2 * deviceArgs->nrowsPack], false);
     }
 }
+
 __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d_deviceArgs)
 {
 
     int chunk_idx = blockIdx.x;
-    int pack_idx = threadIdx.x;
-    uint32_t iBlock = blockIdx.x;
-
-    gl64_t *challenges = (gl64_t *)d_deviceArgs->challenges;
-    gl64_t *numbers = (gl64_t *)d_deviceArgs->numbers;
-    gl64_t *publics = (gl64_t *)d_deviceArgs->publics;
-    gl64_t *evals = (gl64_t *)d_deviceArgs->evals;
-    gl64_t *airgroupValues = (gl64_t *)d_deviceArgs->airgroupValues;
-    gl64_t *airValues = (gl64_t *)d_deviceArgs->airValues;
-    uint64_t *nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
-    uint64_t domainSize = d_deviceArgs->domainSize;
-    uint64_t nrowsPack = d_deviceArgs->nrowsPack;
-    assert(nrowsPack == blockDim.x);
-    DestGPU *dests = d_deviceArgs->dests;
-    uint32_t nDests = d_deviceArgs->nDests;
-    uint64_t nchunks = domainSize / nrowsPack;
-    gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[iBlock * d_deviceArgs->destValsSize]);
-    gl64_t *bufferT_ = (gl64_t *)(&d_deviceArgs->bufferT_[iBlock * d_deviceArgs->bufferSize]);
-    gl64_t *tmp1 = (gl64_t *)(&d_deviceArgs->tmp1[iBlock * d_deviceArgs->tmp1Size]);
-    gl64_t *tmp3 = (gl64_t *)(&d_deviceArgs->tmp3[iBlock * d_deviceArgs->tmp3Size]);
-
-    gl64_t * expressions_params[10];
-    expressions_params[0] = bufferT_;
-    expressions_params[1] = tmp1;
-    expressions_params[2] = publics;
-    expressions_params[3] = numbers;
-    expressions_params[4] = airValues;
-    expressions_params[5] = NULL;//proofValues;
-    expressions_params[6] = tmp3;
-    expressions_params[7] = airgroupValues;
-    expressions_params[8] = challenges;
-    expressions_params[9] = evals;
-    //uint64_t debug_line = 150528;
-    //uint64_t debug_thread = 0;
+    assert(d_deviceArgs->nrowsPack == blockDim.x);
+    uint64_t nchunks = d_deviceArgs->domainSize / blockDim.x;
 
     while (chunk_idx < nchunks)
     {
-        uint64_t i = chunk_idx * nrowsPack;
-        loadPolynomials__(d_deviceArgs, i, iBlock);
-        for (uint64_t j = 0; j < nDests; ++j)
+        uint64_t i = chunk_idx * blockDim.x;
+        loadPolynomials__(d_deviceArgs, i, blockIdx.x);
+        #pragma unroll 1
+        for (uint64_t j = 0; j < d_deviceArgs->nDests; ++j)
         {
-            for (uint64_t k = 0; k < dests[j].nParams; ++k)
+            for (uint64_t k = 0; k < d_deviceArgs->dests[j].nParams; ++k)
             {
-                uint64_t i_args = 0;
 
-                if (dests[j].params[k].op == opType::cm || dests[j].params[k].op == opType::const_)
+                gl64_t * expressions_params[10];
+                expressions_params[0] = (gl64_t *)(&d_deviceArgs->bufferT_[blockIdx.x * d_deviceArgs->bufferSize]);
+                expressions_params[1] = (gl64_t *)(&d_deviceArgs->tmp1[blockIdx.x * d_deviceArgs->tmp1Size]);
+                expressions_params[2] = (gl64_t *)d_deviceArgs->publics;
+                expressions_params[3] = (gl64_t *)d_deviceArgs->numbers;
+                expressions_params[4] = (gl64_t *)d_deviceArgs->airValues;
+                expressions_params[5] = NULL;//proofValues;
+                expressions_params[6] = (gl64_t *)(&d_deviceArgs->tmp3[blockIdx.x * d_deviceArgs->tmp3Size]);
+                expressions_params[7] = (gl64_t *)d_deviceArgs->airgroupValues;
+                expressions_params[8] = (gl64_t *)d_deviceArgs->challenges;
+                expressions_params[9] = (gl64_t *)d_deviceArgs->evals;
+                gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
+                uint64_t *nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
+
+                if (d_deviceArgs->dests[j].params[k].op == opType::cm || d_deviceArgs->dests[j].params[k].op == opType::const_)
                 {
-                    uint64_t openingPointIndex = dests[j].params[k].rowOffsetIndex;
-                    uint64_t buffPos = d_deviceArgs->ns * openingPointIndex + dests[j].params[k].stage;
-                    uint64_t stagePos = dests[j].params[k].stagePos;
-                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * nrowsPack], dests[j].params[k].inverse, dests[j].params[k].dim, &bufferT_[(nColsStagesAcc[buffPos] + stagePos) * nrowsPack]);
+                    uint64_t openingPointIndex = d_deviceArgs->dests[j].params[k].rowOffsetIndex;
+                    uint64_t buffPos = d_deviceArgs->ns * openingPointIndex + d_deviceArgs->dests[j].params[k].stage;
+                    uint64_t stagePos = d_deviceArgs->dests[j].params[k].stagePos;
+                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * blockDim.x], d_deviceArgs->dests[j].params[k].inverse, d_deviceArgs->dests[j].params[k].dim, &expressions_params[0][(nColsStagesAcc[buffPos] + stagePos) * blockDim.x]);
                     continue;
                 }
-                else if (dests[j].params[k].op == opType::number)
+                else if (d_deviceArgs->dests[j].params[k].op == opType::number)
                 {
-                    gl64_t val(dests[j].params[k].value);
-                    if (dests[j].params[k].inverse)
+                    gl64_t val(d_deviceArgs->dests[j].params[k].value);
+                    if (d_deviceArgs->dests[j].params[k].inverse)
                         val = val.reciprocal();
-                    destVals[k * FIELD_EXTENSION * nrowsPack + pack_idx] = val;
+                    destVals[k * FIELD_EXTENSION * blockDim.x + threadIdx.x] = val;
                     continue;
                 }
-                uint8_t *ops = &d_deviceArgs->ops[dests[j].params[k].parserParams.opsOffset];
-                uint16_t *args = &d_deviceArgs->args[dests[j].params[k].parserParams.argsOffset];
-                //bool print = (3286 == dests[j].params[k].parserParams.nOps);
+                uint8_t *ops = &d_deviceArgs->ops[d_deviceArgs->dests[j].params[k].parserParams.opsOffset];
+                uint16_t *args = &d_deviceArgs->args[d_deviceArgs->dests[j].params[k].parserParams.argsOffset];
 
-            
-                for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
+                uint64_t i_args = 0;
+                for (uint64_t kk = 0; kk < d_deviceArgs->dests[j].params[k].parserParams.nOps; ++kk) {
                     switch (ops[kk]) {
                         case 0: {
                             // COPY dim1 to dim1
-                            gl64_t::copy_gpu( &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6])  * nrowsPack + args[i_args + 6]* args[i_args + 5]],args[i_args + 6] );
-                            /*if(  i==debug_line && threadIdx.x == debug_thread && print){
-                                //result
-                                printf("Case 0\n");
-                                printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
-                                printf("Arguments %lu\n", expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * nrowsPack].get_val());
-                                printf("Result: %lu\n", expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack].get_val());
-                            }*/
+                            gl64_t::copy_gpu( &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * blockDim.x], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6])  * blockDim.x + args[i_args + 6]* args[i_args + 5]],args[i_args + 6] );
+                            
                             i_args += 7;
                             break;
                         }
                         case 1: {
                             // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
-                            /*if( i==debug_line && threadIdx.x == debug_thread && print){
-                                //result                                
-                                printf("Arguments: %lu %d %lu %d\n", 
-                                    expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]].get_val(), 
-                                    args[i_args + 7], 
-                                    expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]].get_val(), 
-                                    args[i_args + 11]);
-                                printf("domainSize: %lu\n", domainSize);
-                            }*/
-                            gl64_t::op_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
-                            /*if( i==debug_line && threadIdx.x == debug_thread && print){
-                                //result
-                                printf("Case 1\n");
-                                printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
-                                printf("Buffer: %d %d %d \n", args[i_args + 1], args[i_args + 4], args[i_args + 8]);
-                                printf("Arguments: %lu %d %lu %d\n", 
-                                    expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]].get_val(), 
-                                    args[i_args + 7], 
-                                    expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]].get_val(), 
-                                    args[i_args + 11]);
-                                printf("Result: %lu\n", expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].get_val());
-                                printf("args: %d %d %d %d %d %d %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5], args[i_args + 6], args[i_args + 7], args[i_args + 8], args[i_args + 9], args[i_args + 10], args[i_args + 11]);
-                            }*/
+                            gl64_t::op_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * blockDim.x ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * blockDim.x + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * blockDim.x + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
                             i_args += 12;
                             break;
                         }
                         case 2: {
                             // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
-                            Goldilocks3GPU::op_31_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
-                            /*if(  i==debug_line && threadIdx.x == debug_thread && print){
-                                //result
-                                printf("Case 2\n");
-                                printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
-                                printf("Buffer: %d %d %d \n", args[i_args + 1], args[i_args + 4], args[i_args + 8]);
-                                printf("Arguments: %lu %lu %lu, %d, %lu %lu %lu,  %d\n", 
-                                    expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7]) * nrowsPack + args[i_args + 7]* args[i_args + 6]].get_val(), 
-                                    expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7]) * nrowsPack+ args[i_args + 7]* args[i_args + 6] +1].get_val(),
-                                    expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7]) * nrowsPack+ args[i_args + 7]* args[i_args + 6] +2].get_val(),
-                                    args[i_args + 7], 
-                                    expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]].get_val(),
-                                    expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack+ args[i_args + 11] * args[i_args + 10]+1].get_val(),
-                                    expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack+ args[i_args + 11] * args[i_args + 10]+2].get_val(), 
-                                    args[i_args + 11]);
-                                printf("Result: %lu %lu %lu\n", 
-                                    expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].get_val(), 
-                                    expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 1].get_val(),
-                                    expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 2].get_val());
-                            }*/
+                            Goldilocks3GPU::op_31_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * blockDim.x ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * blockDim.x + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * blockDim.x + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
                             i_args += 12;
                             break;
                         }
                         case 3: {
                             // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
-                            Goldilocks3GPU::op_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * nrowsPack + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * nrowsPack + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
-                            /*if(  i==debug_line && threadIdx.x == debug_thread && print){
-                                //result
-                                printf("Case 3\n");
-                                printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
-                                printf("Result: %lu %lu %lu\n", 
-                                    expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].get_val(), 
-                                    expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 1].get_val(),
-                                    expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack + 2].get_val());
-                            }*/
+                            Goldilocks3GPU::op_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * blockDim.x ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * blockDim.x + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * blockDim.x + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
                             i_args += 12;
                             break;
                         }
                         case 4: {
                             // COPY dim3 to dim3
-                            Goldilocks3GPU::copy_gpu( &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6])  * nrowsPack + args[i_args + 6]* args[i_args + 5]],args[i_args + 6] );
-                            /*if(  i==debug_line && threadIdx.x == debug_thread && print){
-                                //result
-                                printf("Case 4\n");
-                                printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
-                                printf("Result: %lu %lu %lu\n", 
-                                    expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack].get_val(), 
-                                    expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack + 1].get_val(),
-                                    expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * nrowsPack + 2].get_val());
-                            }*/
+                            Goldilocks3GPU::copy_gpu( &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * blockDim.x], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6])  * blockDim.x + args[i_args + 6]* args[i_args + 5]],args[i_args + 6] );
                             i_args += 7;
                             break;
                         }
@@ -946,19 +858,20 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
                     }
                 }
 
-                if (dests[j].params[k].parserParams.destDim == 1)
+                if (d_deviceArgs->dests[j].params[k].parserParams.destDim == 1)
                 {
-                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * nrowsPack], dests[j].params[k].inverse, dests[j].params[k].parserParams.destDim, &tmp1[dests[j].params[k].parserParams.destId * nrowsPack]);
+                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * blockDim.x], d_deviceArgs->dests[j].params[k].inverse, d_deviceArgs->dests[j].params[k].parserParams.destDim, &expressions_params[1][d_deviceArgs->dests[j].params[k].parserParams.destId * blockDim.x]);
                 }
                 else
                 {
-                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * nrowsPack], dests[j].params[k].inverse, dests[j].params[k].parserParams.destDim, &tmp3[dests[j].params[k].parserParams.destId * FIELD_EXTENSION * nrowsPack]);
+                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * blockDim.x], d_deviceArgs->dests[j].params[k].inverse, d_deviceArgs->dests[j].params[k].parserParams.destDim, &expressions_params[6][d_deviceArgs->dests[j].params[k].parserParams.destId * FIELD_EXTENSION * blockDim.x]);
                 }
             }
 
-            if (dests[j].nParams == 2)
+            gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
+            if (d_deviceArgs->dests[j].nParams == 2)
             {
-                multiplyPolynomials__(d_deviceArgs, dests[j], destVals);
+                multiplyPolynomials__(d_deviceArgs, d_deviceArgs->dests[j], destVals);
             }
             storeOnePolynomial__(d_deviceArgs, destVals, i, j);
         }
@@ -967,3 +880,120 @@ __global__ __launch_bounds__(128, 4) void computeExpressions_(DeviceArguments *d
 }
 
 #endif
+
+/*
+__global__  void computeExpressions_(DeviceArguments *d_deviceArgs)
+{
+
+    assert(d_deviceArgs->nrowsPack == blockDim.x);
+    int chunk_idx = blockIdx.x;
+    uint64_t nchunks = d_deviceArgs->domainSize/ blockDim.x;
+
+    while (chunk_idx < nchunks)
+    {
+        loadPolynomials__(d_deviceArgs, chunk_idx * blockDim.x, blockIdx.x);
+        #pragma unroll 1
+        for (uint64_t j = 0; j < d_deviceArgs->nDests; ++j)
+        {
+            for (uint64_t k = 0; k < d_deviceArgs->dests[j].nParams; ++k)
+            {
+                gl64_t * expressions_params[10];
+                expressions_params[0] = (gl64_t *)(&d_deviceArgs->bufferT_[blockIdx.x * d_deviceArgs->bufferSize]);
+                expressions_params[1] = (gl64_t *)(&d_deviceArgs->tmp1[blockIdx.x * d_deviceArgs->tmp1Size]);
+                expressions_params[2] = (gl64_t *)d_deviceArgs->publics;
+                expressions_params[3] = (gl64_t *)d_deviceArgs->numbers;
+                expressions_params[4] = (gl64_t *)d_deviceArgs->airValues;
+                expressions_params[5] = NULL;//proofValues;
+                expressions_params[6] = (gl64_t *)(&d_deviceArgs->tmp3[blockIdx.x * d_deviceArgs->tmp3Size]);
+                expressions_params[7] = (gl64_t *)d_deviceArgs->airgroupValues;
+                expressions_params[8] = (gl64_t *)d_deviceArgs->challenges;
+                expressions_params[9] = (gl64_t *)d_deviceArgs->evals;
+                uint64_t *nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
+
+                if (d_deviceArgs->dests[j].params[k].op == opType::cm || d_deviceArgs->dests[j].params[k].op == opType::const_)
+                {
+                    gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
+                    uint64_t openingPointIndex = d_deviceArgs->dests[j].params[k].rowOffsetIndex;
+                    uint64_t buffPos = d_deviceArgs->ns * openingPointIndex + d_deviceArgs->dests[j].params[k].stage;
+                    uint64_t stagePos = d_deviceArgs->dests[j].params[k].stagePos;
+                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * blockIdx.x], d_deviceArgs->dests[j].params[k].inverse, d_deviceArgs->dests[j].params[k].dim, &expressions_params[0][(nColsStagesAcc[buffPos] + stagePos) * blockIdx.x]);
+                    continue;
+                }
+                else if (d_deviceArgs->dests[j].params[k].op == opType::number)
+                {
+                    gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
+                    gl64_t val(d_deviceArgs->dests[j].params[k].value);
+                    if (d_deviceArgs->dests[j].params[k].inverse)
+                        val = val.reciprocal();
+                    destVals[k * FIELD_EXTENSION * blockIdx.x + threadIdx.x] = val;
+                    continue;
+                }
+                uint8_t *ops = &d_deviceArgs->ops[d_deviceArgs->dests[j].params[k].parserParams.opsOffset];
+                uint16_t *args = &d_deviceArgs->args[d_deviceArgs->dests[j].params[k].parserParams.argsOffset];
+                
+                uint64_t i_args = 0;
+                #pragma unroll 1
+                for (uint64_t kk = 0; kk < d_deviceArgs->dests[j].params[k].parserParams.nOps; ++kk) {
+                    switch (ops[kk]) {
+                        case 0: {
+                            // COPY dim1 to dim1
+                            gl64_t::copy_gpu( &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * blockIdx.x], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6])  * blockIdx.x + args[i_args + 6]* args[i_args + 5]],args[i_args + 6] );
+                            i_args += 7;
+                            break;
+                        }
+                        case 1: {
+                            // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
+                            gl64_t::op_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * blockIdx.x ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * blockIdx.x + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * blockIdx.x + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
+                            i_args += 12;
+                            break;
+                        }
+                        case 2: {
+                            // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
+                            Goldilocks3GPU::op_31_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * blockIdx.x ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * blockIdx.x + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * blockIdx.x + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
+                            i_args += 12;
+                            break;
+                        }
+                        case 3: {
+                            // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3 
+                            Goldilocks3GPU::op_gpu( args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * blockIdx.x ], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7])  * blockIdx.x + args[i_args + 7]* args[i_args + 6]],args[i_args + 7] , &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * blockIdx.x + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
+                            i_args += 12;
+                            break;
+                        }
+                        case 4: {
+                            // COPY dim3 to dim3
+                            Goldilocks3GPU::copy_gpu( &expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * blockIdx.x], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6])  * blockIdx.x + args[i_args + 6]* args[i_args + 5]],args[i_args + 6] );
+                            i_args += 7;
+                            break;
+                        }
+                        default: {
+                            printf(" Wrong operation!\n");
+                            assert(0);
+                        }
+                    }
+                }
+
+                if (d_deviceArgs->dests[j].params[k].parserParams.destDim == 1)
+                {
+                    gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
+                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * blockIdx.x], d_deviceArgs->dests[j].params[k].inverse, d_deviceArgs->dests[j].params[k].parserParams.destDim, &expressions_params[1][d_deviceArgs->dests[j].params[k].parserParams.destId * blockIdx.x]);
+                }
+                else
+                {
+                    gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
+                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * blockIdx.x], d_deviceArgs->dests[j].params[k].inverse, d_deviceArgs->dests[j].params[k].parserParams.destDim, &expressions_params[6][d_deviceArgs->dests[j].params[k].parserParams.destId * FIELD_EXTENSION * blockIdx.x]);
+                }
+                
+            }
+
+            gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
+            if (d_deviceArgs->dests[j].nParams == 2)
+            {
+                multiplyPolynomials__(d_deviceArgs, d_deviceArgs->dests[j], destVals);
+            }
+            storeOnePolynomial__(d_deviceArgs, destVals, chunk_idx * blockDim.x, j);
+        }
+        chunk_idx += gridDim.x;
+    }
+}
+
+*/

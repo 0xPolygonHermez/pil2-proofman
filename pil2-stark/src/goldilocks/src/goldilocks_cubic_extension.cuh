@@ -255,7 +255,7 @@ public:
     {
         inv(*result, *a);
     }
-    static __device__ __forceinline__ void inv(Element &result, Element &a)
+    static __device__ __noinline__ void inv(Element &result, Element &a)
     {
         gl64_t aa = a[0] * a[0];
         gl64_t ac = a[0] * a[2];

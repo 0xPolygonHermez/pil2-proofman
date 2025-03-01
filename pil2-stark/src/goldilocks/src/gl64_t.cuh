@@ -656,7 +656,7 @@ private:
     }
 
 public:
-    inline gl64_t reciprocal() const
+    __device__ __noinline__ gl64_t reciprocal() const
     {
         gl64_t t0, t1;
 
