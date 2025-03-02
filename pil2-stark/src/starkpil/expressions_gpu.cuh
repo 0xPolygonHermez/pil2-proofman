@@ -668,12 +668,7 @@ __global__ void loadPolynomials_(DeviceArguments *d_deviceArgs, uint64_t row, ui
 __device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
 {
 
-    uint64_t row_loc = threadIdx.x;
-    uint64_t nOpenings = d_deviceArgs->nOpenings;
-    uint64_t ns = d_deviceArgs->ns;
     bool domainExtended = d_deviceArgs->domainExtended;
-    uint64_t domainSize = d_deviceArgs->domainSize;
-    uint64_t nrowsPack = d_deviceArgs->nrowsPack;
     uint64_t *nextStrides = d_deviceArgs->nextStrides;
     uint64_t *nColsStages = d_deviceArgs->nColsStages;
     uint64_t *nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
@@ -683,10 +678,10 @@ __device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, ui
     for (uint64_t k = 0; k < d_deviceArgs->constPolsSize; ++k)
     {
         Goldilocks::Element *constPols = domainExtended ? &d_deviceArgs->constPols[2] : d_deviceArgs->constPols;
-        for (uint64_t o = 0; o < nOpenings; ++o)
+        for (uint64_t o = 0; o < d_deviceArgs->nOpenings; ++o)
         {
-            uint64_t l = (row + row_loc + nextStrides[o]) % domainSize;
-            d_bufferT_[(nColsStagesAcc[ns * o] + k) * nrowsPack + row_loc] = constPols[l * nColsStages[0] + k];
+            uint64_t l = (row + threadIdx.x + nextStrides[o]) % d_deviceArgs->domainSize;
+            d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * o] + k) * d_deviceArgs->nrowsPack + threadIdx.x] = constPols[l * nColsStages[0] + k];
         }
     }
 
@@ -698,17 +693,17 @@ __device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, ui
         uint64_t stagePos = cmPolsInfo[k * 3 + 1];
         for (uint64_t d = 0; d < cmPolsInfo[k * 3 + 2]; ++d)
         {
-            for (uint64_t o = 0; o < nOpenings; ++o)
+            for (uint64_t o = 0; o < d_deviceArgs->nOpenings; ++o)
             {
-                uint64_t l = (row + row_loc + nextStrides[o]) % domainSize;
+                uint64_t l = (row + threadIdx.x + nextStrides[o]) % d_deviceArgs->domainSize;
                 if (stage == 1 && !d_deviceArgs->domainExtended)
                 {
-                    d_bufferT_[(nColsStagesAcc[ns * o + stage] + (stagePos + d)) * nrowsPack + row_loc] = d_deviceArgs->trace[l * nColsStages[stage] + stagePos + d];
+                    d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * o + stage] + (stagePos + d)) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->trace[l * nColsStages[stage] + stagePos + d];
                 }
                 else
                 {
                     uint64_t *offsetsStages = d_deviceArgs->offsetsStages;
-                    d_bufferT_[(nColsStagesAcc[ns * o + stage] + (stagePos + d)) * nrowsPack + row_loc] = d_deviceArgs->aux_trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                    d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * o + stage] + (stagePos + d)) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->aux_trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
                 }
             }
         }
@@ -718,24 +713,24 @@ __device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, ui
         #pragma unroll 1
         for (uint64_t d = 0; d < d_deviceArgs->boundSize; ++d)
         {
-            d_bufferT_[(nColsStagesAcc[ns * nOpenings] + d + 1) * nrowsPack + row_loc] = d_deviceArgs->zi[row + row_loc + d * domainSize];
+            d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * d_deviceArgs->nOpenings] + d + 1) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->zi[row + threadIdx.x + d * d_deviceArgs->domainSize];
         }
-        d_bufferT_[(nColsStagesAcc[ns * nOpenings]) * nrowsPack + row_loc] = d_deviceArgs->x_2ns[row + row_loc];
+        d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * d_deviceArgs->nOpenings]) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->x_2ns[row + threadIdx.x];
     }
     else if (d_deviceArgs->expType == 1)
     {
         #pragma unroll 1
-        for (uint64_t d = 0; d < nOpenings; ++d)
+        for (uint64_t d = 0; d < d_deviceArgs->nOpenings; ++d)
         {
             for (uint64_t k = 0; k < FIELD_EXTENSION; ++k)
             {
-                d_bufferT_[(nColsStagesAcc[ns * nOpenings] + d * FIELD_EXTENSION + k) * nrowsPack + row_loc] = d_deviceArgs->xDivXSub[(row + row_loc + d * domainSize) * FIELD_EXTENSION + k];
+                d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * d_deviceArgs->nOpenings] + d * FIELD_EXTENSION + k) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->xDivXSub[(row + threadIdx.x + d * d_deviceArgs->domainSize) * FIELD_EXTENSION + k];
             }
         }
     }
     else
     {
-        d_bufferT_[(nColsStagesAcc[ns * nOpenings]) * nrowsPack + row_loc] = d_deviceArgs->x_n[row + row_loc];
+        d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * d_deviceArgs->nOpenings]) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->x_n[row + threadIdx.x];
     }
 }
 
