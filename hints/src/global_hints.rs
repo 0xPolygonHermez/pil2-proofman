@@ -15,10 +15,10 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: &ProofCtx<F>, airgroup_values: &[V
 
     let mut airgroupvalues = Vec::new();
     for agg_types in pctx.global_info.agg_types.iter() {
-        let mut values = vec![F::zero(); agg_types.len() * FIELD_EXTENSION];
+        let mut values = vec![F::ZERO; agg_types.len() * FIELD_EXTENSION];
         for (idx, agg_type) in agg_types.iter().enumerate() {
             if agg_type.agg_type == 1 {
-                values[idx * FIELD_EXTENSION] = F::one();
+                values[idx * FIELD_EXTENSION] = F::ONE;
             }
         }
         airgroupvalues.push(values);

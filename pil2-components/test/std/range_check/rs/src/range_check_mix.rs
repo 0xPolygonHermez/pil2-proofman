@@ -7,7 +7,11 @@ use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 use p3_field::PrimeField;
-use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rngs::StdRng};
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+};
 
 use crate::RangeCheckMixTrace;
 
@@ -15,7 +19,7 @@ define_wc_with_std!(RangeCheckMix, "RngChMix");
 
 impl<F: PrimeField> WitnessComponent<F> for RangeCheckMix<F>
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
     execute!(RangeCheckMixTrace, 1);
 
@@ -44,81 +48,81 @@ where
 
             for i in 0..num_rows {
                 // First interface
-                trace[i].a[0] = F::from_canonical_u16(rng.gen_range(0..=(1 << 8) - 1));
-                self.std_lib.range_check(trace[i].a[0], F::one(), range1);
+                trace[i].a[0] = F::from_u16(rng.random_range(0..=(1 << 8) - 1));
+                self.std_lib.range_check(trace[i].a[0], F::ONE, range1);
 
-                trace[i].a[1] = F::from_canonical_u8(rng.gen_range(50..=(1 << 7) - 1));
-                self.std_lib.range_check(trace[i].a[1], F::one(), range2);
+                trace[i].a[1] = F::from_u8(rng.random_range(50..=(1 << 7) - 1));
+                self.std_lib.range_check(trace[i].a[1], F::ONE, range2);
 
-                let mut a2_val: i128 = rng.gen_range(-1..=2i128.pow(3));
+                let mut a2_val: i128 = rng.random_range(-1..=2i128.pow(3));
                 if a2_val < 0 {
                     a2_val += F::order().to_i128().unwrap();
                 }
-                trace[i].a[2] = F::from_canonical_u64(a2_val as u64);
-                self.std_lib.range_check(trace[i].a[2], F::one(), range3);
+                trace[i].a[2] = F::from_u64(a2_val as u64);
+                self.std_lib.range_check(trace[i].a[2], F::ONE, range3);
 
-                let a3_val = rng.gen_range(-(2i128.pow(7)) + 1..=-50) + F::order().to_i128().unwrap();
-                trace[i].a[3] = F::from_canonical_u64(a3_val as u64);
-                self.std_lib.range_check(trace[i].a[3], F::one(), range4);
+                let a3_val = rng.random_range(-(2i128.pow(7)) + 1..=-50) + F::order().to_i128().unwrap();
+                trace[i].a[3] = F::from_u64(a3_val as u64);
+                self.std_lib.range_check(trace[i].a[3], F::ONE, range4);
 
                 // Second interface
-                let range_selector1 = rng.gen::<bool>();
+                let range_selector1 = rng.random::<bool>();
                 trace[i].range_sel[0] = F::from_bool(range_selector1);
 
-                let range_selector2 = rng.gen::<bool>();
+                let range_selector2 = rng.random::<bool>();
                 trace[i].range_sel[1] = F::from_bool(range_selector2);
 
                 if range_selector1 {
-                    trace[i].b[0] = F::from_canonical_u16(rng.gen_range(0..=(1 << 7) - 1));
+                    trace[i].b[0] = F::from_u16(rng.random_range(0..=(1 << 7) - 1));
 
-                    self.std_lib.range_check(trace[i].b[0], F::one(), range5);
+                    self.std_lib.range_check(trace[i].b[0], F::ONE, range5);
                 } else {
-                    trace[i].b[0] = F::from_canonical_u16(rng.gen_range(0..=(1 << 4) - 1));
+                    trace[i].b[0] = F::from_u16(rng.random_range(0..=(1 << 4) - 1));
 
-                    self.std_lib.range_check(trace[i].b[0], F::one(), range6);
+                    self.std_lib.range_check(trace[i].b[0], F::ONE, range6);
                 }
 
                 if range_selector2 {
-                    trace[i].b[1] = F::from_canonical_u16(rng.gen_range((1 << 5)..=(1 << 8) - 1));
+                    trace[i].b[1] = F::from_u16(rng.random_range((1 << 5)..=(1 << 8) - 1));
 
-                    self.std_lib.range_check(trace[i].b[1], F::one(), range7);
+                    self.std_lib.range_check(trace[i].b[1], F::ONE, range7);
                 } else {
-                    trace[i].b[1] = F::from_canonical_u16(rng.gen_range((1 << 8)..=(1 << 9) - 1));
+                    trace[i].b[1] = F::from_u16(rng.random_range((1 << 8)..=(1 << 9) - 1));
 
-                    self.std_lib.range_check(trace[i].b[1], F::one(), range8);
+                    self.std_lib.range_check(trace[i].b[1], F::ONE, range8);
                 }
 
                 // Third interface
-                let range = rng.gen_range(0..=2);
+                let range = rng.random_range(0..=2);
 
                 match range {
                     0 => {
-                        trace[i].range_sel[2] = F::one();
-                        trace[i].range_sel[3] = F::zero();
-                        trace[i].range_sel[4] = F::zero();
-                        trace[i].c[0] = F::from_canonical_u32(rng.gen_range(5225..=29023));
+                        trace[i].range_sel[2] = F::ONE;
+                        trace[i].range_sel[3] = F::ZERO;
+                        trace[i].range_sel[4] = F::ZERO;
+                        trace[i].c[0] = F::from_u32(rng.random_range(5225..=29023));
 
-                        self.std_lib.range_check(trace[i].c[0], F::one(), range9);
+                        self.std_lib.range_check(trace[i].c[0], F::ONE, range9);
                     }
                     1 => {
-                        trace[i].range_sel[2] = F::zero();
-                        trace[i].range_sel[3] = F::one();
-                        trace[i].range_sel[4] = F::zero();
-                        let mut colu_val: i128 = rng.gen_range(-10..=10);
+                        trace[i].range_sel[2] = F::ZERO;
+                        trace[i].range_sel[3] = F::ONE;
+                        trace[i].range_sel[4] = F::ZERO;
+                        let mut colu_val: i128 = rng.random_range(-10..=10);
                         if colu_val < 0 {
                             colu_val += F::order().to_i128().unwrap();
                         }
-                        trace[i].c[0] = F::from_canonical_u64(colu_val as u64);
+                        trace[i].c[0] = F::from_u64(colu_val as u64);
 
-                        self.std_lib.range_check(trace[i].c[0], F::one(), range11);
+                        self.std_lib.range_check(trace[i].c[0], F::ONE, range11);
                     }
                     2 => {
-                        trace[i].range_sel[2] = F::zero();
-                        trace[i].range_sel[3] = F::zero();
-                        trace[i].range_sel[4] = F::one();
-                        trace[i].c[0] = F::from_canonical_u32(rng.gen_range(0..=(1 << 7) - 1));
+                        trace[i].range_sel[2] = F::ZERO;
+                        trace[i].range_sel[3] = F::ZERO;
+                        trace[i].range_sel[4] = F::ONE;
+                        trace[i].c[0] = F::from_u32(rng.random_range(0..=(1 << 7) - 1));
 
-                        self.std_lib.range_check(trace[i].c[0], F::one(), range5);
+                        self.std_lib.range_check(trace[i].c[0], F::ONE, range5);
                     }
                     _ => panic!("Invalid range"),
                 }

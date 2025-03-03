@@ -4,7 +4,11 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
-use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rngs::StdRng};
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+};
 
 use crate::{DirectUpdateSumLocalTrace, DirectUpdatePublicValues, DirectUpdateProofValues, DirectUpdateSumLocalAirValues};
 
@@ -12,13 +16,13 @@ define_wc!(DirectUpdateSumLocal, "DUPL    ");
 
 impl<F: PrimeField + Copy> WitnessComponent<F> for DirectUpdateSumLocal
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
     execute!(DirectUpdateSumLocalTrace, 1);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::thread_rng().gen::<u64>() };
+            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
             let mut trace = DirectUpdateSumLocalTrace::new();
@@ -26,13 +30,13 @@ where
 
             log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-            let chosen_index = rng.gen_range(0..=num_rows - 1);
-            let mut values: [F; 6] = [F::zero(); 6];
+            let chosen_index = rng.random_range(0..=num_rows - 1);
+            let mut values: [F; 6] = [F::ZERO; 6];
             for i in 0..num_rows {
                 for j in 0..2 {
-                    trace[i].a[j] = F::from_canonical_u64(rng.gen_range(0..=(1 << 63) - 1));
-                    trace[i].b[j] = F::from_canonical_u64(rng.gen_range(0..=(1 << 63) - 1));
-                    trace[i].c[j] = F::from_canonical_u64(rng.gen_range(0..=(1 << 63) - 1));
+                    trace[i].a[j] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                    trace[i].b[j] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                    trace[i].c[j] = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
                 }
 
                 trace[i].perform_operation = F::from_bool(i == chosen_index);
@@ -62,7 +66,7 @@ where
             air_values.c_airval[1] = values[5];
 
             // Choose one direct update
-            let h = rng.gen::<bool>();
+            let h = rng.random::<bool>();
             air_values.perform_direct_update[0] = F::from_bool(h);
             air_values.perform_direct_update[1] = F::from_bool(!h);
 

@@ -130,7 +130,7 @@ pub fn update_debug_data<F: PrimeField>(
     let bus_opid = debug_data.entry(opid).or_default();
 
     let bus_val = bus_opid.entry(val).or_insert_with(|| BusValue {
-        shared_data: SharedData { direct_was_called: false, num_proves: F::zero(), num_assumes: F::zero() },
+        shared_data: SharedData { direct_was_called: false, num_proves: F::ZERO, num_assumes: F::ZERO },
         grouped_data: AirGroupMap::new(),
     });
 

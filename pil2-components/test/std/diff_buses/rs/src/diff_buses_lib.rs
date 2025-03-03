@@ -5,7 +5,7 @@ use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use p3_field::PrimeField;
 use p3_goldilocks::Goldilocks;
-use rand::{distributions::Standard, prelude::Distribution};
+use rand::distr::{StandardUniform, Distribution};
 
 use crate::{ProdBus, BothBuses, SumBus};
 
@@ -13,7 +13,7 @@ witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField> WitnessLibrary<F> for WitnessLib
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
         Std::new(wcm.clone());

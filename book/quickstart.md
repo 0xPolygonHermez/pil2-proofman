@@ -129,8 +129,8 @@ impl Executor<Goldilocks> for FibonacciExecutor {
         trace!(Fibonacci { a: Goldilocks, b: Goldilocks });
         let mut fib = Fibonacci::new();
 
-        fib.a[0] = Goldilocks::one();
-        fib.b[0] = Goldilocks::one();
+        fib.a[0] = Goldilocks::ONE;
+        fib.b[0] = Goldilocks::ONE;
 
         for i in 1..num_rows {
             fib.a[i] = fib.b[i - 1];
