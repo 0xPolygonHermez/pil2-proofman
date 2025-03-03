@@ -430,6 +430,7 @@ extern "C" {
         circomWitnessFinal: *mut ::std::os::raw::c_void,
         zkeyFile: *mut ::std::os::raw::c_char,
         outputDir: *mut ::std::os::raw::c_char,
+        fflonk: bool,
     );
 
     // Utilities

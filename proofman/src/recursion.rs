@@ -740,7 +740,7 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
 
         let zkey_filename = setup_path.display().to_string() + ".zkey";
         tracing::info!("··· Generating final snark proof");
-        gen_final_snark_proof_c(witness_ptr, zkey_filename.as_str(), &proof_file);
+        gen_final_snark_proof_c(witness_ptr, zkey_filename.as_str(), &proof_file, pctx.global_info.use_fflonk_final_snark());
         timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
         tracing::info!("··· Final Snark Proof generated.");
     }

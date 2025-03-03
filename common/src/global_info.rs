@@ -32,6 +32,14 @@ pub enum CurveType {
     EcMasFp5,
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SnarkType {
+    Fflonk,
+    Plonk,
+}
+
+
 #[derive(Clone, Deserialize)]
 pub struct GlobalInfo {
     pub folder_path: String,
@@ -61,6 +69,9 @@ pub struct GlobalInfo {
 
     #[serde(rename = "transcriptArity")]
     pub transcript_arity: usize,
+
+    #[serde(rename = "finalSnark")]
+    pub final_snark: Option<SnarkType>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -201,5 +212,12 @@ impl GlobalInfo {
 
     pub fn get_n_airs_for_airgroup(&self, airgroup_id: usize) -> usize {
         self.airs[airgroup_id].len()
+    }
+
+    pub fn use_fflonk_final_snark(&self) -> bool {
+        match &self.final_snark {
+            Some(snark_type) => *snark_type == SnarkType::Fflonk,
+            None => false,
+        }
     }
 }
