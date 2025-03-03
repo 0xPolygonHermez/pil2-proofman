@@ -9,6 +9,7 @@
 
 // #define _ROW_DEBUG_ 0
 
+//extern __shared__ uint16_t args[];
 struct ParserParamsGPU
 {
     uint32_t stage;
@@ -453,7 +454,18 @@ public:
         dim3 nBlocks = deviceArgs.nBlocks;
         dim3 nThreads = deviceArgs.nrowsPack;
         std::cout << "goal2_ nBlocks: " << nBlocks.x << std::endl;
+        size_t sharedMemSize = 0;
+        /*for(uint32_t i = 0; i<dests.size(); ++i){
+            for(uint32_t j = 0; j<dests[i].params.size(); ++j){
+                if(sharedMemSize <dests[i].params[j].parserParams.nArgs){
+                    sharedMemSize = dests[i].params[j].parserParams.nArgs;
+                }
+            }
+        }
+        sharedMemSize = sharedMemSize * sizeof(uint16_t);
+        std::cout << "SharedMemSize: " << sharedMemSize << std::endl;*/
         computeExpressions_<<<nBlocks, nThreads>>>(d_deviceArgs);
+        CHECKCUDAERR(cudaGetLastError());
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
         std::cout << "goal2_ de computeExpressions: " << time << std::endl;
@@ -496,7 +508,18 @@ public:
         time = omp_get_wtime();
         dim3 nBlocks = deviceArgs.nBlocks;
         dim3 nThreads = deviceArgs.nrowsPack;
+        /*size_t sharedMemSize = 0;
+        for(uint32_t i = 0; i<dests.size(); ++i){
+            for(uint32_t j = 0; j<dests[i].params.size(); ++j){
+                if(sharedMemSize <dests[i].params[j].parserParams.nArgs){
+                    sharedMemSize = dests[i].params[j].parserParams.nArgs;
+                }
+            }
+        }
+        sharedMemSize = sharedMemSize * sizeof(uint16_t);
+        std::cout << "SharedMemSize: " << sharedMemSize << std::endl;*/
         computeExpressions_<<<nBlocks, nThreads>>>(d_deviceArgs);
+        CHECKCUDAERR(cudaGetLastError());
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
         std::cout << "goal2 nBlocks aqui: " << nBlocks.x << std::endl;
@@ -818,6 +841,14 @@ __global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_de
                 }
                 uint8_t *ops = &d_deviceArgs->ops[d_deviceArgs->dests[j].params[k].parserParams.opsOffset];
                 uint16_t *args = &d_deviceArgs->args[d_deviceArgs->dests[j].params[k].parserParams.argsOffset];
+                /*uint32_t indx = threadIdx.x;
+                while(indx < d_deviceArgs->dests[j].params[k].parserParams.nArgs){
+                    args[indx] = d_deviceArgs->args[d_deviceArgs->dests[j].params[k].parserParams.argsOffset + indx];
+                    indx += blockDim.x;
+                }
+                __syncthreads();*/
+
+
 
                 uint64_t i_args = 0;
                 for (uint64_t kk = 0; kk < d_deviceArgs->dests[j].params[k].parserParams.nOps; ++kk) {

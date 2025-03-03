@@ -81,7 +81,7 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
 }
 template <typename ElementType>
-void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers)
+void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers)
 {
 #ifdef __USE_CUDA__
 
@@ -90,9 +90,9 @@ void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_wi
     std::string section = "cm" + to_string(step);
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
 
-    gl64_t *src = step == 1 ? d_witness : d_trace;
+    gl64_t *src = step == 1 ? d_trace : d_aux_trace;
     uint64_t offset_src = step == 1 ? 0 : setupCtx.starkInfo.mapOffsets[make_pair(section, false)];
-    gl64_t *dst = d_trace;
+    gl64_t *dst = d_aux_trace;
     uint64_t offset_dst = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
 
     NTT_Goldilocks ntt(N);
@@ -120,15 +120,15 @@ void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace,
 }
 
 template <typename ElementType>
-void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers)
+void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers)
 {
     if (step <= setupCtx.starkInfo.nStages)
     {
-        extendAndMerkelize_inplace(step, d_witness, d_trace, d_tree, d_buffers);
+        extendAndMerkelize_inplace(step, d_trace, d_aux_trace, d_tree, d_buffers);
     }
     else
     {
-        computeQ_inplace(step, d_trace, d_tree, d_buffers);
+        computeQ_inplace(step, d_aux_trace, d_tree, d_buffers);
     }
 }
 

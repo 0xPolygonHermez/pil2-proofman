@@ -1285,6 +1285,10 @@ __device__ __forceinline__ void poseidon2_hash_loop(const uint64_t *__restrict__
     if (ncols <= CAPACITY)
     {
         poseidon2_load(in, 0, ncols, ncols);
+        for (uint32_t i = ncols; i < CAPACITY; i++)
+        {
+            scratchpad[i * blockDim.x + threadIdx.x].set_val(0);
+        }
     }
     else
     {
