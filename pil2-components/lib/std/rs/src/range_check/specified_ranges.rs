@@ -215,7 +215,7 @@ impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
                 let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
-                        chunk[col] = F::from_canonical_u64(vec[row].load(Ordering::Relaxed));
+                        chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));
                     }
                 });
 

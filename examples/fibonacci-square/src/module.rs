@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use proofman_common::{AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::{WitnessComponent, execute};
 use pil_std_lib::Std;
-use p3_field::{AbstractField, PrimeField64};
+use p3_field::PrimeField64;
 use num_bigint::BigInt;
 use rayon::prelude::*;
 use crate::{BuildPublicValues, FibonacciSquareTrace, ModuleAirValues, ModuleTrace};
@@ -14,7 +14,7 @@ pub struct Module<F: PrimeField64> {
     std_lib: Arc<Std<F>>,
 }
 
-impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<F> {
+impl<F: PrimeField64> Module<F> {
     const MY_NAME: &'static str = "ModuleSM";
 
     pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
@@ -26,7 +26,7 @@ impl<F: PrimeField64 + AbstractField + Clone + Copy + Default + 'static> Module<
     }
 }
 
-impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
+impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
     execute!(ModuleTrace, FibonacciSquareTrace::<usize>::NUM_ROWS / ModuleTrace::<usize>::NUM_ROWS);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
@@ -62,28 +62,28 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
                     let q = x / module;
                     let x_mod = x % module;
 
-                    trace[i].x = F::from_canonical_u64(x);
-                    trace[i].q = F::from_canonical_u64(q);
-                    trace[i].x_mod = F::from_canonical_u64(x_mod);
+                    trace[i].x = F::from_u64(x);
+                    trace[i].q = F::from_u64(q);
+                    trace[i].x_mod = F::from_u64(x_mod);
                     x_mods.push(x_mod);
                 }
 
                 for i in inputs_slice.len()..num_rows {
-                    trace[i].x = F::zero();
-                    trace[i].q = F::zero();
-                    trace[i].x_mod = F::zero();
+                    trace[i].x = F::ZERO;
+                    trace[i].q = F::ZERO;
+                    trace[i].x_mod = F::ZERO;
                 }
 
                 let mut air_values = ModuleAirValues::<F>::new();
                 air_values.last_segment = F::from_bool(j == num_instances - 1);
 
                 x_mods.par_iter().for_each(|x_mod| {
-                    self.std_lib.range_check(F::from_canonical_u64(module - x_mod), F::one(), range);
+                    self.std_lib.range_check(F::from_u64(module - x_mod), F::ONE, range);
                 });
 
                 // Trivial range check for the remaining rows
                 for _ in inputs_slice.len()..trace.num_rows() {
-                    self.std_lib.range_check(F::from_canonical_u64(module), F::one(), range);
+                    self.std_lib.range_check(F::from_u64(module), F::ONE, range);
                 }
 
                 let air_instance =

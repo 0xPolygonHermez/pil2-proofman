@@ -24,11 +24,11 @@ impl<F: PrimeField + Copy> WitnessComponent<F> for Permutation2 {
             //       Ohterwise, the permutation check cannot be satisfied.
             // Proves
             for i in 0..num_rows {
-                trace[i].c1 = F::from_canonical_u8(200);
-                trace[i].d1 = F::from_canonical_u8(201);
+                trace[i].c1 = F::from_u8(200);
+                trace[i].d1 = F::from_u8(201);
 
-                trace[i].c2 = F::from_canonical_u8(100);
-                trace[i].d2 = F::from_canonical_u8(101);
+                trace[i].c2 = F::from_u8(100);
+                trace[i].d2 = F::from_u8(101);
 
                 trace[i].sel = F::from_bool(true);
             }

@@ -4,7 +4,12 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField;
-use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng, SeedableRng, rngs::StdRng};
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+    seq::SliceRandom,
+};
 
 use crate::Permutation1_6Trace;
 
@@ -12,13 +17,13 @@ define_wc!(Permutation1_6, "Perm1_6 ");
 
 impl<F: PrimeField + Copy> WitnessComponent<F> for Permutation1_6
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
     execute!(Permutation1_6Trace, 2);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::thread_rng().gen::<u64>() };
+            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
             let mut trace = Permutation1_6Trace::new();
@@ -31,20 +36,20 @@ where
 
             // Assumes
             for i in 0..num_rows {
-                trace[i].a1 = rng.gen();
-                trace[i].b1 = rng.gen();
+                trace[i].a1 = rng.random();
+                trace[i].b1 = rng.random();
 
-                trace[i].a2 = F::from_canonical_u8(200);
-                trace[i].b2 = F::from_canonical_u8(201);
+                trace[i].a2 = F::from_u8(200);
+                trace[i].b2 = F::from_u8(201);
 
-                trace[i].a3 = rng.gen();
-                trace[i].b3 = rng.gen();
+                trace[i].a3 = rng.random();
+                trace[i].b3 = rng.random();
 
-                trace[i].a4 = F::from_canonical_u8(100);
-                trace[i].b4 = F::from_canonical_u8(101);
+                trace[i].a4 = F::from_u8(100);
+                trace[i].b4 = F::from_u8(101);
 
-                trace[i].sel1 = F::from_bool(rng.gen_bool(0.5));
-                trace[i].sel3 = F::one();
+                trace[i].sel1 = F::from_bool(rng.random_bool(0.5));
+                trace[i].sel3 = F::ONE;
             }
 
             let mut indices: Vec<usize> = (0..num_rows).collect();

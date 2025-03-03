@@ -149,16 +149,16 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
-     --custom-commits rom=tmp/buffer.bin \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
-     --public-inputs examples/fibonacci-square/src/inputs.json --custom-commits rom=tmp/buffer.bin \
+     --public-inputs examples/fibonacci-square/src/inputs.json --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=tmp/buffer.bin -k
+     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=examples/fibonacci-square/build/rom.bin
 ```
 
 With recursion:
@@ -178,14 +178,14 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
-     --custom-commits rom=tmp/buffer.bin \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
-     --public-inputs examples/fibonacci-square/src/inputs.json --custom-commits rom=tmp/buffer.bin \
+     --public-inputs examples/fibonacci-square/src/inputs.json --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=tmp/buffer.bin -a
+     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=examples/fibonacci-square/build/rom.bin -a
 ```

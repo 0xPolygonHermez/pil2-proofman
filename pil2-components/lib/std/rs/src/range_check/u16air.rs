@@ -86,11 +86,8 @@ impl<F: PrimeField> WitnessComponent<F> for U16Air<F> {
             self.calculated.store(true, Ordering::Relaxed);
 
             if pctx.dctx_is_my_instance(instance_id) {
-                let buffer = self
-                    .multiplicity
-                    .iter()
-                    .map(|x| F::from_canonical_u64(x.load(Ordering::Relaxed)))
-                    .collect::<Vec<F>>();
+                let buffer =
+                    self.multiplicity.iter().map(|x| F::from_u64(x.load(Ordering::Relaxed))).collect::<Vec<F>>();
 
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
                 pctx.add_air_instance(air_instance, instance_id);

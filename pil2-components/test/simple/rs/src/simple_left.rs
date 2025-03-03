@@ -4,7 +4,12 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField64;
-use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng, SeedableRng, rngs::StdRng};
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+    seq::SliceRandom,
+};
 
 use crate::SimpleLeftTrace;
 
@@ -12,13 +17,13 @@ define_wc!(SimpleLeft, "SimLeft ");
 
 impl<F: PrimeField64 + Copy> WitnessComponent<F> for SimpleLeft
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
     execute!(SimpleLeftTrace, 1);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::thread_rng().gen::<u64>() };
+            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
             let mut trace = SimpleLeftTrace::new();
@@ -28,14 +33,14 @@ where
 
             // Assumes
             for i in 0..num_rows {
-                trace[i].a = F::from_canonical_u64(rng.gen_range(0..=(1 << 63) - 1));
-                trace[i].b = F::from_canonical_u64(rng.gen_range(0..=(1 << 63) - 1));
+                trace[i].a = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
 
-                trace[i].e = F::from_canonical_u8(200);
-                trace[i].f = F::from_canonical_u8(201);
+                trace[i].e = F::from_u8(200);
+                trace[i].f = F::from_u8(201);
 
-                trace[i].g = F::from_canonical_usize(i);
-                trace[i].h = F::from_canonical_usize(num_rows - i - 1);
+                trace[i].g = F::from_usize(i);
+                trace[i].h = F::from_usize(num_rows - i - 1);
             }
 
             let mut indices: Vec<usize> = (0..num_rows).collect();

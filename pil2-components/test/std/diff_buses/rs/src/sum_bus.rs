@@ -20,7 +20,7 @@ impl<F: PrimeField> WitnessComponent<F> for SumBus {
             log::debug!("{}: ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
             for i in 0..num_rows {
-                trace[i].a = F::from_canonical_usize(i);
+                trace[i].a = F::from_usize(i);
                 trace[i].b = trace[i].a;
             }
 

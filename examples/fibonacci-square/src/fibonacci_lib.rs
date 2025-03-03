@@ -22,8 +22,8 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
 
         let mut publics = BuildPublicValues::from_vec_guard(wcm.get_pctx().get_publics());
 
-        publics.module = F::from_canonical_u64(public_inputs.module);
-        publics.in1 = F::from_canonical_u64(public_inputs.in1);
-        publics.in2 = F::from_canonical_u64(public_inputs.in2);
+        publics.module = F::from_u64(public_inputs.module);
+        publics.in1 = F::from_u64(public_inputs.in1);
+        publics.in2 = F::from_u64(public_inputs.in2);
     }
 }

@@ -110,7 +110,7 @@ impl<F: Field> HintFieldInfo<F> {
     pub fn init_buffers(&mut self, initialize_zeros: bool) {
         if self.size > 0 {
             if initialize_zeros {
-                self.values = vec![F::zero(); self.size as usize];
+                self.values = vec![F::ZERO; self.size as usize];
             } else {
                 self.values = create_buffer_fast(self.size as usize);
             }
@@ -391,7 +391,7 @@ impl<F: Field> Sub<ExtensionField<F>> for HintFieldOutput<F> {
     fn sub(self, rhs: ExtensionField<F>) -> Self {
         match self {
             HintFieldOutput::Field(a) => {
-                HintFieldOutput::FieldExtended(ExtensionField { value: [a, F::zero(), F::zero()] } - rhs)
+                HintFieldOutput::FieldExtended(ExtensionField { value: [a, F::ZERO, F::ZERO] } - rhs)
             }
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a - rhs),
         }
@@ -409,7 +409,7 @@ impl<F: Field> Sub for HintFieldOutput<F> {
 
             // Field * FieldExtended
             (HintFieldOutput::Field(a), HintFieldOutput::FieldExtended(b)) => {
-                HintFieldOutput::FieldExtended(ExtensionField { value: [a, F::zero(), F::zero()] } - b)
+                HintFieldOutput::FieldExtended(ExtensionField { value: [a, F::ZERO, F::ZERO] } - b)
             }
 
             // FieldExtended * Field
@@ -438,7 +438,7 @@ impl<F: Field> SubAssign<ExtensionField<F>> for HintFieldOutput<F> {
     fn sub_assign(&mut self, rhs: ExtensionField<F>) {
         *self = match *self {
             HintFieldOutput::Field(a) => {
-                HintFieldOutput::FieldExtended(ExtensionField { value: [a, F::zero(), F::zero()] } - rhs)
+                HintFieldOutput::FieldExtended(ExtensionField { value: [a, F::ZERO, F::ZERO] } - rhs)
             }
             HintFieldOutput::FieldExtended(a) => HintFieldOutput::FieldExtended(a - rhs),
         }
@@ -455,7 +455,7 @@ impl<F: Field> SubAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
             },
             HintFieldOutput::FieldExtended(b) => match self {
                 HintFieldOutput::Field(a) => {
-                    *self = HintFieldOutput::FieldExtended(ExtensionField { value: [*a, F::zero(), F::zero()] } - b)
+                    *self = HintFieldOutput::FieldExtended(ExtensionField { value: [*a, F::ZERO, F::ZERO] } - b)
                 }
                 HintFieldOutput::FieldExtended(a) => *self = HintFieldOutput::FieldExtended(*a - b),
             },
