@@ -50,20 +50,16 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     Starks<ElementType> starks(setupCtx, pConstTree, nullptr, true); //initializeTrees
 
+    uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
+    
     // GPU tree-nodes
     GPUTree *d_trees = new GPUTree[setupCtx.starkInfo.nStages + 2];
     for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
     {
-        std::string section = "cm" + to_string(i + 1);
-        uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-        d_trees[i].nFieldElements = 4;
-        // uint64_t numNodes = NExtended * d_trees[i].nFieldElements + (NExtended - 1) * d_trees[i].nFieldElements;
-        // CHECKCUDAERR(cudaMalloc(&d_trees[i].nodes, numNodes * sizeof(gl64_t)));
+        d_trees[i].nFieldElements = nFieldElements;
     }
 
     ExpressionsGPU expressionsCtx(setupCtx, 2, 1176, 465, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3
-
-    uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
 
     TranscriptType transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 

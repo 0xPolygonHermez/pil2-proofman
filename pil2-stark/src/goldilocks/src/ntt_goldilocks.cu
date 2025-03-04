@@ -323,10 +323,10 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(uint64_t **d_tree, gl64_t *d_dst
     std::cout << "             check Total Time: " << time1 - time0 << std::endl;
 }
 
-void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers)
+void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, gl64_t* d_data)
 {
 
-    gl64_t *dst_src = d_buffers->d_aux_trace + data_offset;
+    gl64_t *dst_src = d_data == nullptr ? d_buffers->d_aux_trace + data_offset : d_data;
     cudaDeviceSynchronize();
     double time_base = omp_get_wtime();
     double time = omp_get_wtime();

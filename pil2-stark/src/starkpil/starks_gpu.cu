@@ -90,7 +90,7 @@ __global__ void fillLEv(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t W_,
     }
 }
 
-__global__ void fillLEv_2d(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, gl64_t *d_aux_trace, uint64_t N)
+__global__ void fillLEv_2d(gl64_t *d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N)
 {
 
     uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -101,7 +101,6 @@ __global__ void fillLEv_2d(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t 
         Goldilocks3GPU::Element xi;
         Goldilocks3GPU::Element xiShifted;
         uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
-        gl64_t *LEv = (gl64_t *)d_aux_trace + LEv_offset;
         gl64_t W(W_);
         gl64_t shift(shift_);
         gl64_t invShift = shift.reciprocal();
@@ -118,13 +117,13 @@ __global__ void fillLEv_2d(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t 
         Goldilocks3GPU::mul(xiShifted, xi, invShift);
         Goldilocks3GPU::Element xiShiftedPow;
         Goldilocks3GPU::pow(xiShifted, k, xiShiftedPow);
-        LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION] = xiShiftedPow[0];
-        LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 1] = xiShiftedPow[1];
-        LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 2] = xiShiftedPow[2];
+        d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION] = xiShiftedPow[0];
+        d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 1] = xiShiftedPow[1];
+        d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 2] = xiShiftedPow[2];
     }
 }
 
-void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers)
+void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, gl64_t* d_LEv_)
 {
     cudaDeviceSynchronize();
     double time = omp_get_wtime();
@@ -140,9 +139,13 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, u
     /*dim3 nThreads(32);
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x);
     fillLEv<<<nBlocks, nThreads>>>(LEv_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, d_buffers->d_aux_trace, N);*/
-    dim3 nThreads(1, 64);
+    dim3 nThreads(1, 512);
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (N + nThreads.y - 1) / nThreads.y);
-    fillLEv_2d<<<nBlocks, nThreads>>>(LEv_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, d_buffers->d_aux_trace, N);
+    gl64_t * d_LEv = d_LEv_ == NULL ? (gl64_t *)d_buffers->d_aux_trace + LEv_offset
+                                    : d_LEv_;
+
+    fillLEv_2d<<<nBlocks, nThreads>>>(d_LEv, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, N);
+    CHECKCUDAERR(cudaGetLastError());
     cudaDeviceSynchronize();
     time = omp_get_wtime() - time;
     std::cout << "LEv inplace: " << time << std::endl;
@@ -150,7 +153,8 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, u
     cudaDeviceSynchronize();
     time = omp_get_wtime();
     NTT_Goldilocks ntt(N);
-    ntt.INTT_inplace(LEv_offset, N, FIELD_EXTENSION * nOpeningPoints, d_buffers);
+    ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_buffers, d_LEv);
+
     cudaDeviceSynchronize();
     time = omp_get_wtime() - time;
     std::cout << "INTT: " << time << std::endl;
@@ -158,7 +162,7 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, u
     cudaFree(d_openingPoints);
 }
 
-__global__ void calcXDivXSub(uint64_t xDivXSub_offset, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_x, gl64_t *d_aux_trace, uint64_t NExtended)
+__global__ void calcXDivXSub(gl64_t * d_xDivXSub, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_x, uint64_t NExtended)
 {
     uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
     uint64_t k = blockIdx.y * blockDim.y + threadIdx.y;
@@ -180,7 +184,6 @@ __global__ void calcXDivXSub(uint64_t xDivXSub_offset, gl64_t *d_xiChallenge, ui
 
         if (k < NExtended)
         {
-            gl64_t *d_xDivXSub = (gl64_t *)(d_aux_trace + xDivXSub_offset);
             Goldilocks3GPU::Element *xDivXSubComp = (Goldilocks3GPU::Element *)&d_xDivXSub[(k + i * NExtended) * FIELD_EXTENSION];
             Goldilocks3GPU::sub(*xDivXSubComp, d_x[k], xi);
             Goldilocks3GPU::inv(xDivXSubComp, xDivXSubComp);
@@ -189,7 +192,8 @@ __global__ void calcXDivXSub(uint64_t xDivXSub_offset, gl64_t *d_xiChallenge, ui
     }
 }
 
-void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xiChallenge, SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers)
+
+void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xiChallenge, SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, gl64_t * d_xDivXSub_)
 {
 
     double time = omp_get_wtime();
@@ -212,7 +216,9 @@ void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xi
     dim3 nThreads(1, 128);
     std::cout << "nOpeningPoints: " << nOpeningPoints << std::endl;
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (NExtended + nThreads.y - 1) / nThreads.y);
-    calcXDivXSub<<<nBlocks, nThreads>>>(xDivXSub_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, d_x, d_buffers->d_aux_trace, NExtended);
+    gl64_t* d_xDivXSub = d_xDivXSub_ == NULL ? d_buffers->d_aux_trace + xDivXSub_offset
+                                             : d_xDivXSub_;
+    calcXDivXSub<<<nBlocks, nThreads>>>(d_xDivXSub, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, d_x, NExtended);
     
     cudaFree(d_xiChallenge);
     cudaFree(d_openingPoints);
