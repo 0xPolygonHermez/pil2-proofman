@@ -198,7 +198,8 @@ pub fn add_intermediate_polynomials(
 
     let vc = e.challenge("std_vc", stage, 3, 0, vc_id);
 
-    let max_deg_expr = calculate_exp_deg(expressions, res["cExpId"].as_u64().unwrap_or(0) as usize, im_exps);
+    let exp = expressions[res["cExpId"].as_u64().unwrap_or(0) as usize].clone();
+    let max_deg_expr = calculate_exp_deg(expressions, exp, im_exps);
 
     if max_deg_expr as i64 > q_deg + 1 {
         panic!(
@@ -208,7 +209,8 @@ pub fn add_intermediate_polynomials(
     }
 
     for &exp_id in im_exps {
-        let im_pol_deg = calculate_exp_deg(expressions, exp_id, im_exps);
+        let exp = expressions[exp_id].clone();
+        let im_pol_deg = calculate_exp_deg(expressions, exp, im_exps);
         if im_pol_deg as i64 > q_deg + 1 {
             panic!(
                 "Intermediate polynomial with id: {} has a higher degree ({}) than the maximum allowed degree ({})",
@@ -293,105 +295,70 @@ pub fn add_intermediate_polynomials(
     }
 }
 
-pub fn calculate_exp_deg(expressions: &mut [Value], exp_id: usize, im_exps: &[usize]) -> usize {
-    let mut cache = HashMap::new();
-    calculate_exp_deg_recursive(expressions, &expressions[exp_id], im_exps, &mut cache)
+pub fn calculate_exp_deg(expressions: &mut [Value], exp: Value, im_exps: &[usize]) -> usize {
+    calculate_exp_deg_recursive(expressions, exp, im_exps)
 }
-
-/*
-module.exports.calculateExpDeg = function calculateExpDeg(expressions, exp, imExps = [], cacheValues = false) {
-    if(cacheValues && exp.degree_) return exp.degree_;
-    if (exp.op == "exp") {
-        if (imExps.includes(exp.id)) return 1;
-        let deg = calculateExpDeg(expressions, expressions[exp.id], imExps, cacheValues);
-        if(cacheValues) exp.degree_= deg;
-        return deg;
-    } else if (["x", "const", "cm", "custom"].includes(exp.op) || (exp.op === "Zi" && exp.boundary !== "everyRow")) {
-        return 1;
-    } else if (["number", "public", "challenge", "eval", "airgroupvalue", "airvalue", "proofvalue"].includes(exp.op) || (exp.op === "Zi" && exp.boundary === "everyRow")) {
-        return 0;
-    } else if(exp.op === "neg") {
-        return calculateExpDeg(expressions, exp.values[0], imExps, cacheValues);
-    } else if(["add", "sub", "mul"].includes(exp.op)) {
-        const lhsDeg = calculateExpDeg(expressions, exp.values[0], imExps, cacheValues);
-        const rhsDeg = calculateExpDeg(expressions, exp.values[1], imExps, cacheValues);
-        let deg = exp.op === "mul" ? lhsDeg + rhsDeg : Math.max(lhsDeg, rhsDeg);
-        if(cacheValues) exp.degree_= deg;
-        return deg;
-    } else {
-        throw new Error("Exp op not defined: "+ exp.op);
-    }
-}
-*/
 
 /// Calculates the degree of an expression recursively and caches results.
-pub fn calculate_exp_deg_recursive(
-    expressions: &[Value],
-    exp: &Value,
-    im_exps: &[usize],
-    cache: &mut HashMap<usize, usize>,
-) -> usize {
-    let exp_id = exp["id"].as_u64().unwrap_or(0) as usize;
-    // Check the cache first
-    if let Some(degree) = cache.get(&exp_id) {
-        return *degree;
+pub fn calculate_exp_deg_recursive(expressions: &mut [Value], exp: Value, im_exps: &[usize]) -> usize {
+    if let Some(degree) = exp["degree_"].as_u64() {
+        return degree as usize;
     }
 
-    // Match on the operation type
-    if let Some(op) = exp.get("op").and_then(|v| v.as_str()) {
-        let degree = match op {
-            "exp" => {
-                let id = exp.get("id").and_then(|v| v.as_u64()).unwrap() as usize;
-                if im_exps.contains(&id) {
-                    1
-                } else {
-                    calculate_exp_deg_recursive(expressions, &expressions[id], im_exps, cache)
-                }
-            }
-            "x" | "const" | "cm" | "custom" => 1,
-            "Zi" => {
-                if exp.get("boundary") == Some(&json!("everyRow")) {
-                    0
-                } else {
-                    1
-                }
-            }
-            "number" | "public" | "challenge" | "eval" | "airgroupvalue" | "airvalue" | "proofvalue" => 0,
-            "neg" => {
-                if let Some(values) = exp.get("values").and_then(|v| v.as_array()) {
-                    if let Some(first) = values.first() {
-                        calculate_exp_deg_recursive(expressions, first, im_exps, cache)
-                    } else {
-                        panic!("'neg' op missing values");
-                    }
-                } else {
-                    panic!("'neg' op has no values array");
-                }
-            }
-            "add" | "sub" | "mul" => {
-                let empty = vec![];
-                let values = exp.get("values").and_then(|v| v.as_array()).unwrap_or(&empty);
-                if values.len() < 2 {
-                    panic!("Binary op '{}' missing operands", op);
-                }
+    let op = exp["op"].as_str().unwrap();
 
-                let lhs_deg = calculate_exp_deg_recursive(expressions, &values[0], im_exps, cache);
-                let rhs_deg = calculate_exp_deg_recursive(expressions, &values[1], im_exps, cache);
-
-                if op == "mul" {
-                    lhs_deg + rhs_deg
-                } else {
-                    lhs_deg.max(rhs_deg)
-                }
+    let degree = match op {
+        "exp" => {
+            let id = exp["id"].as_u64().unwrap() as usize;
+            if im_exps.contains(&id) {
+                1
+            } else {
+                let exp = expressions[id].clone();
+                calculate_exp_deg_recursive(expressions, exp, im_exps)
             }
-            _ => panic!("Exp op not defined: {}", op),
-        };
+        }
+        "x" | "const" | "cm" | "custom" => 1,
+        "Zi" => {
+            if exp.get("boundary") == Some(&json!("everyRow")) {
+                0
+            } else {
+                1
+            }
+        }
+        "number" | "public" | "challenge" | "eval" | "airgroupvalue" | "airvalue" | "proofvalue" => 0,
+        "neg" => {
+            if let Some(values) = exp["values"].as_array() {
+                if let Some(first) = values.first() {
+                    calculate_exp_deg_recursive(expressions, first.clone(), im_exps)
+                } else {
+                    panic!("'neg' op missing values");
+                }
+            } else {
+                panic!("'neg' op has no values array");
+            }
+        }
+        "add" | "sub" | "mul" => {
+            let values = exp["values"].as_array().unwrap_or_else(|| panic!("Binary op '{}' missing operands", op));
+            if values.len() < 2 {
+                panic!("Binary op '{}' missing operands", op);
+            }
 
-        // Cache the computed degree
-        cache.insert(exp_id, degree);
+            let lhs_deg = calculate_exp_deg_recursive(expressions, exp["values"][0].clone(), im_exps);
+            let rhs_deg = calculate_exp_deg_recursive(expressions, exp["values"][1].clone(), im_exps);
 
-        degree
-    } else {
-        panic!("Expression missing 'op' field: {:?}", exp);
+            if op == "mul" {
+                lhs_deg + rhs_deg
+            } else {
+                lhs_deg.max(rhs_deg)
+            }
+        }
+        _ => panic!("Exp op not defined: {}", op),
+    };
+
+    // Cache in the exp itself (to match JS behavior)
+    if let Some(id) = exp["id"].as_u64() {
+        expressions[id as usize]["degree_"] = Value::from(degree as u64);
     }
+
+    degree
 }
