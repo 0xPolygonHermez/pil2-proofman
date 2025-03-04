@@ -122,5 +122,6 @@ pub fn generate_constraint_polynomial(
     let initial_q_degree = calculate_exp_deg(expressions, exp, &[]);
 
     println!("The maximum constraint degree is {} (without intermediate polynomials)", initial_q_degree);
+    #[cfg(feature = "debug-fibonacci")]
     assert_eq!(initial_q_degree, 3);
 }

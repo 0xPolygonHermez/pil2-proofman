@@ -19,3 +19,6 @@ pilout = { path = "../pilout" }
 tracing-subscriber = "0"
 async-fs = "2"
 z3 = { version="0", features = ["static-link-z3"] }
+
+[features]
+debug-fibonacci = []
