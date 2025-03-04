@@ -245,9 +245,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     //coyy d_LEv to LEv
     CHECKCUDAERR(cudaMemcpy(LEv, d_LEv, N *  setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION * sizeof(gl64_t), cudaMemcpyDeviceToHost));
 
-    cudaFree(d_buffer);
     starks.computeEvals(params ,LEv, proof);
-    
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         starks.addTranscriptGL(transcript, params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
@@ -274,17 +272,14 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
 
-    /*gl64_t * d_xDivXSub;
-    CHECKCUDAERR(cudaMalloc(&d_xDivXSub, NExtended *  setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION * sizeof(gl64_t)));
-    d_params.xDivXSub = (Goldilocks::Element *) d_xDivXSub;*/
+    gl64_t * d_xDivXSub = d_buffer;
     params.xDivXSub = &pBuffHelper[0];
 
-    starks.calculateXDivXSub(xiChallenge, params.xDivXSub);
-
-    /*calculateXDivXSub_inplace(0, xiChallenge, setupCtx, d_buffers, d_xDivXSub);
+    calculateXDivXSub_inplace(0, xiChallenge, setupCtx, d_buffers, d_xDivXSub);
     // copy xDivXSub to params.xDivXSub
     CHECKCUDAERR(cudaMemcpy(params.xDivXSub, d_xDivXSub, NExtended *  setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION * sizeof(gl64_t), cudaMemcpyDeviceToHost));
-    cudaFree(d_xDivXSub);*/
+    cudaFree(d_buffer);
+
 
     starks.calculateFRIPolynomial(params);
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);

@@ -213,12 +213,13 @@ void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xi
     cudaMalloc(&d_x, NExtended * sizeof(Goldilocks::Element));
     cudaMemcpy(d_x, x, NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
 
-    dim3 nThreads(1, 128);
+    dim3 nThreads(1, 512);
     std::cout << "nOpeningPoints: " << nOpeningPoints << std::endl;
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (NExtended + nThreads.y - 1) / nThreads.y);
     gl64_t* d_xDivXSub = d_xDivXSub_ == NULL ? d_buffers->d_aux_trace + xDivXSub_offset
                                              : d_xDivXSub_;
     calcXDivXSub<<<nBlocks, nThreads>>>(d_xDivXSub, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, d_x, NExtended);
+    CHECKCUDAERR(cudaGetLastError());
     
     cudaFree(d_xiChallenge);
     cudaFree(d_openingPoints);
