@@ -160,10 +160,12 @@ fn _calculate_im_pols(
         }
 
         _ => {
-            let exp_deg = exp["expDeg"].as_u64().unwrap() as usize;
-            if exp_deg == 0 {
-                return (Some(im_pols.clone()), 0);
-            } else if max_deg < 1 {
+            if let Some(exp_deg) = exp["expDeg"].as_u64() {
+                if exp_deg == 0 {
+                    return (Some(im_pols.clone()), 0);
+                }
+            }
+            if max_deg < 1 {
                 return (None, 0);
             } else {
                 return (Some(im_pols.clone()), 1);
