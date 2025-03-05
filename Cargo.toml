@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "cli",
+    "curves",
     "common",
     "hints",
     "pilout",
@@ -39,8 +40,8 @@ witness = { path = "witness", version = "0.4.0" }
 pilout = { path = "pilout", version = "0.4.0" }
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
-p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3.git", rev = "0b696ff9405d4e5c773b7f8865f0653237b58543" }
-p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "0b696ff9405d4e5c773b7f8865f0653237b58543" }
+p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
+p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
 bytes = "1.7"
 prost = "0.13"
 rand = "0.9"
