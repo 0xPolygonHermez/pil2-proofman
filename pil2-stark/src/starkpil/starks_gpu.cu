@@ -561,6 +561,8 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *ch
     dim3 nThreads(256);
     dim3 nBlocks((sizeFoldedPol) + nThreads.x - 1 / nThreads.x);
     fold<<<nBlocks, nThreads>>>(step, d_friPol, d_challenge, d_ppar, d_twiddles, Goldilocks::shift().fe, Goldilocks::w(prevBits).fe, nBitsExt, prevBits, currentBits);
+    CHECKCUDAERR(cudaGetLastError());
+
 
     cudaFree(d_challenge);
     cudaFree(d_ppar);

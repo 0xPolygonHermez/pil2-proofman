@@ -47,7 +47,6 @@ struct ParamsGPU
 };
 struct DestGPU
 {
-    Goldilocks::Element *dest = nullptr; // rick:this will disapear
     Goldilocks::Element *dest_gpu = nullptr;
     uint64_t offset = 0;
     uint64_t dim = 1;
@@ -114,19 +113,12 @@ struct DeviceArguments
     uint32_t tmp3Size;
     Goldilocks::Element **tmp3;
 };
-void computeExpressions(DeviceArguments *d_deviceArgs, DeviceArguments *deviceArgs);
-void copyPolynomial(DeviceArguments *deviceArgs, Goldilocks::Element *destVals, bool inverse, bool batch, uint64_t dim, Goldilocks::Element *tmp);
-void multiplyPolynomials(DeviceArguments *deviceArgs, DestGPU &dest, Goldilocks::Element *destVals);
-void storePolynomial(DeviceArguments *deviceArgs, DestGPU *dests, uint32_t nDests, Goldilocks::Element *destVals, uint64_t row);
+
 __device__ __noinline__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row, uint32_t idest);
-__device__ __noinline__ void storePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row);
-__global__ void copyPolynomial_(DeviceArguments *d_deviceArgs, Goldilocks::Element *d_destVals, bool inverse, uint64_t dim, Goldilocks::Element *d_tmp);
 __device__ __noinline__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl64_t *d_destVals, bool inverse, uint64_t dim, gl64_t *d_tmp);
-__global__ void loadPolynomials_(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock);
 __device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock);
 __device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, DestGPU &dest, gl64_t *destVals);
 __global__ __global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_deviceArgs);
-__global__ void freeDeviceArguments_(DeviceArguments *d_deviceArgs);
 
 class ExpressionsGPU : public ExpressionsCtx
 {
@@ -137,20 +129,17 @@ public:
     uint32_t nParamsMax;
     uint32_t nTemp1Max;
     uint32_t nTemp3Max;
-    vector<uint64_t> nColsStages;
-    vector<uint64_t> nColsStagesAcc;
-    vector<uint64_t> offsetsStages;
-    DeviceArguments deviceArgs;
+   
     DeviceArguments *d_deviceArgs;
     DeviceArguments h_deviceArgs;
-    DestGPU *d_dests;
+    std::vector< ParamsGPU *> dest_params; //pointer for cudaFree
 
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint32_t nTemp1Max, uint32_t nTemp3Max, uint64_t nrowsPack_ = 64, uint32_t nBlocks_ = 256) : ExpressionsCtx(setupCtx), nParamsMax(nParamsMax), nTemp1Max(nTemp1Max), nTemp3Max(nTemp3Max), nrowsPack(nrowsPack_), nBlocks(nBlocks_)
     {
         uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
-        nColsStages.resize(ns * nOpenings + 1);
-        nColsStagesAcc.resize(ns * nOpenings + 1);
+        vector<uint64_t> nColsStages(ns * nOpenings + 1);
+        vector<uint64_t> nColsStagesAcc(ns * nOpenings + 1);
 
         for (uint64_t o = 0; o < nOpenings; ++o)
         {
@@ -204,22 +193,32 @@ public:
         uint64_t nColsMax = max(nCols1, max(nCols2, nCols3));
 
         // bufferT_
-        deviceArgs.bufferSize = nOpenings * nrowsPack * nColsMax; // this must be moved from here
-        cudaMalloc(&h_deviceArgs.bufferT_, nBlocks * deviceArgs.bufferSize * sizeof(Goldilocks::Element));
-        std::cout << "Total memory in expressions buffers [Gb]: " << (1.0 * nBlocks * deviceArgs.bufferSize * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
+        h_deviceArgs.bufferSize = nOpenings * nrowsPack * nColsMax; // this must be moved from here
+        cudaMalloc(&h_deviceArgs.bufferT_, nBlocks * h_deviceArgs.bufferSize * sizeof(Goldilocks::Element));
+        std::cout << "Total memory in expressions buffers [Gb]: " << (1.0 * nBlocks * h_deviceArgs.bufferSize * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
 
         // destVals
-        deviceArgs.destValsSize = nParamsMax * FIELD_EXTENSION * nrowsPack;
-        cudaMalloc(&h_deviceArgs.destVals, nBlocks * deviceArgs.destValsSize * sizeof(Goldilocks::Element));
-        std::cout << "Total memory in expressions destVals [Gb]: " << (1.0 * nBlocks * deviceArgs.destValsSize * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
+        h_deviceArgs.destValsSize = nParamsMax * FIELD_EXTENSION * nrowsPack;
+        cudaMalloc(&h_deviceArgs.destVals, nBlocks * h_deviceArgs.destValsSize * sizeof(Goldilocks::Element));
+        std::cout << "Total memory in expressions destVals [Gb]: " << (1.0 * nBlocks * h_deviceArgs.destValsSize * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
 
         // tmps
-        deviceArgs.tmp1Size = nTemp1Max * nrowsPack;
-        deviceArgs.tmp3Size = nTemp3Max * FIELD_EXTENSION * nrowsPack;
-        cudaMalloc(&h_deviceArgs.tmp1, nBlocks * deviceArgs.tmp1Size * sizeof(Goldilocks::Element *));
-        cudaMalloc(&h_deviceArgs.tmp3, nBlocks * deviceArgs.tmp3Size * sizeof(Goldilocks::Element *));
-        std::cout << "Total memory in expressions tmp1 [Gb]: " << (1.0 * nBlocks * deviceArgs.tmp1Size * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
-        std::cout << "Total memory in expressions tmp3 [Gb]: " << (1.0 * nBlocks * deviceArgs.tmp3Size * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
+        h_deviceArgs.tmp1Size = nTemp1Max * nrowsPack;
+        h_deviceArgs.tmp3Size = nTemp3Max * FIELD_EXTENSION * nrowsPack;
+        cudaMalloc(&h_deviceArgs.tmp1, nBlocks * h_deviceArgs.tmp1Size * sizeof(Goldilocks::Element *));
+        cudaMalloc(&h_deviceArgs.tmp3, nBlocks * h_deviceArgs.tmp3Size * sizeof(Goldilocks::Element *));
+        std::cout << "Total memory in expressions tmp1 [Gb]: " << (1.0 * nBlocks * h_deviceArgs.tmp1Size * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
+        std::cout << "Total memory in expressions tmp3 [Gb]: " << (1.0 * nBlocks * h_deviceArgs.tmp3Size * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
+
+        //constant deviceArgs
+        cudaMemcpy(h_deviceArgs.nColsStages, nColsStages.data(), nColsStages.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
+        cudaMemcpy(h_deviceArgs.nColsStagesAcc, nColsStagesAcc.data(), nColsStagesAcc.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
+        h_deviceArgs.N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        h_deviceArgs.NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+        h_deviceArgs.nrowsPack = nrowsPack;
+        h_deviceArgs.nOpenings = nOpenings;
+        h_deviceArgs.ns = ns;
+        
     };
 
     ~ExpressionsGPU()
@@ -251,14 +250,11 @@ public:
 
         bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
         uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].params[0].parserParams.destDim : 0;
-
-        uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
-        uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
-        offsetsStages.resize(ns * nOpenings + 1);
-        nColsStages.clear();
-        nColsStages.resize(ns * nOpenings + 1);
-        nColsStagesAcc.clear();
-        nColsStagesAcc.resize(ns * nOpenings + 1);
+        uint64_t nOpenings = h_deviceArgs.nOpenings;
+        uint64_t ns = h_deviceArgs.ns;
+        vector<uint64_t> nColsStages(ns * nOpenings + 1);
+        vector<uint64_t> nColsStagesAcc(ns * nOpenings + 1);
+        vector<uint64_t> offsetsStages(ns * nOpenings + 1);
 
         for (uint64_t o = 0; o < nOpenings; ++o)
         {
@@ -303,134 +299,158 @@ public:
         }
 
         // fill device arguments
-        deviceArgs.N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-        deviceArgs.NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-        deviceArgs.domainSize = domainSize;
-        deviceArgs.nrowsPack = nrowsPack;
-        deviceArgs.nCols = nCols;
-        deviceArgs.nOpenings = nOpenings;
-        deviceArgs.ns = ns;
-        deviceArgs.domainExtended = domainExtended;
+        h_deviceArgs.domainSize = domainSize;
+        h_deviceArgs.nCols = nCols;
+        h_deviceArgs.domainExtended = domainExtended;
+
         uint32_t extendBits = (setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits);
         int64_t extend = domainExtended ? (1 << extendBits) : 1;
-        deviceArgs.nextStrides = new uint64_t[nOpenings];
+        uint64_t *nextStrides = new uint64_t[nOpenings];        
         for (uint64_t i = 0; i < nOpenings; ++i)
         {
             uint64_t opening = setupCtx.starkInfo.openingPoints[i] < 0 ? setupCtx.starkInfo.openingPoints[i] + domainSize : setupCtx.starkInfo.openingPoints[i];
-            deviceArgs.nextStrides[i] = opening * extend;
+            nextStrides[i] = opening * extend;
         }
-        deviceArgs.nColsStages = new uint64_t[nColsStages.size()];
-        for (uint64_t i = 0; i < nColsStages.size(); ++i)
+        cudaMemcpy(h_deviceArgs.nextStrides, nextStrides, h_deviceArgs.nOpenings * sizeof(uint64_t), cudaMemcpyHostToDevice);
+        delete[] nextStrides;
+        
+        
+        cudaMemcpy(h_deviceArgs.offsetsStages, offsetsStages.data(), offsetsStages.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
+        h_deviceArgs.constPolsSize = setupCtx.starkInfo.nConstants;
+        h_deviceArgs.cmPolsInfoSize = setupCtx.starkInfo.cmPolsMap.size();
+        uint64_t *cmPolsInfo = new uint64_t[h_deviceArgs.cmPolsInfoSize * 3];
+        for (uint64_t i = 0; i < h_deviceArgs.cmPolsInfoSize; ++i)
         {
-            deviceArgs.nColsStages[i] = nColsStages[i];
+            cmPolsInfo[i * 3] = setupCtx.starkInfo.cmPolsMap[i].stage;
+            cmPolsInfo[i * 3 + 1] = setupCtx.starkInfo.cmPolsMap[i].stagePos;
+            cmPolsInfo[i * 3 + 2] = setupCtx.starkInfo.cmPolsMap[i].dim;
         }
-        deviceArgs.nColsStagesAcc = new uint64_t[nColsStagesAcc.size()];
-        for (uint64_t i = 0; i < nColsStagesAcc.size(); ++i)
-        {
-            deviceArgs.nColsStagesAcc[i] = nColsStagesAcc[i];
-        }
-        deviceArgs.offsetsStages = new uint64_t[offsetsStages.size()];
-        for (uint64_t i = 0; i < offsetsStages.size(); ++i)
-        {
-            deviceArgs.offsetsStages[i] = offsetsStages[i];
-        }
-        deviceArgs.constPolsSize = setupCtx.starkInfo.nConstants;
-        deviceArgs.cmPolsInfoSize = setupCtx.starkInfo.cmPolsMap.size();
-        deviceArgs.cmPolsInfo = new uint64_t[deviceArgs.cmPolsInfoSize * 3];
-        for (uint64_t i = 0; i < deviceArgs.cmPolsInfoSize; ++i)
-        {
-            deviceArgs.cmPolsInfo[i * 3] = setupCtx.starkInfo.cmPolsMap[i].stage;
-            deviceArgs.cmPolsInfo[i * 3 + 1] = setupCtx.starkInfo.cmPolsMap[i].stagePos;
-            deviceArgs.cmPolsInfo[i * 3 + 2] = setupCtx.starkInfo.cmPolsMap[i].dim;
-        }
+        cudaMemcpy(h_deviceArgs.cmPolsInfo, cmPolsInfo, h_deviceArgs.cmPolsInfoSize * 3 * sizeof(uint64_t), cudaMemcpyHostToDevice);
+        free(cmPolsInfo);
         if (dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.cExpId))
         {
-            deviceArgs.expType = 0;
+            h_deviceArgs.expType = 0;
         }
         else if (dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.friExpId))
         {
-            deviceArgs.expType = 1;
+            h_deviceArgs.expType = 1;
         }
         else
         {
-            deviceArgs.expType = 2;
+            
+            h_deviceArgs.expType = 2;
         }
 
-        deviceArgs.boundSize = setupCtx.starkInfo.boundaries.size();
-        deviceArgs.zi = setupCtx.proverHelpers.zi;
-        deviceArgs.x_n = setupCtx.proverHelpers.x_n;
-        deviceArgs.x_2ns = setupCtx.proverHelpers.x_2ns;
+        h_deviceArgs.boundSize = setupCtx.starkInfo.boundaries.size();
+        
 
         // Dests
-        deviceArgs.dests = new DestGPU[dests.size()];
-        deviceArgs.nDests = dests.size();
+        DestGPU* dests_aux = new DestGPU[dests.size()];
+        h_deviceArgs.nDests = dests.size();
         for (uint64_t i = 0; i < dests.size(); ++i)
         {
-            deviceArgs.dests[i].dest = dests[i].dest;
-            deviceArgs.dests[i].dest_gpu = dests[i].dest_gpu;
-            deviceArgs.dests[i].offset = dests[i].offset;
-            deviceArgs.dests[i].dim = dests[i].dim;
-            deviceArgs.dests[i].nParams = dests[i].params.size();
-            assert(deviceArgs.dests[i].nParams <= nParamsMax);
-            deviceArgs.dests[i].params = new ParamsGPU[dests[i].params.size()];
+           dests_aux[i].dest_gpu = dests[i].dest_gpu;
+           dests_aux[i].offset = dests[i].offset;
+           dests_aux[i].dim = dests[i].dim;
+           dests_aux[i].nParams = dests[i].params.size();
+            assert(dests_aux[i].nParams <= nParamsMax);
+           dests_aux[i].params = new ParamsGPU[dests[i].params.size()]; //rick
 
-            for (uint64_t j = 0; j < deviceArgs.dests[i].nParams; ++j)
+            for (uint64_t j = 0; j <dests_aux[i].nParams; ++j)
             {
-                deviceArgs.dests[i].params[j].dim = dests[i].params[j].dim;
-                deviceArgs.dests[i].params[j].stage = dests[i].params[j].stage;
-                deviceArgs.dests[i].params[j].stagePos = dests[i].params[j].stagePos;
-                deviceArgs.dests[i].params[j].polsMapId = dests[i].params[j].polsMapId;
-                deviceArgs.dests[i].params[j].rowOffsetIndex = dests[i].params[j].rowOffsetIndex;
-                deviceArgs.dests[i].params[j].inverse = dests[i].params[j].inverse;
-                deviceArgs.dests[i].params[j].batch = dests[i].params[j].batch;
-                deviceArgs.dests[i].params[j].op = dests[i].params[j].op;
-                deviceArgs.dests[i].params[j].value = dests[i].params[j].value;
-                deviceArgs.dests[i].params[j].parserParams.stage = dests[i].params[j].parserParams.stage;
-                deviceArgs.dests[i].params[j].parserParams.expId = dests[i].params[j].parserParams.expId;
-                deviceArgs.dests[i].params[j].parserParams.nTemp1 = dests[i].params[j].parserParams.nTemp1;
-                assert(deviceArgs.dests[i].params[j].parserParams.nTemp1 < nTemp1Max);
-                deviceArgs.dests[i].params[j].parserParams.nTemp3 = dests[i].params[j].parserParams.nTemp3;
-                assert(deviceArgs.dests[i].params[j].parserParams.nTemp3 < nTemp3Max);
-                deviceArgs.dests[i].params[j].parserParams.nOps = dests[i].params[j].parserParams.nOps;
-                deviceArgs.dests[i].params[j].parserParams.opsOffset = dests[i].params[j].parserParams.opsOffset;
-                deviceArgs.dests[i].params[j].parserParams.nArgs = dests[i].params[j].parserParams.nArgs;
-                deviceArgs.dests[i].params[j].parserParams.argsOffset = dests[i].params[j].parserParams.argsOffset;
-                deviceArgs.dests[i].params[j].parserParams.constPolsOffset = dests[i].params[j].parserParams.constPolsOffset;
-                deviceArgs.dests[i].params[j].parserParams.cmPolsOffset = dests[i].params[j].parserParams.cmPolsOffset;
-                deviceArgs.dests[i].params[j].parserParams.challengesOffset = dests[i].params[j].parserParams.challengesOffset;
-                deviceArgs.dests[i].params[j].parserParams.publicsOffset = dests[i].params[j].parserParams.publicsOffset;
-                deviceArgs.dests[i].params[j].parserParams.airgroupValuesOffset = dests[i].params[j].parserParams.airgroupValuesOffset;
-                deviceArgs.dests[i].params[j].parserParams.airValuesOffset = dests[i].params[j].parserParams.airValuesOffset;
-                deviceArgs.dests[i].params[j].parserParams.firstRow = dests[i].params[j].parserParams.firstRow;
-                deviceArgs.dests[i].params[j].parserParams.lastRow = dests[i].params[j].parserParams.lastRow;
-                deviceArgs.dests[i].params[j].parserParams.destDim = dests[i].params[j].parserParams.destDim;
-                deviceArgs.dests[i].params[j].parserParams.destId = dests[i].params[j].parserParams.destId;
-                deviceArgs.dests[i].params[j].parserParams.imPol = dests[i].params[j].parserParams.imPol;
+               dests_aux[i].params[j].dim = dests[i].params[j].dim;
+               dests_aux[i].params[j].stage = dests[i].params[j].stage;
+               dests_aux[i].params[j].stagePos = dests[i].params[j].stagePos;
+               dests_aux[i].params[j].polsMapId = dests[i].params[j].polsMapId;
+               dests_aux[i].params[j].rowOffsetIndex = dests[i].params[j].rowOffsetIndex;
+               dests_aux[i].params[j].inverse = dests[i].params[j].inverse;
+               dests_aux[i].params[j].batch = dests[i].params[j].batch;
+               dests_aux[i].params[j].op = dests[i].params[j].op;
+               dests_aux[i].params[j].value = dests[i].params[j].value;
+               dests_aux[i].params[j].parserParams.stage = dests[i].params[j].parserParams.stage;
+               dests_aux[i].params[j].parserParams.expId = dests[i].params[j].parserParams.expId;
+               dests_aux[i].params[j].parserParams.nTemp1 = dests[i].params[j].parserParams.nTemp1;
+                assert(dests_aux[i].params[j].parserParams.nTemp1 < nTemp1Max);
+               dests_aux[i].params[j].parserParams.nTemp3 = dests[i].params[j].parserParams.nTemp3;
+                assert(dests_aux[i].params[j].parserParams.nTemp3 < nTemp3Max);
+               dests_aux[i].params[j].parserParams.nOps = dests[i].params[j].parserParams.nOps;
+               dests_aux[i].params[j].parserParams.opsOffset = dests[i].params[j].parserParams.opsOffset;
+               dests_aux[i].params[j].parserParams.nArgs = dests[i].params[j].parserParams.nArgs;
+               dests_aux[i].params[j].parserParams.argsOffset = dests[i].params[j].parserParams.argsOffset;
+               dests_aux[i].params[j].parserParams.constPolsOffset = dests[i].params[j].parserParams.constPolsOffset;
+               dests_aux[i].params[j].parserParams.cmPolsOffset = dests[i].params[j].parserParams.cmPolsOffset;
+               dests_aux[i].params[j].parserParams.challengesOffset = dests[i].params[j].parserParams.challengesOffset;
+               dests_aux[i].params[j].parserParams.publicsOffset = dests[i].params[j].parserParams.publicsOffset;
+               dests_aux[i].params[j].parserParams.airgroupValuesOffset = dests[i].params[j].parserParams.airgroupValuesOffset;
+               dests_aux[i].params[j].parserParams.airValuesOffset = dests[i].params[j].parserParams.airValuesOffset;
+               dests_aux[i].params[j].parserParams.firstRow = dests[i].params[j].parserParams.firstRow;
+               dests_aux[i].params[j].parserParams.lastRow = dests[i].params[j].parserParams.lastRow;
+               dests_aux[i].params[j].parserParams.destDim = dests[i].params[j].parserParams.destDim;
+               dests_aux[i].params[j].parserParams.destId = dests[i].params[j].parserParams.destId;
+               dests_aux[i].params[j].parserParams.imPol = dests[i].params[j].parserParams.imPol;
             }
         }
+
+        // Dests
+        DestGPU* d_dests = new DestGPU[h_deviceArgs.nDests];
+        for (int i = 0; i < h_deviceArgs.nDests; ++i)
+        {
+            d_dests[i].dest_gpu = dests_aux[i].dest_gpu;
+            d_dests[i].offset = dests_aux[i].offset;
+            d_dests[i].dim = dests_aux[i].dim;
+            d_dests[i].nParams = dests_aux[i].nParams;
+            cudaMalloc(&d_dests[i].params, d_dests[i].nParams * sizeof(ParamsGPU));
+            if(d_dests[i].nParams > 0) dest_params.push_back(d_dests[i].params);
+            cudaMemcpy(d_dests[i].params, dests_aux[i].params, d_dests[i].nParams * sizeof(ParamsGPU), cudaMemcpyHostToDevice);
+        }
+        for(int i=0; i<dests.size(); i++){
+            delete[] dests_aux[i].params;
+        }
+        delete[] dests_aux;
+        DestGPU *d_dests_;
+        cudaMalloc(&d_dests_, h_deviceArgs.nDests * sizeof(DestGPU));
+        cudaMemcpy(d_dests_, d_dests, h_deviceArgs.nDests * sizeof(DestGPU), cudaMemcpyHostToDevice);
+        delete[] d_dests;
+        h_deviceArgs.dests = d_dests_;
+
+
         // non polnomial arguments
-        deviceArgs.nChallenges = setupCtx.starkInfo.challengesMap.size();
-        deviceArgs.challenges = params.challenges;
-        deviceArgs.nNumbers = parserArgs.nNumbers;
-        deviceArgs.numbers = (Goldilocks::Element *)parserArgs.numbers;
-        deviceArgs.nPublics = setupCtx.starkInfo.nPublics;
-        deviceArgs.publics = params.publicInputs;
-        deviceArgs.nEvals = setupCtx.starkInfo.evMap.size();
-        deviceArgs.evals = params.evals;
-        deviceArgs.nAirgroupValues = setupCtx.starkInfo.airgroupValuesMap.size();
-        deviceArgs.airgroupValues = params.airgroupValues;
-        deviceArgs.nAirValues = setupCtx.starkInfo.airValuesMap.size();
-        deviceArgs.airValues = params.airValues;
+        h_deviceArgs.nChallenges = setupCtx.starkInfo.challengesMap.size();
+        h_deviceArgs.nNumbers = parserArgs.nNumbers;
+        h_deviceArgs.nPublics = setupCtx.starkInfo.nPublics;
+        h_deviceArgs.nEvals = setupCtx.starkInfo.evMap.size();
+        h_deviceArgs.nAirgroupValues = setupCtx.starkInfo.airgroupValuesMap.size();
+        h_deviceArgs.nAirValues = setupCtx.starkInfo.airValuesMap.size();
         // Expressions bin
-        deviceArgs.ops = parserArgs.ops;
-        deviceArgs.nOpsTotal = parserArgs.nOpsTotal;
-        deviceArgs.args = parserArgs.args;
-        deviceArgs.nArgsTotal = parserArgs.nArgsTotal;
+        h_deviceArgs.nOpsTotal = parserArgs.nOpsTotal;
+        h_deviceArgs.nArgsTotal = parserArgs.nArgsTotal;
 
         // bufferT_
-        deviceArgs.nBlocks = nBlocks;
-    }
+        h_deviceArgs.nBlocks = nBlocks;
 
+        cudaMemcpy(h_deviceArgs.cmPolsInfo, h_deviceArgs.cmPolsInfo, 3 * h_deviceArgs.cmPolsInfoSize * sizeof(uint64_t), cudaMemcpyHostToDevice);
+        cudaMemcpy(h_deviceArgs.zi, setupCtx.proverHelpers.zi, h_deviceArgs.boundSize * h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice); // cal copiar cada cop?
+        cudaMemcpy(h_deviceArgs.x_n, setupCtx.proverHelpers.x_n, h_deviceArgs.N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                              // cal cada cop? no es pot transportar?
+        cudaMemcpy(h_deviceArgs.x_2ns, setupCtx.proverHelpers.x_2ns, h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                  // cal cada cop? no es pot transportar?
+        cudaMemcpy(h_deviceArgs.challenges, params.challenges, h_deviceArgs.nChallenges * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+        cudaMemcpy(h_deviceArgs.numbers, (Goldilocks::Element *)parserArgs.numbers, h_deviceArgs.nNumbers * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+        cudaMemcpy(h_deviceArgs.publics, params.publicInputs, h_deviceArgs.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+        cudaMemcpy(h_deviceArgs.evals, params.evals, h_deviceArgs.nEvals * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+        cudaMemcpy(h_deviceArgs.airgroupValues, params.airgroupValues, h_deviceArgs.nAirgroupValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+        cudaMemcpy(h_deviceArgs.airValues, params.airValues, h_deviceArgs.nAirValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+        cudaMemcpy(h_deviceArgs.ops, parserArgs.ops, h_deviceArgs.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice);
+        cudaMemcpy(h_deviceArgs.args, parserArgs.args, h_deviceArgs.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice);
+
+
+        h_deviceArgs.constPols = h_deviceArgs.domainExtended ? params_gpu.pConstPolsExtendedTreeAddress : params_gpu.pConstPolsAddress;
+        h_deviceArgs.trace = params_gpu.trace;
+        h_deviceArgs.aux_trace = params_gpu.aux_trace;
+        h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
+
+        // Allocate memory for the struct on the device
+        cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
+        cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice);
+    }
 
     void calculateExpressions_gpu(StepsParams &params, StepsParams &params_gpu, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize)
     {
@@ -444,26 +464,9 @@ public:
 
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime();
-        loadDeviceArguments(params_gpu);
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        time = omp_get_wtime() - time;
-        std::cout << "goal2_ cudaMalloc expressions time: " << time << std::endl;
-
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        time = omp_get_wtime();
-        dim3 nBlocks = deviceArgs.nBlocks;
-        dim3 nThreads = deviceArgs.nrowsPack;
+        dim3 nBlocks = h_deviceArgs.nBlocks;
+        dim3 nThreads = h_deviceArgs.nrowsPack;
         std::cout << "goal2_ nBlocks: " << nBlocks.x << std::endl;
-        size_t sharedMemSize = 0;
-        /*for(uint32_t i = 0; i<dests.size(); ++i){
-            for(uint32_t j = 0; j<dests[i].params.size(); ++j){
-                if(sharedMemSize <dests[i].params[j].parserParams.nArgs){
-                    sharedMemSize = dests[i].params[j].parserParams.nArgs;
-                }
-            }
-        }
-        sharedMemSize = sharedMemSize * sizeof(uint16_t);
-        std::cout << "SharedMemSize: " << sharedMemSize << std::endl;*/
         computeExpressions_<<<nBlocks, nThreads>>>(d_deviceArgs);
         CHECKCUDAERR(cudaGetLastError());
         CHECKCUDAERR(cudaDeviceSynchronize());
@@ -472,9 +475,11 @@ public:
 
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime();
-        for (uint32_t i = 0; i < deviceArgs.nDests; ++i)
+        for (uint32_t i = 0; i < h_deviceArgs.nDests; ++i)
         {
-            cudaMemcpy(dests[i].dest, deviceArgs.dests[i].dest_gpu, domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+            if(dests[i].dest != NULL){
+                cudaMemcpy(dests[i].dest, dests[i].dest_gpu, domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+            }
         }
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
@@ -487,140 +492,14 @@ public:
         time = omp_get_wtime() - time;
         std::cout << "goal2_ freeDeviceArguments time: " << time << std::endl;
     }
-    void calculateExpressions_gpu2(StepsParams &params, StepsParams &params_gpu, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize)
-    {
-
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        double time = omp_get_wtime();
-        setBufferTInfo(domainSize, params, params_gpu, parserArgs, dests);
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        time = omp_get_wtime() - time;
-        std::cout << "goal2 setBufferTInfo time: " << time << std::endl;
-
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        time = omp_get_wtime();
-        loadDeviceArguments(params_gpu);
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        time = omp_get_wtime() - time;
-        std::cout << "goal2 cudaMalloc expressions time: " << time << std::endl;
-
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        time = omp_get_wtime();
-        dim3 nBlocks = deviceArgs.nBlocks;
-        dim3 nThreads = deviceArgs.nrowsPack;
-        /*size_t sharedMemSize = 0;
-        for(uint32_t i = 0; i<dests.size(); ++i){
-            for(uint32_t j = 0; j<dests[i].params.size(); ++j){
-                if(sharedMemSize <dests[i].params[j].parserParams.nArgs){
-                    sharedMemSize = dests[i].params[j].parserParams.nArgs;
-                }
-            }
-        }
-        sharedMemSize = sharedMemSize * sizeof(uint16_t);
-        std::cout << "SharedMemSize: " << sharedMemSize << std::endl;*/
-        computeExpressions_<<<nBlocks, nThreads>>>(d_deviceArgs);
-        CHECKCUDAERR(cudaGetLastError());
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        time = omp_get_wtime() - time;
-        std::cout << "goal2 nBlocks aqui: " << nBlocks.x << std::endl;
-        std::cout << "goal2 despres de computeExpressions 2: " << time << std::endl;
-
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        time = omp_get_wtime();
-        freeDeviceArguments();
-        CHECKCUDAERR(cudaDeviceSynchronize());
-        time = omp_get_wtime() - time;
-        std::cout << "goal2 freeDeviceArguments time: " << time << std::endl;
-    }
-
-    void loadDeviceArguments(StepsParams &params_gpu)
-    {
-        double time = omp_get_wtime();
-        cudaMemcpy(h_deviceArgs.nextStrides, deviceArgs.nextStrides, deviceArgs.nOpenings * sizeof(uint64_t), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.nColsStages, deviceArgs.nColsStages, nColsStages.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.nColsStagesAcc, deviceArgs.nColsStagesAcc, nColsStagesAcc.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.offsetsStages, deviceArgs.offsetsStages, offsetsStages.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.cmPolsInfo, deviceArgs.cmPolsInfo, 3 * deviceArgs.cmPolsInfoSize * sizeof(uint64_t), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.zi, deviceArgs.zi, deviceArgs.boundSize * deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice); // cal copiar cada cop?
-        cudaMemcpy(h_deviceArgs.x_n, deviceArgs.x_n, deviceArgs.N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                              // cal cada cop? no es pot transportar?
-        cudaMemcpy(h_deviceArgs.x_2ns, deviceArgs.x_2ns, deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                  // cal cada cop? no es pot transportar?
-        cudaMemcpy(h_deviceArgs.challenges, deviceArgs.challenges, deviceArgs.nChallenges * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.numbers, deviceArgs.numbers, deviceArgs.nNumbers * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.publics, deviceArgs.publics, deviceArgs.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.evals, deviceArgs.evals, deviceArgs.nEvals * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.airgroupValues, deviceArgs.airgroupValues, deviceArgs.nAirgroupValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.airValues, deviceArgs.airValues, deviceArgs.nAirValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.ops, deviceArgs.ops, deviceArgs.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice);
-        cudaMemcpy(h_deviceArgs.args, deviceArgs.args, deviceArgs.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice);
-
-        time = omp_get_wtime() - time;
-        std::cout << "goal2 cudaMalloc cudaMemcpy host to device time: " << time << std::endl;
-
-        // Dests
-        time = omp_get_wtime();
-        d_dests = new DestGPU[deviceArgs.nDests];
-        for (int i = 0; i < deviceArgs.nDests; ++i)
-        {
-            d_dests[i].dest = deviceArgs.dests[i].dest;
-            d_dests[i].dest_gpu = deviceArgs.dests[i].dest_gpu;
-            d_dests[i].offset = deviceArgs.dests[i].offset;
-            d_dests[i].dim = deviceArgs.dests[i].dim;
-            d_dests[i].nParams = deviceArgs.dests[i].nParams;
-            cudaMalloc(&d_dests[i].params, d_dests[i].nParams * sizeof(ParamsGPU));
-            cudaMemcpy(d_dests[i].params, deviceArgs.dests[i].params, d_dests[i].nParams * sizeof(ParamsGPU), cudaMemcpyHostToDevice);
-        }
-        DestGPU *d_dests_;
-        cudaMalloc(&d_dests_, deviceArgs.nDests * sizeof(DestGPU));
-        cudaMemcpy(d_dests_, d_dests, deviceArgs.nDests * sizeof(DestGPU), cudaMemcpyHostToDevice);
-
-        time = omp_get_wtime() - time;
-        std::cout << "goal2 cudaMalloc dests: " << time << std::endl;
-
-        // Update the device struct with device pointers
-        h_deviceArgs.N = deviceArgs.N;
-        h_deviceArgs.NExtended = deviceArgs.NExtended;
-        h_deviceArgs.domainSize = deviceArgs.domainSize;
-        h_deviceArgs.nrowsPack = deviceArgs.nrowsPack;
-        h_deviceArgs.nCols = deviceArgs.nCols;
-        h_deviceArgs.nOpenings = deviceArgs.nOpenings;
-        h_deviceArgs.ns = deviceArgs.ns;
-        h_deviceArgs.domainExtended = deviceArgs.domainExtended;
-        h_deviceArgs.constPolsSize = deviceArgs.constPolsSize;
-        h_deviceArgs.cmPolsInfoSize = deviceArgs.cmPolsInfoSize;
-        h_deviceArgs.expType = deviceArgs.expType;
-        h_deviceArgs.boundSize = deviceArgs.boundSize;
-        h_deviceArgs.nChallenges = deviceArgs.nChallenges;
-        h_deviceArgs.nNumbers = deviceArgs.nNumbers;
-        h_deviceArgs.nPublics = deviceArgs.nPublics;
-        h_deviceArgs.nEvals = deviceArgs.nEvals;
-        h_deviceArgs.nAirgroupValues = deviceArgs.nAirgroupValues;
-        h_deviceArgs.nAirValues = deviceArgs.nAirValues;
-        h_deviceArgs.nDests = deviceArgs.nDests;
-        h_deviceArgs.nOpsTotal = deviceArgs.nOpsTotal;
-        h_deviceArgs.nArgsTotal = deviceArgs.nArgsTotal;
-        h_deviceArgs.nBlocks = deviceArgs.nBlocks;
-        h_deviceArgs.bufferSize = deviceArgs.bufferSize;
-        h_deviceArgs.destValsSize = deviceArgs.destValsSize;
-        h_deviceArgs.tmp1Size = deviceArgs.tmp1Size;
-        h_deviceArgs.tmp3Size = deviceArgs.tmp3Size;
-
-        h_deviceArgs.constPols = h_deviceArgs.domainExtended ? params_gpu.pConstPolsExtendedTreeAddress : params_gpu.pConstPolsAddress;
-        h_deviceArgs.trace = params_gpu.trace;
-        h_deviceArgs.aux_trace = params_gpu.aux_trace;
-        h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
-
-        h_deviceArgs.dests = d_dests_;
-
-        // Allocate memory for the struct on the device
-        cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
-        cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice);
-    }
+    
     void freeDeviceArguments()
     {
-        for (int i = 0; i < deviceArgs.nDests; ++i)
+        for(std::vector<ParamsGPU *>::iterator it = dest_params.begin(); it != dest_params.end(); ++it)
         {
-            cudaFree(d_dests[i].params);
+            cudaFree(*it);
         }
+        dest_params.clear();
         cudaFree(h_deviceArgs.dests);
         cudaFree(d_deviceArgs);
     }
@@ -643,10 +522,6 @@ __device__ __noinline__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs,
     }
 }
 
-__global__ void copyPolynomial_(DeviceArguments *d_deviceArgs, Goldilocks::Element *d_destVals, bool inverse, uint64_t dim, Goldilocks::Element *d_tmp)
-{
-    copyPolynomial__(d_deviceArgs, (gl64_t *)d_destVals, inverse, dim, (gl64_t *)d_tmp);
-}
 __device__ __noinline__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, bool inverse, uint64_t dim, gl64_t *temp)
 {
     int idx = threadIdx.x;
@@ -681,11 +556,6 @@ __device__ __noinline__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl6
             destVals[2 * d_deviceArgs->nrowsPack + idx] = temp[2 * d_deviceArgs->nrowsPack + idx];
         }
     }
-}
-__global__ void loadPolynomials_(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
-{
-
-    loadPolynomials__(d_deviceArgs, row, iBlock);
 }
 
 __device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
@@ -841,14 +711,6 @@ __global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_de
                 }
                 uint8_t *ops = &d_deviceArgs->ops[d_deviceArgs->dests[j].params[k].parserParams.opsOffset];
                 uint16_t *args = &d_deviceArgs->args[d_deviceArgs->dests[j].params[k].parserParams.argsOffset];
-                /*uint32_t indx = threadIdx.x;
-                while(indx < d_deviceArgs->dests[j].params[k].parserParams.nArgs){
-                    args[indx] = d_deviceArgs->args[d_deviceArgs->dests[j].params[k].parserParams.argsOffset + indx];
-                    indx += blockDim.x;
-                }
-                __syncthreads();*/
-
-
 
                 uint64_t i_args = 0;
                 for (uint64_t kk = 0; kk < d_deviceArgs->dests[j].params[k].parserParams.nOps; ++kk) {

@@ -239,7 +239,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     std::cout << "Rick fins PUNT9 (pre-expressions) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
-    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests2, N);
+    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests2, N);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
@@ -296,7 +296,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     std::cout << "Rick fins PUNT13 (Q expressions preparation) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
-    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests3, domainSize);
+    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests3, domainSize);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
@@ -416,7 +416,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     std::cout << "Rick fins PUNT21 (pre-expressions) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
-    expressionsCtx.calculateExpressions_gpu2(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsf, domainSize);
+    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsf, domainSize);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
