@@ -1,7 +1,7 @@
 use num_bigint::BigUint;
 
 use p3_goldilocks::Goldilocks;
-use p3_field::{ExtensionField, Field, PackedValue, PrimeCharacteristicRing};
+use p3_field::{BasedVectorSpace, ExtensionField, Field, PackedValue, PrimeCharacteristicRing};
 use p3_field::extension::BinomialExtensionField;
 
 // Field Fp⁵ = F[X]/(X⁵-3) with fixed generator X + 2
@@ -70,19 +70,19 @@ impl Squaring for GoldilocksQuinticExtension {
     }
 
     fn first_frobenius(&self) -> Self {
-        let a = self.as_slice();
+        let a: &[Goldilocks] = self.as_basis_coefficients_slice();
         let mut result = Self::ZERO;
         for i in 0..5 {
-            result += a[i] * Self::gammas1(i);
+            result += Self::gammas1(i) * a[i];
         }
         result
     }
 
     fn second_frobenius(&self) -> Self {
-        let a = self.as_slice();
+        let a: &[Goldilocks] = self.as_basis_coefficients_slice();
         let mut result = Self::ZERO;
         for i in 0..5 {
-            result += a[i] * Self::gammas2(i);
+            result += Self::gammas2(i) * a[i];
         }
         result
     }
@@ -126,6 +126,9 @@ impl Squaring for GoldilocksQuinticExtension {
         // First Part: Compute the square root of self^-(p⁴ + p³ + p² + p + 1) ∈ Fp
         // ================================================================
         // We use the Cipolla's algorithm as implemented here https://github.com/Plonky3/Plonky3/pull/439/files
+        // The reason to choose Cipolla's algorithm is that it outperforms Tonelli-Shanks when S·(S-1) > 8m + 20,
+        // where S is the largest power of two dividing p-1 and m is the number of bits in p
+        // In this case we have: S = 32 and m = 64, so S·(S-1) = 992 > 8*64 + 20 = 532
         let n = exp_fifth_cyclo.inverse();
 
         // 1] Compute a ∈ Fp such that a² - n is not a square
