@@ -158,7 +158,7 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=tmp/buffer.bin -k
+     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=tmp/buffer.bin -y
 ```
 
 With recursion:
