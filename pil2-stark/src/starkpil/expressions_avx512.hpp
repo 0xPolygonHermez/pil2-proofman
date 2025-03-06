@@ -166,7 +166,7 @@ public:
             for(uint64_t d = 0; d < setupCtx.starkInfo.openingPoints.size(); ++d) {
                for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
                     for(uint64_t j = 0; j < nrowsPack; ++j) {
-                        bufferT[j] = params.xDivXSub[(row + j + d*domainSize)*FIELD_EXTENSION + k];
+                        bufferT[j] = params.xDivXSub[((row + j)*setupCtx.starkInfo.openingPoints.size() + d)*FIELD_EXTENSION + k];
                     }
                     Goldilocks::load_avx512(bufferT_[nColsStagesAcc[ns*nOpenings] + d*FIELD_EXTENSION + k], &bufferT[0]);
                 }
