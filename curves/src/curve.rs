@@ -1,27 +1,40 @@
 use p3_field::{Field, ExtensionField};
 
-use crate::Squaring;
+use crate::SquaringFp5;
 
-pub trait Curve<F: Field, K: ExtensionField<F> + Squaring>: Clone {
+/// Trait for elliptic curves
+pub trait EllipticCurve<F: Field, K: ExtensionField<F> + SquaringFp5>: Clone {
+    /// Parameter `A` of the curve
     const A: [u64; 5];
+    /// Parameter `B` of the curve
     const B: [u64; 5];
-    const Z: [u64; 5]; // find_z_sswu(K,a,b)
-    const C1: [u64; 5]; // -B/A
-    const C2: [u64; 5]; // -1/Z
+    /// Constant `Z` of the Simplified SWU map, it can be found using https://www.ietf.org/archive/id/draft-irtf-cfrg-hash-to-curve-10.html#sswu-z-code
+    const Z: [u64; 5];
+    /// -B/A
+    const C1: [u64; 5];
+    /// -1/Z
+    const C2: [u64; 5];
 
+    /// Create a new point on the curve
     fn new(x: K, y: K) -> Self;
 
+    /// Return the point at infinity
     fn infinity() -> Self;
 
+    /// Return the generator of the subgroup of the curve
     #[allow(dead_code)]
     fn generator() -> Self;
 
+    /// Return the x coordinate of the point
     fn x(&self) -> K;
 
+    /// Return the y coordinate of the point
     fn y(&self) -> K;
 
+    /// Check if the point is the point at infinity
     fn is_infinity(&self) -> bool;
 
+    /// Check if the point is on the curve
     #[allow(dead_code)]
     fn is_on_curve(&self) -> bool {
         if self.is_infinity() {
@@ -35,7 +48,7 @@ pub trait Curve<F: Field, K: ExtensionField<F> + Squaring>: Clone {
         y.square() == x.cube() + a * x + b
     }
 
-    // Addition assuming points are not the point at infinity and not in the same vertical line
+    /// Addition assuming points are not the point at infinity and not in the same vertical line
     fn add_incomplete(&self, other: &Self) -> Self
     where
         Self: Sized,
@@ -51,7 +64,7 @@ pub trait Curve<F: Field, K: ExtensionField<F> + Squaring>: Clone {
         Self::new(x3, y3)
     }
 
-    // Doubling routine assuming the point is not the point at infinity
+    /// Doubling routine assuming the point is not the point at infinity and not of order 2
     fn double_incomplete(&self) -> Self
     where
         Self: Sized,
@@ -66,7 +79,7 @@ pub trait Curve<F: Field, K: ExtensionField<F> + Squaring>: Clone {
         Self::new(x3, y3)
     }
 
-    // Addition routine
+    /// Addition routine
     fn add_complete(&self, other: &Self) -> Self {
         // If one of the points is the point at infinity, return the other point.
         if self.is_infinity() {
@@ -84,6 +97,11 @@ pub trait Curve<F: Field, K: ExtensionField<F> + Squaring>: Clone {
 
         // If the points are the same
         if self.y() == other.y() {
+            // If the point is of order 2
+            if self.y().is_zero() {
+                return Self::infinity();
+            }
+
             return self.double_incomplete();
         }
 
@@ -91,23 +109,24 @@ pub trait Curve<F: Field, K: ExtensionField<F> + Squaring>: Clone {
         Self::infinity()
     }
 
+    /// Doubling routine
     fn double_complete(&self) -> Self {
-        // If the point is the point at infinity, return the point at infinity
-        if self.is_infinity() {
+        // If the point is the point at infinity or of order 2
+        if self.is_infinity() || self.y().is_zero() {
             return Self::infinity();
         }
 
         self.double_incomplete()
     }
 
-    fn clear_cofactor(&self) -> Self {
-        self.double_complete()
-    }
+    /// Map a point on the curve to the working subgroup on the curve
+    fn clear_cofactor(&self) -> Self;
 
-    fn map_to_curve(e: K) -> Self {
+    /// Map a field element to a point on the curve
+    fn map_to_curve(f: K) -> Self {
         let z = K::from_basis_coefficients_fn(|i| F::from_u64(Self::Z[i]));
 
-        let tv1 = z * e.square();
+        let tv1 = z * f.square();
         let mut tv2 = tv1.square();
         let mut x1 = if let Some(inv) = (tv1 + tv2).try_inverse() { inv } else { K::ZERO };
         let e1 = x1 == K::ZERO;
@@ -131,7 +150,7 @@ pub trait Curve<F: Field, K: ExtensionField<F> + Squaring>: Clone {
         // x2 = Z * e^2 * x1
         let x2 = tv1 * x1;
 
-        // gx2 = (Z * e^2)^3 * gx1
+        // gx2 = (Z * e^2)^3 * gx1 = x2^3 + A * x2 + B
         tv2 *= tv1;
         let gx2 = tv2 * gx1;
 
@@ -141,13 +160,10 @@ pub trait Curve<F: Field, K: ExtensionField<F> + Squaring>: Clone {
             if e2 { (x1, gx1.sqrt().expect("gx1 is square")) } else { (x2, gx2.sqrt().expect("gx2 is square")) };
 
         // Fix the sign of y
-        if e.sign0() == y.sign0() {
-            return Self::new(x, y);
-        } else {
-            return Self::new(x, -y);
-        }
+        if f.sign0() == y.sign0() { Self::new(x, y) } else { Self::new(x, -y) }
     }
 
+    /// Hash to the curve
     #[allow(dead_code)]
     fn hash_to_curve(f0: K, f1: K) -> Self
     where

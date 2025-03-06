@@ -3,7 +3,7 @@ use std::ops::Add;
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 use p3_goldilocks::Goldilocks;
 
-use crate::Curve;
+use crate::EllipticCurve;
 use crate::GoldilocksQuinticExtension;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,7 +13,7 @@ pub struct EcGFp5 {
     is_infinity: bool,
 }
 
-impl Curve<Goldilocks, GoldilocksQuinticExtension> for EcGFp5 {
+impl EllipticCurve<Goldilocks, GoldilocksQuinticExtension> for EcGFp5 {
     const A: [u64; 5] = [6148914689804861439, 263, 0, 0, 0];
     const B: [u64; 5] = [15713893096167979237, 6148914689804861265, 0, 0, 0];
     const Z: [u64; 5] = [18446744069414584317, 18446744069414584320, 0, 0, 0];
@@ -52,6 +52,11 @@ impl Curve<Goldilocks, GoldilocksQuinticExtension> for EcGFp5 {
 
     fn is_infinity(&self) -> bool {
         self.is_infinity
+    }
+
+    fn clear_cofactor(&self) -> Self {
+        // Cofactor is 2
+        self.double_complete()
     }
 }
 

@@ -2,35 +2,44 @@ use p3_goldilocks::Goldilocks;
 use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeField64, PrimeCharacteristicRing};
 use p3_field::extension::BinomialExtensionField;
 
-// Field Fp⁵ = F[X]/(X⁵-3) with fixed generator X + 2
+/// Field Fp⁵ = F\[X\]/(X⁵-3) with generator X + 2
 pub(crate) type GoldilocksQuinticExtension = BinomialExtensionField<Goldilocks, 5>;
 
-// Specific methods for computing square root of a goldilocks quintic extension
-// as described in https://hackmd.io/CxJrIhv-SP65W3GWS_J5bw?view#Extension-Field-Selection
-// which is inspired by https://github.com/succinctlabs/sp1/blob/dev/crates/stark/src/septic_extension.rs
-pub(crate) trait Squaring {
+/// Methods for computing the square root in the GoldilocksQuinticExtension field
+/// as described in [Elliptic Curves over Goldilocks](https://hackmd.io/CxJrIhv-SP65W3GWS_J5bw?view#Extension-Field-Selection),
+/// which is inspired by [Curve ecGFp5](https://github.com/pornin/ecgfp5/tree/main)
+pub(crate) trait SquaringFp5 {
+    /// Return the i-th constant of the first Frobenius operator
     fn gammas1(i: usize) -> Goldilocks;
 
+    /// Return the i-th constant of the second Frobenius operator
     fn gammas2(i: usize) -> Goldilocks;
 
+    /// Compute the first Frobenius operator: self^p
     fn first_frobenius(&self) -> Self;
 
+    /// Compute the second Frobenius operator: self^p²
     fn second_frobenius(&self) -> Self;
 
+    /// Compute the fifth cyclotomic exponentiation: self^(p⁴ + p³ + p² + p + 1)
     fn exp_fifth_cyclotomic(&self) -> Self;
 
+    /// Check if the element is a square in Fp
     fn is_square_base(x: &Goldilocks) -> bool;
 
+    /// Check if the element is a square in Fp⁵
     fn is_square(&self) -> (Goldilocks, bool);
 
+    /// Compute the square root of the element in Fp⁵
     fn sqrt(&self) -> Option<Self>
     where
         Self: Sized;
 
+    /// Compute the sign of a field element
     fn sign0(&self) -> bool;
 }
 
-impl Squaring for GoldilocksQuinticExtension {
+impl SquaringFp5 for GoldilocksQuinticExtension {
     fn gammas1(index: usize) -> Goldilocks {
         // ```sage
         // p = 2**64 - 2**32 + 1
@@ -85,7 +94,6 @@ impl Squaring for GoldilocksQuinticExtension {
         *self * t0 * t1 // self^(p⁴ + p³ + p² + p + 1)
     }
 
-    // Computes the Legendre symbol (x / p) = (p-1)/2 and checks if its 1, assumes x != 0
     fn is_square_base(x: &Goldilocks) -> bool {
         // (p-1)/2 = 2^63 - 2^31 -> x^((p-1)/2) = x^(2^63) / x^(2^31)
         let exp_63 = x.exp_power_of_2(63);
@@ -94,7 +102,6 @@ impl Squaring for GoldilocksQuinticExtension {
         symbol == Goldilocks::ONE
     }
 
-    // Computes self^((p⁵ - 1)/2), assumes self != 0
     fn is_square(&self) -> (Goldilocks, bool) {
         // Compute a = self^(p⁴ + p³ + p² + p + 1), a ∈ Fp
         let pow_fifth_cyclo: Goldilocks =
@@ -104,11 +111,12 @@ impl Squaring for GoldilocksQuinticExtension {
         (pow_fifth_cyclo, Self::is_square_base(&pow_fifth_cyclo))
     }
 
-    // We compute the square root using the identity:
-    //      1     p⁴ + p³ + p² + p + 1       p+1          p+1
-    //     --- + ----------------------  = (-----)·p³ + (-----)·p + 1
-    //      2              2                  2            2
     fn sqrt(&self) -> Option<Self> {
+        // We compute the square root using the identity:
+        //      1     p⁴ + p³ + p² + p + 1       p+1          p+1
+        //     --- + ----------------------  = (-----)·p³ + (-----)·p + 1
+        //      2              2                  2            2
+
         // sqrt(0) = 0 and sqrt(1) = 1
         if self.is_zero() || self.is_one() {
             return Some(*self);
@@ -174,8 +182,8 @@ impl Squaring for GoldilocksQuinticExtension {
     }
 }
 
-// Extension field for Cipolla's algorithm, adapted from https://github.com/Plonky3/Plonky3/pull/439/files
-// Cipolla extension is defined as Fp[sqrt(a² - n)], where a² - n is a non-residue in Fp
+/// Extension field for Cipolla's algorithm, adapted from [Plonky3 PR #439](https://github.com/Plonky3/Plonky3/pull/439)
+/// Cipolla extension is defined as Fp\[sqrt(a² - n)\], where a² - n is a non-residue in Fp
 #[derive(Clone, Copy, Debug)]
 struct CipollaExtension<F: Field> {
     real: F,
