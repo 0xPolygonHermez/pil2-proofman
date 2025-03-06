@@ -1,4 +1,3 @@
-
 use p3_goldilocks::Goldilocks;
 use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeCharacteristicRing};
 use p3_field::extension::BinomialExtensionField;
@@ -10,7 +9,6 @@ pub type GoldilocksQuinticExtension = BinomialExtensionField<Goldilocks, 5>;
 // as described in https://hackmd.io/CxJrIhv-SP65W3GWS_J5bw?view#Extension-Field-Selection
 // which is inspired by https://github.com/succinctlabs/sp1/blob/dev/crates/stark/src/septic_extension.rs
 pub trait Squaring {
-
     fn gammas1(i: usize) -> Goldilocks;
 
     fn gammas2(i: usize) -> Goldilocks;
