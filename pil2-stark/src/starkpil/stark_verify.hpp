@@ -213,7 +213,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             Goldilocks3::sub((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)x_ext[0], (Goldilocks3::Element &)aux[0]);
             Goldilocks3::inv((Goldilocks3::Element *)aux, (Goldilocks3::Element *)aux);
             Goldilocks3::mul((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)x_ext[0]);
-            std::memcpy(&xDivXSub[(i + o*starkInfo.starkStruct.nQueries)*FIELD_EXTENSION], &aux[0], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+            std::memcpy(&xDivXSub[(i*starkInfo.openingPoints.size() + o)*FIELD_EXTENSION], &aux[0], FIELD_EXTENSION * sizeof(Goldilocks::Element));
         }
     }
 
