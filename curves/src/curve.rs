@@ -5,9 +5,9 @@ use crate::Squaring;
 pub trait Curve<F: Field, K: ExtensionField<F> + Squaring>: Clone {
     const A: [u64; 5];
     const B: [u64; 5];
-    const Z: [u64; 5];
-    const C1: [u64; 5];
-    const C2: [u64; 5];
+    const Z: [u64; 5]; // find_z_sswu(K,a,b)
+    const C1: [u64; 5]; // -B/A
+    const C2: [u64; 5]; // -1/Z
 
     fn new(x: K, y: K) -> Self;
 
