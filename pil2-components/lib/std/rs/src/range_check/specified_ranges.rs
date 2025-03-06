@@ -47,7 +47,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         let specified_data_hint =
             get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges_data")[0] as usize;
         let col_num = get_hint_field_constant_as_u64::<F>(
-            &sctx,
+            sctx,
             airgroup_id,
             air_id,
             specified_data_hint,
@@ -56,7 +56,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         );
 
         let opids_count = get_hint_field_constant_as_u64::<F>(
-            &sctx,
+            sctx,
             airgroup_id,
             air_id,
             specified_data_hint,
@@ -65,7 +65,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         );
 
         let opids = get_hint_field_constant_a::<F>(
-            &sctx,
+            sctx,
             airgroup_id,
             air_id,
             specified_data_hint,
@@ -75,7 +75,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         .values;
 
         let opids_len = get_hint_field_constant_a::<F>(
-            &sctx,
+            sctx,
             airgroup_id,
             air_id,
             specified_data_hint,
@@ -110,7 +110,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
                 let hint = specified_hints[idx];
 
                 let min = get_hint_field_constant_as_u64::<F>(
-                    &sctx,
+                    sctx,
                     airgroup_id,
                     air_id,
                     hint as usize,
@@ -119,7 +119,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
                 );
 
                 let min_neg = get_hint_field_constant_as_field::<F>(
-                    &sctx,
+                    sctx,
                     airgroup_id,
                     air_id,
                     hint as usize,
