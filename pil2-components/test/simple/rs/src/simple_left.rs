@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use witness::{WitnessComponent, execute, define_wc};
+use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField64;
@@ -8,7 +8,7 @@ use rand::{distributions::Standard, prelude::Distribution, seq::SliceRandom, Rng
 
 use crate::SimpleLeftTrace;
 
-define_wc!(SimpleLeft, "SimLeft ");
+define_wc_with_std!(SimpleLeft, "SimLeft ");
 
 impl<F: PrimeField64 + Copy> WitnessComponent<F> for SimpleLeft<F>
 where
