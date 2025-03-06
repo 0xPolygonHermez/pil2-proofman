@@ -303,6 +303,7 @@ dependencies = [
  "num-traits",
  "p3-field",
  "p3-goldilocks",
+ "rand 0.9.0",
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 use num_bigint::BigUint;
 
 use p3_goldilocks::Goldilocks;
-use p3_field::{BasedVectorSpace, ExtensionField, Field, PackedValue, PrimeCharacteristicRing};
+use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeCharacteristicRing};
 use p3_field::extension::BinomialExtensionField;
 
 // Field Fp⁵ = F[X]/(X⁵-3) with fixed generator X + 2
@@ -13,9 +13,9 @@ pub type GoldilocksQuinticExtension = BinomialExtensionField<Goldilocks, 5>;
 pub trait Squaring {
     const EXP: u64 = 0x7FFF_FFFF_8000_0000; // (p-1)/2
 
-    fn gammas1(i: usize) -> Self;
+    fn gammas1(i: usize) -> Goldilocks;
 
-    fn gammas2(i: usize) -> Self;
+    fn gammas2(i: usize) -> Goldilocks;
 
     fn first_frobenius(&self) -> Self;
 
@@ -31,7 +31,7 @@ pub trait Squaring {
 }
 
 impl Squaring for GoldilocksQuinticExtension {
-    fn gammas1(index: usize) -> Self {
+    fn gammas1(index: usize) -> Goldilocks {
         // ```sage
         // p = 2**64 - 2**32 + 1
         // F = GF(p)
@@ -41,56 +41,48 @@ impl Squaring for GoldilocksQuinticExtension {
         //     print(f"gamma1{i} = {gamma1i}")
         // ```
         match index {
-            0 => Self::ONE,
-            1 => GoldilocksQuinticExtension::from_u64(1041288259238279555),
-            2 => GoldilocksQuinticExtension::from_u64(15820824984080659046),
-            3 => GoldilocksQuinticExtension::from_u64(211587555138949697),
-            4 => GoldilocksQuinticExtension::from_u64(1373043270956696022),
+            0 => Goldilocks::ONE,
+            1 => Goldilocks::from_u64(1041288259238279555),
+            2 => Goldilocks::from_u64(15820824984080659046),
+            3 => Goldilocks::from_u64(211587555138949697),
+            4 => Goldilocks::from_u64(1373043270956696022),
             _ => panic!("Invalid index for gammas1: {}", index),
         }
     }
 
-    fn gammas2(index: usize) -> Self {
+    fn gammas2(index: usize) -> Goldilocks {
         // ```sage
         // p = 2**64 - 2**32 + 1
         // F = GF(p)
         //
         // for i in range(1,5):
-        //     gamma1i = F(3)^(i*(p^2-1)/5)
+        //     gamma1i = F(3)^(i*(p-1)/5)
         //     print(f"gamma2{i} = {gamma1i^2}")
         // ```
         match index {
-            0 => Self::ONE,
-            1 => GoldilocksQuinticExtension::from_u64(15820824984080659046),
-            2 => GoldilocksQuinticExtension::from_u64(1373043270956696022),
-            3 => GoldilocksQuinticExtension::from_u64(1041288259238279555),
-            4 => GoldilocksQuinticExtension::from_u64(211587555138949697),
-            _ => panic!("Invalid index for gammas1: {}", index),
+            0 => Goldilocks::ONE,
+            1 => Goldilocks::from_u64(15820824984080659046),
+            2 => Goldilocks::from_u64(1373043270956696022),
+            3 => Goldilocks::from_u64(1041288259238279555),
+            4 => Goldilocks::from_u64(211587555138949697),
+            _ => panic!("Invalid index for gammas2: {}", index),
         }
     }
 
     fn first_frobenius(&self) -> Self {
         let a: &[Goldilocks] = self.as_basis_coefficients_slice();
-        let mut result = Self::ZERO;
-        for i in 0..5 {
-            result += Self::gammas1(i) * a[i];
-        }
-        result
+        Self::from_basis_coefficients_fn(|i| Self::gammas1(i) * a[i])
     }
 
     fn second_frobenius(&self) -> Self {
         let a: &[Goldilocks] = self.as_basis_coefficients_slice();
-        let mut result = Self::ZERO;
-        for i in 0..5 {
-            result += Self::gammas2(i) * a[i];
-        }
-        result
+        Self::from_basis_coefficients_fn(|i| Self::gammas2(i) * a[i])
     }
 
     fn exp_fifth_cyclotomic(&self) -> Self {
-        let t0 = self.first_frobenius() * self.second_frobenius();
-        let t1 = t0.second_frobenius();
-        *self * t0 * t1
+        let t0 = self.first_frobenius() * self.second_frobenius(); // self^(p² + p)
+        let t1 = t0.second_frobenius(); // self^(p⁴ + p³)
+        *self * t0 * t1 // self^(p⁴ + p³ + p² + p + 1)
     }
 
     // Computes self^((p⁵ - 1)/2), assumes self != 0
@@ -152,12 +144,12 @@ impl Squaring for GoldilocksQuinticExtension {
 
         // 2] Compute the rest using Frobenius
         let mut pow_frob = pow.first_frobenius(); // self^(((p+1)/2)p)
-        let mut result = pow_frob;
+        let mut y = pow_frob;
         pow_frob = pow_frob.second_frobenius(); // self^(((p+1)/2)p³)
-        result *= pow_frob; // self^(((p+1)/2)p³ + ((p+1)/2)p)
-        result *= *self; // self^(((p+1)/2)p³ + ((p+1)/2)p + 1)
+        y *= pow_frob; // self^(((p+1)/2)p³ + ((p+1)/2)p)
+        y *= *self; // self^(((p+1)/2)p³ + ((p+1)/2)p + 1)
 
-        Some(result * x.real)
+        Some(y * x.real)
     }
 }
 
@@ -200,4 +192,47 @@ impl<F: Field> CipollaExtension<F> {
     }
 }
 
-// TODO: Add some tests
+#[cfg(test)]
+mod tests {
+    use rand::{
+        distr::{Distribution, StandardUniform},
+        rng,
+    };
+
+    use super::*;
+
+    #[test]
+    fn test_is_square() {
+        let g = GoldilocksQuinticExtension::GENERATOR;
+        let mut x = GoldilocksQuinticExtension::ONE;
+        for i in 0..1000 {
+            let (_, is_square) = x.is_square();
+            assert_eq!(is_square, i % 2 == 0);
+            x *= g;
+        }
+    }
+
+    #[test]
+    fn test_sqrt() {
+        // Test edge cases
+        let zero_sqrt = GoldilocksQuinticExtension::ZERO.sqrt();
+        assert_eq!(zero_sqrt, Some(GoldilocksQuinticExtension::ZERO));
+
+        let one_sqrt = GoldilocksQuinticExtension::ONE.sqrt();
+        assert_eq!(one_sqrt, Some(GoldilocksQuinticExtension::ONE));
+
+        // Test a non-square
+        let g = GoldilocksQuinticExtension::GENERATOR;
+        let g_sqrt = g.sqrt();
+        assert_eq!(g_sqrt, None);
+
+        // Test random elements
+        let mut rng = rng();
+        for _ in 0..1000 {
+            let x: GoldilocksQuinticExtension = StandardUniform.sample(&mut rng);
+            let x_sq = x.square();
+            let x_sqrt = x_sq.sqrt().unwrap();
+            assert_eq!(x_sqrt * x_sqrt, x_sq);
+        }
+    }
+}
