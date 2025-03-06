@@ -468,6 +468,7 @@ pub fn write_custom_commit_c(
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn commit_witness_c(
+    arity: u64,
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
@@ -477,6 +478,7 @@ pub fn commit_witness_c(
 ) {
     unsafe {
         commit_witness(
+            arity,
             n_bits,
             n_bits_ext,
             n_cols,
@@ -1231,6 +1233,7 @@ pub fn write_custom_commit_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn commit_witness_c(
+    _arity: u64,
     _n_bits: u64,
     _n_bits_ext: u64,
     _n_cols: u64,

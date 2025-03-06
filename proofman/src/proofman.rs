@@ -988,6 +988,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let root = vec![F::zero(); n_field_elements];
         commit_witness_c(
+            3,
             setup.stark_info.stark_struct.n_bits,
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),

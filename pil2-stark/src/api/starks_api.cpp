@@ -336,7 +336,7 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
     }
 }
 
-void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace) {
+void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace) {
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
     Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
@@ -346,7 +346,7 @@ void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *roo
     NTT_Goldilocks ntt(N);
     ntt.extendPol(auxTraceGL, traceGL, NExtended, N, nCols);
 
-    MerkleTreeGL mt(2, true, NExtended, nCols);
+    MerkleTreeGL mt(arity, true, NExtended, nCols);
     mt.setSource(auxTraceGL);
     mt.setNodes(&auxTraceGL[NExtended * nCols]);
     mt.merkelize();

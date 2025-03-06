@@ -223,8 +223,10 @@ public:
         }
 
         for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-            for(uint64_t l = 0; l < starkInfo.starkStruct.steps[0].nBits; ++l) {
-                for(uint64_t k = 0; k < 4; ++k) {
+            uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+            uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+            for(uint64_t l = 0; l < nSiblings; ++l) {
+                for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
                     pointer[p++] = toU64(fri.trees.polQueries[i][starkInfo.nStages + 1].mp[l][k]);
                 }
             }
@@ -237,15 +239,16 @@ public:
                 }
             }
             for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-                for(uint64_t l = 0; l < starkInfo.starkStruct.steps[0].nBits; ++l) {
-                    for(uint64_t k = 0; k < 4; ++k) {
+                uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+                uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+                for(uint64_t l = 0; l < nSiblings; ++l) {
+                    for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
                         pointer[p++] = toU64(fri.trees.polQueries[i][starkInfo.nStages + 2 + c].mp[l][k]);
                     }
                 }
             }
         }
         
-
         for (uint64_t s = 0; s < starkInfo.nStages + 1; ++s) {
             uint64_t stage = s + 1;
             for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
@@ -255,21 +258,21 @@ public:
             }
 
             for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-                for(uint64_t l = 0; l < starkInfo.starkStruct.steps[0].nBits; ++l) {
-                    for(uint64_t k = 0; k < 4; ++k) {
+                uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+                uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+                for(uint64_t l = 0; l < nSiblings; ++l) {
+                    for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
                         pointer[p++] = toU64(fri.trees.polQueries[i][s].mp[l][k]);
                     }
                 }
             }
         }
         
-
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
              for(uint64_t i = 0; i < nFieldElements; i++) {
                 pointer[p++] = toU64(fri.treesFRI[step - 1].root[i]);
             }
         }
-
         
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
             for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
@@ -279,8 +282,10 @@ public:
             }
 
             for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
-                for(uint64_t l = 0; l < starkInfo.starkStruct.steps[step].nBits; ++l) {
-                    for(uint64_t k = 0; k < 4; ++k) {
+                uint64_t nSiblings = std::ceil(starkInfo.starkStruct.steps[step].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+                uint64_t nSiblingsPerLevel = (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+                for(uint64_t l = 0; l < nSiblings; ++l) {
+                    for(uint64_t k = 0; k < nSiblingsPerLevel; ++k) {
                         pointer[p++] = toU64(fri.treesFRI[step - 1].polQueries[i][0].mp[l][k]);
                     }
                 }

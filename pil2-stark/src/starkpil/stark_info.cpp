@@ -257,24 +257,29 @@ void StarkInfo::getProofSize() {
 
     proofSize += evMap.size() * FIELD_EXTENSION; // Evals
 
+    uint64_t nSiblings = std::ceil(starkStruct.steps[0].nBits / std::log2(starkStruct.merkleTreeArity));
+    uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
+
     proofSize += starkStruct.nQueries * nConstants; // Constants Values
-    proofSize += starkStruct.nQueries * starkStruct.nBitsExt * 4; // Siblings Constants Values
+    proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel; // Siblings Constants Values
 
     for(uint64_t i = 0; i < customCommits.size(); ++i) {
         proofSize += starkStruct.nQueries * mapSectionsN[customCommits[i].name + "0"]; // Custom Commits Values
-        proofSize += starkStruct.nQueries * starkStruct.nBitsExt * 4; // Siblings Custom Commits Values
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel; // Siblings Custom Commits Siblings
     }
 
     for(uint64_t i = 0; i < nStages + 1; ++i) {
         proofSize += starkStruct.nQueries * mapSectionsN["cm" + to_string(i+1)];
-        proofSize += starkStruct.nQueries * starkStruct.nBitsExt * 4;
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
     }
 
     proofSize += (starkStruct.steps.size() - 1) * 4; // Roots
 
     for(uint64_t i = 1; i < starkStruct.steps.size(); ++i) {
+        uint64_t nSiblings = std::ceil(starkStruct.steps[i].nBits / std::log2(starkStruct.merkleTreeArity));
+        uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
         proofSize += starkStruct.nQueries * (1 << (starkStruct.steps[i-1].nBits - starkStruct.steps[i].nBits))*FIELD_EXTENSION;
-        proofSize += starkStruct.nQueries * starkStruct.steps[i].nBits * 4;
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
     }
 
     proofSize += (1 << starkStruct.steps[starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION;
