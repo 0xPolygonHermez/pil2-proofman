@@ -9,11 +9,11 @@ pub(crate) type GoldilocksQuinticExtension = BinomialExtensionField<Goldilocks, 
 /// as described in [Elliptic Curves over Goldilocks](https://hackmd.io/CxJrIhv-SP65W3GWS_J5bw?view#Extension-Field-Selection),
 /// which is inspired by [Curve ecGFp5](https://github.com/pornin/ecgfp5/tree/main)
 pub(crate) trait SquaringFp5 {
-    /// Return the i-th constant of the first Frobenius operator
-    fn gammas1(i: usize) -> Goldilocks;
+    /// Constants for the first Frobenius operator
+    const GAMMAS1: [u64; 5] = [1, 1041288259238279555, 15820824984080659046, 211587555138949697, 1373043270956696022];
 
-    /// Return the i-th constant of the second Frobenius operator
-    fn gammas2(i: usize) -> Goldilocks;
+    /// Constants for the second Frobenius operator
+    const GAMMAS2: [u64; 5] = [1, 15820824984080659046, 1373043270956696022, 1041288259238279555, 211587555138949697];
 
     /// Compute the first Frobenius operator: self^p
     fn first_frobenius(&self) -> Self;
@@ -24,10 +24,13 @@ pub(crate) trait SquaringFp5 {
     /// Compute the fifth cyclotomic exponentiation: self^(p⁴ + p³ + p² + p + 1)
     fn exp_fifth_cyclotomic(&self) -> Self;
 
-    /// Check if the element is a square in Fp
+    /// Check if the element is a square in Fp, assumes x != 0
     fn is_square_base(x: &Goldilocks) -> bool;
 
-    /// Check if the element is a square in Fp⁵
+    /// Compute the square root of the element in Fp, assumes x is an square and x != 0,1
+    fn sqrt_base(x: &Goldilocks) -> Goldilocks;
+
+    /// Check if the element is a square in Fp⁵ and returns the fith cyclotomic exponentiation, assumes self != 0
     fn is_square(&self) -> (Goldilocks, bool);
 
     /// Compute the square root of the element in Fp⁵
@@ -40,52 +43,14 @@ pub(crate) trait SquaringFp5 {
 }
 
 impl SquaringFp5 for GoldilocksQuinticExtension {
-    fn gammas1(index: usize) -> Goldilocks {
-        // ```sage
-        // p = 2**64 - 2**32 + 1
-        // F = GF(p)
-        //
-        // for i in range(1,5):
-        //     gamma1i = F(3)^(i*(p-1)/5)
-        //     print(f"gamma1{i} = {gamma1i}")
-        // ```
-        match index {
-            0 => Goldilocks::ONE,
-            1 => Goldilocks::from_u64(1041288259238279555),
-            2 => Goldilocks::from_u64(15820824984080659046),
-            3 => Goldilocks::from_u64(211587555138949697),
-            4 => Goldilocks::from_u64(1373043270956696022),
-            _ => panic!("Invalid index for gammas1: {}", index),
-        }
-    }
-
-    fn gammas2(index: usize) -> Goldilocks {
-        // ```sage
-        // p = 2**64 - 2**32 + 1
-        // F = GF(p)
-        //
-        // for i in range(1,5):
-        //     gamma1i = F(3)^(i*(p-1)/5)
-        //     print(f"gamma2{i} = {gamma1i^2}")
-        // ```
-        match index {
-            0 => Goldilocks::ONE,
-            1 => Goldilocks::from_u64(15820824984080659046),
-            2 => Goldilocks::from_u64(1373043270956696022),
-            3 => Goldilocks::from_u64(1041288259238279555),
-            4 => Goldilocks::from_u64(211587555138949697),
-            _ => panic!("Invalid index for gammas2: {}", index),
-        }
-    }
-
     fn first_frobenius(&self) -> Self {
         let a: &[Goldilocks] = self.as_basis_coefficients_slice();
-        Self::from_basis_coefficients_fn(|i| Self::gammas1(i) * a[i])
+        Self::from_basis_coefficients_fn(|i| Goldilocks::from_u64(Self::GAMMAS1[i]) * a[i])
     }
 
     fn second_frobenius(&self) -> Self {
         let a: &[Goldilocks] = self.as_basis_coefficients_slice();
-        Self::from_basis_coefficients_fn(|i| Self::gammas2(i) * a[i])
+        Self::from_basis_coefficients_fn(|i| Goldilocks::from_u64(Self::GAMMAS2[i]) * a[i])
     }
 
     fn exp_fifth_cyclotomic(&self) -> Self {
@@ -100,6 +65,29 @@ impl SquaringFp5 for GoldilocksQuinticExtension {
         let exp_31 = x.exp_power_of_2(31);
         let symbol = exp_63 / exp_31;
         symbol == Goldilocks::ONE
+    }
+
+    fn sqrt_base(x: &Goldilocks) -> Goldilocks {
+        // We use the Cipolla's algorithm as implemented here https://github.com/Plonky3/Plonky3/pull/439/files
+        // The reason to choose Cipolla's algorithm is that it outperforms Tonelli-Shanks when S·(S-1) > 8m + 20,
+        // where S is the largest power of two dividing p-1 and m is the number of bits in p
+        // In this case we have: S = 32 and m = 64, so S·(S-1) = 992 > 8*64 + 20 = 532
+        let x = *x;
+
+        // 1] Compute a ∈ Fp such that a² - n is not a square
+        let g = Goldilocks::GENERATOR;
+        let mut a = Goldilocks::ONE;
+        let mut nonresidue = a - x;
+        while Self::is_square_base(&nonresidue) {
+            a *= g;
+            nonresidue = a.square() - x;
+        }
+
+        // 2] Compute (a + sqrt(a² - n))^((p+1)/2)
+        let mut result = CipollaExtension::new(a, Goldilocks::ONE);
+        result = result.exp(nonresidue);
+
+        result.real
     }
 
     fn is_square(&self) -> (Goldilocks, bool) {
@@ -130,28 +118,10 @@ impl SquaringFp5 for GoldilocksQuinticExtension {
         }
 
         // First Part: Compute the square root of self^-(p⁴ + p³ + p² + p + 1) ∈ Fp
-        // ================================================================
-        // We use the Cipolla's algorithm as implemented here https://github.com/Plonky3/Plonky3/pull/439/files
-        // The reason to choose Cipolla's algorithm is that it outperforms Tonelli-Shanks when S·(S-1) > 8m + 20,
-        // where S is the largest power of two dividing p-1 and m is the number of bits in p
-        // In this case we have: S = 32 and m = 64, so S·(S-1) = 992 > 8*64 + 20 = 532
-        let n = exp_fifth_cyclo.inverse();
-
-        // 1] Compute a ∈ Fp such that a² - n is not a square
-        let g = Goldilocks::GENERATOR;
-        let mut a = Goldilocks::ONE;
-        let mut nonresidue = a - n;
-        while Self::is_square_base(&nonresidue) {
-            a *= g;
-            nonresidue = a.square() - n;
-        }
-
-        // 2] Compute (a + sqrt(a² - n))^((p+1)/2)
-        let mut x = CipollaExtension::new(a, Goldilocks::ONE);
-        x = x.exp(nonresidue);
+        let x = Self::sqrt_base(&exp_fifth_cyclo.inverse());
 
         // Second Part: Compute self^(((p+1)/2)p³ + ((p+1)/2)p + 1)
-        // ================================================================
+
         // 1] Compute self^((p+1)/2). Notice (p+1)/2 = 2^63 - 2^31 + 1
         let pow_63 = self.exp_power_of_2(63);
         let pow_31 = self.exp_power_of_2(31);
@@ -164,7 +134,7 @@ impl SquaringFp5 for GoldilocksQuinticExtension {
         y *= pow_frob; // self^(((p+1)/2)p³ + ((p+1)/2)p)
         y *= *self; // self^(((p+1)/2)p³ + ((p+1)/2)p + 1)
 
-        Some(y * x.real)
+        Some(y * x)
     }
 
     fn sign0(&self) -> bool {
