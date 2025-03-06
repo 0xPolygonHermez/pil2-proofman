@@ -112,6 +112,11 @@ struct DeviceArguments
     Goldilocks::Element **tmp1;
     uint32_t tmp3Size;
     Goldilocks::Element **tmp3;
+    
+    // customCommits
+    Goldilocks::Element *customCommits;
+    uint64_t customCommitsCols;
+    uint64_t customCommitsArea;
 };
 
 __device__ __noinline__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row, uint32_t idest);
@@ -138,8 +143,8 @@ public:
     {
         uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
-        vector<uint64_t> nColsStages(ns * nOpenings + 1);
-        vector<uint64_t> nColsStagesAcc(ns * nOpenings + 1);
+        vector<uint64_t> nColsStages(ns * nOpenings + 1, 0);
+        vector<uint64_t> nColsStagesAcc(ns * nOpenings + 1, 0);
 
         for (uint64_t o = 0; o < nOpenings; ++o)
         {
@@ -218,7 +223,22 @@ public:
         h_deviceArgs.nrowsPack = nrowsPack;
         h_deviceArgs.nOpenings = nOpenings;
         h_deviceArgs.ns = ns;
+
+        //Size fixed customCommit
+        if(setupCtx.starkInfo.mapTotalNCustomCommitsFixed > 0){
+            h_deviceArgs.customCommitsArea = setupCtx.starkInfo.mapTotalNCustomCommitsFixed - h_deviceArgs.NExtended*HASH_SIZE - (h_deviceArgs.NExtended-1)*HASH_SIZE;
+            cudaMalloc(&h_deviceArgs.customCommits,h_deviceArgs.customCommitsArea * sizeof(Goldilocks::Element));
+            h_deviceArgs.customCommitsCols = h_deviceArgs.customCommitsArea/(h_deviceArgs.NExtended+h_deviceArgs.N);
+        }
+        else{
+            h_deviceArgs.customCommitsCols = 0;
+            h_deviceArgs.customCommitsArea = 0;
+            h_deviceArgs.customCommits = nullptr;
+
+        }
         
+
+        std::cout << "custom commit size: " << h_deviceArgs.customCommitsCols <<" "<<setupCtx.starkInfo.mapTotalNCustomCommitsFixed<<" "<<h_deviceArgs.N<<" "<<h_deviceArgs.NExtended<<std::endl;
     };
 
     ~ExpressionsGPU()
@@ -243,6 +263,8 @@ public:
         cudaFree(h_deviceArgs.destVals);
         cudaFree(h_deviceArgs.tmp1);
         cudaFree(h_deviceArgs.tmp3);
+        if(h_deviceArgs.customCommitsCols > 0)
+            cudaFree(h_deviceArgs.customCommits);
     }
 
     void setBufferTInfo(uint64_t domainSize, StepsParams &params,  StepsParams & params_gpu, ParserArgs &parserArgs, std::vector<Dest> &dests)
@@ -252,9 +274,9 @@ public:
         uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].params[0].parserParams.destDim : 0;
         uint64_t nOpenings = h_deviceArgs.nOpenings;
         uint64_t ns = h_deviceArgs.ns;
-        vector<uint64_t> nColsStages(ns * nOpenings + 1);
-        vector<uint64_t> nColsStagesAcc(ns * nOpenings + 1);
-        vector<uint64_t> offsetsStages(ns * nOpenings + 1);
+        vector<uint64_t> nColsStages(ns * nOpenings + 1, 0);
+        vector<uint64_t> nColsStagesAcc(ns * nOpenings + 1, 0);
+        vector<uint64_t> offsetsStages(ns * nOpenings + 1, 0);
 
         for (uint64_t o = 0; o < nOpenings; ++o)
         {
@@ -313,7 +335,6 @@ public:
         }
         cudaMemcpy(h_deviceArgs.nextStrides, nextStrides, h_deviceArgs.nOpenings * sizeof(uint64_t), cudaMemcpyHostToDevice);
         delete[] nextStrides;
-        
         
         cudaMemcpy(h_deviceArgs.offsetsStages, offsetsStages.data(), offsetsStages.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
         h_deviceArgs.constPolsSize = setupCtx.starkInfo.nConstants;
@@ -441,15 +462,22 @@ public:
         cudaMemcpy(h_deviceArgs.ops, parserArgs.ops, h_deviceArgs.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice);
         cudaMemcpy(h_deviceArgs.args, parserArgs.args, h_deviceArgs.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice);
 
+        std::cout<<" dins 5"<<std::endl;
 
         h_deviceArgs.constPols = h_deviceArgs.domainExtended ? params_gpu.pConstPolsExtendedTreeAddress : params_gpu.pConstPolsAddress;
         h_deviceArgs.trace = params_gpu.trace;
         h_deviceArgs.aux_trace = params_gpu.aux_trace;
         h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
 
+        // customCommits
+        if(h_deviceArgs.customCommitsArea != 0){
+            cudaMemcpy(h_deviceArgs.customCommits, params.pCustomCommitsFixed, h_deviceArgs.customCommitsArea * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+        }
+
         // Allocate memory for the struct on the device
         cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
         cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice);
+
     }
 
     void calculateExpressions_gpu(StepsParams &params, StepsParams &params_gpu, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize)
@@ -458,6 +486,7 @@ public:
         CHECKCUDAERR(cudaDeviceSynchronize());
         double time = omp_get_wtime();
         setBufferTInfo(domainSize, params, params_gpu, parserArgs, dests);
+        CHECKCUDAERR(cudaGetLastError());
         CHECKCUDAERR(cudaDeviceSynchronize());
         time = omp_get_wtime() - time;
         std::cout << "goal2_ setBufferTInfo time: " << time << std::endl;
@@ -601,6 +630,22 @@ __device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, ui
             }
         }
     }
+
+    #pragma unroll 1
+    for (uint64_t k = 0; k < d_deviceArgs->customCommitsCols; ++k)
+    {
+        uint64_t stage = d_deviceArgs->ns - 1; // rick: harcoded one single custom commit
+        for (uint64_t o = 0; o < d_deviceArgs->nOpenings; ++o)
+        {
+            uint64_t l = (row + threadIdx.x + nextStrides[o]) % d_deviceArgs->domainSize;
+            uint64_t offset = 0;
+            if(d_deviceArgs->domainExtended){
+                offset = d_deviceArgs->N*d_deviceArgs->customCommitsCols;
+            }
+            d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * o + stage] + k) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->customCommits[offset+ l * nColsStages[stage] + k];
+        }
+    }
+
     if (d_deviceArgs->expType == 0)
     {
         #pragma unroll 1
