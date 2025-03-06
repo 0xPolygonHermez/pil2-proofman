@@ -2,8 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use rayon::prelude::*;
 
-use num_traits::ToPrimitive;
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
@@ -20,12 +19,12 @@ use crate::{
     DebugDataFast, SharedDataFast,
 };
 
-pub struct StdProd<F: PrimeField> {
+pub struct StdProd<F: PrimeField64> {
     stage_wc: Option<u32>,
     _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: PrimeField> AirComponent<F> for StdProd<F> {
+impl<F: PrimeField64> AirComponent<F> for StdProd<F> {
     const MY_NAME: &'static str = "STD Prod";
 
     fn new(
@@ -53,7 +52,7 @@ impl<F: PrimeField> AirComponent<F> for StdProd<F> {
     }
 }
 
-impl<F: PrimeField> StdProd<F> {
+impl<F: PrimeField64> StdProd<F> {
     const MY_NAME: &'static str = "STD Prod";
     #[allow(clippy::too_many_arguments)]
     fn debug_mode(
@@ -103,12 +102,7 @@ impl<F: PrimeField> StdProd<F> {
 
             // If opids are specified, then only update the bus if the opid is in the list
             if !pctx.options.debug_info.std_mode.opids.is_empty()
-                && !pctx
-                    .options
-                    .debug_info
-                    .std_mode
-                    .opids
-                    .contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
+                && !pctx.options.debug_info.std_mode.opids.contains(&opid.as_canonical_u64())
             {
                 continue;
             }
@@ -197,7 +191,7 @@ impl<F: PrimeField> StdProd<F> {
             }
 
             #[allow(clippy::too_many_arguments)]
-            fn update_bus<F: PrimeField>(
+            fn update_bus<F: PrimeField64>(
                 name_piop: &str,
                 name_expr: &[String],
                 airgroup_id: usize,
@@ -253,7 +247,7 @@ impl<F: PrimeField> StdProd<F> {
     }
 }
 
-impl<F: PrimeField> WitnessComponent<F> for StdProd<F> {
+impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) {
         let stage_wc = self.stage_wc.as_ref();
         if stage_wc.is_none() {

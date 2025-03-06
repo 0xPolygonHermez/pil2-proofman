@@ -5,17 +5,16 @@ use witness::WitnessComponent;
 
 use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
 
-use num_bigint::BigInt;
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
 use crate::RangeCheckDynamic1Trace;
 
-pub struct RangeCheckDynamic1<F: PrimeField> {
+pub struct RangeCheckDynamic1<F: PrimeField64> {
     std_lib: Arc<Std<F>>,
 }
 
-impl<F: PrimeField> RangeCheckDynamic1<F>
+impl<F: PrimeField64> RangeCheckDynamic1<F>
 where
     Standard: Distribution<F>,
 {
@@ -26,7 +25,7 @@ where
     }
 }
 
-impl<F: PrimeField> WitnessComponent<F> for RangeCheckDynamic1<F>
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F>
 where
     Standard: Distribution<F>,
 {
@@ -38,10 +37,10 @@ where
 
         log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        let range7 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 7) - 1), Some(false));
-        let range8 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), Some(false));
-        let range16 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 16) - 1), Some(false));
-        let range17 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 17) - 1), Some(false));
+        let range7 = self.std_lib.get_range(0, (1 << 7) - 1, Some(false));
+        let range8 = self.std_lib.get_range(0, (1 << 8) - 1, Some(false));
+        let range16 = self.std_lib.get_range(0, (1 << 16) - 1, Some(false));
+        let range17 = self.std_lib.get_range(0, (1 << 17) - 1, Some(false));
 
         for i in 0..num_rows {
             let range = rng.gen_range(0..=3);
@@ -49,27 +48,31 @@ where
             match range {
                 0 => {
                     trace[i].sel_7 = F::one();
-                    trace[i].colu = F::from_canonical_u16(rng.gen_range(0..=(1 << 7) - 1));
+                    let val = rng.gen_range(0..=(1 << 7) - 1);
+                    trace[i].colu = F::from_canonical_u16(val);
 
-                    self.std_lib.range_check(trace[i].colu, F::one(), range7);
+                    self.std_lib.range_check(val as i64, 1, range7);
                 }
                 1 => {
                     trace[i].sel_8 = F::one();
-                    trace[i].colu = F::from_canonical_u16(rng.gen_range(0..=(1 << 8) - 1));
+                    let val = rng.gen_range(0..=(1 << 8) - 1);
+                    trace[i].colu = F::from_canonical_u16(val);
 
-                    self.std_lib.range_check(trace[i].colu, F::one(), range8);
+                    self.std_lib.range_check(val as i64, 1, range8);
                 }
                 2 => {
                     trace[i].sel_16 = F::one();
-                    trace[i].colu = F::from_canonical_u32(rng.gen_range(0..=(1 << 16) - 1));
+                    let val = rng.gen_range(0..=(1 << 16) - 1);
+                    trace[i].colu = F::from_canonical_u32(val);
 
-                    self.std_lib.range_check(trace[i].colu, F::one(), range16);
+                    self.std_lib.range_check(val as i64, 1, range16);
                 }
                 3 => {
                     trace[i].sel_17 = F::one();
-                    trace[i].colu = F::from_canonical_u32(rng.gen_range(0..=(1 << 17) - 1));
+                    let val = rng.gen_range(0..=(1 << 17) - 1);
+                    trace[i].colu = F::from_canonical_u32(val);
 
-                    self.std_lib.range_check(trace[i].colu, F::one(), range17);
+                    self.std_lib.range_check(val as i64, 1, range17);
                 }
                 _ => panic!("Invalid range"),
             }
