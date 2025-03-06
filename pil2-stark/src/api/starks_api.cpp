@@ -464,7 +464,7 @@ void load_custom_commit(void *pStarks, uint64_t commitId, void *buffer, void *pP
 
 void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check)
 {   
-    MerkleTreeGL mt(2, true, NExtended, nCols, true, true);
+    MerkleTreeGL mt(3, true, NExtended, nCols, true, true);
 
     NTT_Goldilocks ntt(N);
     ntt.extendPol(mt.source, (Goldilocks::Element *)buffer, NExtended, N, nCols);
