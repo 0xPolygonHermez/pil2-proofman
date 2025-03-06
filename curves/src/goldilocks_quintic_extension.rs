@@ -1,14 +1,14 @@
 use p3_goldilocks::Goldilocks;
-use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeCharacteristicRing};
+use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeField64, PrimeCharacteristicRing};
 use p3_field::extension::BinomialExtensionField;
 
 // Field Fp⁵ = F[X]/(X⁵-3) with fixed generator X + 2
-pub type GoldilocksQuinticExtension = BinomialExtensionField<Goldilocks, 5>;
+pub(crate) type GoldilocksQuinticExtension = BinomialExtensionField<Goldilocks, 5>;
 
 // Specific methods for computing square root of a goldilocks quintic extension
 // as described in https://hackmd.io/CxJrIhv-SP65W3GWS_J5bw?view#Extension-Field-Selection
 // which is inspired by https://github.com/succinctlabs/sp1/blob/dev/crates/stark/src/septic_extension.rs
-pub trait Squaring {
+pub(crate) trait Squaring {
     fn gammas1(i: usize) -> Goldilocks;
 
     fn gammas2(i: usize) -> Goldilocks;
@@ -26,6 +26,8 @@ pub trait Squaring {
     fn sqrt(&self) -> Option<Self>
     where
         Self: Sized;
+
+    fn sign0(&self) -> bool;
 }
 
 impl Squaring for GoldilocksQuinticExtension {
@@ -155,6 +157,20 @@ impl Squaring for GoldilocksQuinticExtension {
         y *= *self; // self^(((p+1)/2)p³ + ((p+1)/2)p + 1)
 
         Some(y * x.real)
+    }
+
+    fn sign0(&self) -> bool {
+        let e_coeffs: &[Goldilocks] = self.as_basis_coefficients_slice();
+        let mut result = false;
+        let mut zero = true;
+        for coeff in e_coeffs.iter() {
+            let sign_i = (coeff.as_canonical_u64() & 1) == 1;
+            let zero_i = coeff.is_zero();
+            result = result || (zero && sign_i);
+            zero = zero && zero_i;
+        }
+
+        result
     }
 }
 
