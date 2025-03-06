@@ -21,7 +21,7 @@ mkdir -p ./pil2-components/test/simple/build/ \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libsimple.so \
      --proving-key ./pil2-components/test/simple/build/provingKey \
-     --output-dir ./pil2-components/test/simple/build/proofs
+     --output-dir ./pil2-components/test/simple/build/proofs -y
 
 ------------------------------------
 CONNECTION
@@ -44,7 +44,7 @@ mkdir -p ./pil2-components/test/std/connection/build/ \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libconnection.so \
      --proving-key ./pil2-components/test/std/connection/build/provingKey \
-     --output-dir ./pil2-components/test/std/connection/build/proofs
+     --output-dir ./pil2-components/test/std/connection/build/proofs -y
 
 ------------------------------------
 DIFF BUSES
@@ -67,7 +67,7 @@ mkdir -p ./pil2-components/test/std/diff_buses/build/ \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libdiff_buses.so \
      --proving-key ./pil2-components/test/std/diff_buses/build/provingKey \
-     --output-dir ./pil2-components/test/std/diff_buses/build/proofs
+     --output-dir ./pil2-components/test/std/diff_buses/build/proofs -y
 
 ------------------------------------
 DIRECT UPDATES
@@ -90,7 +90,7 @@ mkdir -p ./pil2-components/test/std/direct_update/build/ \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libdirect_update.so \
      --proving-key ./pil2-components/test/std/direct_update/build/provingKey \
-     --output-dir ./pil2-components/test/std/direct_update/build/proofs
+     --output-dir ./pil2-components/test/std/direct_update/build/proofs -y
 
 ------------------------------------
 LOOKUP
@@ -113,7 +113,7 @@ mkdir -p ./pil2-components/test/std/lookup/build/ \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/liblookup.so \
      --proving-key ./pil2-components/test/std/lookup/build/provingKey \
-     --output-dir ./pil2-components/test/std/lookup/build/proofs
+     --output-dir ./pil2-components/test/std/lookup/build/proofs -y
 
 ------------------------------------
 PERMUTATION
@@ -136,7 +136,7 @@ mkdir -p ./pil2-components/test/std/permutation/build/ \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libpermutation.so \
      --proving-key ./pil2-components/test/std/permutation/build/provingKey \
-     --output-dir ./pil2-components/test/std/permutation/build/proofs
+     --output-dir ./pil2-components/test/std/permutation/build/proofs -y
 
 ------------------------------------
 RANGE CHECKS
@@ -156,7 +156,7 @@ mkdir -p ./pil2-components/test/std/range_check/build/ \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/librange_check.so \
      --proving-key ./pil2-components/test/std/range_check/build/provingKey \
-     --output-dir ./pil2-components/test/std/range_check/build/proofs
+     --output-dir ./pil2-components/test/std/range_check/build/proofs -y
 
 ------------------------------------
 SPECIAL
