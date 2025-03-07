@@ -80,6 +80,7 @@ __global__ void computeEvals(
     gl64_t *d_evals,
     EvalInfo *d_evalInfo,
     gl64_t *d_cmPols,
+    gl64_t *d_customComits,
     gl64_t *d_fixedPols);
 
 __global__ void computeEvals_v2(
@@ -91,6 +92,7 @@ __global__ void computeEvals_v2(
     gl64_t *d_evals,
     EvalInfo *d_evalInfo,
     gl64_t *d_cmPols,
+    gl64_t *d_customComits,
     gl64_t *d_fixedPols);
 
 void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t LEv_offset, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv_=NULL);

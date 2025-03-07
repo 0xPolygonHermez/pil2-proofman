@@ -235,6 +235,7 @@ __global__ void computeEvals(
     gl64_t *d_evals,
     EvalInfo *d_evalInfo,
     gl64_t *d_cmPols,
+    gl64_t *d_customComits,
     gl64_t *d_fixedPols)
 {
 
@@ -251,7 +252,7 @@ __global__ void computeEvals(
         }
         else if (evalInfo.type == 1)
         {
-            assert(false);
+            pol = d_customComits;
         }
         else
         {
@@ -285,6 +286,7 @@ __global__ void computeEvals_v2(
     EvalInfo *d_evalInfo,
     gl64_t *d_cmPols,
     gl64_t *d_fixedPols,
+    gl64_t *d_customComits,
     gl64_t *d_LEv)
 {
 
@@ -301,7 +303,7 @@ __global__ void computeEvals_v2(
         }
         else if (evalInfo.type == 1)
         {
-            assert(false);
+            pol = d_customComits;
         }
         else
         {
@@ -390,7 +392,7 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t 
     dim3 nBlocks(size_eval);
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time = omp_get_wtime();
-    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, (gl64_t *)d_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, (gl64_t *)d_buffers->d_constTree, (gl64_t *)d_LEv);
+    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, (gl64_t *)d_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, (gl64_t *) d_buffers->d_constTree, (gl64_t *)d_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
     CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaGetLastError());
 
