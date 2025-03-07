@@ -1,12 +1,10 @@
 use std::os::raw::c_void;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 use proofman_starks_lib_c::{
     get_const_tree_size_c, expressions_bin_new_c, stark_info_new_c, load_const_tree_c, load_const_pols_c,
-    calculate_const_tree_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c, write_const_tree_c,
-    get_map_totaln_custom_commits_fixed_c, get_proof_size_c,
+    stark_info_free_c, expressions_bin_free_c, get_map_totaln_c, get_map_totaln_custom_commits_fixed_c,
+    get_proof_size_c,
 };
 use proofman_util::create_buffer_fast;
 
@@ -43,14 +41,13 @@ pub struct Setup<F: Clone> {
     pub prover_buffer_size: u64,
     pub custom_commits_fixed_buffer_size: u64,
     pub proof_size: u64,
-    pub write_const_tree: AtomicBool,
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
     pub air_name: String,
 }
 
 impl<F: Clone> Setup<F> {
-    const MY_NAME: &'static str = "Setup";
+    const MY_NAME: &'static str = "Setup   ";
 
     pub fn new(
         global_info: &GlobalInfo,
@@ -126,7 +123,6 @@ impl<F: Clone> Setup<F> {
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
-            write_const_tree: AtomicBool::new(false),
             setup_path: setup_path.clone(),
             setup_type: setup_type.clone(),
             air_name: global_info.airs[airgroup_id][air_id].name.clone(),
@@ -155,7 +151,7 @@ impl<F: Clone> Setup<F> {
         );
     }
 
-    pub fn load_const_pols_tree(&self) {
+    pub fn load_const_pols_tree(&self) -> Result<(), Box<dyn std::error::Error>> {
         log::debug!(
             "{}   : ··· Loading const tree for AIR {} of type {:?}",
             Self::MY_NAME,
@@ -165,46 +161,19 @@ impl<F: Clone> Setup<F> {
 
         let const_pols_tree_path = self.setup_path.display().to_string() + ".consttree";
 
-        let verkey_path = self.setup_path.display().to_string() + ".verkey.json";
+        let valid = load_const_tree_c(
+            self.p_setup.p_stark_info,
+            self.const_tree.as_ptr() as *mut u8,
+            const_pols_tree_path.as_str(),
+            (self.const_tree.len() * 8) as u64,
+            &(self.setup_path.display().to_string() + ".verkey.json"),
+        );
 
-        let p_stark_info = self.p_setup.p_stark_info;
+        if !valid {
+            return Err(format!("Invalid constant tree {}. Proofman setup needs to be run again", self.air_name).into());
+        }
 
-        let valid_root = if PathBuf::from(&const_pols_tree_path).exists() {
-            load_const_tree_c(
-                p_stark_info,
-                self.const_tree.as_ptr() as *mut u8,
-                const_pols_tree_path.as_str(),
-                (self.const_tree.len() * 8) as u64,
-                verkey_path.as_str(),
-            )
-        } else {
-            false
-        };
-
-        if !valid_root {
-            calculate_const_tree_c(
-                p_stark_info,
-                self.const_pols.as_ptr() as *mut u8,
-                self.const_tree.as_ptr() as *mut u8,
-            );
-            self.write_const_tree.store(true, Ordering::SeqCst)
-        };
-    }
-
-    pub fn to_write_tree(&self) -> bool {
-        self.write_const_tree.load(Ordering::SeqCst)
-    }
-
-    pub fn set_write_const_tree(&self, write: bool) {
-        self.write_const_tree.store(write, Ordering::SeqCst)
-    }
-
-    pub fn write_const_tree(&self) {
-        let const_pols_tree_path = self.setup_path.display().to_string() + ".consttree";
-
-        let p_stark_info = self.p_setup.p_stark_info;
-
-        write_const_tree_c(p_stark_info, self.const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+        Ok(())
     }
 
     pub fn get_const_ptr(&self) -> *mut u8 {

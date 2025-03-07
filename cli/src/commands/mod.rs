@@ -3,6 +3,7 @@ pub mod field;
 pub mod pil_helpers;
 pub mod prove;
 pub mod verify_constraints;
+pub mod setup;
 pub mod get_constraints;
 pub mod verify_stark;
 pub mod gen_custom_commits_fixed;

@@ -276,7 +276,70 @@ pub fn check_paths(
     Ok(())
 }
 
-pub fn add_publics_circom<F: PrimeField64>(
+pub fn check_tree_paths<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> Result<(), Box<dyn Error>> {
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = setups.sctx.get_setup(airgroup_id, air_id);
+            let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+            if !PathBuf::from(&const_pols_tree_path).exists() {
+                return Err(format!("Invalid constant tree {}. Proofman setup needs to be run", setup.air_name).into());
+            }
+        }
+    }
+
+    if pctx.options.aggregation {
+        let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    let setup = sctx_compressor.get_setup(airgroup_id, air_id);
+                    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+                    if !PathBuf::from(&const_pols_tree_path).exists() {
+                        return Err(format!("Invalid constant tree {}. Proofman setup needs to be run", setup.air_name).into());
+                    }
+                }
+            }
+        }
+
+        let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
+                let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+                if !PathBuf::from(&const_pols_tree_path).exists() {
+                    return Err(format!("Invalid constant tree {}. Proofman setup needs to be run", setup.air_name).into());
+                }
+            }
+        }
+
+        let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
+        let n_airgroups = pctx.global_info.air_groups.len();
+        for airgroup in 0..n_airgroups {
+            let setup = sctx_recursive2.get_setup(airgroup, 0);
+            let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+            if !PathBuf::from(&const_pols_tree_path).exists() {
+                return Err(format!("Invalid constant tree {}. Proofman setup needs to be run", setup.air_name).into());
+            }
+        }
+
+        let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+        let const_pols_tree_path = setup_vadcop_final.setup_path.display().to_string() + ".consttree";
+        if !PathBuf::from(&const_pols_tree_path).exists() {
+            return Err(format!("Invalid constant tree {}. Proofman setup needs to be run", setup_vadcop_final.air_name).into());
+        }
+
+        if pctx.options.final_snark {
+            let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
+            let const_pols_tree_path = setup_recursivef.setup_path.display().to_string() + ".consttree";
+            if !PathBuf::from(&const_pols_tree_path).exists() {
+                return Err(format!("Invalid constant tree {}. Proofman setup needs to be run", setup_recursivef.air_name).into());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn add_publics_circom<F: PrimeField>(
     proof: &mut [u64],
     initial_index: usize,
     pctx: &ProofCtx<F>,
