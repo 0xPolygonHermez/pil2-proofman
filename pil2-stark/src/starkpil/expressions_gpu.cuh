@@ -119,7 +119,6 @@ struct DeviceArguments
     // customCommits
     Goldilocks::Element *customCommits;
     uint64_t customCommitsCols;
-    uint64_t customCommitsArea;
 };
 
 __device__ __noinline__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row, uint32_t idest);
@@ -230,19 +229,12 @@ public:
 
         //Size fixed customCommit
         if(setupCtx.starkInfo.mapTotalNCustomCommitsFixed > 0){
-            h_deviceArgs.customCommitsArea = setupCtx.starkInfo.mapTotalNCustomCommitsFixed - h_deviceArgs.NExtended*HASH_SIZE - (h_deviceArgs.NExtended-1)*HASH_SIZE;
-            cudaMalloc(&h_deviceArgs.customCommits,h_deviceArgs.customCommitsArea * sizeof(Goldilocks::Element));
-            h_deviceArgs.customCommitsCols = h_deviceArgs.customCommitsArea/(h_deviceArgs.NExtended+h_deviceArgs.N);
+            uint64_t customCommitsArea = setupCtx.starkInfo.mapTotalNCustomCommitsFixed - h_deviceArgs.NExtended*HASH_SIZE - (h_deviceArgs.NExtended-1)*HASH_SIZE;
+            h_deviceArgs.customCommitsCols = customCommitsArea/(h_deviceArgs.NExtended+h_deviceArgs.N);
         }
         else{
             h_deviceArgs.customCommitsCols = 0;
-            h_deviceArgs.customCommitsArea = 0;
-            h_deviceArgs.customCommits = nullptr;
-
-        }
-        
-
-        std::cout << "custom commit size: " << h_deviceArgs.customCommitsCols <<" "<<setupCtx.starkInfo.mapTotalNCustomCommitsFixed<<" "<<h_deviceArgs.N<<" "<<h_deviceArgs.NExtended<<std::endl;
+        }        
     };
 
     ~ExpressionsGPU()
@@ -268,8 +260,6 @@ public:
         cudaFree(h_deviceArgs.destVals);
         cudaFree(h_deviceArgs.tmp1);
         cudaFree(h_deviceArgs.tmp3);
-        if(h_deviceArgs.customCommitsCols > 0)
-            cudaFree(h_deviceArgs.customCommits);
     }
 
     void setBufferTInfo(uint64_t domainSize, StepsParams &params,  StepsParams & params_gpu, ParserArgs &parserArgs, std::vector<Dest> &dests)
@@ -539,11 +529,7 @@ public:
         h_deviceArgs.trace = params_gpu.trace;
         h_deviceArgs.aux_trace = params_gpu.aux_trace;
         h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
-
-        // customCommits
-        if(h_deviceArgs.customCommitsArea != 0){
-            cudaMemcpy(h_deviceArgs.customCommits, params.pCustomCommitsFixed, h_deviceArgs.customCommitsArea * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-        }
+        h_deviceArgs.customCommits = params_gpu.pCustomCommitsFixed;
 
         // Allocate memory for the struct on the device
         cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));

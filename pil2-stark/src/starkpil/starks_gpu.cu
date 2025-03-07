@@ -281,11 +281,11 @@ __global__ void computeEvals_v2(
     uint64_t size_eval,
     uint64_t N,
     uint64_t openingsSize,
-    uint64_t LEv_offset,
     gl64_t *d_evals,
     EvalInfo *d_evalInfo,
     gl64_t *d_cmPols,
-    gl64_t *d_fixedPols)
+    gl64_t *d_fixedPols,
+    gl64_t *d_LEv)
 {
 
     extern __shared__ Goldilocks3GPU::Element shared_sum[];
@@ -293,7 +293,6 @@ __global__ void computeEvals_v2(
 
     if (evalIdx < size_eval)
     {
-        gl64_t *LEv = (gl64_t *)d_cmPols + LEv_offset;
         EvalInfo evalInfo = d_evalInfo[evalIdx];
         gl64_t *pol;
         if (evalInfo.type == 0)
@@ -321,11 +320,11 @@ __global__ void computeEvals_v2(
             Goldilocks3GPU::Element res;
             if (evalInfo.dim == 1)
             {
-                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&LEv[pos]), pol[evalInfo.offset + row * evalInfo.stride]);
+                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&d_LEv[pos]), pol[evalInfo.offset + row * evalInfo.stride]);
             }
             else
             {
-                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&LEv[pos]), *((Goldilocks3GPU::Element *)(&pol[evalInfo.offset + row * evalInfo.stride])));
+                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&d_LEv[pos]), *((Goldilocks3GPU::Element *)(&pol[evalInfo.offset + row * evalInfo.stride])));
             }
             Goldilocks3GPU::add(shared_sum[threadIdx.x], shared_sum[threadIdx.x], res);
             tid += blockDim.x;
@@ -353,7 +352,7 @@ __global__ void computeEvals_v2(
     }
 }
 
-void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t LEv_offset, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers)
+void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t LEv_offset, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv_)
 {
 
     uint64_t extendBits = starks->setupCtx.starkInfo.starkStruct.nBitsExt - starks->setupCtx.starkInfo.starkStruct.nBits;
@@ -373,7 +372,7 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t 
         PolMap polInfo = type == "cm" ? starks->setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? starks->setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id]
                                                                                                        : starks->setupCtx.starkInfo.constPolsMap[ev.id];
         evalsInfo[i].type = type == "cm" ? 0 : type == "custom" ? 1
-                                                                : 2;
+                                                                : 2; //rick: harcoded
         evalsInfo[i].offset = starks->setupCtx.starkInfo.getTraceOffset(type, polInfo, true);
         evalsInfo[i].stride = starks->setupCtx.starkInfo.getTraceNColsSection(type, polInfo, true);
         evalsInfo[i].dim = polInfo.dim;
@@ -385,12 +384,16 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t 
     CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfo, size_eval * sizeof(EvalInfo), cudaMemcpyHostToDevice));
     delete[] evalsInfo;
 
+    Goldilocks::Element *d_LEv = d_LEv_ == NULL ? (Goldilocks::Element *)d_buffers->d_aux_trace + LEv_offset
+                                                : d_LEv_;
     dim3 nThreads(256);
     dim3 nBlocks(size_eval);
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time = omp_get_wtime();
-    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, LEv_offset, (gl64_t *)d_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, (gl64_t *)d_buffers->d_constTree);
+    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, (gl64_t *)d_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, (gl64_t *)d_buffers->d_constTree, (gl64_t *)d_LEv);
     CHECKCUDAERR(cudaDeviceSynchronize());
+    CHECKCUDAERR(cudaGetLastError());
+
     time = omp_get_wtime() - time;
     std::cout << "rick computeEvals_v2: " << time << std::endl;
 

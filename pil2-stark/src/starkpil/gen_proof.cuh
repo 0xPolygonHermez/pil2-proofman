@@ -95,7 +95,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStart(STARK_PROOF);
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time0 = omp_get_wtime();
-    double time_prev = time0;
 
     CHECKCUDAERR(cudaMemset(d_buffers->d_aux_trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -141,6 +140,11 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         pConstPolsExtendedTreeAddress : (Goldilocks::Element *)d_buffers->d_constTree,
         pCustomCommitsFixed : nullptr,
     };
+    uint64_t customCommitsArea = setupCtx.starkInfo.mapTotalNCustomCommitsFixed > 0 ? setupCtx.starkInfo.mapTotalNCustomCommitsFixed - (2*NExtended-1)*HASH_SIZE : 0;
+    if(customCommitsArea > 0){ 
+        CHECKCUDAERR(cudaMalloc(&d_params.pCustomCommitsFixed,customCommitsArea * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMemcpy(d_params.pCustomCommitsFixed, params.pCustomCommitsFixed, customCommitsArea * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    }
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
@@ -280,6 +284,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     starks.computeEvals(params ,LEv, proof);
 
+    //evmap_inplace(params.evals, d_params, 0, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
+
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         starks.addTranscriptGL(transcript, params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
     } else {
@@ -392,6 +398,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     cudaFree(d_trees[0].nodes);
     cudaFree(d_trees[1].nodes);
     cudaFree(d_trees[2].nodes);
+    if(d_params.pCustomCommitsFixed != nullptr)
+        cudaFree(d_params.pCustomCommitsFixed);
 }
 
 #endif
