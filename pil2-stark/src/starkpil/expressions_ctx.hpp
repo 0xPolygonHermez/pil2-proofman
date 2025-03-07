@@ -77,9 +77,10 @@ struct Dest {
 class ExpressionsCtx {
 public:
 
-    SetupCtx setupCtx;
+    SetupCtx &setupCtx;
+    ProverHelpers &proverHelpers;
 
-    ExpressionsCtx(SetupCtx& _setupCtx) : setupCtx(_setupCtx) {};
+    ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers& proverHelpers_) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {};
 
     virtual ~ExpressionsCtx() {};
     

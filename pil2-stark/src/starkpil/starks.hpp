@@ -25,6 +25,7 @@ class Starks
 {
 public:
     SetupCtx& setupCtx;
+    ProverHelpers& proverHelpers;
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     using MerkleTreeType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, MerkleTreeGL, MerkleTreeBN128>;
 
@@ -32,7 +33,7 @@ public:
     MerkleTreeType **treesFRI;
 
 public:
-    Starks(SetupCtx& setupCtx_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr) : setupCtx(setupCtx_)                           
+    Starks(SetupCtx& setupCtx_, ProverHelpers& proverHelpers_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr) : setupCtx(setupCtx_), proverHelpers(proverHelpers_)                           
     {
 
         uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;

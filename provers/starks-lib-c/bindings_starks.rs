@@ -59,14 +59,7 @@ extern "C" {
     #[link_name = "\u{1}_Z15stark_info_freePv"]
     pub fn stark_info_free(pStarkInfo: *mut ::std::os::raw::c_void);
 }
-extern "C" {
-    #[link_name = "\u{1}_Z18prover_helpers_newPvb"]
-    pub fn prover_helpers_new(pStarkInfo: *mut ::std::os::raw::c_void, pil1: bool) -> *mut ::std::os::raw::c_void;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z19prover_helpers_freePv"]
-    pub fn prover_helpers_free(pProverHelpers: *mut ::std::os::raw::c_void);
-}
+
 extern "C" {
     #[link_name = "\u{1}_Z15load_const_treePvS_PcmS0_"]
     pub fn load_const_tree(

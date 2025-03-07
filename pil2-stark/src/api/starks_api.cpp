@@ -133,18 +133,6 @@ void stark_info_free(void *pStarkInfo)
     delete starkInfo;
 }
 
-// Prover Helpers
-// ========================================================================================
-void *prover_helpers_new(void *pStarkInfo, bool pil1) {
-    auto prover_helpers = new ProverHelpers(*(StarkInfo *)pStarkInfo, pil1);
-    return prover_helpers;
-}
-
-void prover_helpers_free(void *pProverHelpers) {
-    auto proverHelpers = (ProverHelpers *)pProverHelpers;
-    delete proverHelpers;
-};
-
 // Const Pols
 // ========================================================================================
 bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char* verkeyFilename) {
@@ -288,12 +276,14 @@ void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsPar
 
     if(dests.size() == 0) return;
 
+    ProverHelpers proverHelpers;
+
 #ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
+    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
 #elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
+    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
 #else
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
 
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);

@@ -215,7 +215,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     ProverHelpers proverHelpers(starkInfo, xiChallenge);
 
-    SetupCtx setupCtx(starkInfo, expressionsBin, proverHelpers);
+    SetupCtx setupCtx(starkInfo, expressionsBin);
 
     Goldilocks::Element *xDivXSub = new Goldilocks::Element[starkInfo.openingPoints.size() * FIELD_EXTENSION * starkInfo.starkStruct.nQueries];
     for(uint64_t i = 0; i < starkInfo.starkStruct.nQueries; ++i) {
@@ -292,7 +292,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     bool isValid = true;
 
     zklog.trace("Verifying evaluations");
-    ExpressionsPack expressionsPack(setupCtx, 1);
+    ExpressionsPack expressionsPack(setupCtx, proverHelpers, 1);
     
     Goldilocks::Element buff[FIELD_EXTENSION];
     Dest dest(buff, 1);

@@ -24,11 +24,6 @@
 
     void stark_info_free(void *pStarkInfo);
 
-    // Prover Helpers
-    // ========================================================================================
-    void *prover_helpers_new(void *pStarkInfo, bool pil1);
-    void prover_helpers_free(void *pProverHelpers);
-
     // Const Pols
     // ========================================================================================
     bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char* verkeyFilename);

@@ -91,18 +91,6 @@ pub fn stark_info_free_c(p_stark_info: *mut c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn prover_helpers_new_c(p_stark_info: *mut c_void, pil1: bool) -> *mut c_void {
-    unsafe { prover_helpers_new(p_stark_info, pil1) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn prover_helpers_free_c(p_prover_helpers: *mut c_void) {
-    unsafe {
-        prover_helpers_free(p_prover_helpers);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn load_const_pols_c(pConstPolsAddress: *mut u8, const_filename: &str, const_size: u64) {
     unsafe {
         let const_filename: CString = CString::new(const_filename).unwrap();
@@ -1023,15 +1011,6 @@ pub fn get_custom_commit_id_c(_p_stark_info: *mut c_void, _name: &str) -> u64 {
 pub fn stark_info_free_c(_p_stark_info: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_free: This is a mock call because there is no linked library");
 }
-
-#[cfg(feature = "no_lib_link")]
-pub fn prover_helpers_new_c(_p_stark_info: *mut c_void, _pil1: bool) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "prover_helpers_new: This is a mock call because there is no linked library");
-    std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn prover_helpers_free_c(_p_prover_helpers: *mut c_void) {}
 
 #[cfg(feature = "no_lib_link")]
 pub fn load_const_pols_c(_pConstPolsAddress: *mut u8, _const_filename: &str, _const_size: u64) {

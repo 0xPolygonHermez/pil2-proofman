@@ -8,45 +8,17 @@
 class ProverHelpers {
     public: 
     Goldilocks::Element *zi = nullptr;
-    Goldilocks::Element *S = nullptr;
     Goldilocks::Element *x = nullptr;
     Goldilocks::Element *x_n = nullptr; // Needed for PIL1 compatibility
-    Goldilocks::Element *x_2ns = nullptr; // Needed for PIL1 compatibility
 
-    #ifdef __AVX2__
-    __m256i *x_avx = nullptr;
-    #endif 
+    ProverHelpers() {}
 
     ProverHelpers(StarkInfo &starkInfo, bool pil1) {
         uint64_t nBits = starkInfo.starkStruct.nBits;
         uint64_t nBitsExt = starkInfo.starkStruct.nBitsExt;
-        uint64_t qDeg = starkInfo.qDeg;
         vector<Boundary> boundaries = starkInfo.boundaries;
-
-        if(pil1) {
-            #pragma omp parallel sections
-            {
-                #pragma omp section
-                computeZerofier(nBits, nBitsExt, boundaries);
-
-                #pragma omp section
-                computeX(nBits, nBitsExt, qDeg);
-
-                #pragma omp section
-                computeConnectionsX(nBits, nBitsExt);
-            }
-        } else {
-            #pragma omp parallel sections
-            {
-                #pragma omp section
-                computeZerofier(nBits, nBitsExt, boundaries);
-
-                #pragma omp section
-                computeX(nBits, nBitsExt, qDeg);
-            }
-            x_n = new Goldilocks::Element[1 << nBits];
-            x_2ns = new Goldilocks::Element[1 << nBitsExt];
-        }
+        computeX(nBits, nBitsExt, pil1);
+        computeZerofier(nBits, nBitsExt, boundaries);
     }
 
     ProverHelpers(StarkInfo& starkInfo, Goldilocks::Element* z) { 
@@ -136,52 +108,19 @@ class ProverHelpers {
         }
     }
 
-    void computeConnectionsX(uint64_t nBits, uint64_t nBitsExt) {
-        uint64_t N = 1 << nBits;
+    void computeX(uint64_t nBits, uint64_t nBitsExt, bool pil1) {
         uint64_t NExtended = 1 << nBitsExt;
-        x_n = new Goldilocks::Element[N];
-        x_2ns = new Goldilocks::Element[NExtended];
-
-        Goldilocks::Element xx = Goldilocks::one();
-        for (uint64_t i = 0; i < N; i++)
-        {
-            x_n[i] = xx;
-            xx = xx * Goldilocks::w(nBits);
-        }
-
-        Goldilocks::Element xx_shift = Goldilocks::shift();
-        for (uint64_t i = 0; i < NExtended; i++)
-        {
-            x_2ns[i] = xx_shift;
-            xx_shift = xx_shift * Goldilocks::w(nBitsExt);
-        }
-    }
-
-    void computeX(uint64_t nBits, uint64_t nBitsExt, uint64_t qDeg) {
         uint64_t N = 1 << nBits;
-        uint64_t extendBits = nBitsExt - nBits;
-        x = new Goldilocks::Element[N << extendBits];
-        x[0] = Goldilocks::shift();
-        for (uint64_t k = 1; k < (N << extendBits); k++)
-        {
-            x[k] = x[k - 1] * Goldilocks::w(nBitsExt);
-        }
-
-    #ifdef __AVX2__
-        x_avx = new __m256i[N << extendBits];
-        x_avx[0] = _mm256_set1_epi64x(x[0].fe);
+        x = new Goldilocks::Element[NExtended];
+        if(pil1) x_n = new Goldilocks::Element[N];
     #pragma omp parallel for
-        for (uint64_t k = 1; k < (N << extendBits); k++)
-        {
-            x_avx[k] = _mm256_set1_epi64x(x[k].fe);
-        }
-    #endif
-
-        S = new Goldilocks::Element[qDeg];
-        Goldilocks::Element shiftIn = Goldilocks::exp(Goldilocks::inv(Goldilocks::shift()), N);
-        S[0] = Goldilocks::one();
-        for(uint64_t i = 1; i < qDeg; i++) {
-            S[i] = Goldilocks::mul(S[i - 1], shiftIn);
+        for (uint64_t k = 0; k < NExtended; k+=4096) {
+            if(pil1 && k < N) x_n[k] = Goldilocks::pow(Goldilocks::w(nBits), k);
+            x[k] = Goldilocks::mul(Goldilocks::shift(), Goldilocks::pow(Goldilocks::w(nBitsExt), k));
+            for(uint64_t j = k+1; j < std::min(k + 4096, NExtended); ++j) {
+                if(pil1 && j < N) x_n[j] = x_n[j-1] * Goldilocks::w(nBits);
+                x[j] = x[j-1] * Goldilocks::w(nBitsExt);
+            }
         }
     }
 
@@ -216,13 +155,9 @@ class ProverHelpers {
             root = root * Goldilocks::w(nBits);
         }
 
-        Goldilocks::Element w = Goldilocks::one();
-        Goldilocks::Element sn = Goldilocks::shift();
-
+    #pragma omp parallel for
         for(uint64_t i = 0; i < NExtended; ++i) {
-            Goldilocks::Element x = sn * w;
-            Goldilocks::inv(zi[i + offset * NExtended], (x - root) * zi[i]);
-            w = w * Goldilocks::w(nBitsExt);
+            Goldilocks::inv(zi[i + offset * NExtended], (x[i] - root) * zi[i]);
         }
     }
 
@@ -247,28 +182,19 @@ class ProverHelpers {
             }
         }
 
-        Goldilocks::Element w = Goldilocks::one();
-        Goldilocks::Element sn = Goldilocks::shift();
-
+    #pragma omp parallel for
         for(uint64_t i = 0; i < NExtended; ++i) {
             zi[i + offset*NExtended] = Goldilocks::one();
-            Goldilocks::Element x = sn * w;
             for(uint64_t j = 0; j < nRoots; ++j) {
-                zi[i + offset*NExtended] = zi[i + offset*NExtended] * (x - roots[j]);
+                zi[i + offset*NExtended] = zi[i + offset*NExtended] * (x[i] - roots[j]);
             }
-            w = w * Goldilocks::w(nBitsExt);
         }
     }
 
     ~ProverHelpers() {
         if(zi != nullptr) delete[] zi;
-        if(S != nullptr) delete[] S;
         if(x != nullptr) delete[] x;
         if(x_n != nullptr) delete[] x_n;
-        if(x_2ns != nullptr) delete[] x_2ns;
-    #ifdef __AVX2__
-        if(x_avx != nullptr) delete[] x_avx;
-    #endif
     };
 };
 
@@ -277,9 +203,8 @@ public:
 
     StarkInfo &starkInfo;
     ExpressionsBin &expressionsBin;
-    ProverHelpers &proverHelpers; 
     
-    SetupCtx(StarkInfo &_starkInfo, ExpressionsBin& _expressionsBin, ProverHelpers& _proverHelpers) : starkInfo(_starkInfo), expressionsBin(_expressionsBin), proverHelpers(_proverHelpers)  {};
+    SetupCtx(StarkInfo &_starkInfo, ExpressionsBin& _expressionsBin) : starkInfo(_starkInfo), expressionsBin(_expressionsBin)  {};
 };
 
 #endif

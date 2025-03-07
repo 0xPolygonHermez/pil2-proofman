@@ -9,7 +9,7 @@ public:
     vector<uint64_t> nColsStages;
     vector<uint64_t> nColsStagesAcc;
     vector<uint64_t> offsetsStages;
-    ExpressionsPack(SetupCtx& setupCtx, uint64_t nrowsPack_ = 4) : ExpressionsCtx(setupCtx), nrowsPack(nrowsPack_) {};
+    ExpressionsPack(SetupCtx& setupCtx, ProverHelpers& proverHelpers, uint64_t nrowsPack_ = 4) : ExpressionsCtx(setupCtx, proverHelpers), nrowsPack(nrowsPack_) {};
 
     void setBufferTInfo(bool domainExtended, int64_t expId) {
         uint64_t nOpenings = setupCtx.starkInfo.verify ? 1 : setupCtx.starkInfo.openingPoints.size();
@@ -150,20 +150,20 @@ public:
                 for(uint64_t j = 0; j < nrowsPack; ++j) {
                     if(setupCtx.starkInfo.verify) {
                         for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                            bufferT_[((nColsStagesAcc[ns*nOpenings] + d + FIELD_EXTENSION)*nrowsPack + j) + e] = setupCtx.proverHelpers.zi[d*FIELD_EXTENSION + e];
+                            bufferT_[((nColsStagesAcc[ns*nOpenings] + d + FIELD_EXTENSION)*nrowsPack + j) + e] = proverHelpers.zi[d*FIELD_EXTENSION + e];
                         }
                     } else {
-                        bufferT_[(nColsStagesAcc[ns*nOpenings] + d + 1)*nrowsPack + j] = setupCtx.proverHelpers.zi[row + j + d*domainSize];
+                        bufferT_[(nColsStagesAcc[ns*nOpenings] + d + 1)*nrowsPack + j] = proverHelpers.zi[row + j + d*domainSize];
                     }
                 }
             }
             for(uint64_t j = 0; j < nrowsPack; ++j) {
                 if(setupCtx.starkInfo.verify) {
                     for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                        bufferT_[((nColsStagesAcc[ns*nOpenings])*nrowsPack + j) + e] = setupCtx.proverHelpers.x_n[e];
+                        bufferT_[((nColsStagesAcc[ns*nOpenings])*nrowsPack + j) + e] = proverHelpers.x_n[e];
                     }
                 } else {
-                    bufferT_[(nColsStagesAcc[ns*nOpenings])*nrowsPack + j] = setupCtx.proverHelpers.x_2ns[row + j];
+                    bufferT_[(nColsStagesAcc[ns*nOpenings])*nrowsPack + j] = proverHelpers.x[row + j];
                 }
             }
         } else if(dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.friExpId)) {
@@ -174,9 +174,9 @@ public:
                     }
                 }
             }
-        } else {
+        } else if(proverHelpers.x_n != nullptr) {
             for(uint64_t j = 0; j < nrowsPack; ++j) {
-                bufferT_[(nColsStagesAcc[ns*nOpenings])*nrowsPack + j] = setupCtx.proverHelpers.x_n[row + j];
+                bufferT_[(nColsStagesAcc[ns*nOpenings])*nrowsPack + j] = proverHelpers.x_n[row + j];
             }
         }
     }

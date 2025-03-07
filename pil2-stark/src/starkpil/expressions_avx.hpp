@@ -11,7 +11,7 @@ public:
     vector<uint64_t> nColsStages;
     vector<uint64_t> nColsStagesAcc;
     vector<uint64_t> offsetsStages;
-    ExpressionsAvx(SetupCtx& setupCtx) : ExpressionsCtx(setupCtx) {};
+    ExpressionsAvx(SetupCtx& setupCtx, ProverHelpers &proverHelpers) : ExpressionsCtx(setupCtx, proverHelpers) {};
 
     void setBufferTInfo(bool domainExtended, int64_t expId) {
         uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
@@ -153,12 +153,12 @@ public:
 
         if(dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.cExpId)) {
             for(uint64_t j = 0; j < nrowsPack; ++j) {
-                bufferT[j] = setupCtx.proverHelpers.x_2ns[row + j];
+                bufferT[j] = proverHelpers.x[row + j];
             }
             Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings]], &bufferT[0]);
             for(uint64_t d = 0; d < setupCtx.starkInfo.boundaries.size(); ++d) {
                 for(uint64_t j = 0; j < nrowsPack; ++j) {
-                    bufferT[j] = setupCtx.proverHelpers.zi[row + j + d*domainSize];
+                    bufferT[j] = proverHelpers.zi[row + j + d*domainSize];
                 }
                 Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings] + 1 + d], &bufferT[0]);
             }
@@ -171,9 +171,9 @@ public:
                     Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings] + d*FIELD_EXTENSION + k], &bufferT[0]);
                 }
             }
-        } else {
+        } else if(proverHelpers.x_n != nullptr) {
             for(uint64_t j = 0; j < nrowsPack; ++j) {
-                bufferT[j] = setupCtx.proverHelpers.x_n[row + j];
+                bufferT[j] = proverHelpers.x_n[row + j];
             }
             Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings]], &bufferT[0]);
         }
