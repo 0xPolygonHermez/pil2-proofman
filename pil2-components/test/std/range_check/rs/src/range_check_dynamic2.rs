@@ -5,7 +5,11 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField64;
-use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rngs::StdRng};
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+};
 
 use crate::RangeCheckDynamic2Trace;
 
@@ -13,7 +17,7 @@ define_wc_with_std!(RangeCheckDynamic2, "RngChDy2");
 
 impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic2<F>
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
     execute!(RangeCheckDynamic2Trace, 1);
 
@@ -33,65 +37,65 @@ where
             let range5 = self.std_lib.get_range(0, (1 << 7) - 1, Some(false));
 
             for i in 0..num_rows {
-                let range = rng.gen_range(0..=4);
+                let range = rng.random_range(0..=4);
 
                 match range {
                     0 => {
-                        trace[i].sel_1 = F::one();
-                        trace[i].sel_2 = F::zero();
-                        trace[i].sel_3 = F::zero();
-                        trace[i].sel_4 = F::zero();
-                        trace[i].sel_5 = F::zero();
-                        let val = rng.gen_range(5225..=29023);
-                        trace[i].colu = F::from_canonical_u16(val);
+                        trace[i].sel_1 = F::ONE;
+                        trace[i].sel_2 = F::ZERO;
+                        trace[i].sel_3 = F::ZERO;
+                        trace[i].sel_4 = F::ZERO;
+                        trace[i].sel_5 = F::ZERO;
+                        let val = rng.random_range(5225..=29023);
+                        trace[i].colu = F::from_u16(val);
 
                         self.std_lib.range_check(val as i64, 1, range1);
                     }
                     1 => {
-                        trace[i].sel_1 = F::zero();
-                        trace[i].sel_2 = F::one();
-                        trace[i].sel_3 = F::zero();
-                        trace[i].sel_4 = F::zero();
-                        trace[i].sel_5 = F::zero();
-                        let colu_val = rng.gen_range(-8719..=-7269);
-                        trace[i].colu = F::from_canonical_u64((colu_val as i128 + F::ORDER_U64 as i128) as u64);
+                        trace[i].sel_1 = F::ZERO;
+                        trace[i].sel_2 = F::ONE;
+                        trace[i].sel_3 = F::ZERO;
+                        trace[i].sel_4 = F::ZERO;
+                        trace[i].sel_5 = F::ZERO;
+                        let colu_val = rng.random_range(-8719..=-7269);
+                        trace[i].colu = F::from_u64((colu_val as i128 + F::ORDER_U64 as i128) as u64);
 
                         self.std_lib.range_check(colu_val as i64, 1, range2);
                     }
                     2 => {
-                        trace[i].sel_1 = F::zero();
-                        trace[i].sel_2 = F::zero();
-                        trace[i].sel_3 = F::one();
-                        trace[i].sel_4 = F::zero();
-                        trace[i].sel_5 = F::zero();
-                        let colu_val: i8 = rng.gen_range(-10..=10);
+                        trace[i].sel_1 = F::ZERO;
+                        trace[i].sel_2 = F::ZERO;
+                        trace[i].sel_3 = F::ONE;
+                        trace[i].sel_4 = F::ZERO;
+                        trace[i].sel_5 = F::ZERO;
+                        let colu_val: i8 = rng.random_range(-10..=10);
                         trace[i].colu = if colu_val < 0 {
-                            F::from_canonical_u64((colu_val as i128 + F::ORDER_U64 as i128) as u64)
+                            F::from_u64((colu_val as i128 + F::ORDER_U64 as i128) as u64)
                         } else {
-                            F::from_canonical_u8(colu_val as u8)
+                            F::from_u8(colu_val as u8)
                         };
 
                         self.std_lib.range_check(colu_val as i64, 1, range3);
                     }
                     3 => {
-                        trace[i].sel_1 = F::zero();
-                        trace[i].sel_2 = F::zero();
-                        trace[i].sel_3 = F::zero();
-                        trace[i].sel_4 = F::one();
-                        trace[i].sel_5 = F::zero();
-                        let val = rng.gen_range(0..=(1 << 8) - 1);
-                        trace[i].colu = F::from_canonical_u32(val);
+                        trace[i].sel_1 = F::ZERO;
+                        trace[i].sel_2 = F::ZERO;
+                        trace[i].sel_3 = F::ZERO;
+                        trace[i].sel_4 = F::ONE;
+                        trace[i].sel_5 = F::ZERO;
+                        let val = rng.random_range(0..=(1 << 8) - 1);
+                        trace[i].colu = F::from_u32(val);
 
                         self.std_lib.range_check(val as i64, 1, range4);
                     }
                     4 => {
-                        trace[i].sel_1 = F::zero();
-                        trace[i].sel_2 = F::zero();
-                        trace[i].sel_3 = F::zero();
-                        trace[i].sel_4 = F::zero();
-                        trace[i].sel_5 = F::one();
-                        let val = rng.gen_range(0..=(1 << 7) - 1);
-                        trace[i].colu = F::from_canonical_u32(val);
+                        trace[i].sel_1 = F::ZERO;
+                        trace[i].sel_2 = F::ZERO;
+                        trace[i].sel_3 = F::ZERO;
+                        trace[i].sel_4 = F::ZERO;
+                        trace[i].sel_5 = F::ONE;
+                        let val = rng.random_range(0..=(1 << 7) - 1);
+                        trace[i].colu = F::from_u32(val);
 
                         self.std_lib.range_check(val as i64, 1, range5);
                     }

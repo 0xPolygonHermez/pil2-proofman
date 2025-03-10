@@ -114,15 +114,15 @@ impl<F: Field> ProverHelpers<F> {
         let mut x_n = create_buffer_fast(n);
         let mut x_2ns = create_buffer_fast(n_extended);
 
-        let mut xx = F::one();
-        let w = F::from_canonical_u64(W[n_bits as usize]);
+        let mut xx = F::ONE;
+        let w = F::from_u64(W[n_bits as usize]);
         for x in x_n.iter_mut() {
             *x = xx;
             xx *= w;
         }
 
-        let mut xx_shift = F::generator();
-        let w = F::from_canonical_u64(W[n_bits_ext as usize]);
+        let mut xx_shift = F::GENERATOR;
+        let w = F::from_u64(W[n_bits_ext as usize]);
 
         for x in x_2ns.iter_mut() {
             *x = xx_shift;
@@ -137,15 +137,15 @@ impl<F: Field> ProverHelpers<F> {
         let extend_bits = n_bits_ext - n_bits;
 
         let mut x = create_buffer_fast(n << extend_bits);
-        let w = F::from_canonical_u64(W[n_bits_ext as usize]);
-        x[0] = F::generator();
+        let w = F::from_u64(W[n_bits_ext as usize]);
+        x[0] = F::GENERATOR;
         for k in 1..x.len() {
             x[k] = x[k - 1] * w;
         }
 
         let mut s = create_buffer_fast(q_deg as usize);
-        s[0] = F::one();
-        let mut shift_inv = F::generator();
+        s[0] = F::ONE;
+        let mut shift_inv = F::GENERATOR;
         shift_inv = shift_inv.inverse();
         shift_inv = shift_inv.exp_u64(n as u64);
         for k in 1..q_deg as usize {
@@ -160,16 +160,16 @@ impl<F: Field> ProverHelpers<F> {
         let extend_bits = n_bits_ext - n_bits;
         let extend = 1 << extend_bits;
 
-        let mut w = F::one();
-        let mut sn = F::generator();
+        let mut w = F::ONE;
+        let mut sn = F::GENERATOR;
 
         for _ in 0..n_bits {
             sn = sn.square();
         }
 
-        let w_val = F::from_canonical_u64(W[n_bits as usize]);
+        let w_val = F::from_u64(W[n_bits as usize]);
         for zi_val in zi.iter_mut().take(extend) {
-            *zi_val = sn * w - F::one();
+            *zi_val = sn * w - F::ONE;
             *zi_val = zi_val.inverse();
             w *= w_val;
         }
@@ -182,17 +182,17 @@ impl<F: Field> ProverHelpers<F> {
 
     fn build_one_row_zerofier_inv(zi: &mut [F], n_bits: u64, n_bits_ext: u64, offset: usize, row_index: usize) {
         let n_extended = 1 << n_bits_ext;
-        let mut root = F::one();
+        let mut root = F::ONE;
 
-        let w_val = F::from_canonical_u64(W[n_bits as usize]);
+        let w_val = F::from_u64(W[n_bits as usize]);
         for _ in 0..row_index {
             root *= w_val;
         }
 
-        let mut w = F::one();
-        let sn = F::generator();
+        let mut w = F::ONE;
+        let sn = F::GENERATOR;
 
-        let w_val_ext = F::from_canonical_u64(W[n_bits_ext as usize]);
+        let w_val_ext = F::from_u64(W[n_bits_ext as usize]);
         for i in 0..n_extended {
             let x = (sn * w - root) * zi[i];
             zi[i + offset * n_extended] = x.inverse();
@@ -212,29 +212,29 @@ impl<F: Field> ProverHelpers<F> {
         let n = 1 << n_bits;
         let n_roots = offset_min + offset_max;
 
-        let mut roots = vec![F::zero(); n_roots];
+        let mut roots = vec![F::ZERO; n_roots];
 
-        let w_val = F::from_canonical_u64(W[n_bits as usize]);
+        let w_val = F::from_u64(W[n_bits as usize]);
         for (i, root) in roots.iter_mut().enumerate().take(offset_min) {
-            *root = F::one();
+            *root = F::ONE;
             for _ in 0..i {
                 *root *= w_val;
             }
         }
 
         for i in 0..offset_max {
-            roots[i + offset_min] = F::one();
+            roots[i + offset_min] = F::ONE;
             for _ in 0..(n - i - 1) {
                 roots[i + offset_min] *= w_val;
             }
         }
 
-        let mut w = F::one();
-        let sn = F::generator();
+        let mut w = F::ONE;
+        let sn = F::GENERATOR;
 
-        let w_val_ext = F::from_canonical_u64(W[n_bits_ext as usize]);
+        let w_val_ext = F::from_u64(W[n_bits_ext as usize]);
         for i in 0..n_extended {
-            zi[i + offset * n_extended] = F::one();
+            zi[i + offset * n_extended] = F::ONE;
             let x = sn * w;
             for root in &roots {
                 zi[i + offset * n_extended] *= x - *root;

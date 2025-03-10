@@ -5,7 +5,11 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField64;
-use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rngs::StdRng};
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+};
 
 use crate::RangeCheckDynamic1Trace;
 
@@ -13,7 +17,7 @@ define_wc_with_std!(RangeCheckDynamic1, "RngChDy1");
 
 impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F>
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
     execute!(RangeCheckDynamic1Trace, 1);
 
@@ -32,46 +36,46 @@ where
             let range17 = self.std_lib.get_range(0, (1 << 17) - 1, Some(false));
 
             for i in 0..num_rows {
-                let range = rng.gen_range(0..=3);
+                let range = rng.random_range(0..=3);
 
                 match range {
                     0 => {
-                        trace[i].sel_7 = F::one();
-                        trace[i].sel_8 = F::zero();
-                        trace[i].sel_16 = F::zero();
-                        trace[i].sel_17 = F::zero();
-                        let val = rng.gen_range(0..=(1 << 7) - 1);
-                        trace[i].colu = F::from_canonical_u16(val);
+                        trace[i].sel_7 = F::ONE;
+                        trace[i].sel_8 = F::ZERO;
+                        trace[i].sel_16 = F::ZERO;
+                        trace[i].sel_17 = F::ZERO;
+                        let val = rng.random_range(0..=(1 << 7) - 1);
+                        trace[i].colu = F::from_u16(val);
 
                         self.std_lib.range_check(val as i64, 1, range7);
                     }
                     1 => {
-                        trace[i].sel_7 = F::zero();
-                        trace[i].sel_8 = F::one();
-                        trace[i].sel_16 = F::zero();
-                        trace[i].sel_17 = F::zero();
-                        let val = rng.gen_range(0..=(1 << 8) - 1);
-                        trace[i].colu = F::from_canonical_u16(val);
+                        trace[i].sel_7 = F::ZERO;
+                        trace[i].sel_8 = F::ONE;
+                        trace[i].sel_16 = F::ZERO;
+                        trace[i].sel_17 = F::ZERO;
+                        let val = rng.random_range(0..=(1 << 8) - 1);
+                        trace[i].colu = F::from_u16(val);
 
                         self.std_lib.range_check(val as i64, 1, range8);
                     }
                     2 => {
-                        trace[i].sel_7 = F::zero();
-                        trace[i].sel_8 = F::zero();
-                        trace[i].sel_16 = F::one();
-                        trace[i].sel_17 = F::zero();
-                        let val = rng.gen_range(0..=(1 << 16) - 1);
-                        trace[i].colu = F::from_canonical_u32(val);
+                        trace[i].sel_7 = F::ZERO;
+                        trace[i].sel_8 = F::ZERO;
+                        trace[i].sel_16 = F::ONE;
+                        trace[i].sel_17 = F::ZERO;
+                        let val = rng.random_range(0..=(1 << 16) - 1);
+                        trace[i].colu = F::from_u32(val);
 
                         self.std_lib.range_check(val as i64, 1, range16);
                     }
                     3 => {
-                        trace[i].sel_7 = F::zero();
-                        trace[i].sel_8 = F::zero();
-                        trace[i].sel_16 = F::zero();
-                        trace[i].sel_17 = F::one();
-                        let val = rng.gen_range(0..=(1 << 17) - 1);
-                        trace[i].colu = F::from_canonical_u32(val);
+                        trace[i].sel_7 = F::ZERO;
+                        trace[i].sel_8 = F::ZERO;
+                        trace[i].sel_16 = F::ZERO;
+                        trace[i].sel_17 = F::ONE;
+                        let val = rng.random_range(0..=(1 << 17) - 1);
+                        trace[i].colu = F::from_u32(val);
 
                         self.std_lib.range_check(val as i64, 1, range17);
                     }

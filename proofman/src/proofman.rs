@@ -1,5 +1,6 @@
 use libloading::{Library, Symbol};
 use log::info;
+use p3_field::PrimeCharacteristicRing;
 use proofman_common::skip_prover_instance;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
@@ -11,9 +12,9 @@ use std::error::Error;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
-use p3_field::PrimeField;
+
 use p3_goldilocks::Goldilocks;
-use p3_field::AbstractField;
+
 use p3_field::PrimeField64;
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c, calculate_impols_expressions_c,
@@ -44,7 +45,7 @@ pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: PrimeField + 'static> ProofMan<F> {
+impl<F: PrimeField64> ProofMan<F> {
     const MY_NAME: &'static str = "ProofMan";
 
     #[allow(clippy::too_many_arguments)]
@@ -89,10 +90,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         pctx.dctx_close();
 
         let transcript = FFITranscript::new(2, true);
-        let dummy_element = [F::zero(), F::one(), F::two(), F::neg_one()];
+        let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
-        let global_challenge = [F::zero(); 3];
+        let global_challenge = [F::ZERO; 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
         pctx.set_global_challenge(2, &global_challenge);
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
@@ -596,10 +597,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let mut values = Vec::new();
             for idx in group_idxs.iter() {
                 let value = vec![
-                    F::from_wrapped_u64(all_roots[*idx]),
-                    F::from_wrapped_u64(all_roots[*idx + 1]),
-                    F::from_wrapped_u64(all_roots[*idx + 2]),
-                    F::from_wrapped_u64(all_roots[*idx + 3]),
+                    F::from_u64(all_roots[*idx]),
+                    F::from_u64(all_roots[*idx + 1]),
+                    F::from_u64(all_roots[*idx + 2]),
+                    F::from_u64(all_roots[*idx + 3]),
                 ];
                 values.push(value);
             }
@@ -609,7 +610,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             }
         }
 
-        let global_challenge = [F::zero(); 3];
+        let global_challenge = [F::ZERO; 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
         pctx.set_global_challenge(2, &global_challenge);
@@ -986,7 +987,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let setup = sctx.get_setup(airgroup_id, air_id);
 
-        let root = vec![F::zero(); n_field_elements];
+        let root = vec![F::ZERO; n_field_elements];
         commit_witness_c(
             3,
             setup.stark_info.stark_struct.n_bits,
@@ -997,7 +998,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             aux_trace_contribution_ptr,
         );
 
-        let mut value = vec![Goldilocks::zero(); n_field_elements];
+        let mut value = vec![Goldilocks::ZERO; n_field_elements];
 
         let n_airvalues = setup
             .stark_info
@@ -1008,7 +1009,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let size = 2 * n_field_elements + n_airvalues;
 
-        let mut values_hash = vec![F::zero(); size];
+        let mut values_hash = vec![F::ZERO; size];
 
         let verkey = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic).display().to_string()
             + ".verkey.json";
@@ -1018,7 +1019,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         file.read_to_string(&mut json_str).expect("Unable to read file");
         let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
         for j in 0..n_field_elements {
-            values_hash[j] = F::from_canonical_u64(vk[j]);
+            values_hash[j] = F::from_u64(vk[j]);
             values_hash[j + n_field_elements] = root[j];
         }
 
@@ -1053,18 +1054,18 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             let mut buffer = values[i].clone();
             buffer.extend(values[i + 1].clone());
 
-            let is_value1_zero = values[i].iter().all(|x| *x == F::zero());
-            let is_value2_zero = values[i + 1].iter().all(|x| *x == F::zero());
+            let is_value1_zero = values[i].iter().all(|x| *x == F::ZERO);
+            let is_value2_zero = values[i + 1].iter().all(|x| *x == F::ZERO);
 
             let mut value;
             if is_value1_zero && is_value2_zero {
-                value = vec![F::zero(); 4];
+                value = vec![F::ZERO; 4];
             } else if is_value1_zero {
                 value = values[i + 1].clone();
             } else if is_value2_zero {
                 value = values[i].clone();
             } else {
-                value = vec![F::zero(); 4];
+                value = vec![F::ZERO; 4];
                 calculate_hash_c(value.as_mut_ptr() as *mut u8, buffer.as_mut_ptr() as *mut u8, buffer.len() as u64);
             }
 

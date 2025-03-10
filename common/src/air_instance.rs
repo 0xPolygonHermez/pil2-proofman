@@ -215,11 +215,11 @@ impl<F: Field> AirInstance<F> {
     }
 
     pub fn init_evals(&mut self, size: usize) {
-        self.evals = vec![F::zero(); size];
+        self.evals = vec![F::ZERO; size];
     }
 
     pub fn init_challenges(&mut self, size: usize) {
-        self.challenges = vec![F::zero(); size];
+        self.challenges = vec![F::ZERO; size];
     }
 
     pub fn init_aux_trace(&mut self, size: usize) {
@@ -227,11 +227,11 @@ impl<F: Field> AirInstance<F> {
     }
 
     pub fn init_airvalues(&mut self, size: usize) {
-        self.airvalues = vec![F::zero(); size];
+        self.airvalues = vec![F::ZERO; size];
     }
 
     pub fn init_airgroup_values(&mut self, size: usize) {
-        self.airgroup_values = vec![F::zero(); size];
+        self.airgroup_values = vec![F::ZERO; size];
     }
 
     pub fn init_custom_commit_fixed_trace(&mut self, size: usize) {

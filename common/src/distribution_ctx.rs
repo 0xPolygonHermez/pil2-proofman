@@ -406,10 +406,10 @@ impl DistributionCtx {
 
             let mut airgroupvalues_full: Vec<Vec<F>> = Vec::new();
             for agg_types in _global_info.agg_types.iter() {
-                let mut values = vec![F::zero(); agg_types.len() * FIELD_EXTENSION];
+                let mut values = vec![F::ZERO; agg_types.len() * FIELD_EXTENSION];
                 for (idx, agg_type) in agg_types.iter().enumerate() {
                     if agg_type.agg_type == 1 {
-                        values[idx * FIELD_EXTENSION] = F::one();
+                        values[idx * FIELD_EXTENSION] = F::ONE;
                     }
                 }
                 airgroupvalues_full.push(values);
@@ -421,18 +421,18 @@ impl DistributionCtx {
                     for (idx, agg_type) in agg_types.iter().enumerate() {
                         if agg_type.agg_type == 0 {
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] +=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] +=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] +=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         } else {
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] *=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] *=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] *=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         }
                         pos += FIELD_EXTENSION;
                     }
@@ -444,7 +444,7 @@ impl DistributionCtx {
         {
             airgroupvalues
                 .into_iter()
-                .map(|inner_vec| inner_vec.into_iter().map(|x| F::from_canonical_u64(x)).collect::<Vec<F>>())
+                .map(|inner_vec| inner_vec.into_iter().map(|x| F::from_u64(x)).collect::<Vec<F>>())
                 .collect()
         }
     }
