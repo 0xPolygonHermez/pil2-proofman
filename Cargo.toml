@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "cli",
+    "curves",
     "common",
     "hints",
     "pilout",
