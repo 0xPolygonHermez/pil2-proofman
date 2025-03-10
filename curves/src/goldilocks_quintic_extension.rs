@@ -1,5 +1,5 @@
 use p3_goldilocks::Goldilocks;
-use p3_field::{BasedVectorSpace, ExtensionField, Field, PrimeField64, PrimeCharacteristicRing};
+use p3_field::{BasedVectorSpace, Field, PrimeField64, PrimeCharacteristicRing};
 use p3_field::extension::BinomialExtensionField;
 
 /// Field Fp⁵ = F\[X\]/(X⁵-3) with generator X + 2
@@ -22,7 +22,7 @@ pub(crate) trait SquaringFp5 {
     fn second_frobenius(&self) -> Self;
 
     /// Compute the fifth cyclotomic exponentiation: self^(p⁴ + p³ + p² + p + 1)
-    fn exp_fifth_cyclotomic(&self) -> Self;
+    fn exp_fifth_cyclotomic(&self) -> Goldilocks;
 
     /// Check if the element is a square in Fp, assumes x != 0
     fn is_square_base(x: &Goldilocks) -> bool;
@@ -53,16 +53,20 @@ impl SquaringFp5 for GoldilocksQuinticExtension {
         Self::from_basis_coefficients_fn(|i| Goldilocks::from_u64(Self::GAMMAS2[i]) * a[i])
     }
 
-    fn exp_fifth_cyclotomic(&self) -> Self {
+    fn exp_fifth_cyclotomic(&self) -> Goldilocks {
         let t0 = self.first_frobenius() * self.second_frobenius(); // self^(p² + p)
         let t1 = t0.second_frobenius(); // self^(p⁴ + p³)
-        *self * t0 * t1 // self^(p⁴ + p³ + p² + p + 1)
+        let t2 = t0 * t1; // self^(p⁴ + p³ + p² + p)
+
+        let a: &[Goldilocks] = self.as_basis_coefficients_slice();
+        let b: &[Goldilocks] = t2.as_basis_coefficients_slice();
+        a[0] * b[0] + Goldilocks::from_u8(3) * (a[1] * b[4] + a[2] * b[3] + a[3] * b[2] + a[4] * b[1]) // self^(p⁴ + p³ + p² + p + 1)
     }
 
     fn is_square_base(x: &Goldilocks) -> bool {
         // (p-1)/2 = 2^63 - 2^31 -> x^((p-1)/2) = x^(2^63) / x^(2^31)
-        let exp_63 = x.exp_power_of_2(63);
         let exp_31 = x.exp_power_of_2(31);
+        let exp_63 = exp_31.exp_power_of_2(32);
         let symbol = exp_63 / exp_31;
         symbol == Goldilocks::ONE
     }
@@ -92,8 +96,7 @@ impl SquaringFp5 for GoldilocksQuinticExtension {
 
     fn is_square(&self) -> (Goldilocks, bool) {
         // Compute a = self^(p⁴ + p³ + p² + p + 1), a ∈ Fp
-        let pow_fifth_cyclo: Goldilocks =
-            self.exp_fifth_cyclotomic().as_base().expect("This should be a base field element");
+        let pow_fifth_cyclo = self.exp_fifth_cyclotomic();
 
         // Checks whether a is a square in Fp
         (pow_fifth_cyclo, Self::is_square_base(&pow_fifth_cyclo))
@@ -123,8 +126,8 @@ impl SquaringFp5 for GoldilocksQuinticExtension {
         // Second Part: Compute self^(((p+1)/2)p³ + ((p+1)/2)p + 1)
 
         // 1] Compute self^((p+1)/2). Notice (p+1)/2 = 2^63 - 2^31 + 1
-        let pow_63 = self.exp_power_of_2(63);
         let pow_31 = self.exp_power_of_2(31);
+        let pow_63 = pow_31.exp_power_of_2(32);
         let pow = *self * pow_63 / pow_31;
 
         // 2] Compute the rest using Frobenius
@@ -195,8 +198,8 @@ impl<F: Field> CipollaExtension<F> {
 
     // Computes exponentiation by (p+1)/2 = 2^63 - 2^31 + 1
     fn exp(&self, nonresidue: F) -> Self {
-        let pow_63 = self.exp_power_of_2(63, nonresidue);
         let pow_31 = self.exp_power_of_2(31, nonresidue);
+        let pow_63 = pow_31.exp_power_of_2(32, nonresidue);
         let pow = pow_63.div(pow_31, nonresidue);
         self.mul(pow, nonresidue)
     }

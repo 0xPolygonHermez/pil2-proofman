@@ -6,6 +6,11 @@ use p3_goldilocks::Goldilocks;
 use crate::EllipticCurve;
 use crate::GoldilocksQuinticExtension;
 
+/// The EcMasFp5 curve is defined by the equation:
+///         y² = x³ + Ax + B
+/// over the field `GoldilocksQuinticExtension`, where:
+///   - A = 3
+///   - B = 8·X⁴
 #[derive(Debug, Clone, PartialEq)]
 pub struct EcMasFp5 {
     x: GoldilocksQuinticExtension,

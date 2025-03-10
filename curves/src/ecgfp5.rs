@@ -6,6 +6,11 @@ use p3_goldilocks::Goldilocks;
 use crate::EllipticCurve;
 use crate::GoldilocksQuinticExtension;
 
+/// The [EcGFp5](https://eprint.iacr.org/2022/274.pdf) curve is defined by the equation:
+///         y² = x³ + Ax + B
+/// over the field `GoldilocksQuinticExtension`, where:
+///   - A = 6148914689804861439 + 263·X
+///   - B = 15713893096167979237 + 6148914689804861265·X
 #[derive(Debug, Clone, PartialEq)]
 pub struct EcGFp5 {
     x: GoldilocksQuinticExtension,
