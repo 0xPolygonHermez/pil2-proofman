@@ -12,7 +12,6 @@ void offloadCommit(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, u
 {
 
     double time = omp_get_wtime();
-    uint64_t ncols = setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)];
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
     std::string section = "cm" + to_string(step);
@@ -439,7 +438,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            merkelizeFRI_inplace(step, proof, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
+            merkelizeFRI_inplace(setupCtx, params, d_params, step, proof, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, true);
             starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], nFieldElements);
         }
         else
@@ -467,7 +466,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    proveQueries_inplace(friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, d_trees, nTrees, d_buffers);
+    proveQueries_inplace(setupCtx, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, d_trees, nTrees, d_buffers, setupCtx.starkInfo.nStages, d_params);
 
     /*proveFRIQueries_inplace(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx, proof, starks.treesFRI, d_buffers);*/ // Not run in the GPU at this point
 
