@@ -259,7 +259,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14commit_witnessmmmPvS_S_"]
+    #[link_name = "\u{1}_Z14commit_witnessmmmPvS_S_S_"]
     pub fn commit_witness(
         nBits: u64,
         nBitsExt: u64,
@@ -267,6 +267,7 @@ extern "C" {
         root: *mut ::std::os::raw::c_void,
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,
+        d_buffers: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {

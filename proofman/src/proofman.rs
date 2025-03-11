@@ -268,6 +268,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
+        let max_sizes = discover_max_sizes(&pctx, &setups);
+        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+        let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
+
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !all && !pctx.dctx_is_my_instance(instance_id) {
                 continue;
@@ -291,6 +295,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 aux_trace_contribution.clone(),
                 *all,
                 values.clone(),
+                d_buffers.clone(),
             ));
         }
 
@@ -327,11 +332,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         let prover_buffer = Arc::new(prover_buffer);
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
-
-        let max_sizes = discover_max_sizes(&pctx, &setups);
-        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-        
-        let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
 
         for instance_id in my_instances.iter() {
             let (airgroup_id, air_id, all) = instances[*instance_id];
@@ -449,10 +449,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         aux_trace_contribution_ptr: Arc<Vec<F>>,
         all: bool,
         values: Arc<Mutex<Vec<u64>>>,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
-            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr);
+            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr, d_buffers.clone());
 
             if !all {
                 pctx.free_instance(instance_id);
@@ -986,6 +987,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         sctx: &SetupCtx<F>,
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> Vec<u64> {
         let n_field_elements = 4;
 
@@ -1004,6 +1006,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             root.as_ptr() as *mut u8,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
+            d_buffers.lock().unwrap().get_ptr(),
         );
 
         let mut value = vec![Goldilocks::zero(); n_field_elements];

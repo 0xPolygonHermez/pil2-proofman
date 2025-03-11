@@ -474,6 +474,7 @@ pub fn commit_witness_c(
     root: *mut u8,
     witness: *mut u8,
     aux_trace: *mut u8,
+    d_buffers: *mut c_void,
 ) {
     unsafe {
         commit_witness(
@@ -483,6 +484,7 @@ pub fn commit_witness_c(
             root as *mut std::os::raw::c_void,
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
+            d_buffers,
         );
     }
 }
