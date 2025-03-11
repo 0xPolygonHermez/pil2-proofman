@@ -56,7 +56,7 @@ pub async fn parse_cli() -> Config {
             Arg::new("consttree")
                 .short('t')
                 .long("consttree")
-                .required(true)
+                .default_value("./pil2-stark/build/bctree")
                 .value_parser(clap::value_parser!(PathBuf))
                 .help("Path to consttree"),
         )
