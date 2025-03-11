@@ -54,7 +54,7 @@ public:
             std::memcpy(&mp[j][0], &mpCursor[j * numSiblings], numSiblings * sizeof(ElementType));
         }
     }
-};
+    };
 
 template <typename ElementType>
 class ProofTree
@@ -184,7 +184,7 @@ public:
     }
 
 
-    uint64_t *proof2pointer(uint64_t *pointer) {
+    void proof2pointer(uint64_t *pointer) {
         uint64_t p = 0;
 
         for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
@@ -269,7 +269,7 @@ public:
         }
         
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
-             for(uint64_t i = 0; i < nFieldElements; i++) {
+            for(uint64_t i = 0; i < nFieldElements; i++) {
                 pointer[p++] = toU64(fri.treesFRI[step - 1].root[i]);
             }
         }
@@ -298,8 +298,6 @@ public:
                 pointer[p++] = Goldilocks::toU64(fri.pol[i][l]);
             }
         }
-
-        return pointer;
     }
 
     json proof2json()

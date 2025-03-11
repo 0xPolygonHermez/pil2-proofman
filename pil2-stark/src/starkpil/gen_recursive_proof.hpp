@@ -1,3 +1,6 @@
+#ifndef GEN_RECURSIVE_PROOF_HPP
+#define GEN_RECURSIVE_PROOF_HPP
+
 #include "starks.hpp"
 
 template <typename ElementType>
@@ -246,7 +249,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
         return (void *) new nlohmann::json(zkin);
     } else {
-        proofBuffer = proof.proof.proof2pointer(proofBuffer);
+        proof.proof.proof2pointer(proofBuffer);
         if(!proofFile.empty()) {
             json2file(pointer2json(proofBuffer, setupCtx.starkInfo), proofFile);
         }
@@ -257,3 +260,5 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     
     return nullptr;
 }
+
+#endif

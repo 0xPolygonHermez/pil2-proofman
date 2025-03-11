@@ -1,3 +1,6 @@
+#ifndef GEN_PROOF_H
+#define GEN_PROOF_H
+
 #include "starks.hpp"
 
 void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element *pBuffHelper, bool prod) {
@@ -45,7 +48,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     
-    Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
+    Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed, false);
     
 #ifdef __AVX512__
     ExpressionsAvx512 expressionsCtx(setupCtx);
@@ -103,8 +106,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     // TODO: ADD PROOF VALUES ???
 
-    proof.proof.setAirgroupValues(params.airgroupValues);
-    proof.proof.setAirValues(params.airValues);
+   
     TimerStopAndLog(STARK_STEP_2);
 
     TimerStart(STARK_STEP_Q);
@@ -220,6 +222,8 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     TimerStopAndLog(STARK_STEP_FRI);
 
+    proof.proof.setAirgroupValues(params.airgroupValues); 
+    proof.proof.setAirValues(params.airValues);
     proof.proof.proof2pointer(proofBuffer);
 
     if(!proofFile.empty()) {
@@ -256,3 +260,5 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     TimerStopAndLog(STARK_PROOF);    
 }
+
+#endif

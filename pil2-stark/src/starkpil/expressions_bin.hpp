@@ -82,7 +82,9 @@ struct ParserParams
 struct ParserArgs 
 {
     uint8_t* ops;
+    uint64_t nOpsTotal;
     uint16_t* args;
+    uint64_t nArgsTotal;
     uint64_t* numbers;
     uint16_t* constPolsIds;
     uint16_t* cmPolsIds;

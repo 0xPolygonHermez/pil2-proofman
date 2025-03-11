@@ -2,6 +2,7 @@ use libloading::{Library, Symbol};
 use log::info;
 use proofman_common::skip_prover_instance;
 use proofman_hints::aggregate_airgroupvals;
+use proofman_starks_lib_c::gen_device_commit_buffers_c;
 use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
 use std::collections::HashMap;
 use std::fs::File;
@@ -25,8 +26,10 @@ use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessManager};
 
+use crate::discover_max_sizes;
 use crate::verify_basic_proof;
 use crate::verify_global_constraints_proof;
+use crate::MaxSizes;
 use crate::{
     verify_constraints_proof, check_paths, print_summary_info, aggregate_proofs, get_buff_sizes,
     generate_vadcop_recursive1_proof,
@@ -37,7 +40,7 @@ use proofman_common::{ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop}
 use std::ffi::c_void;
 
 use proofman_util::{
-    create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace,
+    create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace, DeviceBuffer,
 };
 
 pub struct ProofMan<F> {
@@ -265,6 +268,10 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
+        let max_sizes = discover_max_sizes(&pctx, &setups);
+        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+        let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
+
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !all && !pctx.dctx_is_my_instance(instance_id) {
                 continue;
@@ -288,6 +295,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 aux_trace_contribution.clone(),
                 *all,
                 values.clone(),
+                d_buffers.clone(),
             ));
         }
 
@@ -325,14 +333,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
-            if !pctx.dctx_is_my_instance(instance_id) {
-                continue;
-            }
+        for instance_id in my_instances.iter() {
+            let (airgroup_id, air_id, all) = instances[*instance_id];
 
             if !all {
                 timer_start_info!(GENERATING_WITNESS);
-                wcm.calculate_witness(1, &[instance_id]);
+                wcm.calculate_witness(1, &[*instance_id]);
                 timer_stop_and_log_info!(GENERATING_WITNESS);
             }
 
@@ -346,17 +352,13 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 valid_proofs.clone(),
                 pctx.clone(),
                 sctx.clone(),
-                instance_id,
-                *airgroup_id,
-                *air_id,
+                *instance_id,
+                airgroup_id,
+                air_id,
                 output_dir_path.clone(),
                 aux_trace.clone(),
                 airgroup_values_air_instances.clone(),
-                setups.clone(),
-                circom_witness.clone(),
-                publics.clone(),
-                trace.clone(),
-                prover_buffer.clone(),
+                d_buffers.clone(),
             ));
         }
 
@@ -404,7 +406,37 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         }
 
         let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
-        let agg_proof = aggregate_proofs(Self::MY_NAME, &pctx, &setups, &proofs, output_dir_path);
+        timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
+        let mut recursive1_proofs = vec![Vec::new(); proofs.len()];
+        for (idx, instance_id) in my_instances.iter().enumerate() {
+            let proof_recursive = generate_vadcop_recursive1_proof(
+                &pctx,
+                &setups,
+                *instance_id,
+                &proofs[idx],
+                &circom_witness,
+                &publics,
+                &trace,
+                &prover_buffer,
+                output_dir_path.clone(),
+                d_buffers.lock().unwrap().get_ptr(),
+            )
+            .expect("Failed to generate recursive proof");
+            recursive1_proofs[idx] = proof_recursive;
+        }
+        timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
+        let agg_proof = aggregate_proofs(
+            Self::MY_NAME,
+            &pctx,
+            &setups,
+            &recursive1_proofs,
+            &circom_witness,
+            &publics,
+            &trace,
+            &prover_buffer,
+            output_dir_path.clone(),
+            d_buffers.lock().unwrap().get_ptr(),
+        );
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
         agg_proof
@@ -417,10 +449,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         aux_trace_contribution_ptr: Arc<Vec<F>>,
         all: bool,
         values: Arc<Mutex<Vec<u64>>>,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
-            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr);
+            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr, d_buffers.clone());
 
             if !all {
                 pctx.free_instance(instance_id);
@@ -444,11 +477,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
-        setups: Arc<SetupsVadcop<F>>,
-        circom_witness: Arc<Vec<F>>,
-        publics: Arc<Vec<F>>,
-        trace: Arc<Vec<F>>,
-        prover_buffer: Arc<Vec<F>>,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
@@ -483,6 +512,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 airgroup_id as u64,
                 air_id as u64,
                 air_instance_id as u64,
+                d_buffers.lock().unwrap().get_ptr(),
             );
 
             airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
@@ -492,30 +522,11 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             pctx.free_instance(instance_id);
             timer_stop_and_log_info!(FREE_INSTANCE);
 
-            if pctx.options.aggregation {
-                timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
-                let proof_recursive = generate_vadcop_recursive1_proof(
-                    &pctx,
-                    &setups,
-                    instance_id,
-                    &proof,
-                    &circom_witness,
-                    &publics,
-                    &trace,
-                    &prover_buffer,
-                    output_dir_path,
-                )
-                .expect("Failed to generate recursive proof");
-                proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof_recursive;
-                timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
-                timer_stop_and_log_info!(GENERATING_PROOF);
-            } else {
-                if pctx.options.verify_proofs {
-                    valid_proofs.fetch_and(verify_basic_proof(&pctx, instance_id, &proof), Ordering::Relaxed);
-                }
-                proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof;
-                timer_stop_and_log_info!(GENERATING_PROOF);
+            timer_stop_and_log_info!(GENERATING_PROOF);
+            if !pctx.options.aggregation && pctx.options.verify_proofs {
+                valid_proofs.fetch_and(verify_basic_proof(&pctx, instance_id, &proof), Ordering::Relaxed);
             }
+            proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof;
         })
     }
 
@@ -976,6 +987,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         sctx: &SetupCtx<F>,
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> Vec<u64> {
         let n_field_elements = 4;
 
@@ -995,6 +1007,7 @@ impl<F: PrimeField + 'static> ProofMan<F> {
             root.as_ptr() as *mut u8,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
+            d_buffers.lock().unwrap().get_ptr(),
         );
 
         let mut value = vec![Goldilocks::zero(); n_field_elements];

@@ -19,6 +19,8 @@
 #include "expressions_avx512.hpp"
 #include "expressions_pack.hpp"
 
+class gl64_t;
+struct DeviceCommitBuffers;
 
 template <typename ElementType>
 class Starks
@@ -32,20 +34,21 @@ public:
     MerkleTreeType **treesFRI;
 
 public:
-    Starks(SetupCtx& setupCtx_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr) : setupCtx(setupCtx_)                           
+    Starks(SetupCtx& setupCtx_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr, bool initializeTrees = false) : setupCtx(setupCtx_)                           
     {
 
         uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
         uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
         bool allocateNodes = setupCtx.starkInfo.starkStruct.verificationHashType == "GL" ? false : true;
-        treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
-        if (pConstPolsExtendedTreeAddress != nullptr) treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
+        treesGL = new MerkleTreeType *[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
+        if (pConstPolsExtendedTreeAddress != nullptr)
+            treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
         for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
         {
             std::string section = "cm" + to_string(i + 1);
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-            treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols, false, allocateNodes);
+            treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols, initializeTrees, allocateNodes || initializeTrees);
         }
 
         
@@ -63,7 +66,7 @@ public:
             uint64_t nGroups = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
             uint64_t groupSize = (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) / nGroups;
 
-            treesFRI[step] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION, false, allocateNodes);
+            treesFRI[step] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION, initializeTrees, allocateNodes || initializeTrees);
         }
     };
     ~Starks()
@@ -80,13 +83,16 @@ public:
         }
         delete[] treesFRI;
     };
-    
+
     void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper);
     void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers);
 
     void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void commitStage_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers);
     void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
-    
+    void computeQ_inplace(uint64_t step, gl64_t *d_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers);
+
     void calculateImPolsExpressions(uint64_t step, StepsParams& params);
     void calculateQuotientPolynomial(StepsParams& params);
     void calculateFRIPolynomial(StepsParams& params);

@@ -164,12 +164,12 @@ public:
     uint64_t proofSize;
 
     /* Constructor */
-    StarkInfo(string file, bool verify = false);
+    StarkInfo(string file, bool recursive = false, bool verify = false);
 
     /* Loads data from a json object */
-    void load (json j, bool verify = false);
+    void load (json j, bool recursive = false, bool verify = false);
 
-    void setMapOffsets();
+    void setMapOffsets(bool recursive_);
 
     void getProofSize();
 
@@ -179,6 +179,7 @@ public:
 
     /* Returns a polynomial specified by its ID */
     void getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended);
+    uint64_t getTraceOffset(string type, PolMap& polInfo, bool domainExtended);
+    uint64_t getTraceNColsSection(string type, PolMap& polInfo, bool domainExtended);
 };
-
 #endif

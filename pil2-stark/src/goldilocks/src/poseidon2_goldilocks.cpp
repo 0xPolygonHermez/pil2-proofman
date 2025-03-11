@@ -247,7 +247,7 @@ void Poseidon2Goldilocks::hash_full_result(Goldilocks::Element *state, const Gol
     Goldilocks::store_avx(&(state[8]), st2);
 }
 
-void Poseidon2Goldilocks::linear_hash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
+void Poseidon2Goldilocks::linear_hash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size, bool print)
 {
     uint64_t remaining = size;
     Goldilocks::Element state[SPONGE_WIDTH];
@@ -272,8 +272,17 @@ void Poseidon2Goldilocks::linear_hash(Goldilocks::Element *output, Goldilocks::E
         uint64_t n = (remaining < RATE) ? remaining : RATE;
         memset(&state[n], 0, (RATE - n) * sizeof(Goldilocks::Element));
         std::memcpy(state, input + (size - remaining), n * sizeof(Goldilocks::Element));
+        /*if(print){
+            for (uint32_t i = 0; i < SPONGE_WIDTH; i++)
+                    printf("tmp abans[%d] = %lu col=%lu ncols=%lu\n", i, state[i].fe, size-remaining, size);
+        }*/
         hash_full_result(state, state);
+        /*if(print){
+            for (uint32_t i = 0; i < CAPACITY; i++)
+                    printf("tmp[%d] = %lu col=%lu ncols=%lu\n", i, state[i].fe, size-remaining, size);
+        }*/
         remaining -= n;
+        
     }
     if (size > 0)
     {
@@ -329,6 +338,9 @@ void Poseidon2Goldilocks::merkletree_avx(Goldilocks::Element *tree, Goldilocks::
         pending = (pending + (arity - 1)) / arity;
         nextN = (pending + (arity - 1)) / arity;
     }
+    /*for (uint64_t i = 0; i < 100; i++){
+        std::cout << "tree[" << i << "] = " << tree[i].fe << std::endl;
+    }*/
 }
 void Poseidon2Goldilocks::merkletree_batch_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t batch_size, int nThreads, uint64_t dim)
 {
