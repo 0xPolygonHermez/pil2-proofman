@@ -1,5 +1,5 @@
 use libloading::{Library, Symbol};
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use std::ffi::CString;
 use std::fs::File;
 use proofman_starks_lib_c::*;
@@ -29,7 +29,7 @@ type GetWitnessFinalFunc =
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
-pub fn aggregate_proofs<F: PrimeField>(
+pub fn aggregate_proofs<F: PrimeField64>(
     name: &str,
     pctx_aggregation: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
@@ -129,7 +129,7 @@ pub fn aggregate_proofs<F: PrimeField>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_vadcop_recursive1_proof<F: PrimeField>(
+pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     global_idx: usize,
@@ -279,7 +279,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_vadcop_recursive2_proof<F: PrimeField>(
+pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     proofs: &[Vec<u64>],
@@ -460,7 +460,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_vadcop_final_proof<F: PrimeField>(
+pub fn generate_vadcop_final_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setup: &Setup<F>,
     proof: &[u64],
@@ -509,7 +509,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_recursivef_proof<F: PrimeField>(
+pub fn generate_recursivef_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setup: &Setup<F>,
     proof: &[u64],
@@ -565,7 +565,7 @@ pub fn generate_recursivef_proof<F: PrimeField>(
     Ok(p_prove)
 }
 
-pub fn generate_fflonk_snark_proof<F: PrimeField>(
+pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     proof: *mut c_void,
     output_dir_path: PathBuf,
@@ -615,7 +615,7 @@ pub fn generate_fflonk_snark_proof<F: PrimeField>(
     Ok(())
 }
 
-fn generate_witness<F: PrimeField>(
+fn generate_witness<F: PrimeField64>(
     witness: &[F],
     buffer: &[F],
     publics: &[F],
@@ -671,7 +671,7 @@ fn generate_witness<F: PrimeField>(
     Ok(())
 }
 
-pub fn get_buff_sizes<F: PrimeField>(
+pub fn get_buff_sizes<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
 ) -> Result<(usize, usize, usize, usize), Box<dyn std::error::Error>> {
@@ -737,7 +737,7 @@ pub fn get_buff_sizes<F: PrimeField>(
     Ok((witness_size, publics, buffer, prover_size as usize))
 }
 
-fn get_size<F: PrimeField>(
+fn get_size<F: PrimeField64>(
     setup_path: &Path,
     setup: &Setup<F>,
     n_cols: usize,

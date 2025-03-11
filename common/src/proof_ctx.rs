@@ -16,7 +16,7 @@ pub struct Values<F> {
 
 impl<F: Field> Values<F> {
     pub fn new(n_values: usize) -> Self {
-        Self { values: RwLock::new(vec![F::zero(); n_values]) }
+        Self { values: RwLock::new(vec![F::ZERO; n_values]) }
     }
 }
 
@@ -333,7 +333,7 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn set_public_value(&self, value: u64, public_id: usize) {
-        self.public_inputs.values.write().unwrap()[public_id] = F::from_canonical_u64(value);
+        self.public_inputs.values.write().unwrap()[public_id] = F::from_u64(value);
     }
 
     pub fn set_global_challenge(&self, stage: usize, global_challenge: &[F]) {

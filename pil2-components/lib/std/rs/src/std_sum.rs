@@ -232,9 +232,9 @@ impl<F: PrimeField64> StdSum<F> {
             }
 
             let proves = match get_row_field_value(proves, row, "proves") {
-                p if p.is_zero() || p == F::neg_one() => {
+                p if p.is_zero() || p == F::NEG_ONE => {
                     // If it's an "assume", negate its value
-                    if p == F::neg_one() {
+                    if p == F::NEG_ONE {
                         mul = -mul;
                     }
                     false

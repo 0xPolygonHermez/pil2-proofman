@@ -6,7 +6,7 @@ use std::io::Read;
 use colored::Colorize;
 
 use p3_goldilocks::Goldilocks;
-use p3_field::AbstractField;
+use p3_field::PrimeCharacteristicRing;
 
 use proofman::verify_proof_from_file;
 
@@ -50,7 +50,7 @@ impl VerifyStark {
             let verkey_json_string: Vec<String> = serde_json::from_str(&contents).unwrap();
             let verkey_json: Vec<u64> =
                 verkey_json_string.iter().map(|s| s.parse::<u64>().expect("Failed to parse string as u64")).collect();
-            Some(verkey_json.into_iter().map(Goldilocks::from_canonical_u64).collect::<Vec<Goldilocks>>())
+            Some(verkey_json.into_iter().map(Goldilocks::from_u64).collect::<Vec<Goldilocks>>())
         } else {
             None
         };

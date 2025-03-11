@@ -1,5 +1,5 @@
 use log::info;
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::Read;
@@ -12,7 +12,7 @@ use std::error::Error;
 
 use proofman_common::{format_bytes, ProofCtx, SetupsVadcop};
 
-pub fn print_summary_info<F: PrimeField>(name: &str, pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) {
+pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) {
     let mpi_rank = pctx.dctx_get_rank();
     let n_processes = pctx.dctx_get_n_processes();
 
@@ -37,7 +37,7 @@ pub fn print_summary_info<F: PrimeField>(name: &str, pctx: &ProofCtx<F>, setups:
     }
 }
 
-pub fn print_summary<F: PrimeField>(name: &str, pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>, global: bool) {
+pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>, global: bool) {
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();
@@ -276,7 +276,7 @@ pub fn check_paths(
     Ok(())
 }
 
-pub fn add_publics_circom<F: PrimeField>(
+pub fn add_publics_circom<F: PrimeField64>(
     proof: &mut [u64],
     initial_index: usize,
     pctx: &ProofCtx<F>,
@@ -330,7 +330,7 @@ pub fn add_publics_circom<F: PrimeField>(
     }
 }
 
-pub fn add_publics_aggregation<F: PrimeField>(
+pub fn add_publics_aggregation<F: PrimeField64>(
     proof: &mut [u64],
     initial_index: usize,
     publics: &[F],

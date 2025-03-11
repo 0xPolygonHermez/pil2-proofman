@@ -3,13 +3,13 @@ use std::sync::Arc;
 use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 
 use crate::SumBusTrace;
 
 define_wc!(SumBus, "SumBus  ");
 
-impl<F: PrimeField> WitnessComponent<F> for SumBus {
+impl<F: PrimeField64> WitnessComponent<F> for SumBus {
     execute!(SumBusTrace, 1);
 
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
@@ -20,7 +20,7 @@ impl<F: PrimeField> WitnessComponent<F> for SumBus {
             log::debug!("{}: ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
             for i in 0..num_rows {
-                trace[i].a = F::from_canonical_usize(i);
+                trace[i].a = F::from_usize(i);
                 trace[i].b = trace[i].a;
             }
 
