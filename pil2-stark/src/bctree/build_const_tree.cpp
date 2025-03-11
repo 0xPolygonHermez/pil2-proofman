@@ -45,7 +45,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
     if (verificationHashType == "GL") {
         TimerStart(MERKELIZE_CONST_TREE);
         Goldilocks::Element root[4];
-        MerkleTreeGL mt(2, true, NExtended, nPols);
+        MerkleTreeGL mt(3, true, NExtended, nPols);
         Goldilocks::Element *buffNodes = new Goldilocks::Element[mt.numNodes];
         mt.setSource(pConstPolsExt);
         mt.setNodes(buffNodes);

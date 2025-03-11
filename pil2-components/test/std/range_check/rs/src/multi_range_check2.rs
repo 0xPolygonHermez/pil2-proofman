@@ -4,15 +4,14 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use num_bigint::BigInt;
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rngs::StdRng};
 
 use crate::MultiRangeCheck2Trace;
 
 define_wc_with_std!(MultiRangeCheck2, "MtRngCh2");
 
-impl<F: PrimeField> WitnessComponent<F> for MultiRangeCheck2<F>
+impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck2<F>
 where
     Standard: Distribution<F>,
 {
@@ -27,10 +26,10 @@ where
 
             log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-            let range1 = self.std_lib.get_range(BigInt::from(1 << 5), BigInt::from((1 << 8) - 1), Some(false));
-            let range2 = self.std_lib.get_range(BigInt::from(1 << 8), BigInt::from((1 << 9) - 1), Some(false));
-            let range3 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 7) - 1), Some(false));
-            let range4 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 4) - 1), Some(false));
+            let range1 = self.std_lib.get_range(1 << 5, (1 << 8) - 1, Some(false));
+            let range2 = self.std_lib.get_range(1 << 8, (1 << 9) - 1, Some(false));
+            let range3 = self.std_lib.get_range(0, (1 << 7) - 1, Some(false));
+            let range4 = self.std_lib.get_range(0, (1 << 4) - 1, Some(false));
 
             for i in 0..num_rows {
                 trace[i].a[0] = F::zero();
@@ -48,25 +47,29 @@ where
 
                 if selected1 {
                     if range_selector1 {
-                        trace[i].a[0] = F::from_canonical_u16(rng.gen_range((1 << 5)..=(1 << 8) - 1));
+                        let val = rng.gen_range((1 << 5)..=(1 << 8) - 1);
+                        trace[i].a[0] = F::from_canonical_u16(val);
 
-                        self.std_lib.range_check(trace[i].a[0], F::one(), range1);
+                        self.std_lib.range_check(val as i64, 1, range1);
                     } else {
-                        trace[i].a[0] = F::from_canonical_u16(rng.gen_range((1 << 8)..=(1 << 9) - 1));
+                        let val = rng.gen_range((1 << 8)..=(1 << 9) - 1);
+                        trace[i].a[0] = F::from_canonical_u16(val);
 
-                        self.std_lib.range_check(trace[i].a[0], F::one(), range2);
+                        self.std_lib.range_check(val as i64, 1, range2);
                     }
                 }
 
                 if selected2 {
                     if range_selector2 {
-                        trace[i].a[1] = F::from_canonical_u16(rng.gen_range(0..=(1 << 7) - 1));
+                        let val = rng.gen_range(0..=(1 << 7) - 1);
+                        trace[i].a[1] = F::from_canonical_u16(val);
 
-                        self.std_lib.range_check(trace[i].a[1], F::one(), range3);
+                        self.std_lib.range_check(val as i64, 1, range3);
                     } else {
-                        trace[i].a[1] = F::from_canonical_u16(rng.gen_range(0..=(1 << 4) - 1));
+                        let val = rng.gen_range(0..=(1 << 4) - 1);
+                        trace[i].a[1] = F::from_canonical_u16(val);
 
-                        self.std_lib.range_check(trace[i].a[1], F::one(), range4);
+                        self.std_lib.range_check(val as i64, 1, range4);
                     }
                 }
             }

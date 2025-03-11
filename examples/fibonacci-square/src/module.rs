@@ -4,7 +4,6 @@ use proofman_common::{AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::{WitnessComponent, execute};
 use pil_std_lib::Std;
 use p3_field::{AbstractField, PrimeField64};
-use num_bigint::BigInt;
 use rayon::prelude::*;
 use crate::{BuildPublicValues, FibonacciSquareTrace, ModuleAirValues, ModuleTrace};
 
@@ -36,7 +35,7 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
             let module = F::as_canonical_u64(&publics.module);
 
             //range_check(colu: mod - x_mod, min: 1, max: 2**8-1);
-            let range = self.std_lib.get_range(BigInt::from(1), BigInt::from((1 << 8) - 1), None);
+            let range = self.std_lib.get_range(1, (1 << 8) - 1, None);
 
             let inputs = self.inputs.lock().unwrap();
 
@@ -78,12 +77,12 @@ impl<F: PrimeField64 + AbstractField + Copy> WitnessComponent<F> for Module<F> {
                 air_values.last_segment = F::from_bool(j == num_instances - 1);
 
                 x_mods.par_iter().for_each(|x_mod| {
-                    self.std_lib.range_check(F::from_canonical_u64(module - x_mod), F::one(), range);
+                    self.std_lib.range_check((module - x_mod) as i64, 1, range);
                 });
 
                 // Trivial range check for the remaining rows
                 for _ in inputs_slice.len()..trace.num_rows() {
-                    self.std_lib.range_check(F::from_canonical_u64(module), F::one(), range);
+                    self.std_lib.range_check(module as i64, 1, range);
                 }
 
                 let air_instance =

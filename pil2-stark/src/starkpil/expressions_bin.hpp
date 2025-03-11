@@ -109,6 +109,9 @@ public:
     
     ParserArgs expressionsBinArgsExpressions;
 
+    uint64_t maxTmp1;
+    uint64_t maxTmp3;
+    
     ~ExpressionsBin() {
         if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;
         if (expressionsBinArgsExpressions.args) delete[] expressionsBinArgsExpressions.args;

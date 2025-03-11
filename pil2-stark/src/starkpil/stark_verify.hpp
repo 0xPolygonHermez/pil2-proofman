@@ -237,7 +237,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             Goldilocks3::sub((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)x_ext[0], (Goldilocks3::Element &)aux[0]);
             Goldilocks3::inv((Goldilocks3::Element *)aux, (Goldilocks3::Element *)aux);
             Goldilocks3::mul((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)x_ext[0]);
-            std::memcpy(&xDivXSub[(i + o*starkInfo.starkStruct.nQueries)*FIELD_EXTENSION], &aux[0], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+            std::memcpy(&xDivXSub[(i*starkInfo.openingPoints.size() + o)*FIELD_EXTENSION], &aux[0], FIELD_EXTENSION * sizeof(Goldilocks::Element));
         }
     }
 
@@ -383,9 +383,9 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                 values[i] = Goldilocks::fromString(jproof["s0_vals" + to_string(s + 1)][q][i]);
             }
 
-            uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[0].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : starkInfo.starkStruct.steps[0].nBits;
-            uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : nFieldElements;
-            
+            uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[0].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+            uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+
             std::vector<std::vector<ElementType>> siblings(
                 nSiblings, 
                 std::vector<ElementType>(nSiblingsPerLevel)
@@ -418,9 +418,9 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             values[i] = Goldilocks::fromString(jproof["s0_valsC"][q][i]);
         }
 
-        uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[0].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : starkInfo.starkStruct.steps[0].nBits;
-        uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : nFieldElements;
-        
+        uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[0].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+        uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+
         std::vector<std::vector<ElementType>> siblings(
             nSiblings, 
             std::vector<ElementType>(nSiblingsPerLevel)
@@ -459,9 +459,9 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                 values[i] = Goldilocks::fromString(jproof["s0_vals_" + starkInfo.customCommits[c].name + "_0"][q][i]);
             }
 
-            uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[0].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : starkInfo.starkStruct.steps[0].nBits;
-            uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : nFieldElements;
-
+            uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[0].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : std::ceil(starkInfo.starkStruct.steps[0].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+            uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+            
             std::vector<std::vector<ElementType>> siblings(
                 nSiblings, 
                 std::vector<ElementType>(nSiblingsPerLevel)
@@ -507,9 +507,9 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                 values[i] = Goldilocks::fromString(jproof["s" + std::to_string(step) + "_vals"][q][i]);
             }
 
-            uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[step].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : starkInfo.starkStruct.steps[step].nBits;
-            uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : nFieldElements;
-
+            uint64_t nSiblings = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? std::floor((starkInfo.starkStruct.steps[step].nBits - 1) / std::ceil(std::log2(starkInfo.starkStruct.merkleTreeArity))) + 1 : std::ceil(starkInfo.starkStruct.steps[step].nBits / std::log2(starkInfo.starkStruct.merkleTreeArity));
+            uint64_t nSiblingsPerLevel = starkInfo.starkStruct.verificationHashType == std::string("BN128") ? starkInfo.starkStruct.merkleTreeArity : (starkInfo.starkStruct.merkleTreeArity - 1) * nFieldElements;
+            
             std::vector<std::vector<ElementType>> siblings(
                 nSiblings, 
                 std::vector<ElementType>(nSiblingsPerLevel)
@@ -520,7 +520,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
                     siblings[i][j] = fromString<ElementType>(jproof["s" + std::to_string(step) + "_siblings"][q][i][j]);
                 }
             }
-            bool res = treeFRI.verifyGroupProof(root, siblings, friQueries[q], values);
+            bool res = treeFRI.verifyGroupProof(root, siblings, friQueries[q] % (1 << starkInfo.starkStruct.steps[step].nBits), values);
             if(!res) {
                 isValidFoldingMT = false;
             }

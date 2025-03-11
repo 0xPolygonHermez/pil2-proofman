@@ -36,10 +36,8 @@ void StarkInfo::load(json j, bool recursive_, bool verify_)
         {
             starkStruct.merkleTreeCustom = false;
         }
-    }
-    else
-    {
-        starkStruct.merkleTreeArity = 2;
+    } else {
+        starkStruct.merkleTreeArity = 3;
         starkStruct.merkleTreeCustom = true;
     }
     if (j["starkStruct"].contains("hashCommits"))
@@ -295,30 +293,35 @@ void StarkInfo::getProofSize() {
 
     proofSize += evMap.size() * FIELD_EXTENSION; // Evals
 
+    uint64_t nSiblings = std::ceil(starkStruct.steps[0].nBits / std::log2(starkStruct.merkleTreeArity));
+    uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
+
     proofSize += starkStruct.nQueries * nConstants; // Constants Values
-    proofSize += starkStruct.nQueries * starkStruct.nBitsExt * 4; // Siblings Constants Values
+    proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel; // Siblings Constants Values
 
     for(uint64_t i = 0; i < customCommits.size(); ++i) {
         proofSize += starkStruct.nQueries * mapSectionsN[customCommits[i].name + "0"]; // Custom Commits Values
-        proofSize += starkStruct.nQueries * starkStruct.nBitsExt * 4; // Siblings Custom Commits Values
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel; // Siblings Custom Commits Siblings
     }
 
     for(uint64_t i = 0; i < nStages + 1; ++i) {
         proofSize += starkStruct.nQueries * mapSectionsN["cm" + to_string(i+1)];
-        proofSize += starkStruct.nQueries * starkStruct.nBitsExt * 4;
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
     }
 
     proofSize += (starkStruct.steps.size() - 1) * 4; // Roots
 
     for(uint64_t i = 1; i < starkStruct.steps.size(); ++i) {
+        uint64_t nSiblings = std::ceil(starkStruct.steps[i].nBits / std::log2(starkStruct.merkleTreeArity));
+        uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
         proofSize += starkStruct.nQueries * (1 << (starkStruct.steps[i-1].nBits - starkStruct.steps[i].nBits))*FIELD_EXTENSION;
-        proofSize += starkStruct.nQueries * starkStruct.steps[i].nBits * 4;
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
     }
 
     proofSize += (1 << starkStruct.steps[starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION;
 }
 
-void StarkInfo::setMapOffsets(bool recursive_) {
+void StarkInfo::setMapOffsets() {
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
 
@@ -422,9 +425,19 @@ void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, st
     pol = Polinomial(&pAddress[offset], deg, dim, nCols);
 }
 
-uint64_t StarkInfo::getNumNodesMT(uint64_t height)
-{
-    return height * HASH_SIZE + (height - 1) * HASH_SIZE;
+uint64_t StarkInfo::getNumNodesMT(uint64_t height) {
+    uint64_t numNodes = height;
+    uint64_t nodesLevel = height;
+    
+    while (nodesLevel > 1) {
+        uint64_t extraZeros = (starkStruct.merkleTreeArity - (nodesLevel % starkStruct.merkleTreeArity)) % starkStruct.merkleTreeArity;
+        numNodes += extraZeros;
+        uint64_t nextN = (nodesLevel + (starkStruct.merkleTreeArity - 1))/starkStruct.merkleTreeArity;        
+        numNodes += nextN;
+        nodesLevel = nextN;
+    }
+
+    return numNodes * HASH_SIZE;
 }
 uint64_t StarkInfo::getTraceOffset(string type, PolMap &polInfo, bool domainExtended)
 {

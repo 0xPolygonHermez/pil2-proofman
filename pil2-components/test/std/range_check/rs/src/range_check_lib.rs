@@ -3,7 +3,7 @@ use std::sync::Arc;
 use pil_std_lib::Std;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 use rand::{distributions::Standard, prelude::Distribution, Rng};
 
@@ -14,13 +14,12 @@ use crate::{
 
 witness_library!(WitnessLib, Goldilocks);
 
-impl<F: PrimeField> WitnessLibrary<F> for WitnessLib
+impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
 where
     Standard: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
         let seed = if cfg!(feature = "debug") { 0 } else { rand::thread_rng().gen::<u64>() };
-        
         let std_lib = Std::new(wcm.clone());
         let range_check1 = RangeCheck1::new(std_lib.clone());
         let range_check2 = RangeCheck2::new(std_lib.clone());
@@ -42,7 +41,6 @@ where
         range_check_dynamic2.set_seed(seed);
         range_check_mix.set_seed(seed);
 
-        
         wcm.register_component(range_check1.clone());
         wcm.register_component(range_check2.clone());
         wcm.register_component(range_check3.clone());

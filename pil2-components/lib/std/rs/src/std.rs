@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
-use num_bigint::BigInt;
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 
 use proofman_common::{ProofCtx, SetupCtx};
 use witness::WitnessManager;
 
-use crate::{AirComponent, StdProd, StdRangeCheck, RangeCheckAir, StdSum};
+use crate::{AirComponent, StdProd, StdRangeCheck, StdSum};
 
-pub struct Std<F: PrimeField> {
+pub struct Std<F: PrimeField64> {
     pub pctx: Arc<ProofCtx<F>>,
     pub sctx: Arc<SetupCtx<F>>,
     pub range_check: Arc<StdRangeCheck<F>>,
@@ -16,7 +15,7 @@ pub struct Std<F: PrimeField> {
     pub std_sum: Arc<StdSum<F>>,
 }
 
-impl<F: PrimeField> Std<F> {
+impl<F: PrimeField64> Std<F> {
     const MY_NAME: &'static str = "STD     ";
 
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
@@ -61,16 +60,12 @@ impl<F: PrimeField> Std<F> {
     }
 
     // Gets the range for the range check.
-    pub fn get_range(&self, min: BigInt, max: BigInt, predefined: Option<bool>) -> usize {
+    pub fn get_range(&self, min: i64, max: i64, predefined: Option<bool>) -> usize {
         self.range_check.get_range(min, max, predefined)
     }
 
     // Processes the inputs for the range check.
-    pub fn range_check(&self, val: F, multiplicity: F, id: usize) {
+    pub fn range_check(&self, val: i64, multiplicity: u64, id: usize) {
         self.range_check.assign_values(val, multiplicity, id);
-    }
-
-    pub fn get_ranges(&self) -> Vec<(usize, usize, RangeCheckAir)> {
-        self.range_check.get_ranges()
     }
 }

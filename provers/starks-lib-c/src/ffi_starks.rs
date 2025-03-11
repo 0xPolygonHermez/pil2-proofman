@@ -55,7 +55,7 @@ pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn stark_info_new_c(filename: &str, recursive: bool, verify: bool) -> *mut c_void {
+pub fn stark_info_new_c(filename: &str, verify: bool) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
@@ -66,6 +66,11 @@ pub fn stark_info_new_c(filename: &str, recursive: bool, verify: bool) -> *mut c
 #[cfg(not(feature = "no_lib_link"))]
 pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_buffer_size_contribution_air_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_buffer_size_contribution_air(p_stark_info) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -468,6 +473,7 @@ pub fn write_custom_commit_c(
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn commit_witness_c(
+    arity: u64,
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
@@ -990,7 +996,7 @@ pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _out
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn stark_info_new_c(_filename: &str, _recursive: bool, _verify: bool) -> *mut c_void {
+pub fn stark_info_new_c(_filename: &str, _verify: bool) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
@@ -1006,7 +1012,7 @@ pub fn get_buffer_size_contribution_air_c(_p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
+pub fn get_map_totaln_c(_p_stark_info: *mut c_void, _recursive: bool) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
     100000000
 }
@@ -1243,6 +1249,7 @@ pub fn write_custom_commit_c(
 
 #[cfg(feature = "no_lib_link")]
 pub fn commit_witness_c(
+    _arity: u64,
     _n_bits: u64,
     _n_bits_ext: u64,
     _n_cols: u64,

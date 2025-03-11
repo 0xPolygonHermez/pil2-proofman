@@ -166,7 +166,7 @@ public:
             for(uint64_t d = 0; d < setupCtx.starkInfo.openingPoints.size(); ++d) {
                for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
                     for(uint64_t j = 0; j < nrowsPack; ++j) {
-                        bufferT[j] = params.xDivXSub[(row + j + d*domainSize)*FIELD_EXTENSION + k];
+                        bufferT[j] = params.xDivXSub[((row + j)*setupCtx.starkInfo.openingPoints.size() + d)*FIELD_EXTENSION + k];
                     }
                     Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings] + d*FIELD_EXTENSION + k], &bufferT[0]);
                 }
@@ -281,7 +281,7 @@ public:
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
         bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
 
-        uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].params[0].parserParams.destDim : 0;
+        uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].expId : 0;
         setBufferTInfo(domainExtended, expId);
 
         __m256i *numbers_ = new __m256i[parserArgs.nNumbers];

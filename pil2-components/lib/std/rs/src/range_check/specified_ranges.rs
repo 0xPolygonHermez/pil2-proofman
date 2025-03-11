@@ -5,176 +5,178 @@ use std::sync::{
 };
 use rayon::prelude::*;
 
-use num_traits::ToPrimitive;
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 
 use witness::WitnessComponent;
 use proofman_common::{AirInstance, ProofCtx, SetupCtx, TraceInfo};
-use proofman_hints::{get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
+use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 use proofman_util::create_buffer_fast;
 
-use crate::{AirComponent, Range};
+use crate::{get_hint_field_constant_as_field, get_hint_field_constant_as_u64, validate_binary_field, AirComponent};
 
-pub struct SpecifiedRanges<F: PrimeField> {
+#[derive(Debug)]
+pub struct SpecifiedRange {
+    id: usize,
+    mul_idx: usize,
+    min: i64,
+}
+
+pub struct SpecifiedRanges {
     // Parameters
     airgroup_id: usize,
     air_id: usize,
     instance_id: AtomicU64,
     num_rows: usize,
     num_cols: usize,
-    ranges: Vec<Range<F>>,
+    ranges: Vec<SpecifiedRange>,
     multiplicities: Vec<Vec<AtomicU64>>,
     calculated: AtomicBool,
 }
 
-impl<F: PrimeField> AirComponent<F> for SpecifiedRanges<F> {
+impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
     const MY_NAME: &'static str = "SpecRang";
 
     fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
         let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
         let air_id = air_id.expect("Air ID must be provided");
+        let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         let setup = sctx.get_setup(airgroup_id, air_id);
-        let specified_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges");
-        let mut ranges = Vec::new();
-        let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
-        let num_cols = if specified_hints.is_empty() { 0 } else { specified_hints.len() - 1 };
-        let mut multiplicities = Vec::new();
 
-        if !specified_hints.is_empty() {
-            for hint in specified_hints[1..].iter() {
-                let predefined = get_hint_field_constant(
+        // Get the relevant data
+        let specified_data_hint =
+            get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges_data")[0] as usize;
+        let col_num = get_hint_field_constant_as_u64::<F>(
+            sctx,
+            airgroup_id,
+            air_id,
+            specified_data_hint,
+            "col_num",
+            HintFieldOptions::default(),
+        );
+
+        let opids_count = get_hint_field_constant_as_u64::<F>(
+            sctx,
+            airgroup_id,
+            air_id,
+            specified_data_hint,
+            "opids_count",
+            HintFieldOptions::default(),
+        );
+
+        let opids = get_hint_field_constant_a::<F>(
+            sctx,
+            airgroup_id,
+            air_id,
+            specified_data_hint,
+            "opids",
+            HintFieldOptions::default(),
+        )
+        .values;
+
+        let opids_len = get_hint_field_constant_a::<F>(
+            sctx,
+            airgroup_id,
+            air_id,
+            specified_data_hint,
+            "opids_len",
+            HintFieldOptions::default(),
+        )
+        .values;
+
+        // Get and store the ranges
+        let specified_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_range");
+        let mut ranges = Vec::new();
+        let mut offset = 0;
+        for i in 0..opids_count as usize {
+            let opid = &opids[i];
+            let opid_len = &opids_len[i];
+
+            // Convert to the correct type
+            let HintFieldValue::Field(opid) = opid else {
+                log::error!("Opid hint must be a field element");
+                panic!();
+            };
+            let opid = opid.as_canonical_u64() as usize;
+
+            let HintFieldValue::Field(opid_len) = opid_len else {
+                log::error!("Opid hint must be a field element");
+                panic!();
+            };
+            let opid_len = opid_len.as_canonical_u64() as usize;
+
+            for j in 0..opid_len {
+                let idx = offset + j;
+                let hint = specified_hints[idx];
+
+                let min = get_hint_field_constant_as_u64::<F>(
                     sctx,
                     airgroup_id,
                     air_id,
-                    *hint as usize,
-                    "predefined",
-                    HintFieldOptions::default(),
-                );
-                let min = get_hint_field_constant(
-                    sctx,
-                    airgroup_id,
-                    air_id,
-                    *hint as usize,
+                    hint as usize,
                     "min",
                     HintFieldOptions::default(),
                 );
-                let min_neg = get_hint_field_constant(
+
+                let min_neg = get_hint_field_constant_as_field::<F>(
                     sctx,
                     airgroup_id,
                     air_id,
-                    *hint as usize,
+                    hint as usize,
                     "min_neg",
                     HintFieldOptions::default(),
                 );
-                let max = get_hint_field_constant(
-                    sctx,
-                    airgroup_id,
-                    air_id,
-                    *hint as usize,
-                    "max",
-                    HintFieldOptions::default(),
-                );
-                let max_neg = get_hint_field_constant(
-                    sctx,
-                    airgroup_id,
-                    air_id,
-                    *hint as usize,
-                    "max_neg",
-                    HintFieldOptions::default(),
-                );
+                let min_neg = validate_binary_field(min_neg, "Min neg");
 
-                let HintFieldValue::Field(predefined) = predefined else {
-                    log::error!("Predefined hint must be a field element");
-                    panic!();
-                };
-                let predefined = {
-                    if !predefined.is_zero() && !predefined.is_one() {
-                        log::error!("Predefined hint must be either 0 or 1");
-                        panic!();
-                    }
-                    predefined.is_one()
-                };
-                let HintFieldValue::Field(min) = min else {
-                    log::error!("Min hint must be a field element");
-                    panic!();
-                };
-                let min_neg = match min_neg {
-                    HintFieldValue::Field(value) => {
-                        if value.is_zero() {
-                            false
-                        } else if value.is_one() {
-                            true
-                        } else {
-                            log::error!("Predefined hint must be either 0 or 1");
-                            panic!("Invalid predefined hint value"); // Or return Err if you prefer error handling
-                        }
-                    }
-                    _ => {
-                        log::error!("Max_neg hint must be a field element");
-                        panic!("Invalid hint type"); // Or return Err if you prefer error handling
-                    }
-                };
-                let HintFieldValue::Field(max) = max else {
-                    log::error!("Max hint must be a field element");
-                    panic!();
-                };
-                let max_neg = match max_neg {
-                    HintFieldValue::Field(value) => {
-                        if value.is_zero() {
-                            false
-                        } else if value.is_one() {
-                            true
-                        } else {
-                            log::error!("Predefined hint must be either 0 or 1");
-                            panic!("Invalid predefined hint value"); // Or return Err if you prefer error handling
-                        }
-                    }
-                    _ => {
-                        log::error!("Max_neg hint must be a field element");
-                        panic!("Invalid hint type"); // Or return Err if you prefer error handling
-                    }
-                };
+                let min = if min_neg { min as i128 - F::ORDER_U64 as i128 } else { min as i128 };
 
-                ranges.push(Range(min, max, min_neg, max_neg, predefined));
+                // In this conversion we assume that min is at most of 63 bits
+                // We can safely assume it because we have already check this minimum before
+                ranges.push(SpecifiedRange { id: opid, mul_idx: idx, min: min as i64 });
             }
 
-            multiplicities = (0..num_cols)
-                .into_par_iter()
-                .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
-                .collect();
+            offset += opid_len;
         }
+
+        let num_cols = col_num as usize;
+        let multiplicities = (0..num_cols)
+            .into_par_iter()
+            .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
+            .collect();
 
         Arc::new(Self {
             airgroup_id,
             air_id,
-            instance_id: AtomicU64::new(0),
             num_cols,
             num_rows,
             ranges,
             multiplicities,
+            instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
         })
     }
 }
 
-impl<F: PrimeField> SpecifiedRanges<F> {
+impl SpecifiedRanges {
     #[inline(always)]
-    pub fn update_inputs(&self, value: F, range: Range<F>, multiplicity: F) {
+    pub fn update_inputs(&self, id: usize, value: i64, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
-        let val = (value - range.0)
-            .as_canonical_biguint()
-            .to_usize()
-            .unwrap_or_else(|| panic!("Cannot convert to usize: {:?}", value));
+        // Get the ranges for the given id
+        let ranges = self.ranges.iter().filter(|r| r.id == id).collect::<Vec<_>>();
 
-        let range_index =
-            self.ranges.iter().position(|r| *r == range).unwrap_or_else(|| panic!("Range {:?} not found", range));
+        // Identify to which sub-range the value belongs
+        let min_global = ranges[0].min;
+        let range_idx = (value - min_global) as usize / self.num_rows;
+        let range = ranges[range_idx];
 
-        let index = val % self.num_rows;
-        let mul = multiplicity.as_canonical_biguint();
-        self.multiplicities[range_index][index].fetch_add(mul.to_u64().unwrap(), Ordering::Relaxed);
+        // Get the row index
+        let min_local = range.min;
+        let row_idx = (value - min_local) as usize;
+
+        // Update the multiplicity
+        self.multiplicities[range.mul_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
     pub fn airgroup_id(&self) -> usize {
@@ -186,7 +188,7 @@ impl<F: PrimeField> SpecifiedRanges<F> {
     }
 }
 
-impl<F: PrimeField> WitnessComponent<F> for SpecifiedRanges<F> {
+impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
     fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
         let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 

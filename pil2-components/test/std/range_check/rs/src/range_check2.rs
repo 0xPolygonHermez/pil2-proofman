@@ -4,15 +4,14 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use num_bigint::BigInt;
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use rand::{distributions::Standard, prelude::Distribution, Rng, SeedableRng, rngs::StdRng};
 
 use crate::RangeCheck2Trace;
 
 define_wc_with_std!(RangeCheck2, "RngChck2");
 
-impl<F: PrimeField> WitnessComponent<F> for RangeCheck2<F>
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheck2<F>
 where
     Standard: Distribution<F>,
 {
@@ -26,18 +25,21 @@ where
 
             log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-            let range1 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), Some(false));
-            let range2 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 9) - 1), Some(false));
-            let range3 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 10) - 1), Some(false));
+            let range1 = self.std_lib.get_range(0, (1 << 8) - 1, Some(false));
+            let range2 = self.std_lib.get_range(0, (1 << 9) - 1, Some(false));
+            let range3 = self.std_lib.get_range(0, (1 << 10) - 1, Some(false));
 
             for i in 0..num_rows {
-                trace[i].b1 = F::from_canonical_u16(rng.gen_range(0..=(1 << 8) - 1));
-                trace[i].b2 = F::from_canonical_u16(rng.gen_range(0..=(1 << 9) - 1));
-                trace[i].b3 = F::from_canonical_u16(rng.gen_range(0..=(1 << 10) - 1));
+                let val1 = rng.gen_range(0..=(1 << 8) - 1);
+                let val2 = rng.gen_range(0..=(1 << 9) - 1);
+                let val3 = rng.gen_range(0..=(1 << 10) - 1);
+                trace[i].b1 = F::from_canonical_u16(val1);
+                trace[i].b2 = F::from_canonical_u16(val2);
+                trace[i].b3 = F::from_canonical_u16(val3);
 
-                self.std_lib.range_check(trace[i].b1, F::one(), range1);
-                self.std_lib.range_check(trace[i].b2, F::one(), range2);
-                self.std_lib.range_check(trace[i].b3, F::one(), range3);
+                self.std_lib.range_check(val1 as i64, 1, range1);
+                self.std_lib.range_check(val2 as i64, 1, range2);
+                self.std_lib.range_check(val3 as i64, 1, range3);
             }
 
             let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));

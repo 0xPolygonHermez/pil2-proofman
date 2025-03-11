@@ -14,8 +14,11 @@ public:
     Goldilocks::Element *x_n = nullptr;   // Needed for PIL1 compatibility
     Goldilocks::Element *x_2ns = nullptr; // Needed for PIL1 compatibility
 
-    ProverHelpers(StarkInfo &starkInfo, bool pil1)
-    {
+    #ifdef __AVX2__
+    __m256i *x_avx = nullptr;
+    #endif 
+
+    ProverHelpers(StarkInfo &starkInfo, bool pil1) {
         uint64_t nBits = starkInfo.starkStruct.nBits;
         uint64_t nBitsExt = starkInfo.starkStruct.nBitsExt;
         uint64_t qDeg = starkInfo.qDeg;
@@ -191,6 +194,16 @@ public:
             x[k] = x[k - 1] * Goldilocks::w(nBitsExt);
         }
 
+    #ifdef __AVX2__
+        x_avx = new __m256i[N << extendBits];
+        x_avx[0] = _mm256_set1_epi64x(x[0].fe);
+    #pragma omp parallel for
+        for (uint64_t k = 1; k < (N << extendBits); k++)
+        {
+            x_avx[k] = _mm256_set1_epi64x(x[k].fe);
+        }
+    #endif
+
         S = new Goldilocks::Element[qDeg];
         Goldilocks::Element shiftIn = Goldilocks::exp(Goldilocks::inv(Goldilocks::shift()), N);
         S[0] = Goldilocks::one();
@@ -286,18 +299,15 @@ public:
         }
     }
 
-    ~ProverHelpers()
-    {
-        if (zi != nullptr)
-            delete[] zi;
-        if (S != nullptr)
-            delete[] S;
-        if (x != nullptr)
-            delete[] x;
-        if (x_n != nullptr)
-            delete[] x_n;
-        if (x_2ns != nullptr)
-            delete[] x_2ns;
+    ~ProverHelpers() {
+        if(zi != nullptr) delete[] zi;
+        if(S != nullptr) delete[] S;
+        if(x != nullptr) delete[] x;
+        if(x_n != nullptr) delete[] x_n;
+        if(x_2ns != nullptr) delete[] x_2ns;
+    #ifdef __AVX2__
+        if(x_avx != nullptr) delete[] x_avx;
+    #endif
     };
 };
 

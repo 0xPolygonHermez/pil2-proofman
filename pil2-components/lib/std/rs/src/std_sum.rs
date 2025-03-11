@@ -5,8 +5,7 @@ use std::{
 
 use rayon::prelude::*;
 
-use num_traits::ToPrimitive;
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
@@ -23,13 +22,13 @@ use crate::{
     DebugDataFast, SharedDataFast,
 };
 
-pub struct StdSum<F: PrimeField> {
+pub struct StdSum<F: PrimeField64> {
     stage_wc: Option<u32>,
     debug_data: RwLock<DebugData<F>>,
     debug_data_fast: RwLock<Vec<DebugDataFast<F>>>,
 }
 
-impl<F: PrimeField> AirComponent<F> for StdSum<F> {
+impl<F: PrimeField64> AirComponent<F> for StdSum<F> {
     const MY_NAME: &'static str = "STD Sum ";
 
     fn new(_pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, _airgroup_id: Option<usize>, _air_id: Option<usize>) -> Arc<Self> {
@@ -52,7 +51,7 @@ impl<F: PrimeField> AirComponent<F> for StdSum<F> {
     }
 }
 
-impl<F: PrimeField> StdSum<F> {
+impl<F: PrimeField64> StdSum<F> {
     #[allow(clippy::too_many_arguments)]
     fn debug_mode(
         &self,
@@ -148,9 +147,7 @@ impl<F: PrimeField> StdSum<F> {
                     HintFieldValue::Field(opid) => {
                         // If opids are specified, then only update the bus if the opid is in the list
                         let opids = &pctx.options.debug_info.std_mode.opids;
-                        if !opids.is_empty()
-                            && !opids.contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
-                        {
+                        if !opids.is_empty() && !opids.contains(&opid.as_canonical_u64()) {
                             continue;
                         }
                         opid
@@ -183,10 +180,7 @@ impl<F: PrimeField> StdSum<F> {
                         HintFieldOutput::Field(opid) => {
                             // If opids are specified, then only update the bus if the opid is in the list
                             let opids = &pctx.options.debug_info.std_mode.opids;
-                            if !opids.is_empty()
-                                && !opids
-                                    .contains(&opid.as_canonical_biguint().to_u64().expect("Cannot convert to u64"))
-                            {
+                            if !opids.is_empty() && !opids.contains(&opid.as_canonical_u64()) {
                                 continue;
                             }
 
@@ -216,7 +210,7 @@ impl<F: PrimeField> StdSum<F> {
         }
 
         #[allow(clippy::too_many_arguments)]
-        fn update_bus<F: PrimeField>(
+        fn update_bus<F: PrimeField64>(
             name_piop: &str,
             name_expr: &[String],
             airgroup_id: usize,
@@ -271,7 +265,7 @@ impl<F: PrimeField> StdSum<F> {
     }
 }
 
-impl<F: PrimeField> WitnessComponent<F> for StdSum<F> {
+impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         let stage_wc = self.stage_wc.as_ref();
         if stage_wc.is_none() {

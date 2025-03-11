@@ -93,7 +93,7 @@ pub fn verify_proof_bn128<F: Field>(
     verkey_path: String,
     publics: Option<Vec<F>>,
 ) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true, true);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), true);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let publics_ptr = match publics {

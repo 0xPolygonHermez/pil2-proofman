@@ -173,6 +173,8 @@ public:
 
     void getProofSize();
 
+    void getProofSize();
+
     uint64_t getNumNodesMT(uint64_t height);
 
     void addMemoryRecursive();

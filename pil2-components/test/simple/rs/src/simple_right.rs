@@ -16,7 +16,6 @@ where
 {
     execute!(SimpleRightTrace, 1);
 
-
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
         if stage == 1 {
             let mut trace = SimpleRightTrace::new();

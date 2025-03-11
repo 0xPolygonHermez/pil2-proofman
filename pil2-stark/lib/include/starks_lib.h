@@ -9,11 +9,6 @@ void save_publics(unsigned long numPublicInputs, void *pPublicInputs, char *file
 void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir);
 
 
-// SetupCtx
-// ========================================================================================
-uint64_t n_hints_by_name(void *p_expression_bin, char* hintName);
-void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintName);
-
 // Stark Info
 // ========================================================================================
 void *stark_info_new(char* filename, bool recursive, bool verifier);
@@ -22,7 +17,6 @@ uint64_t get_proof_size(void *pStarkInfo);
 uint64_t get_map_total_n(void *pStarkInfo);
 uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
 
-void stark_info_free(void *pStarkInfo);
 
 // Prover Helpers
 // ========================================================================================
@@ -55,6 +49,8 @@ uint64_t update_airgroupvalue(void *pSetupCtx, void* stepsParams, uint64_t hintI
 uint64_t set_hint_field(void *pSetupCtx, void* stepsParams, void *values, uint64_t hintId, char* hintFieldName);
 uint64_t get_hint_id(void *pSetupCtx, uint64_t hintId, char * hintFieldName);
 
+
+
 // Starks
 // ========================================================================================
 void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams);
@@ -62,7 +58,7 @@ void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsPar
 void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
 void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check);
 
-void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace);
+void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace);
 void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements);
 
 // Transcript
@@ -94,7 +90,7 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
 // Gen proof && Recursive Proof
 // =================================================================================
 void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, void* pBuffHelper, uint64_t* proofBuffer, char *proofFile);
-void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers);
+void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop);
 void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
 void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file);
 
@@ -115,14 +111,10 @@ bool stark_verify_from_file(char *proof, void *pStarkInfo, void *pExpressionsBin
 // Fixed cols
 // =================================================================================
 void write_fixed_cols_bin(char* binFile, char* airgroupName, char* airName, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo);
-    
+
 // OMP
 // =================================================================================
 uint64_t get_omp_max_threads();
 void set_omp_num_threads(uint64_t num_threads);
-
-// GPU calls
-// =================================================================================
-void *gen_device_commit_buffers(void *maxSizes);
-
+    
 #endif
