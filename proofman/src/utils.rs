@@ -163,12 +163,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
             info!(
                 "{}:       {}",
                 name,
-                format!(
-                    "· {}: {} per each of {} instance",
-                    air_name,
-                    format_bytes(*memory_instance),
-                    count,
-                )
+                format!("· {}: {} per each of {} instance", air_name, format_bytes(*memory_instance), count,)
             );
         }
     }
@@ -235,7 +230,7 @@ pub fn check_paths(
     Ok(())
 }
 
-pub fn check_tree_paths<F: PrimeField>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Result<(), Box<dyn Error>> {
+pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Result<(), Box<dyn Error>> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id);
@@ -248,7 +243,7 @@ pub fn check_tree_paths<F: PrimeField>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -
     Ok(())
 }
 
-pub fn check_tree_paths_vadcop<F: PrimeField>(
+pub fn check_tree_paths_vadcop<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
 ) -> Result<(), Box<dyn Error>> {
@@ -309,7 +304,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField>(
     Ok(())
 }
 
-pub fn add_publics_circom<F: PrimeField>(
+pub fn add_publics_circom<F: PrimeField64>(
     proof: &mut [u64],
     initial_index: usize,
     pctx: &ProofCtx<F>,
