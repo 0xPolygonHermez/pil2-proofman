@@ -448,18 +448,19 @@ impl<F: PrimeField64> ProofMan<F> {
             }
         }
 
-        timer_start_info!(CLEANING_UP);
-        pctx.free_buff_helper();
-        drop(aux_trace);
-        drop(wcm);
-        timer_stop_and_log_info!(CLEANING_UP);
+        std::thread::spawn({
+            let pctx = Arc::clone(&pctx);
+            move || {
+                pctx.free_buff_helper();
+                drop(aux_trace);
+                drop(wcm);
+            }
+        });
 
         pctx.dctx_barrier();
 
-        timer_start_info!(HOLA);
         let setups = setups_handle.join().expect("Setups thread panicked");
         check_tree_paths_vadcop(&pctx, &setups)?;
-        timer_stop_and_log_info!(HOLA);
 
         let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
