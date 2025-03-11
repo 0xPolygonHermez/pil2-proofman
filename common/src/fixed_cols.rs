@@ -1,4 +1,7 @@
-use std::{os::raw::c_void, path::PathBuf};
+use std::{
+    os::raw::c_void,
+    path::{PathBuf, Path},
+};
 
 use p3_field::Field;
 use proofman_starks_lib_c::{
@@ -99,4 +102,24 @@ pub fn calculate_fixed_tree<F: Field>(setup: &Setup<F>) {
         write_const_tree_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
         timer_stop_and_log_debug!(WRITING_CONST_TREE);
     }
+}
+
+pub fn load_const_pols<F: Field>(setup_path: &Path, const_pols: &[F]) {
+    let const_pols_path = setup_path.to_string_lossy().to_string() + ".const";
+    load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
+}
+
+pub fn load_const_pols_tree<F: Field>(setup: &Setup<F>, const_tree: &[F]) {
+    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+    let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+
+    log::debug!("FixedCol   : ··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
+
+    load_const_tree_c(
+        setup.p_setup.p_stark_info,
+        const_tree.as_ptr() as *mut u8,
+        const_pols_tree_path.as_str(),
+        (const_pols_tree_size * 8) as u64,
+        &(setup.setup_path.display().to_string() + ".verkey.json"),
+    );
 }

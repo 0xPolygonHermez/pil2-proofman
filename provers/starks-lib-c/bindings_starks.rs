@@ -40,10 +40,6 @@ extern "C" {
     pub fn stark_info_new(filename: *mut ::std::os::raw::c_char, verifier: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z32get_buffer_size_contribution_airPv"]
-    pub fn get_buffer_size_contribution_air(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-}
-extern "C" {
     #[link_name = "\u{1}_Z14get_proof_sizePv"]
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }

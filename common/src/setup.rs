@@ -1,16 +1,17 @@
 use std::os::raw::c_void;
 use std::path::PathBuf;
+use p3_field::Field;
 
 use proofman_starks_lib_c::{
-    get_const_tree_size_c, expressions_bin_new_c, stark_info_new_c, load_const_tree_c, load_const_pols_c,
-    stark_info_free_c, expressions_bin_free_c, get_map_totaln_c, get_map_totaln_custom_commits_fixed_c,
-    get_proof_size_c,
+    expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
+    get_map_totaln_custom_commits_fixed_c, get_proof_size_c,
 };
 use proofman_util::create_buffer_fast;
 
 use crate::GlobalInfo;
 use crate::ProofType;
 use crate::StarkInfo;
+use crate::load_const_pols;
 
 #[derive(Debug, Clone)]
 #[repr(C)]
@@ -31,13 +32,13 @@ impl From<&SetupC> for *mut c_void {
 /// Air instance context for managing air instances (traces)
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct Setup<F: Clone> {
+pub struct Setup<F: Field> {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub p_setup: SetupC,
     pub stark_info: StarkInfo,
+    pub const_pols_size: usize,
     pub const_pols: Vec<F>,
-    pub const_tree: Vec<F>,
     pub prover_buffer_size: u64,
     pub custom_commits_fixed_buffer_size: u64,
     pub proof_size: u64,
@@ -46,9 +47,7 @@ pub struct Setup<F: Clone> {
     pub air_name: String,
 }
 
-impl<F: Clone> Setup<F> {
-    const MY_NAME: &'static str = "Setup   ";
-
+impl<F: Field> Setup<F> {
     pub fn new(
         global_info: &GlobalInfo,
         airgroup_id: usize,
@@ -69,14 +68,13 @@ impl<F: Clone> Setup<F> {
             stark_info,
             p_stark_info,
             p_expressions_bin,
+            const_pols,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
-            const_pols_size,
-            const_tree_size,
         ) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
             // If the condition is met, use None for each pointer
-            (StarkInfo::default(), std::ptr::null_mut(), std::ptr::null_mut(), 0, 0, 0, 0, 0)
+            (StarkInfo::default(), std::ptr::null_mut(), std::ptr::null_mut(), Vec::new(), 0, 0, 0)
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
@@ -99,17 +97,18 @@ impl<F: Clone> Setup<F> {
             let proof_size = get_proof_size_c(p_stark_info);
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let const_pols_size = (stark_info.n_constants * (1 << stark_info.stark_struct.n_bits)) as usize;
-            let const_pols_tree_size = get_const_tree_size_c(p_stark_info) as usize;
+
+            let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
+            load_const_pols(&setup_path, &const_pols);
 
             (
                 stark_info,
                 p_stark_info,
                 expressions_bin,
+                const_pols,
                 prover_buffer_size,
                 custom_commits_fixed_buffer_size,
                 proof_size,
-                const_pols_size,
-                const_pols_tree_size,
             )
         };
 
@@ -118,8 +117,8 @@ impl<F: Clone> Setup<F> {
             airgroup_id,
             stark_info,
             p_setup: SetupC { p_stark_info, p_expressions_bin },
-            const_pols: create_buffer_fast(const_pols_size),
-            const_tree: create_buffer_fast(const_tree_size),
+            const_pols_size: const_pols.len(),
+            const_pols,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
@@ -134,53 +133,7 @@ impl<F: Clone> Setup<F> {
         expressions_bin_free_c(self.p_setup.p_expressions_bin);
     }
 
-    pub fn load_const_pols(&self) {
-        log::debug!(
-            "{}   : ··· Loading const pols for AIR {} of type {:?}",
-            Self::MY_NAME,
-            self.air_name,
-            self.setup_type
-        );
-
-        let const_pols_path = self.setup_path.display().to_string() + ".const";
-
-        load_const_pols_c(
-            self.const_pols.as_ptr() as *mut u8,
-            const_pols_path.as_str(),
-            self.const_pols.len() as u64 * 8,
-        );
-    }
-
-    pub fn load_const_pols_tree(&self) -> Result<(), Box<dyn std::error::Error>> {
-        log::debug!(
-            "{}   : ··· Loading const tree for AIR {} of type {:?}",
-            Self::MY_NAME,
-            self.air_name,
-            self.setup_type
-        );
-
-        let const_pols_tree_path = self.setup_path.display().to_string() + ".consttree";
-
-        let valid = load_const_tree_c(
-            self.p_setup.p_stark_info,
-            self.const_tree.as_ptr() as *mut u8,
-            const_pols_tree_path.as_str(),
-            (self.const_tree.len() * 8) as u64,
-            &(self.setup_path.display().to_string() + ".verkey.json"),
-        );
-
-        if !valid {
-            return Err(format!("Invalid constant tree {}. Proofman setup needs to be run again", self.air_name).into());
-        }
-
-        Ok(())
-    }
-
     pub fn get_const_ptr(&self) -> *mut u8 {
         self.const_pols.as_ptr() as *mut u8
-    }
-
-    pub fn get_const_tree_ptr(&self) -> *mut u8 {
-        self.const_tree.as_ptr() as *mut u8
     }
 }

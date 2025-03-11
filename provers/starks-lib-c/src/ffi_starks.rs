@@ -69,11 +69,6 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void, recursive: bool) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_buffer_size_contribution_air_c(p_stark_info: *mut c_void) -> u64 {
-    unsafe { get_buffer_size_contribution_air(p_stark_info) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn get_map_totaln_custom_commits_fixed_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n_custom_commits_fixed(p_stark_info) }
 }
@@ -971,16 +966,6 @@ pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _out
 pub fn stark_info_new_c(_filename: &str, _verify: bool) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn get_buffer_size_contribution_air_c(_p_stark_info: *mut c_void) -> u64 {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_buffer_size_contribution_air: This is a mock call because there is no linked library"
-    );
-    100000000
 }
 
 #[cfg(feature = "no_lib_link")]

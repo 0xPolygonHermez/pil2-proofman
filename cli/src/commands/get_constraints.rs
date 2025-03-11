@@ -4,9 +4,8 @@ use p3_goldilocks::Goldilocks;
 use proofman_common::initialize_logger;
 use std::path::PathBuf;
 use colored::Colorize;
-use std::sync::Arc;
 
-use proofman_common::{get_global_constraints_lines_str, get_constraints_lines_str, GlobalInfo, SetupsVadcop};
+use proofman_common::{get_global_constraints_lines_str, get_constraints_lines_str, GlobalInfo, SetupCtx, ProofType};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -25,7 +24,7 @@ impl GetConstraintsCmd {
         println!();
 
         let global_info = GlobalInfo::new(&self.proving_key);
-        let setups = Arc::new(SetupsVadcop::<Goldilocks>::new(&global_info, false, false, false));
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false);
 
         initialize_logger(proofman_common::VerboseMode::Info);
 
@@ -42,14 +41,14 @@ impl GetConstraintsCmd {
                     .bright_white()
                     .bold()
                 );
-                let constraints_lines = get_constraints_lines_str(&setups.sctx, airgroup_id, air_id);
+                let constraints_lines = get_constraints_lines_str(&sctx, airgroup_id, air_id);
                 for (idx, line) in constraints_lines.iter().enumerate() {
                     log::info!("{}:         · Constraint #{} : {}", Self::MY_NAME, idx, line);
                 }
             }
         }
 
-        let global_constraints_lines = get_global_constraints_lines_str(&setups.sctx);
+        let global_constraints_lines = get_global_constraints_lines_str(&sctx);
 
         log::info!("{}", format!("{}:     ► Global Constraints", Self::MY_NAME,).bright_white().bold());
         for (idx, line) in global_constraints_lines.iter().enumerate() {

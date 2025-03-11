@@ -114,13 +114,6 @@ uint64_t get_map_total_n(void *pStarkInfo, bool recursive)
     return starkInfo->mapTotalN;
 }
 
-uint64_t get_buffer_size_contribution_air(void *pStarkInfo) {
-    StarkInfo starkInfo = *(StarkInfo *)pStarkInfo;
-    uint64_t NExtended = (1 << starkInfo.starkStruct.nBitsExt);
-    return starkInfo.mapSectionsN["cm1"]*NExtended + starkInfo.getNumNodesMT(NExtended);
-}
-
-
 uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
 {
     StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
