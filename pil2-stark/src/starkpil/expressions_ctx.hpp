@@ -101,7 +101,6 @@ public:
         Dest destStruct(dest, domainSize, 0, expressionId);
         destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], inverse);
         std::vector<Dest> dests = {destStruct};
-
         calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, compilation_time);
     }
 };

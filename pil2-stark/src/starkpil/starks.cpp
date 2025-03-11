@@ -283,60 +283,16 @@ void Starks<ElementType>::calculateXDivXSub(Goldilocks::Element *xiChallenge, Go
 
     uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
 
-#ifdef __AVX2__
-        uint64_t nChunks = (setupCtx.starkInfo.openingPoints.size() + 3) / 4;
-    #pragma omp parallel for
-        for (uint64_t k = 0; k < NExtended; k++) {
-            for (uint64_t i = 0; i < nChunks; ++i) {
-                Goldilocks3::Element_avx xi, res, xdiv;
-                uint64_t nVals = std::min(uint64_t(4), setupCtx.starkInfo.openingPoints.size() - 4 * i);
-                Goldilocks::Element vals[12];
-
-                for (uint64_t j = 0; j < 4; ++j) {
-                    for (uint64_t l = 0; l < FIELD_EXTENSION; ++l) {
-                        if (j < nVals) {
-                            vals[j + l * 4] = xis[(j + 4 * i) * FIELD_EXTENSION + l];
-                        } else {
-                            vals[j + l * 4] = Goldilocks::zero();
-                        }
-                    }
-                }
-                Goldilocks::load_avx(xi[0], &vals[0]);
-                Goldilocks::load_avx(xi[1], &vals[4]);
-                Goldilocks::load_avx(xi[2], &vals[8]);
-                Goldilocks3::op_31_avx(3, res, xi, setupCtx.proverHelpers.x_avx[k]);
-                Goldilocks::store_avx(&vals[0], FIELD_EXTENSION, res[0]);
-                Goldilocks::store_avx(&vals[1], FIELD_EXTENSION, res[1]);
-                Goldilocks::store_avx(&vals[2], FIELD_EXTENSION, res[2]);
-
-                Goldilocks3::batchInverse((Goldilocks3::Element*)vals, (Goldilocks3::Element*)vals, nVals);
-
-                Goldilocks::load_avx(xdiv[0], &vals[0], FIELD_EXTENSION);
-                Goldilocks::load_avx(xdiv[1], &vals[1], FIELD_EXTENSION);
-                Goldilocks::load_avx(xdiv[2], &vals[2], FIELD_EXTENSION);
-                Goldilocks3::op_31_avx(2, res, xdiv, setupCtx.proverHelpers.x_avx[k]);
-                Goldilocks::store_avx(&vals[0], FIELD_EXTENSION, res[0]);
-                Goldilocks::store_avx(&vals[1], FIELD_EXTENSION, res[1]);
-                Goldilocks::store_avx(&vals[2], FIELD_EXTENSION, res[2]);
-                for (uint64_t j = 0; j < nVals; ++j) {
-                    for (uint64_t l = 0; l < FIELD_EXTENSION; ++l) {
-                        xDivXSub[(k * nOpenings + 4 * i + j) * FIELD_EXTENSION + l] = vals[j * FIELD_EXTENSION + l];
-                    }
-                }
-            }
-        }
-#else
-    #pragma omp parallel for
-        for (uint64_t k = 0; k < NExtended; k++)
+#pragma omp parallel for
+    for (uint64_t k = 0; k < NExtended; k++)
+    {
+        for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
         {
-            for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
-            {
-                Goldilocks3::sub((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), setupCtx.proverHelpers.x[k], (Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]));
-                Goldilocks3::inv((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), (Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]));
-                Goldilocks3::mul((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), (Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), setupCtx.proverHelpers.x[k]);
-            }
+            Goldilocks3::sub((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), setupCtx.proverHelpers.x[k], (Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]));
+            Goldilocks3::inv((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), (Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]));
+            Goldilocks3::mul((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), (Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), setupCtx.proverHelpers.x[k]);
         }
-#endif
+    }
 }
 
 template <typename ElementType>
@@ -465,13 +421,13 @@ void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams 
         return;
     // assert(dests.size() == 1);
 
-    // #ifdef __AVX512__
-    //     ExpressionsAvx512 expressionsCtx(setupCtx);
-    // #elif defined(__AVX2__)
-    //     ExpressionsAvx expressionsCtx(setupCtx);
-    // #else
-    ExpressionsPack expressionsCtx(setupCtx);
-    // #endif
+    #ifdef __AVX512__
+        ExpressionsAvx512 expressionsCtx(setupCtx);
+    #elif defined(__AVX2__)
+        ExpressionsAvx expressionsCtx(setupCtx);
+    #else
+        ExpressionsPack expressionsCtx(setupCtx);
+    #endif
 
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
 }

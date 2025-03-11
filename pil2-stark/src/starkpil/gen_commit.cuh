@@ -6,7 +6,7 @@
 #include "gl64_t.cuh"
 #include "starks_gpu.cuh"
 
-void genCommit_gpu(Goldilocks::Element* root, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers) {
+void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers) {
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time = omp_get_wtime();

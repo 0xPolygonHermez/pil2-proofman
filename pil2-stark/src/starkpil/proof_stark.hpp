@@ -54,20 +54,7 @@ public:
             std::memcpy(&mp[j][0], &mpCursor[j * numSiblings], numSiblings * sizeof(ElementType));
         }
     }
-    MerkleProof(uint64_t nLinears, uint64_t elementsTree, uint64_t numSiblings, void *pointer, uint64_t offsetTree) : v(nLinears, std::vector<Goldilocks::Element>(1, Goldilocks::zero())), mp(elementsTree, std::vector<ElementType>(numSiblings))
-    {
-        for (uint64_t i = 0; i < nLinears; i++)
-        {
-            std::memcpy(&v[i][0], &((Goldilocks::Element *)pointer)[i], sizeof(Goldilocks::Element));
-        }
-        ElementType *mpCursor = (ElementType *)&((Goldilocks::Element *)pointer)[offsetTree];
-        for (uint64_t j = 0; j < elementsTree; j++)
-        {
-            std::memcpy(&mp[j][0], &mpCursor[j * numSiblings], numSiblings * sizeof(ElementType));
-        }
-    }
-
-};
+    };
 
 template <typename ElementType>
 class ProofTree
@@ -197,7 +184,7 @@ public:
     }
 
 
-    uint64_t *proof2pointer(uint64_t *pointer) {
+    void proof2pointer(uint64_t *pointer) {
         uint64_t p = 0;
 
         for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size(); i++) {
@@ -282,10 +269,14 @@ public:
         }
         
         for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
-             for(uint64_t i = 0; i < nFieldElements; i++) {
+            for(uint64_t i = 0; i < nFieldElements; i++) {
                 pointer[p++] = toU64(fri.treesFRI[step - 1].root[i]);
             }
         }
+        
+        for(uint64_t step = 1; step < starkInfo.starkStruct.steps.size(); ++step) {
+            for (uint64_t i = 0; i < starkInfo.starkStruct.nQueries; i++) {
+                for(uint64_t l = 0; l < uint64_t(1 << (starkInfo.starkStruct.steps[step - 1].nBits - starkInfo.starkStruct.steps[step].nBits)) * FIELD_EXTENSION; l++) {
                     pointer[p++] = Goldilocks::toU64(fri.treesFRI[step - 1].polQueries[i][0].v[l][0]);
                 }
             }
@@ -307,10 +298,11 @@ public:
                 pointer[p++] = Goldilocks::toU64(fri.pol[i][l]);
             }
         }
+    }
 
-        return pointer;
     json proof2json()
     {
+        json j = json::object();
         
         for(uint64_t i = 0; i < nStages; i++) {
             if(nFieldElements == 1) {

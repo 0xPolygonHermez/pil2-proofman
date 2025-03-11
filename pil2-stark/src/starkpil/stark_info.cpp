@@ -321,7 +321,7 @@ void StarkInfo::getProofSize() {
     proofSize += (1 << starkStruct.steps[starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION;
 }
 
-void StarkInfo::setMapOffsets() {
+void StarkInfo::setMapOffsets(bool recursive_) {
     uint64_t N = (1 << starkStruct.nBits);
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
 
@@ -439,6 +439,7 @@ uint64_t StarkInfo::getNumNodesMT(uint64_t height) {
 
     return numNodes * HASH_SIZE;
 }
+
 uint64_t StarkInfo::getTraceOffset(string type, PolMap &polInfo, bool domainExtended)
 {
     std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? customCommits[polInfo.commitId].name + "0"

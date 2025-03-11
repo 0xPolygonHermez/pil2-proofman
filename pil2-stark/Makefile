@@ -16,6 +16,7 @@ SETUP_DIRS := ./src/rapidsnark
 SETUP_DPNDS_DIR := src/ffiasm
 WITNESS_LIB := ./witness_lib
 
+
 CXX := g++
 AS := nasm
 CXXFLAGS := -std=c++17 -Wall -pthread -flarge-source-files -Wno-unused-label -rdynamic -fPIC

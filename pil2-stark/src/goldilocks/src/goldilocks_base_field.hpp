@@ -11,7 +11,7 @@
 
 #define GOLDILOCKS_DEBUG 0
 #ifndef USE_ASSEMBLY
-#define USE_ASSEMBLY 1 // Default value if not set by the Makefile
+#define USE_ASSEMBLY 1  // Default value if not set by the Makefile
 #endif
 #define GOLDILOCKS_NUM_ROOTS 33
 #define GOLDILOCKS_PRIME 0xFFFFFFFF00000001ULL
@@ -132,7 +132,7 @@ public:
 
     static void batchInverse(Element *res, const Element *src, uint64_t size)
     {
-        Element *tmp = new Element[size];
+        Element* tmp = new Element[size];
         copy(tmp[0], src[0]);
 
         for (uint64_t i = 1; i < size; i++)
@@ -207,11 +207,11 @@ public:
     // implementations for expressions:
     static void copy_avx(__m256i &dst_, const __m256i &src_);
     static void op_avx(uint64_t op, __m256i &c_, const __m256i &a_, const __m256i &b_);
-
+   
     /*
         AVX512 operations
     */
-#ifdef __AVX512__
+#ifdef __AVX512__ 
 
     static void load_avx512(__m512i &a_, const Goldilocks::Element *a8);
     static void load_avx512(__m512i &a, const Goldilocks::Element *a8_a, uint64_t stride);
@@ -256,10 +256,11 @@ public:
 #endif
 
     /* Pack operations */
-    static void copy_pack(uint64_t nrowsPack, Element *dst, const Element *src);
-    static void copy_pack(uint64_t nrowsPack, Element *dst, uint64_t stride_dst, const Element *src);
-    static void copy_pack(uint64_t nrowsPack, Element *dst, const Element *src, uint64_t stride_src);
-    static void op_pack(uint64_t nrowsPack, uint64_t op, Element *c, const Element *a, const Element *b);
+    static void copy_pack( uint64_t nrowsPack, Element *dst, const Element *src);
+    static void copy_pack( uint64_t nrowsPack, Element *dst, uint64_t stride_dst, const Element *src);
+    static void copy_pack( uint64_t nrowsPack, Element *dst, const Element *src, uint64_t stride_src);
+    static void op_pack( uint64_t nrowsPack, uint64_t op, Element *c, const Element *a, const Element *b);
+
 };
 
 /*

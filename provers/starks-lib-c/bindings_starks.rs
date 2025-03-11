@@ -52,8 +52,8 @@ extern "C" {
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15get_map_total_nPvb"]
-    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void, recursive: bool) -> u64;
+    #[link_name = "\u{1}_Z15get_map_total_nPv"]
+    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z36get_map_total_n_custom_commits_fixedPv"]
@@ -259,8 +259,9 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14commit_witnessmmmPvS_S_S_"]
+    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_S_"]
     pub fn commit_witness(
+        arity: u64,
         nBits: u64,
         nBitsExt: u64,
         nCols: u64,

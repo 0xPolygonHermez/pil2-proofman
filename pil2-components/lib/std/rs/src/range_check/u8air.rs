@@ -115,8 +115,6 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
 
             self.calculated.store(true, Ordering::Relaxed);
 
-            self.calculated.store(true, Ordering::Relaxed);
-
             if pctx.dctx_is_my_instance(instance_id) {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast::<F>(buffer_size);

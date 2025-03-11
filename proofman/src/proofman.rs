@@ -30,8 +30,6 @@ use crate::discover_max_sizes;
 use crate::verify_basic_proof;
 use crate::verify_global_constraints_proof;
 use crate::MaxSizes;
-use crate::verify_basic_proof;
-use crate::verify_global_constraints_proof;
 use crate::{
     verify_constraints_proof, check_paths, print_summary_info, aggregate_proofs, get_buff_sizes,
     generate_vadcop_recursive1_proof,
@@ -335,14 +333,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
-            if !pctx.dctx_is_my_instance(instance_id) {
-                continue;
-            }
+        for instance_id in my_instances.iter() {
+            let (airgroup_id, air_id, all) = instances[*instance_id];
 
             if !all {
                 timer_start_info!(GENERATING_WITNESS);
-                wcm.calculate_witness(1, &[instance_id]);
+                wcm.calculate_witness(1, &[*instance_id]);
                 timer_stop_and_log_info!(GENERATING_WITNESS);
             }
 
@@ -356,17 +352,12 @@ impl<F: PrimeField + 'static> ProofMan<F> {
                 valid_proofs.clone(),
                 pctx.clone(),
                 sctx.clone(),
-                instance_id,
-                *airgroup_id,
-                *air_id,
+                *instance_id,
+                airgroup_id,
+                air_id,
                 output_dir_path.clone(),
                 aux_trace.clone(),
                 airgroup_values_air_instances.clone(),
-                setups.clone(),
-                circom_witness.clone(),
-                publics.clone(),
-                trace.clone(),
-                prover_buffer.clone(),
                 d_buffers.clone(),
             ));
         }
@@ -486,11 +477,6 @@ impl<F: PrimeField + 'static> ProofMan<F> {
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
-        setups: Arc<SetupsVadcop<F>>,
-        circom_witness: Arc<Vec<F>>,
-        publics: Arc<Vec<F>>,
-        trace: Arc<Vec<F>>,
-        prover_buffer: Arc<Vec<F>>,
         d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {

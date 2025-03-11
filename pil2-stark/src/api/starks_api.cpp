@@ -105,7 +105,7 @@ uint64_t get_proof_size(void *pStarkInfo) {
     return starkInfo->proofSize;
 }
 
-uint64_t get_map_total_n(void *pStarkInfo, bool recursive)
+uint64_t get_map_total_n(void *pStarkInfo)
 {
     StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
     return starkInfo->mapTotalN;
@@ -334,7 +334,6 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
 }
 
 #ifndef __USE_CUDA__
-
 void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers) {
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
@@ -352,6 +351,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     mt.getRoot(rootGL);
 }
 #endif
+
 
 void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements)
 {

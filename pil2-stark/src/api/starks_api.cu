@@ -94,7 +94,7 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
     std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 }
 
-void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_) {
+void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_) {
 
     double time = omp_get_wtime();
 
@@ -109,7 +109,7 @@ void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *roo
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     CHECKCUDAERR(cudaSetDevice(0));
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, trace, sizeTrace, cudaMemcpyHostToDevice));
-    genCommit_gpu(rootGL, N, NExtended, nCols, d_buffers);
+    genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_buffers);
     time = omp_get_wtime() - time;
     std::cout << "rick genRCommit_gpu time: " << time << std::endl;
 }

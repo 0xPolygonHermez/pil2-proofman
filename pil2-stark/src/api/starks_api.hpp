@@ -8,13 +8,21 @@ void save_challenges(void *pChallenges, char* globalInfoFile, char *fileDir);
 void save_publics(unsigned long numPublicInputs, void *pPublicInputs, char *fileDir);
 void save_proof_values(void *pProofValues, char* globalInfoFile, char *fileDir);
 
+
+// SetupCtx
+// ========================================================================================
+uint64_t n_hints_by_name(void *p_expression_bin, char* hintName);
+void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintName);
+
 // Stark Info
 // ========================================================================================
-void *stark_info_new(char* filename, bool verifier);
+void *stark_info_new(char* filename, bool recursive, bool verifier);
 uint64_t get_buffer_size_contribution_air(void *pStarkInfo);
 uint64_t get_proof_size(void *pStarkInfo);
-uint64_t get_map_total_n(void *pStarkInfo, bool recursive);
+uint64_t get_map_total_n(void *pStarkInfo);
 uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
+
+void stark_info_free(void *pStarkInfo);
 
 // Prover Helpers
 // ========================================================================================
@@ -107,7 +115,7 @@ bool stark_verify_from_file(char *proof, void *pStarkInfo, void *pExpressionsBin
 // Fixed cols
 // =================================================================================
 void write_fixed_cols_bin(char* binFile, char* airgroupName, char* airName, uint64_t N, uint64_t nFixedPols, void* fixedPolsInfo);
-
+    
 // OMP
 // =================================================================================
 uint64_t get_omp_max_threads();
@@ -116,5 +124,5 @@ void set_omp_num_threads(uint64_t num_threads);
 // GPU calls
 // =================================================================================
 void *gen_device_commit_buffers(void *maxSizes);
-    
+
 #endif

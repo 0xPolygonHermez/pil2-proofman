@@ -20,6 +20,7 @@ where
 {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
         let seed = if cfg!(feature = "debug") { 0 } else { rand::thread_rng().gen::<u64>() };
+
         let std_lib = Std::new(wcm.clone());
         let range_check1 = RangeCheck1::new(std_lib.clone());
         let range_check2 = RangeCheck2::new(std_lib.clone());

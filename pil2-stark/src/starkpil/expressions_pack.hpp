@@ -589,7 +589,7 @@ public:
                     expressions_params[1] = &tmp1_[omp_get_thread_num()*maxTemp1Size];
                     expressions_params[6] = &tmp3_[omp_get_thread_num()*maxTemp3Size];
                     uint64_t debug_line = 0;
-                    bool print = true;
+                    bool print = false;
 
                     //bool print = (3286 == dests[j].params[k].parserParams.nOps);
 
@@ -619,12 +619,12 @@ public:
                                 }*/
                                 Goldilocks::op_pack(nrowsPack, args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * nrowsPack], &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * nrowsPack]);
                                 if( i==debug_line && print){
-                                    //result
+                                    /*//result
                                     printf("Case 1\n");
                                     printf("Op %lu of %d\n", kk, dests[j].params[k].parserParams.nOps);
                                     //printf("Buffer: %d %d %d \n", args[i_args + 1], args[i_args + 4], args[i_args + 8]);
                                     printf("Result: %lu\n", expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * nrowsPack].fe);
-                                    //printf("args: %d %d %d %d %d %d %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5], args[i_args + 6], args[i_args + 7], args[i_args + 8], args[i_args + 9], args[i_args + 10], args[i_args + 11]);
+                                    //printf("args: %d %d %d %d %d %d %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5], args[i_args + 6], args[i_args + 7], args[i_args + 8], args[i_args + 9], args[i_args + 10], args[i_args + 11]); */
                                 }
                                 i_args += 12;
                                 break;

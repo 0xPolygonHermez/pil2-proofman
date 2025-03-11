@@ -65,7 +65,8 @@ pub fn discover_max_sizes<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadc
         max_const_tree_size = max_const_tree_size.max(get_const_tree_size_c(setup.p_setup.p_stark_info));
     };
 
-    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_idx);
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
 
     for instance_id in my_instances {
         let (airgroup_id, air_id, _) = instances[instance_id];
@@ -367,7 +368,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     proofs: &[Vec<u64>],
-    circom_witness: &mut [F],
+    circom_witness: &[F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
@@ -562,7 +563,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField>(
     pctx: &ProofCtx<F>,
     setup: &Setup<F>,
     proof: &[u64],
-    circom_witness: &mut [F],
+    circom_witness: &[F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
@@ -613,7 +614,7 @@ pub fn generate_recursivef_proof<F: PrimeField>(
     pctx: &ProofCtx<F>,
     setup: &Setup<F>,
     proof: &[u64],
-    circom_witness: &mut [F],
+    circom_witness: &[F],
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],

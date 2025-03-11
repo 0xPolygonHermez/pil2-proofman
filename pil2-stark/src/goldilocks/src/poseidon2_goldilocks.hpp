@@ -54,7 +54,7 @@ public:
     // be used in the prover, they implement avx vectorixation though.
     void static hash_full_result(Goldilocks::Element *, const Goldilocks::Element *);
     void static hash(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]);
-    void static linear_hash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
+    void static linear_hash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size, bool print = false);
     void static merkletree_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
     void static merkletree_batch_avx(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 

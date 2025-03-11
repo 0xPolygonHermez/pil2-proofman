@@ -56,7 +56,7 @@ public:
     void getTraceProof(Goldilocks::Element *proof, uint64_t idx);
     void genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
 
-    bool verifyGroupProof(Goldilocks::Element *root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
+    bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
 
     void merkelize();
     Goldilocks::Element *get_nodes_ptr()

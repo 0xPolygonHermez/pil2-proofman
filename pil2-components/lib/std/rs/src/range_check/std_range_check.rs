@@ -126,7 +126,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 HintFieldOptions::default(),
             );
 
-            let min_neg = get_hint_field_constant_as_field(
+            let min_neg = get_hint_field_constant_as_field::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
@@ -144,7 +144,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 HintFieldOptions::default(),
             );
 
-            let max_neg = get_hint_field_constant_as_field(
+            let max_neg = get_hint_field_constant_as_field::<F>(
                 sctx,
                 airgroup_id,
                 air_id,
