@@ -144,7 +144,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
             format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", name).bright_white().bold()
         );
     }
-    let mut total_memory = 0f64;
+    let mut max_prover_memory = 0f64;
     let mut memory_helper_size = 0f64;
     for air_group in air_groups {
         let air_group_instances = air_instances.get(air_group).unwrap();
@@ -154,8 +154,9 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         for air_name in air_names {
             let count = air_group_instances.get(air_name).unwrap();
             let (_, _, _, memory_helper_instance_size, memory_instance) = air_info.get(air_name).unwrap();
-            let total_memory_instance = memory_instance * *count as f64;
-            total_memory += total_memory_instance;
+            if max_prover_memory < *memory_instance {
+                max_prover_memory = *memory_instance;
+            }
             if *memory_helper_instance_size > memory_helper_size {
                 memory_helper_size = *memory_helper_instance_size;
             }
@@ -163,16 +164,16 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
                 "{}:       {}",
                 name,
                 format!(
-                    "· {}: {} per each of {} instance | Total {}",
+                    "· {}: {} per each of {} instance",
                     air_name,
                     format_bytes(*memory_instance),
                     count,
-                    format_bytes(total_memory_instance)
                 )
             );
         }
     }
-    total_memory += memory_helper_size;
+    let total_memory = max_prover_memory + memory_helper_size;
+    info!("{}:       {}", name, format!("Maximum prover memory: {}", format_bytes(max_prover_memory)));
     info!("{}:       {}", name, format!("Extra helper memory: {}", format_bytes(memory_helper_size)));
     info!(
         "{}:       {}",
