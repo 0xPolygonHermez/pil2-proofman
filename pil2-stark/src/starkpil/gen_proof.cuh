@@ -24,7 +24,7 @@ void offloadCommit_(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, 
     Goldilocks::Element *pBuffNodesGL = &params.aux_trace[mtOffset];
     treesGL[step - 1]->setNodes(pBuffNodesGL);
 
-    gl64_t *d_pBuffNodesGL = d_aux_trace + mtOffset;
+    //gl64_t *d_pBuffNodesGL = d_aux_trace + mtOffset;
     uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
     uint32_t nFielsElements = treesGL[step - 1]->getMerkleTreeNFieldElements();
     CHECKCUDAERR(cudaMemcpy(&proof.proof.roots[step - 1][0], &d_tree[tree_size - nFielsElements], nFielsElements * sizeof(uint64_t), cudaMemcpyDeviceToHost));

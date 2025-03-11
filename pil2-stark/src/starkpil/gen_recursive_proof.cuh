@@ -497,5 +497,9 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     }
 
     cudaFree(d_evals);
+    for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
+    {
+       cudaFree(d_trees[i].nodes);
+    }
 }
 #endif

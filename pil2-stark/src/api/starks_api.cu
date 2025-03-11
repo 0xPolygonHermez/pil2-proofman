@@ -6,6 +6,7 @@
 #ifdef __USE_CUDA__
 #include "gen_recursive_proof.cuh"
 #include "gen_proof.cuh"
+#include "gen_commit.cuh"
 
 struct MaxSizes
 {
@@ -91,5 +92,25 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
     genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), d_buffers, vadcop);
     time = omp_get_wtime() - time;
     std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
+}
+
+void commit_witness(uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_) {
+
+    double time = omp_get_wtime();
+
+    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
+    Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
+    Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
+    uint64_t N = 1 << nBits;
+    uint64_t NExtended = 1 << nBitsExt;
+
+
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
+    CHECKCUDAERR(cudaSetDevice(0));
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, trace, sizeTrace, cudaMemcpyHostToDevice));
+    genCommit_gpu(rootGL, N, NExtended, nCols, d_buffers);
+    time = omp_get_wtime() - time;
+    std::cout << "rick genRCommit_gpu time: " << time << std::endl;
 }
 #endif

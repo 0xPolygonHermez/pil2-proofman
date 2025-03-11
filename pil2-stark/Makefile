@@ -20,7 +20,7 @@ CXX := g++
 AS := nasm
 CXXFLAGS := -std=c++17 -Wall -pthread -flarge-source-files -Wno-unused-label -rdynamic -fPIC
 NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH)
-# -G -lineinfo
+# -G -lineinfo -Xptxas=-v
 
 LDFLAGS_GPU := -lcudart -lsodium -lpthread -lgmp -lstdc++
 LDFLAGS := -fopenmp -lsodium -lpthread -lgmp -lstdc++
