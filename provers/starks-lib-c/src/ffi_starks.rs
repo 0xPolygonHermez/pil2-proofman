@@ -64,8 +64,8 @@ pub fn stark_info_new_c(filename: &str, verify: bool) -> *mut c_void {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_map_totaln_c(p_stark_info: *mut c_void, recursive: bool) -> u64 {
-    unsafe { get_map_total_n(p_stark_info, recursive) }
+pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_map_total_n(p_stark_info) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -283,7 +283,6 @@ pub fn mul_hint_fields_c(
 pub fn acc_hint_field_c(
     p_setup_ctx: *mut c_void,
     p_steps_params: *mut u8,
-    p_buff_helper: *mut u8,
     hint_id: u64,
     hint_field_dest: &str,
     hint_field_airgroupvalue: &str,
@@ -298,7 +297,6 @@ pub fn acc_hint_field_c(
         acc_hint_field(
             p_setup_ctx,
             p_steps_params as *mut std::os::raw::c_void,
-            p_buff_helper as *mut std::os::raw::c_void,
             hint_id,
             field_dest.as_ptr() as *mut std::os::raw::c_char,
             field_airgroupvalue.as_ptr() as *mut std::os::raw::c_char,
@@ -313,7 +311,6 @@ pub fn acc_hint_field_c(
 pub fn acc_mul_hint_fields_c(
     p_setup_ctx: *mut c_void,
     p_steps_params: *mut u8,
-    p_buff_helper: *mut u8,
     hint_id: u64,
     hint_field_dest: &str,
     hint_field_airgroupvalue: &str,
@@ -332,7 +329,6 @@ pub fn acc_mul_hint_fields_c(
         acc_mul_hint_fields(
             p_setup_ctx,
             p_steps_params as *mut std::os::raw::c_void,
-            p_buff_helper as *mut std::os::raw::c_void,
             hint_id,
             field_dest.as_ptr() as *mut std::os::raw::c_char,
             field_airgroupvalue.as_ptr() as *mut std::os::raw::c_char,
@@ -691,7 +687,6 @@ pub fn set_hint_field_global_constraints_c(
 pub fn gen_proof_c(
     p_setup: *mut c_void,
     p_params: *mut u8,
-    p_buff_helper: *mut u8,
     p_global_challenge: *mut u8,
     proof_buffer: *mut u64,
     proof_file: &str,
@@ -710,7 +705,6 @@ pub fn gen_proof_c(
             instance_id,
             p_params as *mut std::os::raw::c_void,
             p_global_challenge as *mut std::os::raw::c_void,
-            p_buff_helper as *mut std::os::raw::c_void,
             proof_buffer,
             proof_file_ptr,
         );
@@ -969,7 +963,7 @@ pub fn stark_info_new_c(_filename: &str, _verify: bool) -> *mut c_void {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_map_totaln_c(_p_stark_info: *mut c_void, _recursive: bool) -> u64 {
+pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
     100000000
 }
@@ -1105,7 +1099,6 @@ pub fn mul_hint_fields_c(
 pub fn acc_hint_field_c(
     _p_setup_ctx: *mut c_void,
     _p_steps_params: *mut u8,
-    _p_buff_helper: *mut u8,
     _hint_id: u64,
     _hint_field_dest: &str,
     _hint_field_airgroupvalue: &str,
@@ -1120,7 +1113,6 @@ pub fn acc_hint_field_c(
 pub fn acc_mul_hint_fields_c(
     _p_setup_ctx: *mut c_void,
     _p_steps_params: *mut u8,
-    _p_buff_helper: *mut u8,
     _hint_id: u64,
     _hint_field_dest: &str,
     _hint_field_airgroupvalue: &str,
@@ -1389,7 +1381,6 @@ pub fn set_hint_field_global_constraints_c(
 pub fn gen_proof_c(
     _p_setup_ctx: *mut c_void,
     _p_params: *mut u8,
-    _p_buff_helper: *mut u8,
     _p_global_challenge: *mut u8,
     _proof_buffer: *mut u64,
     _proof_file: &str,

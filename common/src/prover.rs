@@ -42,7 +42,6 @@ pub trait Prover<F: Field> {
     fn calculate_lev(&mut self, pctx: &ProofCtx<F>, challenge: Vec<F>);
     fn opening_stage(&mut self, opening_id: u32, sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) -> ProverStatus;
 
-    fn get_buff_helper_size(&self, pctx: &ProofCtx<F>) -> usize;
     fn get_proof(&self) -> *mut c_void;
     fn get_stark(&self) -> *mut c_void;
     fn get_prover_info(&self) -> ProverInfo;

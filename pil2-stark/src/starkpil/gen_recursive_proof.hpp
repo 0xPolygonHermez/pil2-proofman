@@ -82,8 +82,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    Goldilocks::Element *res = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
-    Goldilocks::Element *gprod = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("q", true)] + N*FIELD_EXTENSION];
+    Goldilocks::Element *res = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
+    Goldilocks::Element *gprod = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("buff_helper", false)] + N*FIELD_EXTENSION];
 
     uint64_t gprodFieldId = setupCtx.expressionsBin.hints[0].fields[0].values[0].id;
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
@@ -148,7 +148,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
 
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
-    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("LEv", true)]];
+    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("buff_helper", false)]];
 
     starks.computeLEv(xiChallenge, LEv);
     starks.computeEvals(params ,LEv, proof);
@@ -177,7 +177,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     TimerStart(STARK_STEP_FRI);
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
-    params.xDivXSub = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)]];
+    params.xDivXSub = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
     starks.calculateXDivXSub(xiChallenge, params.xDivXSub);
     starks.calculateFRIPolynomial(params);
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);

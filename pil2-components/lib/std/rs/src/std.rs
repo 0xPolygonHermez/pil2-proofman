@@ -2,14 +2,11 @@ use std::sync::Arc;
 
 use p3_field::PrimeField64;
 
-use proofman_common::{ProofCtx, SetupCtx};
 use witness::WitnessManager;
 
-use crate::{AirComponent, StdProd, StdRangeCheck, StdSum};
+use crate::{StdProd, StdRangeCheck, StdSum};
 
 pub struct Std<F: PrimeField64> {
-    pub pctx: Arc<ProofCtx<F>>,
-    pub sctx: Arc<SetupCtx<F>>,
     pub range_check: Arc<StdRangeCheck<F>>,
     pub std_prod: Arc<StdProd<F>>,
     pub std_sum: Arc<StdSum<F>>,
@@ -26,13 +23,13 @@ impl<F: PrimeField64> Std<F> {
         log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
-        let std_prod = StdProd::new(&pctx, &sctx, None, None);
-        let std_sum = StdSum::new(&pctx, &sctx, None, None);
+        let std_prod = StdProd::new();
+        let std_sum = StdSum::new();
         let range_check = StdRangeCheck::new(pctx.clone(), &sctx);
 
         Self::register_std(wcm, std_prod.clone(), std_sum.clone(), range_check.clone());
 
-        Arc::new(Self { pctx, sctx, range_check, std_prod, std_sum })
+        Arc::new(Self { range_check, std_prod, std_sum })
     }
 
     pub fn register_std(

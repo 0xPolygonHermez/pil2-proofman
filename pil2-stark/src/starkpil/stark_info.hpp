@@ -175,8 +175,6 @@ public:
 
     uint64_t getNumNodesMT(uint64_t height);
 
-    void addMemoryRecursive();
-
     /* Returns a polynomial specified by its ID */
     void getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended);
 };

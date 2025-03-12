@@ -452,7 +452,7 @@ jobs:
         run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/range_check/build/provingKey
 
       - name: Cargo setup simple
-        run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/simple/build/provingKey
+        run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/simple/build/provingKey
 
       - name: Cargo setup diff_buses
         run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/diff_buses/build/provingKey

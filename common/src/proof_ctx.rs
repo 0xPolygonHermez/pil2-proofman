@@ -4,7 +4,6 @@ use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
 use p3_field::Field;
-use proofman_util::create_buffer_fast;
 use transcript::FFITranscript;
 
 use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams, VerboseMode};
@@ -76,14 +75,12 @@ pub struct ProofCtx<F: Field> {
     pub proof_values: Values<F>,
     pub global_challenge: Values<F>,
     pub challenges: Values<F>,
-    pub buff_helper: Values<F>,
     pub global_info: GlobalInfo,
     pub air_instances: RwLock<HashMap<usize, AirInstance<F>>>,
     pub options: ProofOptions,
     pub weights: HashMap<(usize, usize), u64>,
     pub custom_commits_fixed: HashMap<String, PathBuf>,
     pub dctx: RwLock<DistributionCtx>,
-    pub max_prover_buffer_size: u64,
 }
 
 impl<F: Field> ProofCtx<F> {
@@ -109,13 +106,11 @@ impl<F: Field> ProofCtx<F> {
             proof_values: Values::new(n_proof_values * 3),
             challenges: Values::new(n_challenges * 3),
             global_challenge: Values::new(3),
-            buff_helper: Values::default(),
             air_instances: RwLock::new(HashMap::new()),
             dctx: RwLock::new(DistributionCtx::new()),
             custom_commits_fixed,
             weights,
             options,
-            max_prover_buffer_size: 0,
         }
     }
 
@@ -134,27 +129,6 @@ impl<F: Field> ProofCtx<F> {
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
-    }
-
-    pub fn set_buff_helper(&mut self, sctx: &SetupCtx<F>) {
-        let mut buff_helper_size = 0;
-        let mut prover_buffer_size = 0;
-        for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                let setup = sctx.get_setup(airgroup_id, air_id);
-                let buff_helper_prover_size = setup.stark_info.get_buff_helper_size();
-                if buff_helper_prover_size > buff_helper_size {
-                    buff_helper_size = buff_helper_prover_size;
-                }
-
-                if setup.prover_buffer_size > prover_buffer_size {
-                    prover_buffer_size = setup.prover_buffer_size;
-                }
-            }
-        }
-
-        *self.buff_helper.values.write().unwrap() = create_buffer_fast(buff_helper_size);
-        self.max_prover_buffer_size = prover_buffer_size;
     }
 
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
@@ -409,11 +383,6 @@ impl<F: Field> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
-    pub fn get_buff_helper_ptr(&self) -> *mut u8 {
-        let guard = &self.buff_helper.values.read().unwrap();
-        guard.as_ptr() as *mut u8
-    }
-
     pub fn get_air_instance_params(&self, sctx: &SetupCtx<F>, instance_id: usize, gen_proof: bool) -> StepsParams {
         let air_instances = self.air_instances.read().unwrap();
         let air_instance = air_instances.get(&instance_id).unwrap();
@@ -492,10 +461,5 @@ impl<F: Field> ProofCtx<F> {
     pub fn free_instance(&self, instance_id: usize) {
         let mut air_instances = self.air_instances.write().unwrap();
         air_instances.remove(&instance_id);
-    }
-
-    pub fn free_buff_helper(&self) {
-        let mut buff_helper = self.buff_helper.values.write().unwrap();
-        *buff_helper = Vec::new();
     }
 }

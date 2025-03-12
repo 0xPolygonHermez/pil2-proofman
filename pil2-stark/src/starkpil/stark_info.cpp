@@ -326,13 +326,33 @@ void StarkInfo::setMapOffsets() {
     // This is never used, just set to avoid invalid read
     mapOffsets[std::make_pair("cm" + to_string(nStages + 1), false)] = 0;
 
-    mapOffsets[std::make_pair("f", true)] = mapTotalN;
-    mapTotalN += NExtended * FIELD_EXTENSION;
+    if(starkStruct.verificationHashType == "GL") {
+        // Merkle tree nodes sizes
+        for (uint64_t i = 0; i < nStages + 1; i++) {
+            uint64_t numNodes = getNumNodesMT(1 << starkStruct.nBitsExt);
+            mapOffsets[std::make_pair("mt" + to_string(i + 1), true)] = mapTotalN;
+            mapTotalN += numNodes;
+        }
+    }
 
-    mapOffsets[std::make_pair("q", true)] = mapOffsets[std::make_pair("f", true)];
+    mapOffsets[std::make_pair("f", true)] = mapTotalN;
+    mapOffsets[std::make_pair("q", true)] = mapTotalN;
+    mapTotalN += NExtended * FIELD_EXTENSION;
 
     mapOffsets[std::make_pair("evals", true)] = mapTotalN;
     mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
+
+    mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
+    uint64_t xDivXSubSize = openingPoints.size() * NExtended * FIELD_EXTENSION;
+    uint64_t maxCols = 0;
+    for(auto const& [key, val] : mapSectionsN) {
+        if(key != "const" && val*NExtended > maxCols) {
+            maxCols = val*NExtended;
+        }
+    }
+    uint64_t buffHelperSize = xDivXSubSize > maxCols ? xDivXSubSize : maxCols;
+
+    uint64_t mapTotalNBuffHelper = mapTotalN + buffHelperSize;
 
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
@@ -342,14 +362,6 @@ void StarkInfo::setMapOffsets() {
     }
 
     if(starkStruct.verificationHashType == "GL") {
-        // Merkle tree nodes sizes
-        for (uint64_t i = 0; i < nStages + 1; i++) {
-            uint64_t numNodes = getNumNodesMT(1 << starkStruct.nBitsExt);
-            mapOffsets[std::make_pair("mt" + to_string(i + 1), true)] = mapTotalN;
-            mapTotalN += numNodes;
-        }
-        
-        
         for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
             uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
             uint64_t numNodes = getNumNodesMT(height);
@@ -357,13 +369,10 @@ void StarkInfo::setMapOffsets() {
             mapTotalN += numNodes;
         }
     }
-}
 
-void StarkInfo::addMemoryRecursive() {
-    uint64_t NExtended = (1 << starkStruct.nBitsExt);
-    mapOffsets[std::make_pair("xDivXSubXi", true)] = mapTotalN;
-    mapOffsets[std::make_pair("LEv", true)] = mapTotalN;
-    mapTotalN += openingPoints.size() * NExtended * FIELD_EXTENSION;
+    if(mapTotalNBuffHelper > mapTotalN) {
+        mapTotalN = mapTotalNBuffHelper;
+    }
 }
 
 void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended) {

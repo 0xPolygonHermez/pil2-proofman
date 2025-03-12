@@ -18,42 +18,22 @@ use proofman_hints::{
 use crate::{
     check_invalid_opids, extract_field_element_as_usize, get_global_hint_field_constant_as,
     get_hint_field_constant_a_as_string, get_hint_field_constant_as_field, get_hint_field_constant_as_string,
-    get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, AirComponent, DebugData,
-    DebugDataFast, SharedDataFast,
+    get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, DebugData, DebugDataFast,
+    SharedDataFast,
 };
 
 pub struct StdProd<F: PrimeField64> {
-    stage_wc: Option<u32>,
     debug_data: RwLock<DebugData<F>>,
     debug_data_fast: RwLock<Vec<DebugDataFast<F>>>,
 }
 
-impl<F: PrimeField64> AirComponent<F> for StdProd<F> {
-    const MY_NAME: &'static str = "STD Prod";
-
-    fn new(_pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, _airgroup_id: Option<usize>, _air_id: Option<usize>) -> Arc<Self> {
-        // Retrieve the std_prod_users hint ID
-        let std_prod_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");
-
-        // Initialize std_prod with the extracted data
-        Arc::new(Self {
-            stage_wc: match std_prod_users_id.is_empty() {
-                true => None,
-                false => {
-                    // Get the "stage_wc" hint
-                    let stage_wc = get_global_hint_field_constant_as(sctx, std_prod_users_id[0], "stage_wc");
-                    Some(stage_wc)
-                }
-            },
-            debug_data: RwLock::new(HashMap::new()),
-            debug_data_fast: RwLock::new(Vec::new()),
-        })
-    }
-}
-
 impl<F: PrimeField64> StdProd<F> {
     const MY_NAME: &'static str = "STD Prod";
-    #[allow(clippy::too_many_arguments)]
+
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self { debug_data: RwLock::new(HashMap::new()), debug_data_fast: RwLock::new(Vec::new()) })
+    }
+
     fn debug_mode(
         &self,
         pctx: &ProofCtx<F>,
@@ -255,12 +235,14 @@ impl<F: PrimeField64> StdProd<F> {
 
 impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
     fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
-        let stage_wc = self.stage_wc.as_ref();
-        if stage_wc.is_none() {
+        let std_prod_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");
+
+        if std_prod_users_id.is_empty() {
             return;
         }
+        let stage_wc: u32 = get_global_hint_field_constant_as(&sctx, std_prod_users_id[0], "stage_wc");
 
-        if stage == *stage_wc.unwrap() {
+        if stage == stage_wc {
             // Get the number of product check users and their airgroup and air IDs
             let std_prod_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users")[0];
 

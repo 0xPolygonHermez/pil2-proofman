@@ -317,7 +317,17 @@ impl<F: PrimeField64> ProofMan<F> {
 
         let values = Arc::new(Mutex::new(vec![0; my_instances.len() * 4]));
 
-        let aux_trace = Arc::new(create_buffer_fast(pctx.max_prover_buffer_size as usize));
+        let mut prover_buffer_size = 0;
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let setup = sctx.get_setup(airgroup_id, air_id);
+                if setup.prover_buffer_size > prover_buffer_size {
+                    prover_buffer_size = setup.prover_buffer_size;
+                }
+            }
+        }
+
+        let aux_trace = Arc::new(create_buffer_fast(prover_buffer_size as usize));
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
@@ -361,7 +371,6 @@ impl<F: PrimeField64> ProofMan<F> {
 
         let const_tree = Arc::new(create_buffer_fast(sctx.max_const_tree_size));
 
-        let valid_proofs = Arc::new(AtomicBool::new(true));
         let proofs = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
         let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
         let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
@@ -387,7 +396,6 @@ impl<F: PrimeField64> ProofMan<F> {
 
                 thread_handle = Some(Self::generate_proof_thread(
                     proofs.clone(),
-                    valid_proofs.clone(),
                     pctx.clone(),
                     sctx.clone(),
                     instance_id,
@@ -426,6 +434,16 @@ impl<F: PrimeField64> ProofMan<F> {
             Arc::try_unwrap(airgroup_values_air_instances).unwrap().into_inner().unwrap();
 
         if !pctx.options.aggregation {
+            let mut valid_proofs = true;
+
+            if pctx.options.verify_proofs {
+                let proofs_ = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
+                for instance_id in my_instances.iter() {
+                    valid_proofs =
+                        verify_basic_proof(&pctx, *instance_id, &proofs_[pctx.dctx_get_instance_idx(*instance_id)]);
+                }
+            }
+
             let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
                 || !pctx.options.debug_info.debug_global_instances.is_empty();
 
@@ -436,12 +454,12 @@ impl<F: PrimeField64> ProofMan<F> {
                 if pctx.dctx_get_rank() == 0 {
                     let valid_global_constraints = verify_global_constraints_proof(&pctx, &sctx, airgroupvalues);
                     if valid_global_constraints.is_err() {
-                        valid_proofs.store(false, Ordering::Relaxed);
+                        valid_proofs = false;
                     }
                 }
             }
 
-            if valid_proofs.load(Ordering::Relaxed) {
+            if valid_proofs {
                 return Ok(());
             } else {
                 return Err("Basic proofs were not verified".into());
@@ -449,9 +467,7 @@ impl<F: PrimeField64> ProofMan<F> {
         }
 
         std::thread::spawn({
-            let pctx = Arc::clone(&pctx);
             move || {
-                pctx.free_buff_helper();
                 drop(aux_trace);
                 drop(wcm);
             }
@@ -561,7 +577,6 @@ impl<F: PrimeField64> ProofMan<F> {
     #[allow(clippy::too_many_arguments)]
     fn generate_proof_thread(
         proofs: Arc<Mutex<Vec<Vec<u64>>>>,
-        valid_proofs: Arc<AtomicBool>,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         instance_id: usize,
@@ -606,7 +621,6 @@ impl<F: PrimeField64> ProofMan<F> {
             gen_proof_c(
                 p_setup,
                 p_steps_params,
-                pctx.get_buff_helper_ptr(),
                 pctx.get_global_challenge_ptr(),
                 proof.as_mut_ptr(),
                 &proof_file,
@@ -618,14 +632,9 @@ impl<F: PrimeField64> ProofMan<F> {
             airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
                 pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
 
-            timer_start_info!(FREE_INSTANCE);
             pctx.free_instance(instance_id);
-            timer_stop_and_log_info!(FREE_INSTANCE);
 
             timer_stop_and_log_info!(GENERATING_PROOF);
-            if !pctx.options.aggregation && pctx.options.verify_proofs {
-                valid_proofs.fetch_and(verify_basic_proof(&pctx, instance_id, &proof), Ordering::Relaxed);
-            }
             proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof;
         })
     }
@@ -657,7 +666,6 @@ impl<F: PrimeField64> ProofMan<F> {
         let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options);
         let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, false));
         pctx.set_weights(&sctx);
-        pctx.set_buff_helper(&sctx);
 
         let pctx = Arc::new(pctx);
         check_tree_paths(&pctx, &sctx)?;
@@ -675,20 +683,22 @@ impl<F: PrimeField64> ProofMan<F> {
         wcm: Arc<WitnessManager<F>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("Initializing witness");
-        timer_start_info!(EXECUTE);
 
         // Load the witness computation dynamic library
+        timer_start_info!(REGISTER_WITNESS);
         let library = unsafe { Library::new(&witness_lib_path)? };
-
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(wcm.get_pctx().options.verbose_mode)?;
+        let mut witness_lib = witness_lib(pctx.options.verbose_mode)?;
         witness_lib.register_witness(wcm.clone());
+        timer_stop_and_log_info!(REGISTER_WITNESS);
 
+        timer_start_info!(EXECUTE);
         wcm.execute();
+        timer_stop_and_log_info!(EXECUTE);
+
         pctx.dctx_assign_instances();
         pctx.dctx_close();
 
-        timer_stop_and_log_info!(EXECUTE);
         Ok(())
     }
 
