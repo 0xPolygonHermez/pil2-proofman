@@ -470,6 +470,7 @@ impl<F: PrimeField64> ProofMan<F> {
             move || {
                 drop(aux_trace);
                 drop(wcm);
+                drop(sctx);
             }
         });
 

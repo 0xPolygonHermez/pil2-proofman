@@ -112,7 +112,6 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         for air_name in air_names {
             let (_, _, memory_fixed, _) = air_info.get(air_name).unwrap();
             total_memory += memory_fixed;
-
             info!("{}:       {}", name, format!("· {}: {} fixed cols", air_name, format_bytes(*memory_fixed),));
         }
 
