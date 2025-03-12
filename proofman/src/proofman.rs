@@ -384,9 +384,7 @@ impl<F: PrimeField64> ProofMan<F> {
                 let (airgroup_id, air_id, all) = instances[instance_id];
 
                 if !all {
-                    timer_start_info!(GENERATING_WITNESS);
                     wcm.calculate_witness(1, &[instance_id]);
-                    timer_stop_and_log_info!(GENERATING_WITNESS);
                 }
 
                 // Join the previous thread (if any) before starting a new one
@@ -596,7 +594,7 @@ impl<F: PrimeField64> ProofMan<F> {
             let p_setup: *mut c_void = (&setup.p_setup).into();
             let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
             let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-            timer_start_info!(GENERATING_PROOF);
+            timer_start_info!(GEN_PROOF);
 
             if gen_const_tree {
                 timer_start_debug!(GENERATING_CONST_TREE);
@@ -635,7 +633,7 @@ impl<F: PrimeField64> ProofMan<F> {
 
             pctx.free_instance(instance_id);
 
-            timer_stop_and_log_info!(GENERATING_PROOF);
+            timer_stop_and_log_info!(GEN_PROOF);
             proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof;
         })
     }
