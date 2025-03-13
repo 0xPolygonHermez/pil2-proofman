@@ -1,6 +1,7 @@
 use log::info;
 use p3_field::PrimeField64;
 use num_traits::ToPrimitive;
+use proofman_starks_lib_c::get_const_tree_size_c;
 use std::fs::{self, File};
 use std::io::Read;
 
@@ -224,8 +225,26 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
             let setup = sctx.get_setup(airgroup_id, air_id);
             let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
             if !PathBuf::from(&const_pols_tree_path).exists() {
-                return Err(format!("Invalid constant tree {}. Proofman setup needs to be run", setup.air_name).into());
+                return Err(format!("Constant tree for {} ({:?}) does not exist. Run proofman setup.", setup.air_name, setup.setup_type).into());
             }
+            let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+            match fs::metadata(&const_pols_tree_path) {
+                Ok(metadata) => {
+                    let actual_size = metadata.len() as usize;
+                    if actual_size != const_pols_tree_size * 8 {
+                        return Err(
+                            format!(
+                                "File size mismatch for {}. Expected: {}, Found: {}. Run proofman setup.",
+                                setup.air_name, const_pols_tree_size * 8, actual_size
+                            ).into()
+                        );
+                    }
+                }
+                Err(err) => {
+                    return Err(format!("Failed to get metadata for {}: {}", setup.air_name, err).into());
+                }
+            }
+
         }
     }
     Ok(())
@@ -243,9 +262,27 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
                 let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
                 if !PathBuf::from(&const_pols_tree_path).exists() {
                     return Err(
-                        format!("Invalid constant tree {}. Proofman setup needs to be run", setup.air_name).into()
+                        format!("Constant tree for {} ({:?}) does not exist. Run proofman setup.", setup.air_name, setup.setup_type).into()
                     );
                 }
+                let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+                match fs::metadata(&const_pols_tree_path) {
+                    Ok(metadata) => {
+                        let actual_size = metadata.len() as usize;
+                        if actual_size != const_pols_tree_size * 8 {
+                            return Err(
+                                format!(
+                                    "File size mismatch for {}. Expected: {}, Found: {}. Run proofman setup.",
+                                    setup.air_name, const_pols_tree_size * 8, actual_size
+                                ).into()
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        return Err(format!("Failed to get metadata for {}: {}", setup.air_name, err).into());
+                    }
+                }
+
             }
         }
     }
