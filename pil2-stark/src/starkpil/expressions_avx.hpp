@@ -163,12 +163,53 @@ public:
                 Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings] + 1 + d], &bufferT[0]);
             }
         } else if(dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.friExpId)) {
-            for(uint64_t d = 0; d < setupCtx.starkInfo.openingPoints.size(); ++d) {
-               for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
-                    for(uint64_t j = 0; j < nrowsPack; ++j) {
-                        bufferT[j] = params.xDivXSub[((row + j)*setupCtx.starkInfo.openingPoints.size() + d)*FIELD_EXTENSION + k];
+            uint64_t xiChallengeIndex = 0;
+            for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
+            {
+                if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
+                    if(setupCtx.starkInfo.challengesMap[i].stageId == 0) xiChallengeIndex = i;
+                }
+            }
+
+            Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
+            
+            Goldilocks::Element xis[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
+            for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
+            {
+                Goldilocks::Element w = Goldilocks::one();
+                uint64_t openingAbs = setupCtx.starkInfo.openingPoints[i] < 0 ? -setupCtx.starkInfo.openingPoints[i] : setupCtx.starkInfo.openingPoints[i];
+                for (uint64_t j = 0; j < openingAbs; ++j)
+                {
+                    w = w * Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits);
+                }
+
+                if (setupCtx.starkInfo.openingPoints[i] < 0) w = Goldilocks::inv(w);
+
+                Goldilocks3::mul((Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]), (Goldilocks3::Element &)xiChallenge[0], w);
+            }
+
+            Goldilocks::Element xDivXSub[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION * nrowsPack];
+            if(!setupCtx.starkInfo.verify) {
+                for (uint64_t k = 0; k < nrowsPack; k++) {
+                    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
+                    {
+                        Goldilocks3::sub((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), proverHelpers.x[row + k], (Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]));
                     }
-                    Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings] + d*FIELD_EXTENSION + k], &bufferT[0]);
+                }
+
+                Goldilocks3::batchInverse((Goldilocks3::Element *)xDivXSub, (Goldilocks3::Element *)xDivXSub, setupCtx.starkInfo.openingPoints.size() * nrowsPack);
+
+                for (uint64_t k = 0; k < nrowsPack; k++) {
+                    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
+                    {                
+                        Goldilocks3::mul((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), (Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), proverHelpers.x[row + k]);
+                    }
+                }
+            }
+
+            for(uint64_t d = 0; d < setupCtx.starkInfo.openingPoints.size(); ++d) {
+                for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
+                    Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings] + d*FIELD_EXTENSION + k], &xDivXSub[d*FIELD_EXTENSION + k], setupCtx.starkInfo.openingPoints.size()*FIELD_EXTENSION);
                 }
             }
         } else if(proverHelpers.x_n != nullptr) {

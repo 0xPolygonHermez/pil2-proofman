@@ -95,8 +95,6 @@ public:
     void computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv);
     void computeEvals(StepsParams &params, Goldilocks::Element *LEv, FRIProof<ElementType> &proof);
 
-    void calculateXDivXSub(Goldilocks::Element *xiChallenge, Goldilocks::Element *xDivXSub);
-
     void calculateHash(ElementType* hash, Goldilocks::Element* buffer, uint64_t nElements);
 
     void addTranscriptGL(TranscriptType &transcript, Goldilocks::Element* buffer, uint64_t nElements);

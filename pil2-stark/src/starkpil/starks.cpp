@@ -185,43 +185,6 @@ void Starks<ElementType>::computeEvals(StepsParams &params, Goldilocks::Element 
 }
 
 template <typename ElementType>
-void Starks<ElementType>::calculateXDivXSub(Goldilocks::Element *xiChallenge, Goldilocks::Element *xDivXSub)
-{
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-
-    Goldilocks::Element xis[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
-    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
-    {
-        Goldilocks::Element w = Goldilocks::one();
-        uint64_t openingAbs = setupCtx.starkInfo.openingPoints[i] < 0 ? -setupCtx.starkInfo.openingPoints[i] : setupCtx.starkInfo.openingPoints[i];
-        for (uint64_t j = 0; j < openingAbs; ++j)
-        {
-            w = w * Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits);
-        }
-
-        if (setupCtx.starkInfo.openingPoints[i] < 0)
-        {
-            w = Goldilocks::inv(w);
-        }
-
-        Goldilocks3::mul((Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]), (Goldilocks3::Element &)xiChallenge[0], w);
-    }
-
-    uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
-
-#pragma omp parallel for
-    for (uint64_t k = 0; k < NExtended; k++)
-    {
-        for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
-        {
-            Goldilocks3::sub((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), proverHelpers.x[k], (Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]));
-            Goldilocks3::inv((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), (Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]));
-            Goldilocks3::mul((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), (Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), proverHelpers.x[k]);
-        }
-    }
-}
-
-template <typename ElementType>
 void Starks<ElementType>::evmap(StepsParams& params, Goldilocks::Element *LEv)
 {
     uint64_t extendBits = setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits;

@@ -343,14 +343,14 @@ void StarkInfo::setMapOffsets() {
     mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
 
     mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
-    uint64_t xDivXSubSize = openingPoints.size() * NExtended * FIELD_EXTENSION;
+    uint64_t LEVsize = openingPoints.size() * N * FIELD_EXTENSION;
     uint64_t maxCols = 0;
     for(auto const& [key, val] : mapSectionsN) {
         if(key != "const" && val*NExtended > maxCols) {
             maxCols = val*NExtended;
         }
     }
-    uint64_t buffHelperSize = xDivXSubSize > maxCols ? xDivXSubSize : maxCols;
+    uint64_t buffHelperSize = LEVsize > maxCols ? LEVsize : maxCols;
 
     uint64_t mapTotalNBuffHelper = mapTotalN + buffHelperSize;
 
