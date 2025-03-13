@@ -600,7 +600,10 @@ void accHintField(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std:
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
-    Goldilocks::Element *vals = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
+    
+    Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
+        ? new Goldilocks::Element[dim*N]
+        : &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
     
     Dest destStruct(vals, 1 << setupCtx.starkInfo.starkStruct.nBits, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName, hintOptions);
@@ -627,6 +630,10 @@ void accHintField(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std:
 
     setHintField(setupCtx, params, vals, hintId, hintFieldNameDest);
     setHintField(setupCtx, params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
+
+    if(setupCtx.starkInfo.verify_constraints) {
+        delete[] vals;
+    }
 }
 
 uint64_t getHintId(SetupCtx& setupCtx, uint64_t hintId, std::string name) {
@@ -649,7 +656,10 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, 
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
-    Goldilocks::Element *vals = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
+    
+    Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
+        ? new Goldilocks::Element[dim*N]
+        : &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
     
     Dest destStruct(vals,  1 << setupCtx.starkInfo.starkStruct.nBits, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
@@ -677,6 +687,10 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, 
 
     setHintField(setupCtx, params, vals, hintId, hintFieldNameDest);
     setHintField(setupCtx, params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
+
+    if(setupCtx.starkInfo.verify_constraints) {
+        delete[] vals;
+    }
 }
 
 uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {

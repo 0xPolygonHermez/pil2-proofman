@@ -93,9 +93,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool verify)
+void *stark_info_new(char *filename, bool verify_constraints, bool verify)
 {
-    auto starkInfo = new StarkInfo(filename, verify);
+    auto starkInfo = new StarkInfo(filename, verify_constraints, verify);
 
     return starkInfo;
 }

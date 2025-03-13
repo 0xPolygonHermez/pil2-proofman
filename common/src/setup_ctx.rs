@@ -21,9 +21,9 @@ pub struct SetupsVadcop<F: Field> {
 impl<F: Field> SetupsVadcop<F> {
     pub fn new(global_info: &GlobalInfo, verify_constraints: bool, aggregation: bool, final_snark: bool) -> Self {
         if aggregation {
-            let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, false);
-            let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, false);
-            let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, false);
+            let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints);
+            let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints);
+            let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints);
             let setup_vadcop_final = Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints);
             let mut setup_recursivef = None;
             if final_snark {

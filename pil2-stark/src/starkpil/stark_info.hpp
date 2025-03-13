@@ -156,6 +156,7 @@ public:
     // Precomputed
     std::map<std::pair<std::string, bool>, uint64_t> mapOffsets;
     
+    bool verify_constraints = false;
     bool verify = false;
 
     uint64_t mapTotalN;
@@ -164,10 +165,10 @@ public:
     uint64_t proofSize;
 
     /* Constructor */
-    StarkInfo(string file, bool verify = false);
+    StarkInfo(string file, bool verify_constraints = false, bool verify = false);
 
     /* Loads data from a json object */
-    void load (json j, bool verify = false);
+    void load (json j, bool verify_constraints = false, bool verify = false);
 
     void setMapOffsets();
 

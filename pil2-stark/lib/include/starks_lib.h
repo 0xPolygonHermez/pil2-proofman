@@ -16,7 +16,7 @@
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char* filename, bool verifier);
+    void *stark_info_new(char* filename, bool verify_constraints, bool verify);
     uint64_t get_proof_size(void *pStarkInfo);
     uint64_t get_map_total_n(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);

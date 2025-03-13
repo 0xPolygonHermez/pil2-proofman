@@ -81,7 +81,7 @@ impl<F: Field> Setup<F> {
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
                 .unwrap_or_else(|_| panic!("Failed to read file {}", &stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
-            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false);
+            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), verify_constraints, false);
             let prover_buffer_size = if verify_constraints {
                 let mut mem_instance = 0;
                 for stage in 0..stark_info.n_stages {

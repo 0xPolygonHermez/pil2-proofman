@@ -685,8 +685,9 @@ impl<F: PrimeField64> ProofMan<F> {
             options.verify_constraints,
         )?;
 
-        let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options);
-        let sctx: Arc<SetupCtx<F>> = Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, false));
+        let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options.clone());
+        let sctx: Arc<SetupCtx<F>> =
+            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints));
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
