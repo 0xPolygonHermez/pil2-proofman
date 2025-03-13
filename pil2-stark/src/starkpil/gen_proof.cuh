@@ -111,11 +111,10 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     CHECKCUDAERR(cudaMalloc(&d_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&d_params.xDivXSub, NExtended *  setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
-    uint64_t customCommitsArea = setupCtx.starkInfo.mapTotalNCustomCommitsFixed > 0 ? setupCtx.starkInfo.mapTotalNCustomCommitsFixed - (2*NExtended-1)*HASH_SIZE : 0;
-    if(customCommitsArea > 0){ 
-        CHECKCUDAERR(cudaMalloc(&d_params.pCustomCommitsFixed,customCommitsArea * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMemcpy(d_params.pCustomCommitsFixed, params.pCustomCommitsFixed, customCommitsArea * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    }
+    uint64_t customCommitSize = setupCtx.starkInfo.mapTotalNCustomCommitsFixed;
+    CHECKCUDAERR(cudaMalloc(&d_params.pCustomCommitsFixed,customCommitSize * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemcpy(d_params.pCustomCommitsFixed, params.pCustomCommitsFixed, customCommitSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 

@@ -22,9 +22,20 @@ public:
         std::memcpy(root, &tree[numElementsTree - HASH_SIZE], HASH_SIZE * sizeof(Goldilocks::Element));
     }
 
-    static inline uint64_t getTreeNumElements(uint64_t degree)
+    static inline uint64_t getTreeNumElements(uint64_t degree, uint32_t arity=2)
     {
-        return degree * HASH_SIZE + (degree - 1) * HASH_SIZE;
+        uint64_t numNodes = degree;
+        uint64_t nodesLevel = degree;
+    
+        while (nodesLevel > 1) {
+            uint64_t extraZeros = (arity - (nodesLevel % arity)) % arity;
+            numNodes += extraZeros;
+            uint64_t nextN = (nodesLevel + (arity - 1))/arity;        
+            numNodes += nextN;
+            nodesLevel = nextN;
+        }
+
+        return numNodes * HASH_SIZE;
     };
 };
 

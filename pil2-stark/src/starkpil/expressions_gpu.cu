@@ -93,8 +93,7 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint32_t
     // Size fixed customCommit
     if (setupCtx.starkInfo.mapTotalNCustomCommitsFixed > 0)
     {
-        uint64_t customCommitsArea = setupCtx.starkInfo.mapTotalNCustomCommitsFixed - h_deviceArgs.NExtended * HASH_SIZE - (h_deviceArgs.NExtended - 1) * HASH_SIZE;
-        h_deviceArgs.customCommitsCols = customCommitsArea / (h_deviceArgs.NExtended + h_deviceArgs.N);
+        h_deviceArgs.customCommitsCols = setupCtx.starkInfo.customCommits[0].stageWidths[0];
     }
     else
     {

@@ -166,8 +166,8 @@ void NTT_Goldilocks::computeQ_inplace(uint64_t **d_tree, uint64_t offset_cmQ, ui
     time1 = omp_get_wtime();
     std::cout << "      check rick Time for ntt_cuda: " << time1 - time << std::endl;
     time = time1;
-    // Poseidon2Goldilocks::merkletree_cuda_coalesced(d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
-    Poseidon2Goldilocks::merkletree_cuda_streams(d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
+    Poseidon2Goldilocks::merkletree_cuda_coalesced(3, d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
+    //Poseidon2Goldilocks::merkletree_cuda_streams(3, d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
 
 
     CHECKCUDAERR(cudaDeviceSynchronize());
@@ -302,8 +302,8 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(uint64_t **d_tree, gl64_t *d_dst
 
     time = time1;
 
-    // Poseidon2Goldilocks::merkletree_cuda_coalesced(d_tree, (uint64_t *)d_buffers->d_ntt, ncols, ext_size);
-    Poseidon2Goldilocks::merkletree_cuda_streams(d_tree, (uint64_t *)d_buffers->d_ntt, ncols, ext_size);
+    Poseidon2Goldilocks::merkletree_cuda_coalesced(3, d_tree, (uint64_t *)d_buffers->d_ntt, ncols, ext_size);
+    //Poseidon2Goldilocks::merkletree_cuda_streams(3, d_tree, (uint64_t *)d_buffers->d_ntt, ncols, ext_size);
     /*Goldilocks::Element *pBuff = new Goldilocks::Element[100];
     CHECKCUDAERR(cudaMemcpy(pBuff, *d_tree, 100 * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
     // print first 10 rows of qDim
