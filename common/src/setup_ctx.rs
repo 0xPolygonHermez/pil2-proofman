@@ -14,39 +14,18 @@ pub struct SetupsVadcop<F: Field> {
     pub sctx_recursive2: Option<SetupCtx<F>>,
     pub setup_vadcop_final: Option<Setup<F>>,
     pub setup_recursivef: Option<Setup<F>>,
-    pub max_const_tree_size_aggregation: usize,
 }
 
 impl<F: Field> SetupsVadcop<F> {
     pub fn new(global_info: &GlobalInfo, verify_constraints: bool, aggregation: bool, final_snark: bool) -> Self {
-        let mut max_const_tree_size_aggregation = 0;
         if aggregation {
             let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, false);
-            if sctx_compressor.max_const_tree_size > max_const_tree_size_aggregation {
-                max_const_tree_size_aggregation = sctx_compressor.max_const_tree_size;
-            }
             let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, false);
-            if sctx_recursive1.max_const_tree_size > max_const_tree_size_aggregation {
-                max_const_tree_size_aggregation = sctx_recursive1.max_const_tree_size;
-            }
             let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, false);
-            if sctx_recursive2.max_const_tree_size > max_const_tree_size_aggregation {
-                max_const_tree_size_aggregation = sctx_recursive2.max_const_tree_size;
-            }
             let setup_vadcop_final = Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints);
-            let const_pols_tree_size = get_const_tree_size_c(setup_vadcop_final.p_setup.p_stark_info) as usize;
-            if const_pols_tree_size > max_const_tree_size_aggregation {
-                max_const_tree_size_aggregation = const_pols_tree_size;
-            }
-
             let mut setup_recursivef = None;
             if final_snark {
                 setup_recursivef = Some(Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints));
-                let const_pols_tree_size =
-                    get_const_tree_size_c(setup_recursivef.as_ref().unwrap().p_setup.p_stark_info) as usize;
-                if const_pols_tree_size > max_const_tree_size_aggregation {
-                    max_const_tree_size_aggregation = const_pols_tree_size;
-                }
             }
 
             SetupsVadcop {
@@ -55,7 +34,6 @@ impl<F: Field> SetupsVadcop<F> {
                 sctx_recursive2: Some(sctx_recursive2),
                 setup_vadcop_final: Some(setup_vadcop_final),
                 setup_recursivef,
-                max_const_tree_size_aggregation,
             }
         } else {
             SetupsVadcop {
@@ -64,7 +42,6 @@ impl<F: Field> SetupsVadcop<F> {
                 sctx_recursive2: None,
                 setup_vadcop_final: None,
                 setup_recursivef: None,
-                max_const_tree_size_aggregation,
             }
         }
     }
@@ -92,6 +69,7 @@ impl<F: Field> SetupsVadcop<F> {
 pub struct SetupRepository<F: Field> {
     setups: HashMap<(usize, usize), Setup<F>>,
     max_const_tree_size: usize,
+    max_const_size: usize,
     global_bin: Option<*mut c_void>,
     global_info_file: String,
 }
@@ -116,6 +94,7 @@ impl<F: Field> SetupRepository<F> {
         let global_info_file = global_info_path.to_str().unwrap().to_string();
 
         let mut max_const_tree_size = 0;
+        let mut max_const_size = 0;
 
         // Initialize Hashmap for each airgroup_id, air_id
         if setup_type != &ProofType::VadcopFinal {
@@ -127,6 +106,9 @@ impl<F: Field> SetupRepository<F> {
                         if max_const_tree_size < const_pols_tree_size {
                             max_const_tree_size = const_pols_tree_size;
                         }
+                        if max_const_size < setup.const_pols_size {
+                            max_const_size = setup.const_pols_size;
+                        }
                     }
                     setups.insert((airgroup_id, air_id), setup);
                 }
@@ -135,7 +117,7 @@ impl<F: Field> SetupRepository<F> {
             setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints));
         }
 
-        Self { setups, global_bin, global_info_file, max_const_tree_size }
+        Self { setups, global_bin, global_info_file, max_const_tree_size, max_const_size }
     }
 
     pub fn free(&self) {
@@ -149,6 +131,7 @@ impl<F: Field> SetupRepository<F> {
 pub struct SetupCtx<F: Field> {
     setup_repository: SetupRepository<F>,
     pub max_const_tree_size: usize,
+    pub max_const_size: usize,
     setup_type: ProofType,
 }
 
@@ -156,7 +139,8 @@ impl<F: Field> SetupCtx<F> {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool) -> Self {
         let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints);
         let max_const_tree_size = setup_repository.max_const_tree_size;
-        SetupCtx { setup_repository, max_const_tree_size, setup_type: setup_type.clone() }
+        let max_const_size = setup_repository.max_const_size;
+        SetupCtx { setup_repository, max_const_tree_size, max_const_size, setup_type: setup_type.clone() }
     }
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> &Setup<F> {
