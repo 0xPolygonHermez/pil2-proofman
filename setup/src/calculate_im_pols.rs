@@ -96,6 +96,9 @@ pub fn process_pil_data(input_json: &str) -> String {
     let mut used_variables = HashSet::new();
     let mut possible_degree = 2;
 
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!(degree, 3);
+
     println!("-------------------- POSSIBLE DEGREES ----------------------");
     println!(
         "** Considering degrees between 2 and {} (blowup factor: {}) **",

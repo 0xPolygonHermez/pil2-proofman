@@ -196,12 +196,24 @@ pub fn calculate_added_cols(
     let added_cols = q_cols + im_cols;
 
     println!("Max constraint degree: {}", max_deg);
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!(max_deg, 2);
     println!("Number of intermediate polynomials: {}", im_exps.len());
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!(im_exps.len(), 2);
     println!("Polynomial Q degree: {}", q_deg);
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!(q_deg, 1);
     println!(
         "Number of columns added in the basefield: {} (Polynomial Q columns: {} + Intermediate polynomials columns: {})",
         added_cols, q_cols, im_cols
     );
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!(added_cols, 9);
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!(q_cols, 3);
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!(im_cols, 6);
 
     added_cols
 }
@@ -214,6 +226,9 @@ pub fn calculate_intermediate_polynomials(
     q_dim: usize,
 ) -> Value {
     let mut d: usize = 2;
+
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!(max_q_deg, 3);
 
     println!("-------------------- POSSIBLE DEGREES ----------------------");
     println!(
