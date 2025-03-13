@@ -3,7 +3,7 @@ use p3_field::PrimeField64;
 use num_traits::ToPrimitive;
 use proofman_starks_lib_c::get_const_tree_size_c;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 
 use std::{collections::HashMap, path::PathBuf};
 
@@ -11,7 +11,7 @@ use colored::*;
 
 use std::error::Error;
 
-use proofman_common::{format_bytes, ProofCtx, SetupCtx, SetupsVadcop};
+use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 
 pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
     let mpi_rank = pctx.dctx_get_rank();
@@ -219,36 +219,68 @@ pub fn check_paths(
     Ok(())
 }
 
+fn check_const_tree<F: PrimeField64>(setup: &Setup<F>) -> Result<(), Box<dyn Error>> {
+    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+    if !PathBuf::from(&const_pols_tree_path).exists() {
+        return Err(format!(
+            "Constant tree for {} ({:?}) does not exist. Run proofman check-setup.",
+            setup.air_name, setup.setup_type
+        )
+        .into());
+    }
+    let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+    match fs::metadata(&const_pols_tree_path) {
+        Ok(metadata) => {
+            let actual_size = metadata.len() as usize;
+            if actual_size != const_pols_tree_size * 8 {
+                return Err(format!(
+                    "File size mismatch for {} for {:?}. Expected: {}, Found: {}. Run proofman check-setup.",
+                    setup.air_name,
+                    setup.setup_type,
+                    const_pols_tree_size * 8,
+                    actual_size
+                )
+                .into());
+            }
+        }
+        Err(err) => {
+            return Err(format!("Failed to get metadata for {}: {}", setup.air_name, err).into());
+        }
+    }
+    if setup.setup_type != ProofType::RecursiveF {
+        let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
+
+        let mut contents = String::new();
+        let mut file = File::open(verkey_path).unwrap();
+        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {}", err));
+        let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
+
+        let mut file = File::open(&const_pols_tree_path)?;
+        file.seek(SeekFrom::End(-32))?; // Move to 32 bytes before the end
+
+        let mut buffer = [0u8; 32];
+        file.read_exact(&mut buffer)?;
+
+        for (i, verkey_val) in verkey_u64.iter().enumerate() {
+            let byte_range = i * 8..(i + 1) * 8;
+            let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
+            if value != *verkey_val {
+                return Err(format!(
+                    "Verkey mismatch for {} for {:?}. Expected: {}, Found: {}. Run proofman check-setup",
+                    setup.air_name, setup.setup_type, value, verkey_val
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Result<(), Box<dyn Error>> {
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id);
-            let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-            if !PathBuf::from(&const_pols_tree_path).exists() {
-                return Err(format!(
-                    "Constant tree for {} ({:?}) does not exist. Run proofman setup.",
-                    setup.air_name, setup.setup_type
-                )
-                .into());
-            }
-            let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
-            match fs::metadata(&const_pols_tree_path) {
-                Ok(metadata) => {
-                    let actual_size = metadata.len() as usize;
-                    if actual_size != const_pols_tree_size * 8 {
-                        return Err(format!(
-                            "File size mismatch for {}. Expected: {}, Found: {}. Run proofman setup.",
-                            setup.air_name,
-                            const_pols_tree_size * 8,
-                            actual_size
-                        )
-                        .into());
-                    }
-                }
-                Err(err) => {
-                    return Err(format!("Failed to get metadata for {}: {}", setup.air_name, err).into());
-                }
-            }
+            check_const_tree(setup)?;
         }
     }
     Ok(())
@@ -263,32 +295,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup = sctx_compressor.get_setup(airgroup_id, air_id);
-                let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-                if !PathBuf::from(&const_pols_tree_path).exists() {
-                    return Err(format!(
-                        "Constant tree for {} ({:?}) does not exist. Run proofman setup.",
-                        setup.air_name, setup.setup_type
-                    )
-                    .into());
-                }
-                let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
-                match fs::metadata(&const_pols_tree_path) {
-                    Ok(metadata) => {
-                        let actual_size = metadata.len() as usize;
-                        if actual_size != const_pols_tree_size * 8 {
-                            return Err(format!(
-                                "File size mismatch for {}. Expected: {}, Found: {}. Run proofman setup.",
-                                setup.air_name,
-                                const_pols_tree_size * 8,
-                                actual_size
-                            )
-                            .into());
-                        }
-                    }
-                    Err(err) => {
-                        return Err(format!("Failed to get metadata for {}: {}", setup.air_name, err).into());
-                    }
-                }
+                check_const_tree(setup)?;
             }
         }
     }
@@ -297,10 +304,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
-            let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-            if !PathBuf::from(&const_pols_tree_path).exists() {
-                return Err(format!("Invalid constant tree {}. Proofman setup needs to be run", setup.air_name).into());
-            }
+            check_const_tree(setup)?;
         }
     }
 
@@ -308,28 +312,15 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = sctx_recursive2.get_setup(airgroup, 0);
-        let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-        if !PathBuf::from(&const_pols_tree_path).exists() {
-            return Err(format!("Invalid constant tree {}. Proofman setup needs to be run", setup.air_name).into());
-        }
+        check_const_tree(setup)?;
     }
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    let const_pols_tree_path = setup_vadcop_final.setup_path.display().to_string() + ".consttree";
-    if !PathBuf::from(&const_pols_tree_path).exists() {
-        return Err(
-            format!("Invalid constant tree {}. Proofman setup needs to be run", setup_vadcop_final.air_name).into()
-        );
-    }
+    check_const_tree(setup_vadcop_final)?;
 
     if pctx.options.final_snark {
         let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-        let const_pols_tree_path = setup_recursivef.setup_path.display().to_string() + ".consttree";
-        if !PathBuf::from(&const_pols_tree_path).exists() {
-            return Err(
-                format!("Invalid constant tree {}. Proofman setup needs to be run", setup_recursivef.air_name).into()
-            );
-        }
+        check_const_tree(setup_recursivef)?;
     }
 
     Ok(())

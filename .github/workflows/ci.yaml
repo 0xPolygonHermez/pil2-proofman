@@ -199,8 +199,8 @@ jobs:
       - name: Cargo build
         run: RUST_BACKTRACE=1 cargo build -v
 
-      - name: Cargo setup
-        run: cargo run --bin proofman-cli setup --proving-key examples/fibonacci-square/build/provingKey/ -a
+      - name: Cargo check-setup
+        run: cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ -a
 
       - name: Verify constraints Fibonacci Square
         run: |
@@ -436,26 +436,26 @@ jobs:
       - name: Cargo build
         run: RUST_BACKTRACE=1 cargo build -v
 
-      - name: Cargo setup lookup
-        run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/lookup/build/provingKey
+      - name: Cargo check-setup lookup
+        run: cargo run --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/lookup/build/provingKey
 
-      - name: Cargo setup permutation
-        run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/permutation/build/provingKey
+      - name: Cargo check-setup permutation
+        run: cargo run --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/permutation/build/provingKey
 
-      - name: Cargo setup connection
-        run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/connection/build/provingKey
+      - name: Cargo check-setup connection
+        run: cargo run --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/connection/build/provingKey
 
-      - name: Cargo setup direct_update
-        run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/direct_update/build/provingKey
+      - name: Cargo check-setup direct_update
+        run: cargo run --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/direct_update/build/provingKey
 
-      - name: Cargo setup range-check
-        run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/range_check/build/provingKey
+      - name: Cargo check-setup range-check
+        run: cargo run --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/range_check/build/provingKey
 
-      - name: Cargo setup simple
-        run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/simple/build/provingKey
+      - name: Cargo check-setup simple
+        run: cargo run --bin proofman-cli check-setup --proving-key ./pil2-components/test/simple/build/provingKey
 
-      - name: Cargo setup diff_buses
-        run: cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
+      - name: Cargo check-setup diff_buses
+        run: cargo run --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
 
 
       - name: Verify constraints Lookup
