@@ -19,7 +19,7 @@ inline RawFr::Element fromString(const std::string& element) {
 }
 
 template <typename ElementType>
-bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsBin, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* challenges_) {
+bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsBin, string verkeyFile, Goldilocks::Element *publics, Goldilocks::Element *proofValues, bool challengesVadcop, Goldilocks::Element* globalChallenge) {
 
     json verkeyJson;
     file2json(verkeyFile, verkeyJson);
@@ -56,22 +56,21 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
 
     Goldilocks::Element airValues[starkInfo.airValuesMap.size()  * FIELD_EXTENSION];
-    uint64_t c = 0;
+    uint64_t a = 0;
     for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); ++i) {
         if(starkInfo.airValuesMap[i].stage == 1) {
-            airValues[c++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
+            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
         } else {
-            airValues[c++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
-            airValues[c++] = Goldilocks::fromString(jproof["airvalues"][i][1]);
-            airValues[c++] = Goldilocks::fromString(jproof["airvalues"][i][2]);
+            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][0]);
+            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][1]);
+            airValues[a++] = Goldilocks::fromString(jproof["airvalues"][i][2]);
         }
     }
 
     Goldilocks::Element challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size() + 1) * FIELD_EXTENSION];
 
+    TranscriptType transcript(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom);
     if(!challengesVadcop) {
-        uint64_t c = 0;
-        TranscriptType transcript(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom);
         transcript.put(&verkey[0], nFieldElements);
         if(starkInfo.nPublics > 0) {
             if(!starkInfo.starkStruct.hashCommits) {
@@ -85,84 +84,109 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             }
         }
 
-        for(uint64_t s = 1; s <= starkInfo.nStages + 1; ++s) {
-            uint64_t nChallenges = std::count_if(starkInfo.challengesMap.begin(), starkInfo.challengesMap.end(),[s](const PolMap& c) { return c.stage == s; });
-            for(uint64_t i = 0; i < nChallenges; ++i) {
-                transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
-                c++;
-            }
-            ElementType root[nFieldElements];
-            if(nFieldElements == 1) {
-                root[0] = fromString<ElementType>(jproof["root" + to_string(s)]);
-            } else {
-                for(uint64_t i = 0; i < nFieldElements; ++i) {
-                    root[i] = fromString<ElementType>(jproof["root" + to_string(s)][i]);
-                }
-            }
-            transcript.put(&root[0], nFieldElements);
-        }
-
-        // Evals challenge
-        transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
-        c++;
-
-        if(!starkInfo.starkStruct.hashCommits) {
-            transcript.put(&evals[0], starkInfo.evMap.size()  * FIELD_EXTENSION);
+        ElementType root[nFieldElements];
+        if(nFieldElements == 1) {
+            root[0] = fromString<ElementType>(jproof["root1"]);
         } else {
-            ElementType hash[nFieldElements];
-            TranscriptType transcriptHash(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom);
-            transcriptHash.put(&evals[0], starkInfo.evMap.size()  * FIELD_EXTENSION);
-            transcriptHash.getState(hash);
-            transcript.put(hash, nFieldElements);
+            for(uint64_t i = 0; i < nFieldElements; ++i) {
+                root[i] = fromString<ElementType>(jproof["root1"][i]);
+            }
         }
+        transcript.put(&root[0], nFieldElements);
+    } else {
+        transcript.put(globalChallenge, FIELD_EXTENSION);
+    }
 
-        // FRI challenges
-        transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
-        c++;
-        transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
-        c++;
-
-        for (uint64_t step=0; step<starkInfo.starkStruct.steps.size(); step++) {
+    uint64_t c = 0;
+    for(uint64_t s = 2; s <= starkInfo.nStages + 1; ++s) {
+        uint64_t nChallenges = std::count_if(starkInfo.challengesMap.begin(), starkInfo.challengesMap.end(),[s](const PolMap& c) { return c.stage == s; });
+        for(uint64_t i = 0; i < nChallenges; ++i) {
             transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
             c++;
-            if (step < starkInfo.starkStruct.steps.size() - 1) {
-                ElementType root[nFieldElements];
-                if(nFieldElements == 1) {
-                    root[0] = fromString<ElementType>(jproof["s" + std::to_string(step + 1) + "_root"]);
-                } else {
-                    for(uint64_t i = 0; i < nFieldElements; ++i) {
-                        root[i] = fromString<ElementType>(jproof["s" + std::to_string(step + 1) + "_root"][i]);
-                    }
-                }
-                
-                transcript.put(&root[0], nFieldElements);
-            } else {
-                uint64_t finalPolSize = (1<< starkInfo.starkStruct.steps[step].nBits);
-                Goldilocks::Element finalPol[finalPolSize * FIELD_EXTENSION];
-                for(uint64_t i = 0; i < finalPolSize; ++i) {
-                    for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
-                        finalPol[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["finalPol"][i][j]);
-                    }
-                }
-
-                if(!starkInfo.starkStruct.hashCommits) {
-                    transcript.put(&finalPol[0],finalPolSize*FIELD_EXTENSION);
-                } else {
-                    ElementType hash[nFieldElements];
-                    TranscriptType transcriptHash(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom);
-                    transcriptHash.put(&finalPol[0], finalPolSize*FIELD_EXTENSION);
-                    transcriptHash.getState(hash);
-                    transcript.put(hash, nFieldElements);
-                }
+        }
+        ElementType root[nFieldElements];
+        if(nFieldElements == 1) {
+            root[0] = fromString<ElementType>(jproof["root" + to_string(s)]);
+        } else {
+            for(uint64_t i = 0; i < nFieldElements; ++i) {
+                root[i] = fromString<ElementType>(jproof["root" + to_string(s)][i]);
             }
         }
+
+        transcript.put(&root[0], nFieldElements);
+
+        uint64_t p = 0;
+        for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); i++) {
+            if(starkInfo.airValuesMap[i].stage == 1) {
+                p++;
+            } else {
+                if(starkInfo.airValuesMap[i].stage == s) {
+                    transcript.put(&airValues[p], FIELD_EXTENSION);
+                }
+                p += 3;
+            }
+        }
+
+        // TODO: ADD PROOF VALUES ??
+    }
+
+    // Evals challenge
+    transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
+    c++;
+
+    if(!starkInfo.starkStruct.hashCommits) {
+        transcript.put(&evals[0], starkInfo.evMap.size()  * FIELD_EXTENSION);
+    } else {
+        ElementType hash[nFieldElements];
+        TranscriptType transcriptHash(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom);
+        transcriptHash.put(&evals[0], starkInfo.evMap.size()  * FIELD_EXTENSION);
+        transcriptHash.getState(hash);
+        transcript.put(hash, nFieldElements);
+    }
+
+    // FRI challenges
+    transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
+    c++;
+    transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
+    c++;
+
+    for (uint64_t step=0; step<starkInfo.starkStruct.steps.size(); step++) {
         transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
         c++;
-        assert(c == (starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size() + 1));
-        
-    } else {
-        std::memcpy(challenges, challenges_, ((starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size() + 1) * FIELD_EXTENSION) * sizeof(Goldilocks::Element));
+        if (step < starkInfo.starkStruct.steps.size() - 1) {
+            ElementType root[nFieldElements];
+            if(nFieldElements == 1) {
+                root[0] = fromString<ElementType>(jproof["s" + std::to_string(step + 1) + "_root"]);
+            } else {
+                for(uint64_t i = 0; i < nFieldElements; ++i) {
+                    root[i] = fromString<ElementType>(jproof["s" + std::to_string(step + 1) + "_root"][i]);
+                }
+            }
+            
+            transcript.put(&root[0], nFieldElements);
+        } else {
+            uint64_t finalPolSize = (1<< starkInfo.starkStruct.steps[step].nBits);
+            Goldilocks::Element finalPol[finalPolSize * FIELD_EXTENSION];
+            for(uint64_t i = 0; i < finalPolSize; ++i) {
+                for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
+                    finalPol[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["finalPol"][i][j]);
+                }
+            }
+
+            if(!starkInfo.starkStruct.hashCommits) {
+                transcript.put(&finalPol[0],finalPolSize*FIELD_EXTENSION);
+            } else {
+                ElementType hash[nFieldElements];
+                TranscriptType transcriptHash(starkInfo.starkStruct.merkleTreeArity, starkInfo.starkStruct.merkleTreeCustom);
+                transcriptHash.put(&finalPol[0], finalPolSize*FIELD_EXTENSION);
+                transcriptHash.getState(hash);
+                transcript.put(hash, nFieldElements);
+            }
+        }
     }
+    transcript.getField((uint64_t *)&challenges[c*FIELD_EXTENSION]);
+    c++;
+    assert(c == (starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size() + 1));
 
     Goldilocks::Element *challenge = &challenges[(starkInfo.challengesMap.size() + starkInfo.starkStruct.steps.size()) * FIELD_EXTENSION];
 
@@ -191,7 +215,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
 
     ProverHelpers proverHelpers(starkInfo, xiChallenge);
 
-    SetupCtx setupCtx(starkInfo, expressionsBin, proverHelpers);
+    SetupCtx setupCtx(starkInfo, expressionsBin);
 
     Goldilocks::Element *xDivXSub = new Goldilocks::Element[starkInfo.openingPoints.size() * FIELD_EXTENSION * starkInfo.starkStruct.nQueries];
     for(uint64_t i = 0; i < starkInfo.starkStruct.nQueries; ++i) {
@@ -268,7 +292,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     bool isValid = true;
 
     zklog.trace("Verifying evaluations");
-    ExpressionsPack expressionsPack(setupCtx, 1);
+    ExpressionsPack expressionsPack(setupCtx, proverHelpers, 1);
     
     Goldilocks::Element buff[FIELD_EXTENSION];
     Dest dest(buff, 1);

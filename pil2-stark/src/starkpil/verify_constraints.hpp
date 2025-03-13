@@ -84,7 +84,6 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
         nPols += setupCtx.starkInfo.mapSectionsN["cm" + to_string(stage)];
     }
 
-    // TODO: REUSE MEMORY
     Goldilocks::Element* pBuffer = new Goldilocks::Element[setupCtx.expressionsBin.constraintsInfoDebug.size() * N * FIELD_EXTENSION];
 
     std::vector<uint64_t> destToConstraintIndex;
@@ -103,12 +102,14 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
         }
     }
 
+    ProverHelpers proverHelpers;
+    
 #ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
+    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
 #elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
+    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
 #else
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
 
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsConstraints, dests, N, false);

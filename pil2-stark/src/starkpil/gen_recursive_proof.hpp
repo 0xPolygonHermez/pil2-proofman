@@ -1,21 +1,23 @@
 #include "starks.hpp"
 
 template <typename ElementType>
-void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, std::string proofFile, bool vadcop) {
+void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, bool vadcop) {
     TimerStart(STARK_PROOF);
+
+    ProverHelpers proverHelpers(setupCtx.starkInfo, true);
 
     FRIProof<ElementType> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
 
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     
-    Starks<ElementType> starks(setupCtx, pConstTree);
+    Starks<ElementType> starks(setupCtx, proverHelpers, pConstTree);
     
 #ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
+    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
 #elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
+    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
 #else
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
@@ -80,8 +82,8 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    Goldilocks::Element *res = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
-    Goldilocks::Element *gprod = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("q", true)] + N*FIELD_EXTENSION];
+    Goldilocks::Element *res = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
+    Goldilocks::Element *gprod = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("buff_helper", false)] + N*FIELD_EXTENSION];
 
     uint64_t gprodFieldId = setupCtx.expressionsBin.hints[0].fields[0].values[0].id;
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
@@ -146,7 +148,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
 
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
-    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("LEv", true)]];
+    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("buff_helper", false)]];
 
     starks.computeLEv(xiChallenge, LEv);
     starks.computeEvals(params ,LEv, proof);
@@ -175,8 +177,6 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     TimerStart(STARK_STEP_FRI);
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
-    params.xDivXSub = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("xDivXSubXi", true)]];
-    starks.calculateXDivXSub(xiChallenge, params.xDivXSub);
     starks.calculateFRIPolynomial(params);
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
@@ -228,22 +228,32 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     TimerStopAndLog(STARK_STEP_FRI);
 
-    nlohmann::json zkin = proof.proof.proof2json();
-    
-TimerStopAndLog(STARK_PROOF);
 
-    if(vadcop) {
-        zkin = publics2zkin(zkin, publicInputs, globalInfo, airgroupId);
+    if (setupCtx.starkInfo.starkStruct.verificationHashType == "BN128") {
+        nlohmann::json zkin = proof.proof.proof2json();
+        if(vadcop) {
+            zkin = publics2zkin(zkin, setupCtx.starkInfo.nPublics, publicInputs, globalInfo, airgroupId);
+        } else {
+            zkin["publics"] = json::array();
+            for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
+                zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
+            }
+        }
+
+        if(!proofFile.empty()) {
+            json2file(zkin, proofFile);
+        }
+
+        return (void *) new nlohmann::json(zkin);
     } else {
-        zkin["publics"] = json::array();
-        for(uint64_t i = 0; i < uint64_t(globalInfo["nPublics"]); ++i) {
-            zkin["publics"][i] = Goldilocks::toString(publicInputs[i]);
+        proofBuffer = proof.proof.proof2pointer(proofBuffer);
+        if(!proofFile.empty()) {
+            json2file(pointer2json(proofBuffer, setupCtx.starkInfo), proofFile);
         }
     }
 
-    if(!proofFile.empty()) {
-        json2file(zkin, proofFile);
-    }
+    TimerStopAndLog(STARK_PROOF);
+
     
-    return (void *) new nlohmann::json(zkin);
+    return nullptr;
 }

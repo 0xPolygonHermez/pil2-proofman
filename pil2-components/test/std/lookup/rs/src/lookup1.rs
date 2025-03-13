@@ -1,53 +1,54 @@
 use std::sync::Arc;
 
-use witness::WitnessComponent;
-use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
+use witness::{WitnessComponent, execute, define_wc};
+use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField;
-use rand::{distributions::Standard, prelude::Distribution, Rng};
+use p3_field::PrimeField64;
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+};
 
 use crate::Lookup1Trace;
 
-pub struct Lookup1;
+define_wc!(Lookup1, "Lookup_1");
 
-impl Lookup1 {
-    const MY_NAME: &'static str = "Lookup_1";
-
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self)
-    }
-}
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup1
+impl<F: PrimeField64> WitnessComponent<F> for Lookup1
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let mut rng = rand::thread_rng();
+    execute!(Lookup1Trace, 1);
 
-        let mut trace = Lookup1Trace::new();
-        let num_rows = trace.num_rows();
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+        if stage == 1 {
+            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+            let mut rng = StdRng::seed_from_u64(seed);
 
-        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            let mut trace = Lookup1Trace::new();
+            let num_rows = trace.num_rows();
 
-        let num_lookups = trace[0].sel.len();
+            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        for i in 0..num_rows {
-            let val = rng.gen();
-            let mut n_sel = 0;
-            for j in 0..num_lookups {
-                trace[i].f[j] = val;
-                let selected = rng.gen_bool(0.5);
-                trace[i].sel[j] = F::from_bool(selected);
-                if selected {
-                    n_sel += 1;
+            let num_lookups = trace[0].sel.len();
+
+            for i in 0..num_rows {
+                let val = rng.random();
+                let mut n_sel = 0;
+                for j in 0..num_lookups {
+                    trace[i].f[j] = val;
+                    let selected = rng.random::<bool>();
+                    trace[i].sel[j] = F::from_bool(selected);
+                    if selected {
+                        n_sel += 1;
+                    }
                 }
+                trace[i].t = val;
+                trace[i].mul = F::from_usize(n_sel);
             }
-            trace[i].t = val;
-            trace[i].mul = F::from_canonical_usize(n_sel);
-        }
 
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        add_air_instance::<F>(air_instance, pctx.clone());
+            let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
+            pctx.add_air_instance(air_instance, instance_ids[0]);
+        }
     }
 }

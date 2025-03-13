@@ -1,4 +1,7 @@
-use std::sync::{atomic::AtomicU64, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64},
+    Arc,
+};
 
 use p3_field::PrimeField64;
 
@@ -25,17 +28,14 @@ pub struct U8Air {
     num_cols: usize,
     mins: Vec<Min>,
     multiplicities: Vec<Vec<AtomicU64>>,
+    instance_id: AtomicU64,
+    calculated: AtomicBool,
 }
 
 impl<F: PrimeField64> AirComponent<F> for U8Air {
     const MY_NAME: &'static str = "U8Air   ";
 
-    fn new(
-        pctx: Arc<ProofCtx<F>>,
-        _sctx: Arc<SetupCtx<F>>,
-        airgroup_id: Option<usize>,
-        air_id: Option<usize>,
-    ) -> Arc<Self> {
+    fn new(pctx: &ProofCtx<F>, _sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
         let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
         let air_id = air_id.expect("Air ID must be provided");
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
@@ -49,13 +49,25 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
             .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
             .collect();
 
-        Arc::new(Self { airgroup_id, air_id, num_rows, num_cols, mins, multiplicities })
+        Arc::new(Self {
+            airgroup_id,
+            air_id,
+            num_rows,
+            num_cols,
+            mins,
+            multiplicities,
+            instance_id: AtomicU64::new(0),
+            calculated: AtomicBool::new(false),
+        })
     }
 }
 
 impl U8Air {
     #[inline(always)]
     pub fn update_inputs(&self, value: u8, multiplicity: u64) {
+        if self.calculated.load(Ordering::Relaxed) {
+            return;
+        }
         let mins = &self.mins;
 
         // Identify to which sub-range the value belongs
@@ -79,30 +91,36 @@ impl U8Air {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for U8Air {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let (instance_found, _) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+        let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
         if !instance_found {
-            pctx.dctx_add_instance_no_assign(
-                self.airgroup_id,
-                self.air_id,
-                pctx.get_weight(self.airgroup_id, self.air_id),
-            );
+            instance_id = pctx.add_instance_all(self.airgroup_id, self.air_id);
         }
+
+        self.instance_id.store(instance_id as u64, Ordering::SeqCst);
+
+        Vec::new()
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>) {
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
         if stage == 1 {
-            let (_, instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
+            let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
+
+            if !_instance_ids.contains(&instance_id) {
+                return;
+            }
 
             pctx.dctx_distribute_multiplicities(&self.multiplicities, instance_id);
+
+            self.calculated.store(true, Ordering::Relaxed);
 
             if pctx.dctx_is_my_instance(instance_id) {
                 let buffer_size = self.num_cols * self.num_rows;
                 let mut buffer = create_buffer_fast::<F>(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
-                        chunk[col] = F::from_canonical_u64(vec[row].load(Ordering::Relaxed));
+                        chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));
                     }
                 });
 

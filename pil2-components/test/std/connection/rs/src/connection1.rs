@@ -1,42 +1,43 @@
 use std::sync::Arc;
 
-use witness::WitnessComponent;
-use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
+use witness::{WitnessComponent, execute, define_wc};
+use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField;
-use rand::{distributions::Standard, prelude::Distribution, Rng};
+use p3_field::PrimeField64;
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+};
 
 use crate::Connection1Trace;
 
-pub struct Connection1;
+define_wc!(Connection1, "Connct_1");
 
-impl Connection1 {
-    const MY_NAME: &'static str = "Connct_1";
-
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self)
-    }
-}
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for Connection1
+impl<F: PrimeField64> WitnessComponent<F> for Connection1
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let mut rng = rand::thread_rng();
+    execute!(Connection1Trace, 1);
 
-        let mut trace = Connection1Trace::new_zeroes();
-        let num_rows = trace.num_rows();
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+        if stage == 1 {
+            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+            let mut rng = StdRng::seed_from_u64(seed);
 
-        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            let mut trace = Connection1Trace::new();
+            let num_rows = trace.num_rows();
 
-        for i in 0..num_rows {
-            trace[i].a = rng.gen();
-            trace[i].b = rng.gen();
-            trace[i].c = rng.gen();
+            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+
+            for i in 0..num_rows {
+                trace[i].a = rng.random();
+                trace[i].b = rng.random();
+                trace[i].c = rng.random();
+            }
+
+            let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
+            pctx.add_air_instance(air_instance, instance_ids[0]);
         }
-
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        add_air_instance::<F>(air_instance, pctx.clone());
     }
 }

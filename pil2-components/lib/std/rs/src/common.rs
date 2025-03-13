@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use p3_field::PrimeField64;
+use p3_field::{Field, PrimeField64};
 
 use proofman_common::{ProofCtx, SetupCtx};
 use proofman_hints::{
@@ -8,26 +8,20 @@ use proofman_hints::{
     HintFieldValue,
 };
 
-pub trait AirComponent<F: Clone> {
+pub trait AirComponent<F: Field> {
     const MY_NAME: &'static str;
 
-    fn new(
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        airgroup_id: Option<usize>,
-        air_id: Option<usize>,
-    ) -> Arc<Self>;
+    fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self>;
 }
 
 // Helper to extract hint fields
-pub fn get_global_hint_field_constant_as<T, F>(sctx: Arc<SetupCtx<F>>, hint_id: u64, field_name: &str) -> T
+pub fn get_global_hint_field_constant_as<T, F>(sctx: &SetupCtx<F>, hint_id: u64, field_name: &str) -> T
 where
     T: TryFrom<u64>,
     T::Error: std::fmt::Debug,
     F: PrimeField64,
 {
-    let HintFieldValue::Field(field_value) = get_hint_field_constant_gc::<F>(sctx.clone(), hint_id, field_name, false)
-    else {
+    let HintFieldValue::Field(field_value) = get_hint_field_constant_gc(sctx, hint_id, field_name, false) else {
         panic!("Hint '{}' for field '{}' must be a field element", hint_id, field_name);
     };
 
@@ -44,7 +38,7 @@ pub fn get_hint_field_constant_as_field<F: PrimeField64>(
     field_name: &str,
     hint_field_options: HintFieldOptions,
 ) -> F {
-    match get_hint_field_constant::<F>(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options) {
+    match get_hint_field_constant(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options) {
         HintFieldValue::Field(value) => value,
         _ => panic!("Hint '{}' for field '{}' must be a field element", hint_id, field_name),
     }
@@ -85,10 +79,9 @@ pub fn get_hint_field_constant_a_as_string<F: PrimeField64>(
     field_name: &str,
     hint_field_options: HintFieldOptions,
 ) -> Vec<String> {
-    let hint_fields =
-        get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options);
+    let hint_fields = get_hint_field_constant_a(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options);
 
-    let mut return_values: Vec<String> = Vec::new();
+    let mut return_values = Vec::new();
     for (i, hint_field) in hint_fields.values.iter().enumerate() {
         match hint_field {
             HintFieldValue::String(value) => return_values.push(value.clone()),
@@ -107,7 +100,7 @@ pub fn get_hint_field_constant_as_string<F: PrimeField64>(
     field_name: &str,
     hint_field_options: HintFieldOptions,
 ) -> String {
-    match get_hint_field_constant::<F>(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options) {
+    match get_hint_field_constant(sctx, airgroup_id, air_id, hint_id, field_name, hint_field_options) {
         HintFieldValue::String(value) => value,
         _ => panic!("Hint '{}' for field '{}' must be a string", hint_id, field_name),
     }

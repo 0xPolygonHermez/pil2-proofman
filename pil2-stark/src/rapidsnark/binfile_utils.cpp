@@ -18,7 +18,7 @@ namespace BinFileUtils
         addr = malloc(size);
         int nThreads = omp_get_max_threads() / 2;
         ThreadUtils::parcpy(addr, data, size, nThreads);
-
+        
         type.assign((const char *)addr, 4);
         pos = 4;
 
@@ -56,7 +56,7 @@ namespace BinFileUtils
 
     BinFile::BinFile(std::string fileName, std::string _type, uint32_t maxVersion)
     {
-
+        
         int fd;
         struct stat sb;
 
@@ -70,10 +70,10 @@ namespace BinFileUtils
         size = sb.st_size + sizeof(u_int32_t) + sizeof(u_int64_t);
         void *addrmm = mmap(NULL, size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
         addr = malloc(size);
-
-        int nThreads = omp_get_max_threads() / 2;
-        ThreadUtils::parcpy(addr, addrmm, size, nThreads);
-        //    memcpy(addr, addrmm, sb.st_size);
+        
+        // int nThreads = omp_get_max_threads() / 2;
+        // ThreadUtils::parcpy(addr, addrmm, size, nThreads);
+        memcpy(addr, addrmm, sb.st_size);
 
         munmap(addrmm, size);
         close(fd);

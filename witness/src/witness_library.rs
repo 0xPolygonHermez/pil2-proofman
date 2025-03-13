@@ -1,12 +1,13 @@
 use std::{error::Error, sync::Arc};
 
 use crate::WitnessManager;
+use p3_field::Field;
 use proofman_common::VerboseMode;
 
 /// This is the type of the function that is used to load a witness library.
 pub type WitnessLibInitFn<F> = fn(VerboseMode) -> Result<Box<dyn WitnessLibrary<F>>, Box<dyn Error>>;
 
-pub trait WitnessLibrary<F: Clone> {
+pub trait WitnessLibrary<F: Field> {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>);
 }
 

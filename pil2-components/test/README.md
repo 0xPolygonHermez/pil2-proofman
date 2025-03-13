@@ -15,13 +15,14 @@ mkdir -p ./pil2-components/test/simple/build/ \
      --pilout ./pil2-components/test/simple/build/build.pilout \
      --path ./pil2-components/test/simple/rs/src -o \
 && cargo build \
+&& cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/simple/build/provingKey -a \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libsimple.so \
      --proving-key ./pil2-components/test/simple/build/provingKey \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libsimple.so \
      --proving-key ./pil2-components/test/simple/build/provingKey \
-     --output-dir ./pil2-components/test/simple/build/proofs
+     --output-dir ./pil2-components/test/simple/build/proofs -y
 
 ------------------------------------
 CONNECTION
@@ -38,13 +39,14 @@ mkdir -p ./pil2-components/test/std/connection/build/ \
      --pilout ./pil2-components/test/std/connection/build/build.pilout \
      --path ./pil2-components/test/std/connection/rs/src -o \
 && cargo build \
+&& cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/connection/build/provingKey -a \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libconnection.so \
      --proving-key ./pil2-components/test/std/connection/build/provingKey \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libconnection.so \
      --proving-key ./pil2-components/test/std/connection/build/provingKey \
-     --output-dir ./pil2-components/test/std/connection/build/proofs
+     --output-dir ./pil2-components/test/std/connection/build/proofs -y
 
 ------------------------------------
 DIFF BUSES
@@ -61,13 +63,14 @@ mkdir -p ./pil2-components/test/std/diff_buses/build/ \
      --pilout ./pil2-components/test/std/diff_buses/build/diff_buses.pilout \
      --path ./pil2-components/test/std/diff_buses/rs/src -o \
 && cargo build \
+&& cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/diff_buses/build/provingKey -a \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libdiff_buses.so \
      --proving-key ./pil2-components/test/std/diff_buses/build/provingKey \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libdiff_buses.so \
      --proving-key ./pil2-components/test/std/diff_buses/build/provingKey \
-     --output-dir ./pil2-components/test/std/diff_buses/build/proofs
+     --output-dir ./pil2-components/test/std/diff_buses/build/proofs -y
 
 ------------------------------------
 DIRECT UPDATES
@@ -84,13 +87,14 @@ mkdir -p ./pil2-components/test/std/direct_update/build/ \
      --pilout ./pil2-components/test/std/direct_update/build/direct_update.pilout \
      --path ./pil2-components/test/std/direct_update/rs/src -o \
 && cargo build \
+&& cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/direct_update/build/provingKey -a \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libdirect_update.so \
      --proving-key ./pil2-components/test/std/direct_update/build/provingKey \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libdirect_update.so \
      --proving-key ./pil2-components/test/std/direct_update/build/provingKey \
-     --output-dir ./pil2-components/test/std/direct_update/build/proofs
+     --output-dir ./pil2-components/test/std/direct_update/build/proofs -y
 
 ------------------------------------
 LOOKUP
@@ -107,13 +111,14 @@ mkdir -p ./pil2-components/test/std/lookup/build/ \
      --pilout ./pil2-components/test/std/lookup/build/build.pilout \
      --path ./pil2-components/test/std/lookup/rs/src -o \
 && cargo build \
+&& cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/lookup/build/provingKey -a \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/liblookup.so \
      --proving-key ./pil2-components/test/std/lookup/build/provingKey \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/liblookup.so \
      --proving-key ./pil2-components/test/std/lookup/build/provingKey \
-     --output-dir ./pil2-components/test/std/lookup/build/proofs
+     --output-dir ./pil2-components/test/std/lookup/build/proofs -y
 
 ------------------------------------
 PERMUTATION
@@ -130,13 +135,14 @@ mkdir -p ./pil2-components/test/std/permutation/build/ \
      --pilout ./pil2-components/test/std/permutation/build/build.pilout \
      --path ./pil2-components/test/std/permutation/rs/src -o \
 && cargo build \
+&& cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/permutation/build/provingKey -a \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libpermutation.so \
      --proving-key ./pil2-components/test/std/permutation/build/provingKey \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libpermutation.so \
      --proving-key ./pil2-components/test/std/permutation/build/provingKey \
-     --output-dir ./pil2-components/test/std/permutation/build/proofs
+     --output-dir ./pil2-components/test/std/permutation/build/proofs -y
 
 ------------------------------------
 RANGE CHECKS
@@ -145,7 +151,7 @@ mkdir -p ./pil2-components/test/std/range_check/build/ \
 && rm -rf pil2-components/test/range_check/build/proofs/ \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/range_check/build.pil \
      -I ./pil2-components/lib/std/pil \
-     -o ./pil2-components/test/std/range_check/build/build.pilout \
+-o ./pil2-components/test/std/range_check/build/build.pilout \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/range_check/build/build.pilout \
      -b ./pil2-components/test/std/range_check/build \
@@ -153,13 +159,11 @@ mkdir -p ./pil2-components/test/std/range_check/build/ \
      --pilout ./pil2-components/test/std/range_check/build/build.pilout \
      --path ./pil2-components/test/std/range_check/rs/src -o \
 && cargo build \
-&& cargo run --bin proofman-cli verify-constraints \
-     --witness-lib ./target/debug/librange_check.so \
-     --proving-key ./pil2-components/test/std/range_check/build/provingKey \
+&& cargo run --bin proofman-cli setup --proving-key ./pil2-components/test/std/range_check/build/provingKey -a \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/librange_check.so \
      --proving-key ./pil2-components/test/std/range_check/build/provingKey \
-     --output-dir ./pil2-components/test/std/range_check/build/proofs
+     --output-dir ./pil2-components/test/std/range_check/build/proofs -y
 
 ------------------------------------
 SPECIAL

@@ -1,5 +1,4 @@
 mod air_instance;
-mod air_instances_repository;
 mod verbose_mode;
 mod distribution_ctx;
 mod proof_ctx;
@@ -15,11 +14,9 @@ pub mod stark_info;
 pub mod utils;
 pub mod custom_commits;
 pub mod constraints;
-pub mod prover_helpers;
 pub mod fixed_cols;
 
 pub use air_instance::*;
-pub use air_instances_repository::*;
 pub use verbose_mode::*;
 pub use proof_ctx::*;
 pub use prover::*;
@@ -34,5 +31,4 @@ pub use utils::*;
 pub use distribution_ctx::*;
 pub use custom_commits::*;
 pub use constraints::*;
-pub use prover_helpers::*;
 pub use fixed_cols::*;

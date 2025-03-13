@@ -2,14 +2,11 @@ use std::sync::Arc;
 
 use p3_field::PrimeField64;
 
-use proofman_common::{ProofCtx, SetupCtx};
 use witness::WitnessManager;
 
-use crate::{AirComponent, StdProd, StdRangeCheck, StdSum};
+use crate::{StdProd, StdRangeCheck, StdSum};
 
 pub struct Std<F: PrimeField64> {
-    pub pctx: Arc<ProofCtx<F>>,
-    pub sctx: Arc<SetupCtx<F>>,
     pub range_check: Arc<StdRangeCheck<F>>,
     pub std_prod: Arc<StdProd<F>>,
     pub std_sum: Arc<StdSum<F>>,
@@ -19,17 +16,20 @@ impl<F: PrimeField64> Std<F> {
     const MY_NAME: &'static str = "STD     ";
 
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let std_mode = wcm.get_pctx().options.debug_info.std_mode.clone();
+        let pctx = wcm.get_pctx();
+        let sctx = wcm.get_sctx();
+
+        let std_mode = pctx.options.debug_info.std_mode.clone();
         log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
-        let std_prod = StdProd::new(wcm.get_pctx(), wcm.get_sctx(), None, None);
-        let std_sum = StdSum::new(wcm.get_pctx(), wcm.get_sctx(), None, None);
-        let range_check = StdRangeCheck::new(wcm.get_pctx(), wcm.get_sctx());
+        let std_prod = StdProd::new();
+        let std_sum = StdSum::new();
+        let range_check = StdRangeCheck::new(pctx.clone(), &sctx);
 
-        Self::register_std(wcm.clone(), std_prod.clone(), std_sum.clone(), range_check.clone());
+        Self::register_std(wcm, std_prod.clone(), std_sum.clone(), range_check.clone());
 
-        Arc::new(Self { pctx: wcm.get_pctx(), sctx: wcm.get_sctx(), range_check, std_prod, std_sum })
+        Arc::new(Self { range_check, std_prod, std_sum })
     }
 
     pub fn register_std(

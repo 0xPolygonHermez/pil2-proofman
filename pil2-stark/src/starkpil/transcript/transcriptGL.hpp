@@ -10,7 +10,6 @@
 #define TRANSCRIPT_PENDING_SIZE 8
 #define TRANSCRIPT_OUT_SIZE 12
 
-// TODO: Pending to review and re-factor
 class TranscriptGL
 {
 private:

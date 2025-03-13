@@ -1,84 +1,90 @@
 use std::sync::Arc;
 
-use pil_std_lib::Std;
-use witness::WitnessComponent;
+use witness::{WitnessComponent, execute, define_wc_with_std};
 
-use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
+use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField64;
-use rand::{distributions::Standard, prelude::Distribution, Rng};
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+};
 
 use crate::RangeCheckDynamic1Trace;
 
-pub struct RangeCheckDynamic1<F: PrimeField64> {
-    std_lib: Arc<Std<F>>,
-}
-
-impl<F: PrimeField64> RangeCheckDynamic1<F>
-where
-    Standard: Distribution<F>,
-{
-    const MY_NAME: &'static str = "RngChDy1";
-
-    pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
-        Arc::new(Self { std_lib })
-    }
-}
+define_wc_with_std!(RangeCheckDynamic1, "RngChDy1");
 
 impl<F: PrimeField64> WitnessComponent<F> for RangeCheckDynamic1<F>
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let mut rng = rand::thread_rng();
+    execute!(RangeCheckDynamic1Trace, 1);
 
-        let mut trace = RangeCheckDynamic1Trace::new_zeroes();
-        let num_rows = trace.num_rows();
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+        if stage == 1 {
+            let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
-        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            let mut trace = RangeCheckDynamic1Trace::new();
+            let num_rows = trace.num_rows();
 
-        let range7 = self.std_lib.get_range(0, (1 << 7) - 1, Some(false));
-        let range8 = self.std_lib.get_range(0, (1 << 8) - 1, Some(false));
-        let range16 = self.std_lib.get_range(0, (1 << 16) - 1, Some(false));
-        let range17 = self.std_lib.get_range(0, (1 << 17) - 1, Some(false));
+            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        for i in 0..num_rows {
-            let range = rng.gen_range(0..=3);
+            let range7 = self.std_lib.get_range(0, (1 << 7) - 1, Some(false));
+            let range8 = self.std_lib.get_range(0, (1 << 8) - 1, Some(false));
+            let range16 = self.std_lib.get_range(0, (1 << 16) - 1, Some(false));
+            let range17 = self.std_lib.get_range(0, (1 << 17) - 1, Some(false));
 
-            match range {
-                0 => {
-                    trace[i].sel_7 = F::one();
-                    let val = rng.gen_range(0..=(1 << 7) - 1);
-                    trace[i].colu = F::from_canonical_u16(val);
+            for i in 0..num_rows {
+                let range = rng.random_range(0..=3);
 
-                    self.std_lib.range_check(val as i64, 1, range7);
+                match range {
+                    0 => {
+                        trace[i].sel_7 = F::ONE;
+                        trace[i].sel_8 = F::ZERO;
+                        trace[i].sel_16 = F::ZERO;
+                        trace[i].sel_17 = F::ZERO;
+                        let val = rng.random_range(0..=(1 << 7) - 1);
+                        trace[i].colu = F::from_u16(val);
+
+                        self.std_lib.range_check(val as i64, 1, range7);
+                    }
+                    1 => {
+                        trace[i].sel_7 = F::ZERO;
+                        trace[i].sel_8 = F::ONE;
+                        trace[i].sel_16 = F::ZERO;
+                        trace[i].sel_17 = F::ZERO;
+                        let val = rng.random_range(0..=(1 << 8) - 1);
+                        trace[i].colu = F::from_u16(val);
+
+                        self.std_lib.range_check(val as i64, 1, range8);
+                    }
+                    2 => {
+                        trace[i].sel_7 = F::ZERO;
+                        trace[i].sel_8 = F::ZERO;
+                        trace[i].sel_16 = F::ONE;
+                        trace[i].sel_17 = F::ZERO;
+                        let val = rng.random_range(0..=(1 << 16) - 1);
+                        trace[i].colu = F::from_u32(val);
+
+                        self.std_lib.range_check(val as i64, 1, range16);
+                    }
+                    3 => {
+                        trace[i].sel_7 = F::ZERO;
+                        trace[i].sel_8 = F::ZERO;
+                        trace[i].sel_16 = F::ZERO;
+                        trace[i].sel_17 = F::ONE;
+                        let val = rng.random_range(0..=(1 << 17) - 1);
+                        trace[i].colu = F::from_u32(val);
+
+                        self.std_lib.range_check(val as i64, 1, range17);
+                    }
+                    _ => panic!("Invalid range"),
                 }
-                1 => {
-                    trace[i].sel_8 = F::one();
-                    let val = rng.gen_range(0..=(1 << 8) - 1);
-                    trace[i].colu = F::from_canonical_u16(val);
-
-                    self.std_lib.range_check(val as i64, 1, range8);
-                }
-                2 => {
-                    trace[i].sel_16 = F::one();
-                    let val = rng.gen_range(0..=(1 << 16) - 1);
-                    trace[i].colu = F::from_canonical_u32(val);
-
-                    self.std_lib.range_check(val as i64, 1, range16);
-                }
-                3 => {
-                    trace[i].sel_17 = F::one();
-                    let val = rng.gen_range(0..=(1 << 17) - 1);
-                    trace[i].colu = F::from_canonical_u32(val);
-
-                    self.std_lib.range_check(val as i64, 1, range17);
-                }
-                _ => panic!("Invalid range"),
             }
-        }
 
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        add_air_instance::<F>(air_instance, pctx.clone());
+            let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
+            pctx.add_air_instance(air_instance, instance_ids[0]);
+        }
     }
 }
