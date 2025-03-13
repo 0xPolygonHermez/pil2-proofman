@@ -1,8 +1,9 @@
 use log::info;
 use p3_field::PrimeField64;
 use num_traits::ToPrimitive;
+use proofman_starks_lib_c::get_const_tree_size_c;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 
 use std::{collections::HashMap, path::PathBuf};
 
@@ -10,9 +11,9 @@ use colored::*;
 
 use std::error::Error;
 
-use proofman_common::{format_bytes, ProofCtx, SetupsVadcop};
+use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 
-pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) {
+pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
     let mpi_rank = pctx.dctx_get_rank();
     let n_processes = pctx.dctx_get_n_processes();
 
@@ -29,20 +30,21 @@ pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setup
     }
 
     if mpi_rank == 0 {
-        print_summary(name, pctx, setups, true);
+        print_summary(name, pctx, sctx, true);
     }
 
     if n_processes > 1 {
-        print_summary(name, pctx, setups, false);
+        print_summary(name, pctx, sctx, false);
     }
 }
 
-pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>, global: bool) {
+pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global: bool) {
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();
 
     let instances = pctx.dctx_get_instances();
+    let mut n_instances = instances.len();
 
     let mut print = vec![global; instances.len()];
 
@@ -51,6 +53,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &S
         for instance_id in my_instances.iter() {
             print[*instance_id] = true;
         }
+        n_instances = my_instances.len();
     }
 
     for (instance_id, (airgroup_id, air_id, _)) in instances.iter().enumerate() {
@@ -61,44 +64,12 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &S
         let air_group_name = pctx.global_info.air_groups[*airgroup_id].clone();
         let air_instance_map = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
         if !air_instance_map.contains_key(&air_name.clone()) {
-            let setup = setups.sctx.get_setup(*airgroup_id, *air_id);
+            let setup = sctx.get_setup(*airgroup_id, *air_id);
             let n_bits = setup.stark_info.stark_struct.n_bits;
             let memory_instance = setup.prover_buffer_size as f64 * 8.0;
-            let mut memory_fixed =
-                (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64;
-            if !pctx.options.verify_constraints {
-                memory_fixed += (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits_ext))
-                    + (1 << (setup.stark_info.stark_struct.n_bits_ext))
-                    + ((2 * (1 << (setup.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
-                    as f64;
-            }
-            memory_fixed *= 8.0;
-            let mut memory_fixed_aggregation = 0f64;
-            if pctx.options.aggregation {
-                if pctx.global_info.get_air_has_compressor(*airgroup_id, *air_id) {
-                    let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(*airgroup_id, *air_id);
-                    memory_fixed_aggregation += (setup_compressor.stark_info.n_constants
-                        * (1 << (setup_compressor.stark_info.stark_struct.n_bits))
-                        + setup_compressor.stark_info.n_constants
-                            * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
-                        + (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext))
-                        + ((2 * (1 << (setup_compressor.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
-                        as f64
-                        * 8.0;
-                }
+            let memory_fixed =
+                (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
 
-                let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(*airgroup_id, *air_id);
-                memory_fixed_aggregation += (setup_recursive1.stark_info.n_constants
-                    * (1 << (setup_recursive1.stark_info.stark_struct.n_bits))
-                    + setup_recursive1.stark_info.n_constants
-                        * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
-                    + (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext))
-                    + ((2 * (1 << (setup_recursive1.stark_info.stark_struct.n_bits_ext)) - 1) * 4))
-                    as f64
-                    * 8.0;
-            }
-
-            let memory_helpers = setup.stark_info.get_buff_helper_size() as f64 * 8.0;
             let total_cols: u64 = setup
                 .stark_info
                 .map_sections_n
@@ -106,10 +77,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &S
                 .filter(|(key, _)| *key != "const")
                 .map(|(_, value)| *value)
                 .sum();
-            air_info.insert(
-                air_name.clone(),
-                (n_bits, total_cols, memory_fixed, memory_fixed_aggregation, memory_helpers, memory_instance),
-            );
+            air_info.insert(air_name.clone(), (n_bits, total_cols, memory_fixed, memory_instance));
         }
         let air_instance_map_key = air_instance_map.entry(air_name).or_insert(0);
         *air_instance_map_key += 1;
@@ -119,7 +87,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &S
     air_groups.sort();
 
     info!("{}", format!("{}: --- TOTAL PROOF INSTANCES SUMMARY ------------------------", name).bright_white().bold());
-    info!("{}:     ► {} Air instances found:", name, instances.len());
+    info!("{}:     ► {} Air instances found:", name, n_instances);
     for air_group in air_groups.clone() {
         let air_group_instances = air_instances.get(air_group).unwrap();
         let mut air_names: Vec<_> = air_group_instances.keys().collect();
@@ -128,7 +96,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &S
         info!("{}:       Air Group [{}]", name, air_group);
         for air_name in air_names {
             let count = air_group_instances.get(air_name).unwrap();
-            let (n_bits, total_cols, _, _, _, _) = air_info.get(air_name).unwrap();
+            let (n_bits, total_cols, _, _) = air_info.get(air_name).unwrap();
             info!(
                 "{}:       {}",
                 name,
@@ -139,38 +107,25 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &S
     info!("{}: ----------------------------------------------------------", name);
     info!("{}", format!("{}: --- TOTAL SETUP MEMORY USAGE ----------------------------", name).bright_white().bold());
     let mut total_memory = 0f64;
-    for air_group in air_groups.clone() {
-        let air_group_instances = air_instances.get(air_group).unwrap();
-        let mut air_names: Vec<_> = air_group_instances.keys().collect();
-        air_names.sort();
-
-        for air_name in air_names {
-            let (_, _, memory_fixed, memory_fixed_aggregation, _, _) = air_info.get(air_name).unwrap();
-            total_memory += memory_fixed;
-
-            if !pctx.options.aggregation {
-                info!("{}:       {}", name, format!("· {}: {} fixed cols", air_name, format_bytes(*memory_fixed),));
-            } else {
-                total_memory += memory_fixed_aggregation;
-                info!(
-                    "{}:       {}",
-                    name,
-                    format!(
-                        "· {}: {} fixed cols | {} fixed cols aggregation | Total: {}",
-                        air_name,
-                        format_bytes(*memory_fixed),
-                        format_bytes(*memory_fixed_aggregation),
-                        format_bytes(*memory_fixed + *memory_fixed_aggregation),
-                    )
-                );
-            }
-        }
-        info!(
-            "{}:       {}",
-            name,
-            format!("Total setup memory required: {}", format_bytes(total_memory)).bright_white().bold()
-        );
-    }
+    info!(
+        "{}:       {}",
+        name,
+        format!("Fixed pols memory: {}", format_bytes(sctx.max_const_size as f64 * 8.0)).bright_white().bold()
+    );
+    total_memory += sctx.max_const_size as f64 * 8.0;
+    info!(
+        "{}:       {}",
+        name,
+        format!("Fixed pols tree memory: {}", format_bytes(sctx.max_const_tree_size as f64 * 8.0))
+            .bright_white()
+            .bold()
+    );
+    total_memory += sctx.max_const_tree_size as f64 * 8.0;
+    info!(
+        "{}:       {}",
+        name,
+        format!("Total setup memory required: {}", format_bytes(total_memory)).bright_white().bold()
+    );
 
     info!("{}: ----------------------------------------------------------", name);
     if pctx.options.verify_constraints {
@@ -186,8 +141,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &S
             format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", name).bright_white().bold()
         );
     }
-    let mut total_memory = 0f64;
-    let mut memory_helper_size = 0f64;
+    let mut max_prover_memory = 0f64;
     for air_group in air_groups {
         let air_group_instances = air_instances.get(air_group).unwrap();
         let mut air_names: Vec<_> = air_group_instances.keys().collect();
@@ -195,32 +149,21 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, setups: &S
 
         for air_name in air_names {
             let count = air_group_instances.get(air_name).unwrap();
-            let (_, _, _, _, memory_helper_instance_size, memory_instance) = air_info.get(air_name).unwrap();
-            let total_memory_instance = memory_instance * *count as f64;
-            total_memory += total_memory_instance;
-            if *memory_helper_instance_size > memory_helper_size {
-                memory_helper_size = *memory_helper_instance_size;
+            let (_, _, _, memory_instance) = air_info.get(air_name).unwrap();
+            if max_prover_memory < *memory_instance {
+                max_prover_memory = *memory_instance;
             }
             info!(
                 "{}:       {}",
                 name,
-                format!(
-                    "· {}: {} per each of {} instance | Total {}",
-                    air_name,
-                    format_bytes(*memory_instance),
-                    count,
-                    format_bytes(total_memory_instance)
-                )
+                format!("· {}: {} per each of {} instance", air_name, format_bytes(*memory_instance), count,)
             );
         }
     }
-    total_memory += memory_helper_size;
-    info!("{}:       {}", name, format!("Extra helper memory: {}", format_bytes(memory_helper_size)));
-    info!(
-        "{}:       {}",
-        name,
-        format!("Total prover memory required: {}", format_bytes(total_memory)).bright_white().bold()
-    );
+    info!("{}:       {}", name, format!("Total prover memory required: {}", format_bytes(max_prover_memory)));
+    total_memory += max_prover_memory;
+    info!("{}: ----------------------------------------------------------", name);
+    info!("{}:       {}", name, format!("Total memory required by proofman: {}", format_bytes(total_memory)));
     info!("{}: ----------------------------------------------------------", name);
 }
 
@@ -271,6 +214,113 @@ pub fn check_paths(
 
     if !verify_constraints && !output_dir_path.exists() {
         fs::create_dir_all(output_dir_path).map_err(|err| format!("Failed to create output directory: {:?}", err))?;
+    }
+
+    Ok(())
+}
+
+fn check_const_tree<F: PrimeField64>(setup: &Setup<F>) -> Result<(), Box<dyn Error>> {
+    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+    if !PathBuf::from(&const_pols_tree_path).exists() {
+        return Err(format!(
+            "Constant tree for {} ({:?}) does not exist. Run proofman check-setup.",
+            setup.air_name, setup.setup_type
+        )
+        .into());
+    }
+    let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+    match fs::metadata(&const_pols_tree_path) {
+        Ok(metadata) => {
+            let actual_size = metadata.len() as usize;
+            if actual_size != const_pols_tree_size * 8 {
+                return Err(format!(
+                    "File size mismatch for {} for {:?}. Expected: {}, Found: {}. Run proofman check-setup.",
+                    setup.air_name,
+                    setup.setup_type,
+                    const_pols_tree_size * 8,
+                    actual_size
+                )
+                .into());
+            }
+        }
+        Err(err) => {
+            return Err(format!("Failed to get metadata for {}: {}", setup.air_name, err).into());
+        }
+    }
+    if setup.setup_type != ProofType::RecursiveF {
+        let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
+
+        let mut contents = String::new();
+        let mut file = File::open(verkey_path).unwrap();
+        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {}", err));
+        let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
+
+        let mut file = File::open(&const_pols_tree_path)?;
+        file.seek(SeekFrom::End(-32))?; // Move to 32 bytes before the end
+
+        let mut buffer = [0u8; 32];
+        file.read_exact(&mut buffer)?;
+
+        for (i, verkey_val) in verkey_u64.iter().enumerate() {
+            let byte_range = i * 8..(i + 1) * 8;
+            let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
+            if value != *verkey_val {
+                return Err(format!(
+                    "Verkey mismatch for {} for {:?}. Expected: {}, Found: {}. Run proofman check-setup",
+                    setup.air_name, setup.setup_type, value, verkey_val
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Result<(), Box<dyn Error>> {
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id);
+            check_const_tree(setup)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn check_tree_paths_vadcop<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    setups: &SetupsVadcop<F>,
+) -> Result<(), Box<dyn Error>> {
+    let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                let setup = sctx_compressor.get_setup(airgroup_id, air_id);
+                check_const_tree(setup)?;
+            }
+        }
+    }
+
+    let sctx_recursive1 = setups.sctx_recursive1.as_ref().unwrap();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
+            check_const_tree(setup)?;
+        }
+    }
+
+    let sctx_recursive2 = setups.sctx_recursive2.as_ref().unwrap();
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup in 0..n_airgroups {
+        let setup = sctx_recursive2.get_setup(airgroup, 0);
+        check_const_tree(setup)?;
+    }
+
+    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+    check_const_tree(setup_vadcop_final)?;
+
+    if pctx.options.final_snark {
+        let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
+        check_const_tree(setup_recursivef)?;
     }
 
     Ok(())

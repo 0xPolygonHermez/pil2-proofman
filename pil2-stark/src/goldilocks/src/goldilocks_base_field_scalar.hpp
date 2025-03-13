@@ -118,6 +118,24 @@ inline Goldilocks::Element Goldilocks::mul(const Element &in1, const Element &in
     return result;
 }
 
+inline Goldilocks::Element Goldilocks::pow(const Element& base, uint64_t exp)
+{
+    Element result;
+    one(result);
+    Element temp;
+    copy(temp, base);
+    while (exp > 0)
+    {
+        if (exp % 2 == 1)
+        {
+            mul(result, result, temp);
+        }
+        mul(temp, temp, temp);
+        exp /= 2;
+    }
+    return result;
+}
+
 /*
 * Stable version used until new optimization based on branch_hint was introduced (see mul function)
 */

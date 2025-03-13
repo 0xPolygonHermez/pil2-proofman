@@ -347,15 +347,15 @@ impl DistributionCtx {
         }
 
         // Create my eval groups
-        let mut my_air_groups_indices: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        let mut my_air_groups_indices: HashMap<(usize, usize, bool), usize> = HashMap::new();
         for (loc_idx, glob_idx) in self.my_instances.iter().enumerate() {
             let instance_idx = self.instances[*glob_idx];
-            my_air_groups_indices.entry((instance_idx.0, instance_idx.1)).or_default().push(loc_idx);
-        }
-
-        // Flatten the HashMap into a single vector for my_air_groups
-        for (_, indices) in my_air_groups_indices {
-            self.my_air_groups.push(indices);
+            if let Some(index) = my_air_groups_indices.get(&instance_idx) {
+                self.my_air_groups[*index].push(loc_idx);
+            } else {
+                my_air_groups_indices.insert(instance_idx, my_air_groups_indices.len());
+                self.my_air_groups.push(vec![loc_idx]);
+            }
         }
 
         //Calculate instances of each airgroup

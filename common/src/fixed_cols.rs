@@ -1,7 +1,16 @@
-use std::os::raw::c_void;
+use std::{
+    os::raw::c_void,
+    path::{PathBuf, Path},
+};
 
 use p3_field::Field;
-use proofman_starks_lib_c::write_fixed_cols_bin_c;
+use proofman_starks_lib_c::{
+    calculate_const_tree_c, get_const_tree_size_c, load_const_pols_c, load_const_tree_c, write_const_tree_c,
+    write_fixed_cols_bin_c,
+};
+use proofman_util::{create_buffer_fast, timer_start_debug, timer_stop_and_log_debug};
+
+use crate::Setup;
 
 #[repr(C)]
 #[derive(Debug)]
@@ -51,4 +60,66 @@ pub fn write_fixed_cols_bin<F: Field>(
     let mut fixed_cols_info_c = FixedColsInfoC::from_fixed_cols_info_vec(fixed_cols);
     let fixed_cols_info_c_ptr = fixed_cols_info_c.as_mut_ptr() as *mut c_void;
     write_fixed_cols_bin_c(bin_file, airgroup_name, air_name, n, fixed_cols.len() as u64, fixed_cols_info_c_ptr);
+}
+
+pub fn calculate_fixed_tree<F: Field>(setup: &Setup<F>) {
+    const MY_NAME: &str = "Setup   ";
+
+    let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
+    let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+
+    let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
+    let const_tree: Vec<F> = create_buffer_fast(const_pols_tree_size);
+
+    let const_pols_path = setup.setup_path.display().to_string() + ".const";
+    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+
+    log::debug!("{}   : ··· Loading const pols for AIR {} of type {:?}", MY_NAME, setup.air_name, setup.setup_type);
+
+    load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
+
+    log::debug!("{}   : ··· Loading const tree for AIR {} of type {:?}", MY_NAME, setup.air_name, setup.setup_type);
+
+    let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
+
+    let p_stark_info = setup.p_setup.p_stark_info;
+
+    let valid_root = if PathBuf::from(&const_pols_tree_path).exists() {
+        load_const_tree_c(
+            setup.p_setup.p_stark_info,
+            const_tree.as_ptr() as *mut u8,
+            const_pols_tree_path.as_str(),
+            (const_tree.len() * 8) as u64,
+            verkey_path.as_str(),
+        )
+    } else {
+        false
+    };
+
+    if !valid_root {
+        timer_start_debug!(WRITING_CONST_TREE);
+        calculate_const_tree_c(p_stark_info, const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8);
+        write_const_tree_c(p_stark_info, const_tree.as_ptr() as *mut u8, const_pols_tree_path.as_str());
+        timer_stop_and_log_debug!(WRITING_CONST_TREE);
+    }
+}
+
+pub fn load_const_pols<F: Field>(setup_path: &Path, const_pols_size: usize, const_pols: &[F]) {
+    let const_pols_path = setup_path.to_string_lossy().to_string() + ".const";
+    load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
+}
+
+pub fn load_const_pols_tree<F: Field>(setup: &Setup<F>, const_tree: &[F]) {
+    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+    let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+
+    log::debug!("FixedCol   : ··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
+
+    load_const_tree_c(
+        setup.p_setup.p_stark_info,
+        const_tree.as_ptr() as *mut u8,
+        const_pols_tree_path.as_str(),
+        (const_pols_tree_size * 8) as u64,
+        &(setup.setup_path.display().to_string() + ".verkey.json"),
+    );
 }

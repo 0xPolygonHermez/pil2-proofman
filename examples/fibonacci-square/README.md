@@ -146,6 +146,7 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
 && cargo build \
+&& cargo run --bin proofman-cli setup --proving-key examples/fibonacci-square/build/provingKey/ -a \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \

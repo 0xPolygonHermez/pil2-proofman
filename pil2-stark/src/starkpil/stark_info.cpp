@@ -4,15 +4,15 @@
 #include "zklog.hpp"
 #include "exit_process.hpp"
 
-StarkInfo::StarkInfo(string file, bool verify_)
+StarkInfo::StarkInfo(string file, bool verify_constraints, bool verify)
 {
     // Load contents from json file
     json starkInfoJson;
     file2json(file, starkInfoJson);
-    load(starkInfoJson, verify_);
+    load(starkInfoJson, verify_constraints, verify);
 }
 
-void StarkInfo::load(json j, bool verify_)
+void StarkInfo::load(json j, bool verify_constraints_, bool verify_)
 {   
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
@@ -244,6 +244,7 @@ void StarkInfo::load(json j, bool verify_)
             }
         }
     } else {
+        verify_constraints = verify_constraints_;
         setMapOffsets();
     }
 }
@@ -326,13 +327,34 @@ void StarkInfo::setMapOffsets() {
     // This is never used, just set to avoid invalid read
     mapOffsets[std::make_pair("cm" + to_string(nStages + 1), false)] = 0;
 
-    mapOffsets[std::make_pair("f", true)] = mapTotalN;
-    mapTotalN += NExtended * FIELD_EXTENSION;
-
-    mapOffsets[std::make_pair("q", true)] = mapOffsets[std::make_pair("f", true)];
+    if(starkStruct.verificationHashType == "GL") {
+        // Merkle tree nodes sizes
+        for (uint64_t i = 0; i < nStages + 1; i++) {
+            uint64_t numNodes = getNumNodesMT(1 << starkStruct.nBitsExt);
+            mapOffsets[std::make_pair("mt" + to_string(i + 1), true)] = mapTotalN;
+            mapTotalN += numNodes;
+        }
+    }
 
     mapOffsets[std::make_pair("evals", true)] = mapTotalN;
     mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
+
+    mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
+    uint64_t LEVsize = openingPoints.size() * N * FIELD_EXTENSION;
+    uint64_t maxCols = 0;
+    for(auto const& [key, val] : mapSectionsN) {
+        if(key != "const" && val*NExtended > maxCols) {
+            maxCols = val*NExtended;
+        }
+    }
+
+    uint64_t buffHelperSize = LEVsize > maxCols ? LEVsize : maxCols;
+
+    uint64_t mapTotalNBuffHelper = mapTotalN + buffHelperSize;
+
+    mapOffsets[std::make_pair("f", true)] = mapTotalN;
+    mapOffsets[std::make_pair("q", true)] = mapTotalN;
+    mapTotalN += NExtended * FIELD_EXTENSION;
 
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
@@ -342,14 +364,6 @@ void StarkInfo::setMapOffsets() {
     }
 
     if(starkStruct.verificationHashType == "GL") {
-        // Merkle tree nodes sizes
-        for (uint64_t i = 0; i < nStages + 1; i++) {
-            uint64_t numNodes = getNumNodesMT(1 << starkStruct.nBitsExt);
-            mapOffsets[std::make_pair("mt" + to_string(i + 1), true)] = mapTotalN;
-            mapTotalN += numNodes;
-        }
-        
-        
         for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
             uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
             uint64_t numNodes = getNumNodesMT(height);
@@ -357,13 +371,10 @@ void StarkInfo::setMapOffsets() {
             mapTotalN += numNodes;
         }
     }
-}
 
-void StarkInfo::addMemoryRecursive() {
-    uint64_t NExtended = (1 << starkStruct.nBitsExt);
-    mapOffsets[std::make_pair("xDivXSubXi", true)] = mapTotalN;
-    mapOffsets[std::make_pair("LEv", true)] = mapTotalN;
-    mapTotalN += openingPoints.size() * NExtended * FIELD_EXTENSION;
+    if(mapTotalNBuffHelper > mapTotalN) {
+        mapTotalN = mapTotalNBuffHelper;
+    }
 }
 
 void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended) {

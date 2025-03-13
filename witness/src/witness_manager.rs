@@ -4,7 +4,6 @@ use std::path::PathBuf;
 
 use p3_field::Field;
 use proofman_common::{ModeName, ProofCtx, SetupCtx};
-use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use crate::WitnessComponent;
 
 pub struct WitnessManager<F: Field> {
@@ -58,7 +57,6 @@ impl<F: Field> WitnessManager<F> {
     }
 
     pub fn execute(&self) {
-        timer_start_info!(EXECUTE);
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let global_ids = component.execute(self.pctx.clone());
             self.components_instance_ids.write().unwrap()[idx] = global_ids;
@@ -66,7 +64,6 @@ impl<F: Field> WitnessManager<F> {
         for component in self.components_std.read().unwrap().iter() {
             component.execute(self.pctx.clone());
         }
-        timer_stop_and_log_info!(EXECUTE);
     }
 
     pub fn debug(&self, instance_ids: &[usize]) {

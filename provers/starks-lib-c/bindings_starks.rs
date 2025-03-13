@@ -36,20 +36,16 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPcb"]
-    pub fn stark_info_new(filename: *mut ::std::os::raw::c_char, verifier: bool) -> *mut ::std::os::raw::c_void;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z32get_buffer_size_contribution_airPv"]
-    pub fn get_buffer_size_contribution_air(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+    #[link_name = "\u{1}_Z14stark_info_newPcbb"]
+    pub fn stark_info_new(filename: *mut ::std::os::raw::c_char, verify_constraints:bool, verifier: bool) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z14get_proof_sizePv"]
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15get_map_total_nPvb"]
-    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void, recursive: bool) -> u64;
+    #[link_name = "\u{1}_Z15get_map_total_nPv"]
+    pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z36get_map_total_n_custom_commits_fixedPv"]
@@ -58,14 +54,6 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z15stark_info_freePv"]
     pub fn stark_info_free(pStarkInfo: *mut ::std::os::raw::c_void);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z18prover_helpers_newPvb"]
-    pub fn prover_helpers_new(pStarkInfo: *mut ::std::os::raw::c_void, pil1: bool) -> *mut ::std::os::raw::c_void;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z19prover_helpers_freePv"]
-    pub fn prover_helpers_free(pProverHelpers: *mut ::std::os::raw::c_void);
 }
 extern "C" {
     #[link_name = "\u{1}_Z15load_const_treePvS_PcmS0_"]
@@ -165,11 +153,10 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14acc_hint_fieldPvS_S_mPcS0_S0_b"]
+    #[link_name = "\u{1}_Z14acc_hint_fieldPvS_mPcS0_S0_b"]
     pub fn acc_hint_field(
         pSetupCtx: *mut ::std::os::raw::c_void,
         stepsParams: *mut ::std::os::raw::c_void,
-        pBuffHelper: *mut ::std::os::raw::c_void,
         hintId: u64,
         hintFieldNameDest: *mut ::std::os::raw::c_char,
         hintFieldNameAirgroupVal: *mut ::std::os::raw::c_char,
@@ -178,11 +165,10 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19acc_mul_hint_fieldsPvS_S_mPcS0_S0_S0_S_S_b"]
+    #[link_name = "\u{1}_Z19acc_mul_hint_fieldsPvS_mPcS0_S0_S0_S_S_b"]
     pub fn acc_mul_hint_fields(
         pSetupCtx: *mut ::std::os::raw::c_void,
         stepsParams: *mut ::std::os::raw::c_void,
-        pBuffHelper: *mut ::std::os::raw::c_void,
         hintId: u64,
         hintFieldNameDest: *mut ::std::os::raw::c_char,
         hintFieldNameAirgroupVal: *mut ::std::os::raw::c_char,
@@ -386,7 +372,7 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_S_PmPc"]
+    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPc"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         airgroupId: u64,
@@ -394,7 +380,6 @@ extern "C" {
         instanceId: u64,
         params: *mut ::std::os::raw::c_void,
         globalChallenge: *mut ::std::os::raw::c_void,
-        pBuffHelper: *mut ::std::os::raw::c_void,
         proofBuffer: *mut u64,
         proofFile: *mut ::std::os::raw::c_char,
     );

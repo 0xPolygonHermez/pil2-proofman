@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use p3_field::Field;
 use serde::Deserialize;
 use std::fs;
+use sysinfo::{System, SystemExt, ProcessExt};
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
     env_logger::builder()
@@ -213,5 +214,18 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         debug_global_instances: global_constraints,
         std_mode,
         save_proofs_to_file: true,
+    }
+}
+
+pub fn print_memory_usage() {
+    let mut system = System::new_all();
+    system.refresh_all();
+
+    if let Some(process) = system.process(sysinfo::get_current_pid().unwrap()) {
+        let memory_kb = process.memory();
+        let memory_gb = memory_kb as f64 / 1_048_576.0; // 1 GB = 1,048,576 KB
+        println!("Memory used by the process: {:.2} {:.2} GB", system.used_memory(), memory_gb);
+    } else {
+        println!("Could not get process information.");
     }
 }

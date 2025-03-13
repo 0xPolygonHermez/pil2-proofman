@@ -604,6 +604,15 @@ dependencies = [
 
 [[package]]
 name = "ntapi"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c28774a7fd2fbb4f0babd8237ce554b73af68021b5f695a3cebd6c59bac0980f"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
+name = "ntapi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8a3895c6391c39d7fe7ebc444a87eb2991b2a0bc718fdabd071eec617fc68e4"
@@ -929,6 +938,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "sysinfo 0.22.5",
  "transcript",
 ]
 
@@ -966,7 +976,7 @@ version = "0.4.0"
 dependencies = [
  "colored",
  "p3-field",
- "sysinfo",
+ "sysinfo 0.33.1",
 ]
 
 [[package]]
@@ -1248,6 +1258,21 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
+version = "0.22.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f1bfab07306a27332451a662ca9c8156e3a9986f82660ba9c8e744fe8455d43"
+dependencies = [
+ "cfg-if",
+ "core-foundation-sys",
+ "libc",
+ "ntapi 0.3.7",
+ "once_cell",
+ "rayon",
+ "winapi",
+]
+
+[[package]]
+name = "sysinfo"
 version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fc858248ea01b66f19d8e8a6d55f41deaf91e9d495246fd01368d99935c6c01"
@@ -1255,7 +1280,7 @@ dependencies = [
  "core-foundation-sys",
  "libc",
  "memchr",
- "ntapi",
+ "ntapi 0.4.1",
  "rayon",
  "windows",
 ]

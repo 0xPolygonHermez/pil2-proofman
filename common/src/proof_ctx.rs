@@ -4,8 +4,6 @@ use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
 use p3_field::Field;
-use proofman_starks_lib_c::get_buffer_size_contribution_air_c;
-use proofman_util::create_buffer_fast;
 use transcript::FFITranscript;
 
 use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams, VerboseMode};
@@ -72,20 +70,17 @@ impl ProofOptions {
 }
 
 #[allow(dead_code)]
-pub struct ProofCtx<F> {
+pub struct ProofCtx<F: Field> {
     pub public_inputs: Values<F>,
     pub proof_values: Values<F>,
     pub global_challenge: Values<F>,
     pub challenges: Values<F>,
-    pub buff_helper: Values<F>,
     pub global_info: GlobalInfo,
     pub air_instances: RwLock<HashMap<usize, AirInstance<F>>>,
     pub options: ProofOptions,
     pub weights: HashMap<(usize, usize), u64>,
     pub custom_commits_fixed: HashMap<String, PathBuf>,
     pub dctx: RwLock<DistributionCtx>,
-    pub max_prover_buffer_size: u64,
-    pub max_contribution_air_buffer_size: u64,
 }
 
 impl<F: Field> ProofCtx<F> {
@@ -111,14 +106,11 @@ impl<F: Field> ProofCtx<F> {
             proof_values: Values::new(n_proof_values * 3),
             challenges: Values::new(n_challenges * 3),
             global_challenge: Values::new(3),
-            buff_helper: Values::default(),
             air_instances: RwLock::new(HashMap::new()),
             dctx: RwLock::new(DistributionCtx::new()),
             custom_commits_fixed,
             weights,
             options,
-            max_prover_buffer_size: 0,
-            max_contribution_air_buffer_size: 0,
         }
     }
 
@@ -137,34 +129,6 @@ impl<F: Field> ProofCtx<F> {
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }
-    }
-
-    pub fn set_buff_helper(&mut self, sctx: &SetupCtx<F>) {
-        let mut buff_helper_size = 0;
-        let mut prover_buffer_size = 0;
-        let mut max_contribution_air_buffer_size = 0;
-        for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                let setup = sctx.get_setup(airgroup_id, air_id);
-                let buff_helper_prover_size = setup.stark_info.get_buff_helper_size();
-                if buff_helper_prover_size > buff_helper_size {
-                    buff_helper_size = buff_helper_prover_size;
-                }
-
-                if setup.prover_buffer_size > prover_buffer_size {
-                    prover_buffer_size = setup.prover_buffer_size;
-                }
-
-                let contribution_air_buffer = get_buffer_size_contribution_air_c(setup.p_setup.p_stark_info);
-                if contribution_air_buffer > max_contribution_air_buffer_size {
-                    max_contribution_air_buffer_size = contribution_air_buffer;
-                }
-            }
-        }
-
-        *self.buff_helper.values.write().unwrap() = create_buffer_fast(buff_helper_size);
-        self.max_prover_buffer_size = prover_buffer_size;
-        self.max_contribution_air_buffer_size = max_contribution_air_buffer_size;
     }
 
     pub fn get_weight(&self, airgroup_id: usize, air_id: usize) -> u64 {
@@ -419,11 +383,6 @@ impl<F: Field> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
-    pub fn get_buff_helper_ptr(&self) -> *mut u8 {
-        let guard = &self.buff_helper.values.read().unwrap();
-        guard.as_ptr() as *mut u8
-    }
-
     pub fn get_air_instance_params(&self, sctx: &SetupCtx<F>, instance_id: usize, gen_proof: bool) -> StepsParams {
         let air_instances = self.air_instances.read().unwrap();
         let air_instance = air_instances.get(&instance_id).unwrap();
@@ -433,10 +392,12 @@ impl<F: Field> ProofCtx<F> {
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let challenges = if gen_proof { air_instance.get_challenges_ptr() } else { self.get_challenges_ptr() };
+        let aux_trace: *mut u8 = if gen_proof { std::ptr::null_mut() } else { air_instance.get_aux_trace_ptr() };
+        let const_pols: *mut u8 = if gen_proof { std::ptr::null_mut() } else { setup.get_const_ptr() };
 
         StepsParams {
             trace: air_instance.get_trace_ptr(),
-            aux_trace: air_instance.get_aux_trace_ptr(),
+            aux_trace,
             public_inputs: self.get_publics_ptr(),
             proof_values: self.get_proof_values_ptr(),
             challenges,
@@ -444,8 +405,8 @@ impl<F: Field> ProofCtx<F> {
             airvalues: air_instance.get_airvalues_ptr(),
             evals: air_instance.get_evals_ptr(),
             xdivxsub: std::ptr::null_mut(),
-            p_const_pols: setup.get_const_ptr(),
-            p_const_tree: setup.get_const_tree_ptr(),
+            p_const_pols: const_pols,
+            p_const_tree: std::ptr::null_mut(),
             custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
         }
     }

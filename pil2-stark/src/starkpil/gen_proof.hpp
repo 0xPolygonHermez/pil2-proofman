@@ -1,6 +1,6 @@
 #include "starks.hpp"
 
-void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element *pBuffHelper, bool prod) {
+void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, bool prod) {
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
     uint64_t hint[1];
@@ -36,23 +36,27 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
-    accMulHintFields(setupCtx, params, pBuffHelper, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod);
+    accMulHintFields(setupCtx, params, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod);
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, uint64_t *proofBuffer, std::string proofFile) {
+void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile) {
     TimerStart(STARK_PROOF);
+
+    ProverHelpers proverHelpers(setupCtx.starkInfo, false);
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     
-    Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
+    Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
     
+    Goldilocks::Element *pBuffHelper = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
+
 #ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
+    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
 #elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
+    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
 #else
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
@@ -79,8 +83,8 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         }
     }
 
-    calculateWitnessSTD(setupCtx, params, pBuffHelper, true);
-    calculateWitnessSTD(setupCtx, params, pBuffHelper, false);
+    calculateWitnessSTD(setupCtx, params, true);
+    calculateWitnessSTD(setupCtx, params, false);
 
     
     TimerStart(CALCULATE_IM_POLS);
@@ -165,8 +169,6 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStart(STARK_STEP_FRI);
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
-    params.xDivXSub = &pBuffHelper[0];
-    starks.calculateXDivXSub(xiChallenge, params.xDivXSub);
     starks.calculateFRIPolynomial(params);
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
