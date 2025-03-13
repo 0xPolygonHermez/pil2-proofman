@@ -3,7 +3,9 @@ use std::ffi::c_void;
 
 use p3_field::Field;
 use proofman_starks_lib_c::{expressions_bin_new_c, get_const_tree_size_c};
+use proofman_util::create_buffer_fast;
 
+use crate::load_const_pols;
 use crate::GlobalInfo;
 use crate::Setup;
 use crate::ProofType;
@@ -155,9 +157,13 @@ impl<F: Field> SetupCtx<F> {
         }
     }
 
-    pub fn get_fixed_slice(&self, airgroup_id: usize, air_id: usize) -> &[F] {
+    pub fn get_fixed(&self, airgroup_id: usize, air_id: usize) -> Vec<F> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
-            Some(setup) => setup.const_pols.as_slice(),
+            Some(setup) => {
+                let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
+                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
+                const_pols
+            }
             None => {
                 // Handle the error case as needed
                 log::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);

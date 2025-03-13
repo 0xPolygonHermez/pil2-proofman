@@ -335,10 +335,6 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    mapOffsets[std::make_pair("f", true)] = mapTotalN;
-    mapOffsets[std::make_pair("q", true)] = mapTotalN;
-    mapTotalN += NExtended * FIELD_EXTENSION;
-
     mapOffsets[std::make_pair("evals", true)] = mapTotalN;
     mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
 
@@ -350,9 +346,14 @@ void StarkInfo::setMapOffsets() {
             maxCols = val*NExtended;
         }
     }
+
     uint64_t buffHelperSize = LEVsize > maxCols ? LEVsize : maxCols;
 
     uint64_t mapTotalNBuffHelper = mapTotalN + buffHelperSize;
+
+    mapOffsets[std::make_pair("f", true)] = mapTotalN;
+    mapOffsets[std::make_pair("q", true)] = mapTotalN;
+    mapTotalN += NExtended * FIELD_EXTENSION;
 
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;

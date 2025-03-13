@@ -393,6 +393,7 @@ impl<F: Field> ProofCtx<F> {
 
         let challenges = if gen_proof { air_instance.get_challenges_ptr() } else { self.get_challenges_ptr() };
         let aux_trace: *mut u8 = if gen_proof { std::ptr::null_mut() } else { air_instance.get_aux_trace_ptr() };
+        let const_pols: *mut u8 = if gen_proof { std::ptr::null_mut() } else { setup.get_const_ptr() };
 
         StepsParams {
             trace: air_instance.get_trace_ptr(),
@@ -404,7 +405,7 @@ impl<F: Field> ProofCtx<F> {
             airvalues: air_instance.get_airvalues_ptr(),
             evals: air_instance.get_evals_ptr(),
             xdivxsub: std::ptr::null_mut(),
-            p_const_pols: setup.get_const_ptr(),
+            p_const_pols: const_pols,
             p_const_tree: std::ptr::null_mut(),
             custom_commits_fixed: air_instance.get_custom_commits_fixed_ptr(),
         }

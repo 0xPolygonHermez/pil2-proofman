@@ -10,7 +10,7 @@ use log::info;
 
 use colored::*;
 
-use proofman_common::{load_const_pols_tree, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
+use proofman_common::{load_const_pols, load_const_pols_tree, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 
 use std::os::raw::{c_void, c_char};
 
@@ -39,6 +39,7 @@ pub fn aggregate_proofs<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
+    const_pols: &[F],
     const_tree: &[F],
     output_dir_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -56,6 +57,7 @@ pub fn aggregate_proofs<F: PrimeField64>(
         publics,
         trace,
         prover_buffer,
+        const_pols,
         const_tree,
         output_dir_path.clone(),
     )?;
@@ -74,6 +76,7 @@ pub fn aggregate_proofs<F: PrimeField64>(
             publics,
             trace,
             prover_buffer,
+            const_pols,
             const_tree,
             output_dir_path.clone(),
         )?;
@@ -92,6 +95,7 @@ pub fn aggregate_proofs<F: PrimeField64>(
                 publics,
                 trace,
                 prover_buffer,
+                const_pols,
                 const_tree,
                 output_dir_path.clone(),
             )?;
@@ -141,6 +145,8 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
+    const_pols_compressor: &[F],
+    const_pols_recursive1: &[F],
     const_tree_compressor: &[F],
     const_tree_recursive1: &[F],
     output_dir_path: PathBuf,
@@ -163,8 +169,6 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
 
         let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
         let p_setup: *mut c_void = (&setup.p_setup).into();
-
-        load_const_pols_tree(setup, const_tree_compressor);
 
         let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Compressor);
 
@@ -195,7 +199,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
             p_setup,
             trace.as_ptr() as *mut u8,
             prover_buffer.as_ptr() as *mut u8,
-            setup.get_const_ptr(),
+            const_pols_compressor.as_ptr() as *mut u8,
             const_tree_compressor.as_ptr() as *mut u8,
             publics.as_ptr() as *mut u8,
             recursive_proof.as_mut_ptr(),
@@ -217,8 +221,6 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
 
     let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
     let p_setup: *mut c_void = (&setup.p_setup).into();
-
-    load_const_pols_tree(setup, const_tree_recursive1);
 
     let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1);
 
@@ -267,7 +269,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-        setup.get_const_ptr(),
+        const_pols_recursive1.as_ptr() as *mut u8,
         const_tree_recursive1.as_ptr() as *mut u8,
         publics.as_ptr() as *mut u8,
         recursive1_proof[publics_aggregation..].as_mut_ptr(),
@@ -296,6 +298,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
+    const_pols: &[F],
     const_tree: &[F],
     output_dir_path: PathBuf,
 ) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
@@ -345,6 +348,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
             let setup = sctx.get_setup(airgroup, 0);
             let p_setup: *mut c_void = (&setup.p_setup).into();
             load_const_pols_tree(setup, const_tree);
+            load_const_pols(&setup.setup_path, setup.const_pols_size, const_pols);
             let publics_circom_size =
                 pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
             let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 4;
@@ -411,7 +415,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
                             p_setup,
                             trace.as_ptr() as *mut u8,
                             prover_buffer.as_ptr() as *mut u8,
-                            setup.get_const_ptr(),
+                            const_pols.as_ptr() as *mut u8,
                             const_tree.as_ptr() as *mut u8,
                             publics.as_ptr() as *mut u8,
                             recursive2_proof[publics_aggregation..].as_mut_ptr(),
@@ -477,6 +481,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
+    const_pols: &[F],
     const_tree: &[F],
     output_dir_path: PathBuf,
 ) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
@@ -496,6 +501,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
 
+    load_const_pols(&setup.setup_path, setup.const_pols_size, const_pols);
     load_const_pols_tree(setup, const_tree);
 
     let mut final_vadcop_proof: Vec<u64> = create_buffer_fast(setup.proof_size as usize);
@@ -503,7 +509,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-        setup.get_const_ptr(),
+        const_pols.as_ptr() as *mut u8,
         const_tree.as_ptr() as *mut u8,
         publics.as_ptr() as *mut u8,
         final_vadcop_proof.as_mut_ptr(),
@@ -529,6 +535,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
+    const_pols: &[F],
     const_tree: &[F],
     output_dir_path: PathBuf,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
@@ -541,6 +548,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     let setup_path = pctx.global_info.get_setup_path("recursivef");
 
+    load_const_pols(&setup_path, setup.const_pols_size, const_pols);
     load_const_pols_tree(setup, const_tree);
 
     let mut vadcop_final_proof: Vec<u64> = create_buffer_fast(proof.len() + pctx.global_info.n_publics);
@@ -565,7 +573,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-        setup.get_const_ptr(),
+        const_pols.as_ptr() as *mut u8,
         const_tree.as_ptr() as *mut u8,
         publics.as_ptr() as *mut u8,
         &proof_file,

@@ -43,6 +43,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
     let mut air_instances = HashMap::new();
 
     let instances = pctx.dctx_get_instances();
+    let mut n_instances = instances.len();
 
     let mut print = vec![global; instances.len()];
 
@@ -51,6 +52,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         for instance_id in my_instances.iter() {
             print[*instance_id] = true;
         }
+        n_instances = my_instances.len();
     }
 
     for (instance_id, (airgroup_id, air_id, _)) in instances.iter().enumerate() {
@@ -84,7 +86,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
     air_groups.sort();
 
     info!("{}", format!("{}: --- TOTAL PROOF INSTANCES SUMMARY ------------------------", name).bright_white().bold());
-    info!("{}:     ► {} Air instances found:", name, instances.len());
+    info!("{}:     ► {} Air instances found:", name, n_instances);
     for air_group in air_groups.clone() {
         let air_group_instances = air_instances.get(air_group).unwrap();
         let mut air_names: Vec<_> = air_group_instances.keys().collect();
@@ -104,29 +106,25 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
     info!("{}: ----------------------------------------------------------", name);
     info!("{}", format!("{}: --- TOTAL SETUP MEMORY USAGE ----------------------------", name).bright_white().bold());
     let mut total_memory = 0f64;
-    for air_group in air_groups.clone() {
-        let air_group_instances = air_instances.get(air_group).unwrap();
-        let mut air_names: Vec<_> = air_group_instances.keys().collect();
-        air_names.sort();
-
-        for air_name in air_names {
-            let (_, _, memory_fixed, _) = air_info.get(air_name).unwrap();
-            total_memory += memory_fixed;
-            info!("{}:       {}", name, format!("· {}: {} fixed cols", air_name, format_bytes(*memory_fixed),));
-        }
-
-        info!(
-            "{}:       {}",
-            name,
-            format!("Const tree memory: {}", format_bytes(sctx.max_const_tree_size as f64 * 8.0)).bright_white().bold()
-        );
-        total_memory += sctx.max_const_tree_size as f64 * 8.0;
-        info!(
-            "{}:       {}",
-            name,
-            format!("Total setup memory required: {}", format_bytes(total_memory)).bright_white().bold()
-        );
-    }
+    info!(
+        "{}:       {}",
+        name,
+        format!("Fixed pols memory: {}", format_bytes(sctx.max_const_size as f64 * 8.0)).bright_white().bold()
+    );
+    total_memory += sctx.max_const_size as f64 * 8.0;
+    info!(
+        "{}:       {}",
+        name,
+        format!("Fixed pols tree memory: {}", format_bytes(sctx.max_const_tree_size as f64 * 8.0))
+            .bright_white()
+            .bold()
+    );
+    total_memory += sctx.max_const_tree_size as f64 * 8.0;
+    info!(
+        "{}:       {}",
+        name,
+        format!("Total setup memory required: {}", format_bytes(total_memory)).bright_white().bold()
+    );
 
     info!("{}: ----------------------------------------------------------", name);
     if pctx.options.verify_constraints {
@@ -162,6 +160,9 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         }
     }
     info!("{}:       {}", name, format!("Total prover memory required: {}", format_bytes(max_prover_memory)));
+    total_memory += max_prover_memory;
+    info!("{}: ----------------------------------------------------------", name);
+    info!("{}:       {}", name, format!("Total memory required by proofman: {}", format_bytes(total_memory)));
     info!("{}: ----------------------------------------------------------", name);
 }
 

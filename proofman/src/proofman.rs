@@ -1,7 +1,7 @@
 use libloading::{Library, Symbol};
 use log::info;
 use p3_field::PrimeCharacteristicRing;
-use proofman_common::load_const_pols_tree;
+use proofman_common::{load_const_pols, load_const_pols_tree};
 use proofman_common::{
     calculate_fixed_tree, skip_prover_instance, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
 };
@@ -370,6 +370,7 @@ impl<F: PrimeField64> ProofMan<F> {
         timer_start_info!(GENERATING_BASIC_PROOFS);
 
         let const_tree = Arc::new(create_buffer_fast(sctx.max_const_tree_size));
+        let const_pols = Arc::new(create_buffer_fast(sctx.max_const_size));
 
         let proofs = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
         let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
@@ -401,6 +402,7 @@ impl<F: PrimeField64> ProofMan<F> {
                     air_id,
                     output_dir_path.clone(),
                     aux_trace.clone(),
+                    const_pols.clone(),
                     const_tree.clone(),
                     airgroup_values_air_instances.clone(),
                     gen_const_tree,
@@ -493,25 +495,40 @@ impl<F: PrimeField64> ProofMan<F> {
         let mut recursive1_proofs = vec![Vec::new(); proofs.len()];
         let const_tree_aggregation: Vec<F> =
             create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
+        let const_pols_aggregation: Vec<F> =
+            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
 
         for air_groups in my_air_groups.iter() {
             let (airgroup_id, air_id, _) = instances[my_instances[air_groups[0]]];
+            let const_pols_compressor;
             let const_tree_compressor;
+            let const_pols_recursive1;
             let const_tree_recursive1;
             let has_compressor = pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
             if has_compressor {
                 let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
                 load_const_pols_tree(setup, &const_tree);
                 const_tree_compressor = &const_tree;
+                const_pols_compressor = &const_pols;
                 let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
 
+                load_const_pols(
+                    &setup_recursive1.setup_path,
+                    setup_recursive1.const_pols_size,
+                    &const_pols_aggregation,
+                );
                 load_const_pols_tree(setup_recursive1, &const_tree_aggregation);
                 const_tree_recursive1 = &const_tree_aggregation;
+                const_pols_recursive1 = &const_pols_aggregation;
             } else {
                 let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
                 load_const_pols_tree(setup, &const_tree);
                 const_tree_compressor = &const_tree;
                 const_tree_recursive1 = &const_tree;
+                const_pols_compressor = &const_pols;
+                const_pols_recursive1 = &const_pols;
             }
             for my_instance_id in air_groups.iter() {
                 let instance_id = my_instances[*my_instance_id];
@@ -525,6 +542,8 @@ impl<F: PrimeField64> ProofMan<F> {
                     &publics,
                     &trace,
                     &prover_buffer,
+                    const_pols_compressor,
+                    const_pols_recursive1,
                     const_tree_compressor,
                     const_tree_recursive1,
                     output_dir_path.clone(),
@@ -543,6 +562,7 @@ impl<F: PrimeField64> ProofMan<F> {
             &publics,
             &trace,
             &prover_buffer,
+            &const_pols,
             &const_tree,
             output_dir_path.clone(),
         );
@@ -583,6 +603,7 @@ impl<F: PrimeField64> ProofMan<F> {
         air_id: usize,
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
+        const_pols: Arc<Vec<F>>,
         const_tree: Arc<Vec<F>>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
         gen_const_tree: bool,
@@ -598,12 +619,14 @@ impl<F: PrimeField64> ProofMan<F> {
 
             if gen_const_tree {
                 timer_start_debug!(GENERATING_CONST_TREE);
+                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
                 load_const_pols_tree(setup, &const_tree);
                 timer_stop_and_log_debug!(GENERATING_CONST_TREE);
             }
 
             let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
+            steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
 
             let p_steps_params: *mut u8 = (&steps_params).into();

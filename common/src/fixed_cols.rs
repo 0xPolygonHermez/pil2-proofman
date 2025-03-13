@@ -104,9 +104,9 @@ pub fn calculate_fixed_tree<F: Field>(setup: &Setup<F>) {
     }
 }
 
-pub fn load_const_pols<F: Field>(setup_path: &Path, const_pols: &[F]) {
+pub fn load_const_pols<F: Field>(setup_path: &Path, const_pols_size: usize, const_pols: &[F]) {
     let const_pols_path = setup_path.to_string_lossy().to_string() + ".const";
-    load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
+    load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
 }
 
 pub fn load_const_pols_tree<F: Field>(setup: &Setup<F>, const_tree: &[F]) {
