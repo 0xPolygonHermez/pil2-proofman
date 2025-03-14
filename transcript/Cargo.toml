@@ -9,3 +9,4 @@ proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 [features]
 default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
+gpu = ["proofman-starks-lib-c/gpu"]
