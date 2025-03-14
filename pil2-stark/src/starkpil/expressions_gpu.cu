@@ -649,6 +649,7 @@ __global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_de
     assert(d_deviceArgs->nrowsPack == blockDim.x);
     uint64_t nchunks = d_deviceArgs->domainSize / blockDim.x;
 
+
     __shared__ gl64_t *expressions_params[10];
 
     if (threadIdx.x == 0)
@@ -669,12 +670,19 @@ __global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_de
     while (chunk_idx < nchunks)
     {
         uint64_t i = chunk_idx * blockDim.x;
+        bool print = threadIdx.x == 0 && blockIdx.x == 0 && i==0;
         loadPolynomials__(d_deviceArgs, i, blockIdx.x);
+
+        if(print) printf(" Ndests: %d\n", d_deviceArgs->nDests);
+
 #pragma unroll 1
         for (uint64_t j = 0; j < d_deviceArgs->nDests; ++j)
         {
+            if(print) printf(" dest: %lu\n", j);
+
             for (uint64_t k = 0; k < d_deviceArgs->dests[j].nParams; ++k)
             {
+                if(print) printf(" param: %lu of %d\n", k, d_deviceArgs->dests[j].nParams);
 
                 gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
                 uint64_t *nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
@@ -695,11 +703,13 @@ __global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_de
                     destVals[k * FIELD_EXTENSION * blockDim.x + threadIdx.x] = val;
                     continue;
                 }
+
+                if(print) printf(" nOps: %d\n", d_deviceArgs->dests[j].params[k].parserParams.nOps);
+                if(print) printf(" offset: %d\n", d_deviceArgs->dests[j].params[k].parserParams.opsOffset);
                 uint8_t *ops = &d_deviceArgs->ops[d_deviceArgs->dests[j].params[k].parserParams.opsOffset];
                 uint16_t *args = &d_deviceArgs->args[d_deviceArgs->dests[j].params[k].parserParams.argsOffset];
 
                 uint64_t i_args = 0;
-                bool print = false; // threadIdx.x == 0 && blockIdx.x == 0 && i==0;
                 for (uint64_t kk = 0; kk < d_deviceArgs->dests[j].params[k].parserParams.nOps; ++kk)
                 {
                     switch (ops[kk])
