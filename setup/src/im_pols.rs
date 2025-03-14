@@ -1,5 +1,42 @@
 use serde_json::{json, Value};
 
+pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize) -> (Option<Vec<Value>>, isize) {
+    let mut im_pols: Option<Vec<Value>> = Some(Vec::new());
+    let absolute_max = max_deg;
+    let mut abs_max_d = 0;
+
+    let (re, rd) = __calculate_im_pols(expressions, exp, &mut im_pols, max_deg);
+
+    return (re, rd.max(abs_max_d) - 1);
+
+    fn __calculate_im_pols(
+        expressions: &[Value],
+        exp: &Value,
+        im_pols: &mut Option<Vec<Value>>,
+        max_deg: usize,
+    ) -> (Option<Vec<Value>>, isize) {
+        if im_pols.is_none() {
+            return (None, -1);
+        }
+        match exp["op"].as_str().unwrap() {
+            "add" | "sub" => {
+                let mut md = 0;
+                for value in exp["values"].as_array().unwrap() {
+                    let d;
+                    (*im_pols, d) = __calculate_im_pols(expressions, value, im_pols, max_deg);
+                    if d < md {
+                        md = d;
+                    }
+                }
+                todo!()
+            }
+            _ => {
+                todo!()
+            }
+        }
+    }
+}
+
 /// Computes the intermediate polynomials and their degrees.
 pub fn calculate_im_pols(expressions: &mut [Value], exp: &mut Value, max_deg: usize) -> (Vec<usize>, usize) {
     let absolute_max = max_deg;
