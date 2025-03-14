@@ -28,6 +28,17 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                         md = d;
                     }
                 }
+                return (im_pols.clone(), md);
+            }
+            "mul" => {
+                let mut eb = false;
+                let mut ed = 1;
+                let values = exp["values"].as_array().unwrap();
+                if ["add", "mul", "sub", "exp"].contains(&values[0]["op"].as_str().unwrap())
+                    && values[0]["expDeg"].as_i64().unwrap() == 0
+                {
+                    return __calculate_im_pols(expressions, &values[1], im_pols, max_deg);
+                }
                 todo!()
             }
             _ => {
