@@ -34,10 +34,19 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                 let mut eb = false;
                 let mut ed = 1;
                 let values = exp["values"].as_array().unwrap();
-                if ["add", "mul", "sub", "exp"].contains(&values[0]["op"].as_str().unwrap())
+                if !["add", "mul", "sub", "exp"].contains(&values[0]["op"].as_str().unwrap())
                     && values[0]["expDeg"].as_i64().unwrap() == 0
                 {
                     return __calculate_im_pols(expressions, &values[1], im_pols, max_deg);
+                }
+                if !["add", "mul", "sub", "exp"].contains(&values[1]["op"].as_str().unwrap())
+                    && values[1]["expDeg"].as_i64().unwrap() == 0
+                {
+                    return __calculate_im_pols(expressions, &values[0], im_pols, max_deg);
+                }
+                let max_deg_here = exp["expDeg"].as_i64().unwrap() as isize;
+                if max_deg_here <= max_deg.try_into().unwrap() {
+                    return (im_pols.clone(), max_deg_here);
                 }
                 todo!()
             }
