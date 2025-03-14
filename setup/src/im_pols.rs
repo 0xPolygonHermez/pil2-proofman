@@ -31,7 +31,7 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                 return (im_pols.clone(), md);
             }
             "mul" => {
-                let mut eb = false;
+                let mut eb: Option<Vec<Value>> = None;
                 let mut ed = 1;
                 let values = exp["values"].as_array().unwrap();
                 if !["add", "mul", "sub", "exp"].contains(&values[0]["op"].as_str().unwrap())
@@ -47,6 +47,39 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                 let max_deg_here = exp["expDeg"].as_i64().unwrap() as isize;
                 if max_deg_here <= max_deg.try_into().unwrap() {
                     return (im_pols.clone(), max_deg_here);
+                }
+                for l in 0..max_deg {
+                    let r = max_deg - 1;
+                    let (mut e1, d1) = __calculate_im_pols(expressions, &values[0], im_pols, 1);
+                    let (e2, d2) = __calculate_im_pols(expressions, &values[1], &mut e1, r);
+                    /*
+                    if(e2 !== false && (eb === false || e2.length < eb.length)) {
+                        eb = e2;
+                        ed = d1+d2;
+                    }
+                    */
+                    if let Some(e2) = e2 {
+                        // avoid cloning eb
+                        let eb_len = if let Some(_eb) = eb {
+                            let len = _eb.len();
+                            eb = Some(_eb);
+                            len
+                        } else {
+                            eb = None;
+                            0
+                        };
+                        if eb.is_none() || e2.len() < eb_len {
+                            eb = Some(e2);
+                            ed = d1 + d2;
+                        }
+                    }
+                    // if (eb !== false && eb.length == imPols.length) return [eb, ed];
+                    // Cannot do it better.
+                    if let (Some(eb), Some(im_pols)) = (eb, im_pols.clone()) {
+                        if eb.len() == im_pols.len() {
+                            return (Some(eb), ed);
+                        }
+                    }
                 }
                 todo!()
             }
