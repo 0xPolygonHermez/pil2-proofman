@@ -8,7 +8,7 @@
 #include "poseidon_goldilocks.hpp"
 
 #define MERKLEHASHGOLDILOCKS_HEADER_SIZE 2
-#define MERKLEHASHGOLDILOCKS_ARITY 2
+#define MERKLEHASHGOLDILOCKS_ARITY 3
 class MerklehashGoldilocks
 {
 public:
@@ -25,6 +25,24 @@ public:
     static inline uint64_t getTreeNumElements(uint64_t degree)
     {
         return degree * HASH_SIZE + (degree - 1) * HASH_SIZE;
+    };
+
+    static inline uint64_t getTreeNumElementsArity(uint64_t degree)
+    {
+        uint64_t arity = MERKLEHASHGOLDILOCKS_ARITY;
+        uint64_t numNodes = degree;
+        uint64_t nodesLevel = degree;
+        
+        while (nodesLevel > 1) {
+            uint64_t extraZeros = (arity - (nodesLevel % arity)) % arity;
+            numNodes += extraZeros;
+            uint64_t nextN = (nodesLevel + (arity - 1))/arity;        
+            numNodes += nextN;
+            nodesLevel = nextN;
+        }
+
+
+        return numNodes * HASH_SIZE;
     };
 };
 

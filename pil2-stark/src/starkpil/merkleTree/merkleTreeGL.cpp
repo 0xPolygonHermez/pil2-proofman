@@ -190,10 +190,9 @@ void MerkleTreeGL::calculateRootFromProof(Goldilocks::Element (&value)[4], std::
 void MerkleTreeGL::merkelize()
 {
 #ifdef __AVX512__
-    // Poseidon2Goldilocks::merkletree_avx512(nodes, source, width, height, arity); // AVX512 is not supported yet
-    Poseidon2Goldilocks::merkletree_avx(nodes, source, width, height, arity);
+    Poseidon2Goldilocks::merkletree_batch_avx512(nodes, source, width, height, arity);
 #elif defined(__AVX2__)
-    Poseidon2Goldilocks::merkletree_avx(nodes, source, width, height, arity);
+    Poseidon2Goldilocks::merkletree_batch_avx(nodes, source, width, height, arity);
 #else
     Poseidon2Goldilocks::merkletree_seq(nodes, source, width, height, arity);
 #endif
