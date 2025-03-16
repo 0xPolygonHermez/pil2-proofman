@@ -475,13 +475,13 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
 
 void opHintFields(SetupCtx& setupCtx, StepsParams& params, std::vector<Dest> &dests) {
 
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
-#else
+//#ifdef __AVX512__
+//    ExpressionsAvx512 expressionsCtx(setupCtx);
+//#elif defined(__AVX2__)
+//    ExpressionsAvx expressionsCtx(setupCtx);
+//#else
     ExpressionsPack expressionsCtx(setupCtx);
-#endif
+//#endif
 
     uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
@@ -495,11 +495,11 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t nHints
     }
 
     std::vector<Dest> dests;
-    Goldilocks::Element *buff_gpu = NULL;
     Goldilocks::Element *buff = NULL;
 
     for(uint64_t i = 0; i < nHints; ++i) {
         Hint hint = setupCtx.expressionsBin.hints[hintId[i]];
+        Goldilocks::Element *buff_gpu = NULL;
 
         std::string hintDest = hintFieldNameDest[i];
         auto hintFieldDest = std::find_if(hint.fields.begin(), hint.fields.end(), [hintDest](const HintField& hintField) {
@@ -529,7 +529,7 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t nHints
 
             buff = new Goldilocks::Element[FIELD_EXTENSION*nRows];
 #ifdef __USE_CUDA__
-            allocateDestGPU(buff_gpu, FIELD_EXTENSION*nRows);
+            allocateDestGPU(&buff_gpu, FIELD_EXTENSION*nRows);
 #endif
         } else {
             zklog.error("Only committed pols and airvalues can be set");
@@ -549,9 +549,12 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t nHints
     }
 #ifdef __USE_CUDA__
     opHintFieldsGPU(setupCtx, params, *d_params, dests, GPUExpressionsCtx);
-    if(buff != NULL) {
-       freeDestGPU(buff_gpu);
+    for(uint64_t i = 0; i < nHints; ++i) {
+        if(dests[i].dest_gpu != NULL) {
+                freeDestGPU(dests[i].dest_gpu);            
+        }
     }
+       
 #else
     opHintFields(setupCtx, params, dests);
 #endif

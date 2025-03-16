@@ -64,7 +64,7 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
 void opHintFields(SetupCtx& setupCtx, StepsParams& params, std::vector<Dest> &dests);
 #ifdef __USE_CUDA__
 void opHintFieldsGPU(SetupCtx& setupCtx, StepsParams& params, StepsParams& d_params, std::vector<Dest> &dests, void* GPUExpressionsCtx);
-void allocateDestGPU(Goldilocks::Element* &buff, uint64_t size);
+void allocateDestGPU(Goldilocks::Element**buff, uint64_t size);
 void freeDestGPU(Goldilocks::Element* buff);
 void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *values, uint64_t idPol);
 #endif

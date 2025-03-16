@@ -8,8 +8,8 @@ void opHintFieldsGPU(SetupCtx& setupCtx, StepsParams& params, StepsParams& d_par
     expressionsCtx->calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
 }
 
-void allocateDestGPU(Goldilocks::Element* &buff, uint64_t size){
-    cudaMalloc(&buff, size * sizeof(Goldilocks::Element));
+void allocateDestGPU(Goldilocks::Element**buff, uint64_t size){
+    cudaMalloc((void**) buff, size * sizeof(Goldilocks::Element));
 }
 void freeDestGPU(Goldilocks::Element* buff){
     cudaFree(buff);
