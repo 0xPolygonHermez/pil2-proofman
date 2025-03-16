@@ -481,11 +481,16 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams &params, StepsParams &
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
+    std::cout << " nDests: " << h_deviceArgs.nDests << std::endl;
     for (uint32_t i = 0; i < h_deviceArgs.nDests; ++i)
     {
         if (dests[i].dest != NULL)
         {
-            cudaMemcpy(dests[i].dest, dests[i].dest_gpu, domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+            std::cout << " copy size: " << domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element) << std::endl;
+            std::cout << " domainSize: " << domainSize << std::endl;    
+            Goldilocks::Element *dest = new Goldilocks::Element[domainSize * FIELD_EXTENSION];
+            cudaMemcpy(dest, dests[i].dest_gpu, domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+            memcpy(dests[i].dest, dest, domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element));
         }
     }
     CHECKCUDAERR(cudaGetLastError());
