@@ -645,10 +645,6 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Eleme
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
     Goldilocks::Element *vals = pBuffHelper;
-#ifdef __USE_CUDA__
-    vals = NULL;
-#endif
-
     
     Dest destStruct(vals,  1 << setupCtx.starkInfo.starkStruct.nBits, 0);
 #ifdef __USE_CUDA__
