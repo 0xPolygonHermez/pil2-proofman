@@ -88,11 +88,12 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
-
+    CHECKCUDAERR(cudaGetLastError());
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed, false); //initialze starks
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
-    
+
+    CHECKCUDAERR(cudaGetLastError());
     // GPU tree-nodes
     GPUTree *d_trees = new GPUTree[setupCtx.starkInfo.nStages + 2];
     for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
@@ -101,7 +102,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     }
     
     ExpressionsGPU expressionsCtx(setupCtx, 2, 1176, 465, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3 //rick
-
+    CHECKCUDAERR(cudaGetLastError());
     StepsParams d_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,
         aux_trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
@@ -118,10 +119,16 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     };
 
     CHECKCUDAERR(cudaMalloc(&d_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaGetLastError());
+
     CHECKCUDAERR(cudaMalloc(&d_params.xDivXSub, NExtended *  setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaGetLastError());
+
     uint64_t customCommitSize = setupCtx.starkInfo.mapTotalNCustomCommitsFixed;
     CHECKCUDAERR(cudaMalloc(&d_params.pCustomCommitsFixed,customCommitSize * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMemcpy(d_params.pCustomCommitsFixed, params.pCustomCommitsFixed, customCommitSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaGetLastError());
+
     
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
@@ -137,7 +144,11 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     TimerStart(STARK_STEP_1);
     starks.commitStage_inplace(1, (gl64_t*) d_params.trace, (gl64_t*)d_params.aux_trace, (uint64_t **)(&d_trees[0].nodes), d_buffers);
+    CHECKCUDAERR(cudaGetLastError());
+
     offloadCommit_(1, starks.treesGL, (gl64_t*)d_params.aux_trace, (uint64_t *)d_trees[0].nodes, proof, setupCtx, params);
+    CHECKCUDAERR(cudaGetLastError());
+
     TimerStopAndLog(STARK_STEP_1);
 
     starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
@@ -151,8 +162,12 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     Goldilocks::Element* hintsBuffer = new Goldilocks::Element[N * FIELD_EXTENSION];
 
+    CHECKCUDAERR(cudaGetLastError());
     calculateWitnessSTD_gpu(setupCtx, params, hintsBuffer, true, &expressionsCtx, &d_params);
+    CHECKCUDAERR(cudaGetLastError());
     calculateWitnessSTD_gpu(setupCtx, params, hintsBuffer, false, &expressionsCtx, &d_params);
+    CHECKCUDAERR(cudaGetLastError());
+
 
     delete[] hintsBuffer;
 
