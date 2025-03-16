@@ -527,6 +527,8 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t nHints
         nRows = 1;
     #endif
 
+            nRows = 128; //rick
+
             buff = new Goldilocks::Element[FIELD_EXTENSION*nRows];
 #ifdef __USE_CUDA__
             allocateDestGPU(&buff_gpu, FIELD_EXTENSION*nRows);

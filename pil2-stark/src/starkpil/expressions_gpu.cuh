@@ -48,6 +48,7 @@ struct ParamsGPU
 struct DestGPU
 {
     Goldilocks::Element *dest_gpu = nullptr;
+    uint64_t domainSize;
     uint64_t offset = 0;
     uint64_t dim = 1;
     uint32_t nParams;

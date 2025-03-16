@@ -232,6 +232,7 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
         dests_aux[i].offset = dests[i].offset;
         dests_aux[i].dim = dests[i].dim;
         dests_aux[i].nParams = dests[i].params.size();
+        dests_aux[i].domainSize = dests[i].domainSize;
         assert(dests_aux[i].nParams <= nParamsMax);
         dests_aux[i].params = new ParamsGPU[dests[i].params.size()]; // rick
 
@@ -278,6 +279,7 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
         d_dests[i].offset = dests_aux[i].offset;
         d_dests[i].dim = dests_aux[i].dim;
         d_dests[i].nParams = dests_aux[i].nParams;
+        d_dests[i].domainSize = dests_aux[i].domainSize;
         cudaMalloc(&d_dests[i].params, d_dests[i].nParams * sizeof(ParamsGPU));
         if (d_dests[i].nParams > 0)
             dest_params.push_back(d_dests[i].params);
@@ -478,7 +480,9 @@ void ExpressionsGPU::freeDeviceArguments()
 
 __device__ __noinline__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row, uint32_t idest)
 {
-
+    if (row+blockIdx.x >= d_deviceArgs->dests[idest].domainSize){ //rick
+        return;
+    }
     if (d_deviceArgs->dests[idest].dim == 1)
     {
         uint64_t offset = d_deviceArgs->dests[idest].offset != 0 ? d_deviceArgs->dests[idest].offset : 1;
