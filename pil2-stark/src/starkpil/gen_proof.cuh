@@ -63,11 +63,18 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Goldilocks
         multiplyHintFields(setupCtx, params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtx, d_params);
     }
 
+    std::cout<<"holaaaaaa 1"<<std::endl;
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
+    std::cout<<"holaaaaaa 2"<<std::endl;
+
     accMulHintFields(setupCtx, params, pBuffHelper, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtx, d_params);
+    std::cout<<"holaaaaaa 3"<<std::endl;
+
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
+    std::cout<<"holaaaaaa 4"<<std::endl;
+
 }
 
 void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers) {
