@@ -65,6 +65,12 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint32_t
 
     // bufferT_
     h_deviceArgs.bufferSize = nOpenings * nrowsPack * nColsMax; // this must be moved from here
+
+    while(nBlocks * h_deviceArgs.bufferSize * sizeof(Goldilocks::Element) > 1024 * 1024 * 1024 * 16){
+        nBlocks = nBlocks / 2;
+        nrowsPack = nrowsPack / 2;
+        h_deviceArgs.bufferSize = nOpenings * nrowsPack * nColsMax;
+    }
     cudaMalloc(&h_deviceArgs.bufferT_, nBlocks * h_deviceArgs.bufferSize * sizeof(Goldilocks::Element));
     std::cout << "Total memory in expressions buffers [Gb]: " << (1.0 * nBlocks * h_deviceArgs.bufferSize * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
 
