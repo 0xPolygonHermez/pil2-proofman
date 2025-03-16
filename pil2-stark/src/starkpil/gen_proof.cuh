@@ -69,6 +69,7 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Goldilocks
     options2.inverse = true;
     std::cout<<"holaaaaaa 2"<<std::endl;
 
+
     accMulHintFields(setupCtx, params, pBuffHelper, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtx, d_params);
     std::cout<<"holaaaaaa 3"<<std::endl;
 
@@ -148,8 +149,12 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         }
     }
 
-    calculateWitnessSTD_gpu(setupCtx, params, pBuffHelper, true, &expressionsCtx, &d_params);
-    calculateWitnessSTD_gpu(setupCtx, params, pBuffHelper, false, &expressionsCtx, &d_params);
+    Goldilocks::Element* hintsBuffer = new Goldilocks::Element[N * FIELD_EXTENSION];
+
+    calculateWitnessSTD_gpu(setupCtx, params, hintsBuffer, true, &expressionsCtx, &d_params);
+    calculateWitnessSTD_gpu(setupCtx, params, hintsBuffer, false, &expressionsCtx, &d_params);
+
+    delete[] hintsBuffer;
 
 
     TimerStart(CALCULATE_IM_POLS);

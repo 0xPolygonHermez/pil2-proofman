@@ -195,12 +195,10 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
     cudaMemcpy(h_deviceArgs.nextStrides, nextStrides, h_deviceArgs.nOpenings * sizeof(uint64_t), cudaMemcpyHostToDevice);
     delete[] nextStrides;
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
 
     cudaMemcpy(h_deviceArgs.offsetsStages, offsetsStages.data(), offsetsStages.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     h_deviceArgs.constPolsSize = setupCtx.starkInfo.nConstants;
     h_deviceArgs.cmPolsInfoSize = setupCtx.starkInfo.cmPolsMap.size();
@@ -213,7 +211,6 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
     }
     cudaMemcpy(h_deviceArgs.cmPolsInfo, cmPolsInfo, h_deviceArgs.cmPolsInfoSize * 3 * sizeof(uint64_t), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     free(cmPolsInfo);
     if (dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.cExpId))
@@ -294,7 +291,7 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
             dest_params.push_back(d_dests[i].params);
         cudaMemcpy(d_dests[i].params, dests_aux[i].params, d_dests[i].nParams * sizeof(ParamsGPU), cudaMemcpyHostToDevice);
         CHECKCUDAERR(cudaGetLastError());
-        std::cout<<"vamos"<<std::endl;
+
 
     }
     for (int i = 0; i < dests.size(); i++)
@@ -306,7 +303,6 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
     cudaMalloc(&d_dests_, h_deviceArgs.nDests * sizeof(DestGPU));
     cudaMemcpy(d_dests_, d_dests, h_deviceArgs.nDests * sizeof(DestGPU), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     delete[] d_dests;
     h_deviceArgs.dests = d_dests_;
@@ -328,35 +324,27 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
 
     cudaMemcpy(h_deviceArgs.cmPolsInfo, h_deviceArgs.cmPolsInfo, 3 * h_deviceArgs.cmPolsInfoSize * sizeof(uint64_t), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     cudaMemcpy(h_deviceArgs.zi, setupCtx.proverHelpers.zi, h_deviceArgs.boundSize * h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice); // cal copiar cada cop?
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     cudaMemcpy(h_deviceArgs.x_n, setupCtx.proverHelpers.x_n, h_deviceArgs.N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                                // cal cada cop? no es pot transportar?
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     cudaMemcpy(h_deviceArgs.x_2ns, setupCtx.proverHelpers.x_2ns, h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                    // cal cada cop? no es pot transportar?
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     cudaMemcpy(h_deviceArgs.challenges, params.challenges, h_deviceArgs.nChallenges * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     cudaMemcpy(h_deviceArgs.numbers, (Goldilocks::Element *)parserArgs.numbers, h_deviceArgs.nNumbers * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     cudaMemcpy(h_deviceArgs.publics, params.publicInputs, h_deviceArgs.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     cudaMemcpy(h_deviceArgs.evals, params.evals, h_deviceArgs.nEvals * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
 
     Goldilocks::Element *airgroupValues_aux = new Goldilocks::Element[h_deviceArgs.nAirgroupValues * FIELD_EXTENSION];
@@ -388,7 +376,6 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
     }
     cudaMemcpy(h_deviceArgs.airgroupValues, airgroupValues_aux, h_deviceArgs.nAirgroupValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
     delete[] airgroupValues_aux;
 
     Goldilocks::Element *airValues_aux = new Goldilocks::Element[h_deviceArgs.nAirValues * FIELD_EXTENSION];
@@ -420,7 +407,6 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
     }
     cudaMemcpy(h_deviceArgs.airValues, airValues_aux, h_deviceArgs.nAirValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
     delete[] airValues_aux;
     Goldilocks::Element *proofValues_aux = new Goldilocks::Element[h_deviceArgs.nProofValues * FIELD_EXTENSION];
     p = 0;
@@ -452,14 +438,11 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
 
     cudaMemcpy(h_deviceArgs.proofValues, proofValues_aux, h_deviceArgs.nProofValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
     delete[] proofValues_aux;
     cudaMemcpy(h_deviceArgs.ops, parserArgs.ops, h_deviceArgs.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
     cudaMemcpy(h_deviceArgs.args, parserArgs.args, h_deviceArgs.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 
     h_deviceArgs.constPols = h_deviceArgs.domainExtended ? params_gpu.pConstPolsExtendedTreeAddress : params_gpu.pConstPolsAddress;
     h_deviceArgs.trace = params_gpu.trace;
@@ -471,7 +454,6 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
     cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
     cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice);
     CHECKCUDAERR(cudaGetLastError());
-    std::cout<<"vamos"<<std::endl;
 }
 
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams &params, StepsParams &params_gpu, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize)
