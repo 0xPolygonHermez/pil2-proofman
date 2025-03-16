@@ -691,6 +691,13 @@ __global__ __launch_bounds__(128) void computeExpressions_explore_(DeviceArgumen
 
                 if(print) printf(" nOps: %d\n", d_deviceArgs->dests[j].params[k].parserParams.nOps);
                 if(print) printf(" offset: %d\n", d_deviceArgs->dests[j].params[k].parserParams.opsOffset);
+                if(print) printf(" nArgs: %d\n", d_deviceArgs->dests[j].params[k].parserParams.nArgs);
+                if(print) printf(" argsOffset: %d\n", d_deviceArgs->dests[j].params[k].parserParams.argsOffset);
+                if(print) printf(" nOpsTotal: %d\n", d_deviceArgs->nOpsTotal);
+                for (uint64_t kk = 0; kk < d_deviceArgs->dests[j].params[k].parserParams.nOps; ++kk)
+                {
+                    assert(d_deviceArgs->dests[j].params[k].parserParams.opsOffset + kk < d_deviceArgs->nOpsTotal);
+                }
             }
         }       
         chunk_idx += gridDim.x;
