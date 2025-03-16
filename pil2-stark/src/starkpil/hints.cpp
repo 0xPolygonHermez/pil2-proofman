@@ -550,7 +550,7 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t nHints
 #ifdef __USE_CUDA__
     opHintFieldsGPU(setupCtx, params, *d_params, dests, GPUExpressionsCtx);
     for(uint64_t i = 0; i < nHints; ++i) {
-        if(dests[i].dest_gpu != NULL) {
+        if(dests[i].dest != NULL) {
                 freeDestGPU(dests[i].dest_gpu);            
         }
     }
