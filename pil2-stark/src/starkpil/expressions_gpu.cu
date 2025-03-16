@@ -487,10 +487,10 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams &params, StepsParams &
         if (dests[i].dest != NULL)
         {
             std::cout << " copy size: " << domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element) << std::endl;
-            std::cout << " domainSize: " << domainSize << std::endl;    
-            Goldilocks::Element *dest = new Goldilocks::Element[domainSize * FIELD_EXTENSION];
-            cudaMemcpy(dest, dests[i].dest_gpu, domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-            memcpy(dests[i].dest, dest, domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element));
+            std::cout << " domainSize: " << dests[i].domainSize << std::endl;    
+            Goldilocks::Element *dest = new Goldilocks::Element[dests[i].domainSize * FIELD_EXTENSION];
+            cudaMemcpy(dest, dests[i].dest_gpu, dests[i].domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+            memcpy(dests[i].dest, dest, dests[i].domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element));
         }
     }
     CHECKCUDAERR(cudaGetLastError());
