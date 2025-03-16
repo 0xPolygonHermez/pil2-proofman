@@ -437,6 +437,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams &params, StepsParams &
     dim3 nBlocks = h_deviceArgs.nBlocks;
     dim3 nThreads = h_deviceArgs.nrowsPack;
     std::cout << "goal2_ nBlocks: " << nBlocks.x << std::endl;
+    computeExpressions_explore_<<<nBlocks, nThreads>>>(d_deviceArgs);
     computeExpressions_<<<nBlocks, nThreads>>>(d_deviceArgs);
     CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
@@ -642,6 +643,59 @@ __device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, 
     }
 }
 
+__global__ __launch_bounds__(128) void computeExpressions_explore_(DeviceArguments *d_deviceArgs)
+{
+
+    int chunk_idx = blockIdx.x;
+    assert(d_deviceArgs->nrowsPack == blockDim.x);
+    uint64_t nchunks = d_deviceArgs->domainSize / blockDim.x;
+
+
+    __shared__ gl64_t *expressions_params[10];
+
+    if (threadIdx.x == 0)
+    {
+        expressions_params[0] = (gl64_t *)(&d_deviceArgs->bufferT_[blockIdx.x * d_deviceArgs->bufferSize]);
+        expressions_params[1] = (gl64_t *)(&d_deviceArgs->tmp1[blockIdx.x * d_deviceArgs->tmp1Size]);
+        expressions_params[2] = (gl64_t *)d_deviceArgs->publics;
+        expressions_params[3] = (gl64_t *)d_deviceArgs->numbers;
+        expressions_params[4] = (gl64_t *)d_deviceArgs->airValues;
+        expressions_params[5] = (gl64_t *)d_deviceArgs->proofValues;
+        expressions_params[6] = (gl64_t *)(&d_deviceArgs->tmp3[blockIdx.x * d_deviceArgs->tmp3Size]);
+        expressions_params[7] = (gl64_t *)d_deviceArgs->airgroupValues;
+        expressions_params[8] = (gl64_t *)d_deviceArgs->challenges;
+        expressions_params[9] = (gl64_t *)d_deviceArgs->evals;
+    }
+    __syncthreads();
+
+    while (chunk_idx < nchunks)
+    {
+        uint64_t i = chunk_idx * blockDim.x;
+        bool print = threadIdx.x == 0 && blockIdx.x == 0 && i==0;
+        loadPolynomials__(d_deviceArgs, i, blockIdx.x);
+
+        if(print) printf(" Ndests: %d\n", d_deviceArgs->nDests);
+
+#pragma unroll 1
+        for (uint64_t j = 0; j < d_deviceArgs->nDests; ++j)
+        {
+            if(print) printf(" dest: %lu\n", j);
+
+            for (uint64_t k = 0; k < d_deviceArgs->dests[j].nParams; ++k)
+            {
+                if(print) printf(" param: %lu of %d\n", k, d_deviceArgs->dests[j].nParams);
+
+                gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
+                uint64_t *nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
+
+
+                if(print) printf(" nOps: %d\n", d_deviceArgs->dests[j].params[k].parserParams.nOps);
+                if(print) printf(" offset: %d\n", d_deviceArgs->dests[j].params[k].parserParams.opsOffset);
+            }
+        }       
+        chunk_idx += gridDim.x;
+    }
+}
 __global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_deviceArgs)
 {
 
