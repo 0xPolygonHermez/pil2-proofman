@@ -735,7 +735,7 @@ __global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_de
     while (chunk_idx < nchunks)
     {
         uint64_t i = chunk_idx * blockDim.x;
-        bool print = threadIdx.x == 0 && blockIdx.x == 0 && i==0;
+        bool print = false; //threadIdx.x == 0 && blockIdx.x == 0 && i==0;
         loadPolynomials__(d_deviceArgs, i, blockIdx.x);
 
         if(print) printf(" Ndests: %d\n", d_deviceArgs->nDests);
