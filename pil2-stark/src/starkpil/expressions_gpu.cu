@@ -66,7 +66,7 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint32_t
     // bufferT_
     h_deviceArgs.bufferSize = nOpenings * nrowsPack * nColsMax; // this must be moved from here
 
-    while(nBlocks * h_deviceArgs.bufferSize * sizeof(Goldilocks::Element) > 1024 * 1024 * 1024 * 16){
+    while(uint64_t(nBlocks) * uint64_t(h_deviceArgs.bufferSize) * uint64_t(sizeof(Goldilocks::Element)) > uint64_t(1024) * uint64_t(1024) * uint64_t(1024) * uint64_t(16)){
         nBlocks = nBlocks / 2;
         nrowsPack = nrowsPack / 2;
         h_deviceArgs.bufferSize = nOpenings * nrowsPack * nColsMax;
