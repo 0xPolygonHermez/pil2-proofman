@@ -77,6 +77,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
 
     TimerStart(STARK_STEP_2);
+    TimerStart(STARK_CALCULATE_WITNESS_STD);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
@@ -85,7 +86,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     calculateWitnessSTD(setupCtx, params, true);
     calculateWitnessSTD(setupCtx, params, false);
-
+    TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);
     
     TimerStart(CALCULATE_IM_POLS);
     starks.calculateImPolsExpressions(2, params);
@@ -119,8 +120,10 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
     }
-    
+
+    TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
+    TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof);

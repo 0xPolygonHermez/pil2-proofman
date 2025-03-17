@@ -83,7 +83,7 @@ struct ParserArgs
 {
     uint8_t* ops;
     uint16_t* args;
-    uint64_t* numbers;
+    Goldilocks::Element* numbers;
     uint16_t* constPolsIds;
     uint16_t* cmPolsIds;
     uint16_t* challengesIds;

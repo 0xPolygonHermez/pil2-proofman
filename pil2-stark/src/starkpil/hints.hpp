@@ -492,7 +492,15 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
     } else if(hintFieldVal.operand == opType::tmp) {
         destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[hintFieldVal.id], hintFieldOptions.inverse);
     } else if(hintFieldVal.operand == opType::airvalue) {
-        destStruct.addAirValue(setupCtx.starkInfo.airValuesMap[hintFieldVal.id], hintFieldVal.id, hintFieldOptions.inverse);   
+        uint64_t airValuePos = 0;
+        for(uint64_t i = 0; i < hintFieldVal.id; ++i) {
+            if(setupCtx.starkInfo.airValuesMap[i].stage == 1) {
+                airValuePos += 1;
+            } else {
+                airValuePos += FIELD_EXTENSION;
+            }
+        }
+        destStruct.addAirValue(setupCtx.starkInfo.airValuesMap[hintFieldVal.id], airValuePos, hintFieldOptions.inverse);   
     } else {
         zklog.error("Op type " + to_string(hintFieldVal.operand) + "is not considered yet.");
         exitProcess();

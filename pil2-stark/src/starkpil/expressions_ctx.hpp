@@ -80,6 +80,8 @@ public:
     SetupCtx &setupCtx;
     ProverHelpers &proverHelpers;
 
+    Goldilocks::Element *xis;
+
     ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers& proverHelpers_) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {};
 
     virtual ~ExpressionsCtx() {};
@@ -100,6 +102,10 @@ public:
         destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], inverse);
         std::vector<Dest> dests = {destStruct};
         calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, compilation_time);
+    }
+
+    void setXi(Goldilocks::Element *xi) {
+        xis = xi;
     }
 };
 

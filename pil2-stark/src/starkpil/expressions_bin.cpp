@@ -31,7 +31,7 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
 
     expressionsBinArgsExpressions.ops = new uint8_t[nOpsExpressions];
     expressionsBinArgsExpressions.args = new uint16_t[nArgsExpressions];
-    expressionsBinArgsExpressions.numbers = new uint64_t[nNumbersExpressions];
+    expressionsBinArgsExpressions.numbers = new Goldilocks::Element[nNumbersExpressions];
     expressionsBinArgsExpressions.constPolsIds = new uint16_t[nConstPolsIdsExpressions];
     expressionsBinArgsExpressions.cmPolsIds = new uint16_t[nCmPolsIdsExpressions];
     expressionsBinArgsExpressions.challengesIds = new uint16_t[nChallengesIdsExpressions];
@@ -102,7 +102,7 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
         expressionsBinArgsExpressions.args[j] = expressionsBin->readU16LE();
     }
     for(uint64_t j = 0; j < nNumbersExpressions; ++j) {
-        expressionsBinArgsExpressions.numbers[j] = expressionsBin->readU64LE();
+        expressionsBinArgsExpressions.numbers[j] = Goldilocks::fromU64(expressionsBin->readU64LE());
     }
 
     for(uint64_t j = 0; j < nConstPolsIdsExpressions; ++j) {
@@ -148,7 +148,7 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
 
     expressionsBinArgsConstraints.ops = new uint8_t[nOpsDebug];
     expressionsBinArgsConstraints.args = new uint16_t[nArgsDebug];
-    expressionsBinArgsConstraints.numbers = new uint64_t[nNumbersDebug];
+    expressionsBinArgsConstraints.numbers = new Goldilocks::Element[nNumbersDebug];
     expressionsBinArgsConstraints.constPolsIds = new uint16_t[nConstPolsIdsDebug];
     expressionsBinArgsConstraints.cmPolsIds = new uint16_t[nCmPolsIdsDebug];
     expressionsBinArgsConstraints.challengesIds = new uint16_t[nChallengesIdsDebug];
@@ -225,7 +225,7 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
         expressionsBinArgsConstraints.args[j] = expressionsBin->readU16LE();
     }
     for(uint64_t j = 0; j < nNumbersDebug; ++j) {
-        expressionsBinArgsConstraints.numbers[j] = expressionsBin->readU64LE();
+        expressionsBinArgsConstraints.numbers[j] = Goldilocks::fromU64(expressionsBin->readU64LE());
     }
 
     for(uint64_t j = 0; j < nConstPolsIdsDebug; ++j) {
@@ -330,7 +330,7 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
 
     expressionsBinArgsExpressions.ops = new uint8_t[nOpsExpressions];
     expressionsBinArgsExpressions.args = new uint16_t[nArgsExpressions];
-    expressionsBinArgsExpressions.numbers = new uint64_t[nNumbersExpressions];
+    expressionsBinArgsExpressions.numbers = new Goldilocks::Element[nNumbersExpressions];
     expressionsBinArgsExpressions.constPolsIds = new uint16_t[nConstPolsIdsExpressions];
     expressionsBinArgsExpressions.cmPolsIds = new uint16_t[nCmPolsIdsExpressions];
     expressionsBinArgsExpressions.challengesIds = new uint16_t[nChallengesIdsExpressions];
@@ -401,7 +401,7 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
         expressionsBinArgsExpressions.args[j] = expressionsBin->readU16LE();
     }
     for(uint64_t j = 0; j < nNumbersExpressions; ++j) {
-        expressionsBinArgsExpressions.numbers[j] = expressionsBin->readU64LE();
+        expressionsBinArgsExpressions.numbers[j] = Goldilocks::fromU64(expressionsBin->readU64LE());
     }
 
     for(uint64_t j = 0; j < nConstPolsIdsExpressions; ++j) {
@@ -445,7 +445,7 @@ void ExpressionsBin::loadGlobalBin(BinFileUtils::BinFile *globalBin) {
 
     expressionsBinArgsConstraints.ops = new uint8_t[nOpsDebug];
     expressionsBinArgsConstraints.args = new uint16_t[nArgsDebug];
-    expressionsBinArgsConstraints.numbers = new uint64_t[nNumbersDebug];
+    expressionsBinArgsConstraints.numbers = new Goldilocks::Element[nNumbersDebug];
     expressionsBinArgsConstraints.nNumbers = nNumbersDebug;
 
     uint32_t nGlobalConstraints = globalBin->readU32LE();
@@ -479,7 +479,7 @@ void ExpressionsBin::loadGlobalBin(BinFileUtils::BinFile *globalBin) {
         expressionsBinArgsConstraints.args[j] = globalBin->readU16LE();
     }
     for(uint64_t j = 0; j < nNumbersDebug; ++j) {
-        expressionsBinArgsConstraints.numbers[j] = globalBin->readU64LE();
+        expressionsBinArgsConstraints.numbers[j] = Goldilocks::fromU64(globalBin->readU64LE());
     }
 
     globalBin->endReadSection();

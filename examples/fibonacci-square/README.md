@@ -146,7 +146,7 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
 && cargo build \
-&& cargo run --bin proofman-cli setup --proving-key examples/fibonacci-square/build/provingKey/ -a \
+&& cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
@@ -188,5 +188,5 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=examples/fibonacci-square/build/rom.bin
+     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=examples/fibonacci-square/build/rom.bin -y -a
 ```

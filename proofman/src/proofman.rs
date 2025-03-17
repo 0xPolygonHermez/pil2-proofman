@@ -437,11 +437,13 @@ impl<F: PrimeField64> ProofMan<F> {
             let mut valid_proofs = true;
 
             if pctx.options.verify_proofs {
+                timer_start_info!(VERIFYING_PROOFS);
                 let proofs_ = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
                 for instance_id in my_instances.iter() {
                     valid_proofs =
                         verify_basic_proof(&pctx, *instance_id, &proofs_[pctx.dctx_get_instance_idx(*instance_id)]);
                 }
+                timer_stop_and_log_info!(VERIFYING_PROOFS);
             }
 
             let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()

@@ -330,6 +330,34 @@ void Starks<ElementType>::calculateFRIPolynomial(StepsParams &params) {
 #else
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
+
+    uint64_t xiChallengeIndex = 0;
+    for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
+    {
+        if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
+            if(setupCtx.starkInfo.challengesMap[i].stageId == 0) xiChallengeIndex = i;
+        }
+    }
+
+    Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
+    
+    Goldilocks::Element xis[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
+    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
+    {
+        Goldilocks::Element w = Goldilocks::one();
+        uint64_t openingAbs = setupCtx.starkInfo.openingPoints[i] < 0 ? -setupCtx.starkInfo.openingPoints[i] : setupCtx.starkInfo.openingPoints[i];
+        for (uint64_t j = 0; j < openingAbs; ++j)
+        {
+            w = w * Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits);
+        }
+
+        if (setupCtx.starkInfo.openingPoints[i] < 0) w = Goldilocks::inv(w);
+
+        Goldilocks3::mul((Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]), (Goldilocks3::Element &)xiChallenge[0], w);
+    }
+
+    expressionsCtx.setXi(xis);
+
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.friExpId);
 
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
