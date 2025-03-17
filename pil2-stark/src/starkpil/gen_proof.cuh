@@ -63,19 +63,11 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Goldilocks
         multiplyHintFields(setupCtx, params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtx, d_params);
     }
 
-    std::cout<<"holaaaaaa 1"<<std::endl;
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
-    std::cout<<"holaaaaaa 2"<<std::endl;
-
-
     accMulHintFields(setupCtx, params, pBuffHelper, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtx, d_params);
-    std::cout<<"holaaaaaa 3"<<std::endl;
-
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
-    std::cout<<"holaaaaaa 4"<<std::endl;
-
 }
 
 void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers) {
@@ -92,7 +84,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed, false); //initialze starks
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
-
     CHECKCUDAERR(cudaGetLastError());
     // GPU tree-nodes
     GPUTree *d_trees = new GPUTree[setupCtx.starkInfo.nStages + 2];
@@ -160,16 +151,11 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         }
     }
 
-    Goldilocks::Element* hintsBuffer = new Goldilocks::Element[N * FIELD_EXTENSION];
-
     CHECKCUDAERR(cudaGetLastError());
-    calculateWitnessSTD_gpu(setupCtx, params, hintsBuffer, true, &expressionsCtx, &d_params);
+    calculateWitnessSTD_gpu(setupCtx, params, pBuffHelper, true, &expressionsCtx, &d_params);
     CHECKCUDAERR(cudaGetLastError());
-    calculateWitnessSTD_gpu(setupCtx, params, hintsBuffer, false, &expressionsCtx, &d_params);
+    calculateWitnessSTD_gpu(setupCtx, params, pBuffHelper, false, &expressionsCtx, &d_params);
     CHECKCUDAERR(cudaGetLastError());
-
-
-    delete[] hintsBuffer;
 
 
     TimerStart(CALCULATE_IM_POLS);

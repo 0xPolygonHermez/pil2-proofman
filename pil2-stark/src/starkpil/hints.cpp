@@ -475,13 +475,13 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
 
 void opHintFields(SetupCtx& setupCtx, StepsParams& params, std::vector<Dest> &dests) {
 
-//#ifdef __AVX512__
-//    ExpressionsAvx512 expressionsCtx(setupCtx);
-//#elif defined(__AVX2__)
-//    ExpressionsAvx expressionsCtx(setupCtx);
-//#else
+#ifdef __AVX512__
+    ExpressionsAvx512 expressionsCtx(setupCtx);
+#elif defined(__AVX2__)
+    ExpressionsAvx expressionsCtx(setupCtx);
+#else
     ExpressionsPack expressionsCtx(setupCtx);
-//#endif
+#endif
 
     uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
@@ -527,7 +527,7 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t nHints
         nRows = 1;
     #endif
 
-            nRows = 128; //rick
+            nRows = 128; //rick (hardcoded!)
 
             buff = new Goldilocks::Element[FIELD_EXTENSION*nRows];
 #ifdef __USE_CUDA__

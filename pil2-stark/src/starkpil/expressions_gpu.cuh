@@ -127,8 +127,6 @@ __device__ __noinline__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl6
 __device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock);
 __device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, DestGPU &dest, gl64_t *destVals);
 __global__ __global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_deviceArgs);
-__global__ __global__ __launch_bounds__(128) void computeExpressions_explore_(DeviceArguments *d_deviceArgs);
-
 
 class ExpressionsGPU : public ExpressionsCtx
 {
