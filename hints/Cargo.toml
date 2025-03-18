@@ -9,3 +9,7 @@ proofman-common = { path = "../common" }
 proofman-util = { path = "../util" }
 p3-field.workspace = true
 log.workspace = true
+
+[features]
+default = []
+gpu = ["proofman-starks-lib-c/gpu"]

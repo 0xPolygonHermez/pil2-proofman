@@ -25,6 +25,7 @@ public:
 
     Goldilocks::Element *source;
     Goldilocks::Element *nodes;
+    uint64_t souceTraceOffset = 0;
 
     uint64_t arity;
     bool custom;
@@ -38,6 +39,14 @@ public:
     uint64_t getMerkleTreeWidth(); 
     uint64_t getMerkleProofSize(); 
     uint64_t getMerkleProofLength();
+    inline uint64_t getMerkleTreeNFieldElements()
+    {
+        return nFieldElements;
+    }
+    inline uint64_t getMerkleTreeHeight()
+    {
+        return height;
+    }
 
     uint64_t getNumNodes(uint64_t height);
     void getRoot(Goldilocks::Element *root);
@@ -45,10 +54,15 @@ public:
     void setNodes(Goldilocks::Element *_nodes);
 
     void getGroupProof(Goldilocks::Element *proof, uint64_t idx);
-    
+    void genMerkleProof(Goldilocks::Element *proof, uint64_t idx, uint64_t offset, uint64_t n);
+
     bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
 
     void merkelize();
+    Goldilocks::Element *get_nodes_ptr()
+    {
+        return nodes;
+    }
 
     void writeFile(std::string file);
 };

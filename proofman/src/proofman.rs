@@ -7,6 +7,7 @@ use proofman_common::{
 };
 
 use proofman_hints::aggregate_airgroupvals;
+use proofman_starks_lib_c::gen_device_commit_buffers_c;
 use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
 use std::collections::HashMap;
 use std::fs::File;
@@ -28,10 +29,11 @@ use std::{path::PathBuf, sync::Arc};
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessManager};
-
+use crate::discover_max_sizes;
 use crate::{check_tree_paths, check_tree_paths_vadcop};
 use crate::verify_basic_proof;
 use crate::verify_global_constraints_proof;
+use crate::MaxSizes;
 use crate::{
     verify_constraints_proof, check_paths, print_summary_info, aggregate_proofs, get_buff_sizes,
     generate_vadcop_recursive1_proof,
@@ -331,6 +333,10 @@ impl<F: PrimeField64> ProofMan<F> {
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
+        let max_sizes = discover_max_sizes(&pctx, &setups);
+        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+        let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
+
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !all && !pctx.dctx_is_my_instance(instance_id) {
                 continue;
@@ -354,6 +360,7 @@ impl<F: PrimeField64> ProofMan<F> {
                 aux_trace.clone(),
                 *all,
                 values.clone(),
+                d_buffers.clone(),
             ));
         }
 
@@ -406,6 +413,7 @@ impl<F: PrimeField64> ProofMan<F> {
                     const_tree.clone(),
                     airgroup_values_air_instances.clone(),
                     gen_const_tree,
+                    d_buffers.clone(),
                 ));
                 gen_const_tree = false;
             }
@@ -549,6 +557,7 @@ impl<F: PrimeField64> ProofMan<F> {
                     const_tree_compressor,
                     const_tree_recursive1,
                     output_dir_path.clone(),
+                    d_buffers.lock().unwrap().get_ptr(),
                 )
                 .expect("Failed to generate recursive proof");
                 recursive1_proofs[*my_instance_id] = proof_recursive;
@@ -567,6 +576,7 @@ impl<F: PrimeField64> ProofMan<F> {
             &const_pols,
             &const_tree,
             output_dir_path.clone(),
+            d_buffers.lock().unwrap().get_ptr(),
         );
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
@@ -580,10 +590,11 @@ impl<F: PrimeField64> ProofMan<F> {
         aux_trace_contribution_ptr: Arc<Vec<F>>,
         all: bool,
         values: Arc<Mutex<Vec<u64>>>,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
-            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr);
+            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr, d_buffers.clone());
 
             if !all {
                 pctx.free_instance(instance_id);
@@ -609,6 +620,7 @@ impl<F: PrimeField64> ProofMan<F> {
         const_tree: Arc<Vec<F>>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
         gen_const_tree: bool,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
@@ -651,6 +663,7 @@ impl<F: PrimeField64> ProofMan<F> {
                 airgroup_id as u64,
                 air_id as u64,
                 air_instance_id as u64,
+                d_buffers.lock().unwrap().get_ptr(),
             );
 
             airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
@@ -901,6 +914,7 @@ impl<F: PrimeField64> ProofMan<F> {
         sctx: &SetupCtx<F>,
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> Vec<u64> {
         let n_field_elements = 4;
 
@@ -920,6 +934,7 @@ impl<F: PrimeField64> ProofMan<F> {
             root.as_ptr() as *mut u8,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
+            d_buffers.lock().unwrap().get_ptr(),
         );
 
         let mut value = vec![Goldilocks::ZERO; n_field_elements];
