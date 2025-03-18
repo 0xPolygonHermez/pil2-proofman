@@ -88,9 +88,9 @@ public:
     void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
     void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
     
-    void calculateImPolsExpressions(uint64_t step, StepsParams& params);
-    void calculateQuotientPolynomial(StepsParams& params);
-    void calculateFRIPolynomial(StepsParams& params);
+    void calculateImPolsExpressions(uint64_t step, StepsParams& params, ExpressionsCtx& expressionsCtx);
+    void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
+    void calculateFRIPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
 
     void computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv);
     void computeEvals(StepsParams &params, Goldilocks::Element *LEv, FRIProof<ElementType> &proof);

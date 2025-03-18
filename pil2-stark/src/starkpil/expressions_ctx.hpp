@@ -81,27 +81,111 @@ public:
     ProverHelpers &proverHelpers;
 
     Goldilocks::Element *xis;
+    int64_t *nextStrides;
+    int64_t *nextStridesExtended;
+    uint64_t *mapOffsets;
+    uint64_t *mapOffsetsExtended;
+    uint64_t *mapSectionsN;
+    uint64_t *mapOffsetsCustomFixed;
+    uint64_t *mapOffsetsCustomFixedExtended;
+    uint64_t *mapSectionsNCustomFixed;
+    uint64_t nrowsPack;
+    uint64_t minRow;
+    uint64_t maxRow;
+    uint64_t minRowExtended;
+    uint64_t maxRowExtended;
+    uint64_t bufferCommitsSize;
+    uint64_t nStages;
+    uint64_t nPublics;
+    uint64_t nChallenges;
+    uint64_t nEvals;
 
-    ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers& proverHelpers_) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {};
+    ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers& proverHelpers_) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {
+        nextStrides = new int64_t[setupCtx.starkInfo.openingPoints.size()];
+        nextStridesExtended = new int64_t[setupCtx.starkInfo.openingPoints.size()];
+        mapOffsets = new uint64_t[1 + setupCtx.starkInfo.nStages + 1];
+        mapOffsetsExtended = new uint64_t[1 + setupCtx.starkInfo.nStages + 1];
+        mapOffsetsCustomFixed = new uint64_t[setupCtx.starkInfo.customCommits.size()];
+        mapOffsetsCustomFixedExtended = new uint64_t[setupCtx.starkInfo.customCommits.size()];
+        mapSectionsN = new uint64_t[1 + setupCtx.starkInfo.nStages + 1];
+        mapSectionsNCustomFixed = new uint64_t[setupCtx.starkInfo.customCommits.size()];
 
-    virtual ~ExpressionsCtx() {};
+        int64_t extend = (1 << (setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits));
+
+        uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
+        minRow = 0;
+        maxRow = N;
+        minRowExtended = 0;
+        maxRowExtended = NExtended;
+
+        for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i) {
+            nextStrides[i] = setupCtx.starkInfo.verify ? 0 : setupCtx.starkInfo.openingPoints[i];
+            nextStridesExtended[i] = setupCtx.starkInfo.verify ? 0 : setupCtx.starkInfo.openingPoints[i] * extend;
+            if(setupCtx.starkInfo.openingPoints[i] < 0) {
+                minRow = std::max(minRow, uint64_t(std::abs(nextStrides[i])));
+                minRowExtended = std::max(minRowExtended, uint64_t(std::abs(nextStridesExtended[i])));
+            } else {
+                maxRow = std::min(maxRow, N - nextStrides[i]);
+                maxRowExtended = std::min(maxRowExtended, NExtended - nextStridesExtended[i]);
+            }
+        }
+
+        mapOffsets[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
+        mapOffsetsExtended[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
+        mapSectionsN[0] = setupCtx.starkInfo.mapSectionsN["const"];
+
+        for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
+            mapSectionsN[i + 1] = setupCtx.starkInfo.mapSectionsN["cm" + std::to_string(i + 1)];
+            mapOffsets[i + 1] = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + std::to_string(i + 1), false)];
+            mapOffsetsExtended[i + 1] = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + std::to_string(i + 1), true)];
+        }
+
+        for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); ++i) {
+            mapSectionsNCustomFixed[i] = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[i].name + "0"];
+            mapOffsetsCustomFixed[i] = setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", false)];
+            mapOffsetsCustomFixedExtended[i] = setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", true)];
+        }
+
+        bufferCommitsSize = 1 + setupCtx.starkInfo.nStages + 3 + setupCtx.starkInfo.customCommits.size();
+        nStages = setupCtx.starkInfo.nStages;
+        nPublics = setupCtx.starkInfo.nPublics;
+        nChallenges = setupCtx.starkInfo.challengesMap.size();
+        nEvals = setupCtx.starkInfo.evMap.size();
+    };
+
+    virtual ~ExpressionsCtx() {
+        delete[] nextStrides;
+        delete[] nextStridesExtended;
+        delete[] mapOffsets;
+        delete[] mapOffsetsExtended;
+        delete[] mapOffsetsCustomFixed;
+        delete[] mapOffsetsCustomFixedExtended;
+        delete[] mapSectionsN;
+        delete[] mapSectionsNCustomFixed;
+    };
     
-    virtual void calculateExpressions(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize, bool compilationTime = false) {};
+    virtual void calculateExpressions(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize, bool domainExtended, bool compilationTime = false) {};
  
     void calculateExpression(StepsParams& params, Goldilocks::Element* dest, uint64_t expressionId, bool inverse = false, bool compilation_time = false) {
         uint64_t domainSize;
+        bool domainExtended;
         if (compilation_time) {
             domainSize = 1;
+            domainExtended = false;
         } else if(expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId) {
             setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
             domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+            domainExtended = true;
         } else {
             domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+            domainExtended = false;
         }
         Dest destStruct(dest, domainSize, 0, expressionId);
         destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], inverse);
         std::vector<Dest> dests = {destStruct};
-        calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, compilation_time);
+        calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, domainExtended, compilation_time);
     }
 
     void setXi(Goldilocks::Element *xi) {

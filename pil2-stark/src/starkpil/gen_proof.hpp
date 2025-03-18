@@ -1,6 +1,6 @@
 #include "starks.hpp"
 
-void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, bool prod) {
+void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx, bool prod) {
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
     uint64_t hint[1];
@@ -29,14 +29,14 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, bool prod) {
             hintOptions2[i] = options2;
         }
 
-        multiplyHintFields(setupCtx, params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2);
+        multiplyHintFields(setupCtx, params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2);
         
     }
 
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
-    accMulHintFields(setupCtx, params, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod);
+    accMulHintFields(setupCtx, params, expressionsCtx, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod);
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
@@ -84,12 +84,12 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         }
     }
 
-    calculateWitnessSTD(setupCtx, params, true);
-    calculateWitnessSTD(setupCtx, params, false);
+    calculateWitnessSTD(setupCtx, params, expressionsCtx, true);
+    calculateWitnessSTD(setupCtx, params, expressionsCtx, false);
     TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);
     
     TimerStart(CALCULATE_IM_POLS);
-    starks.calculateImPolsExpressions(2, params);
+    starks.calculateImPolsExpressions(2, params, expressionsCtx);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_2);
@@ -122,7 +122,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     }
 
     TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
-    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
+    starks.calculateQuotientPolynomial(params, expressionsCtx);
     TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
@@ -145,7 +145,9 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
     Goldilocks::Element* LEv = &pBuffHelper[0];
 
+    TimerStart(CALCULATE_LEV);
     starks.computeLEv(xiChallenge, LEv);
+    TimerStopAndLog(CALCULATE_LEV);
     starks.computeEvals(params ,LEv, proof);
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
@@ -172,7 +174,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStart(STARK_STEP_FRI);
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
-    starks.calculateFRIPolynomial(params);
+    starks.calculateFRIPolynomial(params, expressionsCtx);
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];

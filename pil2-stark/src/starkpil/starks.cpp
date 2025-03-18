@@ -137,7 +137,7 @@ void Starks<ElementType>::computeLEv(Goldilocks::Element *xiChallenge, Goldilock
         
     Goldilocks::Element xis[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
     Goldilocks::Element xisShifted[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
-
+    
     Goldilocks::Element shift_inv = Goldilocks::inv(Goldilocks::shift());
     for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
     {
@@ -283,7 +283,7 @@ void Starks<ElementType>::ffi_treesGL_get_root(uint64_t index, ElementType *dst)
 }
 
 template <typename ElementType>
-void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams &params) {
+void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams &params, ExpressionsCtx &expressionsCtx) {
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBits);
     std::vector<Dest> dests;
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
@@ -298,39 +298,16 @@ void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams 
 
     if(dests.size() == 0) return;
 
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
-
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
+    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false, false);
 }
 
 template <typename ElementType>
-void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params) {
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
+void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params, ExpressionsCtx &expressionsCtx) {
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
 }
 
 template <typename ElementType>
-void Starks<ElementType>::calculateFRIPolynomial(StepsParams &params) {
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
-
+void Starks<ElementType>::calculateFRIPolynomial(StepsParams &params, ExpressionsCtx &expressionsCtx) {
     uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {

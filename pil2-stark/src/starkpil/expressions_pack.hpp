@@ -4,103 +4,145 @@
 
 class ExpressionsPack : public ExpressionsCtx {
 public:
-    uint64_t nrowsPack;
-    ExpressionsPack(SetupCtx& setupCtx, ProverHelpers& proverHelpers, uint64_t nrowsPack_ = 4) : ExpressionsCtx(setupCtx, proverHelpers), nrowsPack(nrowsPack_) {};
+    ExpressionsPack(SetupCtx& setupCtx, ProverHelpers& proverHelpers, uint64_t nrowsPack_ = 4) : ExpressionsCtx(setupCtx, proverHelpers) {
+        nrowsPack = nrowsPack_;
+    };
 
-    inline void load(Goldilocks::Element *value, StepsParams& params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, uint64_t domainSize, bool domainExtended) {
-        int64_t extend = domainExtended ? (1 << (setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits)) : 1;
-        
+    inline Goldilocks::Element* load(Goldilocks::Element *value, StepsParams& params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t *mapOffsetsExps, uint64_t* mapOffsetsCustomExps, int64_t* nextStridesExps, uint64_t i_args, uint64_t row, uint64_t dim, uint64_t domainSize, bool domainExtended, bool isCyclic) {        
         uint64_t type = args[i_args];
         if (type == 0) {
             if(dim == FIELD_EXTENSION) { exit(-1); }
             Goldilocks::Element *constPols = domainExtended ? &params.pConstPolsExtendedTreeAddress[2] : params.pConstPolsAddress;
             uint64_t stagePos = args[i_args + 1];
-            uint64_t o = setupCtx.starkInfo.verify ? 0 : (setupCtx.starkInfo.openingPoints[args[i_args + 2]] < 0 ? setupCtx.starkInfo.openingPoints[args[i_args + 2]] + domainSize : setupCtx.starkInfo.openingPoints[args[i_args + 2]]) * extend;
-            for(uint64_t j = 0; j < nrowsPack; ++j) {
-                uint64_t l = (row + j + o) % domainSize;
-                value[j] = constPols[l * setupCtx.starkInfo.nConstants + stagePos];
+            int64_t o = nextStridesExps[args[i_args + 2]];
+            uint64_t nCols = mapSectionsN[0];
+            if(isCyclic) {
+                for(uint64_t j = 0; j < nrowsPack; ++j) {
+                    uint64_t l = (row + j + o) % domainSize;
+                    value[j] = constPols[l * setupCtx.starkInfo.nConstants + stagePos];
+                }
+                return value;
+            } else {
+                uint64_t offsetCol = (row + o) * nCols + stagePos;
+                for(uint64_t j = 0; j < nrowsPack; ++j) {
+                    value[j] = constPols[offsetCol + j*nCols];
+                }
+                return value;
             }
+            
         } else if (type <= setupCtx.starkInfo.nStages + 1) {
-            std::string section = "cm" + to_string(type);
             uint64_t stagePos = args[i_args + 1];
-            uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(section, domainExtended)];
-            uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-            uint64_t o = setupCtx.starkInfo.verify ? 0 : (setupCtx.starkInfo.openingPoints[args[i_args + 2]] < 0 ? setupCtx.starkInfo.openingPoints[args[i_args + 2]] + domainSize : setupCtx.starkInfo.openingPoints[args[i_args + 2]]) * extend;
-            for(uint64_t j = 0; j < nrowsPack; ++j) {
-                uint64_t l = (row + j + o) % domainSize;
-                if(type == 1 && !domainExtended) {
-                    value[j] = params.trace[l * nCols + stagePos];
-                } else {
-                    for(uint64_t d = 0; d < dim; ++d) {
-                        value[j + d*nrowsPack] = params.aux_trace[offset + l * nCols + stagePos + d];
+            uint64_t offset = mapOffsetsExps[type];
+            uint64_t nCols = mapSectionsN[type];
+            int64_t o = nextStridesExps[args[i_args + 2]];
+            if(isCyclic) {
+                for(uint64_t j = 0; j < nrowsPack; ++j) {
+                    uint64_t l = (row + j + o) % domainSize;
+                    if(type == 1 && !domainExtended) {
+                        value[j] = params.trace[l * nCols + stagePos];
+                    } else {
+                        for(uint64_t d = 0; d < dim; ++d) {
+                            value[j + d*nrowsPack] = params.aux_trace[offset + l * nCols + stagePos + d];
+                        }
                     }
+                }
+                return value;
+            } else {
+                if(type == 1 && !domainExtended) {
+                    uint64_t offsetCol = (row + o) * nCols + stagePos;
+                    for(uint64_t j = 0; j < nrowsPack; ++j) {
+                        value[j] = params.trace[offsetCol + j*nCols];
+                    }
+                    return value;
+                } else {
+                    uint64_t offsetCol = offset + (row + o) * nCols + stagePos;
+                    for(uint64_t j = 0; j < nrowsPack; ++j) {
+                        for(uint64_t d = 0; d < dim; ++d) {
+                            value[j + d*nrowsPack] = params.aux_trace[offsetCol + d + j*nCols];
+                        }
+                    }
+                    return value;
                 }
             }
         } else if (type == setupCtx.starkInfo.nStages + 2) {
             uint64_t boundary = args[i_args + 1];
-            if(boundary == 0) {
-                for(uint64_t j = 0; j < nrowsPack; ++j) {
-                    if(setupCtx.starkInfo.verify) {
+            if(setupCtx.starkInfo.verify) {
+                if(boundary == 0) {
+                    for(uint64_t j = 0; j < nrowsPack; ++j) {
                         for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
                             value[j + e*nrowsPack] = proverHelpers.x_n[e];
                         }
-                    } else {
-                        value[j] = domainExtended ? proverHelpers.x[row + j] : proverHelpers.x_n[row + j];
                     }
-                }
-            } else {
-                for(uint64_t j = 0; j < nrowsPack; ++j) {
-                    if(setupCtx.starkInfo.verify) {
+                } else {
+                    for(uint64_t j = 0; j < nrowsPack; ++j) {
                         for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
                             value[j + e*nrowsPack] = proverHelpers.zi[(boundary - 1)*FIELD_EXTENSION + e];
                         }
-                    } else {
-                        value[j] = proverHelpers.zi[row + j + (boundary - 1)*domainSize];
                     }
-                    
+                }
+                return value;
+            } else {
+                if(boundary == 0) {
+                    Goldilocks::Element *x = domainExtended ? &proverHelpers.x[row] : &proverHelpers.x_n[row];
+                    return x;
+                } else {
+                    return &proverHelpers.zi[(boundary - 1)*domainSize  + row];
                 }
             }
         } else if (type == setupCtx.starkInfo.nStages + 3) {
             if(dim == 1) { exit(-1); }
             uint64_t o = args[i_args + 1];
-            if(!setupCtx.starkInfo.verify) {
-                for (uint64_t k = 0; k < nrowsPack; k++) {    
-                    Goldilocks3::sub((Goldilocks3::Element &)(value[k * FIELD_EXTENSION]), proverHelpers.x[row + k], (Goldilocks3::Element &)(xis[o * FIELD_EXTENSION]));
-                }
-
-                Goldilocks3::batchInverse((Goldilocks3::Element *)value, (Goldilocks3::Element *)value, nrowsPack);
-
-                for (uint64_t k = 0; k < nrowsPack; k++) {                
-                    Goldilocks3::mul((Goldilocks3::Element &)(value[k * FIELD_EXTENSION]), (Goldilocks3::Element &)(value[k * FIELD_EXTENSION]), proverHelpers.x[row + k]);
-                }
-            } else {
+            if(setupCtx.starkInfo.verify) {
                 for(uint64_t k = 0; k < nrowsPack; ++k) {
                     for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
                         value[k + e*nrowsPack] = params.xDivXSub[((row + k)*setupCtx.starkInfo.openingPoints.size() + o)*FIELD_EXTENSION + e];
                     }
-                }                            
-            }
-            
-
-        } else if (type >= setupCtx.starkInfo.nStages + 4 && type < setupCtx.starkInfo.customCommits.size() + setupCtx.starkInfo.nStages + 4) {
-            uint64_t index = type - (setupCtx.starkInfo.nStages + 4);
-            std::string section = setupCtx.starkInfo.customCommits[index].name + "0";
-            uint64_t stagePos = args[i_args + 1];
-            uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(section, domainExtended)];
-            uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-            uint64_t o = setupCtx.starkInfo.verify ? 0 : (setupCtx.starkInfo.openingPoints[args[i_args + 2]] < 0 ? setupCtx.starkInfo.openingPoints[args[i_args + 2]] + domainSize : setupCtx.starkInfo.openingPoints[args[i_args + 2]]) * extend;
-            for(uint64_t j = 0; j < nrowsPack; ++j) {
-                uint64_t l = (row + j + o) % domainSize;
-                value[j] = params.pCustomCommitsFixed[offset + l * nCols + stagePos];
-            }
-        } else if (type == setupCtx.starkInfo.customCommits.size() + setupCtx.starkInfo.nStages + 4 || type == setupCtx.starkInfo.customCommits.size() + setupCtx.starkInfo.nStages + 4 + 1) {
-            memcpy(value, &expressions_params[type][args[i_args + 1]*nrowsPack], dim * nrowsPack * sizeof(Goldilocks::Element));
-        } else {
-            for(uint64_t k = 0; k < nrowsPack; ++k) {
-                for(uint64_t d = 0; d < dim; ++d) {
-                    value[k + d*nrowsPack] = expressions_params[type][args[i_args + 1] + d];
                 }
+                return value;
+            } else {
+                Goldilocks::Element xdivxsub[FIELD_EXTENSION*nrowsPack];
+                for (uint64_t k = 0; k < nrowsPack; k++) {    
+                    Goldilocks3::sub((Goldilocks3::Element &)(xdivxsub[k * FIELD_EXTENSION]), proverHelpers.x[row + k], (Goldilocks3::Element &)(xis[o * FIELD_EXTENSION]));
+                }
+
+                Goldilocks3::batchInverse((Goldilocks3::Element *)xdivxsub, (Goldilocks3::Element *)xdivxsub, nrowsPack);
+
+                for (uint64_t k = 0; k < nrowsPack; k++) {
+                    Goldilocks3::mul((Goldilocks3::Element &)(xdivxsub[k * FIELD_EXTENSION]), (Goldilocks3::Element &)(xdivxsub[k * FIELD_EXTENSION]), proverHelpers.x[row + k]);
+                }
+
+                for(uint64_t k = 0; k < nrowsPack; ++k) {
+                    for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
+                        value[k + e*nrowsPack] = xdivxsub[k * FIELD_EXTENSION + e];
+                    }
+                }
+                return value;
             }
+               
+             
+        } else if (type >= setupCtx.starkInfo.nStages + 4 && type < setupCtx.starkInfo.customCommits.size() + setupCtx.starkInfo.nStages + 4) {
+            uint64_t index = type - (nStages + 4);
+            uint64_t stagePos = args[i_args + 1];
+            uint64_t offset = mapOffsetsCustomExps[index];
+            uint64_t nCols = mapSectionsNCustomFixed[index];
+            int64_t o = nextStridesExps[args[i_args + 2]];
+            if(isCyclic) {
+                for(uint64_t j = 0; j < nrowsPack; ++j) {
+                    uint64_t l = (row + j + o) % domainSize;
+                    value[j] = params.pCustomCommitsFixed[offset + l * nCols + stagePos];
+                }
+                return value;
+            } else {
+                uint64_t offsetCol = offset + (row + o) * nCols + stagePos;
+                for(uint64_t j = 0; j < nrowsPack; ++j) {
+                    value[j] = params.pCustomCommitsFixed[offsetCol + j*nCols];
+                }
+                return value;
+            }
+        } else if (type == bufferCommitsSize || type == bufferCommitsSize + 1) {
+            return &expressions_params[type][args[i_args + 1]*nrowsPack];
+        } else {
+            return &expressions_params[type][args[i_args + 1]];
         }
     }
 
@@ -174,22 +216,39 @@ public:
         }
     }
 
-    inline void printTmp1(uint64_t row, Goldilocks::Element* tmp) {
+    inline void printTmp1(uint64_t row, Goldilocks::Element* tmp, bool isConstant) {
         Goldilocks::Element buff[nrowsPack];
         Goldilocks::copy_pack(nrowsPack, buff, tmp);
         for(uint64_t i = 0; i < nrowsPack; ++i) {
-            cout << "Value at row " << row + i << " is " << Goldilocks::toString(buff[i]) << endl;
+            if(isConstant) {
+                cout << "Value at row " << row + i << " is " << Goldilocks::toString(buff[0]) << endl;
+            } else {
+                cout << "Value at row " << row + i << " is " << Goldilocks::toString(buff[i]) << endl;
+            }
         }
     }
 
-    inline void printTmp3(uint64_t row, Goldilocks::Element* tmp) {
+    inline void printTmp3(uint64_t row, Goldilocks::Element* tmp, bool isConstant) {
         for(uint64_t i = 0; i < nrowsPack; ++i) {
-            cout << "Value at row " << row + i << " is [" << Goldilocks::toString(tmp[i]) << ", " << Goldilocks::toString(tmp[nrowsPack + i]) << ", " << Goldilocks::toString(tmp[2*nrowsPack + i]) << "]" << endl;
+            if(isConstant) {
+                cout << "Value at row " << row + i << " is [" << Goldilocks::toString(tmp[0]) << ", " << Goldilocks::toString(tmp[1]) << ", " << Goldilocks::toString(tmp[2]) << "]" << endl;
+            } else {
+                cout << "Value at row " << row + i << " is [" << Goldilocks::toString(tmp[i]) << ", " << Goldilocks::toString(tmp[nrowsPack + i]) << ", " << Goldilocks::toString(tmp[2*nrowsPack + i]) << "]" << endl;
+            }
         }
     }
 
-    void calculateExpressions(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize, bool compilation_time) override {
-        bool domainExtended = !setupCtx.starkInfo.verify && domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
+    void calculateExpressions(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize, bool domainExtended, bool compilation_time) override {
+        uint64_t *mapOffsetsExps = domainExtended ? mapOffsetsExtended : mapOffsets;
+        uint64_t *mapOffsetsCustomExps = domainExtended ? mapOffsetsCustomFixedExtended : mapOffsetsCustomFixed;
+        int64_t *nextStridesExps = domainExtended ? nextStridesExtended : nextStrides;
+
+        uint64_t k_min = domainExtended 
+            ? uint64_t((minRowExtended + nrowsPack - 1) / nrowsPack) * nrowsPack
+            : uint64_t((minRow + nrowsPack - 1) / nrowsPack) * nrowsPack;
+        uint64_t k_max = domainExtended
+            ? uint64_t(maxRowExtended / nrowsPack)*nrowsPack
+            : uint64_t(maxRow / nrowsPack)*nrowsPack;
 
         uint64_t maxTemp1Size = 0;
         uint64_t maxTemp3Size = 0;
@@ -209,16 +268,16 @@ public:
         Goldilocks::Element *values_ = new Goldilocks::Element[omp_get_max_threads() * 2 * FIELD_EXTENSION * nrowsPack];
     #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
-            uint64_t buffer_types_size = 1 + setupCtx.starkInfo.nStages + 3 + setupCtx.starkInfo.customCommits.size();
-            uint64_t expressions_params_size = buffer_types_size + 9;
+            bool isCyclic = i < k_min || i >= k_max;
+            uint64_t expressions_params_size = bufferCommitsSize + 9;
             Goldilocks::Element* expressions_params[expressions_params_size];
-            expressions_params[buffer_types_size + 2] = params.publicInputs;
-            expressions_params[buffer_types_size + 3] = parserArgs.numbers;
-            expressions_params[buffer_types_size + 4] = params.airValues;
-            expressions_params[buffer_types_size + 5] = params.proofValues;
-            expressions_params[buffer_types_size + 6] = params.airgroupValues;
-            expressions_params[buffer_types_size + 7] = params.challenges;
-            expressions_params[buffer_types_size + 8] = params.evals;
+            expressions_params[bufferCommitsSize + 2] = params.publicInputs;
+            expressions_params[bufferCommitsSize + 3] = parserArgs.numbers;
+            expressions_params[bufferCommitsSize + 4] = params.airValues;
+            expressions_params[bufferCommitsSize + 5] = params.proofValues;
+            expressions_params[bufferCommitsSize + 6] = params.airgroupValues;
+            expressions_params[bufferCommitsSize + 7] = params.challenges;
+            expressions_params[bufferCommitsSize + 8] = params.evals;
 
             Goldilocks::Element **destVals = new Goldilocks::Element*[dests.size()];
 
@@ -227,21 +286,20 @@ public:
                 destVals[j] = new Goldilocks::Element[dests[j].params.size() * FIELD_EXTENSION* nrowsPack];
                 for(uint64_t k = 0; k < dests[j].params.size(); ++k) {
                     uint64_t i_args = 0;
-
                     if(dests[j].params[k].op == opType::cm || dests[j].params[k].op == opType::const_) {
                         uint64_t openingPointIndex = dests[j].params[k].rowOffsetIndex;
                         uint64_t stagePos = dests[j].params[k].stagePos;
-                        uint64_t o = setupCtx.starkInfo.verify ? 0 : (setupCtx.starkInfo.openingPoints[openingPointIndex] < 0 ? setupCtx.starkInfo.openingPoints[openingPointIndex] + domainSize : setupCtx.starkInfo.openingPoints[openingPointIndex]);
+                        int64_t o = nextStridesExps[openingPointIndex];
                         Goldilocks::Element *values = &values_[omp_get_thread_num()*2*FIELD_EXTENSION*nrowsPack];
+                        uint64_t nCols = mapSectionsN[0];
                         if (dests[j].params[k].op == opType::const_) {
                             for(uint64_t r = 0; r < nrowsPack; ++r) {
                                 uint64_t l = (i + r + o) % domainSize;
-                                values[r] = params.pConstPolsAddress[l * setupCtx.starkInfo.nConstants + stagePos];
+                                values[r] = params.pConstPolsAddress[l * nCols + stagePos];
                             }
                         } else {
-                            std::string section = "cm" + to_string(dests[j].params[k].stage);
-                            uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)];
-                            uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
+                            uint64_t offset = mapOffsetsExps[dests[j].params[k].stage];
+                            uint64_t nCols = mapSectionsN[dests[j].params[k].stage];
                             for(uint64_t r = 0; r < nrowsPack; ++r) {
                                 uint64_t l = (i + r + o) % domainSize;
                                 if(dests[j].params[k].stage == 1) {
@@ -270,49 +328,57 @@ public:
                     }
                     uint8_t* ops = &parserArgs.ops[dests[j].params[k].parserParams.opsOffset];
                     uint16_t* args = &parserArgs.args[dests[j].params[k].parserParams.argsOffset];
-                    expressions_params[buffer_types_size] = &tmp1_[omp_get_thread_num()*maxTemp1Size];
-                    expressions_params[buffer_types_size + 1] = &tmp3_[omp_get_thread_num()*maxTemp3Size];
+                    expressions_params[bufferCommitsSize] = &tmp1_[omp_get_thread_num()*maxTemp1Size];
+                    expressions_params[bufferCommitsSize + 1] = &tmp3_[omp_get_thread_num()*maxTemp3Size];
 
-                    Goldilocks::Element *a = &values_[omp_get_thread_num()*2*FIELD_EXTENSION*nrowsPack];
-                    Goldilocks::Element *b = &values_[omp_get_thread_num()*2*FIELD_EXTENSION*nrowsPack + nrowsPack*FIELD_EXTENSION];
+                    Goldilocks::Element *valueA = &values_[omp_get_thread_num()*2*FIELD_EXTENSION*nrowsPack];
+                    Goldilocks::Element *valueB = &values_[omp_get_thread_num()*2*FIELD_EXTENSION*nrowsPack + nrowsPack*FIELD_EXTENSION];
 
                     for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
                         switch (ops[kk]) {
                             case 0: {
                                 // COPY dim1 to dim1
-                                load(a, params, expressions_params, args, i_args + 1, i, 1, domainSize, domainExtended);
-                                Goldilocks::copy_pack(nrowsPack, &expressions_params[buffer_types_size][args[i_args] * nrowsPack], a);
+                                Goldilocks::Element* a = load(valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 1, i, 1, domainSize, domainExtended, isCyclic);
+                                bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
+                                Goldilocks::copy_pack(nrowsPack, &expressions_params[bufferCommitsSize][args[i_args] * nrowsPack], a, isConstant);
                                 i_args += 4;
                                 break;
                             }
                             case 1: {
                                 // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
-                                load(a, params, expressions_params, args, i_args + 2, i, 1, domainSize, domainExtended);
-                                load(b, params, expressions_params, args, i_args + 5, i, 1, domainSize, domainExtended);
-                                Goldilocks::op_pack(nrowsPack, args[i_args], &expressions_params[buffer_types_size][args[i_args + 1] * nrowsPack], a, b);
+                                Goldilocks::Element* a = load(valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 2, i, 1, domainSize, domainExtended, isCyclic);
+                                Goldilocks::Element* b = load(valueB, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 5, i, 1, domainSize, domainExtended, isCyclic);
+                                bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
+                                bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
+                                Goldilocks::op_pack(nrowsPack, args[i_args], &expressions_params[bufferCommitsSize][args[i_args + 1] * nrowsPack], a, isConstantA, b, isConstantB);
                                 i_args += 8;
                                 break;
                             }
                             case 2: {
                                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
-                                load(a, params, expressions_params, args, i_args + 2, i, 3, domainSize, domainExtended);
-                                load(b, params, expressions_params, args, i_args + 5, i, 1, domainSize, domainExtended);
-                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &expressions_params[buffer_types_size + 1][args[i_args + 1] * nrowsPack], a, b);
+                                Goldilocks::Element* a = load(valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 2, i, 3, domainSize, domainExtended, isCyclic);
+                                Goldilocks::Element* b = load(valueB, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 5, i, 1, domainSize, domainExtended, isCyclic);
+                                bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
+                                bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
+                                Goldilocks3::op_31_pack(nrowsPack, args[i_args], &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * nrowsPack], a, isConstantA, b, isConstantB);
                                 i_args += 8;
                                 break;
                             }
                             case 3: {
                                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
-                                load(a, params, expressions_params, args, i_args + 2, i, 3, domainSize, domainExtended);
-                                load(b, params, expressions_params, args, i_args + 5, i, 3, domainSize, domainExtended);
-                                Goldilocks3::op_pack(nrowsPack, args[i_args], &expressions_params[buffer_types_size + 1][args[i_args + 1] * nrowsPack], a, b);
+                                Goldilocks::Element* a = load(valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 2, i, 3, domainSize, domainExtended, isCyclic);
+                                Goldilocks::Element* b = load(valueB, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 5, i, 3, domainSize, domainExtended, isCyclic);
+                                bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
+                                bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
+                                Goldilocks3::op_pack(nrowsPack, args[i_args], &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * nrowsPack], a, isConstantA, b, isConstantB);
                                 i_args += 8;
                                 break;
                             }
                             case 4: {
                                 // COPY dim3 to dim3
-                                load(a, params, expressions_params, args, i_args + 1, i, 3, domainSize, domainExtended);
-                                Goldilocks3::copy_pack(nrowsPack, &expressions_params[buffer_types_size + 1][args[i_args] * nrowsPack], a);
+                                Goldilocks::Element* a = load(valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 1, i, 3, domainSize, domainExtended, isCyclic);
+                                bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
+                                Goldilocks3::copy_pack(nrowsPack, &expressions_params[bufferCommitsSize + 1][args[i_args] * nrowsPack], a, isConstant);
                                 i_args += 4;
                                 break;
                             }
@@ -327,9 +393,9 @@ public:
                     assert(i_args == dests[j].params[k].parserParams.nArgs);
 
                     if(dests[j].params[k].parserParams.destDim == 1) {
-                        copyPolynomial(&destVals[j][k*FIELD_EXTENSION*nrowsPack], dests[j].params[k].inverse,dests[j].params[k].batch, dests[j].params[k].parserParams.destDim, &expressions_params[buffer_types_size][dests[j].params[k].parserParams.destId*nrowsPack]);
+                        copyPolynomial(&destVals[j][k*FIELD_EXTENSION*nrowsPack], dests[j].params[k].inverse,dests[j].params[k].batch, dests[j].params[k].parserParams.destDim, &expressions_params[bufferCommitsSize][dests[j].params[k].parserParams.destId*nrowsPack]);
                     } else {
-                        copyPolynomial(&destVals[j][k*FIELD_EXTENSION*nrowsPack], dests[j].params[k].inverse,dests[j].params[k].batch, dests[j].params[k].parserParams.destDim, &expressions_params[buffer_types_size + 1][dests[j].params[k].parserParams.destId*FIELD_EXTENSION*nrowsPack]);
+                        copyPolynomial(&destVals[j][k*FIELD_EXTENSION*nrowsPack], dests[j].params[k].inverse,dests[j].params[k].batch, dests[j].params[k].parserParams.destDim, &expressions_params[bufferCommitsSize + 1][dests[j].params[k].parserParams.destId*FIELD_EXTENSION*nrowsPack]);
                     }
                 }
                 if(dests[j].params.size() == 2) {
@@ -337,7 +403,6 @@ public:
                 }
             }
             storePolynomial(dests, destVals, i);
-
             for(uint64_t j = 0; j < dests.size(); ++j) {
                 if(i >= dests[j].domainSize) continue;
                 delete[] destVals[j];

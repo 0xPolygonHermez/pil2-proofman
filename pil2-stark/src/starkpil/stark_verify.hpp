@@ -299,7 +299,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     dest.addParams(setupCtx.expressionsBin.expressionsInfo[starkInfo.cExpId]);
     std::vector<Dest> dests = {dest};
     
-    expressionsPack.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, 1, false);
+    expressionsPack.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, 1, false, false);
 
     Goldilocks::Element xN[3] = {Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
     for(uint64_t i = 0; i < uint64_t(1 << starkInfo.starkStruct.nBits); ++i) {
@@ -335,7 +335,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     Dest destQueries(buffQueries, starkInfo.starkStruct.nQueries);
     destQueries.addParams(setupCtx.expressionsBin.expressionsInfo[starkInfo.friExpId]);
     std::vector<Dest> destsQueries = {destQueries};
-    expressionsPack.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsQueries, starkInfo.starkStruct.nQueries, false);
+    expressionsPack.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsQueries, starkInfo.starkStruct.nQueries, false, false);
     bool isValidFRIConsistency = true;
 #pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {
