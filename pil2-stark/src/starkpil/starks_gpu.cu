@@ -793,4 +793,45 @@ void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQu
     return;
 }
 
+void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, DeviceCommitBuffers *d_buffers, StepsParams &params, StepsParams &d_params, int64_t step){
 
+    uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBits);
+    std::vector<Dest> dests;
+    for (uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++)
+    {
+        if (setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step)
+        {
+            uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos;
+            Dest destStruct(NULL, domainSize, setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
+            destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
+            destStruct.dest_gpu = (Goldilocks::Element *)(d_buffers->d_aux_trace + offset);
+            dests.push_back(destStruct);
+        }
+    }
+    if (dests.size() == 0)
+        return;
+        
+    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
+        
+}
+
+void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams& params, StepsParams& d_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse){
+    
+    uint64_t domainSize;
+    if (expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId)
+    {
+        setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
+        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    }
+    else
+    {
+        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    }
+    Dest destStructq(NULL, domainSize, 0, expressionId);
+    destStructq.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], inverse);
+    destStructq.dest_gpu = dest_gpu;
+    std::vector<Dest> dests = {destStructq};
+    
+    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
+
+}

@@ -120,12 +120,6 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
 
-    Goldilocks::Element *q = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
-    //print the first 10 elements of q
-    for(int i = 0; i < 10*FIELD_EXTENSION; i++) {
-        std::cout << "q[" << i << "] = " << q[i].fe << std::endl;
-    }
-
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);

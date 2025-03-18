@@ -219,26 +219,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     time_prev = time;
 
     TimerStart(CALCULATE_IM_POLS);
-
-    std::vector<Dest> dests2;
-    for (uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++)
-    {
-        if (setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == 2)
-        {
-            uint64_t offset_ = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(2), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos;
-            Dest destStruct(NULL, N, setupCtx.starkInfo.mapSectionsN["cm" + to_string(2)]);
-            destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
-            destStruct.dest_gpu = (Goldilocks::Element *)(d_buffers->d_aux_trace + offset_);
-            dests2.push_back(destStruct);
-        }
-    }
-
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT9 (pre-expressions) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
-
-    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests2, N);
+    calculateImPolsExpressions(setupCtx, expressionsCtx, d_buffers, params, d_params, 2);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
@@ -274,33 +255,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         }
     }
 
-    uint64_t domainSize;
-    uint64_t expressionId = setupCtx.starkInfo.cExpId;
-    if (expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId)
-    {
-        setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
-        domainSize = NExtended;
-    }
-    else
-    {
-        domainSize = N;
-    }
-    Dest destStructq(NULL, domainSize);
-    destStructq.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
-    destStructq.dest_gpu = (Goldilocks::Element *)(d_buffers->d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]);
-    std::vector<Dest> dests3 = {destStructq};
-
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT13 (Q expressions preparation) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
-
-    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests3, domainSize);
-
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT14 (Q expressions) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
+    calculateExpression(setupCtx, expressionsCtx, params, d_params, (Goldilocks::Element *)(d_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_aux_trace, (uint64_t **)(&d_trees[setupCtx.starkInfo.nStages].nodes), d_buffers);
@@ -395,27 +350,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     time_prev = time;
 
     // FRI expressions
-    expressionId = setupCtx.starkInfo.friExpId;
-    if (expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId)
-    {
-        setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
-        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    }
-    else
-    {
-        domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    }
-    Dest destStructf(NULL, domainSize);
-    destStructf.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], false);
-    destStructf.dest_gpu = (Goldilocks::Element *)(d_buffers->d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
-    std::vector<Dest> destsf = {destStructf};
-
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT21 (pre-expressions) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;
-
-    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsf, domainSize);
+    calculateExpression(setupCtx, expressionsCtx, params, d_params, (Goldilocks::Element *)(d_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();

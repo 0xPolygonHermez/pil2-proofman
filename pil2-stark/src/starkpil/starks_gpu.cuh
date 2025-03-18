@@ -1,8 +1,8 @@
 #ifndef STARKS_GPU_HPP
 #define STARKS_GPU_HPP
 
+#include "expressions_gpu.cuh"
 class gl64_t;
-
 
 extern Goldilocks::Element omegas_inv_[33];
 
@@ -114,4 +114,8 @@ __device__ void genMerkleProof_(gl64_t *nodes, gl64_t *proof, uint64_t idx, uint
 __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t sizeLeaves, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements);
 
 void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, GPUTree *d_trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, uint32_t nStages, StepsParams &d_params);
+
+void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, DeviceCommitBuffers *d_buffers, StepsParams &params, StepsParams &d_params, int64_t step);
+
+void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams& params, StepsParams& d_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse = false);
 #endif
