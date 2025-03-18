@@ -169,7 +169,6 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
 
 pub fn check_paths(
     witness_lib_path: &PathBuf,
-    rom_path: &Option<PathBuf>,
     input_data_path: &Option<PathBuf>,
     public_inputs_path: &Option<PathBuf>,
     proving_key_path: &PathBuf,
@@ -179,13 +178,6 @@ pub fn check_paths(
     // Check witness_lib path exists
     if !witness_lib_path.exists() {
         return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
-    }
-
-    // Check rom_path path exists
-    if let Some(rom_path) = rom_path {
-        if !rom_path.exists() {
-            return Err(format!("ROM file not found at path: {:?}", rom_path).into());
-        }
     }
 
     // Check input data path
@@ -202,6 +194,14 @@ pub fn check_paths(
         }
     }
 
+    check_paths2(proving_key_path, output_dir_path, verify_constraints)
+}
+
+pub fn check_paths2(
+    proving_key_path: &PathBuf,
+    output_dir_path: &PathBuf,
+    verify_constraints: bool,
+) -> Result<(), Box<dyn Error>> {
     // Check proving_key_path exists
     if !proving_key_path.exists() {
         return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
