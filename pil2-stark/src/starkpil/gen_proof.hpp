@@ -51,13 +51,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     
     Goldilocks::Element *pBuffHelper = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
 
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 

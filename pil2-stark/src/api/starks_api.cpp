@@ -194,13 +194,9 @@ void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, u
 {
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
+
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
+
     getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
 
@@ -233,13 +229,7 @@ void mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t nHints, uint64
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
 
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
 
     return multiplyHintFields(setupCtx, *(StepsParams *)stepsParams, expressionsCtx, nHints, hintId, hintFieldNameDests.data(), hintFieldNames1.data(), hintFieldNames2.data(), hintOptions1Vec.data(), hintOptions2Vec.data());
 }
@@ -248,13 +238,7 @@ void acc_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *h
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
 
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
     accHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName), add);
 }
 
@@ -262,13 +246,7 @@ void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, ch
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
 
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
     accMulHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add);
 }
 
@@ -308,13 +286,7 @@ void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsPar
 
     ProverHelpers proverHelpers;
 
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
 
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, false);
 }

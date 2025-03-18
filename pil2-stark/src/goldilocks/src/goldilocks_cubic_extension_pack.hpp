@@ -346,8 +346,8 @@ inline void Goldilocks3::op_31_pack(uint64_t nrowsPack, uint64_t op, Goldilocks:
             for (uint64_t i = 0; i < nrowsPack; ++i)
             {
                 c[i] = a[i] * b[0];
-                c[nrowsPack + i] = a[nrowsPack + i] * b[i];
-                c[2*nrowsPack + i] = a[2*nrowsPack + i] * b[i];
+                c[nrowsPack + i] = a[nrowsPack + i] * b[0];
+                c[2*nrowsPack + i] = a[2*nrowsPack + i] * b[0];
             }
             break;
         case 3:

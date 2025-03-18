@@ -5,7 +5,7 @@
 class ExpressionsPack : public ExpressionsCtx {
 public:
     ExpressionsPack(SetupCtx& setupCtx, ProverHelpers& proverHelpers, uint64_t nrowsPack_ = 128) : ExpressionsCtx(setupCtx, proverHelpers) {
-        nrowsPack = nrowsPack_;
+        nrowsPack = std::min(nrowsPack_, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
     };
 
     inline Goldilocks::Element* load(Goldilocks::Element *value, StepsParams& params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t *mapOffsetsExps, uint64_t* mapOffsetsCustomExps, int64_t* nextStridesExps, uint64_t i_args, uint64_t row, uint64_t dim, uint64_t domainSize, bool domainExtended, bool isCyclic) {        
