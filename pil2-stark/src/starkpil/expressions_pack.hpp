@@ -4,7 +4,7 @@
 
 class ExpressionsPack : public ExpressionsCtx {
 public:
-    ExpressionsPack(SetupCtx& setupCtx, ProverHelpers& proverHelpers, uint64_t nrowsPack_ = 4) : ExpressionsCtx(setupCtx, proverHelpers) {
+    ExpressionsPack(SetupCtx& setupCtx, ProverHelpers& proverHelpers, uint64_t nrowsPack_ = 128) : ExpressionsCtx(setupCtx, proverHelpers) {
         nrowsPack = nrowsPack_;
     };
 
