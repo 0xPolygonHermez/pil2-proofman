@@ -5,7 +5,7 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
     let absolute_max = max_deg;
     let mut abs_max_d = 0;
 
-    let (re, rd) = __calculate_im_pols(expressions, exp, &mut im_pols, max_deg);
+    let (re, rd) = __calculate_im_pols(expressions, exp, &mut im_pols, max_deg, absolute_max);
 
     return (re, rd.max(abs_max_d) - 1);
 
@@ -14,7 +14,9 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
         exp: &Value,
         im_pols: &mut Option<Vec<Value>>,
         max_deg: usize,
+        absolute_max: usize,
     ) -> (Option<Vec<Value>>, isize) {
+        let exp_id = exp["id"].as_str().unwrap();
         if im_pols.is_none() {
             return (None, -1);
         }
@@ -23,7 +25,7 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                 let mut md = 0;
                 for value in exp["values"].as_array().unwrap() {
                     let d;
-                    (*im_pols, d) = __calculate_im_pols(expressions, value, im_pols, max_deg);
+                    (*im_pols, d) = __calculate_im_pols(expressions, value, im_pols, max_deg, absolute_max);
                     if d < md {
                         md = d;
                     }
@@ -37,12 +39,12 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                 if !["add", "mul", "sub", "exp"].contains(&values[0]["op"].as_str().unwrap())
                     && values[0]["expDeg"].as_i64().unwrap() == 0
                 {
-                    return __calculate_im_pols(expressions, &values[1], im_pols, max_deg);
+                    return __calculate_im_pols(expressions, &values[1], im_pols, max_deg, absolute_max);
                 }
                 if !["add", "mul", "sub", "exp"].contains(&values[1]["op"].as_str().unwrap())
                     && values[1]["expDeg"].as_i64().unwrap() == 0
                 {
-                    return __calculate_im_pols(expressions, &values[0], im_pols, max_deg);
+                    return __calculate_im_pols(expressions, &values[0], im_pols, max_deg, absolute_max);
                 }
                 let max_deg_here = exp["expDeg"].as_i64().unwrap() as isize;
                 if max_deg_here <= max_deg.try_into().unwrap() {
@@ -50,8 +52,8 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                 }
                 for _ in 0..max_deg {
                     let r = max_deg - 1;
-                    let (mut e1, d1) = __calculate_im_pols(expressions, &values[0], im_pols, 1);
-                    let (e2, d2) = __calculate_im_pols(expressions, &values[1], &mut e1, r);
+                    let (mut e1, d1) = __calculate_im_pols(expressions, &values[0], im_pols, 1, absolute_max);
+                    let (e2, d2) = __calculate_im_pols(expressions, &values[1], &mut e1, r, absolute_max);
                     /*
                     if(e2 !== false && (eb === false || e2.length < eb.length)) {
                         eb = e2;
@@ -59,6 +61,7 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                     }
                     */
                     if e2.is_some() && eb.is_some() {
+                        // avoid unnecessary clone
                         if let Some(e2) = e2 {
                             let eb_len = if let Some(_eb) = eb.clone() {
                                 let len = _eb.len();
@@ -77,6 +80,7 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                     // if (eb !== false && eb.length == imPols.length) return [eb, ed];
                     // Cannot do it better.
                     if eb.is_some() && im_pols.is_some() {
+                        // avoid unnecessary clone
                         if let (Some(eb), Some(im_pols)) = (eb.clone(), im_pols.clone()) {
                             if eb.len() == im_pols.len() {
                                 return (Some(eb), ed);
@@ -85,6 +89,26 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                     }
                 }
                 return (eb, ed);
+            }
+            "exp" => {
+                if max_deg < 1 {
+                    return (None, -1);
+                }
+                if im_pols.is_some() {
+                    // avoid unnecessary clone
+                    if let Some(im_pols) = im_pols.clone() {
+                        if im_pols.iter().any(|im| im == exp_id) {
+                            return (Some(im_pols), 1);
+                        }
+                    }
+                }
+                let mut case_a = false;
+                if let Some(exp_res) = exp["res"].as_array() {
+                    if let Some(res_at_absolute_max) = exp_res.get(absolute_max) {
+                        todo!()
+                    }
+                }
+                todo!()
             }
             _ => {
                 todo!()
