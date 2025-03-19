@@ -86,9 +86,9 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
 
     Goldilocks::Element* pBuffer = new Goldilocks::Element[setupCtx.expressionsBin.constraintsInfoDebug.size() * N * FIELD_EXTENSION];
 
-    std::vector<uint64_t> destToConstraintIndex;
+    ProverHelpers proverHelpers;
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 
-    std::vector<Dest> dests;
     for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
         constraintsInfo[i].id = i;
         constraintsInfo[i].stage = setupCtx.expressionsBin.constraintsInfoDebug[i].stage;
@@ -96,22 +96,16 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
 
         if(!constraintsInfo[i].skip) {
             Dest constraintDest(&pBuffer[i*FIELD_EXTENSION*N], N);
-            constraintDest.addParams(setupCtx.expressionsBin.constraintsInfoDebug[i]);
-            dests.push_back(constraintDest);
-            destToConstraintIndex.push_back(i);
+            constraintDest.addParams(i, setupCtx.expressionsBin.constraintsInfoDebug[i].destDim);
+            expressionsCtx.calculateExpressions(params, constraintDest, N, false, false, true);
         }
     }
 
-    ProverHelpers proverHelpers;
-    
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsConstraints, dests, N, false, false);
-
 #pragma omp parallel for
-    for (uint64_t i = 0; i < dests.size(); i++) {
-        uint64_t constraintIndex = destToConstraintIndex[i];
-        verifyConstraint(setupCtx, dests[i].dest, constraintIndex, constraintsInfo[constraintIndex]);
+    for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
+        if(!constraintsInfo[i].skip) {
+            verifyConstraint(setupCtx, &pBuffer[i*FIELD_EXTENSION*N], i, constraintsInfo[i]);
+        }
     }
     
     delete[] pBuffer;

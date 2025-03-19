@@ -7,7 +7,7 @@
 #include "setup_ctx.hpp"
 
 struct Params {
-    ParserParams parserParams;
+    uint64_t expId;
     uint64_t dim;
     uint64_t stage;
     uint64_t stagePos;
@@ -18,8 +18,7 @@ struct Params {
     opType op;
     uint64_t value;
     
-    Params(ParserParams& params, bool inverse_ = false, bool batch_ = true) : parserParams(params), inverse(inverse_), batch(batch_), op(opType::tmp) {
-        dim = params.destDim;
+    Params(uint64_t expId_, uint64_t dim_, bool inverse_ = false, bool batch_ = true) : expId(expId_), dim(dim_), inverse(inverse_), batch(batch_), op(opType::tmp) {
         op = opType::tmp;
     }
 
@@ -33,7 +32,7 @@ struct Params {
         value = value_;
     }
 
-    Params(PolMap& polMap, uint64_t id, opType op_, bool inverse_ = false) : dim(polMap.dim), stage(polMap.stage), polsMapId(id), inverse(inverse_), op(op_) {}
+    Params(uint64_t stage_, uint64_t dim_, uint64_t id, opType op_, bool inverse_ = false) : dim(dim_), stage(stage_), polsMapId(id), inverse(inverse_), op(op_) {}
 };
 
 struct Dest {
@@ -46,9 +45,8 @@ struct Dest {
 
     Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t offset_ = 0, int64_t expId_ = -1) : dest(dest_), expId(expId_), offset(offset_), domainSize(domainSize_) {}
 
-    void addParams(ParserParams& parserParams_, bool inverse_ = false, bool batch_ = true) {
-        params.push_back(Params(parserParams_, inverse_, batch_));
-        uint64_t dimExp = parserParams_.destDim;
+    void addParams(uint64_t expId, uint64_t dimExp, bool inverse_ = false, bool batch_ = true) {
+        params.push_back(Params(expId, dimExp, inverse_, batch_));
         dim = std::max(dim, dimExp);
     }
 
@@ -57,9 +55,9 @@ struct Dest {
         dim = std::max(dim, cmPol.dim);
     }
 
-    void addAirValue(PolMap& airValueMap, uint64_t id, bool inverse_ = false) {
-        params.push_back(Params(airValueMap, id, opType::airvalue, inverse_));
-        uint64_t airvalueDim = airValueMap.stage == 1 ? 1 : 3;
+    void addAirValue(uint64_t stage, uint64_t id, bool inverse_ = false) {
+        uint64_t airvalueDim = stage == 1 ? 1 : FIELD_EXTENSION;
+        params.push_back(Params(stage, dim, id, opType::airvalue, inverse_));
         dim = std::max(dim, airvalueDim);
     }
 
@@ -89,7 +87,7 @@ public:
     uint64_t *mapOffsetsCustomFixed;
     uint64_t *mapOffsetsCustomFixedExtended;
     uint64_t *mapSectionsNCustomFixed;
-    uint64_t nrowsPack;
+    uint64_t nrowsPack_;
     uint64_t minRow;
     uint64_t maxRow;
     uint64_t minRowExtended;
@@ -166,7 +164,7 @@ public:
         delete[] mapSectionsNCustomFixed;
     };
     
-    virtual void calculateExpressions(StepsParams& params, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize, bool domainExtended, bool compilationTime = false) {};
+    virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false) {};
  
     void calculateExpression(StepsParams& params, Goldilocks::Element* dest, uint64_t expressionId, bool inverse = false, bool compilation_time = false) {
         uint64_t domainSize;
@@ -183,9 +181,8 @@ public:
             domainExtended = false;
         }
         Dest destStruct(dest, domainSize, 0, expressionId);
-        destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], inverse);
-        std::vector<Dest> dests = {destStruct};
-        calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, domainExtended, compilation_time);
+        destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
+        calculateExpressions(params, destStruct, domainSize, domainExtended, compilation_time);
     }
 
     void setXi(Goldilocks::Element *xi) {

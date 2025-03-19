@@ -268,27 +268,21 @@ uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hi
 
 void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams)
 {
-     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     StepsParams &params = *(StepsParams *)stepsParams;
-
-    std::vector<Dest> dests;
-    for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
-        if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
-            Goldilocks::Element* pAddress = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.trace : params.aux_trace;
-            Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], (1<< setupCtx.starkInfo.starkStruct.nBits), setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
-            destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
-            
-            dests.push_back(destStruct);
-        }
-    }
-
-    if(dests.size() == 0) return;
 
     ProverHelpers proverHelpers;
 
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, false);
+    for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
+        if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
+            Goldilocks::Element* pAddress = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.trace : params.aux_trace;
+            Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], (1<< setupCtx.starkInfo.starkStruct.nBits), setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
+            destStruct.addParams(setupCtx.starkInfo.cmPolsMap[i].expId, setupCtx.starkInfo.cmPolsMap[i].dim, false);
+            expressionsCtx.calculateExpressions(params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, false);
+        }
+    }
 }
 
 void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile)
