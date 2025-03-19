@@ -529,12 +529,14 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
         addHintField(setupCtx, params, hintId[i], destStruct, hintFieldName2[i], hintOptions2[i]);
 
 #ifdef __USE_CUDA__
-    opHintFieldsGPU(setupCtx, params, *d_params, dests, GPUExpressionsCtx);
-    for(uint64_t i = 0; i < nHints; ++i) {
-        if(dests[i].dest != NULL) {
-                freeDestGPU(dests[i].dest_gpu);            
-        }
-    }
+    ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
+    uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    // expressionsCtx->calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
+    // for(uint64_t i = 0; i < nHints; ++i) {
+    //     if(dests[i].dest != NULL) {
+    //             freeDestGPU(dests[i].dest_gpu);            
+    //     }
+    // }
        
 #else
     expressionsCtx.calculateExpressions(params, destStruct, nRows, false, false);
@@ -629,7 +631,9 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
 
 #ifdef __USE_CUDA__
-    opHintFieldsGPU(setupCtx, params, *d_params, dests, GPUExpressionsCtx);    
+    // ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
+    // uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    // expressionsCtx->calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
 #else
     expressionsCtx.calculateExpressions(params, destStruct, N, false, false);
 #endif

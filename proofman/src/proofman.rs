@@ -42,7 +42,8 @@ use crate::{
 use std::ffi::c_void;
 
 use proofman_util::{
-    create_buffer_fast, timer_start_debug, timer_stop_and_log_debug, timer_start_info, timer_stop_and_log_info, DeviceBuffer,
+    create_buffer_fast, timer_start_debug, timer_stop_and_log_debug, timer_start_info, timer_stop_and_log_info,
+    DeviceBuffer,
 };
 
 pub struct ProofMan<F> {
@@ -333,10 +334,13 @@ impl<F: PrimeField64> ProofMan<F> {
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        //the next three lines only active if  gpu feature is enabled
+        let setups = setups_handle.join().expect("Setups thread panicked");
+        if pctx.options.aggregation {
+            check_tree_paths_vadcop(&pctx, &setups)?;
+        }
 
-        //let max_sizes = discover_max_sizes(&pctx, &setups);
-        let max_sizes_ptr = std::ptr::null_mut::<c_void>();//&max_sizes as *const MaxSizes as *mut c_void;
+        let max_sizes = discover_max_sizes(&pctx, &sctx, &setups);
+        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
         let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
@@ -487,9 +491,6 @@ impl<F: PrimeField64> ProofMan<F> {
         });
 
         pctx.dctx_barrier();
-
-        let setups = setups_handle.join().expect("Setups thread panicked");
-        check_tree_paths_vadcop(&pctx, &setups)?;
 
         let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;

@@ -1,12 +1,6 @@
 #include "hints.hpp"
 #include "expressions_gpu.cuh"
 
-void opHintFieldsGPU(SetupCtx& setupCtx, StepsParams& params, StepsParams& d_params, std::vector<Dest> &dests, void* GPUExpressionsCtx){
-
-    ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
-    uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    expressionsCtx->calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
-}
 
 void allocateDestGPU(Goldilocks::Element**buff, uint64_t size){
     cudaMalloc((void**) buff, size * sizeof(Goldilocks::Element));

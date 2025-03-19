@@ -40,8 +40,12 @@ pub struct MaxSizes {
     pub max_const_tree_size: u64,
 }
 
-pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) /*-> MaxSizes*/ {
-    /*let mut max_n = 0;
+pub fn discover_max_sizes<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+    setups: &SetupsVadcop<F>,
+) -> MaxSizes {
+    let mut max_n = 0;
     let mut max_n_ext = 0;
     let mut max_trace_area = 0;
     let mut max_ntt_area: u64 = 0;
@@ -55,10 +59,10 @@ pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVa
         let n_extended = 1 << setup.stark_info.stark_struct.n_bits_ext;
         max_n = max_n.max(n);
         max_n_ext = max_n_ext.max(n_extended);
-        max_trace_area = max_trace_area.max(setup.stark_info.map_sections_n["cm1"]*n);
-        max_ntt_area = max_ntt_area.max(setup.stark_info.map_sections_n["cm1"]*n_extended);
-        max_ntt_area = max_ntt_area.max(setup.stark_info.map_sections_n["cm2"]*n_extended);
-        max_ntt_area = max_ntt_area.max(setup.stark_info.map_sections_n["cm3"]*n_extended);
+        max_trace_area = max_trace_area.max(setup.stark_info.map_sections_n["cm1"] * n);
+        max_ntt_area = max_ntt_area.max(setup.stark_info.map_sections_n["cm1"] * n_extended);
+        max_ntt_area = max_ntt_area.max(setup.stark_info.map_sections_n["cm2"] * n_extended);
+        max_ntt_area = max_ntt_area.max(setup.stark_info.map_sections_n["cm3"] * n_extended);
         max_const_area = max_const_area.max(setup.stark_info.n_constants * n);
         max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
         max_aux_trace_area = max_aux_trace_area.max(setup.prover_buffer_size);
@@ -71,11 +75,10 @@ pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVa
     for instance_id in my_instances {
         let (airgroup_id, air_id, _) = instances[instance_id];
 
-        let setup = setups.sctx.as_ref().get_setup(airgroup_id, air_id);
+        let setup = sctx.get_setup(airgroup_id, air_id);
         update_max_values(setup);
 
         if pctx.options.aggregation {
-
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
                 update_max_values(setup);
@@ -106,9 +109,7 @@ pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVa
         max_n_publics,
         max_aux_trace_area,
         max_const_tree_size,
-    }*/
-
-    
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

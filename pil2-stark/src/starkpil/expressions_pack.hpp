@@ -29,7 +29,6 @@ public:
                 }
                 return value;
             }
-            
         } else if (type <= setupCtx.starkInfo.nStages + 1) {
             uint64_t stagePos = args[i_args + 1];
             uint64_t offset = mapOffsetsExps[type];
@@ -118,8 +117,6 @@ public:
                 }
                 return value;
             }
-               
-             
         } else if (type >= setupCtx.starkInfo.nStages + 4 && type < setupCtx.starkInfo.customCommits.size() + setupCtx.starkInfo.nStages + 4) {
             uint64_t index = type - (nStages + 4);
             uint64_t stagePos = args[i_args + 1];
@@ -245,6 +242,9 @@ public:
 
         uint64_t maxTemp1Size = 0;
         uint64_t maxTemp3Size = 0;
+
+        assert(dest.params.size() == 1 || dest.params.size() == 2);
+
         for (uint64_t k = 0; k < dest.params.size(); ++k) {
             parserParams[k] = verify_constraints 
                 ? setupCtx.expressionsBin.constraintsInfoDebug[dest.params[k].expId]

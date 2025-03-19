@@ -1200,6 +1200,7 @@ pub fn write_custom_commit_c(
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn commit_witness_c(
     _arity: u64,
     _n_bits: u64,
@@ -1400,6 +1401,7 @@ pub fn gen_proof_c(
     _airgroup_id: u64,
     _air_id: u64,
     _instance_id: u64,
+    _d_buffers: *mut c_void,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
 }
