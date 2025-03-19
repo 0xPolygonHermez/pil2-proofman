@@ -41,13 +41,15 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     CHECKCUDAERR(cudaMemset(d_buffers->d_aux_trace, 0, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element)));
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
+    ProverHelpers proverHelpers(setupCtx.starkInfo, false);
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
 
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
 
-    Starks<ElementType> starks(setupCtx, pConstTree, nullptr, true); //initializeTrees
+    Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, pConstTree, nullptr, true); //rick: initialze starks
+
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
     
@@ -58,7 +60,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         d_trees[i].nFieldElements = nFieldElements;
     }
 
-    ExpressionsGPU expressionsCtx(setupCtx, 2, 1176, 465, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 2, 1176, 465, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3
 
     TranscriptType transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 

@@ -36,7 +36,7 @@ void offloadCommit_(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, 
     CHECKCUDAERR(cudaMemcpy(&proof.proof.roots[step - 1][0], &d_tree[tree_size - nFielsElements], nFielsElements * sizeof(uint64_t), cudaMemcpyDeviceToHost));
 }
 
-void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element *pBuffHelper, bool prod, ExpressionsGPU *expressionsCtx, StepsParams* d_params) {
+void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx, bool prod, ExpressionsGPU *expressionsCtxGPU, StepsParams* d_params) {
 
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
@@ -66,13 +66,13 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Goldilocks
             hintOptions2[i] = options2;
         }
 
-        multiplyHintFields(setupCtx, params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtx, d_params);
+        multiplyHintFields(setupCtx, params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, d_params);
     }
 
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
-    accMulHintFields(setupCtx, params, pBuffHelper, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtx, d_params);
+    accMulHintFields(setupCtx, params, expressionsCtx, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, d_params);
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
@@ -82,11 +82,13 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time0 = omp_get_wtime();
 
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    //uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
+    ProverHelpers proverHelpers(setupCtx.starkInfo, false);
+
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
-    Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed, false); //initialze starks
+    Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed, false); //initialze starks
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
     CHECKCUDAERR(cudaGetLastError());
     // GPU tree-nodes
@@ -96,7 +98,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         d_trees[i].nFieldElements = nFieldElements;
     }
     
-    ExpressionsGPU expressionsCtx(setupCtx, 2, 1176, 465, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3 //rick
+    ExpressionsPack expressionsCtx_(setupCtx, proverHelpers); //rick: get rid of this
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 2, 1176, 465, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3 //rick
     CHECKCUDAERR(cudaGetLastError());
     StepsParams d_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,
@@ -145,8 +148,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         }
     }
 
-    calculateWitnessSTD_gpu(setupCtx, params, pBuffHelper, true, &expressionsCtx, &d_params);
-    calculateWitnessSTD_gpu(setupCtx, params, pBuffHelper, false, &expressionsCtx, &d_params);
+    calculateWitnessSTD_gpu(setupCtx, params, expressionsCtx_, true, &expressionsCtx, &d_params);
+    calculateWitnessSTD_gpu(setupCtx, params, expressionsCtx_, false, &expressionsCtx, &d_params);
 
     TimerStart(CALCULATE_IM_POLS);
     calculateImPolsExpressions(setupCtx, expressionsCtx, d_buffers, params, d_params, 2);

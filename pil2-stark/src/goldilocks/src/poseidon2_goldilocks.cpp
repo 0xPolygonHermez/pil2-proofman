@@ -637,7 +637,7 @@ void Poseidon2Goldilocks::merkletree_batch_avx512(Goldilocks::Element *tree, Gol
                 {
                     std::memcpy(pol_input + j*SPONGE_WIDTH, &cursor[nextIndex + (i+j) * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
                 }
-                hash_batch_avx521((Goldilocks::Element(&)[8 * CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
+                hash_batch_avx512((Goldilocks::Element(&)[8 * CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
             }
         }
 

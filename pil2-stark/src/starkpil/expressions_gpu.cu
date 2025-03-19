@@ -4,7 +4,8 @@
 #include "gl64_t.cuh"
 #include "goldilocks_cubic_extension.cuh"
 
-ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint32_t nTemp1Max, uint32_t nTemp3Max, uint64_t nrowsPack_, uint32_t nBlocks_) : ExpressionsCtx(setupCtx), nParamsMax(nParamsMax), nTemp1Max(nTemp1Max), nTemp3Max(nTemp3Max), nrowsPack(nrowsPack_), nBlocks(nBlocks_)
+
+ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers& proverHelpers, uint32_t nParamsMax, uint32_t nTemp1Max, uint32_t nTemp3Max, uint64_t nrowsPack_, uint32_t nBlocks_) : ExpressionsCtx(setupCtx, proverHelpers), nParamsMax(nParamsMax), nTemp1Max(nTemp1Max), nTemp3Max(nTemp3Max), nrowsPack(nrowsPack_), nBlocks(nBlocks_)
 {
     uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
     uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
@@ -55,8 +56,8 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint32_t
     cudaMalloc(&h_deviceArgs.airgroupValues, setupCtx.starkInfo.airgroupValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element));
     cudaMalloc(&h_deviceArgs.airValues, setupCtx.starkInfo.airValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element));
     cudaMalloc(&h_deviceArgs.proofValues, setupCtx.starkInfo.proofValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element));
-    cudaMalloc(&h_deviceArgs.ops, setupCtx.expressionsBin.expressionsBinArgsExpressions.nOpsTotal * sizeof(uint8_t));
-    cudaMalloc(&h_deviceArgs.args, setupCtx.expressionsBin.expressionsBinArgsExpressions.nArgsTotal * sizeof(uint16_t));
+    //rick// cudaMalloc(&h_deviceArgs.ops, setupCtx.expressionsBin.expressionsBinArgsExpressions.nOpsTotal * sizeof(uint8_t));
+    //rick// cudaMalloc(&h_deviceArgs.args, setupCtx.expressionsBin.expressionsBinArgsExpressions.nArgsTotal * sizeof(uint16_t));
 
     uint64_t nCols1 = nColsStagesAcc[ns * nOpenings] + setupCtx.starkInfo.boundaries.size() + 1;
     uint64_t nCols2 = nColsStagesAcc[ns * nOpenings] + nOpenings * FIELD_EXTENSION;
@@ -311,16 +312,16 @@ void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, St
     h_deviceArgs.nAirValues = setupCtx.starkInfo.airValuesMap.size();
     h_deviceArgs.nProofValues = setupCtx.starkInfo.proofValuesMap.size();
     // Expressions bin
-    h_deviceArgs.nOpsTotal = parserArgs.nOpsTotal;
-    h_deviceArgs.nArgsTotal = parserArgs.nArgsTotal;
+    //rick// h_deviceArgs.nOpsTotal = parserArgs.nOpsTotal;
+    //rick// h_deviceArgs.nArgsTotal = parserArgs.nArgsTotal;
 
     // bufferT_
     h_deviceArgs.nBlocks = nBlocks;
 
     cudaMemcpy(h_deviceArgs.cmPolsInfo, h_deviceArgs.cmPolsInfo, 3 * h_deviceArgs.cmPolsInfoSize * sizeof(uint64_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(h_deviceArgs.zi, setupCtx.proverHelpers.zi, h_deviceArgs.boundSize * h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice); // cal copiar cada cop?
-    cudaMemcpy(h_deviceArgs.x_n, setupCtx.proverHelpers.x_n, h_deviceArgs.N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                                // cal cada cop? no es pot transportar?
-    cudaMemcpy(h_deviceArgs.x_2ns, setupCtx.proverHelpers.x_2ns, h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                    // cal cada cop? no es pot transportar?
+    //rick // cudaMemcpy(h_deviceArgs.zi, setupCtx.proverHelpers.zi, h_deviceArgs.boundSize * h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice); // cal copiar cada cop?
+    //rick// cudaMemcpy(h_deviceArgs.x_n, setupCtx.proverHelpers.x_n, h_deviceArgs.N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                                // cal cada cop? no es pot transportar?
+    //rick// cudaMemcpy(h_deviceArgs.x_2ns, setupCtx.proverHelpers.x_2ns, h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                    // cal cada cop? no es pot transportar?
     cudaMemcpy(h_deviceArgs.challenges, params.challenges, h_deviceArgs.nChallenges * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     cudaMemcpy(h_deviceArgs.numbers, (Goldilocks::Element *)parserArgs.numbers, h_deviceArgs.nNumbers * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     cudaMemcpy(h_deviceArgs.publics, params.publicInputs, h_deviceArgs.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);

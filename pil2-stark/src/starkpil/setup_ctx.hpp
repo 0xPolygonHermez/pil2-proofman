@@ -46,7 +46,7 @@ class ProverHelpers {
                 std::memcpy(&zi[i*FIELD_EXTENSION], zi_, FIELD_EXTENSION * sizeof(Goldilocks::Element));
             } else if(boundary.name == "lastRow") {
                 Goldilocks::Element root = Goldilocks::one();
-                for(uint64_t i = 0; i < uint64_t(1 << starkInfo.starkStruct.nBits) - 1; ++i) {
+                for(uint64_t k = 0; k < uint64_t(1 << starkInfo.starkStruct.nBits) - 1; ++k) {
                     root = root * Goldilocks::w(starkInfo.starkStruct.nBits);
                 }
                 Goldilocks::Element zi_[3];
@@ -58,23 +58,23 @@ class ProverHelpers {
                 uint64_t nRoots = boundary.offsetMin + boundary.offsetMax;
                 Goldilocks::Element roots[nRoots];
                 Goldilocks::Element zi_[3] = { Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
-                for(uint64_t i = 0; i < boundary.offsetMin; ++i) {
-                    roots[i] = Goldilocks::one();
-                    for(uint64_t j = 0; j < i; ++j) {
-                        roots[i] = roots[i] * Goldilocks::w(starkInfo.starkStruct.nBits);
+                for(uint64_t k = 0; k < boundary.offsetMin; ++k) {
+                    roots[k] = Goldilocks::one();
+                    for(uint64_t j = 0; j < k; ++j) {
+                        roots[k] = roots[k] * Goldilocks::w(starkInfo.starkStruct.nBits);
                     }
                     Goldilocks::Element aux[3];
-                    Goldilocks3::sub((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)z[0], (Goldilocks3::Element &)roots[i]);
+                    Goldilocks3::sub((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)z[0], (Goldilocks3::Element &)roots[k]);
                     Goldilocks3::mul((Goldilocks3::Element *)zi_, (Goldilocks3::Element *)zi_, (Goldilocks3::Element *)aux);
                 }
 
-                for(uint64_t i = 0; i < boundary.offsetMax; ++i) {
-                    roots[i + boundary.offsetMin] = Goldilocks::one();
-                    for(uint64_t j = 0; j < (uint64_t(1 << starkInfo.starkStruct.nBits) - i - 1); ++j) {
-                        roots[i + boundary.offsetMin] = roots[i + boundary.offsetMin] * Goldilocks::w(starkInfo.starkStruct.nBits);
+                for(uint64_t k = 0; k < boundary.offsetMax; ++k) {
+                    roots[k + boundary.offsetMin] = Goldilocks::one();
+                    for(uint64_t j = 0; j < (uint64_t(1 << starkInfo.starkStruct.nBits) - k - 1); ++j) {
+                        roots[k + boundary.offsetMin] = roots[k + boundary.offsetMin] * Goldilocks::w(starkInfo.starkStruct.nBits);
                     }
                     Goldilocks::Element aux[3];
-                    Goldilocks3::sub((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)z[0], (Goldilocks3::Element &)roots[i + boundary.offsetMin]);
+                    Goldilocks3::sub((Goldilocks3::Element &)aux[0], (Goldilocks3::Element &)z[0], (Goldilocks3::Element &)roots[k + boundary.offsetMin]);
                     Goldilocks3::mul((Goldilocks3::Element *)zi_, (Goldilocks3::Element *)zi_, (Goldilocks3::Element *)aux);
                 }
 

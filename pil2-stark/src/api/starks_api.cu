@@ -99,8 +99,6 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     double time = omp_get_wtime();
 
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
-    Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
-    Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 

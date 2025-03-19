@@ -185,7 +185,7 @@ void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_trace, uint6
     NTT_Goldilocks nttExtended(NExtended);
     if (nCols > 0)
     {
-        nttExtended.computeQ_inplace(d_tree, offset_cmQ, offset_q, qDeg, qDim, setupCtx.proverHelpers.S, N, NExtended, nCols, d_buffers);
+        //rick// nttExtended.computeQ_inplace(d_tree, offset_cmQ, offset_q, qDeg, qDim, setupCtx.proverHelpers.S, N, NExtended, nCols, d_buffers);
     }
 #endif
 }

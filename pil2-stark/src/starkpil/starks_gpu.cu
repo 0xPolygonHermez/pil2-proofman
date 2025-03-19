@@ -196,7 +196,8 @@ __global__ void calcXDivXSub(gl64_t * d_xDivXSub, gl64_t *d_xiChallenge, uint64_
 void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xiChallenge, SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, gl64_t * d_xDivXSub_)
 {
 
-    double time = omp_get_wtime();
+     // rick
+    /*double time = omp_get_wtime();
     uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
     int64_t *openingPoints = setupCtx.starkInfo.openingPoints.data();
     gl64_t *x = (gl64_t *)setupCtx.proverHelpers.x;
@@ -223,7 +224,7 @@ void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xi
     
     cudaFree(d_xiChallenge);
     cudaFree(d_openingPoints);
-    cudaFree(d_x);
+    cudaFree(d_x);*/
 }
 
 __global__ void computeEvals(

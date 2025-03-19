@@ -19,6 +19,8 @@
 #include "expressions_avx512.hpp"
 #include "expressions_pack.hpp"
 
+class gl64_t;
+struct DeviceCommitBuffers;
 
 template <typename ElementType>
 class Starks

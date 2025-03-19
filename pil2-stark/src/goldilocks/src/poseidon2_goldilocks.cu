@@ -1083,12 +1083,7 @@ void Poseidon2Goldilocks::merkletree_cuda_coalesced(uint32_t arity, uint64_t **d
             actual_tpb = TPB;
             actual_blks = nextN / TPB + 1;
         }
-        hash_gpu_3<<<actual_blks, actual_tpb>>>(nextN, nextIndex, pending + extraZeros, *d_tree);
-        //ofload hash to print
-        Goldilocks::Element root[CAPACITY];
-        //CHECKCUDAERR(cudaMemcpy(root, *d_tree + nextIndex * 12, CAPACITY * sizeof(uint64_t), cudaMemcpyDeviceToHost));
-        //std::cout << "root: "<< root[0].fe << " " << root[1].fe << " " << root[2].fe << " " << root[3].fe << std::endl;
-
+        hash_gpu_3<<<actual_blks, actual_tpb>>>(nextN, nextIndex, pending + extraZeros, *d_tree);       
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
         nextN = (pending + (arity - 1)) / arity;

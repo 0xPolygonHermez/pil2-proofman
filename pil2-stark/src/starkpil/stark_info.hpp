@@ -178,6 +178,8 @@ public:
 
     /* Returns a polynomial specified by its ID */
     void getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended);
+    uint64_t getTraceOffset(string type, PolMap& polInfo, bool domainExtended);
+    uint64_t getTraceNColsSection(string type, PolMap& polInfo, bool domainExtended);
 };
 
 #endif

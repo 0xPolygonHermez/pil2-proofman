@@ -37,6 +37,7 @@ struct Params {
 
 struct Dest {
     Goldilocks::Element *dest = nullptr;
+    Goldilocks::Element *dest_gpu = nullptr;
     int64_t expId = -1;
     uint64_t offset = 0;
     uint64_t dim = 1;

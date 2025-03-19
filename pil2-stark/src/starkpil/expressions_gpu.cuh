@@ -142,7 +142,7 @@ public:
     DeviceArguments h_deviceArgs;
     std::vector< ParamsGPU *> dest_params; //pointer for cudaFree
 
-    ExpressionsGPU(SetupCtx &setupCtx, uint32_t nParamsMax, uint32_t nTemp1Max, uint32_t nTemp3Max, uint64_t nrowsPack_ = 64, uint32_t nBlocks_ = 256);
+    ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers& proverHelpers, uint32_t nParamsMax, uint32_t nTemp1Max, uint32_t nTemp3Max, uint64_t nrowsPack_ = 64, uint32_t nBlocks_ = 256);
 
     ~ExpressionsGPU();
 
