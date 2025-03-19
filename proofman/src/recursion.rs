@@ -40,8 +40,8 @@ pub struct MaxSizes {
     pub max_const_tree_size: u64,
 }
 
-pub fn discover_max_sizes<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> MaxSizes {
-    let mut max_n = 0;
+pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) /*-> MaxSizes*/ {
+    /*let mut max_n = 0;
     let mut max_n_ext = 0;
     let mut max_trace_area = 0;
     let mut max_ntt_area: u64 = 0;
@@ -106,7 +106,9 @@ pub fn discover_max_sizes<F: PrimeField>(pctx: &ProofCtx<F>, setups: &SetupsVadc
         max_n_publics,
         max_aux_trace_area,
         max_const_tree_size,
-    }
+    }*/
+
+    
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -608,6 +610,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         0,
         0,
         false,
+        d_buffers,
     );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);

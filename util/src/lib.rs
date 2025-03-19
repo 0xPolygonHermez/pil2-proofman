@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod timer_macro;
+use std::ffi::c_void;
 
 use std::mem::MaybeUninit;
 
@@ -19,4 +20,13 @@ pub fn create_buffer_fast_u8(buffer_size: usize) -> Vec<u8> {
     }
     let buffer: Vec<u8> = unsafe { std::mem::transmute(buffer) };
     buffer
+}
+
+pub struct DeviceBuffer(pub *mut c_void );
+unsafe impl Send for DeviceBuffer {}
+
+impl DeviceBuffer {
+    pub fn get_ptr(&self) -> *mut c_void {
+        self.0
+    }
 }
