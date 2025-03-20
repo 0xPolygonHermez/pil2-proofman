@@ -20,7 +20,7 @@ pub const PILOUT_HASH: &str = "8a490f0026823821f1884e0dbad427a4047c5af04fc302932
 
 //AIRGROUP CONSTANTS
 
-pub const FIBONACCI_SQUARE_AIRGROUP_ID: usize = 0;
+pub const FIBO_CPU_AIRGROUP_ID: usize = 0;
 
 //AIR CONSTANTS
 
@@ -79,11 +79,11 @@ values!(BuildProofValues<F> {
  
 trace!(FibonacciSquareFixed<F> {
  L1: F, __L1__: F,
-},  0, 0, 4194304 );
+},  0, 0, 8388608 );
 
 trace!(FibonacciSquareTrace<F> {
  a: F, b: F,
-},  0, 0, 4194304 );
+},  0, 0, 8388608 );
 
 trace!(ModuleFixed<F> {
  SEGMENT_LN: F, __L1__: F,
@@ -103,7 +103,7 @@ trace!(SpecifiedRangesTrace<F> {
 
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
-}, 0, 0, 4194304, 0 );
+}, 0, 0, 8388608, 0 );
 
 values!(FibonacciSquareAirValues<F> {
  fibo1: [F; 2], fibo3: FieldExtension<F>,

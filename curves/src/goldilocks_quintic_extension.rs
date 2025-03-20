@@ -78,7 +78,7 @@ impl SquaringFp5 for GoldilocksQuinticExtension {
         // In this case we have: S = 32 and m = 64, so S·(S-1) = 992 > 8*64 + 20 = 532
         let x = *x;
 
-        // 1] Compute a ∈ Fp such that a² - n is not a square
+        // 1] Compute a ∈ Fp such that a² - x is not a square
         let g = Goldilocks::GENERATOR;
         let mut a = Goldilocks::ONE;
         let mut nonresidue = a - x;
@@ -87,7 +87,7 @@ impl SquaringFp5 for GoldilocksQuinticExtension {
             nonresidue = a.square() - x;
         }
 
-        // 2] Compute (a + sqrt(a² - n))^((p+1)/2)
+        // 2] Compute (a + sqrt(a² - x))^((p+1)/2)
         let mut result = CipollaExtension::new(a, Goldilocks::ONE);
         result = result.exp(nonresidue);
 

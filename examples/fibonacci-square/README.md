@@ -154,21 +154,23 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
-     --public-inputs examples/fibonacci-square/src/inputs.json --custom-commits rom=examples/fibonacci-square/build/rom.bin \
+     --public-inputs examples/fibonacci-square/src/inputs.json \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=examples/fibonacci-square/build/rom.bin
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
+     --output-dir examples/fibonacci-square/build/proofs
 ```
 
 With recursion:
 
 ```bash
-node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
+node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./examples/fibonacci-square/pil/build.pilout \
-&& node ../pil2-proofman-js/src/main_setup.js \
+&& node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build \
      -r \
@@ -184,10 +186,20 @@ node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
 && cargo run --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
-     --public-inputs examples/fibonacci-square/src/inputs.json --custom-commits rom=examples/fibonacci-square/build/rom.bin \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
+     --public-inputs examples/fibonacci-square/src/inputs.json \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --output-dir examples/fibonacci-square/build/proofs --custom-commits rom=examples/fibonacci-square/build/rom.bin
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
+     --verify-proofs \
+     --aggregation \
+     --output-dir examples/fibonacci-square/build/proofs \
+&& cargo run --bin proofman-cli verify-stark \
+     --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof.json \
+     --stark-info ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.starkinfo.json \
+     --verifier-bin ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verifier.bin \
+     --verkey ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.verkey.json \
+     --public-inputs ./examples/fibonacci-square/build/proofs/publics.json
 ```
