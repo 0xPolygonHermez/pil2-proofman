@@ -12,11 +12,12 @@ void getPolynomial(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
     uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
     offset += polInfo.stagePos;
-    Polinomial pol = Polinomial(&buffer[offset], deg, dim, nCols);
+    Goldilocks::Element *buff = &buffer[offset];
     uint64_t rowOffset = setupCtx.starkInfo.openingPoints[rowOffsetIndex];
 #pragma omp parallel for
     for(uint64_t j = 0; j < deg; ++j) {
-        std::memcpy(&dest[j*dim], pol[(j + rowOffset)%deg], dim * sizeof(Goldilocks::Element));
+        uint64_t l = (j + rowOffset)%deg;
+        std::memcpy(&dest[j*dim], &buff[l*nCols], dim * sizeof(Goldilocks::Element));
     }
 }
 
@@ -28,10 +29,10 @@ void setPolynomial(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
     uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
     offset += polInfo.stagePos;
-    Polinomial pol = Polinomial(&buffer[offset], deg, dim, nCols, std::to_string(idPol));
+    Goldilocks::Element *buff = &buffer[offset];
 #pragma omp parallel for
     for(uint64_t j = 0; j < deg; ++j) {
-        std::memcpy(pol[j], &values[j*dim], dim * sizeof(Goldilocks::Element));
+        std::memcpy(&buff[j*nCols], &values[j*dim], dim * sizeof(Goldilocks::Element));
     }
 }
 
@@ -473,6 +474,9 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
     } else if(hintFieldVal.operand == opType::const_) {
         destStruct.addConstPol(setupCtx.starkInfo.constPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions.inverse);
     } else if(hintFieldVal.operand == opType::number) {
+        if(hintFieldVal.value == 1) {
+            return;
+        } 
         destStruct.addNumber(hintFieldVal.value, hintFieldOptions.inverse);
     } else if(hintFieldVal.operand == opType::tmp) {
         destStruct.addParams(hintFieldVal.id, setupCtx.expressionsBin.expressionsInfo[hintFieldVal.id].destDim, hintFieldOptions.inverse);
@@ -586,7 +590,7 @@ void accHintField(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &expre
     
     Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
         ? new Goldilocks::Element[dim*N]
-        : &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
+        : &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
     
     Dest destStruct(vals, N, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName, hintOptions);
@@ -637,7 +641,7 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
-    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
+    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
 #ifdef __USE_CUDA__
         Goldilocks::Element*  vals = new Goldilocks::Element[dim*N];
 #else
@@ -645,7 +649,7 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
         ? new Goldilocks::Element[dim*N]
         : &params.aux_trace[offsetAuxTrace];
 #endif
-    
+
     Dest destStruct(vals,  1 << setupCtx.starkInfo.starkStruct.nBits, 0);
 #ifdef __USE_CUDA__
         destStruct.dest_gpu = params.aux_trace + offsetAuxTrace;

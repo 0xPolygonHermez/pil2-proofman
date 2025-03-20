@@ -105,6 +105,11 @@ uint64_t get_proof_size(void *pStarkInfo) {
     return starkInfo->proofSize;
 }
 
+void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
+    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
+    starkInfo->setMemoryExpressions(nTmp1, nTmp3);
+}
+
 uint64_t get_map_total_n(void *pStarkInfo)
 {
     StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
@@ -182,6 +187,27 @@ void *expressions_bin_new(char* filename, bool global, bool verifier)
 
     return expressionsBin;
 };
+
+uint64_t get_max_n_tmp1(void *pExpressionsBin) {
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxTmp1;
+};
+
+uint64_t get_max_n_tmp3(void *pExpressionsBin){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxTmp3;
+};
+
+uint64_t get_max_args(void *pExpressionsBin){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxArgs;
+};
+
+uint64_t get_max_ops(void *pExpressionsBin){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxOps;
+};
+
 void expressions_bin_free(void *pExpressionsBin)
 {
     auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
@@ -363,17 +389,6 @@ void transcript_add(void *pTranscript, void *pInput, uint64_t size)
     auto input = (Goldilocks::Element *)pInput;
 
     transcript->put(input, size);
-}
-
-void transcript_add_polinomial(void *pTranscript, void *pPolinomial)
-{
-    auto transcript = (TranscriptGL *)pTranscript;
-    auto pol = (Polinomial *)pPolinomial;
-
-    for (uint64_t i = 0; i < pol->degree(); i++)
-    {
-        transcript->put(pol->operator[](i), pol->dim());
-    }
 }
 
 void transcript_free(void *pTranscript)

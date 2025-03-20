@@ -79,6 +79,13 @@ pub fn get_proof_size_c(p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn set_memory_expressions_c(p_stark_info: *mut c_void, n_tmp1: u64, n_tmp3: u64) {
+    unsafe {
+        set_memory_expressions(p_stark_info, n_tmp1, n_tmp3);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn stark_info_free_c(p_stark_info: *mut c_void) {
     unsafe {
         stark_info_free(p_stark_info);
@@ -161,6 +168,26 @@ pub fn expressions_bin_new_c(filename: &str, global: bool, verify: bool) -> *mut
 
         expressions_bin_new(filename.as_ptr() as *mut std::os::raw::c_char, global, verify)
     }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_max_n_tmp1_c(p_expressions_bin: *mut c_void) -> u64 {
+    unsafe { get_max_n_tmp1(p_expressions_bin) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_max_n_tmp3_c(p_expressions_bin: *mut c_void) -> u64 {
+    unsafe { get_max_n_tmp3(p_expressions_bin) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_max_n_args_c(p_expressions_bin: *mut c_void) -> u64 {
+    unsafe { get_max_args(p_expressions_bin) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_max_n_ops_c(p_expressions_bin: *mut c_void) -> u64 {
+    unsafe { get_max_ops(p_expressions_bin) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -486,13 +513,6 @@ pub fn transcript_new_c(arity: u64, custom: bool) -> *mut c_void {
 pub fn transcript_add_c(p_transcript: *mut c_void, p_input: *mut u8, size: u64) {
     unsafe {
         transcript_add(p_transcript, p_input as *mut std::os::raw::c_void, size);
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn transcript_add_polinomial_c(p_transcript: *mut c_void, p_polinomial: *mut c_void) {
-    unsafe {
-        transcript_add_polinomial(p_transcript, p_polinomial);
     }
 }
 
@@ -987,6 +1007,11 @@ pub fn get_proof_size_c(_p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn set_memory_expressions_c(_p_stark_info: *mut c_void, _n_tmp1: u64, _n_tmp3: u64) {
+    trace!("{}: ··· {}", "ffi     ", "set_memory_expressions: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn get_map_totaln_custom_commits_fixed_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
     100000000
@@ -1045,6 +1070,26 @@ pub fn write_const_tree_c(_pStarkInfo: *mut c_void, _pConstPolsTreeAddress: *mut
 #[cfg(feature = "no_lib_link")]
 pub fn expressions_bin_new_c(_filename: &str, _global: bool, _verify: bool) -> *mut c_void {
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_max_n_tmp1_c(_p_expressions_bin: *mut c_void) -> u64 {
+    10000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_max_n_tmp3_c(_p_expressions_bin: *mut c_void) -> u64 {
+    10000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_max_n_args_c(_p_expressions_bin: *mut c_void) -> u64 {
+    10000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_max_n_ops_c(_p_expressions_bin: *mut c_void) -> u64 {
+    10000
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1228,15 +1273,6 @@ pub fn transcript_new_c(_arity: u64, _custom: bool) -> *mut c_void {
 #[cfg(feature = "no_lib_link")]
 pub fn transcript_add_c(_p_transcript: *mut c_void, _p_input: *mut u8, _size: u64) {
     trace!("{}: ··· {}", "ffi     ", "transcript_add: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn transcript_add_polinomial_c(_p_transcript: *mut c_void, _p_polinomial: *mut c_void) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "transcript_add_polinomial: This is a mock call because there is no linked library"
-    );
 }
 
 #[cfg(feature = "no_lib_link")]

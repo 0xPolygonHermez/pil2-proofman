@@ -22,7 +22,7 @@ pub fn create_buffer_fast_u8(buffer_size: usize) -> Vec<u8> {
     buffer
 }
 
-pub struct DeviceBuffer(pub *mut c_void );
+pub struct DeviceBuffer(pub *mut c_void);
 unsafe impl Send for DeviceBuffer {}
 
 impl DeviceBuffer {

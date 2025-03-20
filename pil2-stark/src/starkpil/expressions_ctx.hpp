@@ -88,6 +88,7 @@ public:
     uint64_t *mapOffsetsCustomFixed;
     uint64_t *mapOffsetsCustomFixedExtended;
     uint64_t *mapSectionsNCustomFixed;
+    uint64_t mapOffsetFriPol;
     uint64_t nrowsPack_;
     uint64_t minRow;
     uint64_t maxRow;
@@ -135,6 +136,8 @@ public:
         mapOffsetsExtended[0] = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
         mapSectionsN[0] = setupCtx.starkInfo.mapSectionsN["const"];
 
+        mapOffsetFriPol = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
+        
         for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
             mapSectionsN[i + 1] = setupCtx.starkInfo.mapSectionsN["cm" + std::to_string(i + 1)];
             mapOffsets[i + 1] = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + std::to_string(i + 1), false)];

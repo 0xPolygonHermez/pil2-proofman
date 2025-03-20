@@ -56,7 +56,8 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         n_instances = my_instances.len();
     }
 
-    for (instance_id, (airgroup_id, air_id, _)) in instances.iter().enumerate() {
+    let mut memory_tables = 0 as f64;
+    for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
         if !print[instance_id] {
             continue;
         }
@@ -66,10 +67,11 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         if !air_instance_map.contains_key(&air_name.clone()) {
             let setup = sctx.get_setup(*airgroup_id, *air_id);
             let n_bits = setup.stark_info.stark_struct.n_bits;
+            let memory_trace = (*setup.stark_info.map_sections_n.get("cm1").unwrap() * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
             let memory_instance = setup.prover_buffer_size as f64 * 8.0;
             let memory_fixed =
                 (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
-
+            if *all { memory_tables += memory_trace; }
             let total_cols: u64 = setup
                 .stark_info
                 .map_sections_n
@@ -77,7 +79,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
                 .filter(|(key, _)| *key != "const")
                 .map(|(_, value)| *value)
                 .sum();
-            air_info.insert(air_name.clone(), (n_bits, total_cols, memory_fixed, memory_instance));
+            air_info.insert(air_name.clone(), (n_bits, total_cols, memory_fixed, memory_trace, memory_instance));
         }
         let air_instance_map_key = air_instance_map.entry(air_name).or_insert(0);
         *air_instance_map_key += 1;
@@ -96,7 +98,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         info!("{}:       Air Group [{}]", name, air_group);
         for air_name in air_names {
             let count = air_group_instances.get(air_name).unwrap();
-            let (n_bits, total_cols, _, _) = air_info.get(air_name).unwrap();
+            let (n_bits, total_cols, _, _, _) = air_info.get(air_name).unwrap();
             info!(
                 "{}:       {}",
                 name,
@@ -149,19 +151,22 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
 
         for air_name in air_names {
             let count = air_group_instances.get(air_name).unwrap();
-            let (_, _, _, memory_instance) = air_info.get(air_name).unwrap();
-            if max_prover_memory < *memory_instance {
-                max_prover_memory = *memory_instance;
+            let (_, _, _, memory_trace, memory_instance) = air_info.get(air_name).unwrap();
+            if max_prover_memory < *memory_instance + *memory_trace {
+                max_prover_memory = *memory_instance + *memory_trace;
             }
             info!(
                 "{}:       {}",
                 name,
-                format!("· {}: {} per each of {} instance", air_name, format_bytes(*memory_instance), count,)
+                format!("· {}: {} + {} per each of {} instance | Total: {}", air_name, format_bytes(*memory_trace), format_bytes(*memory_instance), count, format_bytes(*memory_instance + *memory_trace))
             );
         }
     }
     info!("{}:       {}", name, format!("Total prover memory required: {}", format_bytes(max_prover_memory)));
     total_memory += max_prover_memory;
+    info!("{}: ----------------------------------------------------------", name);
+    info!("{}:       {}", name, format!("Extra memory tables: {}", format_bytes(memory_tables)));
+    total_memory += memory_tables;
     info!("{}: ----------------------------------------------------------", name);
     info!("{}:       {}", name, format!("Total memory required by proofman: {}", format_bytes(total_memory)));
     info!("{}: ----------------------------------------------------------", name);

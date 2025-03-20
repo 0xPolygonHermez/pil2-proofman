@@ -2,6 +2,7 @@ use p3_field::Field;
 
 use proofman_starks_lib_c::{
     stark_info_new_c, expressions_bin_new_c, stark_verify_c, stark_verify_bn128_c, stark_verify_from_file_c,
+    get_max_n_tmp1_c, get_max_n_tmp3_c, set_memory_expressions_c,
 };
 
 use colored::*;
@@ -21,6 +22,10 @@ pub fn verify_proof_from_file<F: Field>(
 ) -> bool {
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, true);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+
+    let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
+    let n_max_tmp3 = get_max_n_tmp3_c(p_expressions_bin);
+    set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
 
     let proof_challenges_ptr = match challenges {
         Some(ref challenges) => challenges.as_ptr() as *mut u8,
@@ -60,6 +65,10 @@ pub fn verify_proof<F: Field>(
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, true);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
+    let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
+    let n_max_tmp3 = get_max_n_tmp3_c(p_expressions_bin);
+    set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
+
     let global_challenge_ptr = match global_challenge {
         Some(ref global_challenge) => global_challenge.as_ptr() as *mut u8,
         None => std::ptr::null_mut(),
@@ -95,6 +104,10 @@ pub fn verify_proof_bn128<F: Field>(
 ) -> bool {
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, true);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+
+    let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
+    let n_max_tmp3 = get_max_n_tmp3_c(p_expressions_bin);
+    set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
 
     let publics_ptr = match publics {
         Some(ref publics) => publics.as_ptr() as *mut u8,

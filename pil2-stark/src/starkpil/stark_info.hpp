@@ -6,7 +6,6 @@
 #include <vector>
 #include "zkassert.hpp"
 #include "goldilocks_base_field.hpp"
-#include "polinomial.hpp"
 #include "merklehash_goldilocks.hpp"
 #include "zklog.hpp"
 #include "exit_process.hpp"
@@ -172,12 +171,13 @@ public:
 
     void setMapOffsets();
 
+    void setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3);
+
     void getProofSize();
 
     uint64_t getNumNodesMT(uint64_t height);
 
     /* Returns a polynomial specified by its ID */
-    void getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended);
     uint64_t getTraceOffset(string type, PolMap& polInfo, bool domainExtended);
     uint64_t getTraceNColsSection(string type, PolMap& polInfo, bool domainExtended);
 };

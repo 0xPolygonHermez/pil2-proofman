@@ -18,6 +18,7 @@
     // ========================================================================================
     void *stark_info_new(char* filename, bool verify_constraints, bool verify);
     uint64_t get_proof_size(void *pStarkInfo);
+    void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
 
@@ -35,6 +36,10 @@
     // Expressions Bin
     // ========================================================================================
     void *expressions_bin_new(char* filename, bool global, bool verifier);
+    uint64_t get_max_n_tmp1(void *pExpressionsBin);
+    uint64_t get_max_n_tmp3(void *pExpressionsBin);
+    uint64_t get_max_args(void *pExpressionsBin);
+    uint64_t get_max_ops(void *pExpressionsBin);
     void expressions_bin_free(void *pExpressionsBin);
 
     // Hints
@@ -63,7 +68,6 @@
     // =================================================================================
     void *transcript_new(uint64_t arity, bool custom);
     void transcript_add(void *pTranscript, void *pInput, uint64_t size);
-    void transcript_add_polinomial(void *pTranscript, void *pPolinomial);
     void transcript_free(void *pTranscript);
     void get_challenge(void *pTranscript, void *pElement);
 
