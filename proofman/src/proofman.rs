@@ -27,9 +27,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use transcript::FFITranscript;
 
-use witness::{WitnessLibInitFn, WitnessManager};
+use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 
-use crate::{check_tree_paths, check_tree_paths_vadcop};
+use crate::{check_paths2, check_tree_paths, check_tree_paths_vadcop};
 use crate::verify_basic_proof;
 use crate::verify_global_constraints_proof;
 use crate::{
@@ -108,10 +108,8 @@ impl<F: PrimeField64> ProofMan<F> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn verify_proof_constraints(
         witness_lib_path: PathBuf,
-        rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
@@ -119,26 +117,53 @@ impl<F: PrimeField64> ProofMan<F> {
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (pctx, sctx) = Self::initialize_proofman(
-            witness_lib_path.clone(),
-            rom_path.clone(),
-            public_inputs_path.clone(),
-            input_data_path.clone(),
-            proving_key_path,
-            output_dir_path,
-            custom_commits_fixed,
-            options,
+        check_paths(
+            &witness_lib_path,
+            &public_inputs_path,
+            &input_data_path,
+            &proving_key_path,
+            &output_dir_path,
+            options.verify_constraints,
         )?;
 
-        let wcm = Arc::new(WitnessManager::new(
-            pctx.clone(),
-            sctx.clone(),
-            rom_path.clone(),
-            public_inputs_path.clone(),
-            input_data_path,
-        ));
+        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
 
-        Self::execute(witness_lib_path, &pctx, wcm.clone())?;
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), public_inputs_path, input_data_path));
+
+        Self::init_witness_lib(witness_lib_path, &pctx, wcm.clone())?;
+
+        Self::_verify_proof_constraints(pctx, sctx, wcm)
+    }
+
+    pub fn verify_proof_constraints_from_lib(
+        mut witness_lib: Box<dyn WitnessLibrary<F>>,
+        proving_key_path: PathBuf,
+        output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        options: ProofOptions,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
+
+        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
+
+        witness_lib.register_witness(wcm.clone());
+
+        Self::_verify_proof_constraints(pctx, sctx, wcm)
+    }
+
+    fn _verify_proof_constraints(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        wcm: Arc<WitnessManager<F>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(EXECUTE);
+        wcm.execute();
+        timer_stop_and_log_info!(EXECUTE);
+
+        pctx.dctx_assign_instances();
+        pctx.dctx_close();
 
         print_summary_info(Self::MY_NAME, &pctx, &sctx);
 
@@ -258,10 +283,8 @@ impl<F: PrimeField64> ProofMan<F> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn generate_proof(
         witness_lib_path: PathBuf,
-        rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
@@ -269,20 +292,51 @@ impl<F: PrimeField64> ProofMan<F> {
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        check_paths(
+            &witness_lib_path,
+            &public_inputs_path,
+            &input_data_path,
+            &proving_key_path,
+            &output_dir_path,
+            options.verify_constraints,
+        )?;
+
+        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), public_inputs_path, input_data_path));
+
+        Self::init_witness_lib(witness_lib_path, &pctx, wcm.clone())?;
+
+        Self::_generate_proof(output_dir_path, pctx, sctx, wcm)
+    }
+
+    pub fn generate_proof_from_lib(
+        mut witness_lib: Box<dyn WitnessLibrary<F>>,
+        proving_key_path: PathBuf,
+        output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        options: ProofOptions,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
+
+        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
+
+        witness_lib.register_witness(wcm.clone());
+
+        Self::_generate_proof(output_dir_path, pctx, sctx, wcm)
+    }
+
+    fn _generate_proof(
+        output_dir_path: PathBuf,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        wcm: Arc<WitnessManager<F>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOFS);
-
-        let (pctx, sctx) = Self::initialize_proofman(
-            witness_lib_path.clone(),
-            rom_path.clone(),
-            public_inputs_path.clone(),
-            input_data_path.clone(),
-            proving_key_path,
-            output_dir_path.clone(),
-            custom_commits_fixed,
-            options,
-        )?;
 
         let setups_handle = {
             let pctx_clone = Arc::clone(&pctx);
@@ -297,15 +351,12 @@ impl<F: PrimeField64> ProofMan<F> {
             })
         };
 
-        let wcm = Arc::new(WitnessManager::new(
-            pctx.clone(),
-            sctx.clone(),
-            rom_path.clone(),
-            public_inputs_path.clone(),
-            input_data_path.clone(),
-        ));
+        timer_start_info!(EXECUTE);
+        wcm.execute();
+        timer_stop_and_log_info!(EXECUTE);
 
-        Self::execute(witness_lib_path, &pctx, wcm.clone())?;
+        pctx.dctx_assign_instances();
+        pctx.dctx_close();
 
         print_summary_info(Self::MY_NAME, &pctx, &sctx);
 
@@ -662,28 +713,12 @@ impl<F: PrimeField64> ProofMan<F> {
     }
 
     #[allow(clippy::type_complexity)]
-    #[allow(clippy::too_many_arguments)]
     fn initialize_proofman(
-        witness_lib_path: PathBuf,
-        rom_path: Option<PathBuf>,
-        public_inputs_path: Option<PathBuf>,
-        input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
-        output_dir_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>), Box<dyn std::error::Error>> {
         timer_start_info!(INITIALIZING_PROOFMAN);
-
-        check_paths(
-            &witness_lib_path,
-            &rom_path,
-            &public_inputs_path,
-            &input_data_path,
-            &proving_key_path,
-            &output_dir_path,
-            options.verify_constraints,
-        )?;
 
         let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options.clone());
         let sctx: Arc<SetupCtx<F>> =
@@ -700,7 +735,7 @@ impl<F: PrimeField64> ProofMan<F> {
         Ok((pctx, sctx))
     }
 
-    fn execute(
+    fn init_witness_lib(
         witness_lib_path: PathBuf,
         pctx: &ProofCtx<F>,
         wcm: Arc<WitnessManager<F>>,
@@ -712,15 +747,10 @@ impl<F: PrimeField64> ProofMan<F> {
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
         let mut witness_lib = witness_lib(pctx.options.verbose_mode)?;
-        witness_lib.register_witness(wcm.clone());
+
+        witness_lib.register_witness(wcm);
+
         timer_stop_and_log_info!(REGISTER_WITNESS);
-
-        timer_start_info!(EXECUTE);
-        wcm.execute();
-        timer_stop_and_log_info!(EXECUTE);
-
-        pctx.dctx_assign_instances();
-        pctx.dctx_close();
 
         Ok(())
     }
