@@ -354,7 +354,7 @@ function range_check_group(const expr expressions[], const int min, const int ma
 function multi_range_check(const expr expression, const int min1, const int max1, const int min2, const int max2, 
                            const expr range_sel = 1, const expr sel = 1, const int predefined = 0): int {
     if (predefined) {
-        error(`WIP: Multi range check cannot be predefined`);
+        error("WIP: Multi range check cannot be predefined");
     }
 
     if (min1 == min2 && max1 == max2) {
@@ -383,7 +383,7 @@ function multi_range_check(const expr expression, const int min1, const int max1
     // Note: This solution improves the naive solution:
     //   · range_check(expression, min1, max1, 0, sel*range_sel).
     //   · range_check(expression, min2, max2, 0, sel*(1-range_sel)).
-    // by just performing 1 assume and 2 proves instead
+    // by just performing 1 assumes and (at most) 2 proves instead
     //
     // Q: Can I do it with 1 assume and 1 prove? E.g.:
     // lookup_assumes_dynamic([opid1,opid2], range_sel*(opid1-opid2) - opid2, [expression], sel, PIOP_NAME_RANGE_CHECK);
@@ -401,7 +401,7 @@ function multi_range_check(const expr expression, const int min1, const int max1
  */
 function range_check_id(const int min, const int max, const int predefined = 0): int {
     if (predefined) {
-        error(`WIP: Range check id cannot be predefined`);
+        error("WIP: Range check id cannot be predefined");
     }
 
     range_validator(min, max);
@@ -456,7 +456,7 @@ function range_check_dynamic(const expr expression, const expr range_sel, const 
 private function check_dynamic_called() {
     use air.std.rcid;
     if (!called) {
-        error(`Dynamic range check was not called`);
+        error("Dynamic range check was not called");
     }
 }
 

@@ -12,7 +12,7 @@ rm -rf ./pil2-components/test/simple/build/ \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/simple/build/build.pilout \
      -b ./pil2-components/test/simple/build \
-&& cargo run --bin proofman-cli check-setup \ 
+&& cargo run --bin proofman-cli check-setup \
      --proving-key ./pil2-components/test/simple/build/provingKey \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/simple/build/build.pilout \
@@ -152,7 +152,7 @@ rm -rf ./pil2-components/test/std/permutation/build/ \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/permutation/build/build.pilout \
      -b ./pil2-components/test/std/permutation/build \
-&& cargo run --bin proofman-cli check-setup \ 
+&& cargo run --bin proofman-cli check-setup \
      --proving-key ./pil2-components/test/std/permutation/build/provingKey \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/std/permutation/build/build.pilout \
