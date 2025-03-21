@@ -168,6 +168,7 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                         *abs_max_d = d;
                     }
                 } else {
+                    // need to make exp mutable
                     todo!()
                 }
                 todo!()
