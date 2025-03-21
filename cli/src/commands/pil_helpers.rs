@@ -125,7 +125,7 @@ impl PilHelpersCmd {
             }
         }
 
-        let pilout_data = fs::read(&self.pilout.display().to_string())?;
+        let pilout_data = fs::read(self.pilout.display().to_string())?;
         let pilout_hash = blake3::hash(&pilout_data).to_hex().to_string();
 
         // Read the pilout file
