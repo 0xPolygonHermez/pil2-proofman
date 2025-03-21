@@ -3,8 +3,8 @@ use std::ops::Add;
 use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
 use p3_goldilocks::Goldilocks;
 
-use crate::EllipticCurve;
-use crate::GoldilocksQuinticExtension;
+use crate::curve::EllipticCurve;
+use crate::goldilocks_quintic_extension::GoldilocksQuinticExtension;
 
 /// The EcMasFp5 curve is defined by the equation:
 ///         y² = x³ + Ax + B

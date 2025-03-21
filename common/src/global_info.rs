@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use serde_json::Value;
 use std::fs;
 
@@ -23,13 +23,20 @@ pub struct PublicMap {
     pub lengths: Vec<u64>,
 }
 
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub enum CurveType {
+    EcGFp5,
+    EcMasFp5,
+}
+
 #[derive(Clone, Deserialize)]
 pub struct GlobalInfo {
     pub folder_path: String,
     pub name: String,
     pub airs: Vec<Vec<GlobalInfoAir>>,
     pub air_groups: Vec<String>,
-
+    pub curve: CurveType,
     #[serde(rename = "aggTypes")]
     pub agg_types: Vec<Vec<GlobalInfoAggType>>,
 

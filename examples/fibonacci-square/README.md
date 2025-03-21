@@ -136,10 +136,10 @@ cargo run --bin proofman-cli prove \
 Without recursion:
 
 ```bash
-node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
+node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./examples/fibonacci-square/pil/build.pilout \
-&& node ../pil2-proofman-js/src/main_setup.js \
+&& node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
      -b ./examples/fibonacci-square/build \
 && cargo run --bin proofman-cli pil-helpers \

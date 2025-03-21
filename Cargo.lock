@@ -913,6 +913,7 @@ name = "proofman"
 version = "0.4.0"
 dependencies = [
  "colored",
+ "curves",
  "env_logger",
  "libloading",
  "log",

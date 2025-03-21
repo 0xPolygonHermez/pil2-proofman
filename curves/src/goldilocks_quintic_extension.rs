@@ -3,12 +3,12 @@ use p3_field::{BasedVectorSpace, Field, PrimeField64, PrimeCharacteristicRing};
 use p3_field::extension::BinomialExtensionField;
 
 /// Field Fp⁵ = F\[X\]/(X⁵-3) with generator X + 2
-pub(crate) type GoldilocksQuinticExtension = BinomialExtensionField<Goldilocks, 5>;
+pub type GoldilocksQuinticExtension = BinomialExtensionField<Goldilocks, 5>;
 
 /// Methods for computing the square root in the GoldilocksQuinticExtension field
 /// as described in [Elliptic Curves over Goldilocks](https://hackmd.io/CxJrIhv-SP65W3GWS_J5bw?view#Extension-Field-Selection),
 /// which is inspired by [Curve ecGFp5](https://github.com/pornin/ecgfp5/tree/main)
-pub(crate) trait SquaringFp5 {
+pub trait SquaringFp5 {
     /// Constants for the first Frobenius operator
     const GAMMAS1: [u64; 5] = [1, 1041288259238279555, 15820824984080659046, 211587555138949697, 1373043270956696022];
 

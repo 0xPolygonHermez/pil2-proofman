@@ -326,7 +326,7 @@ impl DistributionCtx {
             let mut total_instances = 0;
             for i in 0..self.n_processes as usize {
                 self.roots_gatherv_displ[i] = total_instances;
-                self.roots_gatherv_count[i] = self.owners_count[i] * 4;
+                self.roots_gatherv_count[i] = self.owners_count[i] * 10;
                 total_instances += self.roots_gatherv_count[i];
             }
         }
@@ -335,9 +335,9 @@ impl DistributionCtx {
         for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
             #[cfg(feature = "distributed")]
             let pos_buffer = self.roots_gatherv_displ[self.instances_owner[idx].0 as usize] as usize
-                + self.instances_owner[idx].1 * 4;
+                + self.instances_owner[idx].1 * 10;
             #[cfg(not(feature = "distributed"))]
-            let pos_buffer = idx * 4;
+            let pos_buffer = idx * 10;
             group_indices.entry(group_id).or_default().push(pos_buffer);
         }
 
@@ -374,7 +374,7 @@ impl DistributionCtx {
     pub fn distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
         #[cfg(feature = "distributed")]
         {
-            let mut all_roots: Vec<u64> = vec![0; 4 * self.n_instances];
+            let mut all_roots: Vec<u64> = vec![0; 10 * self.n_instances];
             let counts = &self.roots_gatherv_count;
             let displs = &self.roots_gatherv_displ;
 

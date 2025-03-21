@@ -1,7 +1,10 @@
+use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve, goldilocks_quintic_extension::GoldilocksQuinticExtension};
 use libloading::{Library, Symbol};
 use log::info;
-use p3_field::PrimeCharacteristicRing;
-use proofman_common::{load_const_pols, load_const_pols_tree};
+use p3_field::extension::BinomialExtensionField;
+use p3_field::BasedVectorSpace;
+use std::ops::Add;
+use proofman_common::{load_const_pols, load_const_pols_tree, CurveType};
 use proofman_common::{
     calculate_fixed_tree, skip_prover_instance, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
 };
@@ -47,7 +50,10 @@ pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: PrimeField64> ProofMan<F> {
+impl<F: PrimeField64> ProofMan<F>
+where
+    BinomialExtensionField<Goldilocks, 5>: BasedVectorSpace<F>,
+{
     const MY_NAME: &'static str = "ProofMan";
 
     pub fn check_setup(proving_key_path: PathBuf, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -366,7 +372,7 @@ impl<F: PrimeField64> ProofMan<F> {
         let my_instances = pctx.dctx_get_my_instances();
         let my_air_groups = pctx.dctx_get_my_air_groups();
 
-        let values = Arc::new(Mutex::new(vec![0; my_instances.len() * 4]));
+        let values = Arc::new(Mutex::new(vec![0; my_instances.len() * 10]));
 
         let mut prover_buffer_size = 0;
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
@@ -638,8 +644,8 @@ impl<F: PrimeField64> ProofMan<F> {
                 pctx.free_instance(instance_id);
             }
 
-            for (id, value) in value.iter().enumerate().take(4) {
-                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = *value;
+            for (id, value) in value.iter().enumerate().take(10) {
+                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 10 + id] = *value;
             }
         })
     }
@@ -758,6 +764,7 @@ impl<F: PrimeField64> ProofMan<F> {
     }
 
     fn calculate_global_challenge(pctx: &ProofCtx<F>, values: Vec<u64>) {
+        timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
         let transcript = FFITranscript::new(2, true);
 
         transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
@@ -778,11 +785,17 @@ impl<F: PrimeField64> ProofMan<F> {
                     F::from_u64(all_roots[*idx + 1]),
                     F::from_u64(all_roots[*idx + 2]),
                     F::from_u64(all_roots[*idx + 3]),
+                    F::from_u64(all_roots[*idx + 4]),
+                    F::from_u64(all_roots[*idx + 5]),
+                    F::from_u64(all_roots[*idx + 6]),
+                    F::from_u64(all_roots[*idx + 7]),
+                    F::from_u64(all_roots[*idx + 8]),
+                    F::from_u64(all_roots[*idx + 9]),
                 ];
                 values.push(value);
             }
             if !values.is_empty() {
-                let value = Self::hash_b_tree(&values);
+                let value = Self::add_contributions(&pctx.global_info.curve, &values);
                 transcript.add_elements(value.as_ptr() as *mut u8, value.len());
             }
         }
@@ -791,6 +804,7 @@ impl<F: PrimeField64> ProofMan<F> {
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
         pctx.set_global_challenge(2, &global_challenge);
+        timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
     }
 
     #[allow(dead_code)]
@@ -952,7 +966,7 @@ impl<F: PrimeField64> ProofMan<F> {
             aux_trace_contribution_ptr,
         );
 
-        let mut value = vec![Goldilocks::ZERO; n_field_elements];
+        let mut value = vec![F::ZERO; 10];
 
         let n_airvalues = setup
             .stark_info
@@ -990,46 +1004,51 @@ impl<F: PrimeField64> ProofMan<F> {
             }
         }
 
-        calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64);
+        calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64, 10);
 
         timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
 
         value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
     }
 
-    fn hash_b_tree(values: &[Vec<F>]) -> Vec<F> {
-        if values.len() == 1 {
-            return values[0].clone();
-        }
+    fn add_contributions(curve_type: &CurveType, values: &[Vec<F>]) -> Vec<F> {
+        if *curve_type == CurveType::EcGFp5 {
+            let mut result = EcGFp5::hash_to_curve(
+                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
+                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
+            );
 
-        let mut result = Vec::new();
+            for value in values.iter().skip(1) {
+                let curve_point = EcGFp5::hash_to_curve(
+                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
+                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
+                );
 
-        for i in (0..values.len() - 1).step_by(2) {
-            let mut buffer = values[i].clone();
-            buffer.extend(values[i + 1].clone());
-
-            let is_value1_zero = values[i].iter().all(|x| *x == F::ZERO);
-            let is_value2_zero = values[i + 1].iter().all(|x| *x == F::ZERO);
-
-            let mut value;
-            if is_value1_zero && is_value2_zero {
-                value = vec![F::ZERO; 4];
-            } else if is_value1_zero {
-                value = values[i + 1].clone();
-            } else if is_value2_zero {
-                value = values[i].clone();
-            } else {
-                value = vec![F::ZERO; 4];
-                calculate_hash_c(value.as_mut_ptr() as *mut u8, buffer.as_mut_ptr() as *mut u8, buffer.len() as u64);
+                result = result.add(&curve_point);
             }
 
-            result.push(value);
-        }
+            let mut curve_point_values = vec![F::ZERO; 10];
+            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
+            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
+            curve_point_values
+        } else {
+            let mut result = EcMasFp5::hash_to_curve(
+                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
+                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
+            );
 
-        if values.len() % 2 != 0 {
-            result.push(values[values.len() - 1].clone());
-        }
+            for value in values.iter().skip(1) {
+                let curve_point = EcMasFp5::hash_to_curve(
+                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
+                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
+                );
+                result = result.add(&curve_point);
+            }
 
-        Self::hash_b_tree(&result)
+            let mut curve_point_values = vec![F::ZERO; 10];
+            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
+            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
+            curve_point_values
+        }
     }
 }

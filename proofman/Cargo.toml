@@ -9,6 +9,7 @@ proofman-macros = { path = "../macros" }
 proofman-hints = { path = "../hints" }
 proofman-util = { path = "../util" }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
+curves = { path = "../curves" }
 transcript = { path = "../transcript" }
 witness = { path = "../witness" }
 

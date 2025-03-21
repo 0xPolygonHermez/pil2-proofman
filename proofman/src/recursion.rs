@@ -230,7 +230,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
 
     let publics_circom_size =
         pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
-    let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 4;
+    let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
 
     let mut updated_proof_size = recursive_proof.len() + publics_circom_size;
     if has_compressor {
@@ -329,7 +329,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
             if dctx.rank == 0 {
                 if null_zkin.is_none() {
                     let setup = sctx.get_setup(airgroup, 0);
-                    let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 4;
+                    let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 10;
                     null_zkin = Some(vec![0; setup.proof_size as usize + publics_aggregation]);
                 }
                 airgroup_proofs[airgroup].push(Some(null_zkin.clone().unwrap()));
@@ -351,7 +351,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
             load_const_pols(&setup.setup_path, setup.const_pols_size, const_pols);
             let publics_circom_size =
                 pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
-            let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 4;
+            let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 10;
 
             //create a vector of sice indices length
             let mut alive = alives[airgroup];
