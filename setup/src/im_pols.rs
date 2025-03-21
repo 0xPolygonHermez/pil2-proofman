@@ -16,7 +16,7 @@ pub trait HashCode: Hash {
 
 impl<T: Hash> HashCode for T {}
 
-pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize) -> (Option<Vec<Value>>, isize) {
+pub fn calculate_im_pols_new(expressions: &[Value], exp: &mut Value, max_deg: usize) -> (Option<Vec<Value>>, isize) {
     let mut im_pols: Option<Vec<Value>> = Some(Vec::new());
     let absolute_max = max_deg;
     let mut abs_max_d = 0;
@@ -27,20 +27,21 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
 
     fn __calculate_im_pols(
         expressions: &[Value],
-        exp: &Value,
+        exp: &mut Value,
         im_pols: &mut Option<Vec<Value>>,
         max_deg: usize,
         absolute_max: usize,
         abs_max_d: &mut isize,
     ) -> (Option<Vec<Value>>, isize) {
-        let exp_id = exp["id"].as_str().unwrap();
+        let exp_id_st = exp["id"].as_str().unwrap().to_string();
+        let exp_id = exp_id_st.as_str();
         if im_pols.is_none() {
             return (None, -1);
         }
         match exp["op"].as_str().unwrap() {
             "add" | "sub" => {
                 let mut md = 0;
-                for value in exp["values"].as_array().unwrap() {
+                for value in exp["values"].as_array_mut().unwrap() {
                     let d;
                     (*im_pols, d) = __calculate_im_pols(expressions, value, im_pols, max_deg, absolute_max, abs_max_d);
                     if d < md {
@@ -52,26 +53,27 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
             "mul" => {
                 let mut eb: Option<Vec<Value>> = None;
                 let mut ed = 1;
-                let values = exp["values"].as_array().unwrap();
+                let max_deg_here = exp["expDeg"].as_i64().unwrap() as isize;
+                let values = exp["values"].as_array_mut().unwrap();
                 if !["add", "mul", "sub", "exp"].contains(&values[0]["op"].as_str().unwrap())
                     && values[0]["expDeg"].as_i64().unwrap() == 0
                 {
-                    return __calculate_im_pols(expressions, &values[1], im_pols, max_deg, absolute_max, abs_max_d);
+                    return __calculate_im_pols(expressions, &mut values[1], im_pols, max_deg, absolute_max, abs_max_d);
                 }
                 if !["add", "mul", "sub", "exp"].contains(&values[1]["op"].as_str().unwrap())
                     && values[1]["expDeg"].as_i64().unwrap() == 0
                 {
-                    return __calculate_im_pols(expressions, &values[0], im_pols, max_deg, absolute_max, abs_max_d);
+                    return __calculate_im_pols(expressions, &mut values[0], im_pols, max_deg, absolute_max, abs_max_d);
                 }
-                let max_deg_here = exp["expDeg"].as_i64().unwrap() as isize;
                 if max_deg_here <= max_deg.try_into().unwrap() {
                     return (im_pols.clone(), max_deg_here);
                 }
                 for _ in 0..max_deg {
                     let r = max_deg - 1;
                     let (mut e1, d1) =
-                        __calculate_im_pols(expressions, &values[0], im_pols, 1, absolute_max, abs_max_d);
-                    let (e2, d2) = __calculate_im_pols(expressions, &values[1], &mut e1, r, absolute_max, abs_max_d);
+                        __calculate_im_pols(expressions, &mut values[0], im_pols, 1, absolute_max, abs_max_d);
+                    let (e2, d2) =
+                        __calculate_im_pols(expressions, &mut values[1], &mut e1, r, absolute_max, abs_max_d);
                     /*
                     if(e2 !== false && (eb === false || e2.length < eb.length)) {
                         eb = e2;
@@ -141,7 +143,7 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                 if !case_a {
                     (e, d) = __calculate_im_pols(
                         expressions,
-                        &exp.as_object().unwrap()[exp_id],
+                        &mut exp.as_object_mut().unwrap()[exp_id],
                         im_pols,
                         max_deg,
                         absolute_max,
