@@ -127,6 +127,17 @@ switch (ACTIVE_FIELD) {
         error("Unknown field");
 }
 
+// Set the blowup factor across the library
+int BLOWUP_FACTOR = 2;
+
+function set_blowup_factor(const int factor) {
+    if (factor < 1) {
+        error(`Blowup factor must be at least 1 but got ${factor}`);
+    }
+
+    BLOWUP_FACTOR = factor;
+}
+
 // Powers of 2
 const int P2_1 = 2**1;
 const int P2_2 = 2**2;
