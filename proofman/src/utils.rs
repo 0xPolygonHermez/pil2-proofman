@@ -219,7 +219,11 @@ pub fn check_paths2(
     Ok(())
 }
 
-fn check_const_tree<F: PrimeField64>(setup: &Setup<F>, aggregation: bool, final_snark: bool) -> Result<(), Box<dyn Error>> {
+fn check_const_tree<F: PrimeField64>(
+    setup: &Setup<F>,
+    aggregation: bool,
+    final_snark: bool,
+) -> Result<(), Box<dyn Error>> {
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
     let mut flags = String::new();
     if aggregation {
