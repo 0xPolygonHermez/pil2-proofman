@@ -1,4 +1,20 @@
+use std::hash::{Hash, DefaultHasher, Hasher};
+
 use serde_json::{json, Value};
+
+pub trait HashCode: Hash {
+    fn hash_code(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn hash_code_string(&self) -> String {
+        format!("{}", self.hash_code())
+    }
+}
+
+impl<T: Hash> HashCode for T {}
 
 pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize) -> (Option<Vec<Value>>, isize) {
     let mut im_pols: Option<Vec<Value>> = Some(Vec::new());
@@ -102,10 +118,51 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                         }
                     }
                 }
+                // let e,d;
+                // if(exp.res && exp.res[absoluteMax] && exp.res[absoluteMax][JSON.stringify(imPols)]) {
+                //     [e,d] = exp.res[absoluteMax][JSON.stringify(imPols)];
+                // } else {
+                //     [e,d] = _calculateImPols(expressions, expressions[exp.id], imPols, absoluteMax);
+                // }
+                let mut e = None;
+                let mut d = -1;
                 let mut case_a = false;
                 if let Some(exp_res) = exp["res"].as_array() {
                     if let Some(res_at_absolute_max) = exp_res.get(absolute_max) {
-                        todo!()
+                        if let Some(res_at_hash) = res_at_absolute_max[im_pols.hash_code_string()].as_array() {
+                            e = res_at_hash[0].as_array().cloned();
+                            d = res_at_hash[1].as_number().map(|n| n.as_i64().unwrap() as isize).unwrap_or(-1);
+                            case_a = true;
+                        }
+                    }
+                }
+                if !case_a {
+                    (e, d) = __calculate_im_pols(
+                        expressions,
+                        &exp.as_object().unwrap()[exp_id],
+                        im_pols,
+                        max_deg,
+                        absolute_max,
+                    )
+                }
+                // if (e === false) {
+                //     return [false, -1];
+                // }
+                if e.is_none() {
+                    return (None, -1);
+                }
+                // if (d > maxDeg) {
+                //     if (d>absMaxD) absMaxD = d;
+                //     return [[...e, exp.id], 1];
+                // } else {
+                //     if(!exp.res) exp.res = {};
+                //     if(!exp.res[absoluteMax]) exp.res[absoluteMax] = {};
+                //     exp.res[absoluteMax][JSON.stringify(imPols)] = [e, d];
+                //     return exp.res[absoluteMax][JSON.stringify(imPols)];
+                // }
+                if d > max_deg as isize {
+                    if d > abs_max_d {
+                        abs_max_d = d;
                     }
                 }
                 todo!()
