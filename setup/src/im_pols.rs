@@ -167,6 +167,8 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &Value, max_deg: usize)
                     if d > *abs_max_d {
                         *abs_max_d = d;
                     }
+                } else {
+                    todo!()
                 }
                 todo!()
             }
