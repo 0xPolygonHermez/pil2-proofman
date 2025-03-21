@@ -156,22 +156,25 @@ public:
     // Precomputed
     std::map<std::pair<std::string, bool>, uint64_t> mapOffsets;
     
+    bool verify_constraints = false;
     bool verify = false;
 
     uint64_t mapTotalN;
     uint64_t mapTotalNCustomCommitsFixed;
     
+    uint64_t proofSize;
+
     /* Constructor */
-    StarkInfo(string file, bool verify = false);
+    StarkInfo(string file, bool verify_constraints = false, bool verify = false);
 
     /* Loads data from a json object */
-    void load (json j, bool verify = false);
+    void load (json j, bool verify_constraints = false, bool verify = false);
 
     void setMapOffsets();
 
-    uint64_t getNumNodesMT(uint64_t height);
+    void getProofSize();
 
-    void addMemoryRecursive();
+    uint64_t getNumNodesMT(uint64_t height);
 
     /* Returns a polynomial specified by its ID */
     void getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended);

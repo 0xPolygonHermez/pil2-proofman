@@ -1,6 +1,6 @@
 [package]
 name = "connection"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 
 [lib]
@@ -27,5 +27,6 @@ proofman-cli.workspace = true
 
 [features]
 default = []
-no_lib_link = ["proofman-common/no_lib_link", "proofman/no_lib_link"]
+no_lib_link = ["proofman-common/no_lib_link"]
 diagnostic = ["proofman-macros/diagnostic"]
+debug = []

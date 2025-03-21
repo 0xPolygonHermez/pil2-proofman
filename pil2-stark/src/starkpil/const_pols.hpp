@@ -26,7 +26,7 @@ public:
     uint64_t getConstTreeSizeGL(StarkInfo& starkInfo)
     {   
         uint64_t NExtended = 1 << starkInfo.starkStruct.nBitsExt;
-        MerkleTreeGL mt(2, true, NExtended, starkInfo.nConstants);
+        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, NExtended, starkInfo.nConstants);
         return (2 + (NExtended * starkInfo.nConstants) + mt.numNodes);
     }
 
@@ -36,7 +36,7 @@ public:
         NTT_Goldilocks ntt(N);
         Goldilocks::Element *treeAddressGL = (Goldilocks::Element *)treeAddress;
         ntt.extendPol(&treeAddressGL[2], pConstPolsAddress, NExtended, N, starkInfo.nConstants);
-        MerkleTreeGL mt(2, true, NExtended, starkInfo.nConstants);
+        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, NExtended, starkInfo.nConstants);
         
         mt.setSource(&treeAddressGL[2]);
         mt.setNodes(&treeAddressGL[2 + starkInfo.nConstants * NExtended]);
@@ -48,7 +48,7 @@ public:
 
     void writeConstTreeFileGL(StarkInfo& starkInfo, void *treeAddress, std::string constTreeFile) {
         TimerStart(WRITING_TREE_FILE);
-        MerkleTreeGL mt(2, true, (Goldilocks::Element *)treeAddress);
+        MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, (Goldilocks::Element *)treeAddress);
         mt.writeFile(constTreeFile);
         TimerStopAndLog(WRITING_TREE_FILE);
     }
@@ -92,7 +92,7 @@ public:
                 return false;
             }
         } else {
-            MerkleTreeGL mt(2, true, (Goldilocks::Element *)constTreePols);
+            MerkleTreeGL mt(starkInfo.starkStruct.merkleTreeArity, true, (Goldilocks::Element *)constTreePols);
             Goldilocks::Element root[4];
             mt.getRoot(root);
 

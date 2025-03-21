@@ -98,8 +98,7 @@ void Goldilocks::inv(Element &result, const Element &in1)
 {
     if (Goldilocks::isZero(in1))
     {
-        std::cerr << "Error: Goldilocks::inv called with zero" << std::endl;
-        exit(-1);
+        throw std::runtime_error("Error: Goldilocks::inv called with zero");
     }
     u_int64_t t = 0;
     u_int64_t r = GOLDILOCKS_PRIME;

@@ -38,12 +38,13 @@ struct Params {
 
 struct Dest {
     Goldilocks::Element *dest = nullptr;
+    int64_t expId = -1;
     uint64_t offset = 0;
     uint64_t dim = 1;
     uint64_t domainSize;
     std::vector<Params> params;
 
-    Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t offset_ = 0) : dest(dest_), offset(offset_), domainSize(domainSize_) {}
+    Dest(Goldilocks::Element *dest_, uint64_t domainSize_, uint64_t offset_ = 0, int64_t expId_ = -1) : dest(dest_), expId(expId_), offset(offset_), domainSize(domainSize_) {}
 
     void addParams(ParserParams& parserParams_, bool inverse_ = false, bool batch_ = true) {
         params.push_back(Params(parserParams_, inverse_, batch_));
@@ -76,9 +77,10 @@ struct Dest {
 class ExpressionsCtx {
 public:
 
-    SetupCtx setupCtx;
+    SetupCtx &setupCtx;
+    ProverHelpers &proverHelpers;
 
-    ExpressionsCtx(SetupCtx& _setupCtx) : setupCtx(_setupCtx) {};
+    ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers& proverHelpers_) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {};
 
     virtual ~ExpressionsCtx() {};
     
@@ -94,7 +96,7 @@ public:
         } else {
             domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
         }
-        Dest destStruct(dest, domainSize);
+        Dest destStruct(dest, domainSize, 0, expressionId);
         destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], inverse);
         std::vector<Dest> dests = {destStruct};
         calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, compilation_time);

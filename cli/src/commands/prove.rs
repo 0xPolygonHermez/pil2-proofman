@@ -9,7 +9,7 @@ use crate::commands::field::Field;
 use p3_goldilocks::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::ProofOptions;
+use proofman_common::{ModeName, ProofOptions};
 use std::fs;
 use std::path::Path;
 
@@ -104,25 +104,45 @@ impl ProveCmd {
             }
         }
 
-        match self.field {
-            Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
-                self.witness_lib.clone(),
-                self.elf.clone(),
-                self.public_inputs.clone(),
-                self.input_data.clone(),
-                self.proving_key.clone(),
-                self.output_dir.clone(),
-                custom_commits_map,
-                ProofOptions::new(
-                    false,
-                    self.verbose.into(),
-                    self.aggregation,
-                    self.final_snark,
-                    self.verify_proofs,
-                    debug_info,
-                ),
-            )?,
-        };
+        if debug_info.std_mode.name == ModeName::Debug {
+            match self.field {
+                Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
+                    self.witness_lib.clone(),
+                    self.public_inputs.clone(),
+                    self.input_data.clone(),
+                    self.proving_key.clone(),
+                    self.output_dir.clone(),
+                    custom_commits_map,
+                    ProofOptions::new(
+                        false,
+                        self.verbose.into(),
+                        self.aggregation,
+                        self.final_snark,
+                        self.verify_proofs,
+                        debug_info,
+                    ),
+                )?,
+            };
+        } else {
+            match self.field {
+                Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
+                    self.witness_lib.clone(),
+                    self.public_inputs.clone(),
+                    self.input_data.clone(),
+                    self.proving_key.clone(),
+                    self.output_dir.clone(),
+                    custom_commits_map,
+                    ProofOptions::new(
+                        false,
+                        self.verbose.into(),
+                        self.aggregation,
+                        self.final_snark,
+                        self.verify_proofs,
+                        debug_info,
+                    ),
+                )?,
+            };
+        }
 
         Ok(())
     }

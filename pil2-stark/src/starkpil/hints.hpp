@@ -345,16 +345,18 @@ void getHintField(
                 exitProcess();
             }
         } else if (hintFieldVal.operand == opType::tmp) {
+                ProverHelpers proverHelpers;
+
             if(hintOptions.compilation_time) {
-                ExpressionsPack expressionsCtx(setupCtx, 1);
+                ExpressionsPack expressionsCtx(setupCtx, proverHelpers, 1);
                 expressionsCtx.calculateExpression(params, hintFieldInfo.values, hintFieldVal.id, hintOptions.inverse, true);
             } else {
 #ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
+    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
 #elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
+    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
 #else
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
                 expressionsCtx.calculateExpression(params, hintFieldInfo.values, hintFieldVal.id, hintOptions.inverse, false);
             }
@@ -499,13 +501,14 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
 }
 
 void opHintFields(SetupCtx& setupCtx, StepsParams& params, std::vector<Dest> &dests) {
+    ProverHelpers proverHelpers;
 
 #ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
+    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
 #elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
+    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
 #else
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
 
     uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -584,7 +587,7 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t nHints
     }
 }
 
-void accHintField(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element *pBuffHelper, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName, bool add) {
+void accHintField(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName, bool add) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
 
     Hint hint = setupCtx.expressionsBin.hints[hintId];
@@ -597,7 +600,10 @@ void accHintField(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element *
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
-    Goldilocks::Element *vals = pBuffHelper;
+    
+    Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
+        ? new Goldilocks::Element[dim*N]
+        : &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
     
     Dest destStruct(vals, 1 << setupCtx.starkInfo.starkStruct.nBits, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName, hintOptions);
@@ -624,6 +630,10 @@ void accHintField(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element *
 
     setHintField(setupCtx, params, vals, hintId, hintFieldNameDest);
     setHintField(setupCtx, params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
+
+    if(setupCtx.starkInfo.verify_constraints) {
+        delete[] vals;
+    }
 }
 
 uint64_t getHintId(SetupCtx& setupCtx, uint64_t hintId, std::string name) {
@@ -635,7 +645,7 @@ uint64_t getHintId(SetupCtx& setupCtx, uint64_t hintId, std::string name) {
     return hintField->values[0].id;
 }
 
-void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element *pBuffHelper, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
+void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
 
     Hint hint = setupCtx.expressionsBin.hints[hintId];
@@ -646,7 +656,10 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Eleme
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
-    Goldilocks::Element *vals = pBuffHelper;
+    
+    Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
+        ? new Goldilocks::Element[dim*N]
+        : &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
     
     Dest destStruct(vals,  1 << setupCtx.starkInfo.starkStruct.nBits, 0);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
@@ -674,6 +687,10 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Eleme
 
     setHintField(setupCtx, params, vals, hintId, hintFieldNameDest);
     setHintField(setupCtx, params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
+
+    if(setupCtx.starkInfo.verify_constraints) {
+        delete[] vals;
+    }
 }
 
 uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
@@ -693,7 +710,8 @@ uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t h
 
     std::vector<Dest> dests = {destStruct};
 
-    ExpressionsPack expressionsCtx(setupCtx, 1);
+    ProverHelpers proverHelpers;
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers, 1);
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, 1, false);
 
     Goldilocks::Element *airgroupValue = &params.airgroupValues[FIELD_EXTENSION*hintFieldAirgroupVal.id];

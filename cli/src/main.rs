@@ -9,6 +9,7 @@ use commands::prove::ProveCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
 use commands::verify_stark::VerifyStark;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
+use commands::setup::CheckSetupCmd;
 use proofman_util::cli::print_banner;
 
 #[derive(Parser)]
@@ -22,6 +23,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     Pilout(PiloutCmd),
+    CheckSetup(CheckSetupCmd),
     Prove(ProveCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
@@ -38,6 +40,7 @@ fn main() {
         Commands::Pilout(args) => match &args.pilout_commands {
             PiloutSubcommands::Inspect(args) => args.run(),
         },
+        Commands::CheckSetup(args) => args.run(),
         Commands::Prove(args) => args.run(),
         Commands::PilHelpers(args) => args.run(),
         Commands::VerifyConstraints(args) => args.run(),

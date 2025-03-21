@@ -109,6 +109,8 @@ public:
     static Element square(const Element &in1);
     static void square(Element &result, const Element &in1);
 
+    static Element pow(const Element& base, uint64_t exp);
+
     static Element div(const Element &in1, const Element &in2);
     static void div(Element &result, const Element &in1, const Element &in2);
 

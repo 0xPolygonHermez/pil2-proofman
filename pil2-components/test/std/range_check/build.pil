@@ -3,6 +3,8 @@ require "range_check.pil";
 require "multi_range_check.pil";
 require "range_check_dynamic.pil";
 
+set_max_specified_bits(15);
+
 airtemplate RangeCheckMix(const int N = 2**6) {
     col witness a[4];
     col witness b[2];
@@ -10,10 +12,10 @@ airtemplate RangeCheckMix(const int N = 2**6) {
     col witness range_sel[5];
 
     // First user interface
-    range_check(a[0], 0, 2**8-1);
-    range_check(a[1], 50, 2**7-1);
-    range_check(a[2], -1, 2**3);
-    range_check(a[3], -2**7+1, -50);
+    range_check(a[0], 0, 2**8-1, predefined: 1);
+    range_check(a[1], 50, 2**7-1, predefined: 1);
+    range_check(a[2], -1, 2**3, predefined: 1);
+    range_check(a[3], -2**7+1, -50, predefined: 1);
 
     // Second user interface
     multi_range_check(b[0], 0, 2**7-1, 0, 2**4-1, range_sel[0]);

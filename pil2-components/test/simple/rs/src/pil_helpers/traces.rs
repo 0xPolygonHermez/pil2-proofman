@@ -2,6 +2,8 @@
 // Manual modifications are not recommended and may be overwritten.
 #![allow(clippy::all)]
 #![allow(non_snake_case)]
+#![allow(non_upper_case_globals)]
+#![allow(dead_code)]
 
 use proofman_common as common;
 pub use proofman_macros::trace;
@@ -26,27 +28,69 @@ pub const SIMPLE_LEFT_AIR_IDS: &[usize] = &[0];
 
 pub const SIMPLE_RIGHT_AIR_IDS: &[usize] = &[1];
 
+pub const U_8_AIR_AIR_IDS: &[usize] = &[2];
+
+pub const U_16_AIR_AIR_IDS: &[usize] = &[3];
+
+pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[4];
+
   
 trace!(SimpleLeftFixed<F> {
  __L1__: F,
-},  0, 0, 4 );
+},  0, 0, 8 );
 
 trace!(SimpleLeftTrace<F> {
- a: F, b: F, c: F, d: F, e: F, f: F, g: F, h: F,
-},  0, 0, 4 );
+ a: F, b: F, c: F, d: F, e: F, f: F, g: F, h: F, k: [F; 7],
+},  0, 0, 8 );
 
 trace!(SimpleRightFixed<F> {
  __L1__: F,
-},  0, 1, 4 );
+},  0, 1, 8 );
 
 trace!(SimpleRightTrace<F> {
  a: F, b: F, c: F, d: F, mul: F,
-},  0, 1, 4 );
+},  0, 1, 8 );
+
+trace!(U8AirFixed<F> {
+ RANGE: [F; 2], __L1__: F,
+},  0, 2, 128 );
+
+trace!(U8AirTrace<F> {
+ mul: [F; 2],
+},  0, 2, 128 );
+
+trace!(U16AirFixed<F> {
+ RANGE: [F; 2], __L1__: F,
+},  0, 3, 32768 );
+
+trace!(U16AirTrace<F> {
+ mul: [F; 2],
+},  0, 3, 32768 );
+
+trace!(SpecifiedRangesFixed<F> {
+ RANGE: [F; 11], __L1__: F,
+},  0, 4, 64 );
+
+trace!(SpecifiedRangesTrace<F> {
+ mul: [F; 11],
+},  0, 4, 64 );
 
 values!(SimpleLeftAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
 values!(SimpleRightAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(U8AirAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(U16AirAirGroupValues<F> {
+ gsum_result: FieldExtension<F>,
+});
+
+values!(SpecifiedRangesAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });

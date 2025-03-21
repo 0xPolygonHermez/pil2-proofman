@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &[u8] = b"Build-hash";
+pub const PILOUT_HASH: &str = "8a490f0026823821f1884e0dbad427a4047c5af04fc3029321761dfd148ada18";
 
 //AIRGROUP CONSTANTS
 
@@ -28,7 +28,7 @@ pub const FIBONACCI_SQUARE_AIR_IDS: &[usize] = &[0];
 
 pub const MODULE_AIR_IDS: &[usize] = &[1];
 
-pub const U_8_AIR_AIR_IDS: &[usize] = &[2];
+pub const SPECIFIED_RANGES_AIR_IDS: &[usize] = &[2];
 
 
 //PUBLICS
@@ -93,15 +93,14 @@ trace!(ModuleTrace<F> {
  x: F, q: F, x_mod: F,
 },  0, 1, 1048576 );
 
-trace!(U8AirFixed<F> {
- U8: F, __L1__: F,
+trace!(SpecifiedRangesFixed<F> {
+ RANGE: [F; 1], __L1__: F,
 },  0, 2, 256 );
 
-trace!(U8AirTrace<F> {
- mul: F,
+trace!(SpecifiedRangesTrace<F> {
+ mul: [F; 1],
 },  0, 2, 256 );
 
-const FibonacciSquareRomHash: &str = "1e66ad0f5817502c1941ce399c54a4a459494f504ebaca93b09dd2cfb26a4743";
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
 }, 0, 0, 4194304, 0 );
@@ -122,6 +121,6 @@ values!(ModuleAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });
 
-values!(U8AirAirGroupValues<F> {
+values!(SpecifiedRangesAirGroupValues<F> {
  gsum_result: FieldExtension<F>,
 });

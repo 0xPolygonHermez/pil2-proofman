@@ -11,7 +11,7 @@ public:
     vector<uint64_t> nColsStages;
     vector<uint64_t> nColsStagesAcc;
     vector<uint64_t> offsetsStages;
-    ExpressionsAvx(SetupCtx& setupCtx) : ExpressionsCtx(setupCtx) {};
+    ExpressionsAvx(SetupCtx& setupCtx, ProverHelpers &proverHelpers) : ExpressionsCtx(setupCtx, proverHelpers) {};
 
     void setBufferTInfo(bool domainExtended, int64_t expId) {
         uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
@@ -102,7 +102,6 @@ public:
                 }
             }
         }
-
         for(uint64_t k = 0; k < constPolsUsed.size(); ++k) {
             if(!constPolsUsed[k]) continue;
             for(uint64_t o = 0; o < nOpenings; ++o) {
@@ -154,27 +153,68 @@ public:
 
         if(dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.cExpId)) {
             for(uint64_t j = 0; j < nrowsPack; ++j) {
-                bufferT[j] = setupCtx.proverHelpers.x_2ns[row + j];
+                bufferT[j] = proverHelpers.x[row + j];
             }
             Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings]], &bufferT[0]);
             for(uint64_t d = 0; d < setupCtx.starkInfo.boundaries.size(); ++d) {
                 for(uint64_t j = 0; j < nrowsPack; ++j) {
-                    bufferT[j] = setupCtx.proverHelpers.zi[row + j + d*domainSize];
+                    bufferT[j] = proverHelpers.zi[row + j + d*domainSize];
                 }
                 Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings] + 1 + d], &bufferT[0]);
             }
         } else if(dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.friExpId)) {
-            for(uint64_t d = 0; d < setupCtx.starkInfo.openingPoints.size(); ++d) {
-               for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
-                    for(uint64_t j = 0; j < nrowsPack; ++j) {
-                        bufferT[j] = params.xDivXSub[(row + j + d*domainSize)*FIELD_EXTENSION + k];
-                    }
-                    Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings] + d*FIELD_EXTENSION + k], &bufferT[0]);
+            uint64_t xiChallengeIndex = 0;
+            for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
+            {
+                if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
+                    if(setupCtx.starkInfo.challengesMap[i].stageId == 0) xiChallengeIndex = i;
                 }
             }
-        } else {
+
+            Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
+            
+            Goldilocks::Element xis[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
+            for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
+            {
+                Goldilocks::Element w = Goldilocks::one();
+                uint64_t openingAbs = setupCtx.starkInfo.openingPoints[i] < 0 ? -setupCtx.starkInfo.openingPoints[i] : setupCtx.starkInfo.openingPoints[i];
+                for (uint64_t j = 0; j < openingAbs; ++j)
+                {
+                    w = w * Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits);
+                }
+
+                if (setupCtx.starkInfo.openingPoints[i] < 0) w = Goldilocks::inv(w);
+
+                Goldilocks3::mul((Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]), (Goldilocks3::Element &)xiChallenge[0], w);
+            }
+
+            Goldilocks::Element xDivXSub[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION * nrowsPack];
+            if(!setupCtx.starkInfo.verify) {
+                for (uint64_t k = 0; k < nrowsPack; k++) {
+                    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
+                    {
+                        Goldilocks3::sub((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), proverHelpers.x[row + k], (Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]));
+                    }
+                }
+
+                Goldilocks3::batchInverse((Goldilocks3::Element *)xDivXSub, (Goldilocks3::Element *)xDivXSub, setupCtx.starkInfo.openingPoints.size() * nrowsPack);
+
+                for (uint64_t k = 0; k < nrowsPack; k++) {
+                    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
+                    {                
+                        Goldilocks3::mul((Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), (Goldilocks3::Element &)(xDivXSub[(k*nOpenings + i) * FIELD_EXTENSION]), proverHelpers.x[row + k]);
+                    }
+                }
+            }
+
+            for(uint64_t d = 0; d < setupCtx.starkInfo.openingPoints.size(); ++d) {
+                for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
+                    Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings] + d*FIELD_EXTENSION + k], &xDivXSub[d*FIELD_EXTENSION + k], setupCtx.starkInfo.openingPoints.size()*FIELD_EXTENSION);
+                }
+            }
+        } else if(proverHelpers.x_n != nullptr) {
             for(uint64_t j = 0; j < nrowsPack; ++j) {
-                bufferT[j] = setupCtx.proverHelpers.x_n[row + j];
+                bufferT[j] = proverHelpers.x_n[row + j];
             }
             Goldilocks::load_avx(bufferT_[nColsStagesAcc[ns*nOpenings]], &bufferT[0]);
         }
@@ -254,7 +294,7 @@ public:
         Goldilocks::store_avx(&buff[0], uint64_t(FIELD_EXTENSION), tmp[0]);
         Goldilocks::store_avx(&buff[1], uint64_t(FIELD_EXTENSION), tmp[1]);
         Goldilocks::store_avx(&buff[2], uint64_t(FIELD_EXTENSION), tmp[2]);
-        for(uint64_t i = 0; i < 1; ++i) {
+        for(uint64_t i = 0; i < nrowsPack; ++i) {
             cout << "Value at row " << row + i << " is [" << Goldilocks::toString(buff[FIELD_EXTENSION*i]) << ", " << Goldilocks::toString(buff[FIELD_EXTENSION*i + 1]) << ", " << Goldilocks::toString(buff[FIELD_EXTENSION*i + 2]) << "]" << endl;
         }
     }
@@ -282,7 +322,7 @@ public:
         uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
         bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
 
-        uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].params[0].parserParams.destDim : 0;
+        uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].expId : 0;
         setBufferTInfo(domainExtended, expId);
 
         __m256i *numbers_ = new __m256i[parserArgs.nNumbers];
@@ -371,15 +411,24 @@ public:
                     maxTemp3Size = dests[j].params[k].parserParams.nTemp3;
                 }
             }
-        } 
-        
+        }
+
         __m256i *tmp1_ = new __m256i[omp_get_max_threads() * maxTemp1Size];
         Goldilocks3::Element_avx *tmp3_ = new Goldilocks3::Element_avx[omp_get_max_threads() * maxTemp3Size];
 
     #pragma omp parallel for
         for (uint64_t i = 0; i < domainSize; i+= nrowsPack) {
+            __m256i* expressions_params[10];
+            expressions_params[2] = publics;
+            expressions_params[3] = numbers_;
+            expressions_params[4] = (__m256i *)airValues;
+            expressions_params[5] = (__m256i *)proofValues;
+            expressions_params[7] = (__m256i *)airgroupValues;
+            expressions_params[8] = (__m256i *)challenges;
+            expressions_params[9] = (__m256i *)evals;
+
             __m256i* bufferT_ = &bufferT[omp_get_thread_num()*nOpenings*nCols];
-            
+
             loadPolynomials(params, parserArgs, dests, &bufferL[omp_get_thread_num()*nOpenings*nrowsPack], bufferT_, i, domainSize);
 
             __m256i** destVals = new __m256i*[dests.size()];
@@ -403,607 +452,44 @@ public:
                         Goldilocks::copy_avx(destVals[j][k*FIELD_EXTENSION], airValues[dests[j].params[k].polsMapId][0]);
                         Goldilocks::copy_avx(destVals[j][k*FIELD_EXTENSION + 1], airValues[dests[j].params[k].polsMapId][1]);
                         Goldilocks::copy_avx(destVals[j][k*FIELD_EXTENSION + 2], airValues[dests[j].params[k].polsMapId][2]);
+                        continue;
                     }
-
                     uint8_t* ops = &parserArgs.ops[dests[j].params[k].parserParams.opsOffset];
                     uint16_t* args = &parserArgs.args[dests[j].params[k].parserParams.argsOffset];
-                    __m256i *tmp1 = &tmp1_[omp_get_thread_num()*maxTemp1Size];
-                    Goldilocks3::Element_avx *tmp3 = &tmp3_[omp_get_thread_num()*maxTemp3Size];
+                    expressions_params[0] = bufferT_;
+                    expressions_params[1] = &tmp1_[omp_get_thread_num()*maxTemp1Size];
+                    expressions_params[6] = (__m256i *)&tmp3_[omp_get_thread_num()*maxTemp3Size];
 
                     for (uint64_t kk = 0; kk < dests[j].params[k].parserParams.nOps; ++kk) {
                         switch (ops[kk]) {
                             case 0: {
-                                // COPY commit1 to tmp1
-                                Goldilocks::copy_avx(tmp1[args[i_args]], bufferT_[nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]]);
-                                i_args += 3;
+                                // COPY dim1 to dim1
+                                Goldilocks::copy_avx(expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2])], expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5])]);
+                                i_args += 7;
                                 break;
                             }
                             case 1: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: commit1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], bufferT_[nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]]);
-                                i_args += 6;
+                                // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
+                                Goldilocks::op_avx(args[i_args], expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3])], expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6])], expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10])]);
+                                i_args += 12;
                                 break;
                             }
                             case 2: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: tmp1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], tmp1[args[i_args + 4]]);
-                                i_args += 5;
+                                // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
+                                Goldilocks3::op_31_avx(args[i_args], (Goldilocks3::Element_avx &)expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3])], (Goldilocks3::Element_avx &)expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6])], expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10])]);
+                                i_args += 12;
                                 break;
                             }
                             case 3: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: public
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], publics[args[i_args + 4]]);
-                                i_args += 5;
+                                // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
+                                Goldilocks3::op_avx(args[i_args], (Goldilocks3::Element_avx &)expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3])], (Goldilocks3::Element_avx &)expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6])], (Goldilocks3::Element_avx &)expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10])]);
+                                i_args += 12;
                                 break;
                             }
                             case 4: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: number
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], numbers_[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 5: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: airvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], airValues[args[i_args + 4]][0]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 6: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: commit1 - SRC1: proofvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], proofValues[args[i_args + 4]][0]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 7: {
-                                // COPY tmp1 to tmp1
-                                Goldilocks::copy_avx(tmp1[args[i_args]], tmp1[args[i_args + 1]]);
-                                i_args += 2;
-                                break;
-                            }
-                            case 8: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: tmp1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], tmp1[args[i_args + 2]], tmp1[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 9: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: public
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], tmp1[args[i_args + 2]], publics[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 10: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: number
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], tmp1[args[i_args + 2]], numbers_[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 11: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: airvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], tmp1[args[i_args + 2]], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 12: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: tmp1 - SRC1: proofvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], tmp1[args[i_args + 2]], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 13: {
-                                // COPY public to tmp1
-                                Goldilocks::copy_avx(tmp1[args[i_args]], publics[args[i_args + 1]]);
-                                i_args += 2;
-                                break;
-                            }
-                            case 14: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: public
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], publics[args[i_args + 2]], publics[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 15: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: number
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], publics[args[i_args + 2]], numbers_[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 16: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: airvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], publics[args[i_args + 2]], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 17: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: public - SRC1: proofvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], publics[args[i_args + 2]], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 18: {
-                                // COPY number to tmp1
-                                Goldilocks::copy_avx(tmp1[args[i_args]], numbers_[args[i_args + 1]]);
-                                i_args += 2;
-                                break;
-                            }
-                            case 19: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: number
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], numbers_[args[i_args + 2]], numbers_[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 20: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: airvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], numbers_[args[i_args + 2]], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 21: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: number - SRC1: proofvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], numbers_[args[i_args + 2]], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 22: {
-                                // COPY airvalue1 to tmp1
-                                Goldilocks::copy_avx(tmp1[args[i_args]], airValues[args[i_args + 1]][0]);
-                                i_args += 2;
-                                break;
-                            }
-                            case 23: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: airvalue1 - SRC1: airvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], airValues[args[i_args + 2]][0], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 24: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: airvalue1 - SRC1: proofvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], airValues[args[i_args + 2]][0], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 25: {
-                                // COPY proofvalue1 to tmp1
-                                Goldilocks::copy_avx(tmp1[args[i_args]], proofValues[args[i_args + 1]][0]);
-                                i_args += 2;
-                                break;
-                            }
-                            case 26: {
-                                // OPERATION WITH DEST: tmp1 - SRC0: proofvalue1 - SRC1: proofvalue1
-                                Goldilocks::op_avx(args[i_args], tmp1[args[i_args + 1]], proofValues[args[i_args + 2]][0], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 27: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: commit1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], bufferT_[nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]]);
-                                i_args += 6;
-                                break;
-                            }
-                            case 28: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: tmp1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], tmp1[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 29: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: public
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], publics[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 30: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: number
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], numbers_[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 31: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], airValues[args[i_args + 4]][0]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 32: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: proofvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], proofValues[args[i_args + 4]][0]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 33: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: commit1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], bufferT_[nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 34: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: tmp1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], tmp1[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 35: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: public
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], publics[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 36: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: number
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], numbers_[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 37: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 38: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: proofvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 39: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: commit1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], bufferT_[nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 40: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: tmp1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], tmp1[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 41: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: public
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], publics[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 42: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: number
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], numbers_[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 43: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 44: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: proofvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 45: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: commit1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], bufferT_[nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 46: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: tmp1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], tmp1[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 47: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: public
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], publics[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 48: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: number
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], numbers_[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 49: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 50: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: proofvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 51: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: commit1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airValues[args[i_args + 2]], bufferT_[nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 52: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: tmp1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airValues[args[i_args + 2]], tmp1[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 53: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: public
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airValues[args[i_args + 2]], publics[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 54: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: number
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airValues[args[i_args + 2]], numbers_[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 55: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: airvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airValues[args[i_args + 2]], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 56: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: proofvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], airValues[args[i_args + 2]], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 57: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: commit1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], proofValues[args[i_args + 2]], bufferT_[nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 58: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: tmp1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], proofValues[args[i_args + 2]], tmp1[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 59: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: public
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], proofValues[args[i_args + 2]], publics[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 60: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: number
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], proofValues[args[i_args + 2]], numbers_[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 61: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: airvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], proofValues[args[i_args + 2]], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 62: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: proofvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], proofValues[args[i_args + 2]], proofValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 63: {
-                                // COPY commit3 to tmp3
-                                Goldilocks3::copy_avx(tmp3[args[i_args]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]]);
-                                i_args += 3;
-                                break;
-                            }
-                            case 64: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: commit3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]]);
-                                i_args += 6;
-                                break;
-                            }
-                            case 65: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: tmp3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], tmp3[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 66: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: challenge
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], challenges[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 67: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airgroupvalue
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], airgroupValues[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 68: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: airvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], airValues[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 69: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: proofvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], proofValues[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 70: {
-                                // COPY tmp3 to tmp3
-                                Goldilocks3::copy_avx(tmp3[args[i_args]], tmp3[args[i_args + 1]]);
-                                i_args += 2;
-                                break;
-                            }
-                            case 71: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: tmp3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], tmp3[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 72: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: challenge
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], challenges[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 73: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airgroupvalue
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], airgroupValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 74: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: airvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], airValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 75: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: proofvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], proofValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 76: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: challenge
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], challenges[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 77: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airgroupvalue
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], airgroupValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 78: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: airvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], airValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 79: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: proofvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], proofValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 80: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airgroupvalue
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], airgroupValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 81: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: airvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], airValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 82: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: proofvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], proofValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 83: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: airvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], airValues[args[i_args + 2]], airValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 84: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: proofvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], airValues[args[i_args + 2]], proofValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 85: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: proofvalue3 - SRC1: proofvalue3
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], proofValues[args[i_args + 2]], proofValues[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 86: {
-                                // COPY eval to tmp3
-                                Goldilocks3::copy_avx(tmp3[args[i_args]], evals[args[i_args + 1]]);
-                                i_args += 2;
-                                break;
-                            }
-                            case 87: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: tmp1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], evals[args[i_args + 2]], tmp1[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 88: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: airvalue1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], evals[args[i_args + 2]], airValues[args[i_args + 3]][0]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 89: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: commit1
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], evals[args[i_args + 2]], bufferT_[nColsStagesAcc[args[i_args + 3]] + args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 90: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: number
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], evals[args[i_args + 2]], numbers_[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 91: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: public
-                                Goldilocks3::op_31_avx(args[i_args], tmp3[args[i_args + 1]], evals[args[i_args + 2]], publics[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 92: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: tmp3 - SRC1: eval
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], tmp3[args[i_args + 2]], evals[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 93: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: eval
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], evals[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 94: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: challenge - SRC1: eval
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], challenges[args[i_args + 2]], evals[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 95: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airgroupvalue - SRC1: eval
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], airgroupValues[args[i_args + 2]], evals[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 96: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: airvalue3 - SRC1: eval
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], airValues[args[i_args + 2]], evals[args[i_args + 3]]);
-                                i_args += 4;
-                                break;
-                            }
-                            case 97: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: commit3 - SRC1: eval
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], (Goldilocks3::Element_avx &)bufferT_[nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]], evals[args[i_args + 4]]);
-                                i_args += 5;
-                                break;
-                            }
-                            case 98: {
-                                // OPERATION WITH DEST: tmp3 - SRC0: eval - SRC1: eval
-                                Goldilocks3::op_avx(args[i_args], tmp3[args[i_args + 1]], evals[args[i_args + 2]], evals[args[i_args + 3]]);
-                                i_args += 4;
+                                // COPY dim3 to dim3
+                                Goldilocks3::copy_avx((Goldilocks3::Element_avx &)expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2])], (Goldilocks3::Element_avx &)expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5])]);
+                                i_args += 7;
                                 break;
                             }
                             default: {
@@ -1017,9 +503,9 @@ public:
                     assert(i_args == dests[j].params[k].parserParams.nArgs);
 
                     if(dests[j].params[k].parserParams.destDim == 1) {
-                        copyPolynomial(&destVals[j][k*FIELD_EXTENSION], dests[j].params[k].inverse, dests[j].params[k].parserParams.destDim, &tmp1[dests[j].params[k].parserParams.destId]);
+                        copyPolynomial(&destVals[j][k*FIELD_EXTENSION], dests[j].params[k].inverse, dests[j].params[k].parserParams.destDim, &expressions_params[1][dests[j].params[k].parserParams.destId]);
                     } else {
-                        copyPolynomial(&destVals[j][k*FIELD_EXTENSION], dests[j].params[k].inverse, dests[j].params[k].parserParams.destDim, tmp3[dests[j].params[k].parserParams.destId]);
+                        copyPolynomial(&destVals[j][k*FIELD_EXTENSION], dests[j].params[k].inverse, dests[j].params[k].parserParams.destDim, &expressions_params[6][dests[j].params[k].parserParams.destId]);
                     }
                 }
                 if(dests[j].params.size() == 2) {

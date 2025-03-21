@@ -1,65 +1,68 @@
 use std::sync::Arc;
 
-use witness::WitnessComponent;
-use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
+use witness::{WitnessComponent, execute, define_wc};
+use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField;
-use rand::{distributions::Standard, prelude::Distribution, Rng};
+use p3_field::PrimeField64;
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+};
 
 use crate::Lookup2_13Trace;
 
-pub struct Lookup2_13;
+define_wc!(Lookup2_13, "Lkup2_13");
 
-impl Lookup2_13 {
-    const MY_NAME: &'static str = "Lkup2_13";
-
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self)
-    }
-}
-
-impl<F: PrimeField + Copy> WitnessComponent<F> for Lookup2_13
+impl<F: PrimeField64> WitnessComponent<F> for Lookup2_13
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let mut rng = rand::thread_rng();
+    execute!(Lookup2_13Trace, 1);
 
-        let mut trace = Lookup2_13Trace::new();
-        let num_rows = trace.num_rows();
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+        if stage == 1 {
+            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
+            let mut rng = StdRng::seed_from_u64(seed);
 
-        // TODO: Add the ability to send inputs to lookup3
-        //       and consequently add random selectors
+            let mut trace = Lookup2_13Trace::new();
+            let num_rows = trace.num_rows();
 
-        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            // TODO: Add the ability to send inputs to lookup3
+            //       and consequently add random selectors
 
-        for i in 0..num_rows {
-            // Inner lookups
-            trace[i].a1 = rng.gen();
-            trace[i].b1 = rng.gen();
-            trace[i].c1 = trace[i].a1;
-            trace[i].d1 = trace[i].b1;
+            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-            trace[i].a3 = rng.gen();
-            trace[i].b3 = rng.gen();
-            trace[i].c2 = trace[i].a3;
-            trace[i].d2 = trace[i].b3;
-            let selected = rng.gen_bool(0.5);
-            trace[i].sel1 = F::from_bool(selected);
-            if selected {
-                trace[i].mul = trace[i].sel1;
+            for i in 0..num_rows {
+                // Inner lookups
+                trace[i].a1 = rng.random();
+                trace[i].b1 = rng.random();
+                trace[i].c1 = trace[i].a1;
+                trace[i].d1 = trace[i].b1;
+
+                trace[i].a3 = rng.random();
+                trace[i].b3 = rng.random();
+                trace[i].c2 = trace[i].a3;
+                trace[i].d2 = trace[i].b3;
+                let selected = rng.random::<bool>();
+                trace[i].sel1 = F::from_bool(selected);
+                if selected {
+                    trace[i].mul = trace[i].sel1;
+                } else {
+                    trace[i].mul = F::ZERO;
+                }
+
+                // Outer lookups
+                trace[i].a2 = F::from_usize(i);
+                trace[i].b2 = F::from_usize(i);
+
+                trace[i].a4 = F::from_usize(i);
+                trace[i].b4 = F::from_usize(i);
+                trace[i].sel2 = F::from_bool(true);
             }
 
-            // Outer lookups
-            trace[i].a2 = F::from_canonical_usize(i);
-            trace[i].b2 = F::from_canonical_usize(i);
-
-            trace[i].a4 = F::from_canonical_usize(i);
-            trace[i].b4 = F::from_canonical_usize(i);
-            trace[i].sel2 = F::from_bool(true);
+            let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
+            pctx.add_air_instance(air_instance, instance_ids[0]);
         }
-
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        add_air_instance::<F>(air_instance, pctx.clone());
     }
 }
