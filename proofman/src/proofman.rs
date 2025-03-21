@@ -726,7 +726,9 @@ impl<F: PrimeField64> ProofMan<F> {
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
-        check_tree_paths(&pctx, &sctx)?;
+        if !pctx.options.verify_constraints {
+            check_tree_paths(&pctx, &sctx)?;
+        }
 
         Self::initialize_publics(&sctx, &pctx)?;
 

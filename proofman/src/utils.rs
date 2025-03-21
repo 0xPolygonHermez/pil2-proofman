@@ -219,28 +219,43 @@ pub fn check_paths2(
     Ok(())
 }
 
-fn check_const_tree<F: PrimeField64>(setup: &Setup<F>) -> Result<(), Box<dyn Error>> {
+fn check_const_tree<F: PrimeField64>(
+    setup: &Setup<F>,
+    aggregation: bool,
+    final_snark: bool,
+) -> Result<(), Box<dyn Error>> {
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-    if !PathBuf::from(&const_pols_tree_path).exists() {
-        return Err(format!(
-            "Constant tree for {} ({:?}) does not exist. Run proofman check-setup.",
-            setup.air_name, setup.setup_type
-        )
-        .into());
+    let mut flags = String::new();
+    if aggregation {
+        flags.push_str(" -a");
     }
+    if final_snark {
+        flags.push_str(" -f");
+    }
+
+    if !PathBuf::from(&const_pols_tree_path).exists() {
+        let error_message = format!(
+            "Error: Unable to find the constant tree at '{}'.\n\
+            Please run the following command:\n\
+            \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{}\x1b[0m",
+            const_pols_tree_path, flags
+        );
+        return Err(error_message.into());
+    }
+
+    let error_message = format!(
+        "Error: The constant tree file at '{}' exists but is invalid or corrupted.\n\
+        Please regenerate it by running:\n\
+        \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{}\x1b[0m",
+        const_pols_tree_path, flags
+    );
+
     let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
     match fs::metadata(&const_pols_tree_path) {
         Ok(metadata) => {
             let actual_size = metadata.len() as usize;
             if actual_size != const_pols_tree_size * 8 {
-                return Err(format!(
-                    "File size mismatch for {} for {:?}. Expected: {}, Found: {}. Run proofman check-setup.",
-                    setup.air_name,
-                    setup.setup_type,
-                    const_pols_tree_size * 8,
-                    actual_size
-                )
-                .into());
+                return Err(error_message.into());
             }
         }
         Err(err) => {
@@ -265,11 +280,7 @@ fn check_const_tree<F: PrimeField64>(setup: &Setup<F>) -> Result<(), Box<dyn Err
             let byte_range = i * 8..(i + 1) * 8;
             let value = u64::from_le_bytes(buffer[byte_range].try_into()?);
             if value != *verkey_val {
-                return Err(format!(
-                    "Verkey mismatch for {} for {:?}. Expected: {}, Found: {}. Run proofman check-setup",
-                    setup.air_name, setup.setup_type, value, verkey_val
-                )
-                .into());
+                return Err(error_message.into());
             }
         }
     }
@@ -280,7 +291,7 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx.get_setup(airgroup_id, air_id);
-            check_const_tree(setup)?;
+            check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
         }
     }
     Ok(())
@@ -295,7 +306,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup = sctx_compressor.get_setup(airgroup_id, air_id);
-                check_const_tree(setup)?;
+                check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
             }
         }
     }
@@ -304,7 +315,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
-            check_const_tree(setup)?;
+            check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
         }
     }
 
@@ -312,15 +323,15 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = sctx_recursive2.get_setup(airgroup, 0);
-        check_const_tree(setup)?;
+        check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
     }
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    check_const_tree(setup_vadcop_final)?;
+    check_const_tree(setup_vadcop_final, pctx.options.aggregation, pctx.options.final_snark)?;
 
     if pctx.options.final_snark {
         let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-        check_const_tree(setup_recursivef)?;
+        check_const_tree(setup_recursivef, pctx.options.aggregation, pctx.options.final_snark)?;
     }
 
     Ok(())

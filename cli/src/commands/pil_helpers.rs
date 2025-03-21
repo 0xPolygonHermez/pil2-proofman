@@ -31,6 +31,7 @@ struct ProofCtx {
     project_name: String,
     num_stages: u32,
     pilout_filename: String,
+    pilout_hash: String,
     air_groups: Vec<AirGroupsCtx>,
     constant_airgroups: Vec<(String, usize)>,
     constant_airs: Vec<(String, usize, Vec<usize>, String)>,
@@ -71,7 +72,6 @@ struct CustomCommitsCtx {
     name: String,
     commit_id: usize,
     custom_columns: Vec<ColumnCtx>,
-    custom_columns_hash: String,
 }
 #[derive(Clone, Debug, Serialize)]
 struct ColumnCtx {
@@ -124,6 +124,9 @@ impl PilHelpersCmd {
                 }
             }
         }
+
+        let pilout_data = fs::read(self.pilout.display().to_string())?;
+        let pilout_hash = blake3::hash(&pilout_data).to_hex().to_string();
 
         // Read the pilout file
         let pilout = PilOutProxy::new(&self.pilout.display().to_string())?;
@@ -263,7 +266,6 @@ impl PilHelpersCmd {
                         name: commit.name.as_ref().unwrap().to_case(Case::Pascal),
                         commit_id: index,
                         custom_columns: Vec::new(),
-                        custom_columns_hash: String::new(),
                     })
                     .collect();
 
@@ -345,17 +347,12 @@ impl PilHelpersCmd {
                                 .push(ColumnCtx { name: name.to_owned(), r#type });
                         }
                     });
-                for air in wcctxs[airgroup_id].airs.iter_mut() {
-                    for custom in air.custom_columns.iter_mut() {
-                        let serialized = serde_json::to_vec(&custom.custom_columns)?;
-                        custom.custom_columns_hash = blake3::hash(&serialized).to_hex().to_string();
-                    }
-                }
             }
         }
 
         let context = ProofCtx {
             project_name: pilout.name.as_ref().unwrap().to_case(Case::Pascal),
+            pilout_hash,
             num_stages: pilout.num_stages(),
             pilout_filename: self.pilout.file_name().unwrap().to_str().unwrap().to_string(),
             air_groups: wcctxs,
