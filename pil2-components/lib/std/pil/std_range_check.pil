@@ -261,8 +261,10 @@ function range_check(const expr expression, const int min, const int max, const 
     const int absorb = predefined && min >= 0 && max <= MASK_16;
 
     if (predefined && !absorb) {
-        println(`The range [${min},${max}] cannot be absorbed into the predefined ranges. Using the specified range instead...`);
-        println(`Predefined ranges: U8=[0,${MASK_8}], U16=[0,${MASK_16}]`);
+        println(`The range [${min},${max}] cannot be absorbed into any predefined range. The range will be treated as a specified range.`);
+        println("Available predefined ranges:");
+        println(` -  U8: [0, ${MASK_8}]`);
+        println(` - U16: [0, ${MASK_16}]`);
     }
 
     // Define the range check assumes
@@ -481,6 +483,30 @@ private function range_validator(const int min, const int max) {
     } else if (min <= -PRIME) {
         error(`The minimum value of the range cannot be less than the negative field order ${-PRIME}`);
     }
+
+    // Save the range for stats
+    container proof.std.rc.stats alias rcstats {
+        int mins[ARRAY_SIZE];
+        int maxs[ARRAY_SIZE];
+        int reps[ARRAY_SIZE];
+        int count = 0;
+    }
+
+    // If the range has already been introduced, we increment the repetitions
+    for (int i = 0; i < rcstats.count; i++) {
+        if (rcstats.mins[i] == min && rcstats.maxs[i] == max) {
+            rcstats.reps[i]++;
+            return;
+        }
+    }
+
+    // Otherwise, we save the range
+    rcstats.mins[rcstats.count] = min;
+    rcstats.maxs[rcstats.count] = max;
+    rcstats.reps[rcstats.count] = 1;
+    rcstats.count++;
+
+    on final proof print_range_stats();
 }
 
 private function opid_process(const int min, const int max, const int predefined): int {
@@ -719,4 +745,13 @@ private function create_specified_metadata() {
 private function rc_issue_global_hints() {
     use proof.std.rc;
     @std_rc_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids};
+}
+
+private function print_range_stats() {
+    use proof.std.rc.stats;
+
+    println("Range check stats:");
+    for (int i = 0; i < count; i++) {
+        println(` - [${mins[i]},${maxs[i]}]: ${reps[i]} times`);
+    }
 }
