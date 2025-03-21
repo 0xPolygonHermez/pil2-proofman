@@ -38,7 +38,7 @@ function sum(const int name, const int type, const int opids[], const expr busid
         case 2: // Free
             update_piop_sum(name, 2, opids, busid, mul, expressions, direct_type);
         default:
-            error("Invalid sum type: ${type}");
+            error(`Invalid sum type: ${type}`);
     }
 }
 
@@ -113,7 +113,7 @@ private function update_piop_sum(const int name, const int proves, const int opi
             // Update constraints at the airgroup level
             on final airgroup piop_gsum_airgroup();
         default:
-            error("Invalid direct_type: ${direct_type}");
+            error(`Invalid direct_type: ${direct_type}`);
     }
 
     // Update the constraints at the proof level
