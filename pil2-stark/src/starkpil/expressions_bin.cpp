@@ -19,7 +19,9 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
     maxTmp3 = expressionsBin->readU32LE();
 
     uint32_t nOpsExpressions = expressionsBin->readU32LE();
+    nOpsTotal = nOpsExpressions;
     uint32_t nArgsExpressions = expressionsBin->readU32LE();
+    nArgsTotal = nArgsExpressions;
     uint32_t nNumbersExpressions = expressionsBin->readU32LE();
     uint32_t nConstPolsIdsExpressions = expressionsBin->readU32LE();
     uint32_t nCmPolsIdsExpressions = expressionsBin->readU32LE();

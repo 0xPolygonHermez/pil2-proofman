@@ -4,438 +4,167 @@
 #include "gl64_t.cuh"
 #include "goldilocks_cubic_extension.cuh"
 
-
-ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers& proverHelpers, uint32_t nParamsMax, uint32_t nTemp1Max, uint32_t nTemp3Max, uint64_t nrowsPack_, uint32_t nBlocks_) : ExpressionsCtx(setupCtx, proverHelpers), nParamsMax(nParamsMax), nTemp1Max(nTemp1Max), nTemp3Max(nTemp3Max), nrowsPack(nrowsPack_), nBlocks(nBlocks_)
+ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers &proverHelpers, uint32_t nRowsPack, uint32_t nBlocks) : ExpressionsCtx(setupCtx, proverHelpers), nRowsPack(nRowsPack), nBlocks(nBlocks)
 {
-    uint64_t nOpenings = setupCtx.starkInfo.openingPoints.size();
-    uint64_t ns = 2 + setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size();
-    vector<uint64_t> nColsStages(ns * nOpenings + 1, 0);
-    vector<uint64_t> nColsStagesAcc(ns * nOpenings + 1, 0);
 
-    for (uint64_t o = 0; o < nOpenings; ++o)
-    {
-        for (uint64_t stage = 0; stage < ns; ++stage)
-        {
-            if (stage == 0)
-            {
-                nColsStages[ns * o] = setupCtx.starkInfo.mapSectionsN["const"];
-                nColsStagesAcc[ns * o] = o == 0 ? 0 : nColsStagesAcc[ns * o + stage - 1] + nColsStages[stage - 1];
-            }
-            else if (stage < 2 + setupCtx.starkInfo.nStages)
-            {
-                std::string section = "cm" + to_string(stage);
-                nColsStages[ns * o + stage] = setupCtx.starkInfo.mapSectionsN[section];
-                nColsStagesAcc[ns * o + stage] = nColsStagesAcc[ns * o + stage - 1] + nColsStages[stage - 1];
-            }
-            else
-            {
-                uint64_t index = stage - setupCtx.starkInfo.nStages - 2;
-                std::string section = setupCtx.starkInfo.customCommits[index].name + "0";
-                nColsStages[ns * o + stage] = setupCtx.starkInfo.mapSectionsN[section];
-                nColsStagesAcc[ns * o + stage] = nColsStagesAcc[ns * o + stage - 1] + nColsStages[stage - 1];
-            }
-        }
-    }
-    nColsStagesAcc[ns * nOpenings] = nColsStagesAcc[ns * nOpenings - 1] + nColsStages[ns * nOpenings - 1];
-
-    uint64_t Nexteded = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    uint32_t ns = 1 + setupCtx.starkInfo.nStages + 1;
+    uint32_t nCustoms = setupCtx.starkInfo.customCommits.size();
+    uint32_t nOpenings = setupCtx.starkInfo.openingPoints.size();
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
+    h_deviceArgs.N = N;
+    h_deviceArgs.NExtended = NExtended;
+    h_deviceArgs.nRowsPack = nRowsPack;
+    h_deviceArgs.nBlocks = nBlocks;
+    h_deviceArgs.nStages = nStages;
+    h_deviceArgs.nCustomCommits = setupCtx.starkInfo.customCommits.size();
+    h_deviceArgs.bufferCommitSize = bufferCommitsSize;
+
+    cudaMalloc(&h_deviceArgs.mapOffsets, ns * sizeof(uint64_t));
+    cudaMalloc(&h_deviceArgs.mapOffsetsExtended, ns * sizeof(uint64_t));
+    cudaMalloc(&h_deviceArgs.mapOffsetsCustomFixed, nCustoms * sizeof(uint64_t));
+    cudaMalloc(&h_deviceArgs.mapOffsetsCustomFixedExtended, nCustoms * sizeof(uint64_t));
     cudaMalloc(&h_deviceArgs.nextStrides, nOpenings * sizeof(uint64_t));
-    cudaMalloc(&h_deviceArgs.nColsStages, (ns * nOpenings + 1) * sizeof(uint64_t));
-    cudaMalloc(&h_deviceArgs.nColsStagesAcc, (ns * nOpenings + 1) * sizeof(uint64_t));
-    cudaMalloc(&h_deviceArgs.offsetsStages, (ns * nOpenings + 1) * sizeof(uint64_t));
-    cudaMalloc(&h_deviceArgs.cmPolsInfo, setupCtx.starkInfo.cmPolsMap.size() * 3 * sizeof(uint64_t));
-    cudaMalloc(&h_deviceArgs.zi, setupCtx.starkInfo.boundaries.size() * Nexteded * sizeof(Goldilocks::Element)); // rick: pillar calculada abans
+    cudaMalloc(&h_deviceArgs.nextStridesExtended, nOpenings * sizeof(uint64_t));
+    cudaMalloc(&h_deviceArgs.mapSectionsN, ns * sizeof(uint64_t));
+    cudaMalloc(&h_deviceArgs.mapSectionsNCustomFixed, nCustoms * sizeof(uint64_t));
+
+    cudaMemcpy(h_deviceArgs.mapOffsets, mapOffsets, ns * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_deviceArgs.mapOffsetsExtended, mapOffsetsExtended, ns * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_deviceArgs.mapOffsetsCustomFixed, mapOffsetsCustomFixed, nCustoms * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_deviceArgs.mapOffsetsCustomFixedExtended, mapOffsetsCustomFixedExtended, nCustoms * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_deviceArgs.nextStrides, nextStrides, nOpenings * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_deviceArgs.nextStridesExtended, nextStridesExtended, nOpenings * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_deviceArgs.mapSectionsN, mapSectionsN, ns * sizeof(uint64_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_deviceArgs.mapSectionsNCustomFixed, mapSectionsNCustomFixed, nCustoms * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+
+    ParserArgs parserArgs = setupCtx.expressionsBin.expressionsBinArgsExpressions;
+    cudaMalloc(&h_deviceArgs.numbers, parserArgs.nNumbers * sizeof(Goldilocks::Element));
+    cudaMemcpy(h_deviceArgs.numbers, (Goldilocks::Element *)parserArgs.numbers, parserArgs.nNumbers * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+
+    cudaMalloc(&h_deviceArgs.ops, setupCtx.expressionsBin.nOpsTotal * sizeof(uint8_t));   
+    cudaMalloc(&h_deviceArgs.args, setupCtx.expressionsBin.nArgsTotal * sizeof(uint16_t)); 
+    cudaMemcpy(h_deviceArgs.ops, parserArgs.ops, setupCtx.expressionsBin.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(h_deviceArgs.args, parserArgs.args, setupCtx.expressionsBin.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice);
+
+    cudaMalloc(&h_deviceArgs.zi, setupCtx.starkInfo.boundaries.size() * NExtended * sizeof(Goldilocks::Element)); 
     cudaMalloc(&h_deviceArgs.x_n, N * sizeof(Goldilocks::Element));
-    cudaMalloc(&h_deviceArgs.x_2ns, Nexteded * sizeof(Goldilocks::Element));
-    cudaMalloc(&h_deviceArgs.challenges, setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element));
-    uint64_t nNumbers = setupCtx.expressionsBin.expressionsBinArgsExpressions.nNumbers;
-    cudaMalloc(&h_deviceArgs.numbers, nNumbers * sizeof(Goldilocks::Element));
-    cudaMalloc(&h_deviceArgs.publics, setupCtx.starkInfo.nPublics * sizeof(Goldilocks::Element));
-    cudaMalloc(&h_deviceArgs.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element));
-    cudaMalloc(&h_deviceArgs.airgroupValues, setupCtx.starkInfo.airgroupValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element));
-    cudaMalloc(&h_deviceArgs.airValues, setupCtx.starkInfo.airValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element));
-    cudaMalloc(&h_deviceArgs.proofValues, setupCtx.starkInfo.proofValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element));
-    //rick// cudaMalloc(&h_deviceArgs.ops, setupCtx.expressionsBin.expressionsBinArgsExpressions.nOpsTotal * sizeof(uint8_t));
-    //rick// cudaMalloc(&h_deviceArgs.args, setupCtx.expressionsBin.expressionsBinArgsExpressions.nArgsTotal * sizeof(uint16_t));
+    cudaMalloc(&h_deviceArgs.x, NExtended * sizeof(Goldilocks::Element));
 
-    uint64_t nCols1 = nColsStagesAcc[ns * nOpenings] + setupCtx.starkInfo.boundaries.size() + 1;
-    uint64_t nCols2 = nColsStagesAcc[ns * nOpenings] + nOpenings * FIELD_EXTENSION;
-    uint64_t nCols3 = nColsStagesAcc[ns * nOpenings] + 1;
-    uint64_t nColsMax = max(nCols1, max(nCols2, nCols3));
+    cudaMemcpy(h_deviceArgs.zi, proverHelpers.zi, setupCtx.starkInfo.boundaries.size() * h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice); 
+    cudaMemcpy(h_deviceArgs.x_n, proverHelpers.x_n, N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                
+    cudaMemcpy(h_deviceArgs.x, proverHelpers.x, NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                                
 
-    // bufferT_
-    h_deviceArgs.bufferSize = nOpenings * nrowsPack * nColsMax; // this must be moved from here
+    // buffers for execution
+    uint64_t tmp1Size = setupCtx.expressionsBin.maxTmp1 * nRowsPack;
+    uint64_t tmp3Size = setupCtx.expressionsBin.maxTmp3 * FIELD_EXTENSION * nRowsPack;
+    cudaMalloc(&h_deviceArgs.tmp1, nBlocks * tmp1Size * sizeof(Goldilocks::Element));
+    cudaMalloc(&h_deviceArgs.tmp3, nBlocks * tmp3Size * sizeof(Goldilocks::Element));
+    cudaMalloc(&h_deviceArgs.destVals, nBlocks * nRowsPack * 2 * FIELD_EXTENSION * sizeof(Goldilocks::Element));
 
-    while(uint64_t(nBlocks) * uint64_t(h_deviceArgs.bufferSize) * uint64_t(sizeof(Goldilocks::Element)) > uint64_t(1024) * uint64_t(1024) * uint64_t(1024) * uint64_t(16)){
-        nBlocks = nBlocks / 2;
-        nrowsPack = nrowsPack / 2;
-        h_deviceArgs.bufferSize = nOpenings * nrowsPack * nColsMax;
-    }
-    cudaMalloc(&h_deviceArgs.bufferT_, nBlocks * h_deviceArgs.bufferSize * sizeof(Goldilocks::Element));
-    std::cout << "Total memory in expressions buffers [Gb]: " << (1.0 * nBlocks * h_deviceArgs.bufferSize * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
-
-    // destVals
-    h_deviceArgs.destValsSize = nParamsMax * FIELD_EXTENSION * nrowsPack;
-    cudaMalloc(&h_deviceArgs.destVals, nBlocks * h_deviceArgs.destValsSize * sizeof(Goldilocks::Element));
-    std::cout << "Total memory in expressions destVals [Gb]: " << (1.0 * nBlocks * h_deviceArgs.destValsSize * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
-
-    // tmps
-    h_deviceArgs.tmp1Size = nTemp1Max * nrowsPack;
-    h_deviceArgs.tmp3Size = nTemp3Max * FIELD_EXTENSION * nrowsPack;
-    cudaMalloc(&h_deviceArgs.tmp1, nBlocks * h_deviceArgs.tmp1Size * sizeof(Goldilocks::Element));
-    cudaMalloc(&h_deviceArgs.tmp3, nBlocks * h_deviceArgs.tmp3Size * sizeof(Goldilocks::Element));
-    std::cout << "Total memory in expressions tmp1 [Gb]: " << (1.0 * nBlocks * h_deviceArgs.tmp1Size * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
-    std::cout << "Total memory in expressions tmp3 [Gb]: " << (1.0 * nBlocks * h_deviceArgs.tmp3Size * sizeof(Goldilocks::Element)) / (1024.0 * 1024.0 * 1024.0) << std::endl;
-
-    // constant deviceArgs
-    cudaMemcpy(h_deviceArgs.nColsStages, nColsStages.data(), nColsStages.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(h_deviceArgs.nColsStagesAcc, nColsStagesAcc.data(), nColsStagesAcc.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
-    h_deviceArgs.N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    h_deviceArgs.NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    h_deviceArgs.nrowsPack = nrowsPack;
-    h_deviceArgs.nOpenings = nOpenings;
-    h_deviceArgs.ns = ns;
-
-    // Size fixed customCommit
-    if (setupCtx.starkInfo.mapTotalNCustomCommitsFixed > 0)
-    {
-        h_deviceArgs.customCommitsCols = setupCtx.starkInfo.customCommits[0].stageWidths[0];
-    }
-    else
-    {
-        h_deviceArgs.customCommitsCols = 0;
-    }
 };
 
 ExpressionsGPU::~ExpressionsGPU()
 {
+    cudaFree(h_deviceArgs.mapOffsets);
+    cudaFree(h_deviceArgs.mapOffsetsExtended);
     cudaFree(h_deviceArgs.nextStrides);
-    cudaFree(h_deviceArgs.nColsStages);
-    cudaFree(h_deviceArgs.nColsStagesAcc);
-    cudaFree(h_deviceArgs.offsetsStages);
-    cudaFree(h_deviceArgs.cmPolsInfo);
+    cudaFree(h_deviceArgs.nextStridesExtended);
+    cudaFree(h_deviceArgs.mapOffsetsCustomFixed);
+    cudaFree(h_deviceArgs.mapOffsetsCustomFixedExtended);
+    cudaFree(h_deviceArgs.mapSectionsN);
+    cudaFree(h_deviceArgs.mapSectionsNCustomFixed);
     cudaFree(h_deviceArgs.zi);
     cudaFree(h_deviceArgs.x_n);
-    cudaFree(h_deviceArgs.x_2ns);
-    cudaFree(h_deviceArgs.challenges);
+    cudaFree(h_deviceArgs.x);
     cudaFree(h_deviceArgs.numbers);
-    cudaFree(h_deviceArgs.publics);
-    cudaFree(h_deviceArgs.evals);
-    cudaFree(h_deviceArgs.airgroupValues);
-    cudaFree(h_deviceArgs.airValues);
-    cudaFree(h_deviceArgs.proofValues);
     cudaFree(h_deviceArgs.ops);
     cudaFree(h_deviceArgs.args);
-    cudaFree(h_deviceArgs.bufferT_);
+    //next three will be eliminated
     cudaFree(h_deviceArgs.destVals);
     cudaFree(h_deviceArgs.tmp1);
     cudaFree(h_deviceArgs.tmp3);
+
 }
 
-void ExpressionsGPU::setBufferTInfo(uint64_t domainSize, StepsParams &params, StepsParams &params_gpu, ParserArgs &parserArgs, std::vector<Dest> &dests)
+void ExpressionsGPU::loadDeviceArgs(uint64_t domainSize, StepsParams &d_params, Dest &dest)
 {
 
     bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
-    uint64_t expId = dests[0].params[0].op == opType::tmp ? dests[0].params[0].parserParams.destDim : 0;
-    uint64_t nOpenings = h_deviceArgs.nOpenings;
-    uint64_t ns = h_deviceArgs.ns;
-    vector<uint64_t> nColsStages(ns * nOpenings + 1, 0);
-    vector<uint64_t> nColsStagesAcc(ns * nOpenings + 1, 0);
-    vector<uint64_t> offsetsStages(ns * nOpenings + 1, 0);
 
-    for (uint64_t o = 0; o < nOpenings; ++o)
+    h_deviceArgs.mapOffsetsExps = domainExtended ? h_deviceArgs.mapOffsetsExtended : h_deviceArgs.mapOffsets;            
+    h_deviceArgs.mapOffsetsCustomExps = domainExtended ? h_deviceArgs.mapOffsetsCustomFixedExtended : h_deviceArgs.mapOffsetsCustomFixed;
+    h_deviceArgs.nextStridesExps = domainExtended ? h_deviceArgs.nextStridesExtended : h_deviceArgs.nextStrides;
+
+    h_deviceArgs.k_min = domainExtended
+                             ? uint64_t((minRowExtended + nRowsPack - 1) / nRowsPack) * nRowsPack
+                             : uint64_t((minRow + nRowsPack - 1) / nRowsPack) * nRowsPack;
+    h_deviceArgs.k_max = domainExtended
+                             ? uint64_t(maxRowExtended / nRowsPack) * nRowsPack
+                             : uint64_t(maxRow / nRowsPack) * nRowsPack;
+
+    ParserParams parserParams[dest.params.size()];
+
+    h_deviceArgs.maxNTemp1 = 0;
+    h_deviceArgs.maxNTemp3 = 0;
+
+    for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
-        for (uint64_t stage = 0; stage < ns; ++stage)
+        ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
+        if (parserParams.nTemp1)
         {
-            if (stage == 0)
-            {
-                offsetsStages[ns * o] = 0;
-                nColsStages[ns * o] = setupCtx.starkInfo.mapSectionsN["const"];
-                nColsStagesAcc[ns * o] = o == 0 ? 0 : nColsStagesAcc[ns * o + stage - 1] + nColsStages[stage - 1];
-            }
-            else if (stage < 2 + setupCtx.starkInfo.nStages)
-            {
-                std::string section = "cm" + to_string(stage);
-                offsetsStages[ns * o + stage] = setupCtx.starkInfo.mapOffsets[std::make_pair(section, domainExtended)];
-                nColsStages[ns * o + stage] = setupCtx.starkInfo.mapSectionsN[section];
-                nColsStagesAcc[ns * o + stage] = nColsStagesAcc[ns * o + stage - 1] + nColsStages[stage - 1];
-            }
-            else
-            {
-                uint64_t index = stage - setupCtx.starkInfo.nStages - 2;
-                std::string section = setupCtx.starkInfo.customCommits[index].name + "0";
-                offsetsStages[ns * o + stage] = setupCtx.starkInfo.mapOffsets[std::make_pair(section, domainExtended)];
-                nColsStages[ns * o + stage] = setupCtx.starkInfo.mapSectionsN[section];
-                nColsStagesAcc[ns * o + stage] = nColsStagesAcc[ns * o + stage - 1] + nColsStages[stage - 1];
-            }
+            h_deviceArgs.maxNTemp1 = parserParams.nTemp1;
+        }
+        if (parserParams.nTemp3)
+        {
+            h_deviceArgs.maxNTemp3 = parserParams.nTemp3;
         }
     }
 
-    nColsStagesAcc[ns * nOpenings] = nColsStagesAcc[ns * nOpenings - 1] + nColsStages[ns * nOpenings - 1];
-    if (expId == int64_t(setupCtx.starkInfo.cExpId))
-    {
-        nCols = nColsStagesAcc[ns * nOpenings] + setupCtx.starkInfo.boundaries.size() + 1;
-    }
-    else if (expId == int64_t(setupCtx.starkInfo.friExpId))
-    {
-        nCols = nColsStagesAcc[ns * nOpenings] + nOpenings * FIELD_EXTENSION;
-    }
-    else
-    {
-        nCols = nColsStagesAcc[ns * nOpenings] + 1;
-    }
-
-    // fill device arguments
     h_deviceArgs.domainSize = domainSize;
-    h_deviceArgs.nCols = nCols;
     h_deviceArgs.domainExtended = domainExtended;
 
-    uint32_t extendBits = (setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits);
-    int64_t extend = domainExtended ? (1 << extendBits) : 1;
-    uint64_t *nextStrides = new uint64_t[nOpenings];
-    for (uint64_t i = 0; i < nOpenings; ++i)
-    {
-        uint64_t opening = setupCtx.starkInfo.openingPoints[i] < 0 ? setupCtx.starkInfo.openingPoints[i] + domainSize : setupCtx.starkInfo.openingPoints[i];
-        nextStrides[i] = opening * extend;
+    h_deviceArgs.dest_gpu = dest.dest_gpu;
+    h_deviceArgs.dest_domainSize = dest.domainSize;
+    h_deviceArgs.dest_offset = dest.offset;
+    h_deviceArgs.dest_dim = dest.dim;
+    h_deviceArgs.dest_nParams = dest.params.size();
+    assert(dest.params.size() == 1 || dest.params.size() == 2);
+
+    DestParamsGPU* aux_params = new DestParamsGPU[h_deviceArgs.dest_nParams];
+    for (uint64_t j = 0; j < h_deviceArgs.dest_nParams; ++j){
+
+        ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[j].expId];
+        aux_params[j].dim = dest.params[j].dim;
+        aux_params[j].stage = dest.params[j].stage;
+        aux_params[j].stagePos = dest.params[j].stagePos;
+        aux_params[j].polsMapId = dest.params[j].polsMapId;
+        aux_params[j].rowOffsetIndex = dest.params[j].rowOffsetIndex;
+        aux_params[j].inverse = dest.params[j].inverse;
+        aux_params[j].op = dest.params[j].op;
+        aux_params[j].value = dest.params[j].value;
+        aux_params[j].nOps = parserParams.nOps;
+        aux_params[j].opsOffset = parserParams.opsOffset;
+        aux_params[j].nArgs = parserParams.nArgs;
+        aux_params[j].argsOffset =parserParams.argsOffset;
     }
-    cudaMemcpy(h_deviceArgs.nextStrides, nextStrides, h_deviceArgs.nOpenings * sizeof(uint64_t), cudaMemcpyHostToDevice);
-    delete[] nextStrides;
-
-    cudaMemcpy(h_deviceArgs.offsetsStages, offsetsStages.data(), offsetsStages.size() * sizeof(uint64_t), cudaMemcpyHostToDevice);
-    h_deviceArgs.constPolsSize = setupCtx.starkInfo.nConstants;
-    h_deviceArgs.cmPolsInfoSize = setupCtx.starkInfo.cmPolsMap.size();
-    uint64_t *cmPolsInfo = new uint64_t[h_deviceArgs.cmPolsInfoSize * 3];
-    for (uint64_t i = 0; i < h_deviceArgs.cmPolsInfoSize; ++i)
-    {
-        cmPolsInfo[i * 3] = setupCtx.starkInfo.cmPolsMap[i].stage;
-        cmPolsInfo[i * 3 + 1] = setupCtx.starkInfo.cmPolsMap[i].stagePos;
-        cmPolsInfo[i * 3 + 2] = setupCtx.starkInfo.cmPolsMap[i].dim;
-    }
-    cudaMemcpy(h_deviceArgs.cmPolsInfo, cmPolsInfo, h_deviceArgs.cmPolsInfoSize * 3 * sizeof(uint64_t), cudaMemcpyHostToDevice);
-    free(cmPolsInfo);
-    if (dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.cExpId))
-    {
-        h_deviceArgs.expType = 0;
-    }
-    else if (dests[0].params[0].parserParams.expId == int64_t(setupCtx.starkInfo.friExpId))
-    {
-        h_deviceArgs.expType = 1;
-    }
-    else
-    {
-
-        h_deviceArgs.expType = 2;
-    }
-
-    h_deviceArgs.boundSize = setupCtx.starkInfo.boundaries.size();
-
-    // Dests
-    DestGPU *dests_aux = new DestGPU[dests.size()];
-    h_deviceArgs.nDests = dests.size();
-    for (uint64_t i = 0; i < dests.size(); ++i)
-    {
-        dests_aux[i].dest_gpu = dests[i].dest_gpu;
-        dests_aux[i].offset = dests[i].offset;
-        dests_aux[i].dim = dests[i].dim;
-        dests_aux[i].nParams = dests[i].params.size();
-        dests_aux[i].domainSize = dests[i].domainSize;
-        assert(dests_aux[i].nParams <= nParamsMax);
-        dests_aux[i].params = new ParamsGPU[dests[i].params.size()]; // rick
-
-        for (uint64_t j = 0; j < dests_aux[i].nParams; ++j)
-        {
-            dests_aux[i].params[j].dim = dests[i].params[j].dim;
-            dests_aux[i].params[j].stage = dests[i].params[j].stage;
-            dests_aux[i].params[j].stagePos = dests[i].params[j].stagePos;
-            dests_aux[i].params[j].polsMapId = dests[i].params[j].polsMapId;
-            dests_aux[i].params[j].rowOffsetIndex = dests[i].params[j].rowOffsetIndex;
-            dests_aux[i].params[j].inverse = dests[i].params[j].inverse;
-            dests_aux[i].params[j].batch = dests[i].params[j].batch;
-            dests_aux[i].params[j].op = dests[i].params[j].op;
-            dests_aux[i].params[j].value = dests[i].params[j].value;
-            dests_aux[i].params[j].parserParams.stage = dests[i].params[j].parserParams.stage;
-            dests_aux[i].params[j].parserParams.expId = dests[i].params[j].parserParams.expId;
-            dests_aux[i].params[j].parserParams.nTemp1 = dests[i].params[j].parserParams.nTemp1;
-            assert(dests_aux[i].params[j].parserParams.nTemp1 < nTemp1Max);
-            dests_aux[i].params[j].parserParams.nTemp3 = dests[i].params[j].parserParams.nTemp3;
-            assert(dests_aux[i].params[j].parserParams.nTemp3 < nTemp3Max);
-            dests_aux[i].params[j].parserParams.nOps = dests[i].params[j].parserParams.nOps;
-            dests_aux[i].params[j].parserParams.opsOffset = dests[i].params[j].parserParams.opsOffset;
-            dests_aux[i].params[j].parserParams.nArgs = dests[i].params[j].parserParams.nArgs;
-            dests_aux[i].params[j].parserParams.argsOffset = dests[i].params[j].parserParams.argsOffset;
-            dests_aux[i].params[j].parserParams.constPolsOffset = dests[i].params[j].parserParams.constPolsOffset;
-            dests_aux[i].params[j].parserParams.cmPolsOffset = dests[i].params[j].parserParams.cmPolsOffset;
-            dests_aux[i].params[j].parserParams.challengesOffset = dests[i].params[j].parserParams.challengesOffset;
-            dests_aux[i].params[j].parserParams.publicsOffset = dests[i].params[j].parserParams.publicsOffset;
-            dests_aux[i].params[j].parserParams.airgroupValuesOffset = dests[i].params[j].parserParams.airgroupValuesOffset;
-            dests_aux[i].params[j].parserParams.airValuesOffset = dests[i].params[j].parserParams.airValuesOffset;
-            dests_aux[i].params[j].parserParams.firstRow = dests[i].params[j].parserParams.firstRow;
-            dests_aux[i].params[j].parserParams.lastRow = dests[i].params[j].parserParams.lastRow;
-            dests_aux[i].params[j].parserParams.destDim = dests[i].params[j].parserParams.destDim;
-            dests_aux[i].params[j].parserParams.destId = dests[i].params[j].parserParams.destId;
-            dests_aux[i].params[j].parserParams.imPol = dests[i].params[j].parserParams.imPol;
-        }
-    }
-
-    // Dests
-    DestGPU *d_dests = new DestGPU[h_deviceArgs.nDests];
-    for (int i = 0; i < h_deviceArgs.nDests; ++i)
-    {
-        d_dests[i].dest_gpu = dests_aux[i].dest_gpu;
-        d_dests[i].offset = dests_aux[i].offset;
-        d_dests[i].dim = dests_aux[i].dim;
-        d_dests[i].nParams = dests_aux[i].nParams;
-        d_dests[i].domainSize = dests_aux[i].domainSize;
-        cudaMalloc(&d_dests[i].params, d_dests[i].nParams * sizeof(ParamsGPU));
-        if (d_dests[i].nParams > 0)
-            dest_params.push_back(d_dests[i].params);
-        cudaMemcpy(d_dests[i].params, dests_aux[i].params, d_dests[i].nParams * sizeof(ParamsGPU), cudaMemcpyHostToDevice);
-    }
-    for (int i = 0; i < dests.size(); i++)
-    {
-        delete[] dests_aux[i].params;
-    }
-    delete[] dests_aux;
-    DestGPU *d_dests_;
-    cudaMalloc(&d_dests_, h_deviceArgs.nDests * sizeof(DestGPU));
-    cudaMemcpy(d_dests_, d_dests, h_deviceArgs.nDests * sizeof(DestGPU), cudaMemcpyHostToDevice);
-    delete[] d_dests;
-    h_deviceArgs.dests = d_dests_;
-
-    // non polnomial arguments
-    h_deviceArgs.nChallenges = setupCtx.starkInfo.challengesMap.size();
-    h_deviceArgs.nNumbers = parserArgs.nNumbers;
-    h_deviceArgs.nPublics = setupCtx.starkInfo.nPublics;
-    h_deviceArgs.nEvals = setupCtx.starkInfo.evMap.size();
-    h_deviceArgs.nAirgroupValues = setupCtx.starkInfo.airgroupValuesMap.size();
-    h_deviceArgs.nAirValues = setupCtx.starkInfo.airValuesMap.size();
-    h_deviceArgs.nProofValues = setupCtx.starkInfo.proofValuesMap.size();
-    // Expressions bin
-    //rick// h_deviceArgs.nOpsTotal = parserArgs.nOpsTotal;
-    //rick// h_deviceArgs.nArgsTotal = parserArgs.nArgsTotal;
-
-    // bufferT_
-    h_deviceArgs.nBlocks = nBlocks;
-
-    cudaMemcpy(h_deviceArgs.cmPolsInfo, h_deviceArgs.cmPolsInfo, 3 * h_deviceArgs.cmPolsInfoSize * sizeof(uint64_t), cudaMemcpyHostToDevice);
-    //rick // cudaMemcpy(h_deviceArgs.zi, setupCtx.proverHelpers.zi, h_deviceArgs.boundSize * h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice); // cal copiar cada cop?
-    //rick// cudaMemcpy(h_deviceArgs.x_n, setupCtx.proverHelpers.x_n, h_deviceArgs.N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                                // cal cada cop? no es pot transportar?
-    //rick// cudaMemcpy(h_deviceArgs.x_2ns, setupCtx.proverHelpers.x_2ns, h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);                    // cal cada cop? no es pot transportar?
-    cudaMemcpy(h_deviceArgs.challenges, params.challenges, h_deviceArgs.nChallenges * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-    cudaMemcpy(h_deviceArgs.numbers, (Goldilocks::Element *)parserArgs.numbers, h_deviceArgs.nNumbers * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-    cudaMemcpy(h_deviceArgs.publics, params.publicInputs, h_deviceArgs.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-    cudaMemcpy(h_deviceArgs.evals, params.evals, h_deviceArgs.nEvals * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-
-    Goldilocks::Element *airgroupValues_aux = new Goldilocks::Element[h_deviceArgs.nAirgroupValues * FIELD_EXTENSION];
-    uint64_t p = 0;
-    for (uint64_t i = 0; i < setupCtx.starkInfo.airgroupValuesMap.size(); ++i)
-    {
-
-        if (setupCtx.starkInfo.airgroupValuesMap[i].stage == 1)
-        {
-            airgroupValues_aux[i * FIELD_EXTENSION] = params.airgroupValues[p];
-            airgroupValues_aux[i * FIELD_EXTENSION + 1] = Goldilocks::zero();
-            airgroupValues_aux[i * FIELD_EXTENSION + 2] = Goldilocks::zero();
-        }
-        else
-        {
-            airgroupValues_aux[i * FIELD_EXTENSION] = params.airgroupValues[p];
-            airgroupValues_aux[i * FIELD_EXTENSION + 1] = params.airgroupValues[p + 1];
-            airgroupValues_aux[i * FIELD_EXTENSION + 2] = params.airgroupValues[p + 2];
-        }
-
-        if (setupCtx.starkInfo.airgroupValuesMap[i].stage == 1)
-        {
-            p += 1;
-        }
-        else
-        {
-            p += 3;
-        }
-    }
-    cudaMemcpy(h_deviceArgs.airgroupValues, airgroupValues_aux, h_deviceArgs.nAirgroupValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-    delete[] airgroupValues_aux;
-
-    Goldilocks::Element *airValues_aux = new Goldilocks::Element[h_deviceArgs.nAirValues * FIELD_EXTENSION];
-    p = 0;
-    for (uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); ++i)
-    {
-
-        if (setupCtx.starkInfo.airValuesMap[i].stage == 1)
-        {
-            airValues_aux[i * FIELD_EXTENSION] = params.airValues[p];
-            airValues_aux[i * FIELD_EXTENSION + 1] = Goldilocks::zero();
-            airValues_aux[i * FIELD_EXTENSION + 2] = Goldilocks::zero();
-        }
-        else
-        {
-            airValues_aux[i * FIELD_EXTENSION] = params.airValues[p];
-            airValues_aux[i * FIELD_EXTENSION + 1] = params.airValues[p + 1];
-            airValues_aux[i * FIELD_EXTENSION + 2] = params.airValues[p + 2];
-        }
-
-        if (setupCtx.starkInfo.airValuesMap[i].stage == 1)
-        {
-            p += 1;
-        }
-        else
-        {
-            p += 3;
-        }
-    }
-    cudaMemcpy(h_deviceArgs.airValues, airValues_aux, h_deviceArgs.nAirValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-    delete[] airValues_aux;
-    Goldilocks::Element *proofValues_aux = new Goldilocks::Element[h_deviceArgs.nProofValues * FIELD_EXTENSION];
-    p = 0;
-    for (uint64_t i = 0; i < setupCtx.starkInfo.proofValuesMap.size(); ++i)
-    {
-
-        if (setupCtx.starkInfo.proofValuesMap[i].stage == 1)
-        {
-            proofValues_aux[i * FIELD_EXTENSION] = params.proofValues[p];
-            proofValues_aux[i * FIELD_EXTENSION + 1] = Goldilocks::zero();
-            proofValues_aux[i * FIELD_EXTENSION + 2] = Goldilocks::zero();
-        }
-        else
-        {
-            proofValues_aux[i * FIELD_EXTENSION] = params.proofValues[p];
-            proofValues_aux[i * FIELD_EXTENSION + 1] = params.proofValues[p + 1];
-            proofValues_aux[i * FIELD_EXTENSION + 2] = params.proofValues[p + 2];
-        }
-
-        if (setupCtx.starkInfo.proofValuesMap[i].stage == 1)
-        {
-            p += 1;
-        }
-        else
-        {
-            p += 3;
-        }
-    }
-
-    cudaMemcpy(h_deviceArgs.proofValues, proofValues_aux, h_deviceArgs.nProofValues * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-    delete[] proofValues_aux;
-    cudaMemcpy(h_deviceArgs.ops, parserArgs.ops, h_deviceArgs.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(h_deviceArgs.args, parserArgs.args, h_deviceArgs.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice);
-
-    h_deviceArgs.constPols = h_deviceArgs.domainExtended ? params_gpu.pConstPolsExtendedTreeAddress : params_gpu.pConstPolsAddress;
-    h_deviceArgs.trace = params_gpu.trace;
-    h_deviceArgs.aux_trace = params_gpu.aux_trace;
-    h_deviceArgs.xDivXSub = params_gpu.xDivXSub;
-    h_deviceArgs.customCommits = params_gpu.pCustomCommitsFixed;
+    cudaMalloc(&h_deviceArgs.dest_params, h_deviceArgs.dest_nParams * sizeof(DestParamsGPU));
+    cudaMemcpy(h_deviceArgs.dest_params, aux_params, h_deviceArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice);
+    delete[] aux_params;
 
     // Allocate memory for the struct on the device
     cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
     cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice);
 }
 
-void ExpressionsGPU::calculateExpressions_gpu(StepsParams &params, StepsParams &params_gpu, ParserArgs &parserArgs, std::vector<Dest> dests, uint64_t domainSize)
+void ExpressionsGPU::calculateExpressions_gpu(StepsParams &d_params, Dest dest, uint64_t domainSize, bool domainExtended)
 {
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time = omp_get_wtime();
-    setBufferTInfo(domainSize, params, params_gpu, parserArgs, dests);
+    loadDeviceArgs(domainSize, d_params, dest);
     CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
@@ -443,10 +172,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams &params, StepsParams &
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
-    dim3 nBlocks = h_deviceArgs.nBlocks;
-    dim3 nThreads = h_deviceArgs.nrowsPack;
-    std::cout << "goal2_ nBlocks: " << nBlocks.x << std::endl;
-    computeExpressions_<<<nBlocks, nThreads>>>(d_deviceArgs);
+    dim3 nBlocks =  h_deviceArgs.nBlocks;
+    dim3 nThreads = h_deviceArgs.nRowsPack;
+    computeExpressions_<<<nBlocks, nThreads>>>(d_params, d_deviceArgs);
     CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
@@ -454,390 +182,375 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams &params, StepsParams &
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
-    for (uint32_t i = 0; i < h_deviceArgs.nDests; ++i)
+    
+    if (dest.dest != NULL)
     {
-        if (dests[i].dest != NULL)
-        {
-            cudaMemcpy(dests[i].dest, dests[i].dest_gpu, dests[i].domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-        }
+        cudaMemcpy(dest.dest, dest.dest_gpu, dest.domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
     }
+    
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
     std::cout << "goal2_ de cudaMemcpy dests time: " << time << std::endl;
 
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    freeDeviceArguments();
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    std::cout << "goal2_ freeDeviceArguments time: " << time << std::endl;
-}
-
-void ExpressionsGPU::freeDeviceArguments()
-{
-    for (std::vector<ParamsGPU *>::iterator it = dest_params.begin(); it != dest_params.end(); ++it)
-    {
-        cudaFree(*it);
-    }
-    dest_params.clear();
-    cudaFree(h_deviceArgs.dests);
+    
+    cudaFree(h_deviceArgs.dest_params);
     cudaFree(d_deviceArgs);
 }
 
-__device__ __noinline__ void storeOnePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row, uint32_t idest)
-{
-    if (row+blockDim.x > d_deviceArgs->dests[idest].domainSize){
-        return;
-    }
-    if (d_deviceArgs->dests[idest].dim == 1)
-    {
-        uint64_t offset = d_deviceArgs->dests[idest].offset != 0 ? d_deviceArgs->dests[idest].offset : 1;
-        gl64_t::copy_gpu((gl64_t *)&d_deviceArgs->dests[idest].dest_gpu[row * offset], uint64_t(offset), &destVals[0], false);
-    }
-    else
-    {
-        uint64_t offset = d_deviceArgs->dests[idest].offset != 0 ? d_deviceArgs->dests[idest].offset : FIELD_EXTENSION;
-        gl64_t::copy_gpu((gl64_t *)&d_deviceArgs->dests[idest].dest_gpu[row * offset], uint64_t(offset), &destVals[0], false);
-        gl64_t::copy_gpu((gl64_t *)&d_deviceArgs->dests[idest].dest_gpu[row * offset + 1], uint64_t(offset), &destVals[d_deviceArgs->nrowsPack], false);
-        gl64_t::copy_gpu((gl64_t *)&d_deviceArgs->dests[idest].dest_gpu[row * offset + 2], uint64_t(offset), &destVals[2 * d_deviceArgs->nrowsPack], false);
+__device__ __noinline__ Goldilocks::Element*  load__(DeviceArguments *d_deviceArgs, Goldilocks::Element *value, StepsParams& d_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic) {        
+    
+    uint32_t r = row + threadIdx.x;
+    uint32_t nStages = d_deviceArgs->nStages;
+    uint64_t type = args[i_args];
+    if (type == 0) {
+        if(dim == FIELD_EXTENSION) { assert(0); }
+        Goldilocks::Element *constPols = d_deviceArgs->domainExtended ?  &d_params.pConstPolsExtendedTreeAddress[2] :  d_params.pConstPolsAddress;
+        uint64_t stagePos = args[i_args + 1];
+        int64_t o = d_deviceArgs->nextStridesExps[args[i_args + 2]];
+        uint64_t nCols = d_deviceArgs->mapSectionsN[0];
+        if(isCyclic) {
+            uint64_t l = (r + o) % d_deviceArgs->domainSize;
+            value[threadIdx.x] = constPols[l * nCols + stagePos];
+            return value;
+        } else {
+            value[threadIdx.x] = constPols[(r + o)*nCols];
+            return value;
+        }
+    } else if (type <= nStages + 1) { //rick: nStages1
+        uint64_t stagePos = args[i_args + 1];
+        uint64_t offset = d_deviceArgs->mapOffsetsExps[type];
+        uint64_t nCols = d_deviceArgs->mapSectionsN[type];
+        int64_t o = d_deviceArgs->nextStridesExps[args[i_args + 2]];
+        if(isCyclic) {
+            uint64_t l = (r + o) % d_deviceArgs->domainSize;
+            if(type == 1 && !d_deviceArgs->domainExtended) {
+                value[threadIdx.x] = d_params.trace[l * nCols + stagePos];
+            } else {
+                for(uint64_t d = 0; d < dim; ++d) {
+                    value[threadIdx.x + d*blockDim.x] = d_params.aux_trace[offset + l * nCols + stagePos + d];
+                }
+            }
+        } else {
+            if(type == 1 && !d_deviceArgs->domainExtended) {
+                value[threadIdx.x] = d_params.trace[(r + o)*nCols+ stagePos];
+                
+            } else {
+                for(uint64_t d = 0; d < dim; ++d) {
+                    value[threadIdx.x + d*blockDim.x] = d_params.aux_trace[offset + (r + o) *nCols + stagePos + d];
+                }                        
+            }
+        }
+        return value;
+    } else if (type == nStages + 2) {
+        uint64_t boundary = args[i_args + 1];        
+        if(boundary == 0) {
+            Goldilocks::Element *x = d_deviceArgs->domainExtended ? &d_deviceArgs->x[row] : &d_deviceArgs->x_n[row];
+            return x;
+        } else {
+            return &d_deviceArgs->zi[(boundary - 1)*d_deviceArgs->domainSize  + row];
+        }
+        
+    } else if (type == nStages + 3) {
+        if(dim == 1) { assert(0); }
+        /*uint64_t o = args[i_args + 1];
+        gl64_t xdivxsub[FIELD_EXTENSION];
+        //Goldilocks3::sub((Goldilocks3::Element &)(xdivxsub[k * FIELD_EXTENSION]), proverHelpers.x[row + k], (Goldilocks3::Element &)(xis[o * FIELD_EXTENSION]));
+        Goldilocks3GPU::op_31_gpu(2, (gl64_t*)xdivxsub, (gl64_t*)(xis[o * FIELD_EXTENSION]), true, (gl64_t*)(&d_deviceArgs->x_n[r]), true);
+        
+
+        /*Goldilocks3::batchInverse((Goldilocks3::Element *)xdivxsub, (Goldilocks3::Element *)xdivxsub, nrowsPack);
+
+        for (uint64_t k = 0; k < nrowsPack; k++) {
+            Goldilocks3::mul((Goldilocks3::Element &)(xdivxsub[k * FIELD_EXTENSION]), (Goldilocks3::Element &)(xdivxsub[k * FIELD_EXTENSION]), proverHelpers.x[row + k]);
+        }
+
+        for(uint64_t k = 0; k < nrowsPack; ++k) {
+            for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
+                value[k + e*nrowsPack] = xdivxsub[k * FIELD_EXTENSION + e];
+            }
+        }*/
+        return value;
+    } else if (type >= nStages + 4 && type < d_deviceArgs->nCustomCommits + nStages + 4) {
+        uint64_t index = type - (nStages + 4);
+        uint64_t stagePos = args[i_args + 1];
+        uint64_t offset = d_deviceArgs->mapOffsetsCustomExps[index];
+        uint64_t nCols = d_deviceArgs->mapSectionsNCustomFixed[index];
+        int64_t o = d_deviceArgs->nextStridesExps[args[i_args + 2]];
+        if(isCyclic) {
+            uint64_t l = (r + o) % d_deviceArgs->domainSize;
+            value[threadIdx.x] = d_params.pCustomCommitsFixed[offset + l * nCols + stagePos];
+        } else {
+            value[threadIdx.x] = d_params.pCustomCommitsFixed[offset + (r + o) * nCols + stagePos];            
+        }
+        return value;
+    } else if (type ==  d_deviceArgs->bufferCommitSize || type == d_deviceArgs->bufferCommitSize + 1) {
+        return &expressions_params[type][args[i_args + 1]*blockDim.x];
+    } else {
+        return &expressions_params[type][args[i_args + 1]];
     }
 }
 
-__device__ __noinline__ void copyPolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, bool inverse, uint64_t dim, gl64_t *temp)
+__device__ __noinline__ void storePolynomial__(DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint64_t row)
+{
+    int tid = threadIdx.x;
+    if (row + blockDim.x > d_deviceArgs->dest_domainSize)
+    {
+        return;
+    }
+    if (d_deviceArgs->dest_dim == 1)
+    {
+        uint64_t offset = d_deviceArgs->dest_offset != 0 ? d_deviceArgs->dest_offset : 1;
+        if(row + threadIdx.x < d_deviceArgs->dest_domainSize) {
+            d_deviceArgs->dest_gpu[(row + threadIdx.x) * offset ] = destVals[threadIdx.x];
+        }
+    }
+    else
+    {
+        uint64_t offset = d_deviceArgs->dest_offset != 0 ? d_deviceArgs->dest_offset : FIELD_EXTENSION;
+        if(row + threadIdx.x < d_deviceArgs->dest_domainSize) {
+            d_deviceArgs->dest_gpu[(row + threadIdx.x) * offset] = destVals[threadIdx.x];
+            d_deviceArgs->dest_gpu[(row + threadIdx.x) * offset + 1] = destVals[blockDim.x + threadIdx.x];
+            d_deviceArgs->dest_gpu[(row + threadIdx.x) * offset + 2] = destVals[2 * blockDim.x + threadIdx.x];
+        }
+    }
+}
+
+__device__ __noinline__ void multiplyPolynomials__(DeviceArguments *d_deviceArgs, gl64_t *destVals)
+{
+    if (d_deviceArgs->dest_dim == 1)
+    {
+        gl64_t::op_gpu(2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
+    }
+    else
+    {
+        assert(blockDim.x <= 512);
+        __shared__ gl64_t vals[FIELD_EXTENSION * 512]; // rick: corregir
+        if (d_deviceArgs->dest_params[0].dim == FIELD_EXTENSION && d_deviceArgs->dest_params[1].dim == FIELD_EXTENSION)
+        {
+            Goldilocks3GPU::op_gpu(2, &vals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
+        }
+        else if (d_deviceArgs->dest_params[0].dim == FIELD_EXTENSION && d_deviceArgs->dest_params[1].dim == 1)
+        {
+            Goldilocks3GPU::op_31_gpu(2, &vals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
+        }
+        else
+        {
+            Goldilocks3GPU::op_31_gpu(2, &vals[0], &destVals[FIELD_EXTENSION * d_deviceArgs->nRowsPack], false, &destVals[0], false);
+        }
+        gl64_t::copy_gpu(&destVals[0], &vals[0], false);
+        gl64_t::copy_gpu(&destVals[blockDim.x], &vals[blockDim.x], false);
+        gl64_t::copy_gpu(&destVals[2 * blockDim.x], &vals[2 * blockDim.x], false);
+    }
+}
+
+__device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim)
 {
     int idx = threadIdx.x;
     if (dim == 1)
     {
-        if (inverse)
-        {
-            destVals[idx] = temp[idx].reciprocal();
-        }
-        else
-        {
-            destVals[idx] = temp[idx];
-        }
+        polynomial[idx] = polynomial[idx].reciprocal();
     }
     else if (dim == FIELD_EXTENSION)
     {
-        if (inverse)
+        Goldilocks3GPU::Element aux;
+        aux[0] = polynomial[idx];
+        aux[1] = polynomial[blockDim.x + idx];
+        aux[2] = polynomial[2 * blockDim.x + idx];
+        Goldilocks3GPU::inv(aux, aux);
+        polynomial[idx] = aux[0];
+        polynomial[blockDim.x + idx] = aux[1];
+        polynomial[2 * blockDim.x + idx] = aux[2];
+    }
+}
+
+__device__ __noinline__ bool caseNoOprations__(StepsParams &d_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row)
+{
+
+    uint32_t r = row + threadIdx.x;
+
+    if (d_deviceArgs->dest_params[k].op == opType::cm || d_deviceArgs->dest_params[k].op == opType::const_)
+    { // roger: assumeixes k==0 en aqeusta part?
+        uint64_t openingPointIndex = d_deviceArgs->dest_params[k].rowOffsetIndex;
+        uint64_t stagePos = d_deviceArgs->dest_params[k].stagePos;
+        int64_t o = d_deviceArgs->nextStridesExps[openingPointIndex];
+        uint64_t l = (r + o) % d_deviceArgs->domainSize;
+        uint64_t nCols = d_deviceArgs->mapSectionsN[0];
+        if (d_deviceArgs->dest_params[k].op == opType::const_)
         {
-            Goldilocks3GPU::Element aux;
-            aux[0] = temp[idx];
-            aux[1] = temp[d_deviceArgs->nrowsPack + idx];
-            aux[2] = temp[2 * d_deviceArgs->nrowsPack + idx];
-            Goldilocks3GPU::inv(aux, aux);
-            destVals[idx] = aux[0];
-            destVals[d_deviceArgs->nrowsPack + idx] = aux[1];
-            destVals[2 * d_deviceArgs->nrowsPack + idx] = aux[2];
+            destVals[r] = d_params.pConstPolsAddress[l * nCols + stagePos];
         }
         else
         {
-            destVals[idx] = temp[idx];
-            destVals[d_deviceArgs->nrowsPack + idx] = temp[d_deviceArgs->nrowsPack + idx];
-            destVals[2 * d_deviceArgs->nrowsPack + idx] = temp[2 * d_deviceArgs->nrowsPack + idx];
-        }
-    }
-}
-
-__device__ __noinline__ void loadPolynomials__(DeviceArguments *d_deviceArgs, uint64_t row, uint32_t iBlock)
-{
-
-    bool domainExtended = d_deviceArgs->domainExtended;
-    uint64_t *nextStrides = d_deviceArgs->nextStrides;
-    uint64_t *nColsStages = d_deviceArgs->nColsStages;
-    uint64_t *nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
-    Goldilocks::Element *d_bufferT_ = &d_deviceArgs->bufferT_[iBlock * d_deviceArgs->bufferSize];
-
-#pragma unroll 1
-    for (uint64_t k = 0; k < d_deviceArgs->constPolsSize; ++k)
-    {
-        Goldilocks::Element *constPols = domainExtended ? &d_deviceArgs->constPols[2] : d_deviceArgs->constPols;
-        for (uint64_t o = 0; o < d_deviceArgs->nOpenings; ++o)
-        {
-            uint64_t l = (row + threadIdx.x + nextStrides[o]) % d_deviceArgs->domainSize;
-            d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * o] + k) * d_deviceArgs->nrowsPack + threadIdx.x] = constPols[l * nColsStages[0] + k];
-        }
-    }
-
-#pragma unroll 1
-    for (uint64_t k = 0; k < d_deviceArgs->cmPolsInfoSize; ++k)
-    {
-        uint64_t *cmPolsInfo = d_deviceArgs->cmPolsInfo;
-        uint64_t stage = cmPolsInfo[k * 3];
-        uint64_t stagePos = cmPolsInfo[k * 3 + 1];
-        for (uint64_t d = 0; d < cmPolsInfo[k * 3 + 2]; ++d)
-        {
-            for (uint64_t o = 0; o < d_deviceArgs->nOpenings; ++o)
+            uint64_t offset = d_deviceArgs->mapOffsetsExps[d_deviceArgs->dest_params[k].stage];
+            uint64_t nCols = d_deviceArgs->mapSectionsN[d_deviceArgs->dest_params[k].stage];
+            if (d_deviceArgs->dest_params[k].stage == 1)
             {
-                uint64_t l = (row + threadIdx.x + nextStrides[o]) % d_deviceArgs->domainSize;
-                if (stage == 1 && !d_deviceArgs->domainExtended)
+                destVals[r] = d_params.trace[l * nCols + stagePos];
+            }
+            else
+            {
+                for (uint64_t d = 0; d < d_deviceArgs->dest_params[k].dim; ++d)
                 {
-                    d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * o + stage] + (stagePos + d)) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->trace[l * nColsStages[stage] + stagePos + d];
-                }
-                else
-                {
-                    uint64_t *offsetsStages = d_deviceArgs->offsetsStages;
-                    d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * o + stage] + (stagePos + d)) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->aux_trace[offsetsStages[stage] + l * nColsStages[stage] + stagePos + d];
+                    destVals[r + d * blockDim.x] = d_params.aux_trace[offset + l * nCols + stagePos + d];
                 }
             }
         }
-    }
 
-#pragma unroll 1
-    for (uint64_t k = 0; k < d_deviceArgs->customCommitsCols; ++k)
-    {
-        uint64_t stage = d_deviceArgs->ns - 1; // rick: harcoded one single custom commit
-        for (uint64_t o = 0; o < d_deviceArgs->nOpenings; ++o)
+        if (d_deviceArgs->dest_params[k].inverse)
         {
-            uint64_t l = (row + threadIdx.x + nextStrides[o]) % d_deviceArgs->domainSize;
-            uint64_t offset = 0;
-            if (d_deviceArgs->domainExtended)
-            {
-                offset = d_deviceArgs->N * d_deviceArgs->customCommitsCols;
-            }
-            d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * o + stage] + k) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->customCommits[offset + l * nColsStages[stage] + k];
+            getInversePolinomial__((gl64_t*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_deviceArgs->dest_params[k].dim);
         }
+        return true;
     }
-
-    if (d_deviceArgs->expType == 0)
+    else if (d_deviceArgs->dest_params[k].op == opType::number)
     {
-#pragma unroll 1
-        for (uint64_t d = 0; d < d_deviceArgs->boundSize; ++d)
-        {
-            d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * d_deviceArgs->nOpenings] + d + 1) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->zi[row + threadIdx.x + d * d_deviceArgs->domainSize];
-        }
-        d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * d_deviceArgs->nOpenings]) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->x_2ns[row + threadIdx.x];
+        destVals[k * FIELD_EXTENSION * blockDim.x + r].fe = d_deviceArgs->dest_params[k].value;
+        return true;
     }
-    else if (d_deviceArgs->expType == 1)
+    else if (d_deviceArgs->dest_params[k].op == opType::airvalue)
     {
-#pragma unroll 1
-        for (uint64_t d = 0; d < d_deviceArgs->nOpenings; ++d)
-        {
-            for (uint64_t k = 0; k < FIELD_EXTENSION; ++k)
-            {
-                d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * d_deviceArgs->nOpenings] + d * FIELD_EXTENSION + k) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->xDivXSub[(row + threadIdx.x + d * d_deviceArgs->domainSize) * FIELD_EXTENSION + k];
-            }
-        }
+        destVals[k * FIELD_EXTENSION * blockDim.x + r] = d_params.airValues[d_deviceArgs->dest_params[k].polsMapId];
+        destVals[k * FIELD_EXTENSION * blockDim.x + r + blockDim.x] = d_params.airValues[d_deviceArgs->dest_params[k].polsMapId + 1];
+        destVals[k * FIELD_EXTENSION * blockDim.x + r + 2 * blockDim.x] = d_params.airValues[d_deviceArgs->dest_params[k].polsMapId + 2];
+        return true;
     }
-    else
-    {
-        d_bufferT_[(nColsStagesAcc[d_deviceArgs->ns * d_deviceArgs->nOpenings]) * d_deviceArgs->nrowsPack + threadIdx.x] = d_deviceArgs->x_n[row + threadIdx.x];
-    }
+    return false;
 }
 
-__device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, DestGPU &dest, gl64_t *destVals)
-{
-    if (dest.dim == 1)
-    {
-        gl64_t::op_gpu(2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * deviceArgs->nrowsPack], false);
-    }
-    else
-    {
-        assert(blockDim.x <= 128);
-        __shared__ gl64_t vals[FIELD_EXTENSION * 128]; // rick: corregir
-        if (dest.params[0].dim == FIELD_EXTENSION && dest.params[1].dim == FIELD_EXTENSION)
-        {
-            Goldilocks3GPU::op_gpu(2, &vals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * deviceArgs->nrowsPack], false);
-        }
-        else if (dest.params[0].dim == FIELD_EXTENSION && dest.params[1].dim == 1)
-        {
-            Goldilocks3GPU::op_31_gpu(2, &vals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * deviceArgs->nrowsPack], false);
-        }
-        else
-        {
-            Goldilocks3GPU::op_31_gpu(2, &vals[0], &destVals[FIELD_EXTENSION * deviceArgs->nrowsPack], false, &destVals[0], false);
-        }
-        gl64_t::copy_gpu(&destVals[0], &vals[0], false);
-        gl64_t::copy_gpu(&destVals[deviceArgs->nrowsPack], &vals[deviceArgs->nrowsPack], false);
-        gl64_t::copy_gpu(&destVals[2 * deviceArgs->nrowsPack], &vals[2 * deviceArgs->nrowsPack], false);
-    }
-}
-
-__global__ __launch_bounds__(128) void computeExpressions_(DeviceArguments *d_deviceArgs)
+__global__ __launch_bounds__(128) void computeExpressions_(StepsParams &d_params, DeviceArguments *d_deviceArgs)
 {
 
     int chunk_idx = blockIdx.x;
-    assert(d_deviceArgs->nrowsPack == blockDim.x);
+    assert(d_deviceArgs->nRowsPack == blockDim.x);
     uint64_t nchunks = d_deviceArgs->domainSize / blockDim.x;
+    extern __shared__ gl64_t values_[];
 
-    __shared__ gl64_t *expressions_params[10];
+    // aixo s'ha de fer en el setbuffers
+    uint32_t bufferCommitsSize = d_deviceArgs->bufferCommitSize;
+    assert(bufferCommitsSize  + 9 < 30);
+    __shared__ Goldilocks::Element *expressions_params[30];
 
     if (threadIdx.x == 0)
     {
-        expressions_params[0] = (gl64_t *)(&d_deviceArgs->bufferT_[blockIdx.x * d_deviceArgs->bufferSize]);
-        expressions_params[1] = (gl64_t *)(&d_deviceArgs->tmp1[blockIdx.x * d_deviceArgs->tmp1Size]);
-        expressions_params[2] = (gl64_t *)d_deviceArgs->publics;
-        expressions_params[3] = (gl64_t *)d_deviceArgs->numbers;
-        expressions_params[4] = (gl64_t *)d_deviceArgs->airValues;
-        expressions_params[5] = (gl64_t *)d_deviceArgs->proofValues;
-        expressions_params[6] = (gl64_t *)(&d_deviceArgs->tmp3[blockIdx.x * d_deviceArgs->tmp3Size]);
-        expressions_params[7] = (gl64_t *)d_deviceArgs->airgroupValues;
-        expressions_params[8] = (gl64_t *)d_deviceArgs->challenges;
-        expressions_params[9] = (gl64_t *)d_deviceArgs->evals;
+        // rick: falta tmp1 i tmp3
+        expressions_params[bufferCommitsSize + 0] = (&d_deviceArgs->tmp1[blockDim.x * d_deviceArgs->maxNTemp1 * blockDim.x]); //nTemp1
+        expressions_params[bufferCommitsSize + 1] = (&d_deviceArgs->tmp3[blockDim.x * d_deviceArgs->maxNTemp3 * blockDim.x * FIELD_EXTENSION]); //nTemp3
+        expressions_params[bufferCommitsSize + 2] = d_params.publicInputs;
+        expressions_params[bufferCommitsSize + 3] = d_deviceArgs->numbers;
+        expressions_params[bufferCommitsSize + 4] = d_params.airValues;
+        expressions_params[bufferCommitsSize + 5] = d_params.proofValues;
+        expressions_params[bufferCommitsSize + 6] = d_params.airgroupValues;
+        expressions_params[bufferCommitsSize + 7] = d_params.challenges;
+        expressions_params[bufferCommitsSize + 8] = d_params.evals;
     }
     __syncthreads();
+    Goldilocks::Element *destVals = &d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->dest_nParams * blockDim.x]; 
 
     while (chunk_idx < nchunks)
     {
         uint64_t i = chunk_idx * blockDim.x;
-        loadPolynomials__(d_deviceArgs, i, blockIdx.x);
+        bool isCyclic = i < d_deviceArgs->k_min || i >= d_deviceArgs->k_max;
 #pragma unroll 1
-        for (uint64_t j = 0; j < d_deviceArgs->nDests; ++j)
+        for (uint64_t k = 0; k < d_deviceArgs->dest_nParams; ++k)
         {
-            for (uint64_t k = 0; k < d_deviceArgs->dests[j].nParams; ++k)
+
+            if(caseNoOprations__(d_params,d_deviceArgs, destVals, k, i)){
+                continue;
+            }
+            uint8_t *ops = &d_deviceArgs->ops[d_deviceArgs->dest_params[k].opsOffset];
+            uint16_t *args = &d_deviceArgs->args[d_deviceArgs->dest_params[k].argsOffset];
+            Goldilocks::Element *valueA = (Goldilocks::Element *)(&values_[0]);
+            Goldilocks::Element *valueB = (Goldilocks::Element *)(&values_[blockDim.x * FIELD_EXTENSION]);
+
+            uint64_t i_args = 0;
+            uint64_t nOps = d_deviceArgs->dest_params[k].nOps;
+            for (uint64_t kk = 0; kk < nOps; ++kk)
+
             {
 
-                gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
-                uint64_t *nColsStagesAcc = d_deviceArgs->nColsStagesAcc;
+                switch (ops[kk])
+                {
 
-                if (d_deviceArgs->dests[j].params[k].op == opType::cm || d_deviceArgs->dests[j].params[k].op == opType::const_)
+                case 0:
                 {
-                    uint64_t openingPointIndex = d_deviceArgs->dests[j].params[k].rowOffsetIndex;
-                    uint64_t buffPos = d_deviceArgs->ns * openingPointIndex + d_deviceArgs->dests[j].params[k].stage;
-                    uint64_t stagePos = d_deviceArgs->dests[j].params[k].stagePos;
-                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * blockDim.x], d_deviceArgs->dests[j].params[k].inverse, d_deviceArgs->dests[j].params[k].dim, &expressions_params[0][(nColsStagesAcc[buffPos] + stagePos) * blockDim.x]);
-                    continue;
+                    // COPY dim1 to dim1
+                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, valueA, d_params, expressions_params, args, i_args + 1, i, 1, isCyclic);
+                    bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
+                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args] * blockDim.x]);
+                    gl64_t::copy_gpu(res, a, isConstant);
+                    i_args += 4;
+                    break;
                 }
-                else if (d_deviceArgs->dests[j].params[k].op == opType::number)
+                case 1:
                 {
-                    gl64_t val(d_deviceArgs->dests[j].params[k].value);
-                    if (d_deviceArgs->dests[j].params[k].inverse)
-                        val = val.reciprocal();
-                    destVals[k * FIELD_EXTENSION * blockDim.x + threadIdx.x] = val;
-                    continue;
+                    // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
+                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, valueA, d_params, expressions_params, args, i_args + 2, i, 1, isCyclic);
+                    gl64_t* b = (gl64_t*)load__(d_deviceArgs, valueB, d_params, expressions_params, args, i_args + 5, i, 1, isCyclic);
+                    bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
+                    bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
+                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args + 1] * blockDim.x]);
+                    gl64_t::op_gpu( args[i_args], res, a, isConstantA, b, isConstantB);
+                    i_args += 8;
+                    break;
                 }
-                uint8_t *ops = &d_deviceArgs->ops[d_deviceArgs->dests[j].params[k].parserParams.opsOffset];
-                uint16_t *args = &d_deviceArgs->args[d_deviceArgs->dests[j].params[k].parserParams.argsOffset];
-
-                uint64_t i_args = 0;
-                bool print = false; // threadIdx.x == 0 && blockIdx.x == 0 && i==0;
-                for (uint64_t kk = 0; kk < d_deviceArgs->dests[j].params[k].parserParams.nOps; ++kk)
+                case 2:
                 {
-                    switch (ops[kk])
-                    {
-                    case 0:
-                    {
-                        // COPY dim1 to dim1
-                        if (print)
-                        {
-                            // printf("Abans args: %d %d %d %d %d %d %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5], args[i_args + 6], args[i_args + 7], args[i_args + 8], args[i_args + 9], args[i_args + 10], args[i_args + 11]);
-                        }
-                        gl64_t::copy_gpu(&expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * blockDim.x], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6]) * blockDim.x + args[i_args + 6] * args[i_args + 5]], args[i_args + 6]);
-                        if (print)
-                        {
-                            // result
-                            printf("Case 0\n");
-                            printf("Op %lu of %d\n", kk, d_deviceArgs->dests[j].params[k].parserParams.nOps);
-                            // printf("Arguments %lu\n", expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * d_deviceArgs->nrowsPack].get_val());
-                            printf("Result: %lu\n", expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * d_deviceArgs->nrowsPack].get_val());
-                            // printf("args %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5]);
-                        }
-
-                        i_args += 7;
-                        break;
-                    }
-                    case 1:
-                    {
-                        // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
-                        gl64_t::op_gpu(args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * blockDim.x], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7]) * blockDim.x + args[i_args + 7] * args[i_args + 6]], args[i_args + 7], &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * blockDim.x + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
-                        if (print)
-                        {
-                            // result
-                            printf("Case 1\n");
-                            printf("Op %lu of %d\n", kk, d_deviceArgs->dests[j].params[k].parserParams.nOps);
-                            // printf("Buffer: %d %d %d \n", args[i_args + 1], args[i_args + 4], args[i_args + 8]);
-                            printf("Result: %lu\n", expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * d_deviceArgs->nrowsPack].get_val());
-                            // printf("args: %d %d %d %d %d %d %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5], args[i_args + 6], args[i_args + 7], args[i_args + 8], args[i_args + 9], args[i_args + 10], args[i_args + 11]);
-                        }
-                        i_args += 12;
-                        break;
-                    }
-                    case 2:
-                    {
-                        // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
-                        /*if( print){
-                            printf("Abans args: %d %d %d %d %d %d %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5], args[i_args + 6], args[i_args + 7], args[i_args + 8], args[i_args + 9], args[i_args + 10], args[i_args + 11]);
-                        }*/
-                        Goldilocks3GPU::op_31_gpu(args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * blockDim.x], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7]) * blockDim.x + args[i_args + 7] * args[i_args + 6]], args[i_args + 7], &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * blockDim.x + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
-                        if (print)
-                        {
-                            // result
-                            printf("Case 2\n");
-                            printf("Op %lu of %d\n", kk, d_deviceArgs->dests[j].params[k].parserParams.nOps);
-                            // printf("Buffer: %d %d %d \n", args[i_args + 1], args[i_args + 4], args[i_args + 8]);
-                            printf("Result: %lu %lu %lu\n",
-                                   expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * d_deviceArgs->nrowsPack].get_val(),
-                                   expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * d_deviceArgs->nrowsPack + 1].get_val(),
-                                   expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * d_deviceArgs->nrowsPack + 2].get_val());
-                        }
-                        i_args += 12;
-                        break;
-                    }
-                    case 3:
-                    {
-                        /*if( print){
-                            printf("Abans args: %d %d %d %d %d %d %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5], args[i_args + 6], args[i_args + 7], args[i_args + 8], args[i_args + 9], args[i_args + 10], args[i_args + 11]);
-                        }*/
-                        // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
-                        Goldilocks3GPU::op_gpu(args[i_args], &expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * blockDim.x], &expressions_params[args[i_args + 4]][(nColsStagesAcc[args[i_args + 5]] + args[i_args + 6]) * (1 - args[i_args + 7]) * blockDim.x + args[i_args + 7] * args[i_args + 6]], args[i_args + 7], &expressions_params[args[i_args + 8]][(nColsStagesAcc[args[i_args + 9]] + args[i_args + 10]) * (1 - args[i_args + 11]) * blockDim.x + args[i_args + 11] * args[i_args + 10]], args[i_args + 11]);
-                        if (print)
-                        {
-                            // result
-                            printf("Case 3\n");
-                            printf("Op %lu of %d\n", kk, d_deviceArgs->dests[j].params[k].parserParams.nOps);
-                            printf("Result: %lu %lu %lu\n",
-                                   expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * d_deviceArgs->nrowsPack].get_val(),
-                                   expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * d_deviceArgs->nrowsPack + 1].get_val(),
-                                   expressions_params[args[i_args + 1]][(nColsStagesAcc[args[i_args + 2]] + args[i_args + 3]) * d_deviceArgs->nrowsPack + 2].get_val());
-                        }
-                        i_args += 12;
-                        break;
-                    }
-                    case 4:
-                    {
-                        /*if( print){
-                            printf("Abans args: %d %d %d %d %d %d %d %d %d %d %d %d\n", args[i_args], args[i_args + 1], args[i_args + 2], args[i_args + 3], args[i_args + 4], args[i_args + 5], args[i_args + 6], args[i_args + 7], args[i_args + 8], args[i_args + 9], args[i_args + 10], args[i_args + 11]);
-                        }*/
-                        // COPY dim3 to dim3
-                        Goldilocks3GPU::copy_gpu(&expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * blockDim.x], &expressions_params[args[i_args + 3]][(nColsStagesAcc[args[i_args + 4]] + args[i_args + 5]) * (1 - args[i_args + 6]) * blockDim.x + args[i_args + 6] * args[i_args + 5]], args[i_args + 6]);
-                        if (print)
-                        {
-                            // result
-                            printf("Case 4\n");
-                            printf("Op %lu of %d\n", kk, d_deviceArgs->dests[j].params[k].parserParams.nOps);
-                            printf("Result: %lu %lu %lu\n",
-                                   expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * d_deviceArgs->nrowsPack].get_val(),
-                                   expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * d_deviceArgs->nrowsPack + 1].get_val(),
-                                   expressions_params[args[i_args]][(nColsStagesAcc[args[i_args + 1]] + args[i_args + 2]) * d_deviceArgs->nrowsPack + 2].get_val());
-                        }
-                        i_args += 7;
-                        break;
-                    }
-                    default:
-                    {
-                        printf(" Wrong operation!\n");
-                        assert(0);
-                    }
-                    }
+                    // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
+                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, valueA, d_params, expressions_params, args, i_args + 2, i, 3, isCyclic);
+                    gl64_t* b = (gl64_t*)load__(d_deviceArgs, valueB, d_params, expressions_params, args, i_args + 5, i, 1, isCyclic);
+                    bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
+                    bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
+                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
+                    Goldilocks3GPU::op_31_gpu(args[i_args], res, a, isConstantA, b, isConstantB);
+                    i_args += 8;
+                    break;
                 }
-
-                if (d_deviceArgs->dests[j].params[k].parserParams.destDim == 1)
+                case 3:
                 {
-                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * blockDim.x], d_deviceArgs->dests[j].params[k].inverse, d_deviceArgs->dests[j].params[k].parserParams.destDim, &expressions_params[1][d_deviceArgs->dests[j].params[k].parserParams.destId * blockDim.x]);
+                    // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
+                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, valueA, d_params, expressions_params, args, i_args + 2, i, 3, isCyclic);
+                    gl64_t* b = (gl64_t*)load__(d_deviceArgs, valueB, d_params, expressions_params, args, i_args + 5, i, 3, isCyclic);
+                    bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
+                    bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
+                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
+                    Goldilocks3GPU::op_gpu(args[i_args], res, a, isConstantA, b, isConstantB);
+                    i_args += 8;
+                    break;
                 }
-                else
+                case 4:
                 {
-                    copyPolynomial__(d_deviceArgs, &destVals[k * FIELD_EXTENSION * blockDim.x], d_deviceArgs->dests[j].params[k].inverse, d_deviceArgs->dests[j].params[k].parserParams.destDim, &expressions_params[6][d_deviceArgs->dests[j].params[k].parserParams.destId * FIELD_EXTENSION * blockDim.x]);
+                    // COPY dim3 to dim3
+                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, valueA, d_params, expressions_params, args, i_args + 1, i, 3, isCyclic);
+                    bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
+                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args] * blockDim.x]);
+                    Goldilocks3GPU::copy_gpu(res, a, isConstant);
+                    i_args += 4;
+                    break;
+                }
+                default:
+                {
+                    printf(" Wrong operation! %d \n", ops[kk]);
+                    assert(0);
+                }
                 }
             }
-
-            gl64_t *destVals = (gl64_t *)(&d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->destValsSize]);
-            if (d_deviceArgs->dests[j].nParams == 2)
+            if (i_args !=  d_deviceArgs->dest_params[k].nArgs){
+                printf(" %d consumed args - %d expected args \n", i_args, d_deviceArgs->dest_params[k].nArgs);
+                assert(0);
+            }
+            if (d_deviceArgs->dest_params[k].inverse)
             {
-                multiplyPolynomials__(d_deviceArgs, d_deviceArgs->dests[j], destVals);
+                getInversePolinomial__((gl64_t*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_deviceArgs->dest_params[k].dim);
             }
-            storeOnePolynomial__(d_deviceArgs, destVals, i, j);
+            
         }
+
+        if (d_deviceArgs->dest_nParams == 2)
+        {
+            multiplyPolynomials__(d_deviceArgs, (gl64_t*) destVals);
+        }
+        storePolynomial__(d_deviceArgs, destVals, i);
+
         chunk_idx += gridDim.x;
     }
 }

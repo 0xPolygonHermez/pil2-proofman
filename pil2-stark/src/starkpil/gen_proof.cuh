@@ -9,7 +9,6 @@
 #include "starks_gpu.cuh"
 
 // TOTO list: //rick
-// no usar pBuffHelper
 // eliminar els params
 // carregar-me els d_trees
 // _inplace not good name
@@ -76,7 +75,7 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Expression
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, Goldilocks::Element* pBuffHelper, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers) {
+void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers) {
     
     TimerStart(STARK_PROOF);
     CHECKCUDAERR(cudaDeviceSynchronize());
@@ -99,7 +98,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     }
     
     ExpressionsPack expressionsCtx_(setupCtx, proverHelpers); //rick: get rid of this
-    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 2, 1176, 465, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3 //rick
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3 //rick
     CHECKCUDAERR(cudaGetLastError());
     StepsParams d_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,
@@ -140,6 +139,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStopAndLog(STARK_STEP_1);
 
     starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
+    std::cout<<"Global Challenge"<<Goldilocks::toString(globalChallenge[0])<<" "<<Goldilocks::toString(globalChallenge[1])<<" "<<Goldilocks::toString(globalChallenge[2])<<std::endl;
 
     TimerStart(STARK_STEP_2);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
@@ -148,6 +148,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         }
     }
 
+    std::cout<<"Fins aqui arriba bé"<<std::endl;
+    exit(0);
     calculateWitnessSTD_gpu(setupCtx, params, expressionsCtx_, true, &expressionsCtx, &d_params);
     calculateWitnessSTD_gpu(setupCtx, params, expressionsCtx_, false, &expressionsCtx, &d_params);
 
@@ -234,7 +236,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
 
-    params.xDivXSub = &pBuffHelper[0];
+    //params.xDivXSub = &pBuffHelper[0];
     calculateXDivXSub_inplace(0, xiChallenge, setupCtx, d_buffers, (gl64_t*) d_params.xDivXSub);
     
     // FRI expressions

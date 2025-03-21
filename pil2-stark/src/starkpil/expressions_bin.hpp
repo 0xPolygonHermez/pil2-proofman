@@ -97,6 +97,10 @@ struct ParserArgs
 class ExpressionsBin
 {
 public:
+
+    uint32_t  nOpsTotal;
+    uint32_t  nArgsTotal;
+
     std::map<uint64_t, ParserParams> expressionsInfo;
 
     std::vector<ParserParams> constraintsInfoDebug;

@@ -39,7 +39,8 @@ void *gen_device_commit_buffers(void *maxSizes_)
     return (void *)buffers;
 
 }
-void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, void* pBuffHelper, uint64_t* proofBuffer, char *proofFile, void *d_buffers_) {
+
+void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_) {
 
     double time = omp_get_wtime();
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -60,7 +61,7 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     std::cout << "rick genDeviceBuffers time: " << time << std::endl;
 
     time = omp_get_wtime();
-    genProof_gpu(*setupCtx, airgroupId, airId, instanceId, *params, (Goldilocks::Element *)globalChallenge, (Goldilocks::Element *)pBuffHelper, proofBuffer, string(proofFile), d_buffers);
+    genProof_gpu(*setupCtx, airgroupId, airId, instanceId, *params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), d_buffers);
     time = omp_get_wtime() - time;
     std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 }
