@@ -151,7 +151,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: one-global-challenge-0.5.0
+          ref: main
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
@@ -265,7 +265,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: 0xPolygonHermez/pil2-proofman-js
-          ref: one-global-challenge-0.5.0
+          ref: main
           path: pil2-proofman-js
 
       - name: Install pil2-proofman-js dependencies
