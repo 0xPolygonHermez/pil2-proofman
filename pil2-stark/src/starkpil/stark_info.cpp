@@ -4,15 +4,15 @@
 #include "zklog.hpp"
 #include "exit_process.hpp"
 
-StarkInfo::StarkInfo(string file, bool verify_)
+StarkInfo::StarkInfo(string file, bool verify_constraints, bool verify)
 {
     // Load contents from json file
     json starkInfoJson;
     file2json(file, starkInfoJson);
-    load(starkInfoJson, verify_);
+    load(starkInfoJson, verify_constraints, verify);
 }
 
-void StarkInfo::load(json j, bool verify_)
+void StarkInfo::load(json j, bool verify_constraints_, bool verify_)
 {   
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
@@ -30,7 +30,7 @@ void StarkInfo::load(json j, bool verify_)
             starkStruct.merkleTreeCustom = false;
         }
     } else {
-        starkStruct.merkleTreeArity = 2;
+        starkStruct.merkleTreeArity = 3;
         starkStruct.merkleTreeCustom = true;
     }
     if(j["starkStruct"].contains("hashCommits")) {
@@ -224,6 +224,8 @@ void StarkInfo::load(json j, bool verify_)
         mapSectionsN[it.key()] = it.value();
     }
 
+    getProofSize();
+
     if(verify_) {
         verify = verify_;
         mapTotalN = 0;
@@ -242,8 +244,46 @@ void StarkInfo::load(json j, bool verify_)
             }
         }
     } else {
+        verify_constraints = verify_constraints_;
         setMapOffsets();
     }
+}
+
+void StarkInfo::getProofSize() {
+    proofSize = 0;
+    proofSize += airgroupValuesMap.size() * FIELD_EXTENSION;
+    proofSize += airValuesMap.size() * FIELD_EXTENSION;
+
+    proofSize += (nStages + 1) * 4; // Roots
+
+    proofSize += evMap.size() * FIELD_EXTENSION; // Evals
+
+    uint64_t nSiblings = std::ceil(starkStruct.steps[0].nBits / std::log2(starkStruct.merkleTreeArity));
+    uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
+
+    proofSize += starkStruct.nQueries * nConstants; // Constants Values
+    proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel; // Siblings Constants Values
+
+    for(uint64_t i = 0; i < customCommits.size(); ++i) {
+        proofSize += starkStruct.nQueries * mapSectionsN[customCommits[i].name + "0"]; // Custom Commits Values
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel; // Siblings Custom Commits Siblings
+    }
+
+    for(uint64_t i = 0; i < nStages + 1; ++i) {
+        proofSize += starkStruct.nQueries * mapSectionsN["cm" + to_string(i+1)];
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
+    }
+
+    proofSize += (starkStruct.steps.size() - 1) * 4; // Roots
+
+    for(uint64_t i = 1; i < starkStruct.steps.size(); ++i) {
+        uint64_t nSiblings = std::ceil(starkStruct.steps[i].nBits / std::log2(starkStruct.merkleTreeArity));
+        uint64_t nSiblingsPerLevel = (starkStruct.merkleTreeArity - 1) * 4;
+        proofSize += starkStruct.nQueries * (1 << (starkStruct.steps[i-1].nBits - starkStruct.steps[i].nBits))*FIELD_EXTENSION;
+        proofSize += starkStruct.nQueries * nSiblings * nSiblingsPerLevel;
+    }
+
+    proofSize += (1 << starkStruct.steps[starkStruct.steps.size()-1].nBits) * FIELD_EXTENSION;
 }
 
 void StarkInfo::setMapOffsets() {
@@ -287,13 +327,34 @@ void StarkInfo::setMapOffsets() {
     // This is never used, just set to avoid invalid read
     mapOffsets[std::make_pair("cm" + to_string(nStages + 1), false)] = 0;
 
-    mapOffsets[std::make_pair("f", true)] = mapTotalN;
-    mapTotalN += NExtended * FIELD_EXTENSION;
-
-    mapOffsets[std::make_pair("q", true)] = mapOffsets[std::make_pair("f", true)];
+    if(starkStruct.verificationHashType == "GL") {
+        // Merkle tree nodes sizes
+        for (uint64_t i = 0; i < nStages + 1; i++) {
+            uint64_t numNodes = getNumNodesMT(1 << starkStruct.nBitsExt);
+            mapOffsets[std::make_pair("mt" + to_string(i + 1), true)] = mapTotalN;
+            mapTotalN += numNodes;
+        }
+    }
 
     mapOffsets[std::make_pair("evals", true)] = mapTotalN;
     mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
+
+    mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
+    uint64_t LEVsize = openingPoints.size() * N * FIELD_EXTENSION;
+    uint64_t maxCols = 0;
+    for(auto const& [key, val] : mapSectionsN) {
+        if(key != "const" && val*NExtended > maxCols) {
+            maxCols = val*NExtended;
+        }
+    }
+
+    uint64_t buffHelperSize = LEVsize > maxCols ? LEVsize : maxCols;
+
+    uint64_t mapTotalNBuffHelper = mapTotalN + buffHelperSize;
+
+    mapOffsets[std::make_pair("f", true)] = mapTotalN;
+    mapOffsets[std::make_pair("q", true)] = mapTotalN;
+    mapTotalN += NExtended * FIELD_EXTENSION;
 
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
@@ -303,14 +364,6 @@ void StarkInfo::setMapOffsets() {
     }
 
     if(starkStruct.verificationHashType == "GL") {
-        // Merkle tree nodes sizes
-        for (uint64_t i = 0; i < nStages + 1; i++) {
-            uint64_t numNodes = getNumNodesMT(1 << starkStruct.nBitsExt);
-            mapOffsets[std::make_pair("mt" + to_string(i + 1), true)] = mapTotalN;
-            mapTotalN += numNodes;
-        }
-        
-        
         for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
             uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
             uint64_t numNodes = getNumNodesMT(height);
@@ -318,13 +371,10 @@ void StarkInfo::setMapOffsets() {
             mapTotalN += numNodes;
         }
     }
-}
 
-void StarkInfo::addMemoryRecursive() {
-    uint64_t NExtended = (1 << starkStruct.nBitsExt);
-    mapOffsets[std::make_pair("xDivXSubXi", true)] = mapTotalN;
-    mapOffsets[std::make_pair("LEv", true)] = mapTotalN;
-    mapTotalN += openingPoints.size() * NExtended * FIELD_EXTENSION;
+    if(mapTotalNBuffHelper > mapTotalN) {
+        mapTotalN = mapTotalNBuffHelper;
+    }
 }
 
 void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended) {
@@ -338,7 +388,18 @@ void StarkInfo::getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, st
 }
 
 uint64_t StarkInfo::getNumNodesMT(uint64_t height) {
-    return height * HASH_SIZE + (height - 1) * HASH_SIZE;
+    uint64_t numNodes = height;
+    uint64_t nodesLevel = height;
+    
+    while (nodesLevel > 1) {
+        uint64_t extraZeros = (starkStruct.merkleTreeArity - (nodesLevel % starkStruct.merkleTreeArity)) % starkStruct.merkleTreeArity;
+        numNodes += extraZeros;
+        uint64_t nextN = (nodesLevel + (starkStruct.merkleTreeArity - 1))/starkStruct.merkleTreeArity;        
+        numNodes += nextN;
+        nodesLevel = nextN;
+    }
+
+    return numNodes * HASH_SIZE;
 }
 
 opType string2opType(const string s) 

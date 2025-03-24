@@ -1,26 +1,14 @@
 use crate::{
-    AirGroupMap, AirIdMap, AirInstance, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
+    AirGroupMap, AirIdMap, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
     DEFAULT_PRINT_VALS,
 };
 use proofman_starks_lib_c::set_log_level_c;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::collections::HashMap;
 use p3_field::Field;
 use serde::Deserialize;
 use std::fs;
-
-pub fn add_air_instance<F: Field>(air_instance: AirInstance<F>, pctx: Arc<ProofCtx<F>>) -> bool {
-    let (is_mine, gid) = pctx.dctx.write().unwrap().add_instance(
-        air_instance.airgroup_id,
-        air_instance.air_id,
-        pctx.get_weight(air_instance.airgroup_id, air_instance.air_id),
-    );
-    if is_mine {
-        pctx.add_air_instance(air_instance, gid);
-    }
-    is_mine
-}
+use sysinfo::{System, SystemExt, ProcessExt};
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
     env_logger::builder()
@@ -53,7 +41,7 @@ pub fn skip_prover_instance<F: Field>(pctx: &ProofCtx<F>, global_idx: usize) -> 
     }
 
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id) = instances[global_idx];
+    let (airgroup_id, air_id, _) = instances[global_idx];
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
 
     if let Some(airgroup_id_map) = pctx.options.debug_info.debug_instances.get(&airgroup_id) {
@@ -226,5 +214,18 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         debug_global_instances: global_constraints,
         std_mode,
         save_proofs_to_file: true,
+    }
+}
+
+pub fn print_memory_usage() {
+    let mut system = System::new_all();
+    system.refresh_all();
+
+    if let Some(process) = system.process(sysinfo::get_current_pid().unwrap()) {
+        let memory_kb = process.memory();
+        let memory_gb = memory_kb as f64 / 1_048_576.0; // 1 GB = 1,048,576 KB
+        println!("Memory used by the process: {:.2} {:.2} GB", system.used_memory(), memory_gb);
+    } else {
+        println!("Could not get process information.");
     }
 }

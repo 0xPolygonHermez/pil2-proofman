@@ -33,33 +33,6 @@ void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint
 }
 
 template <typename ElementType>
-void Starks<ElementType>::loadCustomCommit(
-    uint64_t commitId,
-    Goldilocks::Element *buffer,
-    FRIProof<ElementType> &proof,
-    std::string bufferFile)
-{   
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-
-    std::string section = setupCtx.starkInfo.customCommits[commitId].name + "0";
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-
-    uint64_t pos = setupCtx.starkInfo.nStages + 2 + commitId;
-    
-    loadFileParallel(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair(section, false)]], bufferFile, ((N + NExtended) * nCols + treesGL[pos]->numNodes) * sizeof(Goldilocks::Element), true, 32);
-
-    treesGL[pos]->setSource(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)]]);
-
-    if (setupCtx.starkInfo.starkStruct.verificationHashType == "GL") {
-        ElementType *pBuffNodes = (ElementType *)&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)] + NExtended * nCols];
-        treesGL[pos]->setNodes(pBuffNodes);
-    }
-
-    treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
-}
-
-template <typename ElementType>
 void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *aux_trace, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
 {   
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -122,12 +95,19 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
         nttExtended.INTT(&buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], &buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], NExtended, setupCtx.starkInfo.qDim);
     }
 
+    Goldilocks::Element S[setupCtx.starkInfo.qDeg];
+    Goldilocks::Element shiftIn = Goldilocks::exp(Goldilocks::inv(Goldilocks::shift()), N);
+    S[0] = Goldilocks::one();
+    for(uint64_t i = 1; i < setupCtx.starkInfo.qDeg; i++) {
+        S[i] = Goldilocks::mul(S[i - 1], shiftIn);
+    }
+
     for (uint64_t p = 0; p < setupCtx.starkInfo.qDeg; p++)
     {   
         #pragma omp parallel for
         for(uint64_t i = 0; i < N; i++)
         { 
-            Goldilocks3::mul((Goldilocks3::Element &)cmQ[(i * setupCtx.starkInfo.qDeg + p) * FIELD_EXTENSION], (Goldilocks3::Element &)buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)] + (p * N + i) * FIELD_EXTENSION], setupCtx.proverHelpers.S[p]);
+            Goldilocks3::mul((Goldilocks3::Element &)cmQ[(i * setupCtx.starkInfo.qDeg + p) * FIELD_EXTENSION], (Goldilocks3::Element &)buffer[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)] + (p * N + i) * FIELD_EXTENSION], S[p]);
         }
     }
 
@@ -202,51 +182,6 @@ void Starks<ElementType>::computeEvals(StepsParams &params, Goldilocks::Element 
 {
     evmap(params, LEv);
     proof.proof.setEvals(params.evals);
-}
-
-template <typename ElementType>
-void Starks<ElementType>::calculateXDivXSub(Goldilocks::Element *xiChallenge, Goldilocks::Element *xDivXSub)
-{
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-
-    Goldilocks::Element xis[setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION];
-    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
-    {
-        Goldilocks::Element w = Goldilocks::one();
-        uint64_t openingAbs = setupCtx.starkInfo.openingPoints[i] < 0 ? -setupCtx.starkInfo.openingPoints[i] : setupCtx.starkInfo.openingPoints[i];
-        for (uint64_t j = 0; j < openingAbs; ++j)
-        {
-            w = w * Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits);
-        }
-
-        if (setupCtx.starkInfo.openingPoints[i] < 0)
-        {
-            w = Goldilocks::inv(w);
-        }
-
-        Goldilocks3::mul((Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]), (Goldilocks3::Element &)xiChallenge[0], w);
-    }
-
-    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
-    {
-#pragma omp parallel for
-        for (uint64_t k = 0; k < NExtended; k++)
-        {
-            Goldilocks3::sub((Goldilocks3::Element &)(xDivXSub[(k + i * NExtended) * FIELD_EXTENSION]), setupCtx.proverHelpers.x[k], (Goldilocks3::Element &)(xis[i * FIELD_EXTENSION]));
-        }
-    }
-
-    Polinomial xDivXSubXi_(xDivXSub, NExtended * setupCtx.starkInfo.openingPoints.size(), FIELD_EXTENSION, FIELD_EXTENSION);
-    Polinomial::batchInverseParallel(xDivXSubXi_, xDivXSubXi_);
-
-    for (uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); ++i)
-    {
-#pragma omp parallel for
-        for (uint64_t k = 0; k < NExtended; k++)
-        {
-            Goldilocks3::mul((Goldilocks3::Element &)(xDivXSub[(k + i * NExtended) * FIELD_EXTENSION]), (Goldilocks3::Element &)(xDivXSub[(k + i * NExtended) * FIELD_EXTENSION]), setupCtx.proverHelpers.x[k]);
-        }
-    }
 }
 
 template <typename ElementType>
@@ -364,11 +299,11 @@ void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams 
     if(dests.size() == 0) return;
 
 #ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
+    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
 #elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
+    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
 #else
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
 
     expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize, false);
@@ -377,11 +312,11 @@ void Starks<ElementType>::calculateImPolsExpressions(uint64_t step, StepsParams 
 template <typename ElementType>
 void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params) {
 #ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
+    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
 #elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
+    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
 #else
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
 }
@@ -389,11 +324,11 @@ void Starks<ElementType>::calculateQuotientPolynomial(StepsParams &params) {
 template <typename ElementType>
 void Starks<ElementType>::calculateFRIPolynomial(StepsParams &params) {
 #ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx);
+    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
 #elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx);
+    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
 #else
-    ExpressionsPack expressionsCtx(setupCtx);
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 #endif
     expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]], setupCtx.starkInfo.friExpId);
 

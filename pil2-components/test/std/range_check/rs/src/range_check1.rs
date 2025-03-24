@@ -1,82 +1,86 @@
 use std::sync::Arc;
 
-use pil_std_lib::Std;
-use witness::WitnessComponent;
+use witness::{WitnessComponent, execute, define_wc_with_std};
 
-use proofman_common::{add_air_instance, FromTrace, AirInstance, ProofCtx};
+use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use num_bigint::BigInt;
-use p3_field::PrimeField;
-use rand::{distributions::Standard, prelude::Distribution, Rng};
+use p3_field::PrimeField64;
+use rand::{
+    distr::{StandardUniform, Distribution},
+    Rng, SeedableRng,
+    rngs::StdRng,
+};
 
 use crate::RangeCheck1Trace;
 
-pub struct RangeCheck1<F: PrimeField> {
-    std_lib: Arc<Std<F>>,
-}
+define_wc_with_std!(RangeCheck1, "RngChck1");
 
-impl<F: PrimeField> RangeCheck1<F>
+impl<F: PrimeField64> WitnessComponent<F> for RangeCheck1<F>
 where
-    Standard: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
-    const MY_NAME: &'static str = "RngChck1";
+    execute!(RangeCheck1Trace, 1);
 
-    pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
-        Arc::new(Self { std_lib })
-    }
-}
+    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+        if stage == 1 {
+            let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
-impl<F: PrimeField> WitnessComponent<F> for RangeCheck1<F>
-where
-    Standard: Distribution<F>,
-{
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) {
-        let mut rng = rand::thread_rng();
+            let mut trace = RangeCheck1Trace::new();
+            let num_rows = trace.num_rows();
 
-        let mut trace = RangeCheck1Trace::new_zeroes();
-        let num_rows = trace.num_rows();
+            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
-        log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            let range1 = self.std_lib.get_range(0, (1 << 8) - 1, Some(false));
+            let range2 = self.std_lib.get_range(0, (1 << 4) - 1, Some(false));
+            let range3 = self.std_lib.get_range(60, (1 << 16) - 1, Some(false));
+            let range4 = self.std_lib.get_range(8228, 17400, Some(false));
 
-        let range1 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 8) - 1), Some(false));
-        let range2 = self.std_lib.get_range(BigInt::from(0), BigInt::from((1 << 4) - 1), Some(false));
-        let range3 = self.std_lib.get_range(BigInt::from(60), BigInt::from((1 << 16) - 1), Some(false));
-        let range4 = self.std_lib.get_range(BigInt::from(8228), BigInt::from(17400), Some(false));
+            for i in 0..num_rows {
+                trace[i].a1 = F::ZERO;
+                trace[i].a2 = F::ZERO;
+                trace[i].a3 = F::ZERO;
+                trace[i].a4 = F::ZERO;
+                trace[i].a5 = F::ZERO;
 
-        for i in 0..num_rows {
-            let selected1 = rng.gen_bool(0.5);
-            trace[i].sel1 = F::from_bool(selected1);
+                let selected1 = rng.random::<bool>();
+                trace[i].sel1 = F::from_bool(selected1);
 
-            let selected2 = rng.gen_bool(0.5);
-            trace[i].sel2 = F::from_bool(selected2);
+                let selected2 = rng.random::<bool>();
+                trace[i].sel2 = F::from_bool(selected2);
 
-            let selected3 = rng.gen_bool(0.5);
-            trace[i].sel3 = F::from_bool(selected3);
+                let selected3 = rng.random::<bool>();
+                trace[i].sel3 = F::from_bool(selected3);
 
-            if selected1 {
-                trace[i].a1 = F::from_canonical_u16(rng.gen_range(0..=(1 << 8) - 1));
-                trace[i].a3 = F::from_canonical_u32(rng.gen_range(60..=(1 << 16) - 1));
+                if selected1 {
+                    let val1 = rng.random_range(0..=(1 << 8) - 1);
+                    let val2 = rng.random_range(60..=(1 << 16) - 1);
+                    trace[i].a1 = F::from_u16(val1);
+                    trace[i].a3 = F::from_u32(val2);
 
-                self.std_lib.range_check(trace[i].a1, F::one(), range1);
-                self.std_lib.range_check(trace[i].a3, F::one(), range3);
+                    self.std_lib.range_check(val1 as i64, 1, range1);
+                    self.std_lib.range_check(val2 as i64, 1, range3);
+                }
+
+                if selected2 {
+                    let val1 = rng.random_range(0..=(1 << 4) - 1);
+                    let val2 = rng.random_range(8228..=17400);
+                    trace[i].a2 = F::from_u8(val1);
+                    trace[i].a4 = F::from_u16(val2);
+
+                    self.std_lib.range_check(val1 as i64, 1, range2);
+                    self.std_lib.range_check(val2 as i64, 1, range4);
+                }
+
+                if selected3 {
+                    let val = rng.random_range(0..=(1 << 8) - 1);
+                    trace[i].a5 = F::from_u16(val);
+
+                    self.std_lib.range_check(val as i64, 1, range1);
+                }
             }
 
-            if selected2 {
-                trace[i].a2 = F::from_canonical_u8(rng.gen_range(0..=(1 << 4) - 1));
-                trace[i].a4 = F::from_canonical_u16(rng.gen_range(8228..=17400));
-
-                self.std_lib.range_check(trace[i].a2, F::one(), range2);
-                self.std_lib.range_check(trace[i].a4, F::one(), range4);
-            }
-
-            if selected3 {
-                trace[i].a5 = F::from_canonical_u16(rng.gen_range(0..=(1 << 8) - 1));
-
-                self.std_lib.range_check(trace[i].a5, F::one(), range1);
-            }
+            let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
+            pctx.add_air_instance(air_instance, instance_ids[0]);
         }
-
-        let air_instance = AirInstance::new_from_trace(FromTrace::new(&mut trace));
-        add_air_instance::<F>(air_instance, pctx.clone());
     }
 }

@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use p3_field::PrimeField;
+use p3_field::PrimeField64;
 use proofman_common::ProofCtx;
 use proofman_hints::{format_vec, HintFieldOutput};
 
@@ -59,7 +59,7 @@ struct InstanceData {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn update_debug_data_fast<F: PrimeField>(
+pub fn update_debug_data_fast<F: PrimeField64>(
     debug_data_fast: &mut DebugDataFast<F>,
     opid: F,
     val: Vec<HintFieldOutput<F>>,
@@ -113,7 +113,7 @@ pub fn update_debug_data_fast<F: PrimeField>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn update_debug_data<F: PrimeField>(
+pub fn update_debug_data<F: PrimeField64>(
     debug_data: &mut DebugData<F>,
     name_piop: &str,
     name_expr: &[String],
@@ -130,7 +130,7 @@ pub fn update_debug_data<F: PrimeField>(
     let bus_opid = debug_data.entry(opid).or_default();
 
     let bus_val = bus_opid.entry(val).or_insert_with(|| BusValue {
-        shared_data: SharedData { direct_was_called: false, num_proves: F::zero(), num_assumes: F::zero() },
+        shared_data: SharedData { direct_was_called: false, num_proves: F::ZERO, num_assumes: F::ZERO },
         grouped_data: AirGroupMap::new(),
     });
 
@@ -166,7 +166,7 @@ pub fn update_debug_data<F: PrimeField>(
     }
 }
 
-pub fn check_invalid_opids<F: PrimeField>(
+pub fn check_invalid_opids<F: PrimeField64>(
     _pctx: &ProofCtx<F>,
     name: &str,
     debugs_data_fasts: &mut [DebugDataFast<F>],
@@ -226,7 +226,7 @@ pub fn check_invalid_opids<F: PrimeField>(
 
     invalid_opids
 }
-pub fn print_debug_info<F: PrimeField>(
+pub fn print_debug_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     name: &str,
     max_values_to_print: usize,
@@ -334,7 +334,7 @@ pub fn print_debug_info<F: PrimeField>(
         log::info!("{}: ··· {}", name, "\u{2713} All bus values match.".bright_green().bold());
     }
 
-    fn print_diffs<F: PrimeField>(
+    fn print_diffs<F: PrimeField64>(
         pctx: &ProofCtx<F>,
         val: &[HintFieldOutput<F>],
         max_values_to_print: usize,

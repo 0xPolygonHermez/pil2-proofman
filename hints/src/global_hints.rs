@@ -6,39 +6,44 @@ use proofman_starks_lib_c::{
 };
 use std::ffi::c_void;
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
-use proofman_common::{ExtensionField, ProofCtx, SetupCtx};
+use proofman_common::{skip_prover_instance, ExtensionField, ProofCtx, SetupCtx};
 
-pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>> {
+pub fn aggregate_airgroupvals<F: Field>(pctx: &ProofCtx<F>, airgroup_values: &[Vec<F>]) -> Vec<Vec<u64>> {
     const FIELD_EXTENSION: usize = 3;
 
-    let mut airgroupvalues: Vec<Vec<F>> = Vec::new();
+    let mut airgroupvalues = Vec::new();
     for agg_types in pctx.global_info.agg_types.iter() {
-        let mut values = vec![F::zero(); agg_types.len() * FIELD_EXTENSION];
+        let mut values = vec![F::ZERO; agg_types.len() * FIELD_EXTENSION];
         for (idx, agg_type) in agg_types.iter().enumerate() {
             if agg_type.agg_type == 1 {
-                values[idx * FIELD_EXTENSION] = F::one();
+                values[idx * FIELD_EXTENSION] = F::ONE;
             }
         }
         airgroupvalues.push(values);
     }
 
-    for (_, air_instance) in pctx.air_instance_repo.air_instances.read().unwrap().iter() {
-        for (idx, agg_type) in pctx.global_info.agg_types[air_instance.airgroup_id].iter().enumerate() {
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
+
+    for (my_instance_idx, instance_id) in my_instances.iter().enumerate() {
+        let (airgroup_id, _, _) = instances[*instance_id];
+        for (idx, agg_type) in pctx.global_info.agg_types[airgroup_id].iter().enumerate() {
             let mut acc = ExtensionField {
                 value: [
-                    airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION],
-                    airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION + 1],
-                    airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION + 2],
+                    airgroupvalues[airgroup_id][idx * FIELD_EXTENSION],
+                    airgroupvalues[airgroup_id][idx * FIELD_EXTENSION + 1],
+                    airgroupvalues[airgroup_id][idx * FIELD_EXTENSION + 2],
                 ],
             };
-            if !air_instance.airgroup_values.is_empty() {
+
+            if !airgroup_values[my_instance_idx].is_empty() {
                 let instance_airgroup_val = ExtensionField {
                     value: [
-                        air_instance.airgroup_values[idx * FIELD_EXTENSION],
-                        air_instance.airgroup_values[idx * FIELD_EXTENSION + 1],
-                        air_instance.airgroup_values[idx * FIELD_EXTENSION + 2],
+                        airgroup_values[my_instance_idx][idx * FIELD_EXTENSION],
+                        airgroup_values[my_instance_idx][idx * FIELD_EXTENSION + 1],
+                        airgroup_values[my_instance_idx][idx * FIELD_EXTENSION + 2],
                     ],
                 };
                 if agg_type.agg_type == 0 {
@@ -46,14 +51,14 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>>
                 } else {
                     acc *= instance_airgroup_val;
                 }
-                airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION] = acc.value[0];
-                airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION + 1] = acc.value[1];
-                airgroupvalues[air_instance.airgroup_id][idx * FIELD_EXTENSION + 2] = acc.value[2];
+                airgroupvalues[airgroup_id][idx * FIELD_EXTENSION] = acc.value[0];
+                airgroupvalues[airgroup_id][idx * FIELD_EXTENSION + 1] = acc.value[1];
+                airgroupvalues[airgroup_id][idx * FIELD_EXTENSION + 2] = acc.value[2];
             }
         }
     }
 
-    let mut airgroupvalues_u64: Vec<Vec<u64>> = Vec::new();
+    let mut airgroupvalues_u64 = Vec::new();
     for (id, agg_types) in pctx.global_info.agg_types.iter().enumerate() {
         let mut values = vec![0; agg_types.len() * FIELD_EXTENSION];
         for idx in 0..agg_types.len() {
@@ -71,17 +76,17 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: Arc<ProofCtx<F>>) -> Vec<Vec<u64>>
 }
 
 fn get_global_hint_f<F: Field>(
-    pctx: Option<Arc<ProofCtx<F>>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: Option<&ProofCtx<F>>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
 ) -> Vec<HintFieldInfo<F>> {
     let n_hints_values = get_hint_field_global_constraints_values_c(sctx.get_global_bin(), hint_id, hint_field_name);
 
-    let mut hint_field_values: Vec<HintFieldInfo<F>> = vec![HintFieldInfo::default(); n_hints_values as usize];
+    let mut hint_field_values = vec![HintFieldInfo::default(); n_hints_values as usize];
 
-    let mut hint_field_values_c = HintFieldInfoC::<F>::from_hint_field_info_vec(&mut hint_field_values);
+    let mut hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     let mut hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
     get_hint_field_global_constraints_sizes_c(
@@ -93,20 +98,34 @@ fn get_global_hint_f<F: Field>(
         print_expression,
     );
 
-    HintFieldInfoC::<F>::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
+    HintFieldInfoC::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
 
     for hint_field_value in hint_field_values.iter_mut() {
         hint_field_value.init_buffers(true);
     }
 
-    hint_field_values_c = HintFieldInfoC::<F>::from_hint_field_info_vec(&mut hint_field_values);
+    hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
     hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
 
-    let publics = if let Some(ref pctx) = pctx { pctx.get_publics_ptr() } else { std::ptr::null_mut() };
-    let challenges = if let Some(ref pctx) = pctx { pctx.get_challenges_ptr() } else { std::ptr::null_mut() };
-    let proof_values = if let Some(ref pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
-    let airgroup_values = if let Some(ref pctx) = pctx {
-        let mut airgroupvals = aggregate_airgroupvals(pctx.clone());
+    let publics = if let Some(pctx) = pctx { pctx.get_publics_ptr() } else { std::ptr::null_mut() };
+    let challenges = if let Some(pctx) = pctx { pctx.get_challenges_ptr() } else { std::ptr::null_mut() };
+    let proof_values = if let Some(pctx) = pctx { pctx.get_proof_values_ptr() } else { std::ptr::null_mut() };
+    let airgroup_values = if let Some(pctx) = pctx {
+        let mut airgroup_values_air_instances = Vec::new();
+        let instances = pctx.dctx_get_instances();
+        let my_instances = pctx.dctx_get_my_instances();
+        for instance_id in my_instances.iter() {
+            if !skip_prover_instance(pctx, *instance_id).0 {
+                let (airgroup_id, air_id, _) = instances[*instance_id];
+                let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
+                airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
+                    airgroup_id,
+                    air_id,
+                    air_instance_id,
+                ));
+            }
+        }
+        let mut airgroupvals = aggregate_airgroupvals(pctx, &airgroup_values_air_instances);
         let mut airgroup_values_ptrs: Vec<*mut u64> = airgroupvals
             .iter_mut() // Iterate mutably over the inner Vecs
             .map(|inner_vec| inner_vec.as_mut_ptr()) // Get a raw pointer to each inner Vec
@@ -131,8 +150,9 @@ fn get_global_hint_f<F: Field>(
 
     hint_field_values
 }
+
 pub fn get_hint_field_constant_gc<F: Field>(
-    sctx: Arc<SetupCtx<F>>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -151,12 +171,12 @@ pub fn get_hint_field_constant_gc<F: Field>(
 }
 
 pub fn get_hint_field_gc_constant_a<F: Field>(
-    sctx: Arc<SetupCtx<F>>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValuesVec<F> {
-    let hint_infos: Vec<HintFieldInfo<F>> = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression);
+    let hint_infos = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression);
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
@@ -174,7 +194,7 @@ pub fn get_hint_field_gc_constant_a<F: Field>(
 }
 
 pub fn get_hint_field_constant_gc_m<F: Field>(
-    sctx: Arc<SetupCtx<F>>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -202,8 +222,8 @@ pub fn get_hint_field_constant_gc_m<F: Field>(
 }
 
 pub fn get_hint_field_gc<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
@@ -222,14 +242,13 @@ pub fn get_hint_field_gc<F: Field>(
 }
 
 pub fn get_hint_field_gc_a<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: ProofCtx<F>,
+    sctx: SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValuesVec<F> {
-    let hint_infos: Vec<HintFieldInfo<F>> =
-        get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression);
+    let hint_infos = get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression);
 
     let mut hint_field_values = Vec::new();
     for (v, hint_info) in hint_infos.iter().enumerate() {
@@ -246,13 +265,13 @@ pub fn get_hint_field_gc_a<F: Field>(
 }
 
 pub fn get_hint_field_gc_m<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: ProofCtx<F>,
+    sctx: SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     print_expression: bool,
 ) -> HintFieldValues<F> {
-    let hint_infos = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression);
+    let hint_infos = get_global_hint_f(Some(&pctx), &sctx, hint_id, hint_field_name, print_expression);
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
@@ -275,13 +294,13 @@ pub fn get_hint_field_gc_m<F: Field>(
 }
 
 pub fn set_hint_field_gc<F: Field>(
-    pctx: Arc<ProofCtx<F>>,
-    sctx: Arc<SetupCtx<F>>,
+    pctx: ProofCtx<F>,
+    sctx: SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
     value: HintFieldOutput<F>,
 ) {
-    let mut value_array: Vec<F> = Vec::new();
+    let mut value_array = Vec::new();
 
     match value {
         HintFieldOutput::Field(val) => {

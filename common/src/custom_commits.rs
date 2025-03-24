@@ -12,13 +12,13 @@ pub fn write_custom_commit_trace<F: Field>(
     file_name: &str,
     check: bool,
 ) -> Result<Vec<F>, Box<dyn std::error::Error>> {
-    let buffer: Vec<F> = custom_trace.get_buffer();
+    let buffer = custom_trace.get_buffer();
     let n = custom_trace.num_rows() as u64;
     let n_extended = blowup_factor * custom_trace.num_rows() as u64;
     let n_cols = custom_trace.n_cols() as u64;
-    let mut root: Vec<F> = vec![F::zero(), F::zero(), F::zero(), F::zero()];
+    let mut root = vec![F::ZERO, F::ZERO, F::ZERO, F::ZERO];
 
-    let mut root_file: Vec<F> = vec![F::zero(), F::zero(), F::zero(), F::zero()];
+    let mut root_file = vec![F::ZERO, F::ZERO, F::ZERO, F::ZERO];
     if check {
         let mut file = File::open(file_name).unwrap();
         let mut root_bytes = [0u8; 32];
@@ -27,7 +27,7 @@ pub fn write_custom_commit_trace<F: Field>(
         for (idx, val) in root_file.iter_mut().enumerate().take(4) {
             let byte_range = idx * 8..(idx + 1) * 8;
             let value = u64::from_le_bytes(root_bytes[byte_range].try_into()?);
-            *val = F::from_canonical_u64(value);
+            *val = F::from_u64(value);
         }
 
         println!("Root from file: {:?}", root_file);

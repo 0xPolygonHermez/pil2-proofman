@@ -13,9 +13,6 @@ use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 #[cfg(feature = "distributed")]
 use std::sync::atomic::Ordering;
-#[cfg(feature = "distributed")]
-use proofman_starks_lib_c::*;
-use std::ffi::c_void;
 
 use p3_field::Field;
 
@@ -31,7 +28,7 @@ pub struct DistributionCtx {
     pub world: mpi::topology::SimpleCommunicator,
     pub n_instances: usize,
     pub my_instances: Vec<usize>,
-    pub instances: Vec<(usize, usize)>,          //group_id, air_id
+    pub instances: Vec<(usize, usize, bool)>,    //group_id, air_id, all
     pub instances_owner: Vec<(i32, usize, u64)>, //owner_rank, owner_instance_idx, weight
     pub owners_count: Vec<i32>,
     pub owners_weight: Vec<u64>,
@@ -162,7 +159,7 @@ impl DistributionCtx {
 
     #[inline]
     pub fn get_instance_info(&self, global_idx: usize) -> (usize, usize) {
-        self.instances[global_idx]
+        (self.instances[global_idx].0, self.instances[global_idx].1)
     }
 
     #[inline]
@@ -178,9 +175,9 @@ impl DistributionCtx {
     #[inline]
     pub fn find_air_instance_id(&self, global_idx: usize) -> usize {
         let mut air_instance_id = 0;
-        let (airgroup_id, air_id) = self.instances[global_idx];
+        let (airgroup_id, air_id, _) = self.instances[global_idx];
         for idx in 0..global_idx {
-            let (instance_airgroup_id, instance_air_id) = self.instances[idx];
+            let (instance_airgroup_id, instance_air_id, _) = self.instances[idx];
             if (instance_airgroup_id, instance_air_id) == (airgroup_id, air_id) {
                 air_instance_id += 1;
             }
@@ -191,12 +188,12 @@ impl DistributionCtx {
     #[inline]
     pub fn find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
         let indexes: Vec<_> =
-            self.instances.iter().enumerate().filter(|&(_, &(x, y))| x == airgroup_id && y == air_id).collect();
+            self.instances.iter().enumerate().filter(|&(_, &(x, y, _))| x == airgroup_id && y == air_id).collect();
 
         if indexes.is_empty() {
             (false, 0)
         } else if indexes.len() == 1 {
-            (true, self.instances.iter().position(|&(x, y)| x == airgroup_id && y == air_id).unwrap())
+            (true, self.instances.iter().position(|&(x, y, _)| x == airgroup_id && y == air_id).unwrap())
         } else {
             panic!("Multiple instances found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
         }
@@ -206,7 +203,8 @@ impl DistributionCtx {
     pub fn find_instance_id(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
         let mut count = 0;
         for (global_idx, instance) in self.instances.iter().enumerate() {
-            if instance == &(airgroup_id, air_id) {
+            let (inst_airgroup_id, inst_air_id, _) = instance;
+            if airgroup_id == *inst_airgroup_id && air_id == *inst_air_id {
                 if count == air_instance_id {
                     return Some(global_idx);
                 }
@@ -220,7 +218,8 @@ impl DistributionCtx {
     pub fn is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
         let mut min_owner = self.n_processes + 1;
         for (idx, instance) in self.instances.iter().enumerate() {
-            if instance == &(airgroup_id, air_id) && self.instances_owner[idx].0 < min_owner {
+            let (inst_airgroup_id, inst_air_id, _) = instance;
+            if airgroup_id == *inst_airgroup_id && air_id == *inst_air_id && self.instances_owner[idx].0 < min_owner {
                 min_owner = self.instances_owner[idx].0;
             }
         }
@@ -233,25 +232,15 @@ impl DistributionCtx {
     }
 
     #[inline]
-    pub fn add_instance(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> (bool, usize) {
-        let mut is_mine = false;
-        let owner = (self.n_instances % self.n_processes as usize) as i32;
-        self.instances.push((airgroup_id, air_id));
-        self.instances_owner.push((owner, self.owners_count[owner as usize] as usize, weight));
-        self.owners_count[owner as usize] += 1;
-        self.owners_weight[owner as usize] += weight;
-
-        if owner == self.rank {
-            self.my_instances.push(self.n_instances);
-            is_mine = true;
-        }
+    pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        self.instances.push((airgroup_id, air_id, false));
+        self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
-        (is_mine, self.n_instances - 1)
+        self.n_instances - 1
     }
 
-    #[inline]
-    pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        self.instances.push((airgroup_id, air_id));
+    pub fn add_instance_no_assign_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        self.instances.push((airgroup_id, air_id, true));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
@@ -343,7 +332,7 @@ impl DistributionCtx {
         }
 
         // Populate the HashMap based on group_id and buffer positions
-        for (idx, &(group_id, _)) in self.instances.iter().enumerate() {
+        for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
             #[cfg(feature = "distributed")]
             let pos_buffer = self.roots_gatherv_displ[self.instances_owner[idx].0 as usize] as usize
                 + self.instances_owner[idx].1 * 4;
@@ -358,20 +347,20 @@ impl DistributionCtx {
         }
 
         // Create my eval groups
-        let mut my_air_groups_indices: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+        let mut my_air_groups_indices: HashMap<(usize, usize, bool), usize> = HashMap::new();
         for (loc_idx, glob_idx) in self.my_instances.iter().enumerate() {
             let instance_idx = self.instances[*glob_idx];
-            my_air_groups_indices.entry(instance_idx).or_default().push(loc_idx);
-        }
-
-        // Flatten the HashMap into a single vector for my_air_groups
-        for (_, indices) in my_air_groups_indices {
-            self.my_air_groups.push(indices);
+            if let Some(index) = my_air_groups_indices.get(&instance_idx) {
+                self.my_air_groups[*index].push(loc_idx);
+            } else {
+                my_air_groups_indices.insert(instance_idx, my_air_groups_indices.len());
+                self.my_air_groups.push(vec![loc_idx]);
+            }
         }
 
         //Calculate instances of each airgroup
         self.airgroup_instances = vec![Vec::new(); n_airgroups];
-        for (idx, &(group_id, _)) in self.instances.iter().enumerate() {
+        for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
             self.airgroup_instances[group_id].push(idx);
         }
 
@@ -417,10 +406,10 @@ impl DistributionCtx {
 
             let mut airgroupvalues_full: Vec<Vec<F>> = Vec::new();
             for agg_types in _global_info.agg_types.iter() {
-                let mut values = vec![F::zero(); agg_types.len() * FIELD_EXTENSION];
+                let mut values = vec![F::ZERO; agg_types.len() * FIELD_EXTENSION];
                 for (idx, agg_type) in agg_types.iter().enumerate() {
                     if agg_type.agg_type == 1 {
-                        values[idx * FIELD_EXTENSION] = F::one();
+                        values[idx * FIELD_EXTENSION] = F::ONE;
                     }
                 }
                 airgroupvalues_full.push(values);
@@ -432,18 +421,18 @@ impl DistributionCtx {
                     for (idx, agg_type) in agg_types.iter().enumerate() {
                         if agg_type.agg_type == 0 {
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] +=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] +=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] +=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         } else {
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] *=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] *=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] *=
-                                F::from_canonical_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         }
                         pos += FIELD_EXTENSION;
                     }
@@ -455,7 +444,7 @@ impl DistributionCtx {
         {
             airgroupvalues
                 .into_iter()
-                .map(|inner_vec| inner_vec.into_iter().map(|x| F::from_canonical_u64(x)).collect::<Vec<F>>())
+                .map(|inner_vec| inner_vec.into_iter().map(|x| F::from_u64(x)).collect::<Vec<F>>())
                 .collect()
         }
     }
@@ -587,8 +576,9 @@ impl DistributionCtx {
             }
         }
     }
+
     #[allow(unused_variables)]
-    pub fn distribute_recursive2_proofs(&mut self, alives: &[usize], proofs: &mut [Vec<Option<*mut c_void>>]) {
+    pub fn distribute_recursive2_proofs(&mut self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
         #[cfg(feature = "distributed")]
         {
             // Count number of aggregations that will be done
@@ -602,7 +592,7 @@ impl DistributionCtx {
             // ngroups, ..., ngroups + 2*n_aggregations - 1: proofs that need to be sent to the owner of the aggregation task
 
             for (group_idx, &alive) in alives.iter().enumerate() {
-                let group_proofs: &mut Vec<Option<*mut c_void>> = &mut proofs[group_idx];
+                let group_proofs: &mut Vec<Option<Vec<u64>>> = &mut proofs[group_idx];
                 let n_aggs_group = alive / 2;
 
                 if n_aggs_group == 0 {
@@ -611,16 +601,12 @@ impl DistributionCtx {
                         if group_proofs[0].is_none() {
                             // Receive proof from the owner process
                             let tag = group_idx as i32;
-                            let (mut msg, _status) = self.world.any_process().receive_vec_with_tag::<i8>(tag);
-                            group_proofs[0] = Some(deserialize_zkin_proof_c(msg.as_mut_ptr()));
+                            let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag);
+                            group_proofs[0] = Some(msg);
                         }
-                    } else if group_proofs[0].is_some() {
-                        let (ptr, size) = get_serialized_proof_c(group_proofs[0].unwrap());
+                    } else if let Some(proof) = group_proofs[0].take() {
                         let tag = group_idx as i32;
-                        let buffer = unsafe { std::slice::from_raw_parts(ptr as *const i8, size as usize) };
-                        self.world.process_at_rank(0).send_with_tag(buffer, tag);
-                        zkin_proof_free_c(group_proofs[0].unwrap());
-                        group_proofs[0] = None;
+                        self.world.process_at_rank(0).send_with_tag(&proof[..], tag);
                     }
                 }
 
@@ -636,21 +622,16 @@ impl DistributionCtx {
                             if group_proofs[idx].is_none() {
                                 let tag =
                                     if idx == left_idx { i_proof * 2 + n_groups } else { i_proof * 2 + n_groups + 1 };
-                                let (mut msg, _status) =
-                                    self.world.any_process().receive_vec_with_tag::<i8>(tag as i32);
-                                group_proofs[idx] = Some(deserialize_zkin_proof_c(msg.as_mut_ptr()));
+                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
+                                group_proofs[idx] = Some(msg);
                             }
                         }
                     } else if self.n_processes > 1 {
                         for &idx in &[left_idx, right_idx] {
-                            if group_proofs[idx].is_some() {
+                            if let Some(proof) = group_proofs[idx].take() {
                                 let tag =
                                     if idx == left_idx { i_proof * 2 + n_groups } else { i_proof * 2 + n_groups + 1 };
-                                let (ptr, size) = get_serialized_proof_c(group_proofs[idx].unwrap());
-                                let buffer = unsafe { std::slice::from_raw_parts(ptr as *const i8, size as usize) };
-                                self.world.process_at_rank(owner_rank as i32).send_with_tag(buffer, tag as i32);
-                                zkin_proof_free_c(group_proofs[idx].unwrap());
-                                group_proofs[idx] = None;
+                                self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag as i32);
                             }
                         }
                     }

@@ -1,12 +1,12 @@
 [workspace]
 members = [
     "cli",
+    "curves",
     "common",
     "hints",
     "pilout",
     "proofman",
     "macros",
-    "provers/stark",
     "provers/starks-lib-c",
     "transcript",
     "witness",
@@ -30,19 +30,19 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-proofman-macros = { path = "macros", version = "0.4.0" }
-proofman = { path = "proofman", version = "0.4.0" }
-proofman-common = { path = "common", version = "0.4.0" }
-proofman-hints = { path = "hints", version = "0.4.0" }
-proofman-util = { path = "util", version = "0.4.0" }
-proofman-cli = { path = "cli", version = "0.4.0" }
-pil-std-lib = { path = "pil2-components/lib/std/rs", version = "0.4.0" }
-witness = { path = "witness", version = "0.4.0" }
-pilout = { path = "pilout", version = "0.4.0" }
+proofman-macros = { path = "macros", version = "0.5.0" }
+proofman = { path = "proofman", version = "0.5.0" }
+proofman-common = { path = "common", version = "0.5.0" }
+proofman-hints = { path = "hints", version = "0.5.0" }
+proofman-util = { path = "util", version = "0.5.0" }
+proofman-cli = { path = "cli", version = "0.5.0" }
+pil-std-lib = { path = "pil2-components/lib/std/rs", version = "0.5.0" }
+witness = { path = "witness", version = "0.5.0" }
+pilout = { path = "pilout", version = "0.5.0" }
+p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
+p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
 log = { version = "0", default-features = false }
 env_logger = "0"
-p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3.git", rev = "c3d754ef77b9fce585b46b972af751fe6e7a9803" }
-p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "c3d754ef77b9fce585b46b972af751fe6e7a9803" }
 bytes = "1"
 prost = "0"
 rand = "0"
