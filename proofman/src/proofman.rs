@@ -554,8 +554,7 @@ where
 
         let const_tree_recursive2: Vec<F> =
             create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
-        let const_pols_recursive2: Vec<F> =
-            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
+        let const_pols_recursive2: Vec<F> = create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
 
         let mut current_airgroup_id = instances[my_instances[my_air_groups[0][0]]].0;
         let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(current_airgroup_id, 0);
@@ -563,6 +562,7 @@ where
         load_const_pols_tree(setup_recursive2, &const_tree_recursive2);
 
         let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
+        #[allow(clippy::needless_range_loop)]
         for airgroup_id in 0..pctx.global_info.air_groups.len() {
             let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
             let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;

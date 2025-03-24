@@ -151,7 +151,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
     const_tree_compressor: &[F],
     const_tree_recursive1: &[F],
     const_tree_recursive2: &[F],
-    mut recursive2_proof: &mut [u64],
+    recursive2_proof: &mut [u64],
     aggregate: bool,
     output_dir_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -291,12 +291,12 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
     add_publics_aggregation(&mut recursive1_proof, 0, publics, publics_aggregation);
 
     if aggregate {
-        let updated_proof_size = 2*recursive1_proof.len() + publics_circom_size;
+        let updated_proof_size = 2 * recursive1_proof.len() + publics_circom_size;
 
         let mut updated_proof_recursive2: Vec<u64> = vec![0; updated_proof_size];
         updated_proof_recursive2[publics_circom_size..(publics_circom_size + recursive1_proof.len())]
             .copy_from_slice(&recursive1_proof);
-        updated_proof_recursive2[(publics_circom_size + recursive1_proof.len())..].copy_from_slice(&recursive2_proof);
+        updated_proof_recursive2[(publics_circom_size + recursive1_proof.len())..].copy_from_slice(recursive2_proof);
 
         add_publics_circom(&mut updated_proof_recursive2, 0, pctx, &recursive2_verkey, true);
 
@@ -331,7 +331,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
             true,
         );
 
-        add_publics_aggregation(&mut recursive2_proof, 0, publics, publics_aggregation);
+        add_publics_aggregation(recursive2_proof, 0, publics, publics_aggregation);
         timer_stop_and_log_trace!(GENERATE_RECURSIVE2_PROOF);
         log::info!("{}: ··· Recursive2 Proof generated.", MY_NAME);
         Ok(())
