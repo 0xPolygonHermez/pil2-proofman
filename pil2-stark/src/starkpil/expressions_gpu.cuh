@@ -77,7 +77,7 @@ struct DeviceArguments
 };
 
 __device__ __noinline__ void storePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row);
-__device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, gl64_t *destVals);
+__device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, gl64_t *destVals, uint64_t row);
 __device__ __noinline__ bool caseNoOprations__(StepsParams *d_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row);
 __device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim);
 __device__ __noinline__ Goldilocks::Element*  load__(DeviceArguments *d_deviceArgs, Goldilocks::Element *value, StepsParams* d_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic);

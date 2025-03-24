@@ -504,6 +504,7 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
 
     for(uint64_t i = 0; i < nHints; ++i) {
         Hint hint = setupCtx.expressionsBin.hints[hintId[i]];
+        uint64_t offsetAuxTrace;
 #ifdef __USE_CUDA__
         Goldilocks::Element *buff_gpu = NULL;
 #endif
@@ -517,7 +518,7 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
         uint64_t nRows;
         if(hintFieldDestVal.operand == opType::cm) {
             offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
-            uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos;           
+            offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos;           
 #ifdef __USE_CUDA__
             buff = NULL;
             buff_gpu = params.aux_trace + offsetAuxTrace;
@@ -562,6 +563,32 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
             std::memcpy(&params.airValues[pos], buff, dim * sizeof(Goldilocks::Element));
             delete[] buff;
         }
+#ifdef __USE_CUDA__
+
+        Goldilocks::Element *aux_trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
+        Goldilocks::Element result[4];
+        copyValueHost(aux_trace, params.aux_trace, setupCtx.starkInfo.mapTotalN);
+        /*Goldilocks::Element *modified = aux_trace  + offsetAuxTrace;
+        uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm2"];
+        for(int k=0; k < N*nCols; k++) {
+           std::cout << "modified[" << k << "] = " << Goldilocks::toString(modified[k]) << std::endl;
+        }*/
+
+        Poseidon2Goldilocks::linear_hash(&result[0], &aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)]], setupCtx.starkInfo.mapSectionsN["cm2"] * (1 << setupCtx.starkInfo.starkStruct.nBits));
+       
+        for(int i = 0; i < 4; i++) {
+            cout << "result[" << i << "] = " << Goldilocks::toString(result[i]) << endl;
+        }
+        delete[] aux_trace;
+#else
+        /*Goldilocks::Element result[4];
+        Poseidon2Goldilocks::linear_hash_batch(result, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)]], setupCtx.starkInfo.mapSectionsN["cm2"] * (1 << setupCtx.starkInfo.starkStruct.nBits));
+        for(int i = 0; i < 4; i++) {
+            cout << "result[" << i << "] = " << Goldilocks::toString(result[i]) << endl;
+        }*/
+#endif
+        
     }
 }
 
@@ -633,9 +660,13 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
     uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
-    Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
+#ifdef __USE_CUDA__
+        Goldilocks::Element*  vals = new Goldilocks::Element[dim*N];
+#else
+        Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
         ? new Goldilocks::Element[dim*N]
         : &params.aux_trace[offsetAuxTrace];
+#endif
     
     Dest destStruct(vals,  1 << setupCtx.starkInfo.starkStruct.nBits, 0);
 #ifdef __USE_CUDA__
@@ -645,11 +676,20 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
 
 #ifdef __USE_CUDA__
-    vals = new Goldilocks::Element[dim*N];
     opHintFieldsGPU(d_params, destStruct, N, false, GPUExpressionsCtx);    
 #else
     expressionsCtx.calculateExpressions(params, destStruct, N, false, false);
 #endif
+    cout << "HOLA " << endl;
+    /*Goldilocks::Element result[4];
+    Poseidon2Goldilocks::linear_hash(&result[0], vals, dim*N);
+        for(int i = 0; i < 4; i++) {
+            cout << "result[" << i << "] = " << Goldilocks::toString(result[i]) << endl;
+    }*/
+    // print vls values
+    for(int i = 0; i < dim*N; i++) {
+        cout << "vals[" << i << "] = " << Goldilocks::toString(vals[i]) << endl;
+    }
     for(uint64_t i = 1; i < N; ++i) {
         if(add) {
             if(dim == 1) {

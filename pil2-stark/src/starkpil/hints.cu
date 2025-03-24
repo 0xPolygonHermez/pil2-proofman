@@ -49,6 +49,9 @@ void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilock
 void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size){
     CHECKCUDAERR(cudaMemcpy(target, src, size * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 }
+void copyValueHost( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size){
+    CHECKCUDAERR(cudaMemcpy(target, src, size * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+}
 
 __global__ void opAirgroupValue_(gl64_t * airgroupValue,  gl64_t* val, uint32_t dim, bool add){
     

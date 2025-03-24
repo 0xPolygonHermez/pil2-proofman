@@ -65,15 +65,49 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Expression
             hintOptions2[i] = options2;
         }
 
-        multiplyHintFields(setupCtx, params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, d_params);
+        multiplyHintFields(setupCtx, params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, 
+        hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, d_params);
+        //PRINT HASH
+        Goldilocks::Element *aux_trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
+        Goldilocks::Element result[4];
+        cudaMemcpy(aux_trace, params.aux_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+        Poseidon2Goldilocks::linear_hash(&result[0], &aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)]], setupCtx.starkInfo.mapSectionsN["cm2"] * (1 << setupCtx.starkInfo.starkStruct.nBits));
+        for(int i = 0; i < 4; i++) {
+            cout << "result[" << i << "] = " << Goldilocks::toString(result[i]) << endl;
+        }
+        delete[] aux_trace;
     }
 
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
     accMulHintFields(setupCtx, params, expressionsCtx, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod, expressionsCtxGPU, d_params);
+
+    {
+        //PRINT HASH
+        Goldilocks::Element *aux_trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
+        Goldilocks::Element result[4];
+        cudaMemcpy(aux_trace, params.aux_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+        Poseidon2Goldilocks::linear_hash(&result[0], &aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)]], setupCtx.starkInfo.mapSectionsN["cm2"] * (1 << setupCtx.starkInfo.starkStruct.nBits));
+        for(int i = 0; i < 4; i++) {
+            cout << "result[" << i << "] = " << Goldilocks::toString(result[i]) << endl;
+        }
+        delete[] aux_trace;
+    }
     
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_params);
+
+    {
+        //PRINT HASH
+        Goldilocks::Element *aux_trace = new Goldilocks::Element[setupCtx.starkInfo.mapTotalN];
+        Goldilocks::Element result[4];
+        cudaMemcpy(aux_trace, params.aux_trace, setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+        Poseidon2Goldilocks::linear_hash(&result[0], &aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)]], setupCtx.starkInfo.mapSectionsN["cm2"] * (1 << setupCtx.starkInfo.starkStruct.nBits));
+        for(int i = 0; i < 4; i++) {
+            cout << "result[" << i << "] = " << Goldilocks::toString(result[i]) << endl;
+        }
+        delete[] aux_trace;
+    }
 }
 
 void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers) {
@@ -137,12 +171,15 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
     CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
     
+
+    Goldilocks::Element *d_pBuffHelper = h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
+
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
     TimerStart(STARK_STEP_0);
     for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
         if(setupCtx.starkInfo.customCommits[i].stageWidths[0] != 0) {
-            uint64_t pos = setupCtx.starkInfo.nStages + 2 + i;
+E            uint64_t pos = setupCtx.starkInfo.nStages + 2 + i;
             starks.treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
         }
     }
@@ -228,18 +265,17 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, (uint64_t **)(&d_trees[setupCtx.starkInfo.nStages].nodes), d_buffers);
-    std::cout<<"Abans offload"<<std::endl;
-    exit(0);
+    
     offloadCommit_(setupCtx.starkInfo.nStages + 1, starks.treesGL, (gl64_t *)h_params.aux_trace, (uint64_t *)d_trees[setupCtx.starkInfo.nStages].nodes, proof, setupCtx, params);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
 
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
     TimerStopAndLog(STARK_STEP_Q);
 
-    
 
     TimerStart(STARK_STEP_EVALS);
-
+    min_challenge = setupCtx.starkInfo.challengesMap.size();
+    max_challenge = 0;
     uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
@@ -248,9 +284,11 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
     }
+    CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-    gl64_t * d_LEv = (gl64_t *) h_params.xDivXSub;
+    
+    gl64_t * d_LEv = (gl64_t *) d_pBuffHelper;
 
     computeLEv_inplace(xiChallenge, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, d_LEv);
     evmap_inplace(params.evals, h_params, 0, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
