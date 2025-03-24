@@ -182,10 +182,18 @@ void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_trace, uint6
     uint64_t offset_q = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
     uint64_t qDeg = setupCtx.starkInfo.qDeg;
     uint64_t qDim = setupCtx.starkInfo.qDim;
+
+    Goldilocks::Element S[setupCtx.starkInfo.qDeg];
+    Goldilocks::Element shiftIn = Goldilocks::exp(Goldilocks::inv(Goldilocks::shift()), N);
+    S[0] = Goldilocks::one();
+    for(uint64_t i = 1; i < setupCtx.starkInfo.qDeg; i++) {
+        S[i] = Goldilocks::mul(S[i - 1], shiftIn);
+    }
+
     NTT_Goldilocks nttExtended(NExtended);
     if (nCols > 0)
     {
-        //rick// nttExtended.computeQ_inplace(d_tree, offset_cmQ, offset_q, qDeg, qDim, setupCtx.proverHelpers.S, N, NExtended, nCols, d_buffers);
+        nttExtended.computeQ_inplace(d_tree, offset_cmQ, offset_q, qDeg, qDim, S, N, NExtended, nCols, d_buffers);
     }
 #endif
 }

@@ -35,8 +35,8 @@ struct DeviceArguments
     uint64_t nBlocks;
     uint64_t k_min;
     uint64_t k_max;
-    uint32_t maxNTemp1;
-    uint32_t maxNTemp3;
+    uint32_t maxTemp1Size;
+    uint32_t maxTemp3Size;
     uint32_t nStages;
     uint32_t nCustomCommits;
     uint32_t bufferCommitSize;
@@ -77,11 +77,11 @@ struct DeviceArguments
 };
 
 __device__ __noinline__ void storePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row);
-__device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, gl64_t *destVals);
-__device__ __noinline__ bool caseNoOprations__(StepsParams &d_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row);
+__device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, gl64_t *destVals, uint64_t row);
+__device__ __noinline__ bool caseNoOprations__(StepsParams *d_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row);
 __device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim);
-__device__ __noinline__ Goldilocks::Element*  load__(DeviceArguments *d_deviceArgs, Goldilocks::Element *value, StepsParams& d_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic);
-__global__ __launch_bounds__(128) void computeExpressions_(StepsParams &d_params, DeviceArguments *d_deviceArgs);
+__device__ __noinline__ Goldilocks::Element*  load__(DeviceArguments *d_deviceArgs, Goldilocks::Element *value, StepsParams* d_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic);
+__global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs);
 
 class ExpressionsGPU : public ExpressionsCtx
 {
@@ -95,8 +95,8 @@ public:
     ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers& proverHelpers, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();
 
-    void loadDeviceArgs(uint64_t domainSize, StepsParams & d_params, Dest &dest);
-    void calculateExpressions_gpu(StepsParams &d_params, Dest dest, uint64_t domainSize, bool domainExtended);
+    void loadDeviceArgs(uint64_t domainSize, Dest &dest);
+    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended);
     
 };
 #endif

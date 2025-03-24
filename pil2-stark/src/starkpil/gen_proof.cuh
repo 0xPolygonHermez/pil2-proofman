@@ -72,7 +72,7 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Expression
     HintFieldOptions options2;
     options2.inverse = true;
     accMulHintFields(setupCtx, params, expressionsCtx, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, d_params);
-    updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
+    updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_params);
 }
 
 void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers) {
@@ -100,7 +100,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     ExpressionsPack expressionsCtx_(setupCtx, proverHelpers); //rick: get rid of this
     ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3 //rick
     CHECKCUDAERR(cudaGetLastError());
-    StepsParams d_params = {
+    StepsParams h_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,
         aux_trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
         publicInputs : (Goldilocks::Element *)d_buffers->d_publicInputs,
@@ -114,13 +114,30 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         pConstPolsExtendedTreeAddress : (Goldilocks::Element *)d_buffers->d_constTree,
         pCustomCommitsFixed : nullptr,
     };
+    for(int i=0; i< setupCtx.starkInfo.mapTotalN; i++) {
+        params.aux_trace[i] = Goldilocks::zero();
+    }
+    // Allocate memory and copy data
+    CHECKCUDAERR(cudaMemcpy(h_params.aux_trace, params.aux_trace,setupCtx.starkInfo.mapTotalN * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice)) //rick: treure!!!
+    CHECKCUDAERR(cudaMemcpy(h_params.publicInputs, params.publicInputs, setupCtx.starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMalloc(&h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&h_params.xDivXSub, NExtended *  setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element))); //rick: not needed
+    CHECKCUDAERR(cudaMalloc(&h_params.pCustomCommitsFixed,setupCtx.starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemcpy(h_params.pCustomCommitsFixed, params.pCustomCommitsFixed, setupCtx.starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMalloc(&h_params.proofValues, setupCtx.starkInfo.proofValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemcpy(h_params.proofValues, params.proofValues, setupCtx.starkInfo.proofValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMalloc(&h_params.challenges, setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemcpy(h_params.challenges, params.challenges, setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMalloc(&h_params.airgroupValues, setupCtx.starkInfo.airgroupValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemcpy(h_params.airgroupValues, params.airgroupValues, setupCtx.starkInfo.airgroupValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMalloc(&h_params.airValues, setupCtx.starkInfo.airValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemcpy(h_params.airValues, params.airValues, setupCtx.starkInfo.airValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    StepsParams* d_params;
+    CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
+    CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
+    
 
-    CHECKCUDAERR(cudaMalloc(&d_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&d_params.xDivXSub, NExtended *  setupCtx.starkInfo.openingPoints.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
-    uint64_t customCommitSize = setupCtx.starkInfo.mapTotalNCustomCommitsFixed;
-    CHECKCUDAERR(cudaMalloc(&d_params.pCustomCommitsFixed,customCommitSize * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMemcpy(d_params.pCustomCommitsFixed, params.pCustomCommitsFixed, customCommitSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaGetLastError());
+    Goldilocks::Element *d_pBuffHelper = h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
@@ -134,33 +151,41 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStopAndLog(STARK_STEP_0);
 
     TimerStart(STARK_STEP_1);
-    starks.commitStage_inplace(1, (gl64_t*) d_params.trace, (gl64_t*)d_params.aux_trace, (uint64_t **)(&d_trees[0].nodes), d_buffers);
-    offloadCommit_(1, starks.treesGL, (gl64_t*)d_params.aux_trace, (uint64_t *)d_trees[0].nodes, proof, setupCtx, params);
+    starks.commitStage_inplace(1, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, (uint64_t **)(&d_trees[0].nodes), d_buffers);
+    offloadCommit_(1, starks.treesGL, (gl64_t*)h_params.aux_trace, (uint64_t *)d_trees[0].nodes, proof, setupCtx, params);
     TimerStopAndLog(STARK_STEP_1);
 
     starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
     std::cout<<"Global Challenge"<<Goldilocks::toString(globalChallenge[0])<<" "<<Goldilocks::toString(globalChallenge[1])<<" "<<Goldilocks::toString(globalChallenge[2])<<std::endl;
 
     TimerStart(STARK_STEP_2);
+    uint64_t min_challenge = setupCtx.starkInfo.challengesMap.size();
+    uint64_t max_challenge = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
+            min_challenge = std::min(min_challenge, i);
+            max_challenge = std::max(max_challenge, i);
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
     }
+    CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    
+    TimerStart(STARK_CALCULATE_WITNESS_STD);
+        
+    calculateWitnessSTD_gpu(setupCtx, h_params, expressionsCtx_, true, &expressionsCtx, d_params);
+    calculateWitnessSTD_gpu(setupCtx, h_params, expressionsCtx_, false, &expressionsCtx, d_params);
 
-    std::cout<<"Fins aqui arriba bé"<<std::endl;
-    exit(0);
-    calculateWitnessSTD_gpu(setupCtx, params, expressionsCtx_, true, &expressionsCtx, &d_params);
-    calculateWitnessSTD_gpu(setupCtx, params, expressionsCtx_, false, &expressionsCtx, &d_params);
+    TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);
+
 
     TimerStart(CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, expressionsCtx, d_buffers, params, d_params, 2);
+    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, d_params, 2);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage_inplace(2, (gl64_t*)d_params.trace, (gl64_t*)d_params.aux_trace, (uint64_t **)(&d_trees[1].nodes), d_buffers);
-    offloadCommit_(2, starks.treesGL, (gl64_t*)d_params.aux_trace, (uint64_t *)d_trees[1].nodes, proof, setupCtx, params);
+    starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, (uint64_t **)(&d_trees[1].nodes), d_buffers);
+    offloadCommit_(2, starks.treesGL, (gl64_t*)h_params.aux_trace, (uint64_t *)d_trees[1].nodes, proof, setupCtx, params);
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
 
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
@@ -176,24 +201,35 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStopAndLog(STARK_STEP_2);
 
     TimerStart(STARK_STEP_Q);
+    min_challenge = setupCtx.starkInfo.challengesMap.size();
+    max_challenge = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 1) {
+            min_challenge = std::min(min_challenge, i);
+            max_challenge = std::max(max_challenge, i);
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
     }
-    calculateExpression(setupCtx, expressionsCtx, params, d_params, (Goldilocks::Element *)(d_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
+    CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+
+    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
-    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, (gl64_t *)d_params.trace, (gl64_t *)d_params.aux_trace, (uint64_t **)(&d_trees[setupCtx.starkInfo.nStages].nodes), d_buffers);
-    offloadCommit_(setupCtx.starkInfo.nStages + 1, starks.treesGL, (gl64_t *)d_params.aux_trace, (uint64_t *)d_trees[setupCtx.starkInfo.nStages].nodes, proof, setupCtx, params);
+    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, (uint64_t **)(&d_trees[setupCtx.starkInfo.nStages].nodes), d_buffers);
+    
+    offloadCommit_(setupCtx.starkInfo.nStages + 1, starks.treesGL, (gl64_t *)h_params.aux_trace, (uint64_t *)d_trees[setupCtx.starkInfo.nStages].nodes, proof, setupCtx, params);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
 
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
     TimerStopAndLog(STARK_STEP_Q);
 
-    TimerStart(STARK_STEP_EVALS);
+    std::cout<<" Fins la Q tot be"<<std::endl;
+    exit(0);
 
+    TimerStart(STARK_STEP_EVALS);
+    min_challenge = setupCtx.starkInfo.challengesMap.size();
+    max_challenge = 0;
     uint64_t xiChallengeIndex = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
@@ -202,12 +238,14 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
     }
+    CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-    gl64_t * d_LEv = (gl64_t *) d_params.xDivXSub;
+    
+    gl64_t * d_LEv = (gl64_t *) d_pBuffHelper;
 
     computeLEv_inplace(xiChallenge, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, d_LEv);
-    evmap_inplace(params.evals, d_params, 0, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
+    evmap_inplace(params.evals, h_params, 0, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
     
     
 
@@ -237,16 +275,16 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
 
     //params.xDivXSub = &pBuffHelper[0];
-    calculateXDivXSub_inplace(0, xiChallenge, setupCtx, d_buffers, (gl64_t*) d_params.xDivXSub);
+    calculateXDivXSub_inplace(0, xiChallenge, setupCtx, d_buffers, (gl64_t*) h_params.xDivXSub);
     
     // FRI expressions
-    calculateExpression(setupCtx, expressionsCtx, params, d_params, (Goldilocks::Element *)(d_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
+    //rick// calculateExpression(setupCtx, expressionsCtx, params, d_params, (Goldilocks::Element *)(d_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
     
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
     uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
-    gl64_t *d_friPol = (gl64_t *)(d_params.aux_trace + friPol_offset);
+    gl64_t *d_friPol = (gl64_t *)(h_params.aux_trace + friPol_offset);
     
     TimerStart(STARK_FRI_FOLDING);
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
@@ -260,7 +298,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            merkelizeFRI_inplace(setupCtx, params, d_params, step, proof, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, false);
+            merkelizeFRI_inplace(setupCtx, params, h_params, step, proof, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, false);
             starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], HASH_SIZE);
         }
         else
@@ -288,7 +326,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    proveQueries_inplace(setupCtx, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, d_trees, nTrees, d_buffers, setupCtx.starkInfo.nStages, d_params);
+    proveQueries_inplace(setupCtx, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, d_trees, nTrees, d_buffers, setupCtx.starkInfo.nStages, h_params);
     
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
 
@@ -312,14 +350,20 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     TimerStopAndLog(STARK_PROOF);    
 
-
+    // Free memory
     ///rick!! falta el free dels trees
     cudaFree(d_trees[0].nodes);
     cudaFree(d_trees[1].nodes);
     cudaFree(d_trees[2].nodes);
-    cudaFree(d_params.xDivXSub);
-    if(d_params.pCustomCommitsFixed != nullptr)
-        cudaFree(d_params.pCustomCommitsFixed);
+    if(h_params.pCustomCommitsFixed != nullptr)
+        cudaFree(h_params.pCustomCommitsFixed);
+    cudaFree(h_params.evals);
+    cudaFree(h_params.xDivXSub);
+    cudaFree(h_params.proofValues);
+    cudaFree(h_params.challenges);
+    cudaFree(h_params.airgroupValues);
+    cudaFree(h_params.airValues);
+    
 }
 
 #endif

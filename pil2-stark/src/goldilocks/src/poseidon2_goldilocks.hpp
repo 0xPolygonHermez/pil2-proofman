@@ -211,7 +211,7 @@ inline void Poseidon2Goldilocks::hash_seq(Goldilocks::Element (&state)[CAPACITY]
 
 #include "poseidon2_goldilocks_avx.hpp"
 
-// #ifdef __AVX512__
-// #include "poseidon2_goldilocks_avx512.hpp"
-// #endif
+#ifdef __AVX512__
+ #include "poseidon2_goldilocks_avx512.hpp"
+ #endif
 #endif

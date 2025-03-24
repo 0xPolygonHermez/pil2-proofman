@@ -125,6 +125,9 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
     TimerStopAndLog(STARK_STEP_Q);
 
+    std::cout<<" Fins la Q tot be"<<std::endl;
+    exit(0);
+
     TimerStart(STARK_STEP_EVALS);
 
     uint64_t xiChallengeIndex = 0;

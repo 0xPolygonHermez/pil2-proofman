@@ -34,6 +34,8 @@ template <typename ElementType>
 void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers, bool vadcop)
 {
 
+#if 0
+
     TimerStart(STARK_PROOF);
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time0 = omp_get_wtime();
@@ -438,5 +440,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     {
        cudaFree(d_trees[i].nodes);
     }
+#endif
 }
 #endif

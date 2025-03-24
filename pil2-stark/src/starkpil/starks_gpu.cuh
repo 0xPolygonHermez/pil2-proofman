@@ -115,7 +115,7 @@ __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t sizeLeaves, uint64_t *d
 
 void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, GPUTree *d_trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, uint32_t nStages, StepsParams &d_params);
 
-void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, DeviceCommitBuffers *d_buffers, StepsParams &params, StepsParams &d_params, int64_t step);
+void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams& h_params, StepsParams *d_params, int64_t step);
 
-void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams& params, StepsParams& d_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse = false);
+void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams* d_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse = false);
 #endif
