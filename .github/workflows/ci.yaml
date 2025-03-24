@@ -192,15 +192,15 @@ jobs:
         run: |
           node --max-old-space-size=65536 pil2-proofman-js/src/main_setup.js -a ./examples/fibonacci-square/pil/build.pilout -b ./examples/fibonacci-square/build -r
 
-      - name: Cargo check-setup
-        run: cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ -a
-
       - name: Generate PIL Helpers Fibonacci Square
         run: |
           cargo run --bin proofman-cli pil-helpers --pilout ./examples/fibonacci-square/pil/build.pilout --path ./examples/fibonacci-square/src -o
 
       - name: Cargo build
         run: RUST_BACKTRACE=1 cargo build -v
+
+      - name: Cargo check-setup
+        run: cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ -a
 
       - name: Generate Custom Commits Fixed Fibonacci Square
         run: |
