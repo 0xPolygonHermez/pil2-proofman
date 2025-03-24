@@ -23,7 +23,9 @@ struct MaxSizes
 
 void *gen_device_commit_buffers(void *maxSizes_)
 {
+
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
+
     CHECKCUDAERR(cudaSetDevice(0));
     DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
     CHECKCUDAERR(cudaMalloc(&buffers->d_trace, maxSizes->maxTraceArea * sizeof(Goldilocks::Element)));

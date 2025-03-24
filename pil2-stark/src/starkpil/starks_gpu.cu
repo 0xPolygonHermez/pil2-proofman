@@ -794,45 +794,43 @@ void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQu
     return;
 }
 
-void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, DeviceCommitBuffers *d_buffers, StepsParams &params, StepsParams &d_params, int64_t step){
+void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams& h_params, StepsParams *d_params, int64_t step){
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBits);
     std::vector<Dest> dests;
-    for (uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++)
-    {
-        if (setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step)
-        {
+    for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
+        if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
+
+            Goldilocks::Element* pAddress = step == 1 ? h_params.trace : h_params.aux_trace;
             uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos;
             Dest destStruct(NULL, domainSize, setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
-            destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
-            destStruct.dest_gpu = (Goldilocks::Element *)(d_buffers->d_aux_trace + offset);
-            dests.push_back(destStruct);
+            destStruct.addParams(setupCtx.starkInfo.cmPolsMap[i].expId, setupCtx.starkInfo.cmPolsMap[i].dim, false);
+            destStruct.dest_gpu = (Goldilocks::Element *)(pAddress + offset);            
+            expressionsCtx.calculateExpressions_gpu(d_params, destStruct, domainSize, false);
         }
     }
-    if (dests.size() == 0)
-        return;
-        
-    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
         
 }
 
-void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams& params, StepsParams& d_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse){
+void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams* d_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse){
     
     uint64_t domainSize;
+    bool domaainExtended;
     if (expressionId == setupCtx.starkInfo.cExpId || expressionId == setupCtx.starkInfo.friExpId)
     {
         setupCtx.expressionsBin.expressionsInfo[expressionId].destDim = 3;
         domainSize = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+        domaainExtended = true;
     }
     else
     {
         domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
+        domaainExtended = false;
     }
-    Dest destStructq(NULL, domainSize, 0, expressionId);
-    destStructq.addParams(setupCtx.expressionsBin.expressionsInfo[expressionId], inverse);
-    destStructq.dest_gpu = dest_gpu;
-    std::vector<Dest> dests = {destStructq};
+    Dest destStruct(NULL, domainSize, 0, expressionId);
+    destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
+    destStruct.dest_gpu = dest_gpu;
     
-    expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
+    expressionsCtx.calculateExpressions_gpu(d_params, destStruct, domainSize, domaainExtended);
 
 }

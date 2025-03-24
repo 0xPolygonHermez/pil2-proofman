@@ -10,7 +10,6 @@
 
 void offloadCommit(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, uint64_t *d_tree, FRIProof<Goldilocks::Element> &proof, SetupCtx &setupCtx)
 {
-
     double time = omp_get_wtime();
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
@@ -33,7 +32,7 @@ void offloadCommit(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, u
 template <typename ElementType>
 void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers, bool vadcop)
 {
-
+    #if 0
     TimerStart(STARK_PROOF);
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time0 = omp_get_wtime();
@@ -60,7 +59,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         d_trees[i].nFieldElements = nFieldElements;
     }
 
-    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 2, 1176, 465, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3
 
     TranscriptType transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
@@ -169,7 +168,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
     uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
 
-    Dest destStruct(res, N);
+    /*Dest destStruct(res, N);
     cudaMalloc(&destStruct.dest_gpu, N * FIELD_EXTENSION * sizeof(Goldilocks::Element));
     destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[numFieldId]);
     destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[denFieldId], true);
@@ -182,7 +181,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     expressionsCtx.calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
 
-    cudaFree(destStruct.dest_gpu);
+    cudaFree(destStruct.dest_gpu);*/
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
@@ -438,5 +437,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     {
        cudaFree(d_trees[i].nodes);
     }
+#endif
 }
 #endif

@@ -43,6 +43,7 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx
 void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile) {
     TimerStart(STARK_PROOF);
 
+
     ProverHelpers proverHelpers(setupCtx.starkInfo, false);
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
@@ -55,6 +56,13 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
+    //initialize params.aux_trace to zero
+    /*for(int i=0; i< setupCtx.starkInfo.mapTotalN; i++) {
+        params.aux_trace[i] = Goldilocks::zero();
+    }*/
+    for(int i=0; i< setupCtx.starkInfo.mapTotalN; i++) {
+        params.aux_trace[i] = Goldilocks::zero();
+    }
     TimerStart(STARK_STEP_0);
     for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
         if(setupCtx.starkInfo.customCommits[i].stageWidths[0] != 0) {
@@ -68,7 +76,16 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     starks.commitStage(1, params.trace, params.aux_trace, proof, pBuffHelper);
     TimerStopAndLog(STARK_STEP_1);
 
+    //print root of step 0
+    std::cout<<" Root step 1: "<<Goldilocks::toString(proof.proof.roots[0][0])<< " " <<
+                                 Goldilocks::toString(proof.proof.roots[0][1])<< " " <<
+                                 Goldilocks::toString(proof.proof.roots[0][2])<< " " <<
+                                 Goldilocks::toString(proof.proof.roots[0][3])<< " " <<
+                                 std::endl;
+
     starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
+
+    std::cout<<"Global Challenge"<<Goldilocks::toString(globalChallenge[0])<<" "<<Goldilocks::toString(globalChallenge[1])<<" "<<Goldilocks::toString(globalChallenge[2])<<std::endl;
 
     TimerStart(STARK_STEP_2);
     TimerStart(STARK_CALCULATE_WITNESS_STD);
@@ -79,16 +96,26 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     }
 
     calculateWitnessSTD(setupCtx, params, expressionsCtx, true);
-    calculateWitnessSTD(setupCtx, params, expressionsCtx, false);
+    calculateWitnessSTD(setupCtx, params, expressionsCtx, false);    
+
     TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);
     
     TimerStart(CALCULATE_IM_POLS);
-    starks.calculateImPolsExpressions(2, params, expressionsCtx);
+    //starks.calculateImPolsExpressions(2, params, expressionsCtx);
     TimerStopAndLog(CALCULATE_IM_POLS);
-
     TimerStart(STARK_COMMIT_STAGE_2);
+
     starks.commitStage(2, nullptr, params.aux_trace, proof, pBuffHelper);
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
+
+    //print root of step 0
+    std::cout<<" Root step 2: "<<Goldilocks::toString(proof.proof.roots[1][0])<< " " <<
+    Goldilocks::toString(proof.proof.roots[1][1])<< " " <<
+    Goldilocks::toString(proof.proof.roots[1][2])<< " " <<
+    Goldilocks::toString(proof.proof.roots[1][3])<< " " <<
+    std::endl;
+
+    
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
 
     uint64_t a = 0;
@@ -104,7 +131,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     proof.proof.setAirgroupValues(params.airgroupValues);
     proof.proof.setAirValues(params.airValues);
-    TimerStopAndLog(STARK_STEP_2);
+   //TimerStopAndLog(STARK_STEP_2);
 
     TimerStart(STARK_STEP_Q);
 
@@ -122,6 +149,8 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
+    std::cout<<"Abans offload"<<std::endl;
+    exit(0);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
     TimerStopAndLog(STARK_STEP_Q);
 

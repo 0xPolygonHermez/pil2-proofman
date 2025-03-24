@@ -1,6 +1,11 @@
 #include "hints.hpp"
 #include "expressions_gpu.cuh"
 
+void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx){
+
+    ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
+    expressionsCtx->calculateExpressions_gpu( d_params, dest, nRows, domainExtended);
+}
 
 void allocateDestGPU(Goldilocks::Element**buff, uint64_t size){
     cudaMalloc((void**) buff, size * sizeof(Goldilocks::Element));
@@ -22,6 +27,7 @@ void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilock
         CHECKCUDAERR(cudaMemcpy(buffer + offset + j * nCols, &values[j * dim], dim * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     }*/
 
+    //rick: we ara copying all the seciton!!
     PolMap polInfo = setupCtx.starkInfo.cmPolsMap[idPol];
     uint64_t deg = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t dim = polInfo.dim;
@@ -39,3 +45,35 @@ void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilock
     CHECKCUDAERR(cudaMemcpy(buffer + sectionOffest, auxSection, nCols * deg * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     delete[] auxSection;
 }
+
+void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size){
+    CHECKCUDAERR(cudaMemcpy(target, src, size * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+}
+
+__global__ void opAirgroupValue_(gl64_t * airgroupValue,  gl64_t* val, uint32_t dim, bool add){
+    
+    if(add){
+        if(dim == 1){
+            airgroupValue[0] += val[0];
+        } else {
+            airgroupValue[0] += val[0];
+            airgroupValue[1] += val[1];
+            airgroupValue[2] += val[2];
+        }
+    }else{
+        if (dim ==1)
+        {
+            airgroupValue[0] *= val[0];
+            
+        }else{
+            Goldilocks3GPU::mul( (Goldilocks3GPU::Element*)airgroupValue, (Goldilocks3GPU::Element*)airgroupValue, (Goldilocks3GPU::Element*)val);
+        }
+    }
+        
+}
+void opAirgroupValueGPU(Goldilocks::Element * airgroupValue,  Goldilocks::Element* val, uint32_t dim, bool add){
+    opAirgroupValue_<<<1, 1>>>((gl64_t*)airgroupValue, (gl64_t*)val, dim, add);
+}
+
+
+

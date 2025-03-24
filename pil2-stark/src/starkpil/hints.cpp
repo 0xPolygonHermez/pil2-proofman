@@ -407,24 +407,40 @@ uint64_t setHintField(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Eleme
 
     auto hintFieldVal = hintField->values[0];
     if(hintFieldVal.operand == opType::cm) {
+
+        Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage > 1 ? params.aux_trace : params.trace;
 #ifdef __USE_CUDA__
-        Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage > 1 ? d_params->aux_trace : d_params->trace;
         setPolynomialGPU(setupCtx, pAddress, values, hintFieldVal.id);
 #else
-        Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage > 1 ? params.aux_trace : params.trace;
         setPolynomial(setupCtx, pAddress, values, hintFieldVal.id);
 #endif
     } else if(hintFieldVal.operand == opType::airgroupvalue) {
         if(setupCtx.starkInfo.airgroupValuesMap[hintFieldVal.id].stage > 1) {
+#ifdef __USE_CUDA__
+            copyValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldVal.id, values, FIELD_EXTENSION);      
+#else
             std::memcpy(&params.airgroupValues[FIELD_EXTENSION*hintFieldVal.id], values, FIELD_EXTENSION * sizeof(Goldilocks::Element));
+#endif
         } else {
-           params.airgroupValues[FIELD_EXTENSION*hintFieldVal.id] = values[0]; 
+#ifdef __USE_CUDA__
+            copyValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldVal.id, values, 1);
+#else
+            params.airgroupValues[FIELD_EXTENSION*hintFieldVal.id] = values[0]; 
+#endif
         }
     } else if(hintFieldVal.operand == opType::airvalue) {
         if(setupCtx.starkInfo.airValuesMap[hintFieldVal.id].stage > 1) {
+#ifdef __USE_CUDA__
+            copyValueGPU(params.airValues + FIELD_EXTENSION*hintFieldVal.id, values, FIELD_EXTENSION);
+#else
             std::memcpy(&params.airValues[FIELD_EXTENSION*hintFieldVal.id], values, FIELD_EXTENSION * sizeof(Goldilocks::Element));
+#endif
         } else {
-           params.airValues[FIELD_EXTENSION*hintFieldVal.id] = values[0]; 
+#ifdef __USE_CUDA__
+            copyValueGPU(params.airValues + FIELD_EXTENSION*hintFieldVal.id, values, 1);
+#else
+            params.airValues[FIELD_EXTENSION*hintFieldVal.id] = values[0]; 
+#endif
         }
     } else {
         zklog.error("Only committed pols and airgroupvalues can be set");
@@ -477,14 +493,13 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
     }
 }
 
-void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, StepsParams * d_params) {
+void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, StepsParams* d_params) {
     if(setupCtx.expressionsBin.hints.size() == 0) {
         zklog.error("No hints were found.");
         exitProcess();
         exit(-1);
     }
 
-    std::vector<Dest> dests;
     Goldilocks::Element *buff = NULL;
 
     for(uint64_t i = 0; i < nHints; ++i) {
@@ -492,7 +507,6 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
 #ifdef __USE_CUDA__
         Goldilocks::Element *buff_gpu = NULL;
 #endif
-
         std::string hintDest = hintFieldNameDest[i];
         auto hintFieldDest = std::find_if(hint.fields.begin(), hint.fields.end(), [hintDest](const HintField& hintField) {
             return hintField.name == hintDest;
@@ -503,17 +517,20 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
         uint64_t nRows;
         if(hintFieldDestVal.operand == opType::cm) {
             offset = setupCtx.starkInfo.mapSectionsN["cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage)];
-            buff = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos];
-            nRows = 1 << setupCtx.starkInfo.starkStruct.nBits;
-
+            uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos;           
 #ifdef __USE_CUDA__
             buff = NULL;
-            buff_gpu = (Goldilocks::Element *)(d_params->aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stage), false)] + setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].stagePos);
+            buff_gpu = params.aux_trace + offsetAuxTrace;
+#else
+            buff = &params.aux_trace[offsetAuxTrace];           
 #endif
+            nRows = 1 << setupCtx.starkInfo.starkStruct.nBits;
         } else if (hintFieldDestVal.operand == opType::airvalue) {
             nRows = 1;
             buff = new Goldilocks::Element[FIELD_EXTENSION*nRows];
-            //rick: tema nrows y block size gpu
+#ifdef __USE_CUDA__
+            allocateDestGPU(&buff_gpu, FIELD_EXTENSION*nRows);
+#endif
         } else {
             zklog.error("Only committed pols and airvalues can be set");
             exitProcess();
@@ -522,24 +539,18 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
 
         Dest destStruct(buff, nRows, offset);
 #ifdef __USE_CUDA__
-            destStruct.dest_gpu = buff_gpu;
+        destStruct.dest_gpu = buff_gpu;
 #endif
 
         addHintField(setupCtx, params, hintId[i], destStruct, hintFieldName1[i], hintOptions1[i]);
         addHintField(setupCtx, params, hintId[i], destStruct, hintFieldName2[i], hintOptions2[i]);
-
 #ifdef __USE_CUDA__
-    ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
-    uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    // expressionsCtx->calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
-    // for(uint64_t i = 0; i < nHints; ++i) {
-    //     if(dests[i].dest != NULL) {
-    //             freeDestGPU(dests[i].dest_gpu);            
-    //     }
-    // }
-       
+        opHintFieldsGPU(d_params, destStruct, nRows, false, GPUExpressionsCtx);
+        if(destStruct.dest != NULL) {
+            freeDestGPU(destStruct.dest_gpu);            
+        }
 #else
-    expressionsCtx.calculateExpressions(params, destStruct, nRows, false, false);
+        expressionsCtx.calculateExpressions(params, destStruct, nRows, false, false);
 #endif
 
         if(hintFieldDestVal.operand == opType::airvalue) {
@@ -611,8 +622,8 @@ uint64_t getHintId(SetupCtx& setupCtx, uint64_t hintId, std::string name) {
 }
 
 void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, StepsParams * d_params) {
+    
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
     auto hintFieldDest = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldNameDest](const HintField& hintField) {
@@ -621,19 +632,21 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
-    
+    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
     Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
         ? new Goldilocks::Element[dim*N]
-        : &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
+        : &params.aux_trace[offsetAuxTrace];
     
     Dest destStruct(vals,  1 << setupCtx.starkInfo.starkStruct.nBits, 0);
+#ifdef __USE_CUDA__
+        destStruct.dest_gpu = params.aux_trace + offsetAuxTrace;
+#endif
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
 
 #ifdef __USE_CUDA__
-    // ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
-    // uint64_t domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    // expressionsCtx->calculateExpressions_gpu(params, d_params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, domainSize);
+    vals = new Goldilocks::Element[dim*N];
+    opHintFieldsGPU(d_params, destStruct, N, false, GPUExpressionsCtx);    
 #else
     expressionsCtx.calculateExpressions(params, destStruct, N, false, false);
 #endif
@@ -652,16 +665,19 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
             }
         }
     }
-
     setHintField(setupCtx, params, vals, hintId, hintFieldNameDest);
     setHintField(setupCtx, params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
 
+#ifdef __USE_CUDA__
+    delete[] vals;
+#else
     if(setupCtx.starkInfo.verify_constraints) {
         delete[] vals;
     }
+#endif
 }
 
-uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
+uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, StepsParams * d_params) {
     
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -673,9 +689,19 @@ uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t h
     Goldilocks::Element vals[3];
     
     Dest destStruct(vals, 1, 0);
+#ifdef __USE_CUDA__
+    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
+    destStruct.dest_gpu = params.aux_trace + offsetAuxTrace;
+    destStruct.dest = nullptr;
+
+#endif
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
 
+#ifdef __USE_CUDA__
+    opHintFieldsGPU(d_params, destStruct, 1, false, GPUExpressionsCtx); 
+    opAirgroupValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldAirgroupVal.id, destStruct.dest_gpu, destStruct.dim, add);
+#else
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers, 1);
     expressionsCtx.calculateExpressions(params, destStruct, 1, false, false);
@@ -694,6 +720,7 @@ uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t h
             Goldilocks3::mul((Goldilocks3::Element &)airgroupValue[0], (Goldilocks3::Element &)airgroupValue[0], (Goldilocks3::Element &)vals[0]);
         }
     }
+#endif
 
     return hintFieldAirgroupVal.id;
 }
