@@ -531,8 +531,6 @@ where
             }
         });
 
-        pctx.dctx_barrier();
-
         let setups = setups_handle.join().expect("Setups thread panicked");
         check_tree_paths_vadcop(&pctx, &setups)?;
 
@@ -549,14 +547,36 @@ where
 
         let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
-        let mut recursive1_proofs = vec![Vec::new(); proofs.len()];
         let const_tree_aggregation: Vec<F> =
             create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
         let const_pols_aggregation: Vec<F> =
             create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
 
+        let const_tree_recursive2: Vec<F> =
+            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
+        let const_pols_recursive2: Vec<F> =
+            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
+
+        let mut current_airgroup_id = instances[my_instances[my_air_groups[0][0]]].0;
+        let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(current_airgroup_id, 0);
+        load_const_pols(&setup_recursive2.setup_path, setup_recursive2.const_pols_size, &const_pols_recursive2);
+        load_const_pols_tree(setup_recursive2, &const_tree_recursive2);
+
+        let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
+        for airgroup_id in 0..pctx.global_info.air_groups.len() {
+            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
+            let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
+            recursive2_proofs[airgroup_id] = create_buffer_fast(setup.proof_size as usize + publics_aggregation);
+        }
+        let mut recursive2_initialized = vec![false; pctx.global_info.air_groups.len()];
         for air_groups in my_air_groups.iter() {
             let (airgroup_id, air_id, _) = instances[my_instances[air_groups[0]]];
+            if airgroup_id != current_airgroup_id {
+                current_airgroup_id = airgroup_id;
+                let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(current_airgroup_id, air_id);
+                load_const_pols(&setup_recursive2.setup_path, setup_recursive2.const_pols_size, &const_pols_recursive2);
+                load_const_pols_tree(setup_recursive2, &const_tree_recursive2);
+            }
             let const_pols_compressor;
             let const_tree_compressor;
             let const_pols_recursive1;
@@ -590,7 +610,7 @@ where
             for my_instance_id in air_groups.iter() {
                 let instance_id = my_instances[*my_instance_id];
 
-                let proof_recursive = generate_vadcop_recursive1_proof(
+                generate_vadcop_recursive1_proof(
                     &pctx,
                     &setups,
                     instance_id,
@@ -601,12 +621,17 @@ where
                     &prover_buffer,
                     const_pols_compressor,
                     const_pols_recursive1,
+                    &const_pols_recursive2,
                     const_tree_compressor,
                     const_tree_recursive1,
+                    &const_tree_recursive2,
+                    &mut recursive2_proofs[airgroup_id],
+                    recursive2_initialized[airgroup_id],
                     output_dir_path.clone(),
                 )
                 .expect("Failed to generate recursive proof");
-                recursive1_proofs[*my_instance_id] = proof_recursive;
+
+                recursive2_initialized[airgroup_id] = true;
             }
         }
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
@@ -614,7 +639,7 @@ where
             Self::MY_NAME,
             &pctx,
             &setups,
-            &recursive1_proofs,
+            &recursive2_proofs,
             &circom_witness,
             &publics,
             &trace,
