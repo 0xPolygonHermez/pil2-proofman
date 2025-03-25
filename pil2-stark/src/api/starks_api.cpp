@@ -14,10 +14,27 @@
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
 
+#ifdef __USE_CUDA__
+#include "gen_recursive_proof.cuh"
+#include "gen_proof.cuh"
+#include "gen_commit.cuh"
+#endif
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
 using namespace CPlusPlusLogging;
+
+struct MaxSizes
+{
+    uint64_t maxN;
+    uint64_t maxNExtended;
+    uint64_t maxTraceArea;
+    uint64_t maxNTTArea;
+    uint64_t maxConstArea;
+    uint64_t maxNPublics;
+    uint64_t maxAuxTraceArea;
+    uint64_t maxConstTreeSize;
+};
 
 void save_challenges(void *pGlobalChallenge, char* globalInfoFile, char *fileDir) {
 
@@ -93,9 +110,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive, bool verify)
+void *stark_info_new(char *filename, bool recursive, bool verify, bool gpu)
 {
-    auto starkInfo = new StarkInfo(filename, recursive, verify);
+    auto starkInfo = new StarkInfo(filename, recursive, verify, false);
 
     return starkInfo;
 }
@@ -348,24 +365,40 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
     }
 }
 
-#ifndef __USE_CUDA__
 void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers) {
+#ifndef __USE_CUDA__
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
     Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    NTT_Goldilocks ntt(N);
-    ntt.extendPol(auxTraceGL, traceGL, NExtended, N, nCols);
-
     MerkleTreeGL mt(arity, true, NExtended, nCols);
+
+    NTT_Goldilocks ntt(N);
+    ntt.extendPol(auxTraceGL, traceGL, NExtended, N, nCols, &auxTraceGL[NExtended * nCols + mt.numNodes]);
+
     mt.setSource(auxTraceGL);
     mt.setNodes(&auxTraceGL[NExtended * nCols]);
     mt.merkelize();
     mt.getRoot(rootGL);
-}
+#else
+    double time = omp_get_wtime();
+
+    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
+    uint64_t N = 1 << nBits;
+    uint64_t NExtended = 1 << nBitsExt;
+
+
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
+    CHECKCUDAERR(cudaSetDevice(0));
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, trace, sizeTrace, cudaMemcpyHostToDevice));
+    genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_buffers);
+    time = omp_get_wtime() - time;
+    std::cout << "rick genRCommit_gpu time: " << time << std::endl;
 #endif
+}
 
 
 void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements)
@@ -486,28 +519,99 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
     return setHintFieldGlobalConstraint(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)proofValues, (Goldilocks::Element *)values, hintId, string(hintFieldName));
 }
 
-#ifndef __USE_CUDA__
 // Gen proof
 // =================================================================================
 void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers) {
-    genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
+    auto setupCtx = *(SetupCtx *)pSetupCtx;
+    if (!setupCtx.starkInfo.gpu) {
+        genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
+    } else {
+#ifdef __USE_CUDA__
+        double time = omp_get_wtime();
+        DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+        SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+        StepsParams *params = (StepsParams *)params_;
+
+        uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+        uint64_t sizeTrace = N * (setupCtx->starkInfo.mapSectionsN["cm1"]) * sizeof(Goldilocks::Element);
+        uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
+        uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
+
+        CHECKCUDAERR(cudaSetDevice(0));
+        CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, params->trace, sizeTrace, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_buffers->d_constPols, params->pConstPolsAddress, sizeConstPols, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_buffers->d_constTree, params->pConstPolsExtendedTreeAddress, sizeConstTree, cudaMemcpyHostToDevice));
+
+        time = omp_get_wtime() - time;
+        std::cout << "rick genDeviceBuffers time: " << time << std::endl;
+
+        time = omp_get_wtime();
+        genProof_gpu(*setupCtx, airgroupId, airId, instanceId, *params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), d_buffers);
+        time = omp_get_wtime() - time;
+        std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
+#endif
+    }
 }
 
 // Recursive proof
 // ================================================================================= 
 void *gen_device_commit_buffers(void *max_sizes)
 {
+#ifdef __USE_CUDA__
+    MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
+    CHECKCUDAERR(cudaSetDevice(0));
+    DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
+    CHECKCUDAERR(cudaMalloc(&buffers->d_trace, maxSizes->maxTraceArea * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->maxConstArea * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_constTree, maxSizes->maxConstTreeSize * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_publicInputs, maxSizes->maxNPublics * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_aux_trace, maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_forwardTwiddleFactors, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_inverseTwiddleFactors, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_r, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_ntt, maxSizes->maxNTTArea * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_tree, maxSizes->maxNExtended * sizeof(uint64_t)));
+    return (void *)buffers;
+#else 
     return NULL;
+#endif
 };
 
 void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
+    auto setupCtx = *(SetupCtx *)pSetupCtx;
+    if (!setupCtx.starkInfo.gpu) {
+        genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), vadcop);
+    } else {
+#ifdef __USE_CUDA__
+        json globalInfo;
+        file2json(globalInfoFile, globalInfo);
 
-    genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), vadcop);
-}
+        DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+        SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+        double time = omp_get_wtime();
 
+        CHECKCUDAERR(cudaSetDevice(0));
+        uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+        uint64_t sizeTrace = N * (setupCtx->starkInfo.mapSectionsN["cm1"]) * sizeof(Goldilocks::Element);
+        uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
+        uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
+
+        CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, trace, sizeTrace, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_buffers->d_constPols, pConstPols, sizeConstPols, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_buffers->d_constTree, pConstTree, sizeConstTree, cudaMemcpyHostToDevice));
+
+        time = omp_get_wtime() - time;
+        std::cout << "rick genDeviceBuffers time: " << time << std::endl;
+
+        time = omp_get_wtime();
+        genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), d_buffers, vadcop);
+        time = omp_get_wtime() - time;
+        std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 #endif
+    }
+}
 
 void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
     json globalInfo;

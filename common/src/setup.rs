@@ -65,6 +65,8 @@ impl<F: Field> Setup<F> {
         let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
         let expressions_bin_path = setup_path.display().to_string() + ".bin";
 
+        let gpu = false;
+
         let (
             stark_info,
             p_stark_info,
@@ -82,7 +84,7 @@ impl<F: Field> Setup<F> {
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
                 .unwrap_or_else(|_| panic!("Failed to read file {}", &stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
-            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), verify_constraints, false);
+            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), verify_constraints, false, gpu);
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);

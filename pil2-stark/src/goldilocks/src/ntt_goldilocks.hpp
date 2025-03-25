@@ -218,7 +218,7 @@ public:
 
     void extendPol_MultiGPU(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols, Goldilocks::Element *buffer = NULL, uint64_t PACK = 8);
     void extendPol_GPU(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols);
-#endif  // __USE_CUDA__
+#endif  // 
 };
 
 // extend parameter is used to indicate tha the polinomial will be extended after the INTT

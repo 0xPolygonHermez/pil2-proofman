@@ -20,7 +20,7 @@ pub fn verify_proof_from_file<F: Field>(
     proof_values: Option<Vec<F>>,
     challenges: Option<Vec<F>>,
 ) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, true);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, true, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
@@ -62,7 +62,7 @@ pub fn verify_proof<F: Field>(
     proof_values: Option<Vec<F>>,
     global_challenge: Option<Vec<F>>,
 ) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, true);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, true, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
@@ -102,7 +102,7 @@ pub fn verify_proof_bn128<F: Field>(
     verkey_path: String,
     publics: Option<Vec<F>>,
 ) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, true);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, true, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
@@ -131,6 +131,9 @@ pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proo
     let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
     let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
     let verkey_path = setup_path.display().to_string() + ".verkey.json";
+    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
+
+    log::info!("{}:     {}", MY_NAME, format!("Verifying proof of {}: Instance #{}", air_name, air_instance_id));
 
     let is_valid_proof = verify_proof(
         proof.as_ptr() as *mut u64,
@@ -141,8 +144,6 @@ pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proo
         Some(pctx.get_proof_values().clone()),
         Some(pctx.get_global_challenge().clone()),
     );
-
-    let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
     if !is_valid_proof {
         is_valid = false;

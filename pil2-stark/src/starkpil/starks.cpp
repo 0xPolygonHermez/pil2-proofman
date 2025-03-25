@@ -237,7 +237,6 @@ template <typename ElementType>
 void Starks<ElementType>::computeEvals(StepsParams &params, Goldilocks::Element *LEv, FRIProof<ElementType> &proof)
 {
     evmap(params, LEv);
-    proof.proof.setEvals(params.evals);
 }
 
 template <typename ElementType>

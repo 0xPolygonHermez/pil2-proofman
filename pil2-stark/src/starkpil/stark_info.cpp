@@ -5,15 +5,15 @@
 #include "exit_process.hpp"
 #include "expressions_pack.hpp"
 
-StarkInfo::StarkInfo(string file, bool verify_constraints, bool verify)
+StarkInfo::StarkInfo(string file, bool verify_constraints, bool verify, bool gpu)
 {
     // Load contents from json file
     json starkInfoJson;
     file2json(file, starkInfoJson);
-    load(starkInfoJson, verify_constraints, verify);
+    load(starkInfoJson, verify_constraints, verify, gpu);
 }
 
-void StarkInfo::load(json j, bool verify_constraints_, bool verify_)
+void StarkInfo::load(json j, bool verify_constraints_, bool verify_,  bool gpu_)
 {   
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
@@ -229,6 +229,7 @@ void StarkInfo::load(json j, bool verify_constraints_, bool verify_)
 
     if(verify_) {
         verify = verify_;
+        gpu = false;
         mapTotalN = 0;
         mapTotalNCustomCommitsFixed = 0;
         mapOffsets[std::make_pair("const", false)] = 0;
@@ -244,9 +245,9 @@ void StarkInfo::load(json j, bool verify_constraints_, bool verify_)
                 mapTotalNCustomCommitsFixed += customCommits[i].stageWidths[0] * starkStruct.nQueries;
             }
         }
-        mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
     } else {
         verify_constraints = verify_constraints_;
+        gpu = gpu_;
         setMapOffsets();
     }
 }
@@ -347,8 +348,6 @@ void StarkInfo::setMapOffsets() {
 
     mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
     maxTotalN = std::max(maxTotalN, mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION + NExtended * mapSectionsN["cm" + to_string(nStages + 1)]);
-
-    mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
  
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
@@ -366,21 +365,24 @@ void StarkInfo::setMapOffsets() {
 }
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
-    uint64_t maxNBlocks, nrowsPack;
+    uint64_t NExtended = (1 << starkStruct.nBitsExt);
+    uint64_t maxNBlocks, nrowsPack, mapBuffHelper;
     if(verify) {
         maxNBlocks = 1;
-        nrowsPack = 128;
+        nrowsPack = starkStruct.nQueries;
+        mapBuffHelper = mapTotalN;
     } else {
-#ifndef __USE_CUDA__
-        nrowsPack = NROWS_PACK;
-        maxNBlocks = omp_get_max_threads();
-#else 
-        nrowsPack = 128; // TODO: SHOULD NOT BE HARDCODED
-        maxNBlocks = 4096; // TODO: SHOULD NOT BE HARDCODED
-#endif
+        mapBuffHelper = mapOffsets[std::make_pair("f", true)] + NExtended * FIELD_EXTENSION;
+        if(!gpu) {
+            nrowsPack = NROWS_PACK;
+            maxNBlocks = omp_get_max_threads();
+        } else {
+            nrowsPack = 128; // TODO: SHOULD NOT BE HARDCODED
+            maxNBlocks = 4096; // TODO: SHOULD NOT BE HARDCODED
+        }
     }
     
-    uint64_t mapBuffHelper = mapOffsets[std::make_pair("buff_helper", false)];
+    
     uint64_t memoryTmp1 = nTmp1 * nrowsPack * maxNBlocks;
     mapOffsets[std::make_pair("tmp1", false)] = mapBuffHelper;
     mapBuffHelper += memoryTmp1;

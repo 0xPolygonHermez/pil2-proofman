@@ -140,22 +140,10 @@ public:
                 return value;
             } else {
                 Goldilocks::Element *xdivxsub = &params.aux_trace[mapOffsetFriPol + row*FIELD_EXTENSION];
-                for (uint64_t k = 0; k < nrowsPack; k++) {    
-                    Goldilocks3::sub((Goldilocks3::Element &)(xdivxsub[k * FIELD_EXTENSION]), proverHelpers.x[row + k], (Goldilocks3::Element &)(xis[o * FIELD_EXTENSION]));
-                }
-
-                Goldilocks3::batchInverse((Goldilocks3::Element *)xdivxsub, (Goldilocks3::Element *)xdivxsub, nrowsPack);
-                for (uint64_t k = 0; k < nrowsPack; k++) {
-                    Goldilocks3::mul((Goldilocks3::Element &)(xdivxsub[k * FIELD_EXTENSION]), (Goldilocks3::Element &)(xdivxsub[k * FIELD_EXTENSION]), proverHelpers.x[row + k]);
-                }
-
-                for(uint64_t k = 0; k < nrowsPack; ++k) {
-                    for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                        value[k + e*nrowsPack] = xdivxsub[k * FIELD_EXTENSION + e];
-                    }
-                }
-
-                return value;
+                Goldilocks3::op_31_pack(nrowsPack, 3, xdivxsub, &xis[o * FIELD_EXTENSION], true, &proverHelpers.x[row], false);
+                getInversePolinomial(nrowsPack, xdivxsub, value, true, 3);
+                Goldilocks3::op_31_pack(nrowsPack, 2, xdivxsub, xdivxsub, false, &proverHelpers.x[row], false);
+                return xdivxsub;
             }
         } else if (type >= setupCtx.starkInfo.nStages + 4 && type < setupCtx.starkInfo.customCommits.size() + setupCtx.starkInfo.nStages + 4) {
             uint64_t index = type - (nStages + 4);
@@ -286,20 +274,20 @@ public:
     }
 
 
-    void printArguments(Goldilocks::Element *a, uint32_t dimA, bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op, uint64_t nOps){
+    void printArguments(uint64_t nrowsPack, Goldilocks::Element *a, uint32_t dimA, bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op, uint64_t nOps){
         #if DEBUG
             bool print = i == DEBUG_ROW;
             if(print){
                 printf("Expression debug op: %lu of %lu\n", op, nOps);
                 if(a!= NULL){
                     for(uint32_t i = 0; i < dimA; i++){
-                        Goldilocks::Element val = constA ? a[i] : a[i*nrowsPack_];
+                        Goldilocks::Element val = constA ? a[i] : a[i*nrowsPack];
                         printf("Expression debug a[%d]: %lu\n", i, val.fe);
                     }
                 }
                 if(b!= NULL){
                     for(uint32_t i = 0; i < dimB; i++){
-                        Goldilocks::Element val = constB ? b[i] : b[i*nrowsPack_];
+                        Goldilocks::Element val = constB ? b[i] : b[i*nrowsPack];
                         printf("Expression debug b[%d]: %lu\n", i, val.fe);
                     }
         
@@ -308,13 +296,13 @@ public:
         #endif
     }
 
-    void printRes(Goldilocks::Element *res, uint32_t dimRes, int i)
+    void printRes(uint64_t nrowsPack, Goldilocks::Element *res, uint32_t dimRes, int i)
     {
         #if DEBUG
             bool print = i == DEBUG_ROW;
             if(print){
                 for(uint32_t i = 0; i < dimRes; i++){
-                    printf("Expression debug res[%d]: %lu\n", i, res[i*nrowsPack_].fe);
+                    printf("Expression debug res[%d]: %lu\n", i, res[i*nrowsPack].fe);
                 }
             }
         #endif
@@ -444,9 +432,9 @@ public:
                             Goldilocks::Element* a = load(nrowsPack, valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 1, i, 1, domainSize, domainExtended, isCyclic);
                             bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
                             Goldilocks::Element* res = kk == parserParams[k].nOps - 1 ? &values[k*FIELD_EXTENSION*nrowsPack] : &expressions_params[bufferCommitsSize][args[i_args] * nrowsPack];
-                            printArguments(a, 1, isConstant,  NULL, 0, true, i, kk, parserParams[k].nOps);
+                            printArguments(nrowsPack, a, 1, isConstant,  NULL, 0, true, i, kk, parserParams[k].nOps);
                             Goldilocks::copy_pack(nrowsPack, res, a, isConstant);
-                            printRes(res, 1, i);
+                            printRes(nrowsPack, res, 1, i);
                             i_args += 4;
                             break;
                         }
@@ -459,9 +447,9 @@ public:
                             Goldilocks::Element* res = kk == parserParams[k].nOps - 1 ? &values[k*FIELD_EXTENSION*nrowsPack] : &expressions_params[bufferCommitsSize][args[i_args + 1] * nrowsPack];
                             // if(i == 0) printTmp1(nrowsPack, i, a, isConstantA);
                             // if(i == 0) printTmp1(nrowsPack, i, b, isConstantB);
-                            printArguments(a, 1, isConstantA, b, 1, isConstantB, i, kk, parserParams[k].nOps);
+                            printArguments(nrowsPack, a, 1, isConstantA, b, 1, isConstantB, i, kk, parserParams[k].nOps);
                             Goldilocks::op_pack(nrowsPack, args[i_args], res, a, isConstantA, b, isConstantB);
-                            printRes(res, 1,i);
+                            printRes(nrowsPack, res, 1,i);
                             // if(i == 0) printTmp1(nrowsPack, i, res, false);
                             i_args += 8;
                             break;
@@ -475,9 +463,9 @@ public:
                             Goldilocks::Element *res = kk == parserParams[k].nOps - 1 ? &values[k*FIELD_EXTENSION*nrowsPack] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * nrowsPack];
                             // if(i == 0) printTmp3(nrowsPack, i, a, isConstantA);
                             // if(i == 0) printTmp1(nrowsPack, i, b, isConstantB);
-                            printArguments(a, 3, isConstantA, b, 1, isConstantB, i, kk, parserParams[k].nOps);
+                            printArguments(nrowsPack, a, 3, isConstantA, b, 1, isConstantB, i, kk, parserParams[k].nOps);
                             Goldilocks3::op_31_pack(nrowsPack, args[i_args], res, a, isConstantA, b, isConstantB);
-                            printRes(res, 3, i);
+                            printRes(nrowsPack, res, 3, i);
                             // if(i == 0) printTmp3(nrowsPack, i, res, false);
                             i_args += 8;
                             break;
@@ -491,9 +479,9 @@ public:
                             Goldilocks::Element *res = kk == parserParams[k].nOps - 1 ? &values[k*FIELD_EXTENSION*nrowsPack] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * nrowsPack];
                             // if(i == 0) printTmp3(nrowsPack, i, a, isConstantA);
                             // if(i == 0) printTmp3(nrowsPack, i, b, isConstantB);
-                            printArguments(a, 3, isConstantA, b, 3, isConstantB, i, kk, parserParams[k].nOps);
+                            printArguments(nrowsPack, a, 3, isConstantA, b, 3, isConstantB, i, kk, parserParams[k].nOps);
                             Goldilocks3::op_pack(nrowsPack, args[i_args], res, a, isConstantA, b, isConstantB);
-                            printRes(res, 3, i);
+                            printRes(nrowsPack, res, 3, i);
                             // if(i == 0) printTmp3(nrowsPack, i, res, false);
                             i_args += 8;
                             break;
@@ -504,8 +492,8 @@ public:
                             bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
                             Goldilocks::Element *res = kk == parserParams[k].nOps - 1 ? &values[k*FIELD_EXTENSION*nrowsPack] : &expressions_params[bufferCommitsSize + 1][args[i_args] * nrowsPack];
                             // if(i == 0) printTmp3(nrowsPack, i, a, isConstant);
-                            printArguments(a, 3, isConstant, NULL, 0, true, i, kk, parserParams[k].nOps);
-                            printRes(res, 3, i);
+                            printArguments(nrowsPack, a, 3, isConstant, NULL, 0, true, i, kk, parserParams[k].nOps);
+                            printRes(nrowsPack, res, 3, i);
                             Goldilocks3::copy_pack(nrowsPack, res, a, isConstant);
                             i_args += 4;
                             break;

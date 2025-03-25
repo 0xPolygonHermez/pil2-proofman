@@ -224,7 +224,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     TimerStopAndLog(STARK_STEP_FRI);
 
-
+    proof.proof.setEvals(params.evals);
     if (setupCtx.starkInfo.starkStruct.verificationHashType == "BN128") {
         nlohmann::json zkin = proof.proof.proof2json();
         if(vadcop) {

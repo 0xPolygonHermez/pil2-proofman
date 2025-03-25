@@ -289,14 +289,14 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     }
 
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
-    uint64_t LEv_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("LEv", true)];
+    uint64_t LEv_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
     std::cout << "Rick fins PUNT16 (Q offload) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
-    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.mapOffsets[make_pair("LEv", true)], setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers);
+    computeLEv_inplace(xiChallenge, LEv_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();

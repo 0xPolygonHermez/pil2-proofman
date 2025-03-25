@@ -100,8 +100,6 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     // TODO: ADD PROOF VALUES ???
 
-    proof.proof.setAirgroupValues(params.airgroupValues);
-    proof.proof.setAirValues(params.airValues);
     TimerStopAndLog(STARK_STEP_2);
 
     TimerStart(STARK_STEP_Q);
@@ -217,6 +215,10 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStopAndLog(STARK_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);
+
+    proof.proof.setEvals(params.evals);
+    proof.proof.setAirgroupValues(params.airgroupValues);
+    proof.proof.setAirValues(params.airValues);
 
     proof.proof.proof2pointer(proofBuffer);
 

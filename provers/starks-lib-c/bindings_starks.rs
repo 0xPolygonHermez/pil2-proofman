@@ -36,11 +36,12 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPcbb"]
+    #[link_name = "\u{1}_Z14stark_info_newPcbbb"]
     pub fn stark_info_new(
         filename: *mut ::std::os::raw::c_char,
         verify_constraints: bool,
         verify: bool,
+        gpu: bool,
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {

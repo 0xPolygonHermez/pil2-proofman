@@ -119,16 +119,15 @@ impl<F: Field> ProofCtx<F> {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id);
                 let mut total_cols = setup
-                .stark_info
-                .map_sections_n
-                .iter()
-                .filter(|(key, _)| *key != "const")
-                .map(|(_, value)| *value)
-                .sum::<u64>();
+                    .stark_info
+                    .map_sections_n
+                    .iter()
+                    .filter(|(key, _)| *key != "const")
+                    .map(|(_, value)| *value)
+                    .sum::<u64>();
                 total_cols += 3; // FRI polinomial
                 let n_openings = setup.stark_info.opening_points.len() as u64;
-                let weight = (total_cols + n_openings*2)
-                    * (1 << (setup.stark_info.stark_struct.n_bits_ext));
+                let weight = (total_cols + n_openings * 2) * (1 << (setup.stark_info.stark_struct.n_bits_ext));
                 self.weights.insert((airgroup_id, air_id), weight);
             }
         }

@@ -50,7 +50,7 @@ class ProverHelpers {
                     root = root * Goldilocks::w(starkInfo.starkStruct.nBits);
                 }
                 Goldilocks::Element zi_[3];
-                Goldilocks3::sub((Goldilocks3::Element &)zi_[0], (Goldilocks3::Element &)z[0], (Goldilocks3::Element &)root);
+                Goldilocks3::sub((Goldilocks3::Element &)zi_[0], (Goldilocks3::Element &)z[0], root);
                 Goldilocks3::inv((Goldilocks3::Element *)zi_, (Goldilocks3::Element *)zi_);
                 Goldilocks3::mul((Goldilocks3::Element *)zi_, (Goldilocks3::Element *)zi_, (Goldilocks3::Element *)zN);
                 std::memcpy(&zi[i*FIELD_EXTENSION], zi_, FIELD_EXTENSION * sizeof(Goldilocks::Element));

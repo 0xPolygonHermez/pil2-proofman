@@ -131,9 +131,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
     CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
     
-
-    Goldilocks::Element *d_pBuffHelper = h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
-
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
     TimerStart(STARK_STEP_0);
@@ -237,7 +234,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
     
-    gl64_t * d_LEv = (gl64_t *) d_pBuffHelper;
+    gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
+
     computeLEv_inplace(xiChallenge, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, d_LEv);
     evmap_inplace(params.evals, h_params, 0, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
 
@@ -323,7 +321,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     proveQueries_inplace(setupCtx, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, d_trees, nTrees, d_buffers, setupCtx.starkInfo.nStages, h_params);
     
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
-
         FRI<Goldilocks::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
         delete starks.treesFRI[step - 1]->source;
         delete starks.treesFRI[step - 1]->nodes;

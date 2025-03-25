@@ -67,11 +67,15 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         if !air_instance_map.contains_key(&air_name.clone()) {
             let setup = sctx.get_setup(*airgroup_id, *air_id);
             let n_bits = setup.stark_info.stark_struct.n_bits;
-            let memory_trace = (*setup.stark_info.map_sections_n.get("cm1").unwrap() * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
+            let memory_trace = (*setup.stark_info.map_sections_n.get("cm1").unwrap()
+                * (1 << (setup.stark_info.stark_struct.n_bits))) as f64
+                * 8.0;
             let memory_instance = setup.prover_buffer_size as f64 * 8.0;
             let memory_fixed =
                 (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
-            if *all { memory_tables += memory_trace; }
+            if *all {
+                memory_tables += memory_trace;
+            }
             let total_cols: u64 = setup
                 .stark_info
                 .map_sections_n
@@ -115,14 +119,16 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         format!("Fixed pols memory: {}", format_bytes(sctx.max_const_size as f64 * 8.0)).bright_white().bold()
     );
     total_memory += sctx.max_const_size as f64 * 8.0;
-    info!(
-        "{}:       {}",
-        name,
-        format!("Fixed pols tree memory: {}", format_bytes(sctx.max_const_tree_size as f64 * 8.0))
-            .bright_white()
-            .bold()
-    );
-    total_memory += sctx.max_const_tree_size as f64 * 8.0;
+    if !pctx.options.verify_constraints {
+        info!(
+            "{}:       {}",
+            name,
+            format!("Fixed pols tree memory: {}", format_bytes(sctx.max_const_tree_size as f64 * 8.0))
+                .bright_white()
+                .bold()
+        );
+        total_memory += sctx.max_const_tree_size as f64 * 8.0;
+    }
     info!(
         "{}:       {}",
         name,
@@ -158,7 +164,14 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
             info!(
                 "{}:       {}",
                 name,
-                format!("· {}: {} + {} per each of {} instance | Total: {}", air_name, format_bytes(*memory_trace), format_bytes(*memory_instance), count, format_bytes(*memory_instance + *memory_trace))
+                format!(
+                    "· {}: {} + {} per each of {} instance | Total: {}",
+                    air_name,
+                    format_bytes(*memory_trace),
+                    format_bytes(*memory_instance),
+                    count,
+                    format_bytes(*memory_instance + *memory_trace)
+                )
             );
         }
     }
