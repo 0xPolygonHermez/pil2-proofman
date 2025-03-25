@@ -38,7 +38,7 @@ pub struct DistributionCtx {
     pub roots_gatherv_displ: Vec<i32>,
     pub my_groups: Vec<Vec<usize>>,
     pub my_air_groups: Vec<Vec<usize>>,
-    pub airgroup_instances: Vec<Vec<usize>>,
+    pub airgroup_instances_alives: Vec<Vec<usize>>,
     pub glob2loc: Vec<Option<usize>>,
     pub balance_distribution: bool,
 }
@@ -58,7 +58,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("owners_weight", &self.owners_weight)
                 .field("my_groups", &self.my_groups)
                 .field("my_air_groups", &self.my_air_groups)
-                .field("airgroup_instances", &self.airgroup_instances)
+                .field("airgroup_instances_alives", &self.airgroup_instances_alives)
                 .field("glob2loc", &self.glob2loc)
                 .field("balance_distribution", &self.balance_distribution)
                 .field("roots_gatherv_count", &self.roots_gatherv_count)
@@ -78,7 +78,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("owners_weight", &self.owners_weight)
                 .field("my_groups", &self.my_groups)
                 .field("my_air_groups", &self.my_air_groups)
-                .field("airgroup_instances", &self.airgroup_instances)
+                .field("airgroup_instances_alives", &self.airgroup_instances_alives)
                 .field("glob2loc", &self.glob2loc)
                 .field("balance_distribution", &self.balance_distribution)
                 .finish()
@@ -109,7 +109,7 @@ impl DistributionCtx {
                 roots_gatherv_displ: vec![0; n_processes as usize],
                 my_groups: Vec::new(),
                 my_air_groups: Vec::new(),
-                airgroup_instances: Vec::new(),
+                airgroup_instances_alives: Vec::new(),
                 glob2loc: Vec::new(),
                 balance_distribution: true,
             }
@@ -127,7 +127,7 @@ impl DistributionCtx {
                 owners_weight: vec![0; 1],
                 my_groups: Vec::new(),
                 my_air_groups: Vec::new(),
-                airgroup_instances: Vec::new(),
+                airgroup_instances_alives: Vec::new(),
                 glob2loc: Vec::new(),
                 balance_distribution: false,
             }
@@ -326,7 +326,7 @@ impl DistributionCtx {
             let mut total_instances = 0;
             for i in 0..self.n_processes as usize {
                 self.roots_gatherv_displ[i] = total_instances;
-                self.roots_gatherv_count[i] = self.owners_count[i] * 4;
+                self.roots_gatherv_count[i] = self.owners_count[i] * 10;
                 total_instances += self.roots_gatherv_count[i];
             }
         }
@@ -335,9 +335,9 @@ impl DistributionCtx {
         for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
             #[cfg(feature = "distributed")]
             let pos_buffer = self.roots_gatherv_displ[self.instances_owner[idx].0 as usize] as usize
-                + self.instances_owner[idx].1 * 4;
+                + self.instances_owner[idx].1 * 10;
             #[cfg(not(feature = "distributed"))]
-            let pos_buffer = idx * 4;
+            let pos_buffer = idx * 10;
             group_indices.entry(group_id).or_default().push(pos_buffer);
         }
 
@@ -358,10 +358,13 @@ impl DistributionCtx {
             }
         }
 
-        //Calculate instances of each airgroup
-        self.airgroup_instances = vec![Vec::new(); n_airgroups];
+        //Calculate for each airgroup how many processes have instances of that airgroup alive
+        self.airgroup_instances_alives = vec![vec![0; self.n_processes as usize]; n_airgroups];
         for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
-            self.airgroup_instances[group_id].push(idx);
+            let owner = self.instances_owner[idx].0;
+            if self.airgroup_instances_alives[group_id][owner as usize] == 0 {
+                self.airgroup_instances_alives[group_id][owner as usize] = 1;
+            }
         }
 
         //Evaluate glob2loc
@@ -374,7 +377,7 @@ impl DistributionCtx {
     pub fn distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
         #[cfg(feature = "distributed")]
         {
-            let mut all_roots: Vec<u64> = vec![0; 4 * self.n_instances];
+            let mut all_roots: Vec<u64> = vec![0; 10 * self.n_instances];
             let counts = &self.roots_gatherv_count;
             let displs = &self.roots_gatherv_displ;
 

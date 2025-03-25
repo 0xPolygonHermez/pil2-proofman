@@ -253,8 +253,8 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14calculate_hashPvS_m"]
-    pub fn calculate_hash(pValue: *mut ::std::os::raw::c_void, pBuffer: *mut ::std::os::raw::c_void, nElements: u64);
+    #[link_name = "\u{1}_Z14calculate_hashPvS_mm"]
+    pub fn calculate_hash(pValue: *mut ::std::os::raw::c_void, pBuffer: *mut ::std::os::raw::c_void, nElements: u64, nOutputs: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_newmb"]

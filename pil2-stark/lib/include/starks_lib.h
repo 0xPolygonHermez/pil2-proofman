@@ -57,7 +57,7 @@
     void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check);
 
     void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace);
-    void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements);
+    void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements, uint64_t nOutputs);
 
     // Transcript
     // =================================================================================

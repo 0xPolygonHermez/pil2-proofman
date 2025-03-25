@@ -333,11 +333,11 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     mt.getRoot(rootGL);
 }
 
-void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements)
+void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements, uint64_t nOutputs)
 {
     TranscriptGL transcriptHash(2, true);
     transcriptHash.put((Goldilocks::Element *)pBuffer, nElements);
-    transcriptHash.getState((Goldilocks::Element *)pValue);
+    transcriptHash.getState((Goldilocks::Element *)pValue, nOutputs);
 
 }
 
