@@ -69,7 +69,7 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, u
 
 __global__ void calcXDivXSub(uint64_t xDivXSub_offset, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_x, gl64_t *d_aux_trace, uint64_t NExtended);
 
-void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xiChallenge, SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, gl64_t * d_xDivXSub_ = NULL);
+void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks::Element *xiChallenge);
 
 __global__ void computeEvals(
     uint64_t extendBits,

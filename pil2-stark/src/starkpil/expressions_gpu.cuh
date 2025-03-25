@@ -56,7 +56,6 @@ struct DeviceArguments
     Goldilocks::Element *zi;
     Goldilocks::Element *x_n;
     Goldilocks::Element *x;
-    Goldilocks::Element *xis;
     Goldilocks::Element *numbers;
 
     // Dest

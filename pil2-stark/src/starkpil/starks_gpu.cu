@@ -192,16 +192,29 @@ __global__ void calcXDivXSub(gl64_t * d_xDivXSub, gl64_t *d_xiChallenge, uint64_
     }
 }
 
+__global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints)
+{
+    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < nOpeningPoints)
+    {
+        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
+        gl64_t W(W_);
+        gl64_t w = W ^ uint32_t(openingAbs);
+        if (d_openingPoints[i] < 0)
+        {
+            w = w.reciprocal();
+        }
+        Goldilocks3GPU::mul(*((Goldilocks3GPU::Element *) &d_xis[i * FIELD_EXTENSION]), *((Goldilocks3GPU::Element *)d_xiChallenge), w);
+    }
+}
 
-void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xiChallenge, SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, gl64_t * d_xDivXSub_)
+
+void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks::Element *xiChallenge)
 {
 
-     // rick
-    /*double time = omp_get_wtime();
+    double time = omp_get_wtime();
     uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
     int64_t *openingPoints = setupCtx.starkInfo.openingPoints.data();
-    gl64_t *x = (gl64_t *)setupCtx.proverHelpers.x;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
 
     gl64_t *d_xiChallenge;
@@ -210,21 +223,14 @@ void calculateXDivXSub_inplace(uint64_t xDivXSub_offset, Goldilocks::Element *xi
     cudaMemcpy(d_xiChallenge, xiChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     cudaMalloc(&d_openingPoints, nOpeningPoints * sizeof(int64_t));
     cudaMemcpy(d_openingPoints, openingPoints, nOpeningPoints * sizeof(int64_t), cudaMemcpyHostToDevice);
-    gl64_t *d_x;
-    cudaMalloc(&d_x, NExtended * sizeof(Goldilocks::Element));
-    cudaMemcpy(d_x, x, NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-
-    dim3 nThreads(1, 512);
-    std::cout << "nOpeningPoints: " << nOpeningPoints << std::endl;
-    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (NExtended + nThreads.y - 1) / nThreads.y);
-    gl64_t* d_xDivXSub = d_xDivXSub_ == NULL ? d_buffers->d_aux_trace + xDivXSub_offset
-                                             : d_xDivXSub_;
-    calcXDivXSub<<<nBlocks, nThreads>>>(d_xDivXSub, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, d_x, NExtended);
+    
+    dim3 nThreads(16);
+    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x);
+    calcXis<<<nBlocks, nThreads>>>(h_params.xDivXSub, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints);
     CHECKCUDAERR(cudaGetLastError());
     
     cudaFree(d_xiChallenge);
     cudaFree(d_openingPoints);
-    cudaFree(d_x);*/
 }
 
 __global__ void computeEvals(
@@ -355,7 +361,7 @@ __global__ void computeEvals_v2(
     }
 }
 
-void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t LEv_offset, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv_)
+void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, uint64_t LEv_offset, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv_)
 {
 
     uint64_t extendBits = starks->setupCtx.starkInfo.starkStruct.nBitsExt - starks->setupCtx.starkInfo.starkStruct.nBits;
@@ -363,7 +369,7 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t 
     uint64_t N = 1 << starks->setupCtx.starkInfo.starkStruct.nBits;
     uint64_t openingsSize = (uint64_t)starks->setupCtx.starkInfo.openingPoints.size();
 
-    CHECKCUDAERR(cudaMemset(d_params.evals, 0, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemset(h_params.evals, 0, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
 
     EvalInfo *evalsInfo = new EvalInfo[size_eval];
 
@@ -393,14 +399,14 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t 
     dim3 nBlocks(size_eval);
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time = omp_get_wtime();
-    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, (gl64_t *)d_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, (gl64_t *) d_buffers->d_constTree, (gl64_t *)d_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
+    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, (gl64_t *) d_buffers->d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
     CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaGetLastError());
 
     time = omp_get_wtime() - time;
     std::cout << "rick computeEvals_v2: " << time << std::endl;
 
-    cudaMemcpy(evals, d_params.evals, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+    cudaMemcpy(evals, h_params.evals, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
     cudaFree(d_evalsInfo);
 
     proof.proof.setEvals(evals);
@@ -592,7 +598,7 @@ __global__ void transposeFRI(gl64_t *d_aux, gl64_t *pol, uint64_t degree, uint64
     }
 }
 
-void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &params, StepsParams &d_params, uint64_t step, FRIProof<Goldilocks::Element> &proof, gl64_t *pol, MerkleTreeGL *treeFRI, uint64_t currentBits, uint64_t nextBits, bool recursion)
+void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &params, StepsParams &h_params, uint64_t step, FRIProof<Goldilocks::Element> &proof, gl64_t *pol, MerkleTreeGL *treeFRI, uint64_t currentBits, uint64_t nextBits, bool recursion)
 {
     uint64_t pol2N = 1 << currentBits;
     gl64_t *d_aux;
@@ -627,14 +633,14 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &params, StepsParams &
         treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
     }else{
 
-        /*uint64_t offsetNodes = setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)];
-        Goldilocks::Element *pBuffNodesGL = &params.aux_trace[offsetNodes];
-        treeFRI->setNodes(pBuffNodesGL);
-        CHECKCUDAERR(cudaMemcpy(d_params.aux_trace + offsetNodes, *d_tree, tree_size, cudaMemcpyDeviceToDevice));
+        //uint64_t offsetNodes = setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)];
+        //Goldilocks::Element *pBuffNodesGL = &params.aux_trace[offsetNodes];
+        //treeFRI->setNodes(pBuffNodesGL);
+        //CHECKCUDAERR(cudaMemcpy(h_params.aux_trace + offsetNodes, *d_tree, tree_size, cudaMemcpyDeviceToDevice));
         //uint32_t nFielsElements = treeFRI->getMerkleTreeNFieldElements();
         //CHECKCUDAERR(cudaMemcpy(&proof.proof.fri.treesFRI[step].root[0], &d_tree[tree_size - nFielsElements], nFielsElements * sizeof(uint64_t), cudaMemcpyDeviceToHost));
-        CHECKCUDAERR(cudaMemcpy(treeFRI->get_nodes_ptr(), *d_tree, tree_size, cudaMemcpyDeviceToHost));
-        treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);*/
+        //CHECKCUDAERR(cudaMemcpy(treeFRI->get_nodes_ptr(), *d_tree, tree_size, cudaMemcpyDeviceToHost));
+        //treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
         treeFRI->nodes = new Goldilocks::Element[tree_size]; //rick: free this memory
         CHECKCUDAERR(cudaMemcpy(treeFRI->get_nodes_ptr(), *d_tree, tree_size, cudaMemcpyDeviceToHost));
         treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);

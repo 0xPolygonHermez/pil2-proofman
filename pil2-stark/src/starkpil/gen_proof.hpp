@@ -125,8 +125,6 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
     TimerStopAndLog(STARK_STEP_Q);
 
-    std::cout<<" Fins la Q tot be"<<std::endl;
-    exit(0);
 
     TimerStart(STARK_STEP_EVALS);
 
@@ -154,7 +152,6 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         starks.calculateHash(hash, params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
         starks.addTranscript(transcript, hash, HASH_SIZE);
     }
-
     // Challenges for FRI polynomial
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
