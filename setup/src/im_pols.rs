@@ -169,7 +169,9 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &mut Value, max_deg: us
                     if d > *abs_max_d {
                         *abs_max_d = d;
                     }
-                    todo!()
+                    let mut combined = e.unwrap_or(Vec::new());
+                    combined.push(exp_id.into());
+                    return (Some(combined), 1);
                 } else {
                     if exp["res"].as_array().is_none() {
                         exp["res"] = Value::Array(Vec::new());
