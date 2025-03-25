@@ -1,6 +1,6 @@
 use std::hash::{Hash, DefaultHasher, Hasher};
 
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 pub trait HashCode: Hash {
     fn hash_code(&self) -> u64 {
@@ -169,14 +169,35 @@ pub fn calculate_im_pols_new(expressions: &[Value], exp: &mut Value, max_deg: us
                     if d > *abs_max_d {
                         *abs_max_d = d;
                     }
-                } else {
-                    // need to make exp mutable
                     todo!()
+                } else {
+                    if exp["res"].as_array().is_none() {
+                        exp["res"] = Value::Array(Vec::new());
+                    }
+                    let exp_res = exp["res"].as_array_mut().unwrap();
+                    if exp_res[absolute_max].as_object().is_none() {
+                        exp_res[absolute_max] = Value::Object(Map::new());
+                    }
+                    let Some(res_at_absolute_max) = exp_res[absolute_max].as_object_mut() else { unreachable!() };
+                    let hashcode = im_pols.hash_code_string();
+                    res_at_absolute_max[&hashcode] = Value::Array(vec![e.clone().into(), d.into()]);
+                    return (e, d);
                 }
-                todo!()
             }
             _ => {
-                todo!()
+                if let Some(exp_deg) = exp["expDeg"].as_number() {
+                    if *exp_deg == 0.into() {
+                        return (im_pols.clone(), 0);
+                    } else if max_deg < 1 {
+                        return (None, -1);
+                    } else {
+                        return (im_pols.clone(), 1);
+                    }
+                } else if max_deg < 1 {
+                    return (None, -1);
+                } else {
+                    return (im_pols.clone(), 1);
+                }
             }
         }
     }
