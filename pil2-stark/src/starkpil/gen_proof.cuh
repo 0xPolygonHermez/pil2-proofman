@@ -95,7 +95,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     }
     
     ExpressionsPack expressionsCtx_(setupCtx, proverHelpers); //rick: get rid of this
-    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048); //maxNparams, maxNTemp1, maxNTemp3 //rick
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048);
     CHECKCUDAERR(cudaGetLastError());
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,
@@ -361,8 +361,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     cudaFree(h_params.challenges);
     cudaFree(h_params.airgroupValues);
     cudaFree(h_params.airValues);
-    cudaFree(h_params.xDivXSub);
-
     delete[] foldedFRIPol;
     delete[] d_trees;
     cudaFree(d_params);
