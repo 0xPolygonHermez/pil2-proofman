@@ -65,7 +65,7 @@ __global__ void fillLEv(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t W_,
 
 __global__ void fillLEv_2d(gl64_t* d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N);
 
-void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, gl64_t* d_LEv_ = NULL);
+void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, gl64_t* d_LEv);
 
 __global__ void calcXDivXSub(uint64_t xDivXSub_offset, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_x, gl64_t *d_aux_trace, uint64_t NExtended);
 
@@ -95,7 +95,7 @@ __global__ void computeEvals_v2(
     gl64_t *d_customComits,
     gl64_t *d_fixedPols);
 
-void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, uint64_t LEv_offset, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv_=NULL);
+void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv_);
 
 __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_twiddles, uint32_t ncols);
 

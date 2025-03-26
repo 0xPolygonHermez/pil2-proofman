@@ -16,6 +16,7 @@
 void offloadCommit(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, uint64_t *d_tree, FRIProof<Goldilocks::Element> &proof, SetupCtx &setupCtx)
 {
 
+    CHECKCUDAERR(cudaDeviceSynchronize());
     double time = omp_get_wtime();
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
     uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
@@ -244,14 +245,14 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     time_prev = time;
 
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage_inplace(2, d_buffers->d_trace, d_buffers->d_aux_trace, (uint64_t **)(&d_trees[1].nodes), d_buffers);
+    starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, (uint64_t **)(&d_trees[1].nodes), d_buffers);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
     std::cout << "Rick fins PUNT11 (commit) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
-    offloadCommit(2, starks.treesGL, d_buffers->d_aux_trace, (uint64_t *)d_trees[1].nodes, proof, setupCtx);
+    offloadCommit(2, starks.treesGL, (gl64_t*)h_params.aux_trace, (uint64_t *)d_trees[1].nodes, proof, setupCtx);
 
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], nFieldElements);
@@ -310,23 +311,21 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
-    uint64_t LEv_offset = setupCtx.starkInfo.mapOffsets[make_pair("buff_helper", false)];
-
+    gl64_t * d_LEv = (gl64_t *) d_pBuffHelper;
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
     std::cout << "Rick fins PUNT16 (Q offload) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
-    computeLEv_inplace(xiChallenge, LEv_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers);
+    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, d_LEv);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
     std::cout << "Rick fins PUNT17 (LEv) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
-    evmap_inplace(evals, h_params, LEv_offset, proof, &starks, d_buffers);
-
+    evmap_inplace(evals, h_params, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
     std::cout << "Rick fins PUNT18 (Evmap) " << time - time0 << " " << time - time_prev << std::endl;

@@ -161,7 +161,7 @@ __global__ void fillLEv_2d(gl64_t *d_LEv, gl64_t *d_xiChallenge, uint64_t W_, ui
     }
 }*/
 
-void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, gl64_t* d_LEv_)
+void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, gl64_t* d_LEv)
 {
     cudaDeviceSynchronize();
     double time = omp_get_wtime();
@@ -176,8 +176,6 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, u
 
     dim3 nThreads(1, 256);
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (N + nThreads.y - 1) / nThreads.y);
-    gl64_t * d_LEv = d_LEv_ == NULL ? (gl64_t *)d_buffers->d_aux_trace + LEv_offset
-                                    : d_LEv_;
 
     fillLEv_2d<<<nBlocks, nThreads>>>(d_LEv, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, N);
     CHECKCUDAERR(cudaGetLastError());
@@ -396,7 +394,7 @@ __global__ void computeEvals_v2(
     }
 }
 
-void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, uint64_t LEv_offset, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv_)
+void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv)
 {
 
     uint64_t extendBits = starks->setupCtx.starkInfo.starkStruct.nBitsExt - starks->setupCtx.starkInfo.starkStruct.nBits;
@@ -428,8 +426,6 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, uint64_t 
     CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfo, size_eval * sizeof(EvalInfo), cudaMemcpyHostToDevice));
     delete[] evalsInfo;
 
-    Goldilocks::Element *d_LEv = d_LEv_ == NULL ? (Goldilocks::Element *)d_buffers->d_aux_trace + LEv_offset
-                                                : d_LEv_;
     dim3 nThreads(256);
     dim3 nBlocks(size_eval);
     CHECKCUDAERR(cudaDeviceSynchronize());

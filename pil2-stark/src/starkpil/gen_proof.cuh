@@ -236,10 +236,12 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-    
     gl64_t * d_LEv = (gl64_t *) d_pBuffHelper;
-    computeLEv_inplace(xiChallenge, 0, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, d_LEv);
-    evmap_inplace(params.evals, h_params, 0, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
+
+    
+   
+    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, d_LEv);
+    evmap_inplace(params.evals, h_params, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         starks.addTranscriptGL(transcript, params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
