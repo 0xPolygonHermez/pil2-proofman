@@ -95,8 +95,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     }
     
     ExpressionsPack expressionsCtx_(setupCtx, proverHelpers); //rick: get rid of this
-    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048);
-    CHECKCUDAERR(cudaGetLastError());
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 4096);
+
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,
         aux_trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
@@ -292,7 +292,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            merkelizeFRI_inplace(setupCtx, params, h_params, step, proof, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, false);
+            merkelizeFRI_inplace(setupCtx, h_params, step, proof, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, false);
             starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], HASH_SIZE);
         }
         else
@@ -349,10 +349,11 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStopAndLog(STARK_PROOF);    
 
     // Free memory
-    ///rick!! falta el free dels trees
-    cudaFree(d_trees[0].nodes);
-    cudaFree(d_trees[1].nodes);
-    cudaFree(d_trees[2].nodes);
+    for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
+    {
+       cudaFree(d_trees[i].nodes);
+    }
+    delete[] d_trees;
     if(h_params.pCustomCommitsFixed != nullptr)
         cudaFree(h_params.pCustomCommitsFixed);
     cudaFree(h_params.evals);
@@ -362,7 +363,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     cudaFree(h_params.airgroupValues);
     cudaFree(h_params.airValues);
     delete[] foldedFRIPol;
-    delete[] d_trees;
     cudaFree(d_params);
 
 }
