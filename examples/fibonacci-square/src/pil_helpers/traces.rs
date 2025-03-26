@@ -16,11 +16,11 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &[u8] = b"Build-hash";
+pub const PILOUT_HASH: &str = "87b36991502bb216bbe12e74146986f570b19cbe976e0a91f75885b280fa20e7";
 
 //AIRGROUP CONSTANTS
 
-pub const FIBONACCI_SQUARE_AIRGROUP_ID: usize = 0;
+pub const FIBO_CPU_AIRGROUP_ID: usize = 0;
 
 //AIR CONSTANTS
 
@@ -79,11 +79,11 @@ values!(BuildProofValues<F> {
  
 trace!(FibonacciSquareFixed<F> {
  L1: F, __L1__: F,
-},  0, 0, 4194304 );
+},  0, 0, 8388608 );
 
 trace!(FibonacciSquareTrace<F> {
  a: F, b: F,
-},  0, 0, 4194304 );
+},  0, 0, 8388608 );
 
 trace!(ModuleFixed<F> {
  SEGMENT_LN: F, __L1__: F,
@@ -101,10 +101,9 @@ trace!(SpecifiedRangesTrace<F> {
  mul: [F; 1],
 },  0, 2, 256 );
 
-pub const FibonacciSquareRomHash: &str = "1e66ad0f5817502c1941ce399c54a4a459494f504ebaca93b09dd2cfb26a4743";
 trace!(FibonacciSquareRomTrace<F> {
  line: F, flags: F,
-}, 0, 0, 4194304, 0 );
+}, 0, 0, 8388608, 0 );
 
 values!(FibonacciSquareAirValues<F> {
  fibo1: [F; 2], fibo3: FieldExtension<F>,

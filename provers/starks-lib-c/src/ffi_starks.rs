@@ -498,9 +498,9 @@ pub fn commit_witness_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn calculate_hash_c(pValue: *mut u8, pBuffer: *mut u8, nElements: u64) {
+pub fn calculate_hash_c(pValue: *mut u8, pBuffer: *mut u8, nElements: u64, nOutputs: u64) {
     unsafe {
-        calculate_hash(pValue as *mut std::os::raw::c_void, pBuffer as *mut std::os::raw::c_void, nElements);
+        calculate_hash(pValue as *mut std::os::raw::c_void, pBuffer as *mut std::os::raw::c_void, nElements, nOutputs);
     }
 }
 
@@ -1260,7 +1260,7 @@ pub fn commit_witness_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn calculate_hash_c(_pValue: *mut u8, _pBuffer: *mut u8, _nElements: u64) {
+pub fn calculate_hash_c(_pValue: *mut u8, _pBuffer: *mut u8, _nElements: u64, _nOutputs: u64) {
     trace!("{}: ··· {}", "ffi     ", "calculate_hash: This is a mock call because there is no linked library");
 }
 

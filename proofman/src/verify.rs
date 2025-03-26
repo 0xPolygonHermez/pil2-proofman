@@ -133,7 +133,7 @@ pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proo
     let verkey_path = setup_path.display().to_string() + ".verkey.json";
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
-    log::info!("{}:     {}", MY_NAME, format!("Verifying proof of {}: Instance #{}", air_name, air_instance_id));
+    log::info!("{}:     Verifying proof of {}: Instance #{}", MY_NAME, air_name, air_instance_id);
 
     let is_valid_proof = verify_proof(
         proof.as_ptr() as *mut u64,

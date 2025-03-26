@@ -378,10 +378,10 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
 
                 // Get all air instances ids for this airgroup and air_id
                 for instance_id in my_instances.iter() {
-                    if instances[*instance_id].0 != airgroup_id
-                        || instances[*instance_id].1 != air_id
-                            && instance_ids.contains(instance_id)
-                            && !skip_prover_instance(&pctx, *instance_id).0
+                    if instances[*instance_id].0 == airgroup_id
+                        && instances[*instance_id].1 == air_id
+                        && instance_ids.contains(instance_id)
+                        && !skip_prover_instance(&pctx, *instance_id).0
                     {
                         global_instance_ids.push(instance_id);
                     }

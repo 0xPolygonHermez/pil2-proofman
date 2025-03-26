@@ -22,7 +22,7 @@ void TranscriptGL::_updateState()
     out_cursor = TRANSCRIPT_OUT_SIZE;
     std::memset(pending, 0, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element));
     pending_cursor = 0;
-    std::memcpy(state, out, TRANSCRIPT_STATE_SIZE * sizeof(Goldilocks::Element));
+    std::memcpy(state, out, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element));
 }
 
 void TranscriptGL::_add1(Goldilocks::Element input)
@@ -50,6 +50,13 @@ void TranscriptGL::getState(Goldilocks::Element* output) {
         _updateState();
     }
     std::memcpy(output, state, TRANSCRIPT_STATE_SIZE * sizeof(Goldilocks::Element));
+}
+
+void TranscriptGL::getState(Goldilocks::Element* output, uint64_t nOutputs) {
+    if(pending_cursor > 0) {
+        _updateState();
+    }
+    std::memcpy(output, state, nOutputs * sizeof(Goldilocks::Element));
 }
 
 Goldilocks::Element TranscriptGL::getFields1()

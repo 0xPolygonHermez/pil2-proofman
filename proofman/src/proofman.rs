@@ -1,7 +1,10 @@
+use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve, goldilocks_quintic_extension::GoldilocksQuinticExtension};
 use libloading::{Library, Symbol};
 use log::info;
-use p3_field::PrimeCharacteristicRing;
-use proofman_common::{load_const_pols, load_const_pols_tree};
+use p3_field::extension::BinomialExtensionField;
+use p3_field::BasedVectorSpace;
+use std::ops::Add;
+use proofman_common::{load_const_pols, load_const_pols_tree, CurveType};
 use proofman_common::{
     calculate_fixed_tree, skip_prover_instance, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
 };
@@ -28,9 +31,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use transcript::FFITranscript;
 
-use witness::{WitnessLibInitFn, WitnessManager};
+use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::discover_max_sizes;
-use crate::{check_tree_paths, check_tree_paths_vadcop};
+use crate::{check_paths2, check_tree_paths, check_tree_paths_vadcop};
 use crate::verify_basic_proof;
 use crate::verify_global_constraints_proof;
 use crate::MaxSizes;
@@ -50,7 +53,10 @@ pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
 }
 
-impl<F: PrimeField64> ProofMan<F> {
+impl<F: PrimeField64> ProofMan<F>
+where
+    BinomialExtensionField<Goldilocks, 5>: BasedVectorSpace<F>,
+{
     const MY_NAME: &'static str = "ProofMan";
 
     pub fn check_setup(proving_key_path: PathBuf, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
@@ -111,10 +117,8 @@ impl<F: PrimeField64> ProofMan<F> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn verify_proof_constraints(
         witness_lib_path: PathBuf,
-        rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
@@ -122,26 +126,53 @@ impl<F: PrimeField64> ProofMan<F> {
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (pctx, sctx) = Self::initialize_proofman(
-            witness_lib_path.clone(),
-            rom_path.clone(),
-            public_inputs_path.clone(),
-            input_data_path.clone(),
-            proving_key_path,
-            output_dir_path,
-            custom_commits_fixed,
-            options,
+        check_paths(
+            &witness_lib_path,
+            &public_inputs_path,
+            &input_data_path,
+            &proving_key_path,
+            &output_dir_path,
+            options.verify_constraints,
         )?;
 
-        let wcm = Arc::new(WitnessManager::new(
-            pctx.clone(),
-            sctx.clone(),
-            rom_path.clone(),
-            public_inputs_path.clone(),
-            input_data_path,
-        ));
+        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
 
-        Self::execute(witness_lib_path, &pctx, wcm.clone())?;
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), public_inputs_path, input_data_path));
+
+        Self::init_witness_lib(witness_lib_path, &pctx, wcm.clone())?;
+
+        Self::_verify_proof_constraints(pctx, sctx, wcm)
+    }
+
+    pub fn verify_proof_constraints_from_lib(
+        mut witness_lib: Box<dyn WitnessLibrary<F>>,
+        proving_key_path: PathBuf,
+        output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        options: ProofOptions,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
+
+        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
+
+        witness_lib.register_witness(wcm.clone());
+
+        Self::_verify_proof_constraints(pctx, sctx, wcm)
+    }
+
+    fn _verify_proof_constraints(
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        wcm: Arc<WitnessManager<F>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(EXECUTE);
+        wcm.execute();
+        timer_stop_and_log_info!(EXECUTE);
+
+        pctx.dctx_assign_instances();
+        pctx.dctx_close();
 
         print_summary_info(Self::MY_NAME, &pctx, &sctx);
 
@@ -261,10 +292,8 @@ impl<F: PrimeField64> ProofMan<F> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn generate_proof(
         witness_lib_path: PathBuf,
-        rom_path: Option<PathBuf>,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
@@ -272,20 +301,51 @@ impl<F: PrimeField64> ProofMan<F> {
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        check_paths(
+            &witness_lib_path,
+            &public_inputs_path,
+            &input_data_path,
+            &proving_key_path,
+            &output_dir_path,
+            options.verify_constraints,
+        )?;
+
+        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), public_inputs_path, input_data_path));
+
+        Self::init_witness_lib(witness_lib_path, &pctx, wcm.clone())?;
+
+        Self::_generate_proof(output_dir_path, pctx, sctx, wcm)
+    }
+
+    pub fn generate_proof_from_lib(
+        mut witness_lib: Box<dyn WitnessLibrary<F>>,
+        proving_key_path: PathBuf,
+        output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        options: ProofOptions,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
+
+        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
+
+        witness_lib.register_witness(wcm.clone());
+
+        Self::_generate_proof(output_dir_path, pctx, sctx, wcm)
+    }
+
+    fn _generate_proof(
+        output_dir_path: PathBuf,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        wcm: Arc<WitnessManager<F>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOFS);
-
-        let (pctx, sctx) = Self::initialize_proofman(
-            witness_lib_path.clone(),
-            rom_path.clone(),
-            public_inputs_path.clone(),
-            input_data_path.clone(),
-            proving_key_path,
-            output_dir_path.clone(),
-            custom_commits_fixed,
-            options,
-        )?;
 
         let setups_handle = {
             let pctx_clone = Arc::clone(&pctx);
@@ -300,15 +360,12 @@ impl<F: PrimeField64> ProofMan<F> {
             })
         };
 
-        let wcm = Arc::new(WitnessManager::new(
-            pctx.clone(),
-            sctx.clone(),
-            rom_path.clone(),
-            public_inputs_path.clone(),
-            input_data_path.clone(),
-        ));
+        timer_start_info!(EXECUTE);
+        wcm.execute();
+        timer_stop_and_log_info!(EXECUTE);
 
-        Self::execute(witness_lib_path, &pctx, wcm.clone())?;
+        pctx.dctx_assign_instances();
+        pctx.dctx_close();
 
         print_summary_info(Self::MY_NAME, &pctx, &sctx);
 
@@ -318,7 +375,7 @@ impl<F: PrimeField64> ProofMan<F> {
         let my_instances = pctx.dctx_get_my_instances();
         let my_air_groups = pctx.dctx_get_my_air_groups();
 
-        let values = Arc::new(Mutex::new(vec![0; my_instances.len() * 4]));
+        let values = Arc::new(Mutex::new(vec![0; my_instances.len() * 10]));
 
         let mut prover_buffer_size = 0;
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
@@ -490,8 +547,6 @@ impl<F: PrimeField64> ProofMan<F> {
             }
         });
 
-        pctx.dctx_barrier();
-
         let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
             let circom_witness = Arc::new(create_buffer_fast(circom_witness_size));
@@ -505,14 +560,36 @@ impl<F: PrimeField64> ProofMan<F> {
 
         let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
-        let mut recursive1_proofs = vec![Vec::new(); proofs.len()];
         let const_tree_aggregation: Vec<F> =
             create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
         let const_pols_aggregation: Vec<F> =
             create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
 
+        let const_tree_recursive2: Vec<F> =
+            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
+        let const_pols_recursive2: Vec<F> = create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
+
+        let mut current_airgroup_id = instances[my_instances[my_air_groups[0][0]]].0;
+        let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(current_airgroup_id, 0);
+        load_const_pols(&setup_recursive2.setup_path, setup_recursive2.const_pols_size, &const_pols_recursive2);
+        load_const_pols_tree(setup_recursive2, &const_tree_recursive2);
+
+        let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
+        #[allow(clippy::needless_range_loop)]
+        for airgroup_id in 0..pctx.global_info.air_groups.len() {
+            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
+            let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
+            recursive2_proofs[airgroup_id] = create_buffer_fast(setup.proof_size as usize + publics_aggregation);
+        }
+        let mut recursive2_initialized = vec![false; pctx.global_info.air_groups.len()];
         for air_groups in my_air_groups.iter() {
             let (airgroup_id, air_id, _) = instances[my_instances[air_groups[0]]];
+            if airgroup_id != current_airgroup_id {
+                current_airgroup_id = airgroup_id;
+                let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(current_airgroup_id, air_id);
+                load_const_pols(&setup_recursive2.setup_path, setup_recursive2.const_pols_size, &const_pols_recursive2);
+                load_const_pols_tree(setup_recursive2, &const_tree_recursive2);
+            }
             let const_pols_compressor;
             let const_tree_compressor;
             let const_pols_recursive1;
@@ -546,7 +623,7 @@ impl<F: PrimeField64> ProofMan<F> {
             for my_instance_id in air_groups.iter() {
                 let instance_id = my_instances[*my_instance_id];
 
-                let proof_recursive = generate_vadcop_recursive1_proof(
+                generate_vadcop_recursive1_proof(
                     &pctx,
                     &setups,
                     instance_id,
@@ -557,13 +634,18 @@ impl<F: PrimeField64> ProofMan<F> {
                     &prover_buffer,
                     const_pols_compressor,
                     const_pols_recursive1,
+                    &const_pols_recursive2,
                     const_tree_compressor,
                     const_tree_recursive1,
+                    &const_tree_recursive2,
+                    &mut recursive2_proofs[airgroup_id],
+                    recursive2_initialized[airgroup_id],
                     output_dir_path.clone(),
                     d_buffers.lock().unwrap().get_ptr(),
                 )
                 .expect("Failed to generate recursive proof");
-                recursive1_proofs[*my_instance_id] = proof_recursive;
+
+                recursive2_initialized[airgroup_id] = true;
             }
         }
         timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
@@ -571,7 +653,7 @@ impl<F: PrimeField64> ProofMan<F> {
             Self::MY_NAME,
             &pctx,
             &setups,
-            &recursive1_proofs,
+            &recursive2_proofs,
             &circom_witness,
             &publics,
             &trace,
@@ -603,8 +685,8 @@ impl<F: PrimeField64> ProofMan<F> {
                 pctx.free_instance(instance_id);
             }
 
-            for (id, value) in value.iter().enumerate().take(4) {
-                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 4 + id] = *value;
+            for (id, value) in value.iter().enumerate().take(10) {
+                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 10 + id] = *value;
             }
         })
     }
@@ -680,28 +762,12 @@ impl<F: PrimeField64> ProofMan<F> {
     }
 
     #[allow(clippy::type_complexity)]
-    #[allow(clippy::too_many_arguments)]
     fn initialize_proofman(
-        witness_lib_path: PathBuf,
-        rom_path: Option<PathBuf>,
-        public_inputs_path: Option<PathBuf>,
-        input_data_path: Option<PathBuf>,
         proving_key_path: PathBuf,
-        output_dir_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>), Box<dyn std::error::Error>> {
         timer_start_info!(INITIALIZING_PROOFMAN);
-
-        check_paths(
-            &witness_lib_path,
-            &rom_path,
-            &public_inputs_path,
-            &input_data_path,
-            &proving_key_path,
-            &output_dir_path,
-            options.verify_constraints,
-        )?;
 
         let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options.clone());
         let sctx: Arc<SetupCtx<F>> =
@@ -709,7 +775,9 @@ impl<F: PrimeField64> ProofMan<F> {
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
-        check_tree_paths(&pctx, &sctx)?;
+        if !pctx.options.verify_constraints {
+            check_tree_paths(&pctx, &sctx)?;
+        }
 
         Self::initialize_publics(&sctx, &pctx)?;
 
@@ -718,7 +786,7 @@ impl<F: PrimeField64> ProofMan<F> {
         Ok((pctx, sctx))
     }
 
-    fn execute(
+    fn init_witness_lib(
         witness_lib_path: PathBuf,
         pctx: &ProofCtx<F>,
         wcm: Arc<WitnessManager<F>>,
@@ -730,20 +798,16 @@ impl<F: PrimeField64> ProofMan<F> {
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
         let mut witness_lib = witness_lib(pctx.options.verbose_mode)?;
-        witness_lib.register_witness(wcm.clone());
+
+        witness_lib.register_witness(wcm);
+
         timer_stop_and_log_info!(REGISTER_WITNESS);
-
-        timer_start_info!(EXECUTE);
-        wcm.execute();
-        timer_stop_and_log_info!(EXECUTE);
-
-        pctx.dctx_assign_instances();
-        pctx.dctx_close();
 
         Ok(())
     }
 
     fn calculate_global_challenge(pctx: &ProofCtx<F>, values: Vec<u64>) {
+        timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
         let transcript = FFITranscript::new(2, true);
 
         transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
@@ -764,11 +828,17 @@ impl<F: PrimeField64> ProofMan<F> {
                     F::from_u64(all_roots[*idx + 1]),
                     F::from_u64(all_roots[*idx + 2]),
                     F::from_u64(all_roots[*idx + 3]),
+                    F::from_u64(all_roots[*idx + 4]),
+                    F::from_u64(all_roots[*idx + 5]),
+                    F::from_u64(all_roots[*idx + 6]),
+                    F::from_u64(all_roots[*idx + 7]),
+                    F::from_u64(all_roots[*idx + 8]),
+                    F::from_u64(all_roots[*idx + 9]),
                 ];
                 values.push(value);
             }
             if !values.is_empty() {
-                let value = Self::hash_b_tree(&values);
+                let value = Self::add_contributions(&pctx.global_info.curve, &values);
                 transcript.add_elements(value.as_ptr() as *mut u8, value.len());
             }
         }
@@ -777,6 +847,7 @@ impl<F: PrimeField64> ProofMan<F> {
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
         pctx.set_global_challenge(2, &global_challenge);
+        timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
     }
 
     #[allow(dead_code)]
@@ -940,7 +1011,7 @@ impl<F: PrimeField64> ProofMan<F> {
             d_buffers.lock().unwrap().get_ptr(),
         );
 
-        let mut value = vec![Goldilocks::ZERO; n_field_elements];
+        let mut value = vec![F::ZERO; 10];
 
         let n_airvalues = setup
             .stark_info
@@ -978,46 +1049,51 @@ impl<F: PrimeField64> ProofMan<F> {
             }
         }
 
-        calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64);
+        calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64, 10);
 
         timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
 
         value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
     }
 
-    fn hash_b_tree(values: &[Vec<F>]) -> Vec<F> {
-        if values.len() == 1 {
-            return values[0].clone();
-        }
+    fn add_contributions(curve_type: &CurveType, values: &[Vec<F>]) -> Vec<F> {
+        if *curve_type == CurveType::EcGFp5 {
+            let mut result = EcGFp5::hash_to_curve(
+                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
+                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
+            );
 
-        let mut result = Vec::new();
+            for value in values.iter().skip(1) {
+                let curve_point = EcGFp5::hash_to_curve(
+                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
+                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
+                );
 
-        for i in (0..values.len() - 1).step_by(2) {
-            let mut buffer = values[i].clone();
-            buffer.extend(values[i + 1].clone());
-
-            let is_value1_zero = values[i].iter().all(|x| *x == F::ZERO);
-            let is_value2_zero = values[i + 1].iter().all(|x| *x == F::ZERO);
-
-            let mut value;
-            if is_value1_zero && is_value2_zero {
-                value = vec![F::ZERO; 4];
-            } else if is_value1_zero {
-                value = values[i + 1].clone();
-            } else if is_value2_zero {
-                value = values[i].clone();
-            } else {
-                value = vec![F::ZERO; 4];
-                calculate_hash_c(value.as_mut_ptr() as *mut u8, buffer.as_mut_ptr() as *mut u8, buffer.len() as u64);
+                result = result.add(&curve_point);
             }
 
-            result.push(value);
-        }
+            let mut curve_point_values = vec![F::ZERO; 10];
+            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
+            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
+            curve_point_values
+        } else {
+            let mut result = EcMasFp5::hash_to_curve(
+                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
+                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
+            );
 
-        if values.len() % 2 != 0 {
-            result.push(values[values.len() - 1].clone());
-        }
+            for value in values.iter().skip(1) {
+                let curve_point = EcMasFp5::hash_to_curve(
+                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
+                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
+                );
+                result = result.add(&curve_point);
+            }
 
-        Self::hash_b_tree(&result)
+            let mut curve_point_values = vec![F::ZERO; 10];
+            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
+            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
+            curve_point_values
+        }
     }
 }
