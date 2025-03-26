@@ -75,6 +75,7 @@ void freeDestGPU(Goldilocks::Element* buff);
 void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *values, uint64_t idPol);
 void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size);
 void copyValueHost( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size);
+void copyValueGPUGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size);
 void opAirgroupValueGPU(Goldilocks::Element * airgroupValue,  Goldilocks::Element* val, uint32_t dim, bool add);
 
 #endif

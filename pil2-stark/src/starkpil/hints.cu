@@ -77,5 +77,10 @@ void opAirgroupValueGPU(Goldilocks::Element * airgroupValue,  Goldilocks::Elemen
     opAirgroupValue_<<<1, 1>>>((gl64_t*)airgroupValue, (gl64_t*)val, dim, add);
 }
 
+void copyValueGPUGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size){
+    CHECKCUDAERR(cudaMemcpy(target, src, size * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice));
+}
+
+
 
 
