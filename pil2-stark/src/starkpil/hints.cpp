@@ -563,6 +563,7 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
             for(int k =0; k < dim; ++k) {
                 params.airValues[pos + k] = buff_gpu[k];
             }
+            cudaMemcpy(&params.airValues + pos, buff_gpu, dim * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice);
             freeDestGPU(destStruct.dest_gpu);            
 #else
             uint64_t pos = 0;
