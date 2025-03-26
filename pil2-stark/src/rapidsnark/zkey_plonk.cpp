@@ -1,52 +1,55 @@
 #include <stdexcept>
 
 #include "zkey.hpp"
-#include "zkey_fflonk.hpp"
+#include "zkey_plonk.hpp"
 
 namespace Zkey {
-    FflonkZkeyHeader::FflonkZkeyHeader() {
-        this->protocolId = Zkey::FFLONK_PROTOCOL_ID;
+    PlonkZkeyHeader::PlonkZkeyHeader() {
+        this->protocolId = Zkey::PLONK_PROTOCOL_ID;
     }
 
-    FflonkZkeyHeader::~FflonkZkeyHeader() {
+    PlonkZkeyHeader::~PlonkZkeyHeader() {
         mpz_clear(qPrime);
         mpz_clear(rPrime);
     }
 
-    FflonkZkeyHeader* FflonkZkeyHeader::loadFflonkZkeyHeader(BinFileUtils::BinFile *f) {
-        auto fflonkZkeyHeader = new FflonkZkeyHeader();
+    PlonkZkeyHeader* PlonkZkeyHeader::loadPlonkZkeyHeader(BinFileUtils::BinFile *f) {
+        auto plonkZkeyHeader = new PlonkZkeyHeader();
 
-        f->startReadSection(Zkey::ZKEY_FF_HEADER_SECTION);
+        f->startReadSection(Zkey::ZKEY_PL_HEADER_SECTION);
 
-        fflonkZkeyHeader->n8q = f->readU32LE();
-        mpz_init(fflonkZkeyHeader->qPrime);
-        mpz_import(fflonkZkeyHeader->qPrime, fflonkZkeyHeader->n8q, -1, 1, -1, 0, f->read(fflonkZkeyHeader->n8q));
+        plonkZkeyHeader->n8q = f->readU32LE();
+        mpz_init(plonkZkeyHeader->qPrime);
+        mpz_import(plonkZkeyHeader->qPrime, plonkZkeyHeader->n8q, -1, 1, -1, 0, f->read(plonkZkeyHeader->n8q));
 
-        fflonkZkeyHeader->n8r = f->readU32LE();
-        mpz_init(fflonkZkeyHeader->rPrime);
-        mpz_import(fflonkZkeyHeader->rPrime, fflonkZkeyHeader->n8r, -1, 1, -1, 0, f->read(fflonkZkeyHeader->n8r));
+        plonkZkeyHeader->n8r = f->readU32LE();
+        mpz_init(plonkZkeyHeader->rPrime);
+        mpz_import(plonkZkeyHeader->rPrime, plonkZkeyHeader->n8r, -1, 1, -1, 0, f->read(plonkZkeyHeader->n8r));
 
-        fflonkZkeyHeader->nVars = f->readU32LE();
-        fflonkZkeyHeader->nPublic = f->readU32LE();
-        fflonkZkeyHeader->domainSize = f->readU32LE();
-        fflonkZkeyHeader->nAdditions = f->readU32LE();
-        fflonkZkeyHeader->nConstraints = f->readU32LE();
+        plonkZkeyHeader->nVars = f->readU32LE();
+        plonkZkeyHeader->nPublic = f->readU32LE();
+        plonkZkeyHeader->domainSize = f->readU32LE();
+        plonkZkeyHeader->nAdditions = f->readU32LE();
+        plonkZkeyHeader->nConstraints = f->readU32LE();
 
-        fflonkZkeyHeader->k1 = f->read(fflonkZkeyHeader->n8r);
-        fflonkZkeyHeader->k2 = f->read(fflonkZkeyHeader->n8r);
+        plonkZkeyHeader->k1 = f->read(plonkZkeyHeader->n8r);
+        plonkZkeyHeader->k2 = f->read(plonkZkeyHeader->n8r);
 
-        fflonkZkeyHeader->w3 = f->read(fflonkZkeyHeader->n8r);
-        fflonkZkeyHeader->w4 = f->read(fflonkZkeyHeader->n8r);
-        fflonkZkeyHeader->w8 = f->read(fflonkZkeyHeader->n8r);
-        fflonkZkeyHeader->wr = f->read(fflonkZkeyHeader->n8r);
+        plonkZkeyHeader->QM = f->read(plonkZkeyHeader->n8q * 2);
+        plonkZkeyHeader->QL = f->read(plonkZkeyHeader->n8q * 2);
+        plonkZkeyHeader->QR = f->read(plonkZkeyHeader->n8q * 2);
+        plonkZkeyHeader->QO = f->read(plonkZkeyHeader->n8q * 2);
+        plonkZkeyHeader->QC = f->read(plonkZkeyHeader->n8q * 2);
 
-        fflonkZkeyHeader->X2 = f->read(fflonkZkeyHeader->n8q * 4);
+        plonkZkeyHeader->S1 = f->read(plonkZkeyHeader->n8q * 2);
+        plonkZkeyHeader->S2 = f->read(plonkZkeyHeader->n8q * 2);
+        plonkZkeyHeader->S3 = f->read(plonkZkeyHeader->n8q * 2);
 
-        fflonkZkeyHeader->C0 = f->read(fflonkZkeyHeader->n8q * 2);
+        plonkZkeyHeader->X2 = f->read(plonkZkeyHeader->n8q * 4);
 
         f->endReadSection();
 
-        return fflonkZkeyHeader;
+        return plonkZkeyHeader;
     }
 }
 

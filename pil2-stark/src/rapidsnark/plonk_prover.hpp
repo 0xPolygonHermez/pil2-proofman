@@ -18,7 +18,7 @@
 using json = nlohmann::json;
 using namespace std::chrono;
 
-#define BLINDINGFACTORSLENGTH 10
+#define BLINDINGFACTORSLENGTH_PLONK 11
 
 namespace Plonk {
 
@@ -71,7 +71,7 @@ namespace Plonk {
         std::map <std::string, FrElement> toInverse;
         std::map <std::string, FrElement> challenges;
         std::map<std::string, FrElement *> roots;
-        FrElement blindingFactors[BLINDINGFACTORSLENGTH];
+        FrElement blindingFactors[BLINDINGFACTORSLENGTH_PLONK + 1];
 
         Keccak256Transcript<Engine> *transcript;
         SnarkProof<Engine> *proof;
@@ -113,50 +113,31 @@ namespace Plonk {
 
         void computeWirePolynomial(std::string polName, FrElement blindingFactors[]);
 
-        void computeT0();
-
-        void computeC1();
+        void computeT();
 
         //ROUND 2 functions
         void computeZ();
 
-        void computeT1();
-
-        void computeT2();
-
-        void computeC2();
-
-        //ROUND 4 functions
-        void computeR0();
-
-        void computeR1();
-
-        void computeR2();
-
-        void computeF();
-
-        void computeZT();
-
         //ROUND 5 functions
-        void computeL();
+        void computeR();
 
-        void computeZTS2();
+        void computeWxi();
+
+        void computeWxiw();
 
         void batchInverse(FrElement *elements, u_int64_t length);
 
         FrElement *polynomialFromMontgomery(Polynomial<Engine> *polynomial);
 
-        FrElement getMontgomeryBatchedInverse();
+        // FrElement getMontgomeryBatchedInverse();
 
-        void computeLiS0();
+        // void computeLiS0();
 
-        void computeLiS1();
+        // void computeLiS1();
 
-        void computeLiS2();
+        // void computeLiS2();
 
         G1Point multiExponentiation(Polynomial<Engine> *polynomial);
-
-        G1Point multiExponentiation(Polynomial<Engine> *polynomial, u_int32_t nx, u_int64_t x[]);
     };
 }
 

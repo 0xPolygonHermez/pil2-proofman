@@ -6,7 +6,6 @@
 #include <sodium.h>
 #include "thread_utils.hpp"
 #include "polynomial/cpolynomial.hpp"
-#include "zklog.hpp"
 #include "exit_process.hpp"
 
 #define ELPP_NO_DEFAULT_LOG_FILE
@@ -88,8 +87,8 @@ namespace Fflonk
 
     template<typename Engine>
     void FflonkProver<Engine>::setZkey(BinFileUtils::BinFile *fdZkey) {
-        try
-        {
+        //try
+        //{
             if(NULL != zkey) {
                 removePrecomputedData();
             }
@@ -398,12 +397,12 @@ namespace Fflonk
             buffers["T1z"]    = buffers["tmp"] + zkey->domainSize * 2;
             buffers["T2"]     = buffers["tmp"];
             buffers["T2z"]    = buffers["tmp"] + zkey->domainSize * 4;
-        }
-        catch (const std::exception &e)
-        {
-            zklog.error("Fflonk::setZkey() EXCEPTION: " + string(e.what()));
-            exitProcess();
-        }
+        //}
+        // catch (const std::exception &e)
+        // {
+        //     //LOG_ERROR("Fflonk::setZkey() EXCEPTION: " + string(e.what()));
+        //     exitProcess();
+        // }
     }
 
     template<typename Engine>
@@ -439,8 +438,8 @@ namespace Fflonk
             throw std::runtime_error("Zkey data not set");
         }
 
-        try
-        {
+        //try
+        //{
             LOG_TRACE("FFLONK PROVER STARTED");
 
             this->buffWitness = buffWitness;
@@ -588,13 +587,13 @@ namespace Fflonk
             delete evaluations["Z"];
 
             return {proof->toJson(), publicSignals};
-        }
-        catch (const std::exception &e)
-        {
-            zklog.error("Fflonk::prove() EXCEPTION: " + string(e.what()));
-            exitProcess();
-            exit(-1);
-        }
+        //}
+        // catch (const std::exception &e)
+        // {
+        //     //LOG_ERROR("Fflonk::prove() EXCEPTION: " + string(e.what()));
+        //     exitProcess();
+        //     exit(-1);
+        // }
     }
 
     template <typename Engine>

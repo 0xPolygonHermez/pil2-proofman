@@ -8,7 +8,7 @@
 #include "binfile_utils.hpp"
 #include "binfile_writer.hpp"
 #include "plonk_setup.hpp"
-#include "plonk_setup_settings.hpp"
+#include "fflonk_setup_settings.hpp"
 #include "polynomial/cpolynomial.c.hpp"
 #include "polynomial/polynomial.hpp"
 #include "r1cs_binfile.hpp"
@@ -37,7 +37,7 @@ class PlonkSetup {
     // G1PointAffine *PTau;
 
     FFT<AltBn128::Engine::Fr> *fft = NULL;
-    PlonkSetupSettings settings;
+    FflonkSetupSettings settings;
 
     map<string, Polynomial<AltBn128::Engine> *> polynomials;
     FrElement k1, k2;
@@ -47,17 +47,13 @@ class PlonkSetup {
     vector<ConstraintCoefficients> plonkConstraints;
     vector<AdditionCoefficients> plonkAdditions;
 
-    void computeFFConstraints(BinFile &r1cs, R1csHeader &r1csHeader);
+    void computeConstraints(BinFile &r1cs, R1csHeader &r1csHeader);
 
     array<vector<R1csConstraint>, 3> readR1csConstraint(R1csHeader &r1csHeader, BinFile &r1cs);
     vector<R1csConstraint> readR1csConstraintLC(R1csHeader &r1csHeader, BinFile &r1cs);
 
     void computeK1K2();
     bool isIncluded(FrElement k, vector<FrElement> &kArr);
-    FrElement computeW3();
-    FrElement computeW4();
-    FrElement computeW8();
-    FrElement getOmegaCubicRoot();
     void writeZkeyFile(string &zkeyFilename, BinFile &ptauFile);
     void writeZkeyHeader(BinFileWriter &zkeyFile);
     void writeAdditions(BinFileWriter &zkeyFile);
@@ -68,11 +64,10 @@ class PlonkSetup {
                     unordered_map<uint64_t, uint64_t> &firstPos, uint64_t signalId, uint64_t idx);
     void writeLagrangePolynomials(BinFileWriter &zkeyFile);
     void writePtau(BinFileWriter &zkeyFile, BinFile &ptauFile);
-    void writeC0(BinFileWriter &zkeyFile);
     void writePlonkHeader(BinFileWriter &zkeyFile, BinFile &ptauFile);
 
     FrElement *polynomialFromMontgomery(Polynomial<AltBn128::Engine> *polynomial);
-    G1Point multiExponentiation(Polynomial<AltBn128::Engine> *polynomial, u_int32_t nx, u_int64_t x[]);
+    G1Point multiExponentiation(Polynomial<AltBn128::Engine> *polynomial);
     void scalar2bytes(mpz_class s, uint8_t (&bytes)[32]);
 
     void reset();
