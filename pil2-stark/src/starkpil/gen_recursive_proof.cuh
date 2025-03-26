@@ -197,7 +197,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     expressionsCtx.calculateExpressions_gpu(d_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
 
-    cudaFree(destStruct.dest_gpu);
+    CHECKCUDAERR(cudaFree(destStruct.dest_gpu));
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
@@ -228,7 +228,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     delete res;
     delete gprod;
-    cudaFree(d_grod);
+    CHECKCUDAERR(cudaFree(d_grod));
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
@@ -448,16 +448,14 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     // Free memory
     for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
     {
-       cudaFree(d_trees[i].nodes);
+       CHECKCUDAERR(cudaFree(d_trees[i].nodes));
     }
     delete[] d_trees;
 
-    if(h_params.pCustomCommitsFixed != nullptr)
-        cudaFree(h_params.pCustomCommitsFixed);
-    cudaFree(h_params.evals);
-    cudaFree(h_params.xDivXSub);
-    cudaFree(h_params.challenges);
-    cudaFree(d_params);
+    CHECKCUDAERR(cudaFree(h_params.evals));
+    CHECKCUDAERR(cudaFree(h_params.xDivXSub));
+    CHECKCUDAERR(cudaFree(h_params.challenges));
+    CHECKCUDAERR(cudaFree(d_params));
     delete[] foldedFRIPol;
     delete challenges;
     delete evals;

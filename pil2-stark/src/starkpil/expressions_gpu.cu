@@ -79,24 +79,26 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers &proverHelpers,
 
 ExpressionsGPU::~ExpressionsGPU()
 {
-    cudaFree(h_deviceArgs.mapOffsets);
-    cudaFree(h_deviceArgs.mapOffsetsExtended);
-    cudaFree(h_deviceArgs.nextStrides);
-    cudaFree(h_deviceArgs.nextStridesExtended);
-    cudaFree(h_deviceArgs.mapOffsetsCustomFixed);
-    cudaFree(h_deviceArgs.mapOffsetsCustomFixedExtended);
-    cudaFree(h_deviceArgs.mapSectionsN);
-    cudaFree(h_deviceArgs.mapSectionsNCustomFixed);
-    cudaFree(h_deviceArgs.zi);
-    cudaFree(h_deviceArgs.x_n);
-    cudaFree(h_deviceArgs.x);
-    cudaFree(h_deviceArgs.numbers);
-    cudaFree(h_deviceArgs.ops);
-    cudaFree(h_deviceArgs.args);
+    CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsets));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsExtended));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.nextStrides));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.nextStridesExtended));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsCustomFixed));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsCustomFixedExtended));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.mapSectionsN));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.mapSectionsNCustomFixed));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.zi));
+    if(proverHelpers.x_n != nullptr) {
+        CHECKCUDAERR(cudaFree(h_deviceArgs.x_n));
+    }
+    CHECKCUDAERR(cudaFree(h_deviceArgs.x));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.numbers));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.ops));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.args));
     //next three will be eliminated
-    cudaFree(h_deviceArgs.destVals);
-    cudaFree(h_deviceArgs.tmp1);
-    cudaFree(h_deviceArgs.tmp3);
+    CHECKCUDAERR(cudaFree(h_deviceArgs.destVals));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.tmp1));
+    CHECKCUDAERR(cudaFree(h_deviceArgs.tmp3));
 
 }
 
@@ -204,8 +206,8 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     std::cout << "goal2_ de cudaMemcpy dests time: " << time << std::endl;
 
     
-    cudaFree(h_deviceArgs.dest_params);
-    cudaFree(d_deviceArgs);
+    CHECKCUDAERR(cudaFree(h_deviceArgs.dest_params));
+    CHECKCUDAERR(cudaFree(d_deviceArgs));
     CHECKCUDAERR(cudaGetLastError());
 }
 

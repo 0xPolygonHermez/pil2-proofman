@@ -11,7 +11,7 @@ void allocateDestGPU(Goldilocks::Element**buff, uint64_t size){
     cudaMalloc((void**) buff, size * sizeof(Goldilocks::Element));
 }
 void freeDestGPU(Goldilocks::Element* buff){
-    cudaFree(buff);
+    CHECKCUDAERR(cudaFree(buff));
 }
 
 void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *values, uint64_t idPol) {

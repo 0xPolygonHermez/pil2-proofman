@@ -191,8 +191,8 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64
     cudaDeviceSynchronize();
     time = omp_get_wtime() - time;
     std::cout << "INTT: " << time << std::endl;
-    cudaFree(d_xiChallenge);
-    cudaFree(d_openingPoints);
+    CHECKCUDAERR(cudaFree(d_xiChallenge));
+    CHECKCUDAERR(cudaFree(d_openingPoints));
 }
 
 __global__ void calcXDivXSub(gl64_t * d_xDivXSub, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_x, uint64_t NExtended)
@@ -262,8 +262,8 @@ void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks:
     calcXis<<<nBlocks, nThreads>>>(h_params.xDivXSub, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints);
     CHECKCUDAERR(cudaGetLastError());
     
-    cudaFree(d_xiChallenge);
-    cudaFree(d_openingPoints);
+    CHECKCUDAERR(cudaFree(d_xiChallenge));
+    CHECKCUDAERR(cudaFree(d_openingPoints));
 }
 
 __global__ void computeEvals(
@@ -438,7 +438,7 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, FRIProof<
     std::cout << "rick computeEvals_v2: " << time << std::endl;
 
     cudaMemcpy(evals, h_params.evals, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-    cudaFree(d_evalsInfo);
+    CHECKCUDAERR(cudaFree(d_evalsInfo));
 
     proof.proof.setEvals(evals);
 }
@@ -607,9 +607,9 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *ch
     CHECKCUDAERR(cudaGetLastError());
 
 
-    cudaFree(d_challenge);
-    cudaFree(d_ppar);
-    cudaFree(d_twiddles);
+    CHECKCUDAERR(cudaFree(d_challenge));
+    CHECKCUDAERR(cudaFree(d_ppar));
+    CHECKCUDAERR(cudaFree(d_twiddles));
 }
 
 __global__ void transposeFRI(gl64_t *d_aux, gl64_t *pol, uint64_t degree, uint64_t width)
@@ -677,7 +677,7 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
         treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
     }
 
-    cudaFree(d_aux);
+    CHECKCUDAERR(cudaFree(d_aux));
 }
 
 __global__ void getTreeTracePols(gl64_t *d_treeTrace, uint64_t traceWidth, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth)

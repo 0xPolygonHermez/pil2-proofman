@@ -23,7 +23,7 @@ uint64_t* get_pinned_mem() {
 
 void free_pinned_mem()
 {
-    cudaFreeHost(global_buffer);
+    CHECKCUDAERR(cudaFreeHost(global_buffer));
 }
 
 void warmup_all_gpus()

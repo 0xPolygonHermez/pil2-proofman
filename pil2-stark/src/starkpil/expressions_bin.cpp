@@ -18,6 +18,9 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
     maxTmp1 = expressionsBin->readU32LE();
     maxTmp3 = expressionsBin->readU32LE();
 
+    // expressionsBin->readU32LE();
+    // expressionsBin->readU32LE();
+
     uint32_t nOpsExpressions = expressionsBin->readU32LE();
     nOpsTotal = nOpsExpressions;
     uint32_t nArgsExpressions = expressionsBin->readU32LE();
@@ -319,6 +322,9 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
     maxTmp1 = expressionsBin->readU32LE();
     maxTmp3 = expressionsBin->readU32LE();
     
+    // expressionsBin->readU32LE();
+    // expressionsBin->readU32LE();
+
     uint32_t nOpsExpressions = expressionsBin->readU32LE();
     uint32_t nArgsExpressions = expressionsBin->readU32LE();
     uint32_t nNumbersExpressions = expressionsBin->readU32LE();

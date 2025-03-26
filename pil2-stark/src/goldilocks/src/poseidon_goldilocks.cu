@@ -779,8 +779,8 @@ void PoseidonGoldilocks::merkletree_cuda_async(Goldilocks::Element *tree, Goldil
     cudaFree(gpu_final_tree);
     for (int s = 0; s < nStreams * nDevices; s++)
     {
-        cudaFree(gpu_input[s]);
-        cudaFree(gpu_subtree[s]);
+        CHECKCUDAERR(cudaFree(gpu_input[s]));
+        CHECKCUDAERR(cudaFree(gpu_subtree[s]));
         cudaEventDestroy(events[s]);
         cudaStreamDestroy(cuda_streams[s]);
     }

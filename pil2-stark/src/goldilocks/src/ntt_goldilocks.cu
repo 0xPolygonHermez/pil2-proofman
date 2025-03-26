@@ -1324,10 +1324,10 @@ void NTT_Goldilocks::extendPol_GPU(Goldilocks::Element *output, Goldilocks::Elem
     CHECKCUDAERR(cudaStreamSynchronize(stream));
 
     cudaStreamDestroy(stream);
-    cudaFree(forward_tf_d);
-    cudaFree(inverse_tf_d);
-    cudaFree(r_d);
-    cudaFree(data_d);
+    CHECKCUDAERR(cudaFree(forward_tf_d));
+    CHECKCUDAERR(cudaFree(inverse_tf_d));
+    CHECKCUDAERR(cudaFree(r_d));
+    CHECKCUDAERR(cudaFree(data_d));
     TimerStopAndLog(ExtendPol_Full);
 }
 
@@ -1442,14 +1442,14 @@ void NTT_Goldilocks::extendPol_MultiGPU(Goldilocks::Element *output, Goldilocks:
 
     for (int s = 0; s < nStreams * nDevices; s++)
     {
-        cudaFree(data_d[s]);
+        CHECKCUDAERR(cudaFree(data_d[s]));
         cudaEventDestroy(events[s]);
         cudaStreamDestroy(cuda_streams[s]);
     }
     for (int d = 0; d < nDevices; d++)
     {
-        cudaFree(forward_tf_d[d]);
-        cudaFree(inverse_tf_d[d]);
-        cudaFree(r_d[d]);
+        CHECKCUDAERR(cudaFree(forward_tf_d[d]));
+        CHECKCUDAERR(cudaFree(inverse_tf_d[d]));
+        CHECKCUDAERR(cudaFree(r_d[d]));
     }
 }

@@ -353,19 +353,19 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     // Free memory
     for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
     {
-       cudaFree(d_trees[i].nodes);
+       CHECKCUDAERR(cudaFree(d_trees[i].nodes));
     }
     delete[] d_trees;
     if(h_params.pCustomCommitsFixed != nullptr)
-        cudaFree(h_params.pCustomCommitsFixed);
-    cudaFree(h_params.evals);
-    cudaFree(h_params.xDivXSub);
-    cudaFree(h_params.proofValues);
-    cudaFree(h_params.challenges);
-    cudaFree(h_params.airgroupValues);
-    cudaFree(h_params.airValues);
+    CHECKCUDAERR(cudaFree(h_params.pCustomCommitsFixed));
+    CHECKCUDAERR(cudaFree(h_params.evals));
+    CHECKCUDAERR(cudaFree(h_params.xDivXSub));
+    CHECKCUDAERR(cudaFree(h_params.proofValues));
+    CHECKCUDAERR(cudaFree(h_params.challenges));
+    CHECKCUDAERR(cudaFree(h_params.airgroupValues));
+    CHECKCUDAERR(cudaFree(h_params.airValues));
     delete[] foldedFRIPol;
-    cudaFree(d_params);
+    CHECKCUDAERR(cudaFree(d_params));
 
 }
     
