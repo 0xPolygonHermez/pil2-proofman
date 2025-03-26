@@ -52,8 +52,6 @@ namespace Plonk {
 
         Zkey::Addition<Engine> *additionsBuff;
 
-        u_int64_t lengthBatchInversesBuffer;
-
         FrElement *inverses;
         FrElement *products;
 
@@ -70,7 +68,7 @@ namespace Plonk {
 
         std::map <std::string, FrElement> toInverse;
         std::map <std::string, FrElement> challenges;
-        std::map<std::string, FrElement *> roots;
+
         FrElement blindingFactors[BLINDINGFACTORSLENGTH_PLONK + 1];
 
         Keccak256Transcript<Engine> *transcript;
@@ -108,17 +106,14 @@ namespace Plonk {
 
         void round5();
 
-        //ROUND 1 functions
         void computeWirePolynomials();
 
         void computeWirePolynomial(std::string polName, FrElement blindingFactors[]);
 
-        void computeT();
-
-        //ROUND 2 functions
         void computeZ();
 
-        //ROUND 5 functions
+        void computeT();
+
         void computeR();
 
         void computeWxi();
@@ -128,14 +123,6 @@ namespace Plonk {
         void batchInverse(FrElement *elements, u_int64_t length);
 
         FrElement *polynomialFromMontgomery(Polynomial<Engine> *polynomial);
-
-        // FrElement getMontgomeryBatchedInverse();
-
-        // void computeLiS0();
-
-        // void computeLiS1();
-
-        // void computeLiS2();
 
         G1Point multiExponentiation(Polynomial<Engine> *polynomial);
     };

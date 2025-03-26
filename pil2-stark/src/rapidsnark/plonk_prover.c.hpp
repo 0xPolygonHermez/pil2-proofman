@@ -66,11 +66,7 @@ namespace Plonk
         delete fft;
 
         mapBuffers.clear();
-
-        for (auto const &x : roots)
-            delete[] x.second;
-        roots.clear();
-
+        
         delete polynomials["QL"];
         delete polynomials["QR"];
         delete polynomials["QM"];
@@ -79,6 +75,7 @@ namespace Plonk
         delete polynomials["Sigma1"];
         delete polynomials["Sigma2"];
         delete polynomials["Sigma3"];
+        cout << 1 << endl;
 
         delete evaluations["QL"];
         delete evaluations["QR"];
@@ -89,6 +86,7 @@ namespace Plonk
         delete evaluations["Sigma2"];
         delete evaluations["Sigma3"];
         delete evaluations["lagrange"];
+        cout << 1 << endl;
     }
 
     template <typename Engine>
@@ -271,10 +269,10 @@ namespace Plonk
         }
         LOG_TRACE("... Loading Powers of Tau evaluations");
 
-        ThreadUtils::parset(PTau, 0, sizeof(G1PointAffine) * (zkey->domainSize + 6), nThreads);
+        // ThreadUtils::parset(PTau, 0, sizeof(G1PointAffine) * (zkey->domainSize + 6), nThreads);
 
-        // domainSize * 9 = SRS length in the zkey saved in setup process.
-        // it corresponds to the maximum SRS length needed, specifically to commit C2
+        // domainSize + 6 corresponds to the SRS length stored in the zkey during the setup phase.
+        // This represents the maximum SRS length required by the proving system.
         ThreadUtils::parcpy(this->PTau,
                             (G1PointAffine *)fdZkey->getSectionData(Zkey::ZKEY_PL_PTAU_SECTION),
                             (zkey->domainSize + 6) * sizeof(G1PointAffine), nThreads);
@@ -296,7 +294,7 @@ namespace Plonk
         additionsBuff = (Zkey::Addition<Engine> *)fdZkey->getSectionData(Zkey::ZKEY_PL_ADDITIONS_SECTION);
 
         LOG_TRACE("··· Loading map buffers");
-        ThreadUtils::parset(mapBuffers["A"], 0, byteLength * 3, nThreads);
+        // ThreadUtils::parset(mapBuffers["A"], 0, byteLength * 3, nThreads);
 
         // Read zkey sections and fill the buffers
         ThreadUtils::parcpy(mapBuffers["A"],
@@ -312,8 +310,6 @@ namespace Plonk
         transcript = new Keccak256Transcript<Engine>(E);
         proof = new SnarkProof<Engine>(E, "plonk");
 
-        lengthBatchInversesBuffer = zkey->domainSize * 2;
-
         if (NULL == this->reservedMemoryPtr)
         {
             inverses = new FrElement[zkey->domainSize];
@@ -328,24 +324,22 @@ namespace Plonk
         ////////////////////////////////////////////////////
         // NON-PRECOMPUTED BIG BUFFER
         ////////////////////////////////////////////////////
-        // Non-precomputed 1 > polynomials buffer
         lengthNonPrecomputedBigBuffer = 0;
-        lengthNonPrecomputedBigBuffer += zkey->domainSize * 16 * 1; // Polynomial L (A, B & C will (re)use this buffer)
-        lengthNonPrecomputedBigBuffer += zkey->domainSize * 8 * 1;  // Polynomial C1
-        lengthNonPrecomputedBigBuffer += zkey->domainSize * 16 * 1; // Polynomial C2
-        lengthNonPrecomputedBigBuffer += zkey->domainSize * 16 * 1; // Polynomial F
-        lengthNonPrecomputedBigBuffer += zkey->domainSize * 16 * 1; // Polynomial tmp (Z, T0, T1, T1z, T2 & T2z will (re)use this buffer)
-        // Non-precomputed 2 > evaluations buffer
-        lengthNonPrecomputedBigBuffer += zkey->domainSize * 4 * 3; // Evaluations A, B & C
-        lengthNonPrecomputedBigBuffer += zkey->domainSize * 4 * 1; // Evaluations Z
-        // Non-precomputed 3 > buffers buffer
-        buffersLength = 0;
-        buffersLength += zkey->domainSize * 4 * 3;  // Evaluations A, B & C
-        buffersLength += zkey->domainSize * 16 * 1; // Evaluations tmp (Z, numArr, denArr, T0, T1, T1z, T2 & T2z will (re)use this buffer)
-        lengthNonPrecomputedBigBuffer += buffersLength;
+        lengthNonPrecomputedBigBuffer += zkey->domainSize * 4 * 4;   // Evaluations A, B, C & Z
+        lengthNonPrecomputedBigBuffer += zkey->domainSize * 4 * 4;   // Buffers T, Tz & Polynomials T, Tz
+        lengthNonPrecomputedBigBuffer += (zkey->domainSize + 2) * 3; // Polynomials A, B & C
+        lengthNonPrecomputedBigBuffer += zkey->domainSize + 3;       // Polynomial Z
+        lengthNonPrecomputedBigBuffer += (zkey->domainSize + 1) * 2; // Polynomials T1 & T2
+        lengthNonPrecomputedBigBuffer += zkey->domainSize + 6;       // Polynomials T3
+        lengthNonPrecomputedBigBuffer += zkey->domainSize * 3;       // Buffers A, B, C
+        lengthNonPrecomputedBigBuffer += zkey->domainSize + 6;       // Buffer tmp
 
-        auto l = lengthNonPrecomputedBigBuffer;
-            lengthNonPrecomputedBigBuffer += zkey->domainSize * 2 * 3;
+        // Memory reuse plan:
+        // buffers.T    ← numArr, polynomials.R
+        // buffers.Tz   ← denArr, polynomials.Wxi
+        // polynomials.T ← buffers.Z, polynomials.Wxiw
+
+        buffersLength = zkey->domainSize * 3; // Buffers A, B, C, tmp
 
         if (NULL == this->reservedMemoryPtr)
         {
@@ -353,54 +347,55 @@ namespace Plonk
         }
         else
         {
-            if ((lengthBatchInversesBuffer + lengthNonPrecomputedBigBuffer) * sizeof(FrElement) > reservedMemorySize)
+            if (lengthNonPrecomputedBigBuffer * sizeof(FrElement) > reservedMemorySize)
             {
                 ss.str("");
                 ss << "Not enough reserved memory to generate a prove. Increase reserved memory size at least to "
-                   << (lengthBatchInversesBuffer + lengthNonPrecomputedBigBuffer) * sizeof(FrElement) << " bytes";
+                   << lengthNonPrecomputedBigBuffer * sizeof(FrElement) << " bytes";
                 throw std::runtime_error(ss.str());
             }
 
-            nonPrecomputedBigBuffer = this->reservedMemoryPtr + lengthBatchInversesBuffer;
+            nonPrecomputedBigBuffer = this->reservedMemoryPtr;
         }
-        //L,A,B,C,Sigma1,Sigma2,Z
-        polPtr["L"] = &nonPrecomputedBigBuffer[0];
-        polPtr["Wxi"] = polPtr["L"] + zkey->domainSize * 2;
-        polPtr["Wxiw"] = polPtr["Wxi"] + zkey->domainSize * 2;
-        polPtr["C1"] = polPtr["L"] + zkey->domainSize * 16;
-        polPtr["C2"] = polPtr["C1"] + zkey->domainSize * 8;
-        polPtr["F"] = polPtr["C2"] + zkey->domainSize * 16;
-        polPtr["tmp"] = polPtr["F"] + zkey->domainSize * 16;
-        // Reuses
-        polPtr["A"] = &nonPrecomputedBigBuffer[l];
-        polPtr["B"] = polPtr["A"] + zkey->domainSize + 2;
-        polPtr["C"] = polPtr["B"] + zkey->domainSize + 2;
-        polPtr["Z"] = polPtr["tmp"];
-        polPtr["T"] = polPtr["Z"] + zkey->domainSize * 2;
-        polPtr["Tz"] = polPtr["T"] + zkey->domainSize * 4;
-        polPtr["T1"] = polPtr["Tz"] + zkey->domainSize * 4;
-        polPtr["T2"] = polPtr["T1"] + zkey->domainSize + 1;
-        polPtr["T3"] = polPtr["T2"] + zkey->domainSize + 1;
 
-        evalPtr["A"] = polPtr["F"];
+        //L,A,B,C,Sigma1,Sigma2,Z
+        evalPtr["A"] = &nonPrecomputedBigBuffer[0];
         evalPtr["B"] = evalPtr["A"] + zkey->domainSize * 4;
         evalPtr["C"] = evalPtr["B"] + zkey->domainSize * 4;
         evalPtr["Z"] = evalPtr["C"] + zkey->domainSize * 4;
 
-        buffers["A"] = polPtr["tmp"] + zkey->domainSize * 16;
-        buffers["B"] = buffers["A"] + (zkey->domainSize);
-        buffers["C"] = buffers["B"] + (zkey->domainSize);
+        buffers["T"] = evalPtr["Z"] + zkey->domainSize * 4;
+        buffers["Tz"] = buffers["T"] + zkey->domainSize * 4;
+        polPtr["T"] = buffers["Tz"] + zkey->domainSize * 4;
+        polPtr["Tz"] = polPtr["T"] + zkey->domainSize * 4;
+
+        polPtr["A"] = polPtr["Tz"] + zkey->domainSize * 4;
+        polPtr["B"] = polPtr["A"] + zkey->domainSize + 2;
+        polPtr["C"] = polPtr["B"] + zkey->domainSize + 2;
+
+        polPtr["Z"] = polPtr["C"] + zkey->domainSize + 2;
+
+        polPtr["T1"] = polPtr["Z"] + zkey->domainSize + 3;
+        polPtr["T2"] = polPtr["T1"] + zkey->domainSize + 1;
+
+        polPtr["T3"] = polPtr["T2"] + zkey->domainSize + 1;
+
+        buffers["A"] = polPtr["T3"] + zkey->domainSize  + 1;
+        buffers["B"] = buffers["A"] + zkey->domainSize;
+        buffers["C"] = buffers["B"] + zkey->domainSize;
+
         buffers["tmp"] = buffers["C"] + (zkey->domainSize);
 
         // Reuses
-        buffers["Z"] = buffers["tmp"];
-        buffers["numArr"] = buffers["tmp"];
-        buffers["denArr"] = buffers["numArr"] + zkey->domainSize;
-        buffers["T"] = buffers["tmp"];
-        buffers["Tz"] = buffers["tmp"] + zkey->domainSize * 4;
-        // buffers["T1z"] = buffers["tmp"] + zkey->domainSize * 2;
-        // buffers["T2"] = buffers["tmp"];
-        // buffers["T2z"] = buffers["tmp"] + zkey->domainSize * 4;
+        buffers["numArr"] = buffers["T"];
+        polPtr["R"] = buffers["T"];
+        ;
+
+        buffers["denArr"] = buffers["Tz"];
+        polPtr["Wxi"] = buffers["Tz"];
+
+        buffers["Z"] = polPtr["T"];
+        polPtr["Wxiw"] = polPtr["T"];
         // }
         // catch (const std::exception &e)
         // {
@@ -499,26 +494,8 @@ namespace Plonk
         // We set it to zero to go faster in the exponentiations.
         buffWitness[0] = E.fr.zero();
 
-        // To divide prime fields the Extended Euclidean Algorithm for computing modular inverses is needed.
-        // NOTE: This is the equivalent of compute 1/denominator and then multiply it by the numerator.
-        // The Extended Euclidean Algorithm is expensive in terms of computation.
-        // For the special case where we need to do many modular inverses, there's a simple mathematical trick
-        // that allows us to compute many inverses, called Montgomery batch inversion.
-        // More info: https://vitalik.ca/general/2018/07/21/starks_part_3.html
-        // Montgomery batch inversion reduces the n inverse computations to a single one
-        // To save this (single) inverse computation on-chain, will compute it in proving time and send it to the verifier.
-        // The verifier will have to check:
-        // 1) the denominator is correct multiplying by himself non-inverted -> a * 1/a == 1
-        // 2) compute the rest of the denominators using the Montgomery batch inversion
-        // The inversions are:
-        //   · denominator needed in step 8 and 9 of the verifier to multiply by 1/Z_H(xi)
-        //   · denominator needed in step 10 and 11 of the verifier
-        //   · denominator needed in the verifier when computing L_i^{S1}(X) and L_i^{S2}(X)
-        //   · L_i i=1 to num public inputs, needed in step 6 and 7 of the verifier to compute L_1(xi) and PI(xi)
-        // toInverse property is the variable to store the values to be inverted
-
-        // Until this point all calculations made are circuit depending and independent from the data, so we could
-        // this big function into two parts: until here circuit dependent and from here is the proof calculation
+        // Until this point all calculations made are circuit depending and independent from the data, 
+        // from here is the proof calculation
 
         double startTime = omp_get_wtime();
 
@@ -567,29 +544,7 @@ namespace Plonk
         ss << "Execution time: " << omp_get_wtime() - startTime << "\n";
         LOG_TRACE(ss);
 
-        delete polynomials["A"];
-        delete polynomials["B"];
-        delete polynomials["C"];
-        delete polynomials["C1"];
-        delete polynomials["C2"];
-        delete polynomials["F"];
-        delete polynomials["L"];
-        delete polynomials["R0"];
-        delete polynomials["R1"];
-        delete polynomials["R2"];
-        delete polynomials["T0"];
-        delete polynomials["T1"];
-        delete polynomials["T1z"];
-        delete polynomials["T2"];
-        delete polynomials["T2z"];
-        delete polynomials["Z"];
-        delete polynomials["ZT"];
-        delete polynomials["ZTS2"];
-
-        delete evaluations["A"];
-        delete evaluations["B"];
-        delete evaluations["C"];
-        delete evaluations["Z"];
+        delete nonPrecomputedBigBuffer;
 
         return {proof->toJson(), publicSignals};
         // }
@@ -744,16 +699,6 @@ namespace Plonk
         E.g1.copy(Commitment, *((G1PointAffine *)zkey->S3));
         transcript->addPolCommitment(Commitment);
 
-        Dump::Dump dump(E);
-        // dump.dump("QM", *((G1PointAffine *)zkey->QM));
-        // dump.dump("QL", *((G1PointAffine *)zkey->QL));
-        // dump.dump("QR", *((G1PointAffine *)zkey->QR));
-        // dump.dump("QO", *((G1PointAffine *)zkey->QO));
-        // dump.dump("QC", *((G1PointAffine *)zkey->QC));
-        // dump.dump("S1", *((G1PointAffine *)zkey->S1));
-        // dump.dump("S2", *((G1PointAffine *)zkey->S2));
-        // dump.dump("S3", *((G1PointAffine *)zkey->S3));
-
         // Add A to the transcript
         for (u_int32_t i = 0; i < zkey->nPublic; i++)
         {
@@ -764,13 +709,6 @@ namespace Plonk
         transcript->addPolCommitment(proof->getPolynomialCommitment("A"));
         transcript->addPolCommitment(proof->getPolynomialCommitment("B"));
         transcript->addPolCommitment(proof->getPolynomialCommitment("C"));
-
-        // auto point = proof->getPolynomialCommitment("A");
-        // dump.dump("A", point);
-        // point = proof->getPolynomialCommitment("B");
-        // dump.dump("B", point);
-        // point = proof->getPolynomialCommitment("C");
-        // dump.dump("C", point);
 
         challenges["beta"] = transcript->getChallenge();
         std::ostringstream ss;
@@ -804,8 +742,6 @@ namespace Plonk
         LOG_TRACE("··· Computing Z evaluations");
 
         std::ostringstream ss;
-        Dump::Dump dump(E);
-
 #pragma omp parallel for
         for (u_int64_t i = 0; i < zkey->domainSize; i++)
         {
@@ -942,9 +878,8 @@ namespace Plonk
     {
         LOG_TRACE("··· Computing T evaluations");
 
-        Dump::Dump dump(E);
         std::ostringstream ss;
-        // #pragma omp parallel for
+#pragma omp parallel for
         for (u_int64_t i = 0; i < zkey->domainSize * 4; i++)
         {
             FrElement omega = fft->root(zkeyPower + 2, i);
@@ -978,17 +913,12 @@ namespace Plonk
                 blindingFactors[9]);
 
             auto pi = E.fr.zero();
-            // if (i==0) {cout << "PI: " << endl;}
             for (u_int32_t j = 0; j < zkey->nPublic; j++)
             {
                 const u_int32_t offset = (j * 4 * zkey->domainSize) + i;
 
                 const auto lPol = evaluations["lagrange"]->getEvaluation(offset);
                 const auto aVal = buffers["A"][j];
-                // if (i==0) {cout << "offset: " << offset<<endl;}
-                // if (i==0) {dump.dump("lPol: ", lPol);}
-                // if (i==0) {dump.dump("aVal: ", aVal);}
-
                 pi = E.fr.sub(pi, E.fr.mul(lPol, aVal));
             }
 
@@ -1003,42 +933,18 @@ namespace Plonk
             auto [e1, e1z] = mulz.mul2(a, b, ap, bp, i % 4);
             e1 = E.fr.mul(e1, qm);
             e1z = E.fr.mul(e1z, qm);
-            // if (i == 0)
-            // {
-            //     dump.dump("*** e1", e1);
-            // }
 
             e1 = E.fr.add(e1, E.fr.mul(a, ql));
             e1z = E.fr.add(e1z, E.fr.mul(ap, ql));
 
-            // if (i == 0)
-            // {
-            //     dump.dump("*** e1", e1);
-            // }
             e1 = E.fr.add(e1, E.fr.mul(b, qr));
             e1z = E.fr.add(e1z, E.fr.mul(bp, qr));
 
-            // if (i == 0)
-            // {
-            //     dump.dump("*** e1", e1);
-            // }
             e1 = E.fr.add(e1, E.fr.mul(c, qo));
             e1z = E.fr.add(e1z, E.fr.mul(cp, qo));
 
-            // if (i == 0)
-            // {
-            //     dump.dump("*** e1", e1);
-            // }
             e1 = E.fr.add(e1, pi);
-            // if (i == 0)
-            // {
-            //     dump.dump("*** e1", e1);
-            // }
             e1 = E.fr.add(e1, qc);
-            // if (i == 0)
-            // {
-            //     dump.dump("*** e1", e1);
-            // }
 
             // e2 := α[(a(X) + βX + γ)(b(X) + βk1X + γ)(c(X) + βk2X + γ)z(X)]
             auto betaw = E.fr.mul(challenges["beta"], omega);
@@ -1237,15 +1143,12 @@ namespace Plonk
     template <typename Engine>
     void PlonkProver<Engine>::computeR()
     {
-Dump::Dump dump(E);
         challenges["xin"] = challenges["xi"];
         for (u_int32_t i = 0; i < zkeyPower; i++)
         {
             challenges["xin"] = E.fr.square(challenges["xin"]);
         }
-dump.dump("challenges.xin", challenges["xin"]);
         challenges["zh"] = E.fr.sub(challenges["xin"], E.fr.one());
-dump.dump("challenges.zh", challenges["zh"]);
 
         auto upper_bound = std::max(static_cast<uint32_t>(1), zkey->nPublic);
         auto L = new FrElement[upper_bound + 1];
@@ -1263,14 +1166,13 @@ dump.dump("challenges.zh", challenges["zh"]);
                  E.fr.sub(challenges["xin"], E.fr.one()),
                  E.fr.mul(n, E.fr.sub(challenges["xi"], E.fr.one())));
 
-dump.dump("eval_l1", eval_l1);
         LOG_TRACE("> Lagrange Evaluations:");
         std::ostringstream ss;
 
         for (u_int32_t i = 1; i <= upper_bound; i++)
         {
             ss.str("");
-            ss << "··· L" << i << "(xi): " << E.fr.toString(L[i]) << endl;
+            ss << "··· L" << i << "(xi): " << E.fr.toString(L[i]);
             LOG_TRACE(ss);
         }
 
@@ -1291,31 +1193,31 @@ dump.dump("eval_l1", eval_l1);
         }
 
         ss.str("");
-        ss << "··· PI: " << E.fr.toString(eval_pi) << endl;
+        ss << "··· PI: " << E.fr.toString(eval_pi);
         LOG_TRACE(ss);
 
         // Compute constant parts of R(X)
         auto coef_ab = E.fr.mul(proof->getEvaluationCommitment("eval_a"), proof->getEvaluationCommitment("eval_b"));
-dump.dump("coef_ab", coef_ab);
+
         auto e2a = proof->getEvaluationCommitment("eval_a");
         auto betaxi = E.fr.mul(challenges["beta"], challenges["xi"]);
         e2a = E.fr.add(e2a, betaxi);
         e2a = E.fr.add(e2a, challenges["gamma"]);
-dump.dump("e2a", e2a);
+
         auto e2b = proof->getEvaluationCommitment("eval_b");
         e2b = E.fr.add(e2b, E.fr.mul(betaxi, *((FrElement *)zkey->k1)));
         e2b = E.fr.add(e2b, challenges["gamma"]);
-dump.dump("e2b", e2b);
+
         auto e2c = proof->getEvaluationCommitment("eval_c");
         e2c = E.fr.add(e2c, E.fr.mul(betaxi, *((FrElement *)zkey->k2)));
         e2c = E.fr.add(e2c, challenges["gamma"]);
-dump.dump("e2c", e2c);
+
         auto e2 = E.fr.mul(E.fr.mul(E.fr.mul(e2a, e2b), e2c), challenges["alpha"]);
-dump.dump("e2", e2);
+
         auto e3a = proof->getEvaluationCommitment("eval_a");
         e3a = E.fr.add(e3a, E.fr.mul(challenges["beta"], proof->getEvaluationCommitment("eval_s1")));
         e3a = E.fr.add(e3a, challenges["gamma"]);
-dump.dump("e3a", e3a);
+
         auto e3b = proof->getEvaluationCommitment("eval_b");
         e3b = E.fr.add(e3b, E.fr.mul(challenges["beta"], proof->getEvaluationCommitment("eval_s2")));
         e3b = E.fr.add(e3b, challenges["gamma"]);
@@ -1326,7 +1228,7 @@ dump.dump("e3a", e3a);
 
         auto e4 = E.fr.mul(eval_l1, challenges["alpha2"]);
 
-        polynomials["R"] = new Polynomial<Engine>(E, polPtr["L"], zkey->domainSize + 6);
+        polynomials["R"] = new Polynomial<Engine>(E, polPtr["R"], zkey->domainSize + 6);
         polynomials["R"]->addBlinding(*polynomials["QM"], coef_ab);
         auto eval_a = proof->getEvaluationCommitment("eval_a");
         polynomials["R"]->addBlinding(*polynomials["QL"], eval_a);
@@ -1340,9 +1242,6 @@ dump.dump("e3a", e3a);
         polynomials["R"]->subBlinding(*polynomials["Sigma3"], val);
         polynomials["R"]->addBlinding(*polynomials["Z"], e4);
 
-dump.dump("polynomials[R][0]", polynomials["R"]->coef[0]);
-dump.dump("polynomials[R][1]", polynomials["R"]->coef[1]);
-
         auto tmp = polynomials["T3"];
         auto xin2 = E.fr.square(challenges["xin"]);
         tmp->mulScalar(xin2);
@@ -1351,14 +1250,12 @@ dump.dump("polynomials[R][1]", polynomials["R"]->coef[1]);
         tmp->mulScalar(challenges["zh"]);
 
         polynomials["R"]->sub(*tmp);
-dump.dump("polynomials[R][0]", polynomials["R"]->coef[0]);
-dump.dump("polynomials[R][1]", polynomials["R"]->coef[1]);
 
         auto r0 = E.fr.sub(eval_pi, E.fr.mul(e3, E.fr.add(proof->getEvaluationCommitment("eval_c"), challenges["gamma"])));
         r0 = E.fr.sub(r0, e4);
 
         ss.str("");
-        ss << "··· r0: " << E.fr.toString(r0) << endl;
+        ss << "··· r0: " << E.fr.toString(r0);
         LOG_TRACE(ss);
 
         polynomials["R"]->addScalar(r0);
@@ -1429,125 +1326,6 @@ dump.dump("polynomials[R][1]", polynomials["R"]->coef[1]);
             E.fr.mul(elements[index], inverses[index], products[index - 1]);
         }
     }
-
-    // template <typename Engine>
-    // typename Engine::FrElement PlonkProver<Engine>::getMontgomeryBatchedInverse()
-    // {
-    //     std::ostringstream ss;
-    //     //   · denominator needed in step 8 and 9 of the verifier to multiply by 1/Z_H(xi)
-    //     FrElement xiN = challenges["xi"];
-    //     for (u_int64_t i = 0; i < zkeyPower; i++)
-    //     {
-    //         xiN = E.fr.square(xiN);
-    //     }
-    //     toInverse["zh"] = E.fr.sub(xiN, E.fr.one());
-
-    //     //   · denominator needed in step 10 and 11 of the verifier
-    //     //     toInverse.yBatch -> Computed in round5, computeL()
-
-    //     //   · denominator needed in the verifier when computing L_i^{S0}(X), L_i^{S1}(X) and L_i^{S2}(X)
-    //     computeLiS0();
-
-    //     computeLiS1();
-
-    //     computeLiS2();
-
-    //     //   · L_i i=1 to num public inputs, needed in step 6 and 7 of the verifier to compute L_1(xi) and PI(xi)
-    //     u_int32_t size = std::max(1, (int)zkey->nPublic);
-
-    //     FrElement w = E.fr.one();
-    //     for (u_int64_t i = 0; i < size; i++)
-    //     {
-    //         ss.str("");
-    //         ss << "Li_" << (i + 1);
-    //         toInverse[ss.str()] = E.fr.mul(E.fr.set(zkey->domainSize), E.fr.sub(challenges["xi"], w));
-    //         w = E.fr.mul(w, fft->root(zkeyPower, 1));
-    //     }
-
-    //     FrElement mulAccumulator = E.fr.one();
-    //     for (auto &[key, value] : toInverse)
-    //     {
-    //         mulAccumulator = E.fr.mul(mulAccumulator, value);
-    //     }
-
-    //     E.fr.inv(mulAccumulator, mulAccumulator);
-    //     return mulAccumulator;
-    // }
-
-    // template <typename Engine>
-    // void PlonkProver<Engine>::computeLiS0()
-    // {
-    //     std::ostringstream ss;
-
-    //     FrElement den1 = E.fr.set(8);
-    //     for (u_int64_t i = 0; i < 6; i++)
-    //     {
-    //         den1 = E.fr.mul(den1, roots["S0h0"][0]);
-    //     }
-
-    //     // Compute L_i^{(S0)}(y)
-    //     for (uint j = 0; j < 8; j++)
-    //     {
-
-    //         FrElement den2 = roots["S0h0"][(7 * j) % 8];
-    //         FrElement den3 = E.fr.sub(challenges["y"], roots["S0h0"][j]);
-
-    //         ss.str("");
-    //         ss << "LiS0_" << (j + 1) << " ";
-    //         toInverse[ss.str()] = E.fr.mul(E.fr.mul(den1, den2), den3);
-    //     }
-    //     return;
-    // }
-
-    // template <typename Engine>
-    // void PlonkProver<Engine>::computeLiS1()
-    // {
-    //     std::ostringstream ss;
-
-    //     // Compute L_i^{(S1)}(y)
-    //     FrElement den1 = E.fr.mul(E.fr.set(4), E.fr.mul(roots["S1h1"][0], roots["S1h1"][0]));
-    //     for (uint j = 0; j < 4; j++)
-    //     {
-
-    //         FrElement den2 = roots["S1h1"][(3 * j) % 4];
-    //         FrElement den3 = E.fr.sub(challenges["y"], roots["S1h1"][j]);
-
-    //         ss.str("");
-    //         ss << "LiS1_" << (j + 1) << " ";
-    //         toInverse[ss.str()] = E.fr.mul(E.fr.mul(den1, den2), den3);
-    //     }
-    //     return;
-    // }
-
-    // template <typename Engine>
-    // void PlonkProver<Engine>::computeLiS2()
-    // {
-    //     std::ostringstream ss;
-
-    //     // Compute L_i^{(S2)}(y)
-    //     FrElement den1 = E.fr.mul(E.fr.mul(E.fr.set(3), roots["S2h2"][0]), E.fr.sub(challenges["xi"], challenges["xiw"]));
-    //     for (uint j = 0; j < 3; j++)
-    //     {
-    //         FrElement den2 = roots["S2h2"][2 * j % 3];
-    //         FrElement den3 = E.fr.sub(challenges["y"], roots["S2h2"][j]);
-
-    //         ss.str("");
-    //         ss << "LiS2_" << (j + 1) << " ";
-    //         toInverse[ss.str()] = E.fr.mul(E.fr.mul(den1, den2), den3);
-    //     }
-
-    //     den1 = E.fr.mul(E.fr.mul(E.fr.set(3), roots["S2h3"][0]), E.fr.sub(challenges["xiw"], challenges["xi"]));
-    //     for (uint j = 0; j < 3; j++)
-    //     {
-    //         FrElement den2 = roots["S2h3"][2 * j % 3];
-    //         FrElement den3 = E.fr.sub(challenges["y"], roots["S2h3"][j]);
-
-    //         ss.str("");
-    //         ss << "LiS2_" << (j + 1 + 3) << " ";
-    //         toInverse[ss.str()] = E.fr.mul(E.fr.mul(den1, den2), den3);
-    //     }
-    //     return;
-    // }
 
     template <typename Engine>
     typename Engine::FrElement *PlonkProver<Engine>::polynomialFromMontgomery(Polynomial<Engine> *polynomial)
