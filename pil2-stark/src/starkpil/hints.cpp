@@ -548,14 +548,23 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
         addHintField(setupCtx, params, hintId[i], destStruct, hintFieldName2[i], hintOptions2[i]);
 #ifdef __USE_CUDA__
         opHintFieldsGPU(d_params, destStruct, nRows, false, GPUExpressionsCtx);
-        if(destStruct.dest != NULL) {
-            freeDestGPU(destStruct.dest_gpu);            
-        }
+        
 #else
         expressionsCtx.calculateExpressions(params, destStruct, nRows, false, false);
 #endif
 
         if(hintFieldDestVal.operand == opType::airvalue) {
+#ifdef __USE_CUDA__
+            uint64_t pos = 0;
+            uint64_t dim = setupCtx.starkInfo.airValuesMap[hintFieldDestVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
+            for(uint64_t i = 0; i < hintFieldDestVal.id; ++i) {
+                pos += setupCtx.starkInfo.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
+            }
+            for(int k =0; k < dim; ++k) {
+                params.airValues[pos + k] = buff_gpu[k];
+            }
+            freeDestGPU(destStruct.dest_gpu);            
+#else
             uint64_t pos = 0;
             uint64_t dim = setupCtx.starkInfo.airValuesMap[hintFieldDestVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
             for(uint64_t i = 0; i < hintFieldDestVal.id; ++i) {
@@ -563,6 +572,7 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
             }
             std::memcpy(&params.airValues[pos], buff, dim * sizeof(Goldilocks::Element));
             delete[] buff;
+#endif
         }
 
 
