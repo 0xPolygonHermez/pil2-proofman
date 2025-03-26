@@ -121,7 +121,45 @@ __global__ void fillLEv_2d(gl64_t *d_LEv, gl64_t *d_xiChallenge, uint64_t W_, ui
         d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 1] = xiShiftedPow[1];
         d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 2] = xiShiftedPow[2];
     }
+
 }
+
+/*__global__ void fillLEv_2d(gl64_t *d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N)
+{
+
+    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t k = blockIdx.y * blockDim.y + threadIdx.y;
+    if (i < nOpeningPoints && k < N)
+    {
+        gl64_t w(1);
+        Goldilocks3GPU::Element xi;
+        Goldilocks3GPU::Element xiShifted;
+        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
+        gl64_t W(W_);
+        gl64_t shift(shift_);
+        gl64_t invShift = shift.reciprocal();
+        for (uint64_t j = 0; j < openingAbs; ++j)
+        {
+            w *= W;
+        }
+
+        if (d_openingPoints[i] < 0)
+        {
+            w = w.reciprocal();
+        }
+        Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), w);
+        Goldilocks3GPU::mul(xiShifted, xi, invShift);
+        while(k < N)
+        {
+            Goldilocks3GPU::Element xiShiftedPow;
+            Goldilocks3GPU::pow(xiShifted, k, xiShiftedPow);
+            d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION] = xiShiftedPow[0];
+            d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 1] = xiShiftedPow[1];
+            d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 2] = xiShiftedPow[2];
+            k+=blockDim.y;
+        }
+    }
+}*/
 
 void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, gl64_t* d_LEv_)
 {
@@ -136,10 +174,7 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t LEv_offset, u
     cudaMalloc(&d_openingPoints, nOpeningPoints * sizeof(int64_t));
     cudaMemcpy(d_openingPoints, openingPoints, nOpeningPoints * sizeof(int64_t), cudaMemcpyHostToDevice);
 
-    /*dim3 nThreads(32);
-    dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x);
-    fillLEv<<<nBlocks, nThreads>>>(LEv_offset, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, d_buffers->d_aux_trace, N);*/
-    dim3 nThreads(1, 512);
+    dim3 nThreads(1, 256);
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (N + nThreads.y - 1) / nThreads.y);
     gl64_t * d_LEv = d_LEv_ == NULL ? (gl64_t *)d_buffers->d_aux_trace + LEv_offset
                                     : d_LEv_;
