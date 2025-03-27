@@ -337,7 +337,7 @@ namespace Plonk
         // Memory reuse plan:
         // buffers.T    ← numArr, polynomials.R
         // buffers.Tz   ← denArr, polynomials.Wxi
-        // polynomials.T ← buffers.Z, polynomials.Wxiw
+        // polynomials.T ← buffers.Z
 
         buffersLength = zkey->domainSize * 3; // Buffers A, B, C, tmp
 
@@ -395,7 +395,6 @@ namespace Plonk
         polPtr["Wxi"] = buffers["Tz"];
 
         buffers["Z"] = polPtr["T"];
-        polPtr["Wxiw"] = polPtr["T"];
         // }
         // catch (const std::exception &e)
         // {
@@ -607,6 +606,7 @@ namespace Plonk
         computeWirePolynomials();
 
         // STEP 1.3 - Compute [a]_1, [b]_1, [c]_1
+        LOG_TRACE("> Computing A, B, C polynomial commitments");
         G1Point A = multiExponentiation(polynomials["A"]);
         G1Point B = multiExponentiation(polynomials["B"]);
         G1Point C = multiExponentiation(polynomials["C"]);
@@ -648,12 +648,14 @@ namespace Plonk
     void PlonkProver<Engine>::computeWirePolynomial(std::string polName, FrElement blindingFactors[])
     {
 
-// Compute all witness from signal ids and set them to the polynomial buffers
+        // Compute all witness from signal ids and set them to the polynomial buffers
+        auto mapBuffersPol = mapBuffers[polName];
+        auto buffersPol = buffers[polName];
 #pragma omp parallel for
         for (u_int32_t i = 0; i < zkey->nConstraints; ++i)
         {
-            FrElement witness = getWitness(mapBuffers[polName][i]);
-            E.fr.toMontgomery(buffers[polName][i], witness);
+            FrElement witness = getWitness(mapBuffersPol[i]);
+            E.fr.toMontgomery(buffersPol[i], witness);
         }
 
         // Create the polynomial
@@ -661,7 +663,7 @@ namespace Plonk
         std::ostringstream ss;
         ss << "··· Computing " << polName << " ifft";
         LOG_TRACE(ss);
-        polynomials[polName] = Polynomial<Engine>::fromEvaluations(E, fft, buffers[polName], polPtr[polName], zkey->domainSize, 2);
+        polynomials[polName] = Polynomial<Engine>::fromEvaluations(E, fft, buffersPol, polPtr[polName], zkey->domainSize, 2);
 
         // Compute the extended evaluations of the wire polynomials
         ss.str("");
@@ -728,7 +730,7 @@ namespace Plonk
         computeZ();
 
         // The second output of the prover is ([C2]_1)
-        LOG_TRACE("> Computing Z multi exponentiation");
+        LOG_TRACE("> Computing Z polynomial commitment");
         G1Point Z = multiExponentiation(polynomials["Z"]);
         proof->addPolynomialCommitment("Z", Z);
     }
@@ -739,7 +741,21 @@ namespace Plonk
         FrElement *numArr = buffers["numArr"];
         FrElement *denArr = buffers["denArr"];
 
+        auto buffersA = buffers["A"];
+        auto buffersB = buffers["B"];
+        auto buffersC = buffers["C"];
+
+        auto evalSigma1 = evaluations["Sigma1"];
+        auto evalSigma2 = evaluations["Sigma2"];
+        auto evalSigma3 = evaluations["Sigma3"];
+
         LOG_TRACE("··· Computing Z evaluations");
+
+        // Preloaded constants
+        auto beta = challenges["beta"];
+        auto gamma = challenges["gamma"];
+        auto k1 = *((FrElement *)zkey->k1);
+        auto k2 = *((FrElement *)zkey->k2);
 
         std::ostringstream ss;
 #pragma omp parallel for
@@ -755,34 +771,34 @@ namespace Plonk
 
             // Z(X) := numArr / denArr
             // numArr := (a + beta·ω + gamma)(b + beta·ω·k1 + gamma)(c + beta·ω·k2 + gamma)
-            FrElement betaw = E.fr.mul(challenges["beta"], omega);
+            FrElement betaw = E.fr.mul(beta, omega);
 
-            FrElement num1 = buffers["A"][i];
+            FrElement num1 = buffersA[i];
             num1 = E.fr.add(num1, betaw);
-            num1 = E.fr.add(num1, challenges["gamma"]);
+            num1 = E.fr.add(num1, gamma);
 
-            FrElement num2 = buffers["B"][i];
-            num2 = E.fr.add(num2, E.fr.mul(*((FrElement *)zkey->k1), betaw));
-            num2 = E.fr.add(num2, challenges["gamma"]);
+            FrElement num2 = buffersB[i];
+            num2 = E.fr.add(num2, E.fr.mul(k1, betaw));
+            num2 = E.fr.add(num2, gamma);
 
-            FrElement num3 = buffers["C"][i];
-            num3 = E.fr.add(num3, E.fr.mul(*((FrElement *)zkey->k2), betaw));
-            num3 = E.fr.add(num3, challenges["gamma"]);
+            FrElement num3 = buffersC[i];
+            num3 = E.fr.add(num3, E.fr.mul(k2, betaw));
+            num3 = E.fr.add(num3, gamma);
 
             numArr[i] = E.fr.mul(num1, E.fr.mul(num2, num3));
 
             // denArr := (a + beta·sigma1 + gamma)(b + beta·sigma2 + gamma)(c + beta·sigma3 + gamma)
-            FrElement den1 = buffers["A"][i];
-            den1 = E.fr.add(den1, E.fr.mul(challenges["beta"], evaluations["Sigma1"]->eval[i * 4]));
-            den1 = E.fr.add(den1, challenges["gamma"]);
+            FrElement den1 = buffersA[i];
+            den1 = E.fr.add(den1, E.fr.mul(beta, evalSigma1->eval[i * 4]));
+            den1 = E.fr.add(den1, gamma);
 
-            FrElement den2 = buffers["B"][i];
-            den2 = E.fr.add(den2, E.fr.mul(challenges["beta"], evaluations["Sigma2"]->eval[i * 4]));
-            den2 = E.fr.add(den2, challenges["gamma"]);
+            FrElement den2 = buffersB[i];
+            den2 = E.fr.add(den2, E.fr.mul(beta, evalSigma2->eval[i * 4]));
+            den2 = E.fr.add(den2, gamma);
 
-            FrElement den3 = buffers["C"][i];
-            den3 = E.fr.add(den3, E.fr.mul(challenges["beta"], evaluations["Sigma3"]->eval[i * 4]));
-            den3 = E.fr.add(den3, challenges["gamma"]);
+            FrElement den3 = buffersC[i];
+            den3 = E.fr.add(den3, E.fr.mul(beta, evalSigma3->eval[i * 4]));
+            den3 = E.fr.add(den3, gamma);
 
             denArr[i] = E.fr.mul(den1, E.fr.mul(den2, den3));
         }
@@ -810,21 +826,23 @@ namespace Plonk
         // division numArr/denArr by multiplying num · 1/denArr
         batchInverse(denArr, zkey->domainSize);
 
-// Multiply numArr · denArr where denArr was inverted in the previous command
+        // Multiply numArr · denArr where denArr was inverted in the previous command
+        auto buffersZ = buffers["Z"];
+
 #pragma omp parallel for
         for (u_int32_t i = 0; i < zkey->domainSize; i++)
         {
-            buffers["Z"][i] = E.fr.mul(numArr[i], denArr[i]);
+            buffersZ[i] = E.fr.mul(numArr[i], denArr[i]);
         }
 
-        if (!E.fr.eq(buffers["Z"][0], E.fr.one()))
+        if (!E.fr.eq(buffersZ[0], E.fr.one()))
         {
             throw std::runtime_error("Copy constraints does not match");
         }
 
         // Compute polynomial coefficients z(X) from buffers.Z
         LOG_TRACE("··· Computing Z ifft");
-        polynomials["Z"] = Polynomial<Engine>::fromEvaluations(E, fft, buffers["Z"], polPtr["Z"], zkey->domainSize, 3);
+        polynomials["Z"] = Polynomial<Engine>::fromEvaluations(E, fft, buffersZ, polPtr["Z"], zkey->domainSize, 3);
 
         // Compute extended evaluations of z(X) polynomial
         LOG_TRACE("··· Computing Z fft");
@@ -864,6 +882,7 @@ namespace Plonk
         computeT();
 
         // Compute [T1]_1, [T2]_1, [T3]_1
+        LOG_TRACE("> Computing T1, T2 & T3 polynomial commitments");
         G1Point T1 = multiExponentiation(polynomials["T1"]);
         G1Point T2 = multiExponentiation(polynomials["T2"]);
         G1Point T3 = multiExponentiation(polynomials["T3"]);
@@ -874,9 +893,37 @@ namespace Plonk
     }
 
     template <typename Engine>
-    void PlonkProver<Engine>::computeT()
+    void PlonkProver<Engine>::  computeT()
     {
         LOG_TRACE("··· Computing T evaluations");
+        MulZ<Engine> mulz(E, fft);
+
+        auto buffersA = buffers["A"];
+        auto buffersT = buffers["T"];
+        auto buffersTz = buffers["Tz"];
+
+        auto evaluationsA = evaluations["A"];
+        auto evaluationsB = evaluations["B"];
+        auto evaluationsC = evaluations["C"];
+        auto evaluationsZ = evaluations["Z"];
+        auto evaluationsQM = evaluations["QM"];
+        auto evaluationsQL = evaluations["QL"];
+        auto evaluationsQR = evaluations["QR"];
+        auto evaluationsQO = evaluations["QO"];
+        auto evaluationsQC = evaluations["QC"];
+        auto evaluationsS1 = evaluations["Sigma1"];
+        auto evaluationsS2 = evaluations["Sigma2"];
+        auto evaluationsS3 = evaluations["Sigma3"];
+        auto evaluationsLagrange = evaluations["lagrange"];
+
+
+        // Preloaded constants
+        auto beta = challenges["beta"];
+        auto gamma = challenges["gamma"];
+        auto alpha = challenges["alpha"];
+        auto alpha2 = challenges["alpha2"];
+        auto k1 = *((FrElement *)zkey->k1);
+        auto k2 = *((FrElement *)zkey->k2);
 
         std::ostringstream ss;
 #pragma omp parallel for
@@ -887,20 +934,22 @@ namespace Plonk
             FrElement omegaW = E.fr.mul(omega, fft->root(zkeyPower, 1));
             FrElement omegaW2 = E.fr.square(omegaW);
 
-            FrElement a = evaluations["A"]->eval[i];
-            FrElement b = evaluations["B"]->eval[i];
-            FrElement c = evaluations["C"]->eval[i];
-            FrElement z = evaluations["Z"]->eval[i];
-            FrElement zW = evaluations["Z"]->eval[(zkey->domainSize * 4 + 4 + i) % (zkey->domainSize * 4)];
+            FrElement a = evaluationsA->eval[i];
+            FrElement b = evaluationsB->eval[i];
+            FrElement c = evaluationsC->eval[i];
+            FrElement z = evaluationsZ->eval[i];
+            FrElement zW = evaluationsZ->eval[(zkey->domainSize * 4 + 4 + i) % (zkey->domainSize * 4)];
 
-            FrElement qm = evaluations["QM"]->eval[i];
-            FrElement ql = evaluations["QL"]->eval[i];
-            FrElement qr = evaluations["QR"]->eval[i];
-            FrElement qo = evaluations["QO"]->eval[i];
-            FrElement qc = evaluations["QC"]->eval[i];
-            FrElement s1 = evaluations["Sigma1"]->eval[i];
-            FrElement s2 = evaluations["Sigma2"]->eval[i];
-            FrElement s3 = evaluations["Sigma3"]->eval[i];
+            FrElement qm = evaluationsQM->eval[i];
+            FrElement ql = evaluationsQL->eval[i];
+            FrElement qr = evaluationsQR->eval[i];
+            FrElement qo = evaluationsQO->eval[i];
+            FrElement qc = evaluationsQC->eval[i];
+            FrElement s1 = evaluationsS1->eval[i];
+            FrElement s2 = evaluationsS2->eval[i];
+            FrElement s3 = evaluationsS3->eval[i];
+
+            auto lagrange_eval = evaluationsLagrange->getEvaluation(i);
 
             FrElement ap = E.fr.add(blindingFactors[2], E.fr.mul(blindingFactors[1], omega));
             FrElement bp = E.fr.add(blindingFactors[4], E.fr.mul(blindingFactors[3], omega));
@@ -917,12 +966,10 @@ namespace Plonk
             {
                 const u_int32_t offset = (j * 4 * zkey->domainSize) + i;
 
-                const auto lPol = evaluations["lagrange"]->getEvaluation(offset);
-                const auto aVal = buffers["A"][j];
+                const auto lPol = evaluationsLagrange ->getEvaluation(offset);
+                    const auto aVal = buffersA[j];
                 pi = E.fr.sub(pi, E.fr.mul(lPol, aVal));
             }
-
-            MulZ<Engine> mulz(E, fft);
 
             // T(X) := [ ( a(X)·b(X)·qm(X) + a(X)·ql(X) + b(X)·qr(X) + c(X)·qo(X) + PI(X) + qc(X) )
             //       +   ((a(X) + beta·X + gamma)(b(X) + beta·k1·X + gamma)(c(X) + beta·k2·X + gamma)·z(X)
@@ -947,68 +994,68 @@ namespace Plonk
             e1 = E.fr.add(e1, qc);
 
             // e2 := α[(a(X) + βX + γ)(b(X) + βk1X + γ)(c(X) + βk2X + γ)z(X)]
-            auto betaw = E.fr.mul(challenges["beta"], omega);
+            auto betaw = E.fr.mul(beta, omega);
             auto e2a = E.fr.add(a, betaw);
-            e2a = E.fr.add(e2a, challenges["gamma"]);
+            e2a = E.fr.add(e2a, gamma);
 
-            auto e2b = E.fr.add(b, E.fr.mul(betaw, *((FrElement *)zkey->k1)));
-            e2b = E.fr.add(e2b, challenges["gamma"]);
+            auto e2b = E.fr.add(b, E.fr.mul(betaw, k1));
+            e2b = E.fr.add(e2b, gamma);
 
-            auto e2c = E.fr.add(c, E.fr.mul(betaw, *((FrElement *)zkey->k2)));
-            e2c = E.fr.add(e2c, challenges["gamma"]);
+            auto e2c = E.fr.add(c, E.fr.mul(betaw, k2));
+            e2c = E.fr.add(e2c, gamma);
 
             auto e2d = z;
 
             auto [e2, e2z] = mulz.mul4(e2a, e2b, e2c, e2d, ap, bp, cp, zp, i % 4);
-            e2 = E.fr.mul(e2, challenges["alpha"]);
-            e2z = E.fr.mul(e2z, challenges["alpha"]);
+            e2 = E.fr.mul(e2, alpha);
+            e2z = E.fr.mul(e2z, alpha);
 
             // e3 := α[(a(X) + βSσ1(X) + γ)(b(X) + βSσ2(X) + γ)(c(X) + βSσ3(X) + γ)z(Xω)]
             auto e3a = a;
-            e3a = E.fr.add(e3a, E.fr.mul(challenges["beta"], s1));
-            e3a = E.fr.add(e3a, challenges["gamma"]);
+            e3a = E.fr.add(e3a, E.fr.mul(beta, s1));
+            e3a = E.fr.add(e3a, gamma);
 
             auto e3b = b;
-            e3b = E.fr.add(e3b, E.fr.mul(challenges["beta"], s2));
-            e3b = E.fr.add(e3b, challenges["gamma"]);
+            e3b = E.fr.add(e3b, E.fr.mul(beta, s2));
+            e3b = E.fr.add(e3b, gamma);
 
             auto e3c = c;
-            e3c = E.fr.add(e3c, E.fr.mul(challenges["beta"], s3));
-            e3c = E.fr.add(e3c, challenges["gamma"]);
+            e3c = E.fr.add(e3c, E.fr.mul(beta, s3));
+            e3c = E.fr.add(e3c, gamma);
 
             auto e3d = zW;
             auto [e3, e3z] = mulz.mul4(e3a, e3b, e3c, e3d, ap, bp, cp, zWp, i % 4);
 
-            e3 = E.fr.mul(e3, challenges["alpha"]);
-            e3z = E.fr.mul(e3z, challenges["alpha"]);
+            e3 = E.fr.mul(e3, alpha);
+            e3z = E.fr.mul(e3z, alpha);
 
             // e4 := α^2(z(X)−1)L1(X)
             auto e4 = E.fr.sub(z, E.fr.one());
-            e4 = E.fr.mul(e4, evaluations["lagrange"]->getEvaluation(i));
-            e4 = E.fr.mul(e4, challenges["alpha2"]);
+            e4 = E.fr.mul(e4, lagrange_eval);
+            e4 = E.fr.mul(e4, alpha2);
 
-            auto e4z = E.fr.mul(zp, evaluations["lagrange"]->getEvaluation(i));
-            e4z = E.fr.mul(e4z, challenges["alpha2"]);
+            auto e4z = E.fr.mul(zp, lagrange_eval);
+            e4z = E.fr.mul(e4z, alpha2);
 
             auto t = E.fr.add(E.fr.sub(E.fr.add(e1, e2), e3), e4);
             auto tz = E.fr.add(E.fr.sub(E.fr.add(e1z, e2z), e3z), e4z);
 
-            buffers["T"][i] = t;
-            buffers["Tz"][i] = tz;
+            buffersT[i] = t;
+            buffersTz[i] = tz;
         }
 
         // Compute the coefficients of the polynomial T2(X) from buffers.T2
         LOG_TRACE("··· Computing T ifft");
         polynomials["T"] = Polynomial<Engine>::fromEvaluations(E, fft, buffers["T"], polPtr["T"], zkey->domainSize * 4);
 
-        // Divide the polynomial T2 by Z_H(X)
+        // Divide the polynomial T by Z_H(X)
         polynomials["T"]->divZh(zkey->domainSize, 4);
 
-        // Compute the coefficients of the polynomial T2z(X) from buffers.T2z
+        // Compute the coefficients of the polynomial Tz(X) from buffers.Tz
         LOG_TRACE("··· Computing Tz ifft");
         polynomials["Tz"] = Polynomial<Engine>::fromEvaluations(E, fft, buffers["Tz"], polPtr["Tz"], zkey->domainSize * 4);
 
-        // Add the polynomial T2z to T2 to get the final polynomial T2
+        // Add the polynomial Tz to T to get the final polynomial T
         polynomials["T"]->add(*polynomials["Tz"]);
 
         // Check degree
@@ -1127,9 +1174,8 @@ namespace Plonk
         LOG_TRACE("> Computing opening proof polynomial Wxiw(X) polynomial");
         computeWxiw();
 
-        LOG_TRACE("> Computing Wxi, Wxiw MSM");
-
         // The fifth output of the prover is ([Wxi]_1, [Wxiw]_1)
+        LOG_TRACE("> Computing Wxi, Wxiw polynomial commitments");
         G1Point commitWxi = multiExponentiation(polynomials["Wxi"]);
         G1Point commitWxiw = multiExponentiation(polynomials["Wxiw"]);
         Dump::Dump dump(E);
