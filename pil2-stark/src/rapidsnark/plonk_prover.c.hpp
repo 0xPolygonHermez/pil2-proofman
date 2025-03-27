@@ -596,9 +596,9 @@ namespace Plonk
         // 0 index not used, set to zero
         for (u_int32_t i = 1; i <= BLINDINGFACTORSLENGTH_PLONK; i++)
         {
-            blindingFactors[i] = E.fr.one();
-            // memset((void *)&(blindingFactors[i].v[0]), 0, sizeof(FrElement)); // TODO! Set to 1 to avoid zero
-            // randombytes_buf((void *)&(blindingFactors[i].v[0]), sizeof(FrElement) - 1);
+            // blindingFactors[i] = E.fr.one();
+            memset((void *)&(blindingFactors[i].v[0]), 0, sizeof(FrElement));
+            randombytes_buf((void *)&(blindingFactors[i].v[0]), sizeof(FrElement) - 1);
         }
 
         // STEP 1.2 - Compute wire polynomials a(X), b(X) and c(X)
@@ -692,8 +692,8 @@ namespace Plonk
         transcript->addPolCommitment(Commitment);
         E.g1.copy(Commitment, *((G1PointAffine *)zkey->QO));
         transcript->addPolCommitment(Commitment);
-        // E.g1.copy(Commitment, *((G1PointAffine *)zkey->QC));
-        // transcript->addPolCommitment(Commitment);
+        E.g1.copy(Commitment, *((G1PointAffine *)zkey->QC));
+        transcript->addPolCommitment(Commitment);
         E.g1.copy(Commitment, *((G1PointAffine *)zkey->S1));
         transcript->addPolCommitment(Commitment);
         E.g1.copy(Commitment, *((G1PointAffine *)zkey->S2));
