@@ -65,7 +65,7 @@ namespace Plonk
 
         fft = new FFT<AltBn128::Engine::Fr>(settings.domainSize * 4);
 
-        if (fdPtau->getSectionSize(2) < settings.domainSize * 9 * sG1)
+        if (fdPtau->getSectionSize(2) < (settings.domainSize + 6) * sG1)
         { // TODO! CHECK
             throw new runtime_error("Powers of Tau is not big enough for this circuit size. Section 2 too small.");
         }
@@ -261,10 +261,7 @@ namespace Plonk
         ss.str("");
         writeQMap(fdZKey, Zkey::ZKEY_PL_QC_SECTION, 7);
 
-        // ss << "··· Writing Section "
-        //    << Zkey::ZKEY_PL_SIGMA1_SECTION << ", "
-        //    << Zkey::ZKEY_PL_SIGMA2_SECTION << ", "
-        //    << Zkey::ZKEY_PL_SIGMA3_SECTION << ". Sigma1, Sigma2 & Sigma 3";
+        ss << "··· Writing Section " << Zkey::ZKEY_PL_SIGMA_SECTION << ". Sigma1, Sigma2 & Sigma 3";
         LOG_INFO(ss);
         ss.str("");
         writeSigma(fdZKey);
@@ -383,17 +380,11 @@ namespace Plonk
                 buildSigma(sigma, w, lastSeen, firstPos, constraint.signal_b, i + settings.domainSize);
                 buildSigma(sigma, w, lastSeen, firstPos, constraint.signal_c, i + settings.domainSize * 2);
             }
-            else if (i < settings.domainSize - 2)
+            else
             {
                 buildSigma(sigma, w, lastSeen, firstPos, 0, i);
                 buildSigma(sigma, w, lastSeen, firstPos, 0, i + settings.domainSize);
                 buildSigma(sigma, w, lastSeen, firstPos, 0, i + settings.domainSize * 2);
-            }
-            else
-            {
-                sigma[i] = w;
-                sigma[i + settings.domainSize] = E.fr.mul(w, k1);
-                sigma[i + settings.domainSize * 2] = E.fr.mul(w, k2);
             }
 
             w = E.fr.mul(w, fft->root(settings.cirPower, 1));
@@ -411,25 +402,24 @@ namespace Plonk
             }
         }
 
-        // for (uint32_t i = 0; i < 3; i++)
-        // {
-        //     auto sectionId = i == 0 ? Zkey::ZKEY_PL_SIGMA1_SECTION : i == 1 ? Zkey::ZKEY_PL_SIGMA2_SECTION
-        //                                                                     : Zkey::ZKEY_PL_SIGMA3_SECTION;
-        //     auto name = "S" + to_string(i + 1);
+        zkeyFile.startWriteSection(Zkey::ZKEY_PL_SIGMA_SECTION);
 
-        //     FrElement *buffer_coefs = new FrElement[settings.domainSize];
-        //     FrElement *buffer_evals = new FrElement[settings.domainSize * 4];
-        //     memset(buffer_evals, 0, settings.domainSize * 4 * sizeof(FrElement));
+        for (uint32_t i = 0; i < 3; i++)
+        {
+            auto name = "S" + to_string(i + 1);
+            FrElement *buffer_coefs = new FrElement[settings.domainSize];
+            FrElement *buffer_evals = new FrElement[settings.domainSize * 4];
+            memset(buffer_evals, 0, settings.domainSize * 4 * sizeof(FrElement));
 
-        //     polynomials[name] = Polynomial<AltBn128::Engine>::fromEvaluations(E, fft, &sigma[i * settings.domainSize], buffer_coefs, settings.domainSize);
-        //     polynomials[name]->fixDegree();
-        //     Evaluations<AltBn128::Engine>(E, fft, buffer_evals, *polynomials[name], settings.domainSize * 4);
+            polynomials[name] = Polynomial<AltBn128::Engine>::fromEvaluations(E, fft, &sigma[i * settings.domainSize], buffer_coefs, settings.domainSize);
+            polynomials[name]->fixDegree();
+            Evaluations<AltBn128::Engine>(E, fft, buffer_evals, *polynomials[name], settings.domainSize * 4);
 
-        //     zkeyFile.startWriteSection(sectionId);
-        //     zkeyFile.write(buffer_coefs, settings.domainSize * sizeof(FrElement));
-        //     zkeyFile.write(buffer_evals, settings.domainSize * 4 * sizeof(FrElement));
-        //     zkeyFile.endWriteSection();
-        // }
+            zkeyFile.write(buffer_coefs, settings.domainSize * sizeof(FrElement));
+            zkeyFile.write(buffer_evals, settings.domainSize * 4 * sizeof(FrElement));
+        }
+
+        zkeyFile.endWriteSection();
     }
 
     void PlonkSetup::buildSigma(FrElement *sigma, FrElement w, unordered_map<uint64_t, FrElement> &lastSeen, unordered_map<uint64_t, uint64_t> &firstPos, uint64_t signalId, uint64_t idx)
