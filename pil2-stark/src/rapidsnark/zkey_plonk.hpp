@@ -4,7 +4,7 @@
 #include <gmp.h>
 
 namespace Zkey {
-    const int ZKEY_PL_NSECTIONS = 17;
+    const int ZKEY_PL_NSECTIONS = 14;
 
     const int ZKEY_PL_HEADER_SECTION = 2;
     const int ZKEY_PL_ADDITIONS_SECTION = 3;
