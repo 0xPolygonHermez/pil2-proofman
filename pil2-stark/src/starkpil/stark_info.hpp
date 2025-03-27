@@ -6,7 +6,6 @@
 #include <vector>
 #include "zkassert.hpp"
 #include "goldilocks_base_field.hpp"
-#include "polinomial.hpp"
 #include "merklehash_goldilocks.hpp"
 #include "zklog.hpp"
 #include "exit_process.hpp"
@@ -158,6 +157,7 @@ public:
     
     bool verify_constraints = false;
     bool verify = false;
+    bool gpu = false;
 
     uint64_t mapTotalN;
     uint64_t mapTotalNCustomCommitsFixed;
@@ -165,19 +165,20 @@ public:
     uint64_t proofSize;
 
     /* Constructor */
-    StarkInfo(string file, bool verify_constraints = false, bool verify = false);
+    StarkInfo(string file, bool verify_constraints = false, bool verify = false, bool gpu = false);
 
     /* Loads data from a json object */
-    void load (json j, bool verify_constraints = false, bool verify = false);
+    void load (json j, bool verify_constraints = false, bool verify = false, bool gpu = false);
 
     void setMapOffsets();
+
+    void setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3);
 
     void getProofSize();
 
     uint64_t getNumNodesMT(uint64_t height);
 
     /* Returns a polynomial specified by its ID */
-    void getPolynomial(Polinomial &pol, Goldilocks::Element *pAddress, string type, PolMap& polInfo, bool domainExtended);
     uint64_t getTraceOffset(string type, PolMap& polInfo, bool domainExtended);
     uint64_t getTraceNColsSection(string type, PolMap& polInfo, bool domainExtended);
 };

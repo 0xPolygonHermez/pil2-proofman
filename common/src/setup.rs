@@ -2,9 +2,10 @@ use std::os::raw::c_void;
 use std::path::PathBuf;
 use p3_field::Field;
 
+use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
-    get_map_totaln_custom_commits_fixed_c, get_proof_size_c,
+    get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c,
 };
 use proofman_util::create_buffer_fast;
 
@@ -64,6 +65,8 @@ impl<F: Field> Setup<F> {
         let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
         let expressions_bin_path = setup_path.display().to_string() + ".bin";
 
+        let gpu = cfg!(feature = "gpu");
+
         let (
             stark_info,
             p_stark_info,
@@ -81,21 +84,14 @@ impl<F: Field> Setup<F> {
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
                 .unwrap_or_else(|_| panic!("Failed to read file {}", &stark_info_path));
             let stark_info = StarkInfo::from_json(&stark_info_json);
-            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), verify_constraints, false);
-            let prover_buffer_size = if verify_constraints {
-                let mut mem_instance = 0;
-                for stage in 0..stark_info.n_stages {
-                    let n_cols = stark_info.map_sections_n[&format!("cm{}", stage + 1)];
-                    mem_instance += n_cols * (1 << (stark_info.stark_struct.n_bits));
-                }
-                mem_instance += (stark_info.custom_commits_map.len() * (1 << (stark_info.stark_struct.n_bits))) as u64;
-                mem_instance
-            } else {
-                get_map_totaln_c(p_stark_info)
-            };
+            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), verify_constraints, false, gpu);
+            let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
+            let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
+            let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);
+            set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
+            let prover_buffer_size = get_map_totaln_c(p_stark_info);
             let custom_commits_fixed_buffer_size = get_map_totaln_custom_commits_fixed_c(p_stark_info);
             let proof_size = get_proof_size_c(p_stark_info);
-            let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
 
             let const_pols_size = (stark_info.n_constants * (1 << stark_info.stark_struct.n_bits)) as usize;
 

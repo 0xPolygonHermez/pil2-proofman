@@ -17,7 +17,7 @@ private:
     void _updateState();
 
 public:
-    Goldilocks::Element state[TRANSCRIPT_STATE_SIZE];
+    Goldilocks::Element state[TRANSCRIPT_OUT_SIZE];
     Goldilocks::Element pending[TRANSCRIPT_PENDING_SIZE];
     Goldilocks::Element out[TRANSCRIPT_OUT_SIZE];
 
@@ -27,13 +27,14 @@ public:
 
     TranscriptGL(uint64_t arity, bool custom)
     {
-        std::memset(state, 0, TRANSCRIPT_STATE_SIZE * sizeof(Goldilocks::Element));
+        std::memset(state, 0, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element));
         std::memset(pending, 0, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element));
         std::memset(out, 0, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element));
     }
     void put(Goldilocks::Element *input, uint64_t size);
     void getField(uint64_t *output);
     void getState(Goldilocks::Element* output);
+    void getState(Goldilocks::Element* output, uint64_t nOutputs);
     void getPermutations(uint64_t *res, uint64_t n, uint64_t nBits);
     Goldilocks::Element getFields1();
 };

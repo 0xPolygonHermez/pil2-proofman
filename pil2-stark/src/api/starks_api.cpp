@@ -93,9 +93,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive, bool verify)
+void *stark_info_new(char *filename, bool recursive, bool verify, bool gpu)
 {
-    auto starkInfo = new StarkInfo(filename, recursive, verify);
+    auto starkInfo = new StarkInfo(filename, recursive, verify, gpu);
 
     return starkInfo;
 }
@@ -103,6 +103,11 @@ void *stark_info_new(char *filename, bool recursive, bool verify)
 uint64_t get_proof_size(void *pStarkInfo) {
     StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
     return starkInfo->proofSize;
+}
+
+void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
+    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
+    starkInfo->setMemoryExpressions(nTmp1, nTmp3);
 }
 
 uint64_t get_map_total_n(void *pStarkInfo)
@@ -182,6 +187,27 @@ void *expressions_bin_new(char* filename, bool global, bool verifier)
 
     return expressionsBin;
 };
+
+uint64_t get_max_n_tmp1(void *pExpressionsBin) {
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxTmp1;
+};
+
+uint64_t get_max_n_tmp3(void *pExpressionsBin){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxTmp3;
+};
+
+uint64_t get_max_args(void *pExpressionsBin){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxArgs;
+};
+
+uint64_t get_max_ops(void *pExpressionsBin){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxOps;
+};
+
 void expressions_bin_free(void *pExpressionsBin)
 {
     auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
@@ -330,10 +356,11 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    NTT_Goldilocks ntt(N);
-    ntt.extendPol(auxTraceGL, traceGL, NExtended, N, nCols);
-
     MerkleTreeGL mt(arity, true, NExtended, nCols);
+
+    NTT_Goldilocks ntt(N);
+    ntt.extendPol(auxTraceGL, traceGL, NExtended, N, nCols, &auxTraceGL[NExtended * nCols + mt.numNodes]);
+
     mt.setSource(auxTraceGL);
     mt.setNodes(&auxTraceGL[NExtended * nCols]);
     mt.merkelize();
@@ -342,12 +369,11 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 #endif
 
 
-void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements)
+void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements, uint64_t nOutputs)
 {
     TranscriptGL transcriptHash(2, true);
     transcriptHash.put((Goldilocks::Element *)pBuffer, nElements);
-    transcriptHash.getState((Goldilocks::Element *)pValue);
-
+    transcriptHash.getState((Goldilocks::Element *)pValue, nOutputs);
 }
 
 // Transcript
@@ -363,17 +389,6 @@ void transcript_add(void *pTranscript, void *pInput, uint64_t size)
     auto input = (Goldilocks::Element *)pInput;
 
     transcript->put(input, size);
-}
-
-void transcript_add_polinomial(void *pTranscript, void *pPolinomial)
-{
-    auto transcript = (TranscriptGL *)pTranscript;
-    auto pol = (Polinomial *)pPolinomial;
-
-    for (uint64_t i = 0; i < pol->degree(); i++)
-    {
-        transcript->put(pol->operator[](i), pol->dim());
-    }
 }
 
 void transcript_free(void *pTranscript)

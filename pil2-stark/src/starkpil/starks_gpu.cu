@@ -195,36 +195,6 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64
     CHECKCUDAERR(cudaFree(d_openingPoints));
 }
 
-__global__ void calcXDivXSub(gl64_t * d_xDivXSub, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, gl64_t *d_x, uint64_t NExtended)
-{
-    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    uint64_t k = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i < nOpeningPoints)
-    {
-        Goldilocks3GPU::Element xi;
-        gl64_t w(1);
-        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
-        gl64_t W(W_);
-        for (uint64_t j = 0; j < openingAbs; ++j)
-        {
-            w *= W;
-        }
-        if (d_openingPoints[i] < 0)
-        {
-            w = w.reciprocal();
-        }
-        Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), w);
-
-        if (k < NExtended)
-        {
-            Goldilocks3GPU::Element *xDivXSubComp = (Goldilocks3GPU::Element *)&d_xDivXSub[(k + i * NExtended) * FIELD_EXTENSION];
-            Goldilocks3GPU::sub(*xDivXSubComp, d_x[k], xi);
-            Goldilocks3GPU::inv(xDivXSubComp, xDivXSubComp);
-            Goldilocks3GPU::mul(*xDivXSubComp, *xDivXSubComp, d_x[k]);
-        }
-    }
-}
-
 __global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints)
 {
     uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;

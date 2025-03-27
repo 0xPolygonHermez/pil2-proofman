@@ -36,16 +36,25 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPcbb"]
+    #[link_name = "\u{1}_Z14stark_info_newPcbbb"]
     pub fn stark_info_new(
         filename: *mut ::std::os::raw::c_char,
         verify_constraints: bool,
         verify: bool,
+        gpu: bool,
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z14get_proof_sizePv"]
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z22set_memory_expressionsPvmm"]
+    pub fn set_memory_expressions(
+        pStarkInfo: *mut ::std::os::raw::c_void,
+        nTmp1: u64,
+        nTmp3: u64,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPv"]
@@ -108,6 +117,22 @@ extern "C" {
         global: bool,
         verifier: bool,
     ) -> *mut ::std::os::raw::c_void;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z14get_max_n_tmp1Pv"]
+    pub fn get_max_n_tmp1(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z14get_max_n_tmp3Pv"]
+    pub fn get_max_n_tmp3(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z12get_max_argsPv"]
+    pub fn get_max_args(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z11get_max_opsPv"]
+    pub fn get_max_ops(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z20expressions_bin_freePv"]
@@ -258,8 +283,8 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14calculate_hashPvS_m"]
-    pub fn calculate_hash(pValue: *mut ::std::os::raw::c_void, pBuffer: *mut ::std::os::raw::c_void, nElements: u64);
+    #[link_name = "\u{1}_Z14calculate_hashPvS_mm"]
+    pub fn calculate_hash(pValue: *mut ::std::os::raw::c_void, pBuffer: *mut ::std::os::raw::c_void, nElements: u64, nOutputs: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_newmb"]
@@ -268,13 +293,6 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_addPvS_m"]
     pub fn transcript_add(pTranscript: *mut ::std::os::raw::c_void, pInput: *mut ::std::os::raw::c_void, size: u64);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z25transcript_add_polinomialPvS_"]
-    pub fn transcript_add_polinomial(
-        pTranscript: *mut ::std::os::raw::c_void,
-        pPolinomial: *mut ::std::os::raw::c_void,
-    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z15transcript_freePv"]

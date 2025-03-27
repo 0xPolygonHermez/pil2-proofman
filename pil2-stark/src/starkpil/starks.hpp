@@ -34,8 +34,11 @@ public:
     MerkleTreeType **treesGL;
     MerkleTreeType **treesFRI;
 
+    NTT_Goldilocks ntt;
+    NTT_Goldilocks nttExtended;
+
 public:
-    Starks(SetupCtx& setupCtx_, ProverHelpers& proverHelpers_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr, bool initializeTrees = false) : setupCtx(setupCtx_), proverHelpers(proverHelpers_)                           
+    Starks(SetupCtx& setupCtx_, ProverHelpers& proverHelpers_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr, bool initializeTrees = false) : setupCtx(setupCtx_), proverHelpers(proverHelpers_), ntt(1 << setupCtx.starkInfo.starkStruct.nBits), nttExtended(1 << setupCtx.starkInfo.starkStruct.nBitsExt)                     
     {
 
         uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;

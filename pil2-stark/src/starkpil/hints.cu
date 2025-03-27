@@ -1,5 +1,6 @@
 #include "hints.hpp"
 #include "expressions_gpu.cuh"
+#include "polinomial.hpp"
 
 void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx){
 

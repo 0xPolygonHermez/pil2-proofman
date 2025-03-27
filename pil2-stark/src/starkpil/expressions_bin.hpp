@@ -4,7 +4,6 @@
 #include <string>
 #include <map>
 #include "binfile_utils.hpp"
-#include "polinomial.hpp"
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_base_field_avx.hpp"
 #include "goldilocks_base_field_avx512.hpp"
@@ -113,6 +112,9 @@ public:
 
     uint64_t maxTmp1;
     uint64_t maxTmp3;
+
+    uint64_t maxArgs;
+    uint64_t maxOps;
     
     ~ExpressionsBin() {
         if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;

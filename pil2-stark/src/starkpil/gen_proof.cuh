@@ -131,9 +131,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
     CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
     
-
-    Goldilocks::Element *d_pBuffHelper = h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
-
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
     TimerStart(STARK_STEP_0);
@@ -236,7 +233,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-    gl64_t * d_LEv = (gl64_t *) d_pBuffHelper;
+   gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
     
    

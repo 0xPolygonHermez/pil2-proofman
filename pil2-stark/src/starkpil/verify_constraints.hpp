@@ -52,6 +52,7 @@ void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t co
     uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
 
     std::vector<ConstraintRowInfo> constraintInvalidRows;
+#pragma omp parallel for
     for(uint64_t i = 0; i < N; ++i) {
         auto [isValid, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], i);
         if(!isValid) {
@@ -84,7 +85,7 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
         nPols += setupCtx.starkInfo.mapSectionsN["cm" + to_string(stage)];
     }
 
-    Goldilocks::Element* pBuffer = new Goldilocks::Element[setupCtx.expressionsBin.constraintsInfoDebug.size() * N * FIELD_EXTENSION];
+    Goldilocks::Element* pBuffer = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
 
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
@@ -95,18 +96,10 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
         constraintsInfo[i].imPol = setupCtx.expressionsBin.constraintsInfoDebug[i].imPol;
 
         if(!constraintsInfo[i].skip) {
-            Dest constraintDest(&pBuffer[i*FIELD_EXTENSION*N], N);
+            Dest constraintDest(pBuffer, N);
             constraintDest.addParams(i, setupCtx.expressionsBin.constraintsInfoDebug[i].destDim);
             expressionsCtx.calculateExpressions(params, constraintDest, N, false, false, true);
+            verifyConstraint(setupCtx, pBuffer, i, constraintsInfo[i]);
         }
-    }
-
-#pragma omp parallel for
-    for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
-        if(!constraintsInfo[i].skip) {
-            verifyConstraint(setupCtx, &pBuffer[i*FIELD_EXTENSION*N], i, constraintsInfo[i]);
-        }
-    }
-    
-    delete[] pBuffer;
+    }    
 }

@@ -8,7 +8,6 @@
         "./pil2-components/lib/std/rs/Cargo.toml",
         "./pilout/Cargo.toml",
         "./proofman/Cargo.toml",
-        "./provers/stark/Cargo.toml",
         "./provers/starks-lib-c/Cargo.toml",
         "./transcript/Cargo.toml",
         "./util/Cargo.toml",

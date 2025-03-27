@@ -35,7 +35,6 @@ void *gen_device_commit_buffers(void *maxSizes_)
     CHECKCUDAERR(cudaMalloc(&buffers->d_inverseTwiddleFactors, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_r, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_ntt, maxSizes->maxNTTArea * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_tree, maxSizes->maxNExtended * sizeof(uint64_t)));
     return (void *)buffers;
 
 }

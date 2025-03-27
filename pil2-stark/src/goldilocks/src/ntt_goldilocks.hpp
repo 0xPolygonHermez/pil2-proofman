@@ -138,19 +138,20 @@ public:
             // calculate the first root of unity
             // mpz_powm(m_aux, m_nqr, m_aux, m_q);
             // roots[1] = Goldilocks::fromU64(mpz_get_ui(m_aux));
-            roots[1] = Goldilocks::w(domainPow);
 
             // modular inverse of 2
             mpz_set_ui(m_aux, 2);
             mpz_invert(m_aux, m_aux, m_q);
             powTwoInv[1] = Goldilocks::fromU64(mpz_get_ui(m_aux));
         }
-
-        // calculate the rest of roots of unity
-        for (uint64_t i = 2; i < nRoots; i++)
-        {
-            roots[i] = roots[i - 1] * roots[1];
-        }
+        // calculate roots of unity
+    #pragma omp parallel for
+        for (uint64_t k = 0; k < nRoots; k+=4096) {
+            roots[k] = Goldilocks::pow(Goldilocks::w(domainPow), k);
+            for(uint64_t j = k+1; j < std::min(k + 4096, nRoots); ++j) {
+                roots[j] = roots[j-1] * Goldilocks::w(domainPow);
+            }
+        }                
         Goldilocks::Element aux = roots[nRoots - 1] * roots[1];
         assert(Goldilocks::toU64(aux) == 1);
         for (uint64_t i = 2; i <= s; i++)

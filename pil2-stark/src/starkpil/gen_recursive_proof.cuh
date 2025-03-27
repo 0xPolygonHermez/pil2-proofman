@@ -311,7 +311,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
-    gl64_t * d_LEv = (gl64_t *) d_pBuffHelper;
+    gl64_t * d_LEv = (gl64_t *)  h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];;
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();

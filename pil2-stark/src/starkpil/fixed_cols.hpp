@@ -2,7 +2,6 @@
 #include <map>
 #include "binfile_utils.hpp"
 #include "binfile_writer.hpp"
-#include "polinomial.hpp"
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_base_field_avx.hpp"
 #include "goldilocks_base_field_avx512.hpp"
