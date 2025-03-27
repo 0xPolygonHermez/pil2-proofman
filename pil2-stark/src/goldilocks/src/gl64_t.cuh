@@ -816,10 +816,6 @@ struct DeviceCommitBuffers
     gl64_t *d_constTree;
     gl64_t *d_publicInputs;
     gl64_t *d_aux_trace;
-    gl64_t *d_forwardTwiddleFactors;
-    gl64_t *d_inverseTwiddleFactors;
-    gl64_t *d_r;
-    gl64_t *d_ntt;
 };
 
 #undef inline

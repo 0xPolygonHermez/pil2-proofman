@@ -68,13 +68,6 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers &proverHelpers,
         CHECKCUDAERR(cudaMemcpy(h_deviceArgs.x_n, proverHelpers.x_n, N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));                
     }
 
-    // buffers for execution
-    uint64_t tmp1Size = setupCtx.expressionsBin.maxTmp1 * nRowsPack;
-    uint64_t tmp3Size = setupCtx.expressionsBin.maxTmp3 * FIELD_EXTENSION * nRowsPack;
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.tmp1, nBlocks * tmp1Size * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.tmp3, nBlocks * tmp3Size * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.destVals, nBlocks * nRowsPack * 2 * FIELD_EXTENSION * sizeof(Goldilocks::Element))); //assume max dest.params.size() = 2
-
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -95,11 +88,6 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(h_deviceArgs.numbers));
     CHECKCUDAERR(cudaFree(h_deviceArgs.ops));
     CHECKCUDAERR(cudaFree(h_deviceArgs.args));
-    //next three will be eliminated
-    CHECKCUDAERR(cudaFree(h_deviceArgs.destVals));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.tmp1));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.tmp3));
-
 }
 
 void ExpressionsGPU::loadDeviceArgs(uint64_t domainSize, Dest &dest)
@@ -121,6 +109,10 @@ void ExpressionsGPU::loadDeviceArgs(uint64_t domainSize, Dest &dest)
     h_deviceArgs.maxTemp1Size = 0;
     h_deviceArgs.maxTemp3Size = 0;
 
+    h_deviceArgs.offsetTmp1 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp1", false)];
+    h_deviceArgs.offsetTmp3 = setupCtx.starkInfo.mapOffsets[std::make_pair("tmp3", false)];
+    h_deviceArgs.offsetDestVals = setupCtx.starkInfo.mapOffsets[std::make_pair("destVals", false)];
+    
     for (uint64_t k = 0; k < dest.params.size(); ++k)
     {
         ParserParams &parserParams = setupCtx.expressionsBin.expressionsInfo[dest.params[k].expId];
@@ -541,8 +533,8 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
 
     if (threadIdx.x == 0)
     {
-        expressions_params[bufferCommitsSize + 0] = (&d_deviceArgs->tmp1[blockIdx.x * d_deviceArgs->maxTemp1Size]);
-        expressions_params[bufferCommitsSize + 1] = (&d_deviceArgs->tmp3[blockIdx.x * d_deviceArgs->maxTemp3Size]);
+        expressions_params[bufferCommitsSize + 0] = (&d_params->aux_trace[d_deviceArgs->offsetTmp1 + blockIdx.x * d_deviceArgs->maxTemp1Size]);
+        expressions_params[bufferCommitsSize + 1] = (&d_params->aux_trace[d_deviceArgs->offsetTmp3 + blockIdx.x * d_deviceArgs->maxTemp3Size]);
         expressions_params[bufferCommitsSize + 2] = d_params->publicInputs;
         expressions_params[bufferCommitsSize + 3] = d_deviceArgs->numbers;
         expressions_params[bufferCommitsSize + 4] = d_params->airValues;
@@ -552,7 +544,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
         expressions_params[bufferCommitsSize + 8] = d_params->evals;
     }
     __syncthreads();
-    Goldilocks::Element *destVals = &(d_deviceArgs->destVals[blockIdx.x * d_deviceArgs->dest_nParams * blockDim.x * FIELD_EXTENSION]); 
+    Goldilocks::Element *destVals = &(d_params->aux_trace[d_deviceArgs->offsetDestVals + blockIdx.x * d_deviceArgs->dest_nParams * blockDim.x * FIELD_EXTENSION]); 
 
     while (chunk_idx < nchunks)
     {

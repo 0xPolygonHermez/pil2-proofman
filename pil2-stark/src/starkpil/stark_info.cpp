@@ -339,8 +339,6 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
     LEvSize += openingPoints.size() * N * FIELD_EXTENSION;
 
-    maxTotalN = std::max(maxTotalN, LEvSize);
-
     if(!gpu) {
         for(uint64_t stage = 1; stage <= nStages; stage++) {
             mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
@@ -348,8 +346,15 @@ void StarkInfo::setMapOffsets() {
         }
 
         mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
-        maxTotalN = std::max(maxTotalN, mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION + NExtended * mapSectionsN["cm" + to_string(nStages + 1)]);
+        maxTotalN = std::max(maxTotalN, mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] + NExtended * mapSectionsN["cm" + to_string(nStages + 1)]);
+    } else {
+        mapOffsets[std::make_pair("buff_helper_fft", false)] = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
+        maxTotalN = std::max(maxTotalN, mapOffsets[std::make_pair("buff_helper_fft", false)] + 3*NExtended);
+        mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
+        LEvSize += 3 * N;
     }
+
+    maxTotalN = std::max(maxTotalN, LEvSize);
  
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
@@ -380,7 +385,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             maxNBlocks = omp_get_max_threads();
         } else {
             nrowsPack = 128; // TODO: SHOULD NOT BE HARDCODED
-            maxNBlocks = 2048; // TODO: SHOULD NOT BE HARDCODED
+            maxNBlocks = 4096; // TODO: SHOULD NOT BE HARDCODED
         }
     }
     
@@ -393,9 +398,15 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
     mapOffsets[std::make_pair("tmp3", false)] = mapBuffHelper;
     mapBuffHelper += memoryTmp3;
 
-    uint64_t values = 3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
-    mapOffsets[std::make_pair("values", false)] = mapBuffHelper;
-    mapBuffHelper += values;
+    if(!gpu) {
+        uint64_t values = 3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+        mapOffsets[std::make_pair("values", false)] = mapBuffHelper;
+        mapBuffHelper += values;
+    } else {
+        uint64_t destVals = 2 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+        mapOffsets[std::make_pair("destVals", false)] = mapBuffHelper;
+        mapBuffHelper += destVals;
+    }
 
     if(mapBuffHelper > mapTotalN) {
         mapTotalN = mapBuffHelper;

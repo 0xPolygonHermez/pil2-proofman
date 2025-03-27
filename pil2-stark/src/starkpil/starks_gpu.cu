@@ -161,7 +161,7 @@ __global__ void fillLEv_2d(gl64_t *d_LEv, gl64_t *d_xiChallenge, uint64_t W_, ui
     }
 }*/
 
-void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, gl64_t* d_LEv)
+void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv)
 {
     cudaDeviceSynchronize();
     double time = omp_get_wtime();
@@ -186,7 +186,7 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64
     cudaDeviceSynchronize();
     time = omp_get_wtime();
     NTT_Goldilocks ntt(N);
-    ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_buffers, d_LEv);
+    ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_buffers, offset_helper, d_LEv);
 
     cudaDeviceSynchronize();
     time = omp_get_wtime() - time;

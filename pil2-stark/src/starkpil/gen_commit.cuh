@@ -18,13 +18,15 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64
         gl64_t *dst = d_buffers->d_aux_trace;
         uint64_t offset_dst = 0;
 
+        uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, 3);
+
         NTT_Goldilocks ntt(N);
 
-        
+        uint64_t offset_helper = NExtended * nCols + tree_size;
+
         GPUTree *d_tree = new GPUTree;
         d_tree->nFieldElements = HASH_SIZE;
-        ntt.LDE_MerkleTree_GPU_inplace((uint64_t **)(&d_tree->nodes), dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers);
-        uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, 3);
+        ntt.LDE_MerkleTree_GPU_inplace((uint64_t **)(&d_tree->nodes), dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, offset_helper);
         CHECKCUDAERR(cudaMemcpy(&root[0], &d_tree->nodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost));    
         CHECKCUDAERR(cudaFree(d_tree->nodes));
         delete d_tree;

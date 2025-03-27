@@ -31,10 +31,6 @@ void *gen_device_commit_buffers(void *maxSizes_)
     CHECKCUDAERR(cudaMalloc(&buffers->d_constTree, maxSizes->maxConstTreeSize * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_publicInputs, maxSizes->maxNPublics * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_aux_trace, maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_forwardTwiddleFactors, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_inverseTwiddleFactors, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_r, maxSizes->maxNExtended * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_ntt, maxSizes->maxNTTArea * sizeof(Goldilocks::Element)));
     return (void *)buffers;
 
 }

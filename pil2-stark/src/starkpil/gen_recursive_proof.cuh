@@ -66,7 +66,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         d_trees[i].nFieldElements = nFieldElements;
     }
 
-    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 64, 8192); 
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 4096); 
 
 
     StepsParams h_params = {
@@ -101,7 +101,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     std::cout << "Rick fins PUNT1 (pre-process) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = omp_get_wtime();
 
-    Goldilocks::Element *d_pBuffHelper = h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
+    Goldilocks::Element *d_pBuffHelper = h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft", false)];
 
     TranscriptType transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
     
@@ -318,7 +318,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     std::cout << "Rick fins PUNT16 (Q offload) " << time - time0 << " " << time - time_prev << std::endl;
     time_prev = time;
 
-    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, d_LEv);
+    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_lev", false)], d_LEv);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();

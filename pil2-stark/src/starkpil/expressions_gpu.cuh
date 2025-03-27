@@ -40,6 +40,9 @@ struct DeviceArguments
     uint32_t nStages;
     uint32_t nCustomCommits;
     uint32_t bufferCommitSize;
+    uint64_t offsetTmp1;
+    uint64_t offsetTmp3;
+    uint64_t offsetDestVals;
 
     uint64_t *mapOffsets;  //rick: passar a uint32_t
     uint64_t *mapOffsetsExtended;
@@ -69,10 +72,6 @@ struct DeviceArguments
     // Expressions bin
     uint8_t *ops;
     uint16_t *args;
-    Goldilocks::Element *destVals;
-    Goldilocks::Element *tmp1;
-    Goldilocks::Element *tmp3;
-    
 };
 
 __device__ __noinline__ void storePolynomial__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row);

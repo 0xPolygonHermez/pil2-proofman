@@ -237,7 +237,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     
    
-    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, d_LEv);
+    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_lev", false)], d_LEv);
     evmap_inplace(params.evals, h_params, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
