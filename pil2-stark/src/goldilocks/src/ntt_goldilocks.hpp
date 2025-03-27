@@ -188,8 +188,8 @@ public:
     #ifdef __USE_CUDA__
     // Calculating on a single GPU
     void LDE_MerkleTree_GPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, bool buildMerkleTree = true);
-    void LDE_MerkleTree_GPU_inplace(uint64_t ** d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_helper, u_int64_t nphase = NUM_PHASES, bool buildMerkleTree = true);
-    void computeQ_inplace(uint64_t ** d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper);
+    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_helper, u_int64_t nphase = NUM_PHASES, bool buildMerkleTree = true);
+    void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper);
     void INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_helper, gl64_t* d_data = nullptr);
     void offloadNTT(Goldilocks::Element *dst, gl64_t* d_src, uint64_t offset_d_src, u_int64_t size);
     void offloadTree(Goldilocks::Element *dst, uint64_t *d_src, uint64_t size);

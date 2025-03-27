@@ -168,7 +168,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
-    std::cout << "goal2_ setBufferTInfo time: " << time << std::endl;
+    //std::cout << "goal2_ setBufferTInfo time: " << time << std::endl;
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
@@ -183,7 +183,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
-    std::cout << "goal2_ de computeExpressions: " << time << std::endl;
+    //std::cout << "goal2_ de computeExpressions: " << time << std::endl;
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
@@ -195,7 +195,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
-    std::cout << "goal2_ de cudaMemcpy dests time: " << time << std::endl;
+    //std::cout << "goal2_ de cudaMemcpy dests time: " << time << std::endl;
 
     
     CHECKCUDAERR(cudaFree(h_deviceArgs.dest_params));

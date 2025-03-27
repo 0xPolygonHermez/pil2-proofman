@@ -24,13 +24,9 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64
 
         uint64_t offset_helper = NExtended * nCols + tree_size;
 
-        GPUTree *d_tree = new GPUTree;
-        d_tree->nFieldElements = HASH_SIZE;
-        ntt.LDE_MerkleTree_GPU_inplace((uint64_t **)(&d_tree->nodes), dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, offset_helper);
-        CHECKCUDAERR(cudaMemcpy(&root[0], &d_tree->nodes[tree_size - HASH_SIZE], HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost));    
-        CHECKCUDAERR(cudaFree(d_tree->nodes));
-        delete d_tree;
-
+        Goldilocks::Element *pNodes = (Goldilocks::Element*) d_buffers->d_aux_trace + nCols * NExtended;
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, offset_helper);
+        CHECKCUDAERR(cudaMemcpy(&root[0], pNodes + tree_size - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost));   
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;
         assert(0);
@@ -38,7 +34,7 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
-    std::cout << "genCommit_gpu " <<time<<std::endl;
+    //std::cout << "genCommit_gpu " <<time<<std::endl;
 
 }
 

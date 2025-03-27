@@ -848,7 +848,6 @@ where
 
         pctx.set_global_challenge(2, &global_challenge);
 
-        println!("Global challenge: {:?}", global_challenge);
         timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
     }
 
