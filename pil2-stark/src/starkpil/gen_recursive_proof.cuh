@@ -163,6 +163,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     expressionsCtx.calculateExpressions_gpu(d_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
 
+    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(destStruct.dest_gpu));
 
     /*CHECKCUDAERR(cudaDeviceSynchronize());
@@ -194,6 +195,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     delete res;
     delete gprod;
+    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_grod));
 
     /*CHECKCUDAERR(cudaDeviceSynchronize());
@@ -413,6 +415,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     }
 
     // Free memory
+    CHECKCUDAERR(cudaDeviceSynchronize());
     if(h_params.pCustomCommitsFixed != nullptr)
         cudaFree(h_params.pCustomCommitsFixed);
     cudaFree(h_params.evals);

@@ -12,6 +12,7 @@ void allocateDestGPU(Goldilocks::Element**buff, uint64_t size){
     cudaMalloc((void**) buff, size * sizeof(Goldilocks::Element));
 }
 void freeDestGPU(Goldilocks::Element* buff){
+    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(buff));
 }
 

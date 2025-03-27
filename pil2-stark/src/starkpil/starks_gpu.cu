@@ -179,18 +179,18 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64
 
     fillLEv_2d<<<nBlocks, nThreads>>>(d_LEv, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, N);
     CHECKCUDAERR(cudaGetLastError());
-    cudaDeviceSynchronize();
+    CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
     // std::cout << "LEv inplace: " << time << std::endl;
 
-    cudaDeviceSynchronize();
+    CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
     NTT_Goldilocks ntt(N);
     ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_buffers, offset_helper, d_LEv);
 
-    cudaDeviceSynchronize();
     time = omp_get_wtime() - time;
     // std::cout << "INTT: " << time << std::endl;
+    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_xiChallenge));
     CHECKCUDAERR(cudaFree(d_openingPoints));
 }
@@ -232,6 +232,7 @@ void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks:
     calcXis<<<nBlocks, nThreads>>>(h_params.xDivXSub, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints);
     CHECKCUDAERR(cudaGetLastError());
     
+    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_xiChallenge));
     CHECKCUDAERR(cudaFree(d_openingPoints));
 }
@@ -408,6 +409,7 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, FRIProof<
     // std::cout << "rick computeEvals_v2: " << time << std::endl;
 
     cudaMemcpy(evals, h_params.evals, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_evalsInfo));
 
     proof.proof.setEvals(evals);
@@ -576,7 +578,7 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *ch
     fold<<<nBlocks, nThreads>>>(step, d_friPol, d_challenge, d_ppar, d_twiddles, Goldilocks::shift().fe, Goldilocks::w(prevBits).fe, nBitsExt, prevBits, currentBits);
     CHECKCUDAERR(cudaGetLastError());
 
-
+    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_challenge));
     CHECKCUDAERR(cudaFree(d_ppar));
     CHECKCUDAERR(cudaFree(d_twiddles));
@@ -623,9 +625,9 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     CHECKCUDAERR(cudaMemcpy(treeFRI->nodes, d_tree, tree_size, cudaMemcpyDeviceToHost));
     treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
 
-    cudaDeviceSynchronize();
-    cudaFree(d_aux);
-    cudaFree(d_tree);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    CHECKCUDAERR(cudaFree(d_aux));
+    CHECKCUDAERR(cudaFree(d_tree));
 }
 
 __global__ void getTreeTracePols(gl64_t *d_treeTrace, uint64_t traceWidth, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth)

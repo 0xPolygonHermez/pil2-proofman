@@ -72,6 +72,7 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers &proverHelpers,
 
 ExpressionsGPU::~ExpressionsGPU()
 {
+    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsets));
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsExtended));
     CHECKCUDAERR(cudaFree(h_deviceArgs.nextStrides));
@@ -193,11 +194,11 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
         cudaMemcpy(dest.dest, dest.dest_gpu, dest.domainSize * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
     }
     
-    CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime() - time;
     //std::cout << "goal2_ de cudaMemcpy dests time: " << time << std::endl;
 
     
+    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(h_deviceArgs.dest_params));
     CHECKCUDAERR(cudaFree(d_deviceArgs));
     CHECKCUDAERR(cudaGetLastError());
