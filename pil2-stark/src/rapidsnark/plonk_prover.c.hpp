@@ -924,6 +924,7 @@ namespace Plonk
         auto alpha2 = challenges["alpha2"];
         auto k1 = *((FrElement *)zkey->k1);
         auto k2 = *((FrElement *)zkey->k2);
+        auto omega1 = fft->root(zkeyPower, 1);
 
         std::ostringstream ss;
 #pragma omp parallel for
@@ -931,7 +932,7 @@ namespace Plonk
         {
             FrElement omega = fft->root(zkeyPower + 2, i);
             FrElement omega2 = E.fr.square(omega);
-            FrElement omegaW = E.fr.mul(omega, fft->root(zkeyPower, 1));
+            FrElement omegaW = E.fr.mul(omega, omega1);
             FrElement omegaW2 = E.fr.square(omegaW);
 
             FrElement a = evaluationsA->eval[i];
@@ -1078,15 +1079,12 @@ namespace Plonk
 
         polynomials["T1"] = new Polynomial<Engine>(E, polPtr["T1"], zkey->domainSize, 1);
         ThreadUtils::parcpy(polynomials["T1"]->coef, &polynomials["T"]->coef[0], zkey->domainSize * sizeof(FrElement), nThreads);
-        polynomials["T1"]->fixDegree();
 
         polynomials["T2"] = new Polynomial<Engine>(E, polPtr["T2"], zkey->domainSize, 1);
         ThreadUtils::parcpy(polynomials["T2"]->coef, &polynomials["T"]->coef[zkey->domainSize], zkey->domainSize * sizeof(FrElement), nThreads);
-        polynomials["T2"]->fixDegree();
 
         polynomials["T3"] = new Polynomial<Engine>(E, polPtr["T3"], zkey->domainSize, 6);
         ThreadUtils::parcpy(polynomials["T3"]->coef, &polynomials["T"]->coef[zkey->domainSize * 2], (zkey->domainSize + 6) * sizeof(FrElement), nThreads);
-        polynomials["T3"]->fixDegree();
 
         // Add blinding scalar b_10 as a new coefficient n
         polynomials["T1"]->coef[zkey->domainSize] = blindingFactors[10];
