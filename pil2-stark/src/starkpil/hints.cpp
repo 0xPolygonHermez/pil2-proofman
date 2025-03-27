@@ -570,14 +570,6 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
             }
             copyValueGPUGPU(params.airValues + pos, buff_gpu, dim);
             freeDestGPU(destStruct.dest_gpu);            
-#else
-            uint64_t pos = 0;
-            uint64_t dim = setupCtx.starkInfo.airValuesMap[hintFieldDestVal.id].stage == 1 ? 1 : FIELD_EXTENSION;
-            for(uint64_t i = 0; i < hintFieldDestVal.id; ++i) {
-                pos += setupCtx.starkInfo.airValuesMap[i].stage == 1 ? 1 : FIELD_EXTENSION;
-            }
-            std::memcpy(&params.airValues[pos], buff, dim * sizeof(Goldilocks::Element));
-            delete[] buff;
 #endif
         }
 

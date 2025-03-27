@@ -23,7 +23,6 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers &proverHelpers,
 
     h_deviceArgs.N = N;
     h_deviceArgs.NExtended = NExtended;
-    h_deviceArgs.nRowsPack = nRowsPack;
     h_deviceArgs.nBlocks = nBlocks;
     h_deviceArgs.nStages = nStages_;
     h_deviceArgs.nCustomCommits = nCustoms;
@@ -96,16 +95,18 @@ void ExpressionsGPU::loadDeviceArgs(uint64_t domainSize, Dest &dest)
 
     bool domainExtended = domainSize == uint64_t(1 << setupCtx.starkInfo.starkStruct.nBitsExt) ? true : false;
 
+    h_deviceArgs.nRowsPack = std::min(static_cast<uint64_t>(nRowsPack), domainSize);
+    
     h_deviceArgs.mapOffsetsExps = domainExtended ? h_deviceArgs.mapOffsetsExtended : h_deviceArgs.mapOffsets;            
     h_deviceArgs.mapOffsetsCustomExps = domainExtended ? h_deviceArgs.mapOffsetsCustomFixedExtended : h_deviceArgs.mapOffsetsCustomFixed;
     h_deviceArgs.nextStridesExps = domainExtended ? h_deviceArgs.nextStridesExtended : h_deviceArgs.nextStrides;
 
     h_deviceArgs.k_min = domainExtended
-                             ? uint64_t((minRowExtended + nRowsPack - 1) / nRowsPack) * nRowsPack
-                             : uint64_t((minRow + nRowsPack - 1) / nRowsPack) * nRowsPack;
+                             ? uint64_t((minRowExtended + h_deviceArgs.nRowsPack - 1) / h_deviceArgs.nRowsPack) * h_deviceArgs.nRowsPack
+                             : uint64_t((minRow + h_deviceArgs.nRowsPack - 1) / h_deviceArgs.nRowsPack) * h_deviceArgs.nRowsPack;
     h_deviceArgs.k_max = domainExtended
-                             ? uint64_t(maxRowExtended / nRowsPack) * nRowsPack
-                             : uint64_t(maxRow / nRowsPack) * nRowsPack;
+                             ? uint64_t(maxRowExtended / h_deviceArgs.nRowsPack) * h_deviceArgs.nRowsPack
+                             : uint64_t(maxRow / h_deviceArgs.nRowsPack) * h_deviceArgs.nRowsPack;
 
     h_deviceArgs.maxTemp1Size = 0;
     h_deviceArgs.maxTemp3Size = 0;
@@ -387,7 +388,7 @@ __device__ __noinline__ void multiplyPolynomials__(DeviceArguments *d_deviceArgs
         }
         else
         {
-            Goldilocks3GPU::op_31_gpu(2, &vals[0], &destVals[FIELD_EXTENSION * d_deviceArgs->nRowsPack], false, &destVals[0], false);
+            Goldilocks3GPU::op_31_gpu(2, &vals[0], &destVals[FIELD_EXTENSION * blockDim.x], false, &destVals[0], false);
         }
         gl64_t::copy_gpu(&destVals[0], &vals[0], false);
         gl64_t::copy_gpu(&destVals[blockDim.x], &vals[blockDim.x], false);

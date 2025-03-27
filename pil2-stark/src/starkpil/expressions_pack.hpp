@@ -282,13 +282,13 @@ public:
                 if(a!= NULL){
                     for(uint32_t i = 0; i < dimA; i++){
                         Goldilocks::Element val = constA ? a[i] : a[i*nrowsPack];
-                        printf("Expression debug a[%d]: %lu\n", i, val.fe);
+                        printf("Expression debug a[%d]: %lu\n", i, val.fe % GOLDILOCKS_PRIME);
                     }
                 }
                 if(b!= NULL){
                     for(uint32_t i = 0; i < dimB; i++){
                         Goldilocks::Element val = constB ? b[i] : b[i*nrowsPack];
-                        printf("Expression debug b[%d]: %lu\n", i, val.fe);
+                        printf("Expression debug b[%d]: %lu\n", i, val.fe % GOLDILOCKS_PRIME);
                     }
         
                 }
@@ -302,7 +302,7 @@ public:
             bool print = i == DEBUG_ROW;
             if(print){
                 for(uint32_t i = 0; i < dimRes; i++){
-                    printf("Expression debug res[%d]: %lu\n", i, res[i*nrowsPack].fe);
+                    printf("Expression debug res[%d]: %lu\n", i, res[i*nrowsPack].fe % GOLDILOCKS_PRIME);
                 }
             }
         #endif
