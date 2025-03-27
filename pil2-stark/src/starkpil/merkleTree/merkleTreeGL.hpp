@@ -24,7 +24,6 @@ public:
 
     Goldilocks::Element *source;
     Goldilocks::Element *nodes;
-    uint64_t souceTraceOffset = 0;
 
     uint64_t arity;
     bool custom;

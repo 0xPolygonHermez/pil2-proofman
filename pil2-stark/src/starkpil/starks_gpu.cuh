@@ -42,11 +42,6 @@ __device__ __constant__ uint64_t domain_size_inverse_[33] = {
     0xfffffffe00000002, // (1 << 32)^{-1}
 };
 
-struct GPUTree
-{
-    gl64_t *nodes;
-    uint32_t nFieldElements;
-};
 
 struct EvalInfo
 {
@@ -105,7 +100,7 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, Goldilocks::Element *ch
 
 __global__ void transposeFRI(gl64_t *d_aux, gl64_t *pol, uint64_t degree, uint64_t width);
 
-void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &d_param, uint64_t step, FRIProof<Goldilocks::Element> &proof, gl64_t *pol, MerkleTreeGL *treeFRI, uint64_t currentBits, uint64_t nextBits, bool recursion);
+void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &d_param, uint64_t step, FRIProof<Goldilocks::Element> &proof, gl64_t *pol, MerkleTreeGL *treeFRI, uint64_t currentBits, uint64_t nextBits);
 
 __global__ void getTreeTracePols(gl64_t *d_treeTrace, uint64_t traceWidth, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth);
 
@@ -113,9 +108,11 @@ __device__ void genMerkleProof_(gl64_t *nodes, gl64_t *proof, uint64_t idx, uint
 
 __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t sizeLeaves, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements);
 
-void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, GPUTree *d_trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, uint32_t nStages, StepsParams &d_params);
+void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, uint32_t nStages, StepsParams &d_params);
 
 void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams& h_params, StepsParams *d_params, int64_t step);
 
 void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams* d_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse = false);
+
+void offloadCommit(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, FRIProof<Goldilocks::Element> &proof, SetupCtx &setupCtx);
 #endif

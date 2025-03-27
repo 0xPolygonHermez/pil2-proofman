@@ -62,7 +62,7 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
 }
 template <typename ElementType>
-void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers)
+void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers)
 {
 #ifdef __USE_CUDA__
 
@@ -75,13 +75,18 @@ void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_tr
     uint64_t offset_src = step == 1 ? 0 : setupCtx.starkInfo.mapOffsets[make_pair(section, false)];
     gl64_t *dst = d_aux_trace;
     uint64_t offset_dst = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
+    Goldilocks::Element * dstGL = (Goldilocks::Element*) (d_aux_trace);
 
+    treesGL[step - 1]->setSource(dstGL + offset_dst);
+    Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
+    treesGL[step - 1]->setNodes((ElementType*) pNodes);
+    
     NTT_Goldilocks ntt(N);
 
     if (nCols > 0)
     {
 
-        ntt.LDE_MerkleTree_GPU_inplace(d_tree, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers);
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers);
     }
 #endif
 }
@@ -101,15 +106,15 @@ void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace,
 }
 
 template <typename ElementType>
-void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers)
+void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers)
 {
     if (step <= setupCtx.starkInfo.nStages)
     {
-        extendAndMerkelize_inplace(step, d_trace, d_aux_trace, d_tree, d_buffers);
+        extendAndMerkelize_inplace(step, d_trace, d_aux_trace, d_buffers);
     }
     else
     {
-        computeQ_inplace(step, d_aux_trace, d_tree, d_buffers);
+        computeQ_inplace(step, d_aux_trace, d_buffers);
     }
 }
 
@@ -169,7 +174,7 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
 }
 
 template <typename ElementType>
-void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_trace, uint64_t **d_tree, DeviceCommitBuffers *d_buffers)
+void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers)
 {
 #ifdef __USE_CUDA__
 
@@ -189,11 +194,16 @@ void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_trace, uint6
     for(uint64_t i = 1; i < setupCtx.starkInfo.qDeg; i++) {
         S[i] = Goldilocks::mul(S[i - 1], shiftIn);
     }
+    Goldilocks::Element* d_aux_traceGL = (Goldilocks::Element*) d_aux_trace;
+
+    treesGL[step - 1]->setSource( d_aux_traceGL + offset_q);
+    Goldilocks::Element *pNodes = d_aux_traceGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
+    treesGL[step - 1]->setNodes(( ElementType*)pNodes);
 
     NTT_Goldilocks nttExtended(NExtended);
     if (nCols > 0)
     {
-        nttExtended.computeQ_inplace(d_tree, offset_cmQ, offset_q, qDeg, qDim, S, N, NExtended, nCols, d_buffers);
+        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, S, N, NExtended, nCols, d_buffers);
     }
 #endif
 }

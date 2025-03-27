@@ -58,12 +58,12 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_constTree, params->pConstPolsExtendedTreeAddress, sizeConstTree, cudaMemcpyHostToDevice));
 
     time = omp_get_wtime() - time;
-    std::cout << "rick genDeviceBuffers time: " << time << std::endl;
+    //std::cout << "rick genDeviceBuffers time: " << time << std::endl;
 
     time = omp_get_wtime();
     genProof_gpu(*setupCtx, airgroupId, airId, instanceId, *params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), d_buffers);
     time = omp_get_wtime() - time;
-    std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
+    //std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 }
 
 void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_)
@@ -110,6 +110,6 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, trace, sizeTrace, cudaMemcpyHostToDevice));
     genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_buffers);
     time = omp_get_wtime() - time;
-    std::cout << "rick genRCommit_gpu time: " << time << std::endl;
+    //std::cout << "rick genRCommit_gpu time: " << time << std::endl;
 }
 #endif

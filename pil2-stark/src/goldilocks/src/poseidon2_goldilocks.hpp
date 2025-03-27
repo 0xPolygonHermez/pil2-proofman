@@ -94,7 +94,7 @@ public:
 
     void static merkletree_cuda_async(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows);
 
-    void static merkletree_cuda_coalesced(uint32_t arity, uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
+    void static merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
 
 #endif
 };

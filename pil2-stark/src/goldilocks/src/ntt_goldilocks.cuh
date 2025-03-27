@@ -3,7 +3,7 @@
 #include <cuda_runtime.h>
 #include <sys/time.h>
 
-#define GPU_TIMING
+//#define GPU_TIMING
 
 #ifdef GPU_TIMING
 #include "timer_gl.hpp"
