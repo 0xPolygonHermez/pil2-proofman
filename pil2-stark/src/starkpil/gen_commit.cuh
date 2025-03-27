@@ -13,7 +13,7 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64
 
     if (nCols > 0)
     {
-        gl64_t *src = d_buffers->d_trace;
+        gl64_t *src = d_buffers->d_aux_trace;
         uint64_t offset_src = 0;
         gl64_t *dst = d_buffers->d_aux_trace;
         uint64_t offset_dst = 0;

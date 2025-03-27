@@ -51,6 +51,8 @@ public:
     void getRoot(Goldilocks::Element *root);
     void setSource(Goldilocks::Element *_source);
     void setNodes(Goldilocks::Element *_nodes);
+    void initSource();
+    void initNodes();
 
     void getGroupProof(Goldilocks::Element *proof, uint64_t idx);
     bool verifyGroupProof(Goldilocks::Element* root, std::vector<std::vector<Goldilocks::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);

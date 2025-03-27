@@ -158,18 +158,32 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         for air_name in air_names {
             let count = air_group_instances.get(air_name).unwrap();
             let (_, _, _, memory_trace, memory_instance) = air_info.get(air_name).unwrap();
-            if max_prover_memory < *memory_instance + *memory_trace {
-                max_prover_memory = *memory_instance + *memory_trace;
+            let gpu = cfg!(feature = "gpu");
+            if gpu {
+                if max_prover_memory < *memory_instance {
+                    max_prover_memory = *memory_instance;
+                }
+                info!(
+                    "{}:       · {}: {} per each of {} instance",
+                    name,
+                    air_name,
+                    format_bytes(*memory_instance),
+                    count,
+                );
+            } else {
+                if max_prover_memory < *memory_instance + *memory_trace {
+                    max_prover_memory = *memory_instance + *memory_trace;
+                }
+                info!(
+                    "{}:       · {}: {} + {} per each of {} instance | Total: {}",
+                    name,
+                    air_name,
+                    format_bytes(*memory_trace),
+                    format_bytes(*memory_instance),
+                    count,
+                    format_bytes(*memory_instance + *memory_trace)
+                );
             }
-            info!(
-                "{}:       · {}: {} + {} per each of {} instance | Total: {}",
-                name,
-                air_name,
-                format_bytes(*memory_trace),
-                format_bytes(*memory_instance),
-                count,
-                format_bytes(*memory_instance + *memory_trace)
-            );
         }
     }
     info!("{}:       Total prover memory required: {}", name, format_bytes(max_prover_memory));

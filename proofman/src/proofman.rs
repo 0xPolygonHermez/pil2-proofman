@@ -10,7 +10,7 @@ use proofman_common::{
 };
 
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::gen_device_commit_buffers_c;
+use proofman_starks_lib_c::{gen_device_commit_buffers_c, gen_device_commit_buffers_free_c};
 use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
 use std::collections::HashMap;
 use std::fs::File;
@@ -32,7 +32,7 @@ use std::{path::PathBuf, sync::Arc};
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
-use crate::discover_max_sizes;
+use crate::{discover_max_sizes, discover_max_sizes_aggregation};
 use crate::{check_paths2, check_tree_paths, check_tree_paths_vadcop};
 use crate::verify_basic_proof;
 use crate::verify_global_constraints_proof;
@@ -396,7 +396,7 @@ where
             check_tree_paths_vadcop(&pctx, &setups)?;
         }
 
-        let max_sizes = discover_max_sizes(&pctx, &sctx, &setups);
+        let max_sizes = discover_max_sizes(&pctx, &sctx);
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
         let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
 
@@ -539,13 +539,20 @@ where
             }
         }
 
-        std::thread::spawn({
-            move || {
-                drop(aux_trace);
-                drop(wcm);
-                drop(sctx);
-            }
-        });
+        // std::thread::spawn({
+        //     move || {
+        //         drop(aux_trace);
+        //         drop(wcm);
+        //         drop(sctx);
+        //     }
+        // });
+
+        gen_device_commit_buffers_free_c(d_buffers.lock().unwrap().get_ptr());
+
+        let max_sizes_aggregation = discover_max_sizes_aggregation(&pctx, &setups);
+        let max_sizes_aggregation_ptr = &max_sizes_aggregation as *const MaxSizes as *mut c_void;
+        let d_buffers_aggregation =
+            Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_aggregation_ptr))));
 
         let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
@@ -641,7 +648,7 @@ where
                     &mut recursive2_proofs[airgroup_id],
                     recursive2_initialized[airgroup_id],
                     output_dir_path.clone(),
-                    d_buffers.lock().unwrap().get_ptr(),
+                    d_buffers_aggregation.lock().unwrap().get_ptr(),
                 )
                 .expect("Failed to generate recursive proof");
 
@@ -661,7 +668,7 @@ where
             &const_pols,
             &const_tree,
             output_dir_path.clone(),
-            d_buffers.lock().unwrap().get_ptr(),
+            d_buffers_aggregation.lock().unwrap().get_ptr(),
         );
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 

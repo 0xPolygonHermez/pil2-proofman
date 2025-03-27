@@ -10,10 +10,7 @@
 
 struct MaxSizes
 {
-    uint64_t maxN;
-    uint64_t maxNExtended;
     uint64_t maxTraceArea;
-    uint64_t maxNTTArea;
     uint64_t maxConstArea;
     uint64_t maxNPublics;
     uint64_t maxAuxTraceArea;
@@ -32,7 +29,17 @@ void *gen_device_commit_buffers(void *maxSizes_)
     CHECKCUDAERR(cudaMalloc(&buffers->d_publicInputs, maxSizes->maxNPublics * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_aux_trace, maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
     return (void *)buffers;
+}
 
+void gen_device_commit_buffers_free(void *d_buffers)
+{
+    DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
+    CHECKCUDAERR(cudaFree(buffers->d_trace));
+    CHECKCUDAERR(cudaFree(buffers->d_constPols));
+    CHECKCUDAERR(cudaFree(buffers->d_constTree));
+    CHECKCUDAERR(cudaFree(buffers->d_publicInputs));
+    CHECKCUDAERR(cudaFree(buffers->d_aux_trace));
+    delete buffers;
 }
 
 void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_) {
@@ -47,8 +54,9 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
 
+    uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     CHECKCUDAERR(cudaSetDevice(0));
-    CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, params->trace, sizeTrace, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, params->trace, sizeTrace, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_constPols, params->pConstPolsAddress, sizeConstPols, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_constTree, params->pConstPolsExtendedTreeAddress, sizeConstTree, cudaMemcpyHostToDevice));
 
@@ -101,8 +109,10 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
+    uint64_t offsetStage1 = 0;
+
     CHECKCUDAERR(cudaSetDevice(0));
-    CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, trace, sizeTrace, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, trace, sizeTrace, cudaMemcpyHostToDevice));
     genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_buffers);
     time = omp_get_wtime() - time;
     //std::cout << "rick genRCommit_gpu time: " << time << std::endl;

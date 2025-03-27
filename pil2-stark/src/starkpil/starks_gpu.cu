@@ -612,17 +612,15 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     dim3 nThreads(32, 32);
     dim3 nBlocks((width + nThreads.x - 1) / nThreads.x, (height + nThreads.y - 1) / nThreads.y);
     transposeFRI<<<nBlocks, nThreads>>>(d_aux, (gl64_t *)pol, pol2N, width);
-
-    treeFRI->source = new Goldilocks::Element[pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element)]; //rick: free this memory
+    treeFRI->initSource();
     cudaMemcpy(treeFRI->source, d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
     
     Goldilocks::Element  *d_tree;
     CHECKCUDAERR(cudaMalloc(&d_tree, treeFRI->getNumNodes(treeFRI->height) * sizeof(uint64_t)));
     Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_aux, treeFRI->width, treeFRI->height);
-    uint64_t tree_size = treeFRI->getNumNodes(treeFRI->height) * sizeof(uint64_t);
 
-    treeFRI->nodes = new Goldilocks::Element[tree_size]; //rick: free this memory
-    CHECKCUDAERR(cudaMemcpy(treeFRI->nodes, d_tree, tree_size, cudaMemcpyDeviceToHost));
+    treeFRI->initNodes();
+    CHECKCUDAERR(cudaMemcpy(treeFRI->nodes, d_tree, treeFRI->numNodes * sizeof(uint64_t), cudaMemcpyDeviceToHost));
     treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
 
     CHECKCUDAERR(cudaDeviceSynchronize());

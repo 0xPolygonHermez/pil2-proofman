@@ -50,11 +50,7 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z22set_memory_expressionsPvmm"]
-    pub fn set_memory_expressions(
-        pStarkInfo: *mut ::std::os::raw::c_void,
-        nTmp1: u64,
-        nTmp3: u64,
-    );
+    pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPv"]
@@ -524,4 +520,8 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z25gen_device_commit_buffersPv"]
     pub fn gen_device_commit_buffers(maxSizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z30gen_device_commit_buffers_freePv"]
+    pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 }

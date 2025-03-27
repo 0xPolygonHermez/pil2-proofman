@@ -500,6 +500,8 @@ void *gen_device_commit_buffers(void *max_sizes)
     return NULL;
 };
 
+void gen_device_commit_buffers_free(void *d_buffers) {}
+
 void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);

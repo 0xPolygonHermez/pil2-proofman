@@ -970,6 +970,13 @@ pub fn gen_device_commit_buffers_c(max_sizes: *mut ::std::os::raw::c_void) -> *m
     unsafe { gen_device_commit_buffers(max_sizes) }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn gen_device_commit_buffers_free_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe {
+        gen_device_commit_buffers_free(d_buffers);
+    }
+}
+
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -1586,4 +1593,13 @@ pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *
         "gen_device_commit_buffers: This is a mock call because there is no linked library"
     );
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn gen_device_commit_buffers_free_c(_d_buffers: *mut ::std::os::raw::c_void) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "gen_device_commit_buffers_free: This is a mock call because there is no linked library"
+    );
 }

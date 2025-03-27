@@ -72,7 +72,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 4096);
 
     StepsParams h_params = {
-        trace : (Goldilocks::Element *)d_buffers->d_trace,
+        trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
         aux_trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
         publicInputs : (Goldilocks::Element *)d_buffers->d_publicInputs,
         proofValues : nullptr,
@@ -116,11 +116,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     }
     TimerStopAndLog(STARK_STEP_0);
 
-    TimerStart(STARK_STEP_1);
-    starks.commitStage_inplace(1, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers);
-    offloadCommit(1, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
-    TimerStopAndLog(STARK_STEP_1);
-
     starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
 
     TimerStart(STARK_STEP_2);
@@ -147,6 +142,10 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, d_params, 2);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
+    TimerStart(STARK_COMMIT_STAGE_1);
+    starks.commitStage_inplace(1, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers);
+    offloadCommit(1, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
+    TimerStopAndLog(STARK_COMMIT_STAGE_1);
     
     TimerStart(STARK_COMMIT_STAGE_2);
     starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers);
@@ -258,7 +257,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     Goldilocks::Element *foldedFRIPol = new Goldilocks::Element[(1 << setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits) * FIELD_EXTENSION];
 
     for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size(); step++)
-    {   
+    {
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
         fold_inplace(step, friPol_offset, challenge, nBitsExt, prevBits, currentBits, d_buffers);
@@ -298,8 +297,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
 
         FRI<Goldilocks::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
-        delete starks.treesFRI[step - 1]->source;
-        delete starks.treesFRI[step - 1]->nodes;
     }
 
     FRI<Goldilocks::Element>::setFinalPol(proof, foldedFRIPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
