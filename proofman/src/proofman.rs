@@ -142,7 +142,7 @@ where
     }
 
     pub fn verify_proof_constraints_from_lib(
-        mut witness_lib: Box<dyn WitnessLibrary<F>>,
+        witness_lib: &mut dyn WitnessLibrary<F>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
@@ -317,7 +317,7 @@ where
     }
 
     pub fn generate_proof_from_lib(
-        mut witness_lib: Box<dyn WitnessLibrary<F>>,
+        witness_lib: &mut dyn WitnessLibrary<F>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
