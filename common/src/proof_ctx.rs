@@ -95,7 +95,11 @@ impl<F: Field> ProofCtx<F> {
 
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;
-        let n_proof_values = global_info.proof_values_map.as_ref().unwrap().len();
+        let n_proof_values = global_info
+            .proof_values_map
+            .as_ref()
+            .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
+            .unwrap_or(0);
         let n_challenges = global_info.n_challenges.iter().sum::<usize>();
 
         let weights = HashMap::new();
@@ -103,7 +107,7 @@ impl<F: Field> ProofCtx<F> {
         Self {
             global_info,
             public_inputs: Values::new(n_publics),
-            proof_values: Values::new(n_proof_values * 3),
+            proof_values: Values::new(n_proof_values),
             challenges: Values::new(n_challenges * 3),
             global_challenge: Values::new(3),
             air_instances: RwLock::new(HashMap::new()),

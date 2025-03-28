@@ -35,6 +35,20 @@
         }
     }
 
+    inline void Goldilocks::copy_pack( uint64_t nrowsPack, Element *dst, uint64_t stride_dst, const Element *src, const bool const_src){
+        if(const_src) {
+            for (uint64_t i = 0; i < nrowsPack; ++i)
+            {
+                dst[i*stride_dst].fe = src[0].fe;
+            }
+        } else {
+            for (uint64_t i = 0; i < nrowsPack; ++i)
+            {
+                dst[i*stride_dst].fe = src[i].fe;
+            }
+        }
+    }
+
     inline void Goldilocks::copy_pack( uint64_t nrowsPack, Element *dst, const Element *src, uint64_t stride_src){
         for (uint64_t i = 0; i < nrowsPack; ++i)
         {

@@ -89,18 +89,27 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     // Allocate memory and copy data
     CHECKCUDAERR(cudaMemcpy(h_params.publicInputs, params.publicInputs, setupCtx.starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMalloc(&h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&h_params.pCustomCommitsFixed,setupCtx.starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMemcpy(h_params.pCustomCommitsFixed, params.pCustomCommitsFixed, setupCtx.starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMalloc(&h_params.proofValues, setupCtx.starkInfo.proofValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMemcpy(h_params.proofValues, params.proofValues, setupCtx.starkInfo.proofValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMalloc(&h_params.challenges, setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMemcpy(h_params.challenges, params.challenges, setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMalloc(&h_params.airgroupValues, setupCtx.starkInfo.airgroupValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMemcpy(h_params.airgroupValues, params.airgroupValues, setupCtx.starkInfo.airgroupValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMalloc(&h_params.airValues, setupCtx.starkInfo.airValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMemcpy(h_params.airValues, params.airValues, setupCtx.starkInfo.airValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMalloc(&h_params.xDivXSub, FIELD_EXTENSION * setupCtx.starkInfo.openingPoints.size() * sizeof(Goldilocks::Element)));
 
+    if (setupCtx.starkInfo.mapTotalNCustomCommitsFixed > 0) {
+        CHECKCUDAERR(cudaMalloc(&h_params.pCustomCommitsFixed,setupCtx.starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMemcpy(h_params.pCustomCommitsFixed, params.pCustomCommitsFixed, setupCtx.starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    }
+    if (setupCtx.starkInfo.proofValuesSize > 0) {
+        CHECKCUDAERR(cudaMalloc(&h_params.proofValues, setupCtx.starkInfo.proofValuesSize * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMemcpy(h_params.proofValues, params.proofValues, setupCtx.starkInfo.proofValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    }
+    if (setupCtx.starkInfo.airgroupValuesSize > 0) {
+        CHECKCUDAERR(cudaMalloc(&h_params.airgroupValues, setupCtx.starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMemcpy(h_params.airgroupValues, params.airgroupValues, setupCtx.starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    }
+    if (setupCtx.starkInfo.airValuesSize > 0) {
+        CHECKCUDAERR(cudaMalloc(&h_params.airValues, setupCtx.starkInfo.airValuesSize * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMemcpy(h_params.airValues, params.airValues, setupCtx.starkInfo.airValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    }
+   
     StepsParams* d_params;
     CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
     CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
@@ -152,10 +161,10 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     offloadCommit(2, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
 
+    CHECKCUDAERR(cudaMemcpy(params.airValues, h_params.airValues, setupCtx.starkInfo.airValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
-    
-    CHECKCUDAERR(cudaMemcpy(params.airValues, h_params.airValues, setupCtx.starkInfo.airValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-    
+        
     uint64_t a = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); i++) {
         if(setupCtx.starkInfo.airValuesMap[i].stage == 1) a++;
@@ -304,9 +313,9 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     TimerStopAndLog(STARK_STEP_FRI);
 
-    //offload airgroup values 
-    CHECKCUDAERR(cudaMemcpy(params.airgroupValues, h_params.airgroupValues, setupCtx.starkInfo.airgroupValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-    CHECKCUDAERR(cudaMemcpy(params.airValues, h_params.airValues, setupCtx.starkInfo.airValuesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    // offload airgroup values 
+    CHECKCUDAERR(cudaMemcpy(params.airgroupValues, h_params.airgroupValues, setupCtx.starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    CHECKCUDAERR(cudaMemcpy(params.airValues, h_params.airValues, setupCtx.starkInfo.airValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
 
     proof.proof.setAirgroupValues(params.airgroupValues); 
     proof.proof.setAirValues(params.airValues);
@@ -320,14 +329,13 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     // Free memory
     CHECKCUDAERR(cudaDeviceSynchronize());
-    if(h_params.pCustomCommitsFixed != nullptr)
-    CHECKCUDAERR(cudaFree(h_params.pCustomCommitsFixed));
     CHECKCUDAERR(cudaFree(h_params.evals));
     CHECKCUDAERR(cudaFree(h_params.xDivXSub));
-    CHECKCUDAERR(cudaFree(h_params.proofValues));
     CHECKCUDAERR(cudaFree(h_params.challenges));
-    CHECKCUDAERR(cudaFree(h_params.airgroupValues));
-    CHECKCUDAERR(cudaFree(h_params.airValues));
+    if(h_params.proofValues != nullptr) CHECKCUDAERR(cudaFree(h_params.proofValues));
+    if(h_params.airgroupValues != nullptr) CHECKCUDAERR(cudaFree(h_params.airgroupValues));
+    if(h_params.airValues != nullptr) CHECKCUDAERR(cudaFree(h_params.airValues));
+    if(h_params.pCustomCommitsFixed != nullptr) CHECKCUDAERR(cudaFree(h_params.pCustomCommitsFixed));
     delete[] foldedFRIPol;
     CHECKCUDAERR(cudaFree(d_params));
 

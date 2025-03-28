@@ -5,7 +5,10 @@ use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField64;
 use rand::{
-    distr::{Distribution, StandardUniform}, rngs::StdRng, seq::SliceRandom, Rng, SeedableRng
+    distr::{Distribution, StandardUniform},
+    rngs::StdRng,
+    seq::SliceRandom,
+    Rng, SeedableRng,
 };
 
 use crate::Permutation1_6Trace;

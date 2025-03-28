@@ -1,6 +1,4 @@
 #include "expressions_ctx.hpp"
-#include "expressions_avx.hpp"
-#include "expressions_avx512.hpp"
 #include "expressions_pack.hpp"
 #include "hints.hpp"
 
@@ -474,7 +472,7 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
     } else if(hintFieldVal.operand == opType::const_) {
         destStruct.addConstPol(setupCtx.starkInfo.constPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, hintFieldOptions.inverse);
     } else if(hintFieldVal.operand == opType::number) {
-        if(hintFieldVal.value == 1) {
+        if(hintFieldVal.value == 1 && destStruct.params.size() > 0) {
             return;
         } 
         destStruct.addNumber(hintFieldVal.value, hintFieldOptions.inverse);
@@ -572,9 +570,6 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
             freeDestGPU(destStruct.dest_gpu);            
 #endif
         }
-
-
-        
     }
 }
 
@@ -647,14 +642,14 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
     uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
 #ifdef __USE_CUDA__
-        Goldilocks::Element*  vals = new Goldilocks::Element[dim*N];
+        Goldilocks::Element* vals = new Goldilocks::Element[dim*N];
 #else
         Goldilocks::Element *vals = setupCtx.starkInfo.verify_constraints
         ? new Goldilocks::Element[dim*N]
         : &params.aux_trace[offsetAuxTrace];
 #endif
     
-    Dest destStruct(vals,  1 << setupCtx.starkInfo.starkStruct.nBits, 0);
+    Dest destStruct(vals, 1 << setupCtx.starkInfo.starkStruct.nBits, 0);
 #ifdef __USE_CUDA__
         destStruct.dest_gpu = params.aux_trace + offsetAuxTrace;
 #endif

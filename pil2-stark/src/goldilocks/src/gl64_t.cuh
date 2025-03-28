@@ -169,7 +169,6 @@ public:
 
     inline gl64_t &operator-=(const gl64_t &b)
     {
-#if 0
         uint64_t tmp;
         uint32_t borrow;
         asm("{ .reg.pred %top;");
@@ -182,20 +181,22 @@ public:
         asm("@%top mov.b64 %0, %1;" : "+l"(val) : "l"(tmp));
 #endif
 
+        asm("mov.b64 %0, %1;" 
+            : "=l"(tmp) 
+            : "l"(b.val));
+
+        asm("setp.ge.u64 %top, %1, %2;"  // Set predicate if tmp >= MOD
+            "@%top sub.u64 %0, %1, %2;"   // If true, subtract MOD from tmp
+            : "+l"(tmp)
+            : "l"(tmp), "l"(MOD));
+
         asm("sub.cc.u64 %0, %0, %2; subc.u32 %1, 0, 0;"
             : "+l"(val), "=r"(borrow)
-            : "l"(b.val));
+            : "l"(tmp));
         asm("add.u64 %0, %1, %2;" : "=l"(tmp) : "l"(val), "l"(MOD));
         asm("setp.ne.u32 %top, %0, 0;" ::"r"(borrow));
         asm("@%top mov.b64 %0, %1;" : "+l"(val) : "l"(tmp));
         asm("}");
-#endif
-        
-        if (val >= b.val) {
-            val -= b.val;
-        } else {
-            val += MOD - b.val;
-        }
         return *this;
     }
     friend inline gl64_t operator-(gl64_t a, const gl64_t &b)

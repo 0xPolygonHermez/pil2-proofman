@@ -107,28 +107,46 @@ void StarkInfo::load(json j, bool verify_constraints_, bool verify_,  bool gpu_)
         publicsMap.push_back(map);
     }
 
+    airgroupValuesSize = 0;
     for (uint64_t i = 0; i < j["airgroupValuesMap"].size(); i++) 
     {
         PolMap map;
         map.name = j["airgroupValuesMap"][i]["name"];
         map.stage = j["airgroupValuesMap"][i]["stage"];
         airgroupValuesMap.push_back(map);
+        if(map.stage == 1) {
+            airgroupValuesSize += 1;
+        } else {
+            airgroupValuesSize += FIELD_EXTENSION;
+        }
     }
 
+    airValuesSize = 0;
     for (uint64_t i = 0; i < j["airValuesMap"].size(); i++) 
     {
         PolMap map;
         map.name = j["airValuesMap"][i]["name"];
         map.stage = j["airValuesMap"][i]["stage"];
         airValuesMap.push_back(map);
+        if(map.stage == 1) {
+            airValuesSize += 1;
+        } else {
+            airValuesSize += FIELD_EXTENSION;
+        }
     }
 
+    proofValuesSize = 0;
     for (uint64_t i = 0; i < j["proofValuesMap"].size(); i++) 
     {
         PolMap map;
         map.name = j["proofValuesMap"][i]["name"];
         map.stage = j["proofValuesMap"][i]["stage"];
         proofValuesMap.push_back(map);
+        if(map.stage == 1) {
+            proofValuesSize += 1;
+        } else {
+            proofValuesSize += FIELD_EXTENSION;
+        }
     }
 
     for (uint64_t i = 0; i < j["cmPolsMap"].size(); i++) 

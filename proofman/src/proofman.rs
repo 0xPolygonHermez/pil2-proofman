@@ -539,13 +539,13 @@ where
             }
         }
 
-        // std::thread::spawn({
-        //     move || {
-        //         drop(aux_trace);
-        //         drop(wcm);
-        //         drop(sctx);
-        //     }
-        // });
+        std::thread::spawn({
+            move || {
+                drop(aux_trace);
+                drop(wcm);
+                drop(sctx);
+            }
+        });
 
         gen_device_commit_buffers_free_c(d_buffers.lock().unwrap().get_ptr());
 
@@ -941,15 +941,26 @@ where
             }
         }
 
-        let n_airgroup_values = setup.stark_info.airgroupvalues_map.as_ref().unwrap().len();
-        let n_air_values = setup.stark_info.airvalues_map.as_ref().unwrap().len();
-
+        let n_airgroup_values = setup
+            .stark_info
+            .airgroupvalues_map
+            .as_ref()
+            .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
+            .unwrap_or(0);
+    
+        let n_air_values = setup
+            .stark_info
+            .airvalues_map
+            .as_ref()
+            .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
+            .unwrap_or(0);
+                
         if n_air_values > 0 && air_instance.airvalues.is_empty() {
-            air_instance.init_airvalues(n_air_values * 3);
+            air_instance.init_airvalues(n_air_values);
         }
 
         if n_airgroup_values > 0 && air_instance.airgroup_values.is_empty() {
-            air_instance.init_airgroup_values(n_airgroup_values * 3);
+            air_instance.init_airgroup_values(n_airgroup_values);
         }
     }
 

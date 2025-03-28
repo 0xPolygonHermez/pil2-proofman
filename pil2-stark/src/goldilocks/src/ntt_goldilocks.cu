@@ -261,7 +261,6 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
     gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*ext_size;
 
 
-    uint64_t aux_size = ext_size * ncols;
     CHECKCUDAERR(cudaSetDevice(gpu_id));
     CHECKCUDAERR(cudaStreamCreate(&gpu_stream[gpu_id]));
     CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, ext_size * sizeof(uint64_t)))

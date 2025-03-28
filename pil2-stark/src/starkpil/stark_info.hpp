@@ -164,6 +164,10 @@ public:
     
     uint64_t proofSize;
 
+    uint64_t airValuesSize;
+    uint64_t airgroupValuesSize;
+    uint64_t proofValuesSize;
+
     /* Constructor */
     StarkInfo(string file, bool verify_constraints = false, bool verify = false, bool gpu = false);
 

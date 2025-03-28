@@ -15,8 +15,6 @@
 #include "transcriptBN128.hpp"
 #include "exit_process.hpp"
 #include "expressions_bin.hpp"
-#include "expressions_avx.hpp"
-#include "expressions_avx512.hpp"
 #include "expressions_pack.hpp"
 
 class gl64_t;

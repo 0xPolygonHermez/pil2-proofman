@@ -48,14 +48,14 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         }
     }
 
-    Goldilocks::Element airgroupValues[starkInfo.airgroupValuesMap.size()  * FIELD_EXTENSION];
+    Goldilocks::Element airgroupValues[starkInfo.airgroupValuesSize];
     for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size() ; ++i) {
         for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
             airgroupValues[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
         }
     }
 
-    Goldilocks::Element airValues[starkInfo.airValuesMap.size()  * FIELD_EXTENSION];
+    Goldilocks::Element airValues[starkInfo.airValuesSize];
     uint64_t a = 0;
     for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); ++i) {
         if(starkInfo.airValuesMap[i].stage == 1) {
