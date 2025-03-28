@@ -55,7 +55,13 @@ pub fn save_proof_values_c(proof_values: *mut u8, global_info_file: &str, output
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn stark_info_new_c(filename: &str, recursive: bool, verify_constraints: bool, verify: bool, gpu: bool) -> *mut c_void {
+pub fn stark_info_new_c(
+    filename: &str,
+    recursive: bool,
+    verify_constraints: bool,
+    verify: bool,
+    gpu: bool,
+) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
@@ -1001,7 +1007,13 @@ pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _out
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn stark_info_new_c(_filename: &str, _recursive: bool, _verify_constraints: bool, _verify: bool, _gpu: bool) -> *mut c_void {
+pub fn stark_info_new_c(
+    _filename: &str,
+    _recursive: bool,
+    _verify_constraints: bool,
+    _verify: bool,
+    _gpu: bool,
+) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }

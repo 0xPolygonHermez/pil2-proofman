@@ -118,8 +118,6 @@ pub fn aggregate_proofs<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
-    const_pols_recursive2: &[F],
-    const_tree_recursive2: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -137,8 +135,6 @@ pub fn aggregate_proofs<F: PrimeField64>(
         publics,
         trace,
         prover_buffer,
-        const_pols_recursive2,
-        const_tree_recursive2,
         output_dir_path.clone(),
         d_buffers,
     )?;
@@ -223,12 +219,6 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
-    const_pols_compressor: &[F],
-    const_pols_recursive1: &[F],
-    const_pols_recursive2: &[F],
-    const_tree_compressor: &[F],
-    const_tree_recursive1: &[F],
-    const_tree_recursive2: &[F],
     recursive2_proof: &mut [u64],
     aggregate: bool,
     output_dir_path: PathBuf,
@@ -283,8 +273,8 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
             p_setup,
             trace.as_ptr() as *mut u8,
             prover_buffer.as_ptr() as *mut u8,
-            const_pols_compressor.as_ptr() as *mut u8,
-            const_tree_compressor.as_ptr() as *mut u8,
+           setup.get_const_ptr(),
+           setup.get_const_tree_ptr(),
             publics.as_ptr() as *mut u8,
             recursive_proof.as_mut_ptr(),
             &proof_file,
@@ -355,8 +345,8 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-        const_pols_recursive1.as_ptr() as *mut u8,
-        const_tree_recursive1.as_ptr() as *mut u8,
+       setup.get_const_ptr(),
+       setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
         recursive1_proof[publics_aggregation..].as_mut_ptr(),
         &proof_file,
@@ -398,8 +388,8 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
             p_setup_recursive2,
             trace.as_ptr() as *mut u8,
             prover_buffer.as_ptr() as *mut u8,
-            const_pols_recursive2.as_ptr() as *mut u8,
-            const_tree_recursive2.as_ptr() as *mut u8,
+            setup_recursive2.get_const_ptr(),
+            setup_recursive2.get_const_tree_ptr(),
             publics.as_ptr() as *mut u8,
             recursive2_proof[publics_aggregation..].as_mut_ptr(),
             "",
@@ -430,8 +420,6 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
-    const_pols: &[F],
-    const_tree: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
 ) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
@@ -471,8 +459,6 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
         for airgroup in 0..n_airgroups {
             let setup = sctx.get_setup(airgroup, 0);
             let p_setup: *mut c_void = (&setup.p_setup).into();
-            load_const_pols_tree(setup, const_tree);
-            load_const_pols(&setup.setup_path, setup.const_pols_size, const_pols);
             let publics_circom_size =
                 pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
             let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 10;
@@ -539,8 +525,8 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
                             p_setup,
                             trace.as_ptr() as *mut u8,
                             prover_buffer.as_ptr() as *mut u8,
-                            const_pols.as_ptr() as *mut u8,
-                            const_tree.as_ptr() as *mut u8,
+                           setup.get_const_ptr(),
+                           setup.get_const_tree_ptr(),
                             publics.as_ptr() as *mut u8,
                             recursive2_proof[publics_aggregation..].as_mut_ptr(),
                             &proof_file,
@@ -627,7 +613,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 
     let const_tree_size = setup.const_tree_size;
     let const_tree = create_buffer_fast(const_tree_size);
-    let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size as usize);
+    let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
 
     load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
     load_const_pols_tree(setup, &const_tree);
@@ -677,7 +663,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     let const_tree_size = setup.const_tree_size;
     let const_tree = create_buffer_fast(const_tree_size);
-    let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size as usize);
+    let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
 
     load_const_pols(&setup_path, setup.const_pols_size, &const_pols);
     load_const_pols_tree(setup, &const_tree);

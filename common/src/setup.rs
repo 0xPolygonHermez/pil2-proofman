@@ -6,6 +6,7 @@ use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
     get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c, get_const_tree_size_c,
+    load_const_pols_c, load_const_tree_c,
 };
 use proofman_util::create_buffer_fast;
 
@@ -117,6 +118,24 @@ impl<F: Field> Setup<F> {
                     custom_commits_fixed_buffer_size,
                     proof_size,
                 )
+            } else if setup_type == &ProofType::Compressor
+                || setup_type == &ProofType::Recursive1
+                || setup_type == &ProofType::Recursive2
+            {
+                let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
+                let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
+                (
+                    stark_info,
+                    p_stark_info,
+                    expressions_bin,
+                    const_pols,
+                    const_pols_tree,
+                    const_pols_size,
+                    const_tree_size,
+                    prover_buffer_size,
+                    custom_commits_fixed_buffer_size,
+                    proof_size,
+                )
             } else {
                 (
                     stark_info,
@@ -156,11 +175,33 @@ impl<F: Field> Setup<F> {
         expressions_bin_free_c(self.p_setup.p_expressions_bin);
     }
 
+    pub fn load_const_pols(&self) {
+        let const_pols_path = self.setup_path.to_string_lossy().to_string() + ".const";
+        load_const_pols_c(
+            self.const_pols.as_ptr() as *mut u8,
+            const_pols_path.as_str(),
+            self.const_pols_size as u64 * 8,
+        );
+    }
+
+    pub fn load_const_pols_tree(&self) {
+        let const_pols_tree_path = self.setup_path.display().to_string() + ".consttree";
+        let const_pols_tree_size = self.const_tree_size;
+
+        load_const_tree_c(
+            self.p_setup.p_stark_info,
+            self.const_pols_tree.as_ptr() as *mut u8,
+            const_pols_tree_path.as_str(),
+            (const_pols_tree_size * 8) as u64,
+            &(self.setup_path.display().to_string() + ".verkey.json"),
+        );
+    }
+
     pub fn get_const_ptr(&self) -> *mut u8 {
         self.const_pols.as_ptr() as *mut u8
     }
 
-    pub fn get_const_tree(&self) -> *mut u8 {
-        self.const_pols.as_ptr() as *mut u8
+    pub fn get_const_tree_ptr(&self) -> *mut u8 {
+        self.const_pols_tree.as_ptr() as *mut u8
     }
 }

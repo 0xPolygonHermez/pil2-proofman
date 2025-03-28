@@ -4,7 +4,10 @@ use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use colored::*;
 
@@ -334,6 +337,42 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     }
 
     Ok(())
+}
+
+pub fn initialize_fixed_pols_tree<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) {
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
+
+    let mut airs = Vec::new();
+    let mut seen = HashSet::new();
+
+    for instance_id in my_instances.iter() {
+        let (airgroup_id, air_id, _) = instances[*instance_id];
+        if seen.insert((airgroup_id, air_id)) {
+            airs.push((airgroup_id, air_id));
+        }
+    }
+
+    airs.iter().for_each(|&(airgroup_id, air_id)| {
+        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+            setup.load_const_pols();
+            setup.load_const_pols_tree();
+        }
+    });
+
+    airs.iter().for_each(|&(airgroup_id, air_id)| {
+        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+        setup.load_const_pols();
+        setup.load_const_pols_tree();
+    });
+
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup in 0..n_airgroups {
+        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
+        setup.load_const_pols();
+        setup.load_const_pols_tree();
+    }
 }
 
 pub fn add_publics_circom<F: PrimeField64>(

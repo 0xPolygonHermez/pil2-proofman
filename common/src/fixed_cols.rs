@@ -5,8 +5,7 @@ use std::{
 
 use p3_field::Field;
 use proofman_starks_lib_c::{
-    calculate_const_tree_c, load_const_pols_c, load_const_tree_c, write_const_tree_c,
-    write_fixed_cols_bin_c,
+    calculate_const_tree_c, load_const_pols_c, load_const_tree_c, write_const_tree_c, write_fixed_cols_bin_c,
 };
 use proofman_util::{create_buffer_fast, timer_start_debug, timer_stop_and_log_debug};
 
