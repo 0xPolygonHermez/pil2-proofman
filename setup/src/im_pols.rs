@@ -454,8 +454,7 @@ pub fn calculate_intermediate_polynomials(
         .map(|i| i.as_number().unwrap().as_u64().unwrap().try_into().unwrap())
         // the most dangerous line of rust ever typed ^
         .collect::<Vec<_>>();
-    let q_deg = q_deg.try_into().expect("q_deg was negative!");
-    let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg, q_dim);
+    let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg as usize, q_dim);
     d += 1;
 
     while !im_exps.is_empty() && d <= max_q_deg {
