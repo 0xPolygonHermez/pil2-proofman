@@ -7,11 +7,13 @@
 #include "gl64_t.cuh"
 #include "expressions_gpu.cuh"
 #include "starks_gpu.cuh"
+#include <iomanip>
 
 // TOTO list: //rick
 // eliminar els params
 // carregar-me els d_trees
 // _inplace not good name
+#define PRINT_TIME_SUMMARY 1
 
 
 void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx, bool prod, ExpressionsGPU *expressionsCtxGPU, StepsParams* d_params) {
@@ -139,7 +141,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         }
     }
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-
     TimerStopAndLog(STARK_STEP_0);
     
     TimerStart(STARK_CALCULATE_WITNESS_STD);
@@ -222,7 +223,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     
     computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_lev", false)], d_LEv);
     TimerStopAndLog(STARK_STEP_EVALS_CALCULATE_LEV);
-    TimerStart(STARK_STEP_EVMAP);
+    TimerStart(STARK_STEP_EVALS_EVMAP);
     
     evmap_inplace(params.evals, h_params, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
 
@@ -246,7 +247,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         }
     }
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    TimerStopAndLog(STARK_STEP_EVMAP);
+    TimerStopAndLog(STARK_STEP_EVALS_EVMAP);
     TimerStopAndLog(STARK_STEP_EVALS);
 
     //--------------------------------
@@ -344,6 +345,56 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStopAndLog(STARK_POSTPROCESS);
     TimerStopAndLog(STARK_GPU_PROOF);
 
+#if PRINT_TIME_SUMMARY
+
+    double time_total = TimerGetElapsed(STARK_GPU_PROOF);
+
+    std::ostringstream oss;
+
+    zklog.trace("    TIMES SUMMARY: ");
+
+    double expressions_time = TimerGetElapsed(STARK_CALCULATE_WITNESS_STD) + TimerGetElapsed(CALCULATE_IM_POLS) + TimerGetElapsed(STARK_STEP_Q_EXPRESSIONS);
+    oss << std::fixed << std::setprecision(2) << expressions_time << "s (" << (expressions_time / time_total) * 100 << "%)";
+    zklog.trace("        EXPRESSIONS:  " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    double commit_time = TimerGetElapsed(STARK_COMMIT_STAGE_1) + TimerGetElapsed(STARK_COMMIT_STAGE_2) + TimerGetElapsed(STARK_STEP_Q_COMMIT);
+    oss << std::fixed << std::setprecision(2) << commit_time << "s (" << (commit_time / time_total) * 100 << "%)";
+    zklog.trace("        COMMIT:       " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    double evmap_time = TimerGetElapsed(STARK_STEP_EVALS);
+    oss << std::fixed << std::setprecision(2) << evmap_time << "s (" << (evmap_time / time_total) * 100 << "%)";
+    zklog.trace("        EVALUATIONS:  " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    double fri_time = TimerGetElapsed(STARK_STEP_FRI);
+    oss << std::fixed << std::setprecision(2) << fri_time << "s (" << (fri_time / time_total) * 100 << "%)";
+    zklog.trace("        FRI:          " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    double others_time = TimerGetElapsed(STARK_INITIALIZATION) + TimerGetElapsed(STARK_STEP_0) + TimerGetElapsed(STARK_POSTPROCESS);
+    oss << std::fixed << std::setprecision(2) << others_time << "s (" << (others_time / time_total) * 100 << "%)";
+    zklog.trace("        OTHERS:       " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    if (others_time + commit_time + evmap_time + expressions_time + fri_time >= time_total ||
+        others_time + commit_time + evmap_time + expressions_time + fri_time <= 0.99 * time_total) {
+        oss << std::fixed << std::setprecision(2) << (others_time + commit_time + evmap_time + expressions_time + fri_time);
+        std::string calculated_time = oss.str();
+        oss.str("");
+        oss.clear();
+        oss << std::fixed << std::setprecision(2) << time_total;
+        std::string total_time = oss.str();
+        zklog.error("    TIME SUMMARY ERROR: " + calculated_time + " != " + total_time);
+    } 
+
+#endif
 }
 
 #endif

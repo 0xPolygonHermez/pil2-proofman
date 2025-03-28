@@ -7,6 +7,9 @@
 #include "gl64_t.cuh"
 #include "expressions_gpu.cuh"
 #include "starks_gpu.cuh"
+#include <iomanip>
+
+#define PRINT_TIME_SUMMARY 1
 
 // TOTO list: 
 // fer que lo dls params vagi igual
@@ -17,7 +20,8 @@ template <typename ElementType>
 void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers, bool vadcop)
 {
 
-    TimerStart(STARK_PROOF);
+    TimerStart(STARK_GPU_PROOF);
+    TimerStart(STARK_INITIALIZATION);
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time0 = omp_get_wtime();
     //double time_prev = time0;
@@ -61,15 +65,11 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
     CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
 
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    double time = omp_get_wtime();
-    std::cout << "Rick fins PUNT1 (pre-process) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = omp_get_wtime();*/
-
     Goldilocks::Element *d_pBuffHelper = h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft", false)];
 
-    TranscriptType transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
-    
+    TranscriptType transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);    
+    TimerStopAndLog(STARK_INITIALIZATION);
+
     //--------------------------------
     // 0.- Add const root and publics to transcript
     //--------------------------------
@@ -90,13 +90,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
             starks.addTranscript(transcript, hash, HASH_SIZE);
         }
     }
-    TimerStopAndLog(STARK_STEP_0);
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT2 (step0) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = omp_get_wtime();*/
-
-    TimerStart(STARK_STEP_1);
     uint64_t min_challenge = setupCtx.starkInfo.challengesMap.size();
     uint64_t max_challenge = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -110,26 +103,13 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     }
     if(min_challenge == setupCtx.starkInfo.challengesMap.size()) min_challenge =0;
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    TimerStopAndLog(STARK_STEP_0);    
 
     TimerStart(STARK_COMMIT_STAGE_1);
     starks.commitStage_inplace(1, d_buffers->d_trace, d_buffers->d_aux_trace, d_buffers);
-    TimerStopAndLog(STARK_COMMIT_STAGE_1);
-
     CHECKCUDAERR(cudaDeviceSynchronize());
-    /*time = omp_get_wtime();
-    std::cout << "Rick fins PUNT3 (step1) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = omp_get_wtime();*/
-
     offloadCommit(1, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
     starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
-    TimerStopAndLog(STARK_STEP_1);
-
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT4 (offload) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
-
-    TimerStart(STARK_STEP_2);
     min_challenge = setupCtx.starkInfo.challengesMap.size();
     max_challenge = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -142,10 +122,14 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         }
     }
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    TimerStopAndLog(STARK_COMMIT_STAGE_1);
+
+
+    TimerStart(STARK_CALCULATE_GPROD);
+    
 
     Goldilocks::Element *res = new Goldilocks::Element[N * FIELD_EXTENSION];
     Goldilocks::Element *gprod = new Goldilocks::Element[N * FIELD_EXTENSION];
-   
     uint64_t gprodFieldId = setupCtx.expressionsBin.hints[0].fields[0].values[0].id;
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
     uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
@@ -155,26 +139,15 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     destStruct.addParams(numFieldId, setupCtx.expressionsBin.expressionsInfo[numFieldId].destDim);
     destStruct.addParams(denFieldId, setupCtx.expressionsBin.expressionsInfo[denFieldId].destDim, true);
 
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT5 (pre-expressions) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
-
     expressionsCtx.calculateExpressions_gpu(d_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(destStruct.dest_gpu));
 
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT6 (expressions) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
-
     Goldilocks3::copy((Goldilocks3::Element *)&gprod[0], &Goldilocks3::one());
     for(uint64_t i = 1; i < N; ++i) {
         Goldilocks3::mul((Goldilocks3::Element *)&gprod[i * FIELD_EXTENSION], (Goldilocks3::Element *)&gprod[(i - 1) * FIELD_EXTENSION], (Goldilocks3::Element *)&res[(i - 1) * FIELD_EXTENSION]);
     }
-
 
     Goldilocks::Element *d_grod;
     CHECKCUDAERR(cudaMalloc(&d_grod, N * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
@@ -182,11 +155,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     uint64_t offset = setupCtx.starkInfo.getTraceOffset("cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
     uint64_t nCols = setupCtx.starkInfo.getTraceNColsSection("cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
-
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT7 (gprod) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
 
     dim3 nThreads(256);
     dim3 nBlocks((N + nThreads.x - 1) / nThreads.x);
@@ -197,39 +165,17 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_grod));
 
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT8 (upload) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
+   TimerStopAndLog(STARK_CALCULATE_GPROD);
 
     TimerStart(CALCULATE_IM_POLS);
     calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, d_params, 2);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT10 (expressions im pols) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
 
     TimerStart(STARK_COMMIT_STAGE_2);
     starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers);
-
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT11 (commit) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
-
     offloadCommit(2, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
-
-    TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
-    TimerStopAndLog(STARK_STEP_2);
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT12 (offload) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
-
-    TimerStart(STARK_STEP_Q);
     min_challenge = setupCtx.starkInfo.challengesMap.size();
     max_challenge = 0;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -242,27 +188,26 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         }
     }
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    TimerStopAndLog(STARK_COMMIT_STAGE_2);
+    
 
-    TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
+    TimerStart(STARK_STEP_Q);
+    
+    TimerStart(STARK_STEP_Q_EXPRESSIONS);
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
-    TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
+    TimerStopAndLog(STARK_STEP_Q_EXPRESSIONS);
 
-    TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
+    TimerStart(STARK_STEP_Q_COMMIT);
+
     starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_aux_trace, d_buffers);
-
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT15 (Q commit) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
-
     offloadCommit(setupCtx.starkInfo.nStages + 1, starks.treesGL, (gl64_t *)h_params.aux_trace, proof, setupCtx);
-
-    TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
+
+    TimerStopAndLog(STARK_STEP_Q_COMMIT);
     TimerStopAndLog(STARK_STEP_Q);
 
     TimerStart(STARK_STEP_EVALS);
-
+    TimerStart(STARK_STEP_EVALS_CALCULATE_LEV);
     uint64_t xiChallengeIndex = 0;
     min_challenge = setupCtx.starkInfo.challengesMap.size();
     max_challenge = 0;
@@ -282,23 +227,12 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
     gl64_t * d_LEv = (gl64_t *)  h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];;
 
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT16 (Q offload) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
 
     computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_lev", false)], d_LEv);
-
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT17 (LEv) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
+    TimerStopAndLog(STARK_STEP_EVALS_CALCULATE_LEV);
+    TimerStart(STARK_STEP_EVMAP);
 
     evmap_inplace(evals, h_params, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT18 (Evmap) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
 
     if (!setupCtx.starkInfo.starkStruct.hashCommits)
     {
@@ -324,7 +258,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         }
     }
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-
+    TimerStopAndLog(STARK_STEP_EVMAP);
     TimerStopAndLog(STARK_STEP_EVALS);
 
     //--------------------------------
@@ -332,23 +266,18 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     //--------------------------------
     TimerStart(STARK_STEP_FRI);
 
-    TimerStart(COMPUTE_FRI_POLYNOMIAL);
+    TimerStart(STARK_STEP_FRI_POLYNOMIAL);
 
     calculateXis_inplace(setupCtx, h_params, xiChallenge);    
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
 
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT22 (expressions FRI) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
-
-    TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
+    TimerStopAndLog(STARK_STEP_FRI_POLYNOMIAL);
+    TimerStart(STARK_STEP_FRI_FOLDING);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
     uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
     gl64_t *d_friPol = (gl64_t *)(h_params.aux_trace + friPol_offset);
     
-    TimerStart(STARK_FRI_FOLDING);
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
     Goldilocks::Element *foldedFRIPol = new Goldilocks::Element[(1 << setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits) * FIELD_EXTENSION];
 
@@ -377,9 +306,9 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         }
         starks.getChallenge(transcript, *challenge);
     }
-    TimerStopAndLog(STARK_FRI_FOLDING);
+    TimerStopAndLog(STARK_STEP_FRI_FOLDING);
    
-    TimerStart(STARK_FRI_QUERIES);
+    TimerStart(STARK_STEP_FRI_QUERIES);
 
     uint64_t friQueries[setupCtx.starkInfo.starkStruct.nQueries];
 
@@ -398,17 +327,10 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     }
 
     FRI<Goldilocks::Element>::setFinalPol(proof, foldedFRIPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
-    TimerStopAndLog(STARK_FRI_QUERIES);
+    TimerStopAndLog(STARK_STEP_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);
-
-    /*CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
-    std::cout << "Rick fins PUNT23 (FRI) " << time - time0 << " " << time - time_prev << std::endl;
-    time_prev = time;*/
-
-    
-    TimerStopAndLog(STARK_PROOF);
+    TimerStart(STARK_POSTPROCESS);
 
     proof.proof.proof2pointer(proofBuffer);
     if(!proofFile.empty()) {
@@ -422,9 +344,63 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     cudaFree(h_params.evals);
     cudaFree(h_params.xDivXSub);
     cudaFree(h_params.challenges);
-    cudaFree(d_params);
+    cudaFree(d_params);  
     delete[] foldedFRIPol;
     delete challenges;
     delete evals;
+    TimerStopAndLog(STARK_POSTPROCESS);
+    TimerStopAndLog(STARK_GPU_PROOF);
+
+    #if PRINT_TIME_SUMMARY
+
+    double time_total = TimerGetElapsed(STARK_GPU_PROOF);
+
+    std::ostringstream oss;
+
+    zklog.trace("    TIMES SUMMARY: ");
+
+    double expressions_time = TimerGetElapsed(STARK_CALCULATE_GPROD) + TimerGetElapsed(CALCULATE_IM_POLS) + TimerGetElapsed(STARK_STEP_Q_EXPRESSIONS);
+    oss << std::fixed << std::setprecision(2) << expressions_time << "s (" << (expressions_time / time_total) * 100 << "%)";
+    zklog.trace("        EXPRESSIONS:  " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    double commit_time = TimerGetElapsed(STARK_COMMIT_STAGE_1) + TimerGetElapsed(STARK_COMMIT_STAGE_2) + TimerGetElapsed(STARK_STEP_Q_COMMIT);
+    oss << std::fixed << std::setprecision(2) << commit_time << "s (" << (commit_time / time_total) * 100 << "%)";
+    zklog.trace("        COMMIT:       " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    double evmap_time = TimerGetElapsed(STARK_STEP_EVALS);
+    oss << std::fixed << std::setprecision(2) << evmap_time << "s (" << (evmap_time / time_total) * 100 << "%)";
+    zklog.trace("        EVALUATIONS:  " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    double fri_time = TimerGetElapsed(STARK_STEP_FRI);
+    oss << std::fixed << std::setprecision(2) << fri_time << "s (" << (fri_time / time_total) * 100 << "%)";
+    zklog.trace("        FRI:          " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    double others_time = TimerGetElapsed(STARK_INITIALIZATION) + TimerGetElapsed(STARK_STEP_0) + TimerGetElapsed(STARK_POSTPROCESS);
+    oss << std::fixed << std::setprecision(2) << others_time << "s (" << (others_time / time_total) * 100 << "%)";
+    zklog.trace("        OTHERS:       " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    if (others_time + commit_time + evmap_time + expressions_time + fri_time >= time_total ||
+        others_time + commit_time + evmap_time + expressions_time + fri_time <= 0.99 * time_total) {
+        oss << std::fixed << std::setprecision(2) << (others_time + commit_time + evmap_time + expressions_time + fri_time);
+        std::string calculated_time = oss.str();
+        oss.str("");
+        oss.clear();
+        oss << std::fixed << std::setprecision(2) << time_total;
+        std::string total_time = oss.str();
+        zklog.error("    TIME SUMMARY ERROR: " + calculated_time + " != " + total_time);
+    } 
+
+#endif
+
 }
 #endif
