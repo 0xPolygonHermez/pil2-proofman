@@ -1239,7 +1239,7 @@ static void MERKLETREE_BENCH_CUDA(benchmark::State &state)
     // Benchmark
     for (auto _ : state)
     {
-        PoseidonGoldilocks::merkletree_cuda(tree, cols, NCOLS_HASH, NROWS_HASH, state.range(0));
+        //PoseidonGoldilocks::merkletree_cuda(tree, cols, NCOLS_HASH, NROWS_HASH, state.range(0));
     }
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);

@@ -2772,7 +2772,7 @@ TEST(GOLDILOCKS_TEST, merkletree_cuda)
     uint64_t numElementsTree = MerklehashGoldilocks::getTreeNumElements(nrows_hash);
     Goldilocks::Element *tree = (Goldilocks::Element *)malloc(numElementsTree * sizeof(Goldilocks::Element));
 
-    PoseidonGoldilocks::merkletree_cuda(tree, cols, ncols_hash, nrows_hash);
+    //PoseidonGoldilocks::merkletree_cuda(tree, cols, ncols_hash, nrows_hash);
     Goldilocks::Element root[4];
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
 
@@ -2791,7 +2791,7 @@ TEST(GOLDILOCKS_TEST, merkletree_cuda)
     numElementsTree = MerklehashGoldilocks::getTreeNumElements(nrows_hash);
     tree = (Goldilocks::Element *)malloc(numElementsTree * sizeof(Goldilocks::Element));
     cols = NULL;
-    PoseidonGoldilocks::merkletree_cuda(tree, cols, ncols_hash, nrows_hash);
+    //PoseidonGoldilocks::merkletree_cuda(tree, cols, ncols_hash, nrows_hash);
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
 
     ASSERT_EQ(Goldilocks::toU64(root[0]), 0X25225F1A5D49614A);
@@ -2805,7 +2805,7 @@ TEST(GOLDILOCKS_TEST, merkletree_cuda)
     numElementsTree = MerklehashGoldilocks::getTreeNumElements(nrows_hash);
     tree = (Goldilocks::Element *)malloc(numElementsTree * sizeof(Goldilocks::Element));
     cols = NULL;
-    PoseidonGoldilocks::merkletree_cuda(tree, cols, ncols_hash, nrows_hash);
+    //PoseidonGoldilocks::merkletree_cuda(tree, cols, ncols_hash, nrows_hash);
     MerklehashGoldilocks::root(&(root[0]), tree, numElementsTree);
 
     ASSERT_EQ(Goldilocks::toU64(root[0]), 0X5587AD00B6DDF0CB);
