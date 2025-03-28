@@ -16,14 +16,21 @@ pub trait HashCode: Hash {
 
 impl<T: Hash> HashCode for T {}
 
-pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize) -> (Option<Vec<Value>>, isize) {
+pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize) -> (Vec<usize>, isize) {
     let mut im_pols: Option<Vec<Value>> = Some(Vec::new());
     let absolute_max = max_deg;
     let mut abs_max_d = 0;
 
     let (re, rd) = __calculate_im_pols(expressions, exp, &mut im_pols, max_deg, absolute_max, &mut abs_max_d);
 
-    return (re, rd.max(abs_max_d) - 1);
+    return (
+        re.unwrap_or(Vec::new())
+            .into_iter()
+            .map(|i| i.as_number().unwrap().as_u64().unwrap().try_into().unwrap())
+            // the most dangerous line of rust ever typed ^
+            .collect::<Vec<_>>(),
+        rd.max(abs_max_d) - 1,
+    );
 
     fn __calculate_im_pols(
         expressions: &[Value],
@@ -448,12 +455,6 @@ pub fn calculate_intermediate_polynomials(
 
     // First calculation
     let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, &mut c_exp, d);
-    let im_exps = im_exps
-        .unwrap_or(Vec::new())
-        .into_iter()
-        .map(|i| i.as_number().unwrap().as_u64().unwrap().try_into().unwrap())
-        // the most dangerous line of rust ever typed ^
-        .collect::<Vec<_>>();
     let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg as usize, q_dim);
     d += 1;
 
@@ -464,12 +465,6 @@ pub fn calculate_intermediate_polynomials(
         let mut c_exp_clone = c_exp.clone();
 
         let (im_exps_p, q_deg_p) = calculate_im_pols(expressions, &mut c_exp_clone, d);
-        let im_exps_p = im_exps_p
-            .unwrap_or(Vec::new())
-            .into_iter()
-            .map(|i| i.as_number().unwrap().as_u64().unwrap().try_into().unwrap())
-            // the most dangerous line of rust ever typed ^
-            .collect::<Vec<_>>();
         let new_added_basefield_cols =
             calculate_added_cols(d, expressions, &im_exps_p, q_deg_p.try_into().unwrap(), q_dim);
         d += 1;
