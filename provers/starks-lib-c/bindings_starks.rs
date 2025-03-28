@@ -36,9 +36,10 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPcbbb"]
+    #[link_name = "\u{1}_Z14stark_info_newPcbbbb"]
     pub fn stark_info_new(
         filename: *mut ::std::os::raw::c_char,
+        recursive: bool,
         verify_constraints: bool,
         verify: bool,
         gpu: bool,
@@ -55,6 +56,10 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPv"]
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z21get_const_pols_offsetPv"]
+    pub fn get_const_pols_offset(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z36get_map_total_n_custom_commits_fixedPv"]
@@ -280,7 +285,12 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z14calculate_hashPvS_mm"]
-    pub fn calculate_hash(pValue: *mut ::std::os::raw::c_void, pBuffer: *mut ::std::os::raw::c_void, nElements: u64, nOutputs: u64);
+    pub fn calculate_hash(
+        pValue: *mut ::std::os::raw::c_void,
+        pBuffer: *mut ::std::os::raw::c_void,
+        nElements: u64,
+        nOutputs: u64,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_newmb"]
@@ -523,5 +533,5 @@ extern "C" {
 }
 extern "C" {
     #[link_name = "\u{1}_Z30gen_device_commit_buffers_freePv"]
-    pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+    pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void);
 }

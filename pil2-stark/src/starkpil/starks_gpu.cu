@@ -368,6 +368,9 @@ __global__ void computeEvals_v2(
 void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv)
 {
 
+    uint64_t offsetConstTree = starks->setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
+    gl64_t *d_constTree = (gl64_t *)h_params.pConstPolsExtendedTreeAddress;
+
     uint64_t extendBits = starks->setupCtx.starkInfo.starkStruct.nBitsExt - starks->setupCtx.starkInfo.starkStruct.nBits;
     uint64_t size_eval = starks->setupCtx.starkInfo.evMap.size();
     uint64_t N = 1 << starks->setupCtx.starkInfo.starkStruct.nBits;
@@ -401,7 +404,7 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, FRIProof<
     dim3 nBlocks(size_eval);
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time = omp_get_wtime();
-    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, (gl64_t *) d_buffers->d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
+    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
     CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaGetLastError());
 
@@ -605,7 +608,7 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
 {
     uint64_t pol2N = 1 << currentBits;
     gl64_t *d_aux;
-    cudaMalloc(&d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element));
+    CHECKCUDAERR(cudaMalloc(&d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
 
     uint64_t width = 1 << nextBits;
     uint64_t height = pol2N / width;
@@ -613,7 +616,7 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     dim3 nBlocks((width + nThreads.x - 1) / nThreads.x, (height + nThreads.y - 1) / nThreads.y);
     transposeFRI<<<nBlocks, nThreads>>>(d_aux, (gl64_t *)pol, pol2N, width);
     treeFRI->initSource();
-    cudaMemcpy(treeFRI->source, d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+    CHECKCUDAERR(cudaMemcpy(treeFRI->source, d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
     
     Goldilocks::Element  *d_tree;
     CHECKCUDAERR(cudaMalloc(&d_tree, treeFRI->getNumNodes(treeFRI->height) * sizeof(uint64_t)));
@@ -677,8 +680,8 @@ __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t nLeaves, uint64_t *d_fr
     }
 }
 
-void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, uint32_t nStages, StepsParams &d_params)
-{
+void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, gl64_t* d_constTree, uint32_t nStages, StepsParams &d_params)
+{   
 
     uint64_t maxTreeWidth = 0;
     uint64_t maxProofSize = 0;
@@ -715,7 +718,7 @@ void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQu
         }
         else if (k == nStages + 1)
         {
-            getTreeTracePols<<<nBlocks, nThreads>>>(&d_buffers->d_constTree[2], trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_buff + k * nQueries * maxBuffSize, maxBuffSize); // rick: this last should be done in the CPU
+            getTreeTracePols<<<nBlocks, nThreads>>>(&d_constTree[2], trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_buff + k * nQueries * maxBuffSize, maxBuffSize); // rick: this last should be done in the CPU
         } else{
             uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];

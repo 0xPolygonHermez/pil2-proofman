@@ -11,7 +11,7 @@ use proofman_common::{
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{gen_device_commit_buffers_c, gen_device_commit_buffers_free_c};
-use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
+use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c, get_const_offset_c};
 use std::collections::HashMap;
 use std::fs::File;
 use std::fmt::Write;
@@ -439,9 +439,6 @@ where
 
         timer_start_info!(GENERATING_BASIC_PROOFS);
 
-        let const_tree = Arc::new(create_buffer_fast(sctx.max_const_tree_size));
-        let const_pols = Arc::new(create_buffer_fast(sctx.max_const_size));
-
         let proofs = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
         let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
         let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
@@ -472,8 +469,6 @@ where
                     air_id,
                     output_dir_path.clone(),
                     aux_trace.clone(),
-                    const_pols.clone(),
-                    const_tree.clone(),
                     airgroup_values_air_instances.clone(),
                     gen_const_tree,
                     d_buffers.clone(),
@@ -572,10 +567,15 @@ where
 
         let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
-        let const_tree_aggregation: Vec<F> =
-            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
-        let const_pols_aggregation: Vec<F> =
-            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
+        let const_tree_compressor: Vec<F> =
+            create_buffer_fast(setups.sctx_compressor.as_ref().unwrap().max_const_tree_size);
+        let const_pols_compressor: Vec<F> =
+            create_buffer_fast(setups.sctx_compressor.as_ref().unwrap().max_const_size);
+
+        let const_tree_recursive1: Vec<F> =
+            create_buffer_fast(setups.sctx_recursive1.as_ref().unwrap().max_const_tree_size);
+        let const_pols_recursive1: Vec<F> =
+            create_buffer_fast(setups.sctx_recursive1.as_ref().unwrap().max_const_size);   
 
         let const_tree_recursive2: Vec<F> =
             create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
@@ -602,35 +602,23 @@ where
                 load_const_pols(&setup_recursive2.setup_path, setup_recursive2.const_pols_size, &const_pols_recursive2);
                 load_const_pols_tree(setup_recursive2, &const_tree_recursive2);
             }
-            let const_pols_compressor;
-            let const_tree_compressor;
-            let const_pols_recursive1;
-            let const_tree_recursive1;
             let has_compressor = pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
             if has_compressor {
                 let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
-                load_const_pols_tree(setup, &const_tree);
-                const_tree_compressor = &const_tree;
-                const_pols_compressor = &const_pols;
+                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols_compressor);
+                load_const_pols_tree(setup, &const_tree_compressor);
                 let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
 
                 load_const_pols(
                     &setup_recursive1.setup_path,
                     setup_recursive1.const_pols_size,
-                    &const_pols_aggregation,
+                    &const_pols_recursive1,
                 );
-                load_const_pols_tree(setup_recursive1, &const_tree_aggregation);
-                const_tree_recursive1 = &const_tree_aggregation;
-                const_pols_recursive1 = &const_pols_aggregation;
+                load_const_pols_tree(setup_recursive1, &const_tree_recursive1);
             } else {
                 let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
-                load_const_pols_tree(setup, &const_tree);
-                const_tree_compressor = &const_tree;
-                const_tree_recursive1 = &const_tree;
-                const_pols_compressor = &const_pols;
-                const_pols_recursive1 = &const_pols;
+                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols_recursive1);
+                load_const_pols_tree(setup, &const_tree_recursive1);
             }
             for my_instance_id in air_groups.iter() {
                 let instance_id = my_instances[*my_instance_id];
@@ -644,11 +632,11 @@ where
                     &publics,
                     &trace,
                     &prover_buffer,
-                    const_pols_compressor,
-                    const_pols_recursive1,
+                    &const_pols_compressor,
+                    &const_pols_recursive1,
                     &const_pols_recursive2,
-                    const_tree_compressor,
-                    const_tree_recursive1,
+                    &const_tree_compressor,
+                    &const_tree_recursive1,
                     &const_tree_recursive2,
                     &mut recursive2_proofs[airgroup_id],
                     recursive2_initialized[airgroup_id],
@@ -670,8 +658,8 @@ where
             &publics,
             &trace,
             &prover_buffer,
-            &const_pols,
-            &const_tree,
+            &const_pols_recursive2,
+            &const_tree_recursive2,
             output_dir_path.clone(),
             d_buffers_aggregation.lock().unwrap().get_ptr(),
         );
@@ -713,8 +701,6 @@ where
         air_id: usize,
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
-        const_pols: Arc<Vec<F>>,
-        const_tree: Arc<Vec<F>>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
         gen_const_tree: bool,
         d_buffers: Arc<Mutex<DeviceBuffer>>,
@@ -728,17 +714,17 @@ where
             let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
             timer_start_info!(GEN_PROOF);
 
+            let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
+            load_const_pols(&setup.setup_path, setup.const_pols_size, &aux_trace[offset_const..offset_const + setup.const_pols_size]);
+
             if gen_const_tree {
                 timer_start_debug!(GENERATING_CONST_TREE);
-                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
-                load_const_pols_tree(setup, &const_tree);
+                load_const_pols_tree(setup, &aux_trace[0..setup.const_tree_size]);
                 timer_stop_and_log_debug!(GENERATING_CONST_TREE);
             }
 
             let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
-            steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
-            steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
 
             let p_steps_params: *mut u8 = (&steps_params).into();
 

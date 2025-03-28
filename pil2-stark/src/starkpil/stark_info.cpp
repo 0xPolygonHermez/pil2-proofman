@@ -5,15 +5,21 @@
 #include "exit_process.hpp"
 #include "expressions_pack.hpp"
 
-StarkInfo::StarkInfo(string file, bool verify_constraints, bool verify, bool gpu)
+StarkInfo::StarkInfo(string file, bool recursive_, bool verify_constraints_, bool verify_, bool gpu_)
 {
+
+    recursive = recursive_;
+    verify_constraints = verify_constraints_;
+    verify = verify_;
+    gpu = gpu_;
+
     // Load contents from json file
     json starkInfoJson;
     file2json(file, starkInfoJson);
-    load(starkInfoJson, verify_constraints, verify, gpu);
+    load(starkInfoJson);
 }
 
-void StarkInfo::load(json j, bool verify_constraints_, bool verify_,  bool gpu_)
+void StarkInfo::load(json j)
 {   
     starkStruct.nBits = j["starkStruct"]["nBits"];
     starkStruct.nBitsExt = j["starkStruct"]["nBitsExt"];
@@ -245,8 +251,7 @@ void StarkInfo::load(json j, bool verify_constraints_, bool verify_,  bool gpu_)
 
     getProofSize();
 
-    if(verify_) {
-        verify = verify_;
+    if(verify) {
         gpu = false;
         mapTotalN = 0;
         mapTotalNCustomCommitsFixed = 0;
@@ -264,8 +269,6 @@ void StarkInfo::load(json j, bool verify_constraints_, bool verify_,  bool gpu_)
             }
         }
     } else {
-        verify_constraints = verify_constraints_;
-        gpu = gpu_;
         setMapOffsets();
     }
 }
@@ -332,6 +335,13 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t numNodes = getNumNodesMT(NExtended);
 
+    if(!recursive) {
+        mapOffsets[std::make_pair("const", true)] = mapTotalN;
+        MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
+        uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
+        mapTotalN += constTreeSize;
+    }
+
     assert(nStages <= 2);
 
     uint64_t maxTotalN = 0;
@@ -346,12 +356,19 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    mapOffsets[std::make_pair("evals", true)] = mapTotalN;
-    mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
+    if(!gpu) {
+        mapOffsets[std::make_pair("evals", true)] = mapTotalN;
+        mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
+    }
 
     mapOffsets[std::make_pair("f", true)] = mapTotalN;
     mapOffsets[std::make_pair("q", true)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
+
+    if(!recursive) {
+        mapOffsets[std::make_pair("const", false)] = mapOffsets[std::make_pair("cm" + to_string(nStages), false)] + N * mapSectionsN["cm" + to_string(nStages)];
+        assert(mapOffsets[std::make_pair("const", false)] + N * nConstants <= mapOffsets[std::make_pair("q", true)]);
+    }
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
@@ -387,6 +404,11 @@ void StarkInfo::setMapOffsets() {
     }
 
     mapTotalN = std::max(mapTotalN, maxTotalN);
+
+    if(gpu) {
+        mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
+        mapTotalN += mapTotalNCustomCommitsFixed;
+    }
 }
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {

@@ -93,9 +93,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive, bool verify, bool gpu)
+void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bool verify, bool gpu)
 {
-    auto starkInfo = new StarkInfo(filename, recursive, verify, gpu);
+    auto starkInfo = new StarkInfo(filename, recursive, verify_constraints, verify, gpu);
 
     return starkInfo;
 }
@@ -108,6 +108,11 @@ uint64_t get_proof_size(void *pStarkInfo) {
 void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
     StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
     starkInfo->setMemoryExpressions(nTmp1, nTmp3);
+}
+
+uint64_t get_const_pols_offset(void *pStarkInfo) {
+    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
+    return starkInfo->mapOffsets[std::make_pair("const", false)];
 }
 
 uint64_t get_map_total_n(void *pStarkInfo)

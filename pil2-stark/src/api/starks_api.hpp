@@ -16,10 +16,11 @@
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char* filename, bool verify_constraints, bool verify, bool gpu);
+    void *stark_info_new(char* filename, bool recursive, bool verify_constraints, bool verify, bool gpu);
     uint64_t get_proof_size(void *pStarkInfo);
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
+    uint64_t get_const_pols_offset(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
 
     void stark_info_free(void *pStarkInfo);

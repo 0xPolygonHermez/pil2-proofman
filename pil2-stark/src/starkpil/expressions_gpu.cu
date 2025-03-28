@@ -153,13 +153,13 @@ void ExpressionsGPU::loadDeviceArgs(uint64_t domainSize, Dest &dest)
         aux_params[j].nArgs = parserParams.nArgs;
         aux_params[j].argsOffset =parserParams.argsOffset;
     }
-    cudaMalloc(&h_deviceArgs.dest_params, h_deviceArgs.dest_nParams * sizeof(DestParamsGPU));
-    cudaMemcpy(h_deviceArgs.dest_params, aux_params, h_deviceArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice);
+    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.dest_params, h_deviceArgs.dest_nParams * sizeof(DestParamsGPU)));
+    CHECKCUDAERR(cudaMemcpy(h_deviceArgs.dest_params, aux_params, h_deviceArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice));
     delete[] aux_params;
 
     // Allocate memory for the struct on the device
-    cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments));
-    cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice);
+    CHECKCUDAERR(cudaMalloc(&d_deviceArgs, sizeof(DeviceArguments)));
+    CHECKCUDAERR(cudaMemcpy(d_deviceArgs, &h_deviceArgs, sizeof(DeviceArguments), cudaMemcpyHostToDevice));
 }
 
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended)

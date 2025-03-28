@@ -63,8 +63,10 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     ProverHelpers proverHelpers(setupCtx.starkInfo, false);
 
+    uint64_t offsetConstTree = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
+
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
-    Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed, false); 
+    Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, &params.aux_trace[offsetConstTree], params.pCustomCommitsFixed, false); 
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
     CHECKCUDAERR(cudaGetLastError());    
@@ -72,8 +74,11 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     ExpressionsPack expressionsCtx_(setupCtx, proverHelpers); //rick: get rid of this
     ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048);
 
+    uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
+    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
+
     StepsParams h_params = {
-        trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
+        trace : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetCm1,
         aux_trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
         publicInputs : (Goldilocks::Element *)d_buffers->d_publicInputs,
         proofValues : nullptr,
@@ -82,9 +87,9 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         airValues : nullptr,
         evals : nullptr,
         xDivXSub : nullptr, //rick: canviar nom per xi_s
-        pConstPolsAddress : (Goldilocks::Element *)d_buffers->d_constPols,
-        pConstPolsExtendedTreeAddress : (Goldilocks::Element *)d_buffers->d_constTree,
-        pCustomCommitsFixed : nullptr,
+        pConstPolsAddress : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetConstPols,
+        pConstPolsExtendedTreeAddress : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetConstTree,
+        pCustomCommitsFixed : (Goldilocks::Element *)d_buffers->d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)],
     };
     
     // Allocate memory and copy data
@@ -95,7 +100,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaMalloc(&h_params.xDivXSub, FIELD_EXTENSION * setupCtx.starkInfo.openingPoints.size() * sizeof(Goldilocks::Element)));
 
     if (setupCtx.starkInfo.mapTotalNCustomCommitsFixed > 0) {
-        CHECKCUDAERR(cudaMalloc(&h_params.pCustomCommitsFixed,setupCtx.starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMemcpy(h_params.pCustomCommitsFixed, params.pCustomCommitsFixed, setupCtx.starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     }
     if (setupCtx.starkInfo.proofValuesSize > 0) {
@@ -300,8 +304,10 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
+    gl64_t *d_constTree = d_buffers->d_aux_trace + offsetConstTree;
+
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    proveQueries_inplace(setupCtx, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees, d_buffers, setupCtx.starkInfo.nStages, h_params);
+    proveQueries_inplace(setupCtx, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees, d_buffers, d_constTree, setupCtx.starkInfo.nStages, h_params);
     
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
 
@@ -333,7 +339,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     if(h_params.proofValues != nullptr) CHECKCUDAERR(cudaFree(h_params.proofValues));
     if(h_params.airgroupValues != nullptr) CHECKCUDAERR(cudaFree(h_params.airgroupValues));
     if(h_params.airValues != nullptr) CHECKCUDAERR(cudaFree(h_params.airValues));
-    if(h_params.pCustomCommitsFixed != nullptr) CHECKCUDAERR(cudaFree(h_params.pCustomCommitsFixed));
     delete[] foldedFRIPol;
     CHECKCUDAERR(cudaFree(d_params));
     TimerStopAndLog(STARK_POSTPROCESS);

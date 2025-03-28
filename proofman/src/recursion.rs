@@ -38,19 +38,16 @@ pub struct MaxSizes {
 }
 
 pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> MaxSizes {
-    let mut max_trace_area = 0;
-    let mut max_const_area = 0;
+    let max_trace_area = 0;
+    let max_const_tree_size = 0;
+    let max_const_area = 0;
+
     let mut max_n_publics = 0;
     let mut max_aux_trace_area = 0;
-    let mut max_const_tree_size = 0;
 
     let mut update_max_values = |setup: &Setup<F>| {
-        let n = 1 << setup.stark_info.stark_struct.n_bits;
-        max_trace_area = max_trace_area.max(setup.stark_info.map_sections_n["cm1"] * n);
-        max_const_area = max_const_area.max(setup.stark_info.n_constants * n);
         max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
         max_aux_trace_area = max_aux_trace_area.max(setup.prover_buffer_size);
-        max_const_tree_size = max_const_tree_size.max(get_const_tree_size_c(setup.p_setup.p_stark_info));
     };
 
     let instances = pctx.dctx_get_instances();
@@ -62,8 +59,6 @@ pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
         let setup = sctx.get_setup(airgroup_id, air_id);
         update_max_values(setup);
     }
-
-    max_trace_area = 0;
 
     MaxSizes { max_trace_area, max_const_area, max_n_publics, max_aux_trace_area, max_const_tree_size }
 }
@@ -81,7 +76,7 @@ pub fn discover_max_sizes_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, setup
         max_const_area = max_const_area.max(setup.stark_info.n_constants * n);
         max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
         max_aux_trace_area = max_aux_trace_area.max(setup.prover_buffer_size);
-        max_const_tree_size = max_const_tree_size.max(get_const_tree_size_c(setup.p_setup.p_stark_info));
+        max_const_tree_size = max_const_tree_size.max(setup.const_tree_size as u64);
     };
 
     let instances = pctx.dctx_get_instances();
@@ -123,8 +118,8 @@ pub fn aggregate_proofs<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
-    const_pols: &[F],
-    const_tree: &[F],
+    const_pols_recursive2: &[F],
+    const_tree_recursive2: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -142,8 +137,8 @@ pub fn aggregate_proofs<F: PrimeField64>(
         publics,
         trace,
         prover_buffer,
-        const_pols,
-        const_tree,
+        const_pols_recursive2,
+        const_tree_recursive2,
         output_dir_path.clone(),
         d_buffers,
     )?;
@@ -162,8 +157,6 @@ pub fn aggregate_proofs<F: PrimeField64>(
             publics,
             trace,
             prover_buffer,
-            const_pols,
-            const_tree,
             output_dir_path.clone(),
             d_buffers,
         )?;
@@ -182,8 +175,6 @@ pub fn aggregate_proofs<F: PrimeField64>(
                 publics,
                 trace,
                 prover_buffer,
-                const_pols,
-                const_tree,
                 output_dir_path.clone(),
             )?;
             timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
@@ -615,8 +606,6 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
-    const_pols: &[F],
-    const_tree: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
 ) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
@@ -636,8 +625,12 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
 
-    load_const_pols(&setup.setup_path, setup.const_pols_size, const_pols);
-    load_const_pols_tree(setup, const_tree);
+    let const_tree_size = setup.const_tree_size;
+    let const_tree = create_buffer_fast(const_tree_size);
+    let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size as usize);
+
+    load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
+    load_const_pols_tree(setup, &const_tree);
 
     let mut final_vadcop_proof: Vec<u64> = create_buffer_fast(setup.proof_size as usize);
     gen_recursive_proof_c(
@@ -671,8 +664,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     publics: &[F],
     trace: &[F],
     prover_buffer: &[F],
-    const_pols: &[F],
-    const_tree: &[F],
     output_dir_path: PathBuf,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "RecProof";
@@ -684,8 +675,12 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     let setup_path = pctx.global_info.get_setup_path("recursivef");
 
-    load_const_pols(&setup_path, setup.const_pols_size, const_pols);
-    load_const_pols_tree(setup, const_tree);
+    let const_tree_size = setup.const_tree_size;
+    let const_tree = create_buffer_fast(const_tree_size);
+    let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size as usize);
+
+    load_const_pols(&setup_path, setup.const_pols_size, &const_pols);
+    load_const_pols_tree(setup, &const_tree);
 
     let mut vadcop_final_proof: Vec<u64> = create_buffer_fast(proof.len() + pctx.global_info.n_publics);
     vadcop_final_proof[pctx.global_info.n_publics..].copy_from_slice(proof);

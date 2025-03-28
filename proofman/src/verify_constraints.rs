@@ -80,7 +80,11 @@ pub fn verify_global_constraints_proof<F: Field>(
 
     for idx in 0..global_constraints.len() {
         let constraint = global_constraints[idx];
-        let line_str = &global_constraints_lines[idx];
+        let line_str = if global_constraints_lines[idx].len() > 100 {
+            ""
+        } else {
+            &global_constraints_lines[idx]
+        };
 
         if constraint.skip {
             log::debug!(

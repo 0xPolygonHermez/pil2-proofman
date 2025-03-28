@@ -1,7 +1,6 @@
 use log::info;
 use p3_field::PrimeField64;
 use num_traits::ToPrimitive;
-use proofman_starks_lib_c::get_const_tree_size_c;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 
@@ -111,31 +110,6 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         }
     }
     info!("{}: ----------------------------------------------------------", name);
-    info!("{}", format!("{}: --- TOTAL SETUP MEMORY USAGE ----------------------------", name).bright_white().bold());
-    let mut total_memory = 0f64;
-    info!(
-        "{}:       {}",
-        name,
-        format!("Fixed pols memory: {}", format_bytes(sctx.max_const_size as f64 * 8.0)).bright_white().bold()
-    );
-    total_memory += sctx.max_const_size as f64 * 8.0;
-    if !pctx.options.verify_constraints {
-        info!(
-            "{}:       {}",
-            name,
-            format!("Fixed pols tree memory: {}", format_bytes(sctx.max_const_tree_size as f64 * 8.0))
-                .bright_white()
-                .bold()
-        );
-        total_memory += sctx.max_const_tree_size as f64 * 8.0;
-    }
-    info!(
-        "{}:       {}",
-        name,
-        format!("Total setup memory required: {}", format_bytes(total_memory)).bright_white().bold()
-    );
-
-    info!("{}: ----------------------------------------------------------", name);
     if pctx.options.verify_constraints {
         info!(
             "{}",
@@ -186,13 +160,9 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
             }
         }
     }
-    info!("{}:       Total prover memory required: {}", name, format_bytes(max_prover_memory));
-    total_memory += max_prover_memory;
+    info!("{}:       Total memory required by proofman: {}", name, format_bytes(max_prover_memory));
     info!("{}: ----------------------------------------------------------", name);
-    info!("{}:       Extra memory tables: {}", name, format_bytes(memory_tables));
-    total_memory += memory_tables;
-    info!("{}: ----------------------------------------------------------", name);
-    info!("{}:       Total memory required by proofman: {}", name, format_bytes(total_memory));
+    info!("{}:       Extra memory tables (CPU): {}", name, format_bytes(memory_tables));
     info!("{}: ----------------------------------------------------------", name);
 }
 
@@ -279,7 +249,7 @@ fn check_const_tree<F: PrimeField64>(
         const_pols_tree_path, flags
     );
 
-    let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+    let const_pols_tree_size = setup.const_tree_size;
     match fs::metadata(&const_pols_tree_path) {
         Ok(metadata) => {
             let actual_size = metadata.len() as usize;
