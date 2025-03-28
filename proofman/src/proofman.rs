@@ -910,7 +910,7 @@ where
                     (&setup.p_setup).into(),
                     commit_id as u64,
                     air_instance.get_custom_commits_fixed_ptr(),
-                    custom_commit_file_path,
+                    custom_commit_file_path.to_str().expect("Invalid path"),
                 );
             }
         }
