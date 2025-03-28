@@ -7,6 +7,7 @@ edition = "2021"
 bytes.workspace = true
 prost.workspace = true
 log.workspace = true
+serde = { version = "1", features = ["derive"] }  # Add serde
 
 [build-dependencies]
 prost-build.workspace = true
