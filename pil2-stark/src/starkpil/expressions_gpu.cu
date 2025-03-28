@@ -342,11 +342,6 @@ __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_devic
 
 __device__ __noinline__ void storePolynomial__(DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint64_t row)
 {
-#if DEBUG
-    if(row == 0 && threadIdx.x == DEBUG_ROW) {
-        printf("storePolynomial__\n");
-    }
-#endif
     if (d_deviceArgs->dest_dim == 1)
     {
         uint64_t offset = d_deviceArgs->dest_offset != 0 ? d_deviceArgs->dest_offset : 1;
@@ -364,12 +359,6 @@ __device__ __noinline__ void storePolynomial__(DeviceArguments *d_deviceArgs, Go
 
 __device__ __noinline__ void multiplyPolynomials__(DeviceArguments *d_deviceArgs, gl64_t *destVals, uint64_t row)
 {
-#if DEBUG
-    if(row == 0 && threadIdx.x == DEBUG_ROW) {
-        printf("multiplyPolynomials__\n");
-
-    }
-#endif
     if (d_deviceArgs->dest_dim == 1)
     {
         gl64_t::op_gpu(2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);

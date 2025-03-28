@@ -92,11 +92,26 @@ public:
         uint64_t tmp;
         uint32_t carry;
 
-        asm("add.cc.u64 %0, %0, %2; addc.u32 %1, 0, 0;"
-            : "+l"(val), "=r"(carry)
+        asm("{ .reg.pred %top;");
+
+        asm("setp.ge.u64 %top, %1, %2;"  // Set predicate if tmp >= MOD
+            "@%top sub.u64 %0, %1, %2;"   // If true, subtract MOD from tmp
+            : "+l"(val)
+            : "l"(val), "l"(MOD));
+
+        asm("mov.b64 %0, %1;" 
+            : "=l"(tmp) 
             : "l"(b.val));
 
-        asm("{ .reg.pred %top;");
+        asm("setp.ge.u64 %top, %1, %2;"  // Set predicate if tmp >= MOD
+            "@%top sub.u64 %0, %1, %2;"   // If true, subtract MOD from tmp
+            : "+l"(tmp)
+            : "l"(tmp), "l"(MOD));
+
+        asm("add.cc.u64 %0, %0, %2; addc.u32 %1, 0, 0;"
+            : "+l"(val), "=r"(carry)
+            : "l"(tmp));
+
 #ifdef GL64_PARTIALLY_REDUCED
         asm("sub.u64 %0, %1, %2;"
             : "=l"(tmp)

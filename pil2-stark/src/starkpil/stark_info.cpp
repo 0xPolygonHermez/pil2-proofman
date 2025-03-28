@@ -403,7 +403,7 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             maxNBlocks = omp_get_max_threads();
         } else {
             nrowsPack = 128; // TODO: SHOULD NOT BE HARDCODED
-            maxNBlocks = 4096; // TODO: SHOULD NOT BE HARDCODED
+            maxNBlocks = 2048; // TODO: SHOULD NOT BE HARDCODED
         }
     }
     

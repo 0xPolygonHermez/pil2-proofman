@@ -8,7 +8,7 @@ use proofman_common::{load_const_pols, load_const_pols_tree, CurveType};
 use proofman_common::{
     calculate_fixed_tree, skip_prover_instance, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
 };
-
+use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{gen_device_commit_buffers_c, gen_device_commit_buffers_free_c};
 use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
@@ -533,6 +533,11 @@ where
             }
 
             if valid_proofs {
+                log::info!(
+                    "{}: ··· {}",
+                    Self::MY_NAME,
+                    "\u{2713} All proofs were successfully verified".bright_green().bold()
+                );
                 return Ok(());
             } else {
                 return Err("Basic proofs were not verified".into());
@@ -947,14 +952,14 @@ where
             .as_ref()
             .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
             .unwrap_or(0);
-    
+
         let n_air_values = setup
             .stark_info
             .airvalues_map
             .as_ref()
             .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
             .unwrap_or(0);
-                
+
         if n_air_values > 0 && air_instance.airvalues.is_empty() {
             air_instance.init_airvalues(n_air_values);
         }

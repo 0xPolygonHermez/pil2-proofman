@@ -32,8 +32,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, pConstTree, nullptr, false);
 
-    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 4096); 
-
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048); 
 
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,
@@ -244,7 +243,9 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     }
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
+    TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
+    TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_aux_trace, d_buffers);

@@ -114,7 +114,7 @@ public:
             } else {
                 if(boundary == 0) {
 #if DEBUG
-                    if(print) printf("Expression debug x_n\n");
+                if(print) printf("Expression debug x or x_n\n");
 #endif
                     Goldilocks::Element *x = domainExtended ? &proverHelpers.x[row] : &proverHelpers.x_n[row];
                     return x;

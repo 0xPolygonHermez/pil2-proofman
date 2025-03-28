@@ -69,7 +69,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaGetLastError());    
     
     ExpressionsPack expressionsCtx_(setupCtx, proverHelpers); //rick: get rid of this
-    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 4096);
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048);
 
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
@@ -218,8 +218,10 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
    gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
     
-   
+    TimerStart(STARK_CALCULATE_LEV);
     computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_lev", false)], d_LEv);
+    TimerStopAndLog(STARK_CALCULATE_LEV);
+    
     evmap_inplace(params.evals, h_params, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
