@@ -24,7 +24,11 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     TimerStart(STARK_INITIALIZATION);
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time0 = omp_get_wtime();
-    //double time_prev = time0;
+    
+    double totalNTTTime = 0;
+    double totalMerkleTime = 0;
+    double nttTime = 0;
+    double merkleTime = 0;
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
 
@@ -106,7 +110,9 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     TimerStopAndLog(STARK_STEP_0);    
 
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage_inplace(1, d_buffers->d_trace, d_buffers->d_aux_trace, d_buffers);
+    starks.commitStage_inplace(1, d_buffers->d_trace, d_buffers->d_aux_trace, d_buffers, &nttTime, &merkleTime);
+    totalNTTTime += nttTime;
+    totalMerkleTime += merkleTime;
     CHECKCUDAERR(cudaDeviceSynchronize());
     offloadCommit(1, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
     starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
@@ -173,7 +179,9 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
 
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers);
+    starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers, &nttTime, &merkleTime);
+    totalNTTTime += nttTime;
+    totalMerkleTime += merkleTime;
     offloadCommit(2, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
     min_challenge = setupCtx.starkInfo.challengesMap.size();
@@ -199,7 +207,9 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     TimerStart(STARK_STEP_Q_COMMIT);
 
-    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_aux_trace, d_buffers);
+    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, nullptr, d_buffers->d_aux_trace, d_buffers, &nttTime, &merkleTime);
+    totalNTTTime += nttTime;
+    totalMerkleTime += merkleTime;
     offloadCommit(setupCtx.starkInfo.nStages + 1, starks.treesGL, (gl64_t *)h_params.aux_trace, proof, setupCtx);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
 
@@ -365,11 +375,18 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     oss.str("");
     oss.clear();
 
-    double commit_time = TimerGetElapsed(STARK_COMMIT_STAGE_1) + TimerGetElapsed(STARK_COMMIT_STAGE_2) + TimerGetElapsed(STARK_STEP_Q_COMMIT);
-    oss << std::fixed << std::setprecision(2) << commit_time << "s (" << (commit_time / time_total) * 100 << "%)";
-    zklog.trace("        COMMIT:       " + oss.str());
+    
+    double commit_time = totalNTTTime + totalMerkleTime; 
+    oss << std::fixed << std::setprecision(2) << totalNTTTime << "s (" << (totalNTTTime / time_total) * 100 << "%)";
+    zklog.trace("        NTT:          " + oss.str());
     oss.str("");
     oss.clear();
+
+    oss << std::fixed << std::setprecision(2) << totalMerkleTime << "s (" << (totalMerkleTime / time_total) * 100 << "%)";
+    zklog.trace("        MERKLE:       " + oss.str());
+    oss.str("");
+    oss.clear();
+
 
     double evmap_time = TimerGetElapsed(STARK_STEP_EVALS);
     oss << std::fixed << std::setprecision(2) << evmap_time << "s (" << (evmap_time / time_total) * 100 << "%)";

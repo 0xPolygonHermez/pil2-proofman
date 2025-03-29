@@ -60,7 +60,7 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
 }
 template <typename ElementType>
-void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers)
+void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers, double *nttTime, double *merkleTime)
 {
 #ifdef __USE_CUDA__
 
@@ -84,7 +84,7 @@ void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_tr
     if (nCols > 0)
     {
 
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft", false)]);
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft", false)], nttTime, merkleTime);
     }
 #endif
 }
@@ -104,15 +104,15 @@ void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace,
 }
 
 template <typename ElementType>
-void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers)
+void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers, double *nttTime, double *merkleTime)
 {
     if (step <= setupCtx.starkInfo.nStages)
     {
-        extendAndMerkelize_inplace(step, d_trace, d_aux_trace, d_buffers);
+        extendAndMerkelize_inplace(step, d_trace, d_aux_trace, d_buffers, nttTime, merkleTime);
     }
     else
     {
-        computeQ_inplace(step, d_aux_trace, d_buffers);
+        computeQ_inplace(step, d_aux_trace, d_buffers, nttTime, merkleTime);
     }
 }
 
@@ -172,7 +172,7 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
 }
 
 template <typename ElementType>
-void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers)
+void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers, double *nttTime, double *merkleTime)
 {
 #ifdef __USE_CUDA__
 
@@ -200,7 +200,7 @@ void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_aux_trace, D
 
     if (nCols > 0)
     {
-        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, S, N, NExtended, nCols, d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft", false)]);
+        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, S, N, NExtended, nCols, d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft", false)], nttTime, merkleTime);
     }
 #endif
 }

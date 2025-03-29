@@ -117,71 +117,50 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, uint64_t N, uint
     }
 }
 
-void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper)
+void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    double time = omp_get_wtime();
     gl64_t* d_r = d_buffers->d_aux_trace + offset_helper;
     gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + NExtended;
     gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*NExtended;
 
-    double time = omp_get_wtime();
     gl64_t *d_q = d_buffers->d_aux_trace + offset_q;
     gl64_t *d_cmQ = d_buffers->d_aux_trace + offset_cmQ;
     gl64_t *d_S;
-    CHECKCUDAERR(cudaMalloc(&d_S, qDeg * sizeof(gl64_t)));
+    CHECKCUDAERR(cudaMalloc(&d_S, qDeg * sizeof(gl64_t))); //rick
     CHECKCUDAERR(cudaMemcpy(d_S, S, qDeg * sizeof(gl64_t), cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time1 = omp_get_wtime();
-    //std::cout << "      check rick Time for S cudaMalloc: " << time1 - time << std::endl;
-    time = time1;
     if (ncols == 0 || NExtended == 0)
     {
         return;
     }
 
-    // printf("*** In computeQ_inplace ...\n");
-
-    int gpu_id = 0;
-    CHECKCUDAERR(cudaSetDevice(gpu_id));
     CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, NExtended * sizeof(uint64_t)))
     CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, NExtended * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemset(d_r, 0, NExtended * sizeof(uint64_t)));
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      check rick Time for cudaMalloc: " << time1 - time << std::endl;
 
-    time = time1;
     // Init twiddle factors
     int lg2ext = log2(NExtended);
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext);
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      check rick Time for init_twiddle_factors: " << time1 - time << std::endl;
 
-    
     // Intt
-    time = time1;
     ntt_cuda(d_q, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, qDim, true, false);
 
-    
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      check rick Time for ntt_cuda: " << time1 - time << std::endl;
+    CHECKCUDAERR(cudaDeviceSynchronize());   
 
-    time = time1;
     dim3 threads(128, 1, 1);
     dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
     applyS<<<blocks, threads>>>(d_cmQ, d_q, d_S, N, qDeg, qDim);
     CHECKCUDAERR(cudaMemset(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t)));
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      check rick Time for applyS: " << time1 - time << std::endl;
 
-    time = time1;
 
     ntt_cuda(d_cmQ, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false);
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      check rick Time for ntt_cuda: " << time1 - time << std::endl;
+    double time1 = omp_get_wtime();
+    if(nttTime!= nullptr) *nttTime = time1 - time;
     time = time1;
     Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
     //Poseidon2Goldilocks::merkletree_cuda_streams(3, d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
@@ -189,22 +168,14 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    // std::cout << "      check rick Time for merkletree_cuda_gpudata: " << time1 - time << std::endl;
-
-    time = time1;
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      check rick Time for cudaStreamDestroy: " << time1 - time << std::endl;
-
-    
+    if(merkleTime!= nullptr) *merkleTime = time1 - time;
     
 }
 
-void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, u_int64_t nphase, bool buildMerkleTree)
+void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time = omp_get_wtime();
-    double time0 = omp_get_wtime();
     gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
     gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
 
@@ -213,76 +184,40 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
         return;
     }
 
-    //printf("*** In LDE_MerkleTree_GPU ...\n");
-
-    int gpu_id = 0;
-
     gl64_t* d_r = d_buffers->d_aux_trace + offset_helper;
     gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + ext_size;
     gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*ext_size;
 
 
-    CHECKCUDAERR(cudaSetDevice(gpu_id));
     CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, ext_size * sizeof(uint64_t)))
     CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, ext_size * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemset(d_r, 0, ext_size * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time1 = omp_get_wtime();
-    //std::cout << "      rick check Time for cudaMalloc: " << time1 - time << std::endl;
 
-    time = time1;
     int lg2 = log2(size);
     int lg2ext = log2(ext_size);
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2);
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext);
     init_r(d_r, lg2);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      rick check Time for init_twiddle_factors: " << time1 - time << std::endl;
 
-    time = time1;
     CHECKCUDAERR(cudaMemcpy(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice));
     CHECKCUDAERR(cudaMemset(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t)));
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      rick check Time for cudaMemcpy: " << time1 - time << std::endl;
-
-    time = time1;
     ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, true);
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      rick check Time for ntt_cuda: " << time1 - time << std::endl;
 
-    time = time1;
     ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false);
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      rick check Time for ntt_cuda: " << time1 - time << std::endl;
 
-    time = time1;
-    // CHECKCUDAERR(cudaMemcpy(d_dst_ntt_, d_dst_ntt_, ext_size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice));
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      rick check Time for cudaMemcpy: " << time1 - time << std::endl;
-
+    double time1 = omp_get_wtime();
+    if(nttTime!= nullptr) *nttTime = time1 - time;
     time = time1;
 
     Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, ncols, ext_size);
-    /*Goldilocks::Element *pBuff = new Goldilocks::Element[100];
-    CHECKCUDAERR(cudaMemcpy(pBuff, *d_tree, 100 * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-    // print first 10 rows of qDim
-    for (uint64_t i = 0; i < 100; i++){
-        std::cout << "tree[" << i << "] = " << pBuff[i].fe << std::endl;
-    }*/
+    
+    
     CHECKCUDAERR(cudaDeviceSynchronize());
     time1 = omp_get_wtime();
-    //std::cout << "      rick check Time for merkletree_cuda_gpudata: " << time1 - time << std::endl;
-
-    time = time1;
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    //std::cout << "      rick check Time for cudaStreamDestroy: " << time1 - time << std::endl;
-    //std::cout << "             check Total Time: " << time1 - time0 << std::endl;
+    if(merkleTime!= nullptr) *merkleTime = time1 - time;
 }
 
 void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_data)
@@ -301,16 +236,11 @@ void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_
         return;
     }
 
-    //printf("*** In LDE_MerkleTree_GPU ...\n");
 
-    int gpu_id = 0;
-    // uint64_t aux_size = size * ncols;
-    CHECKCUDAERR(cudaSetDevice(gpu_id));
     CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, size * sizeof(uint64_t)))
     CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, size * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemset(d_r, 0, size * sizeof(uint64_t)));
     double time1 = omp_get_wtime();
-    //std::cout << "rick Time for cudaMalloc: " << time1 - time << std::endl;
 
     time = time1;
     int lg2 = log2(size);
@@ -333,8 +263,6 @@ void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_
     time1 = omp_get_wtime();
     //std::cout << "rick Time for INTT dins: " << time1 - time_base << std::endl;
 }
-
-
 
 
 __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols)

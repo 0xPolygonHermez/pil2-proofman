@@ -63,6 +63,11 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaDeviceSynchronize());
     double time0 = omp_get_wtime();
 
+    double totalNTTTime = 0;
+    double totalMerkleTime = 0;
+    double nttTime = 0;
+    double merkleTime = 0;
+
     ProverHelpers proverHelpers(setupCtx.starkInfo, false);
 
     uint64_t offsetConstTree = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
@@ -156,12 +161,16 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage_inplace(1, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers);
+    starks.commitStage_inplace(1, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers, &nttTime, &merkleTime);
+    totalNTTTime += nttTime;
+    totalMerkleTime += merkleTime;
     offloadCommit(1, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
     
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers);
+    starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers, &nttTime, &merkleTime);
+    totalNTTTime += nttTime;
+    totalMerkleTime += merkleTime;
     offloadCommit(2, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
 
     CHECKCUDAERR(cudaMemcpy(params.airValues, h_params.airValues, setupCtx.starkInfo.airValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
@@ -194,7 +203,9 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
     TimerStopAndLog(STARK_STEP_Q_EXPRESSIONS);
     TimerStart(STARK_STEP_Q_COMMIT);
-    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_buffers);
+    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_buffers, &nttTime, &merkleTime);
+    totalNTTTime += nttTime;
+    totalMerkleTime += merkleTime;
     offloadCommit(setupCtx.starkInfo.nStages + 1, starks.treesGL, (gl64_t *)h_params.aux_trace, proof, setupCtx);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
 
@@ -359,9 +370,14 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     oss.str("");
     oss.clear();
 
-    double commit_time = TimerGetElapsed(STARK_COMMIT_STAGE_1) + TimerGetElapsed(STARK_COMMIT_STAGE_2) + TimerGetElapsed(STARK_STEP_Q_COMMIT);
-    oss << std::fixed << std::setprecision(2) << commit_time << "s (" << (commit_time / time_total) * 100 << "%)";
-    zklog.trace("        COMMIT:       " + oss.str());
+    double commit_time = totalNTTTime + totalMerkleTime; 
+    oss << std::fixed << std::setprecision(2) << totalNTTTime << "s (" << (totalNTTTime / time_total) * 100 << "%)";
+    zklog.trace("        NTT:          " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    oss << std::fixed << std::setprecision(2) << totalMerkleTime << "s (" << (totalMerkleTime / time_total) * 100 << "%)";
+    zklog.trace("        MERKLE:       " + oss.str());
     oss.str("");
     oss.clear();
 
