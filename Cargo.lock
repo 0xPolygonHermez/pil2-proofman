@@ -912,6 +912,7 @@ dependencies = [
 name = "proofman"
 version = "0.5.0"
 dependencies = [
+ "blake3",
  "colored",
  "curves",
  "env_logger",

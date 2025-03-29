@@ -297,7 +297,7 @@ where
         output_dir_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         check_paths(
             &witness_lib_path,
             &public_inputs_path,
@@ -322,7 +322,7 @@ where
         output_dir_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
 
         let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
@@ -339,7 +339,7 @@ where
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         wcm: Arc<WitnessManager<F>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOFS);
@@ -517,7 +517,7 @@ where
             }
 
             if valid_proofs {
-                return Ok(());
+                return Ok(None);
             } else {
                 return Err("Basic proofs were not verified".into());
             }
