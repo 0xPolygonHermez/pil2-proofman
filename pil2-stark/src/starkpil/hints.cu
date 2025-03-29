@@ -15,37 +15,37 @@ void freeDestGPU(Goldilocks::Element* buff){
     CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(buff));
 }
+__global__ void setPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *values, uint64_t deg, uint64_t dim, uint64_t nCols) {
+    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < deg) {
+        for (uint64_t j = 0; j < dim; ++j) {
+            pol[i * nCols + j] = values[i * dim + j];
+        }
+    }
+}
 
-void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *values, uint64_t idPol) {
-    /*PolMap polInfo = setupCtx.starkInfo.cmPolsMap[idPol];
+void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *aux_trace, Goldilocks::Element *values, uint64_t idPol) {
+    PolMap polInfo = setupCtx.starkInfo.cmPolsMap[idPol];
     uint64_t deg = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t dim = polInfo.dim;
     std::string stage = "cm" + to_string(polInfo.stage);
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
     uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
     offset += polInfo.stagePos;
-#pragma omp parallel for
-    for(uint64_t j = 0; j < deg; ++j) {
-        CHECKCUDAERR(cudaMemcpy(buffer + offset + j * nCols, &values[j * dim], dim * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    }*/
+    uint64_t offset_values = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
+    
+    // copy values into the GPU
+    Goldilocks::Element* d_values = aux_trace + offset_values;
+    CHECKCUDAERR(cudaMemcpy(d_values, values, deg * dim * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
-    PolMap polInfo = setupCtx.starkInfo.cmPolsMap[idPol];
-    uint64_t deg = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t dim = polInfo.dim;
-    std::string stage = "cm" + to_string(polInfo.stage);
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
-    Goldilocks::Element* auxSection = new Goldilocks::Element[nCols * deg];
-    uint64_t sectionOffest = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
-    CHECKCUDAERR(cudaMemcpy(auxSection, buffer + sectionOffest, nCols * deg * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
-    uint64_t offset = polInfo.stagePos;
-    Polinomial pol = Polinomial(&auxSection[offset], deg, dim, nCols, std::to_string(idPol));
-#pragma omp parallel for
-    for(uint64_t j = 0; j < deg; ++j) {
-        std::memcpy(pol[j], &values[j*dim], dim * sizeof(Goldilocks::Element));
-    }
-    CHECKCUDAERR(cudaMemcpy(buffer + sectionOffest, auxSection, nCols * deg * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    delete[] auxSection;
+    dim3 threds(512);
+    dim3 blocks((deg + threds.x - 1) / threds.x);
+    setPolynomial_<<<blocks, threds>>>(aux_trace + offset, d_values, deg, dim, nCols);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    
 }
+
+
 
 void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size){
     CHECKCUDAERR(cudaMemcpy(target, src, size * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));

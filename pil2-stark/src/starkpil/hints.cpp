@@ -407,11 +407,10 @@ uint64_t setHintField(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Eleme
     auto hintFieldVal = hintField->values[0];
     if(hintFieldVal.operand == opType::cm) {
 
-        Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage > 1 ? params.aux_trace : params.trace;
 #ifdef __USE_CUDA__
-        setPolynomialGPU(setupCtx, pAddress, values, hintFieldVal.id);
+        setPolynomialGPU(setupCtx, params.aux_trace, values, hintFieldVal.id);
 #else
-        setPolynomial(setupCtx, pAddress, values, hintFieldVal.id);
+        setPolynomial(setupCtx, params.aux_trace, values, hintFieldVal.id);
 #endif
     } else if(hintFieldVal.operand == opType::airgroupvalue) {
         if(setupCtx.starkInfo.airgroupValuesMap[hintFieldVal.id].stage > 1) {
