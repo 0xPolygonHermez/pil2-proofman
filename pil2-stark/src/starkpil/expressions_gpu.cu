@@ -215,7 +215,33 @@ __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_devic
     uint32_t nStages = d_deviceArgs->nStages;
     uint64_t type = args[i_args];
 
-    if (type == 0) {
+    if (type ==  d_deviceArgs->bufferCommitSize || type == d_deviceArgs->bufferCommitSize + 1) {
+#if DEBUG
+        if(print){ 
+            if(type == d_deviceArgs->bufferCommitSize) printf("Expression debug tmp1\n");
+            if(type == d_deviceArgs->bufferCommitSize + 1) printf("Expression debug tmp3\n");
+        }
+#endif
+        return &expressions_params[type][args[i_args + 1]*blockDim.x];
+    } else if (type >= d_deviceArgs->bufferCommitSize + 2) {
+#if DEBUG
+        if(print){
+            if(type == d_deviceArgs->bufferCommitSize + 2 ) printf("Expression debug publicInputs\n");
+            if(type == d_deviceArgs->bufferCommitSize + 3 ) printf("Expression debug numbers\n");
+            if(type == d_deviceArgs->bufferCommitSize + 4 ) printf("Expression debug airValues\n");
+            if(type == d_deviceArgs->bufferCommitSize + 5 ) printf("Expression debug proofValues\n");
+            if(type == d_deviceArgs->bufferCommitSize + 6 ) printf("Expression debug airgroupValues\n");
+            if(type == d_deviceArgs->bufferCommitSize + 7 ) printf("Expression debug challenges\n");
+            if(type == d_deviceArgs->bufferCommitSize + 8 ) printf("Expression debug evals\n");
+        }
+#endif
+        return &expressions_params[type][args[i_args + 1]];
+    }
+
+    switch (type)
+    {
+    case 0:
+    {
         if(dim == FIELD_EXTENSION) { assert(0); }
         Goldilocks::Element *constPols = d_deviceArgs->domainExtended ?  &(d_params->pConstPolsExtendedTreeAddress[2]) :  d_params->pConstPolsAddress;
         uint64_t stagePos = args[i_args + 1];
@@ -235,7 +261,12 @@ __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_devic
             value[threadIdx.x] = constPols[(r + o)*nCols + stagePos];
             return value;
         }
-    } else if (type <= nStages + 1) { 
+        break;
+    }
+    case 1:
+    case 2: //rick: harcoded nStages=2
+    case 3:
+    {
         uint64_t stagePos = args[i_args + 1];
         uint64_t offset = d_deviceArgs->mapOffsetsExps[type];
         uint64_t nCols = d_deviceArgs->mapSectionsN[type];
@@ -272,7 +303,10 @@ __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_devic
             }
         }
         return value;
-    } else if (type == nStages + 2) {
+        break;
+    }
+    case 4:
+    {
         uint64_t boundary = args[i_args + 1];        
         if(boundary == 0) {
 #if DEBUG
@@ -286,8 +320,10 @@ __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_devic
 #endif
             return &d_deviceArgs->zi[(boundary - 1)*d_deviceArgs->domainSize  + row];
         }
-        
-    } else if (type == nStages + 3) {
+        break;
+    }
+    case 5:
+    {
 #if DEBUG
         if(print) printf("Expression debug xi\n");
 #endif
@@ -297,7 +333,10 @@ __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_devic
         getInversePolinomial__((gl64_t*) value, 3);  
         Goldilocks3GPU::op_31_gpu(2, (gl64_t*)value, (gl64_t*)value, false, (gl64_t*) &d_deviceArgs->x[row], false);
         return value;
-    } else if (type >= nStages + 4 && type < d_deviceArgs->nCustomCommits + nStages + 4) {
+        break;
+    }
+    default:
+    {
         uint64_t index = type - (nStages + 4);
         uint64_t stagePos = args[i_args + 1];
         uint64_t offset = d_deviceArgs->mapOffsetsCustomExps[index];
@@ -316,28 +355,10 @@ __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_devic
             value[threadIdx.x] = d_params->pCustomCommitsFixed[offset + (r + o) * nCols + stagePos];            
         }
         return value;
-    } else if (type ==  d_deviceArgs->bufferCommitSize || type == d_deviceArgs->bufferCommitSize + 1) {
-#if DEBUG
-        if(print){ 
-            if(type == d_deviceArgs->bufferCommitSize) printf("Expression debug tmp1\n");
-            if(type == d_deviceArgs->bufferCommitSize + 1) printf("Expression debug tmp3\n");
-        }
-#endif
-        return &expressions_params[type][args[i_args + 1]*blockDim.x];
-    } else {
-#if DEBUG
-        if(print){
-            if(type == d_deviceArgs->bufferCommitSize + 2 ) printf("Expression debug publicInputs\n");
-            if(type == d_deviceArgs->bufferCommitSize + 3 ) printf("Expression debug numbers\n");
-            if(type == d_deviceArgs->bufferCommitSize + 4 ) printf("Expression debug airValues\n");
-            if(type == d_deviceArgs->bufferCommitSize + 5 ) printf("Expression debug proofValues\n");
-            if(type == d_deviceArgs->bufferCommitSize + 6 ) printf("Expression debug airgroupValues\n");
-            if(type == d_deviceArgs->bufferCommitSize + 7 ) printf("Expression debug challenges\n");
-            if(type == d_deviceArgs->bufferCommitSize + 8 ) printf("Expression debug evals\n");
-        }
-#endif
-        return &expressions_params[type][args[i_args + 1]];
+        break;
+    }    
     }
+
 }
 
 __device__ __noinline__ void storePolynomial__(DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint64_t row)
