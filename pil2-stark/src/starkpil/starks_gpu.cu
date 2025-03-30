@@ -90,76 +90,53 @@ __global__ void fillLEv(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t W_,
     }
 }
 
-__global__ void fillLEv_2d(gl64_t *d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N)
+
+
+__global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues)
 {
 
     uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
     uint64_t k = blockIdx.y * blockDim.y + threadIdx.y;
     if (i < nOpeningPoints && k < N)
     {
-        gl64_t w(1);
+        
         Goldilocks3GPU::Element xi;
-        Goldilocks3GPU::Element xiShifted;
-        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
-        gl64_t W(W_);
-        gl64_t shift(shift_);
-        gl64_t invShift = shift.reciprocal();
-        for (uint64_t j = 0; j < openingAbs; ++j)
-        {
-            w *= W;
-        }
-
-        if (d_openingPoints[i] < 0)
-        {
-            w = w.reciprocal();
-        }
-        Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), w);
-        Goldilocks3GPU::mul(xiShifted, xi, invShift);
+        xi[0] = d_shiftedValues[i * FIELD_EXTENSION];
+        xi[1] = d_shiftedValues[i * FIELD_EXTENSION + 1];
+        xi[2] = d_shiftedValues[i * FIELD_EXTENSION + 2];
         Goldilocks3GPU::Element xiShiftedPow;
-        Goldilocks3GPU::pow(xiShifted, k, xiShiftedPow);
+        Goldilocks3GPU::pow(xi, k, xiShiftedPow);
         d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION] = xiShiftedPow[0];
         d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 1] = xiShiftedPow[1];
         d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 2] = xiShiftedPow[2];
+
     }
 
 }
 
-/*__global__ void fillLEv_2d(gl64_t *d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N)
+__global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t invShift_)
 {
-
     uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    uint64_t k = blockIdx.y * blockDim.y + threadIdx.y;
-    if (i < nOpeningPoints && k < N)
-    {
-        gl64_t w(1);
-        Goldilocks3GPU::Element xi;
-        Goldilocks3GPU::Element xiShifted;
-        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
-        gl64_t W(W_);
-        gl64_t shift(shift_);
-        gl64_t invShift = shift.reciprocal();
-        for (uint64_t j = 0; j < openingAbs; ++j)
-        {
-            w *= W;
-        }
 
+    if (i < nOpeningPoints )
+    {
+        uint32_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
+        gl64_t w(W_);
+        w^=openingAbs;
         if (d_openingPoints[i] < 0)
         {
             w = w.reciprocal();
         }
+        
+        Goldilocks3GPU::Element xi;
+        gl64_t invShift(invShift_);
         Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), w);
-        Goldilocks3GPU::mul(xiShifted, xi, invShift);
-        while(k < N)
-        {
-            Goldilocks3GPU::Element xiShiftedPow;
-            Goldilocks3GPU::pow(xiShifted, k, xiShiftedPow);
-            d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION] = xiShiftedPow[0];
-            d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 1] = xiShiftedPow[1];
-            d_LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION + 2] = xiShiftedPow[2];
-            k+=blockDim.y;
-        }
+        Goldilocks3GPU::mul(xi, xi, invShift);
+        d_shiftedValues[i * FIELD_EXTENSION] = xi[0];
+        d_shiftedValues[i * FIELD_EXTENSION + 1] = xi[1];
+        d_shiftedValues[i * FIELD_EXTENSION + 2] = xi[2];
     }
-}*/
+}
 
 void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime)
 {
@@ -169,19 +146,29 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64
 
     gl64_t *d_xiChallenge;
     int64_t *d_openingPoints;
+    gl64_t * d_shiftedValues;
+
     cudaMalloc(&d_xiChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element));
     cudaMemcpy(d_xiChallenge, xiChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
     cudaMalloc(&d_openingPoints, nOpeningPoints * sizeof(int64_t));
     cudaMemcpy(d_openingPoints, openingPoints, nOpeningPoints * sizeof(int64_t), cudaMemcpyHostToDevice);
+    cudaMalloc(&d_shiftedValues, nOpeningPoints * FIELD_EXTENSION * sizeof(Goldilocks::Element));
 
-    dim3 nThreads(1, 256);
+    Goldilocks::Element invShift = Goldilocks::inv(Goldilocks::shift());
+
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    // Evaluate the shifted value for each opening point
+    dim3 nThreads_(32);
+    dim3 nBlocks_((nOpeningPoints + nThreads_.x - 1) / nThreads_.x);
+    evalXiShifted<<<nBlocks_, nThreads_>>>(d_shiftedValues, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, invShift.fe);
+    CHECKCUDAERR(cudaDeviceSynchronize());
+
+    dim3 nThreads(1, 512);
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (N + nThreads.y - 1) / nThreads.y);
-
-    fillLEv_2d<<<nBlocks, nThreads>>>(d_LEv, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, Goldilocks::shift().fe, N);
+    fillLEv_2d<<<nBlocks, nThreads>>>(d_LEv, nOpeningPoints, N,  d_shiftedValues);
     CHECKCUDAERR(cudaGetLastError());
     CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    // std::cout << "LEv inplace: " << time << std::endl;
 
     CHECKCUDAERR(cudaDeviceSynchronize());
     time = omp_get_wtime();
@@ -192,6 +179,7 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64
     if (nttTime != nullptr) *nttTime = time;
     CHECKCUDAERR(cudaFree(d_xiChallenge));
     CHECKCUDAERR(cudaFree(d_openingPoints));
+    CHECKCUDAERR(cudaFree(d_shiftedValues));
 }
 
 __global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints)
