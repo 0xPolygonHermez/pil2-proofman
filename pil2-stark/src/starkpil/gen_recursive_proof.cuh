@@ -238,7 +238,8 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     gl64_t * d_LEv = (gl64_t *)  h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];;
 
 
-    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_lev", false)], d_LEv);
+    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_lev", false)], d_LEv, &nttTime);
+    totalNTTTime += nttTime;
     TimerStopAndLog(STARK_STEP_EVALS_CALCULATE_LEV);
     TimerStart(STARK_STEP_EVMAP);
 
@@ -275,10 +276,11 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     // 6. Compute FRI
     //--------------------------------
     TimerStart(STARK_STEP_FRI);
+    TimerStart(STARK_STEP_FRI_XIS);
+    calculateXis_inplace(setupCtx, h_params, xiChallenge);    
+    TimerStopAndLog(STARK_STEP_FRI_XIS);
 
     TimerStart(STARK_STEP_FRI_POLYNOMIAL);
-
-    calculateXis_inplace(setupCtx, h_params, xiChallenge);    
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
 
     TimerStopAndLog(STARK_STEP_FRI_POLYNOMIAL);
@@ -299,7 +301,8 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            merkelizeFRI_inplace(setupCtx, h_params, step, proof, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
+            merkelizeFRI_inplace(setupCtx, h_params, step, proof, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, &merkleTime);
+            totalMerkleTime += merkleTime;
             starks.addTranscript(transcript, &proof.proof.fri.treesFRI[step].root[0], HASH_SIZE);
         }
         else
@@ -369,21 +372,16 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     zklog.trace("    TIMES SUMMARY: ");
 
-    double expressions_time = TimerGetElapsed(STARK_CALCULATE_GPROD) + TimerGetElapsed(CALCULATE_IM_POLS) + TimerGetElapsed(STARK_STEP_Q_EXPRESSIONS);
+    double expressions_time = TimerGetElapsed(STARK_CALCULATE_GPROD) + TimerGetElapsed(CALCULATE_IM_POLS) + TimerGetElapsed(STARK_STEP_Q_EXPRESSIONS) + TimerGetElapsed(STARK_STEP_FRI_POLYNOMIAL);;
     oss << std::fixed << std::setprecision(2) << expressions_time << "s (" << (expressions_time / time_total) * 100 << "%)";
     zklog.trace("        EXPRESSIONS:  " + oss.str());
     oss.str("");
     oss.clear();
 
     
-    double commit_time = totalNTTTime + totalMerkleTime; 
-    oss << std::fixed << std::setprecision(2) << totalNTTTime << "s (" << (totalNTTTime / time_total) * 100 << "%)";
-    zklog.trace("        NTT:          " + oss.str());
-    oss.str("");
-    oss.clear();
-
-    oss << std::fixed << std::setprecision(2) << totalMerkleTime << "s (" << (totalMerkleTime / time_total) * 100 << "%)";
-    zklog.trace("        MERKLE:       " + oss.str());
+    double commit_time = TimerGetElapsed(STARK_COMMIT_STAGE_1) + TimerGetElapsed(STARK_COMMIT_STAGE_2) + TimerGetElapsed(STARK_STEP_Q_COMMIT);
+    oss << std::fixed << std::setprecision(2) << commit_time << "s (" << (commit_time / time_total) * 100 << "%)";
+    zklog.trace("        COMMIT:          " + oss.str());
     oss.str("");
     oss.clear();
 
@@ -394,7 +392,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     oss.str("");
     oss.clear();
 
-    double fri_time = TimerGetElapsed(STARK_STEP_FRI);
+    double fri_time = TimerGetElapsed(STARK_STEP_FRI) - TimerGetElapsed(STARK_STEP_FRI_POLYNOMIAL);
     oss << std::fixed << std::setprecision(2) << fri_time << "s (" << (fri_time / time_total) * 100 << "%)";
     zklog.trace("        FRI:          " + oss.str());
     oss.str("");
@@ -416,6 +414,18 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         std::string total_time = oss.str();
         zklog.error("    TIME SUMMARY ERROR: " + calculated_time + " != " + total_time);
     } 
+
+    zklog.trace("    KERNELS CONTRIBUTIONS: ");
+    
+    oss << std::fixed << std::setprecision(2) << totalNTTTime << "s (" << (totalNTTTime / time_total) * 100 << "%)";
+    zklog.trace("        NTT:          " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    oss << std::fixed << std::setprecision(2) << totalMerkleTime << "s (" << (totalMerkleTime / time_total) * 100 << "%)";
+    zklog.trace("        MERKLE:       " + oss.str());
+    oss.str("");
+    oss.clear();
 
 #endif
 

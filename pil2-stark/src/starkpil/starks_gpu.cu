@@ -161,7 +161,7 @@ __global__ void fillLEv_2d(gl64_t *d_LEv, gl64_t *d_xiChallenge, uint64_t W_, ui
     }
 }*/
 
-void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv)
+void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime)
 {
     cudaDeviceSynchronize();
     double time = omp_get_wtime();
@@ -187,10 +187,9 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64
     time = omp_get_wtime();
     NTT_Goldilocks ntt(N);
     ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_buffers, offset_helper, d_LEv);
-
-    time = omp_get_wtime() - time;
-    // std::cout << "INTT: " << time << std::endl;
     CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime() - time;
+    if (nttTime != nullptr) *nttTime = time;
     CHECKCUDAERR(cudaFree(d_xiChallenge));
     CHECKCUDAERR(cudaFree(d_openingPoints));
 }
@@ -604,7 +603,7 @@ __global__ void transposeFRI(gl64_t *d_aux, gl64_t *pol, uint64_t degree, uint64
     }
 }
 
-void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t step, FRIProof<Goldilocks::Element> &proof, gl64_t *pol, MerkleTreeGL *treeFRI, uint64_t currentBits, uint64_t nextBits)
+void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t step, FRIProof<Goldilocks::Element> &proof, gl64_t *pol, MerkleTreeGL *treeFRI, uint64_t currentBits, uint64_t nextBits, double * merkleTime)
 {
     uint64_t pol2N = 1 << currentBits;
     gl64_t *d_aux;
@@ -618,10 +617,13 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     treeFRI->initSource();
     CHECKCUDAERR(cudaMemcpy(treeFRI->source, d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
     
+    double time = omp_get_wtime();
     Goldilocks::Element  *d_tree;
     CHECKCUDAERR(cudaMalloc(&d_tree, treeFRI->getNumNodes(treeFRI->height) * sizeof(uint64_t)));
     Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_aux, treeFRI->width, treeFRI->height);
-
+    CHECKCUDAERR(cudaDeviceSynchronize());
+    time = omp_get_wtime() - time;
+    if (merkleTime != nullptr) *merkleTime = time;
     treeFRI->initNodes();
     CHECKCUDAERR(cudaMemcpy(treeFRI->nodes, d_tree, treeFRI->numNodes * sizeof(uint64_t), cudaMemcpyDeviceToHost));
     treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
