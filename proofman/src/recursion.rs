@@ -248,7 +248,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
         // Copy proof to updated proof starting at the end of the publics_circom
         updated_proof[publics_circom_size..].copy_from_slice(proof);
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
-        generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, &updated_proof, 21)?;
+        generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, &updated_proof, 24)?;
 
         log::info!(
             "{}: ··· Generating compressor proof for instance {} of {}",
@@ -321,7 +321,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
 
     updated_proof[initial_index..].copy_from_slice(&recursive_proof);
 
-    generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, &updated_proof, 21)?;
+    generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, &updated_proof, 24)?;
 
     log::info!(
         "{}: ··· Generating recursive1 proof for instance {} of {}",
@@ -374,7 +374,7 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
         let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
         let p_setup_recursive2 = (&setup_recursive2.p_setup).into();
 
-        generate_witness(circom_witness, trace, publics, &setup_path, setup_recursive2, &updated_proof_recursive2, 21)?;
+        generate_witness(circom_witness, trace, publics, &setup_path, setup_recursive2, &updated_proof_recursive2, 24)?;
 
         timer_start_trace!(GENERATE_RECURSIVE2_PROOF);
         let air_instance_name = &pctx.global_info.airs[airgroup_id][0].name;
@@ -493,7 +493,7 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
 
                         let setup_path = pctx.global_info.get_air_setup_path(airgroup, 0, &ProofType::Recursive2);
 
-                        generate_witness(circom_witness, trace, publics, &setup_path, setup, &updated_proof, 21)?;
+                        generate_witness(circom_witness, trace, publics, &setup_path, setup, &updated_proof, 24)?;
 
                         timer_start_trace!(GENERATE_RECURSIVE2_PROOF);
                         let proof_file = match pctx.options.debug_info.save_proofs_to_file {
@@ -601,7 +601,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 
     let setup_path = pctx.global_info.get_setup_path("vadcop_final");
 
-    generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, proof, 21)?;
+    generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, proof, 24)?;
 
     let proof_file = output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().into_owned();
 
@@ -826,7 +826,7 @@ pub fn get_buff_sizes<F: PrimeField64>(
         if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
             let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
             let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Compressor);
-            let sizes = get_size(&setup_path, setup_compressor, 21)?;
+            let sizes = get_size(&setup_path, setup_compressor, 24)?;
             witness_size = witness_size.max(sizes.0);
             publics = publics.max(sizes.1);
             buffer = buffer.max(sizes.2);
@@ -835,7 +835,7 @@ pub fn get_buff_sizes<F: PrimeField64>(
 
         let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
         let setup_path = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Recursive1);
-        let sizes = get_size(&setup_path, setup_recursive1, 21)?;
+        let sizes = get_size(&setup_path, setup_recursive1, 24)?;
         witness_size = witness_size.max(sizes.0);
         publics = publics.max(sizes.1);
         buffer = buffer.max(sizes.2);
@@ -846,7 +846,7 @@ pub fn get_buff_sizes<F: PrimeField64>(
     for airgroup in 0..n_airgroups {
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
         let setup_path = pctx.global_info.get_air_setup_path(airgroup, 0, &ProofType::Recursive2);
-        let sizes = get_size(&setup_path, setup, 21)?;
+        let sizes = get_size(&setup_path, setup, 24)?;
         witness_size = witness_size.max(sizes.0);
         publics = publics.max(sizes.1);
         buffer = buffer.max(sizes.2);
@@ -855,7 +855,7 @@ pub fn get_buff_sizes<F: PrimeField64>(
 
     let setup_final = setups.setup_vadcop_final.as_ref().unwrap();
     let setup_path = pctx.global_info.get_setup_path("vadcop_final");
-    let sizes = get_size(&setup_path, setup_final, 21)?;
+    let sizes = get_size(&setup_path, setup_final, 24)?;
     witness_size = witness_size.max(sizes.0);
     publics = publics.max(sizes.1);
     buffer = buffer.max(sizes.2);
