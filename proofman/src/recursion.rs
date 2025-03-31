@@ -117,7 +117,7 @@ pub fn aggregate_proofs<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
     info!("{}: ··· Generating aggregated proofs", name);
 
     timer_start_info!(GENERATING_AGGREGATION_PROOFS);
@@ -139,6 +139,7 @@ pub fn aggregate_proofs<F: PrimeField64>(
     info!("{}: Recursive2 proofs generated successfully", name);
 
     pctx_aggregation.dctx.read().unwrap().barrier();
+    let mut proof_id = None;
     if pctx_aggregation.dctx_get_rank() == 0 {
         let setup_final = setups.setup_vadcop_final.as_ref().unwrap();
         timer_start_info!(GENERATING_VADCOP_FINAL_PROOF);
@@ -153,6 +154,14 @@ pub fn aggregate_proofs<F: PrimeField64>(
             output_dir_path.clone(),
             d_buffers,
         )?;
+        proof_id = Some(
+            blake3::hash(unsafe {
+                std::slice::from_raw_parts(final_proof.as_ptr() as *const u8, final_proof.len() * 8)
+            })
+            .to_hex()
+            .to_string(),
+        );
+
         timer_stop_and_log_info!(GENERATING_VADCOP_FINAL_PROOF);
         info!("{}: VadcopFinal proof generated successfully", name);
 
@@ -203,7 +212,7 @@ pub fn aggregate_proofs<F: PrimeField64>(
     pctx_aggregation.dctx_barrier();
     info!("{}: Proofs generated successfully", name);
     pctx_aggregation.dctx.read().unwrap().barrier();
-    Ok(())
+    Ok(proof_id)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -604,7 +613,6 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     generate_witness::<F>(circom_witness, trace, publics, &setup_path, setup, proof, 21)?;
 
     let proof_file = output_dir_path.join("proofs/vadcop_final_proof.json").to_string_lossy().into_owned();
-
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
 

@@ -145,7 +145,7 @@ where
     }
 
     pub fn verify_proof_constraints_from_lib(
-        mut witness_lib: Box<dyn WitnessLibrary<F>>,
+        witness_lib: &mut dyn WitnessLibrary<F>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
@@ -300,7 +300,7 @@ where
         output_dir_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         check_paths(
             &witness_lib_path,
             &public_inputs_path,
@@ -320,12 +320,12 @@ where
     }
 
     pub fn generate_proof_from_lib(
-        mut witness_lib: Box<dyn WitnessLibrary<F>>,
+        witness_lib: &mut dyn WitnessLibrary<F>,
         proving_key_path: PathBuf,
         output_dir_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
 
         let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
@@ -342,7 +342,7 @@ where
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         wcm: Arc<WitnessManager<F>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOFS);
@@ -536,7 +536,7 @@ where
                     Self::MY_NAME,
                     "\u{2713} All proofs were successfully verified".bright_green().bold()
                 );
-                return Ok(());
+                return Ok(None);
             } else {
                 return Err("Basic proofs were not verified".into());
             }
@@ -890,7 +890,7 @@ where
                     (&setup.p_setup).into(),
                     commit_id as u64,
                     air_instance.get_custom_commits_fixed_ptr(),
-                    custom_commit_file_path,
+                    custom_commit_file_path.to_str().expect("Invalid path"),
                 );
             }
         }
