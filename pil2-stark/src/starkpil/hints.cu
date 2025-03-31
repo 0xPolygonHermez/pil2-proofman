@@ -12,7 +12,6 @@ void allocateDestGPU(Goldilocks::Element**buff, uint64_t size){
     cudaMalloc((void**) buff, size * sizeof(Goldilocks::Element));
 }
 void freeDestGPU(Goldilocks::Element* buff){
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(buff));
 }
 __global__ void setPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *values, uint64_t deg, uint64_t dim, uint64_t nCols) {
@@ -40,9 +39,7 @@ void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *aux_trace, Goldil
 
     dim3 threds(512);
     dim3 blocks((deg + threds.x - 1) / threds.x);
-    setPolynomial_<<<blocks, threds>>>(aux_trace + offset, d_values, deg, dim, nCols);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    
+    setPolynomial_<<<blocks, threds>>>(aux_trace + offset, d_values, deg, dim, nCols);    
 }
 
 

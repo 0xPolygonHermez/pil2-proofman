@@ -119,8 +119,13 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, uint64_t N, uint
 
 void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time = omp_get_wtime();
+    cudaEvent_t point1, point2, point3;
+    cudaEventCreate(&point1);
+    cudaEventCreate(&point2);
+    cudaEventCreate(&point3);
+
+    cudaEventRecord(point1);
+
     gl64_t* d_r = d_buffers->d_aux_trace + offset_helper;
     gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + NExtended;
     gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*NExtended;
@@ -138,44 +143,56 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
     CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, NExtended * sizeof(uint64_t)))
     CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, NExtended * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemset(d_r, 0, NExtended * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
     // Init twiddle factors
     int lg2ext = log2(NExtended);
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext);
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
     // Intt
     ntt_cuda(d_q, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, qDim, true, false);
 
-    CHECKCUDAERR(cudaDeviceSynchronize());   
 
     dim3 threads(128, 1, 1);
     dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
     applyS<<<blocks, threads>>>(d_cmQ, d_q, d_S, N, qDeg, qDim);
     CHECKCUDAERR(cudaMemset(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
 
     ntt_cuda(d_cmQ, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time1 = omp_get_wtime();
-    if(nttTime!= nullptr) *nttTime = time1 - time;
-    time = time1;
+
+    cudaEventRecord(point2);
+
     Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
-    //Poseidon2Goldilocks::merkletree_cuda_streams(3, d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
 
-
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    if(merkleTime!= nullptr) *merkleTime = time1 - time;
+    cudaEventRecord(point3);
+    
+    if(nttTime!= nullptr){
+        cudaEventSynchronize(point2);
+        float elapsedTime;
+        cudaEventElapsedTime(&elapsedTime, point1, point2);
+        *nttTime = elapsedTime/1000;
+    }
+    if(merkleTime!= nullptr){ 
+        cudaEventSynchronize(point3);
+        float elapsedTime;
+        cudaEventElapsedTime(&elapsedTime, point2, point3);
+        *merkleTime = elapsedTime/1000;
+    }
+    cudaEventDestroy(point1);
+    cudaEventDestroy(point2);
+    cudaEventDestroy(point3);
     
 }
 
 void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time = omp_get_wtime();
+    cudaEvent_t point1, point2, point3;
+    cudaEventCreate(&point1);
+    cudaEventCreate(&point2);
+    cudaEventCreate(&point3);
+    cudaEventRecord(point1);
+
+
     gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
     gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
 
@@ -201,23 +218,31 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
 
     CHECKCUDAERR(cudaMemcpy(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice));
     CHECKCUDAERR(cudaMemset(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t)));
-    CHECKCUDAERR(cudaDeviceSynchronize());
     ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, true);
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
     ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false);
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
-    double time1 = omp_get_wtime();
-    if(nttTime!= nullptr) *nttTime = time1 - time;
-    time = time1;
+    cudaEventRecord(point2);
 
     Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, ncols, ext_size);
     
+    cudaEventRecord(point3);
     
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time1 = omp_get_wtime();
-    if(merkleTime!= nullptr) *merkleTime = time1 - time;
+    if(nttTime!= nullptr){
+        cudaEventSynchronize(point2);
+        float elapsedTime;
+        cudaEventElapsedTime(&elapsedTime, point1, point2);
+        *nttTime = elapsedTime/1000;
+    }
+    if(merkleTime!= nullptr){ 
+        cudaEventSynchronize(point3);
+        float elapsedTime;
+        cudaEventElapsedTime(&elapsedTime, point2, point3);
+        *merkleTime = elapsedTime/1000;
+    }
+    cudaEventDestroy(point1);
+    cudaEventDestroy(point2);
+    cudaEventDestroy(point3);
 }
 
 void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_data)
@@ -228,40 +253,18 @@ void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_
     gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*size;
 
     gl64_t *dst_src = d_data == nullptr ? d_buffers->d_aux_trace + data_offset : d_data;
-    cudaDeviceSynchronize();
-    double time_base = omp_get_wtime();
-    double time = omp_get_wtime();
     if (ncols == 0 || size == 0)
     {
         return;
     }
 
-
     CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, size * sizeof(uint64_t)))
     CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, size * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemset(d_r, 0, size * sizeof(uint64_t)));
-    double time1 = omp_get_wtime();
 
-    time = time1;
     int lg2 = log2(size);
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2);
-    time1 = omp_get_wtime();
-    //std::cout << "rick Time for init_twiddle_factors: " << time1 - time << std::endl;
-
-    cudaDeviceSynchronize();
-    time = omp_get_wtime();
     ntt_cuda(dst_src, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, false);
-    cudaDeviceSynchronize();
-    time1 = omp_get_wtime();
-    //std::cout << "rick Time for ntt_cuda: " << time1 - time << std::endl;
-
-    time = time1;
-    time1 = omp_get_wtime();
-    //std::cout << "rick Time for cudaStreamDestroy: " << time1 - time << std::endl;
-    time = time1;
-    cudaDeviceSynchronize();
-    time1 = omp_get_wtime();
-    //std::cout << "rick Time for INTT dins: " << time1 - time_base << std::endl;
 }
 
 
@@ -537,48 +540,28 @@ void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddl
     blockDim = dim3(TPB_NTT);
     gridDim = dim3(8192);
 
-#ifdef GPU_TIMING
-    cudaDeviceSynchronize();
-    TimerStart(NTT_Core_ReversePermutation);
-#endif
+
     reverse_permutation_new<<<gridDim, blockDim, 0>>>(data, log_domain_size, ncols);
     CHECKCUDAERR(cudaGetLastError());
-#ifdef GPU_TIMING
-    cudaDeviceSynchronize();
-    TimerStopAndLog(NTT_Core_ReversePermutation);
-#endif
+
 
     gl64_t *ptr_twiddles = fwd_twiddles;
     if (inverse)
     {
         ptr_twiddles = inv_twiddles;
     }
-#ifdef GPU_TIMING
-    cudaDeviceSynchronize();
-    TimerStart(NTT_Core_BRNTTGroup);
-#endif
+
     for (uint32_t i = 0; i < log_domain_size; i++)
     {
         br_ntt_group<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
         CHECKCUDAERR(cudaGetLastError());
     }
-#ifdef GPU_TIMING
-    cudaDeviceSynchronize();
-    TimerStopAndLog(NTT_Core_BRNTTGroup);
-#endif
+
 
     if (inverse)
     {
-#ifdef GPU_TIMING
-        cudaDeviceSynchronize();
-        TimerStart(NTT_Core_INTTScale);
-#endif
         intt_scale<<<domain_size, ncols, 0>>>(data, r, domain_size, log_domain_size, ncols, extend);
         CHECKCUDAERR(cudaGetLastError());
-#ifdef GPU_TIMING
-        cudaDeviceSynchronize();
-        TimerStopAndLog(NTT_Core_INTTScale);
-#endif
     }
 }
 

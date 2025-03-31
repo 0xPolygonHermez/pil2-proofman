@@ -140,8 +140,6 @@ __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, ui
 
 void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime)
 {
-    cudaDeviceSynchronize();
-    double time = omp_get_wtime();
     uint64_t N = 1 << nBits;
 
     gl64_t *d_xiChallenge;
@@ -156,27 +154,34 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64
 
     Goldilocks::Element invShift = Goldilocks::inv(Goldilocks::shift());
 
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
     // Evaluate the shifted value for each opening point
     dim3 nThreads_(32);
     dim3 nBlocks_((nOpeningPoints + nThreads_.x - 1) / nThreads_.x);
     evalXiShifted<<<nBlocks_, nThreads_>>>(d_shiftedValues, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints, invShift.fe);
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
     dim3 nThreads(1, 512);
     dim3 nBlocks((nOpeningPoints + nThreads.x - 1) / nThreads.x, (N + nThreads.y - 1) / nThreads.y);
     fillLEv_2d<<<nBlocks, nThreads>>>(d_LEv, nOpeningPoints, N,  d_shiftedValues);
     CHECKCUDAERR(cudaGetLastError());
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
+    cudaEvent_t point1, point2;
+    cudaEventCreate(&point1);
+    cudaEventCreate(&point2);
+    cudaEventRecord(point1);
+
     NTT_Goldilocks ntt(N);
     ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_buffers, offset_helper, d_LEv);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    if (nttTime != nullptr) *nttTime = time;
+
+    cudaEventRecord(point2);
+    if(nttTime!= nullptr){
+        cudaEventSynchronize(point2);
+        float elapsedTime;
+        cudaEventElapsedTime(&elapsedTime, point1, point2);
+        *nttTime = elapsedTime/1000;
+    }
+    cudaEventDestroy(point1);
+    cudaEventDestroy(point2);    
     CHECKCUDAERR(cudaFree(d_xiChallenge));
     CHECKCUDAERR(cudaFree(d_openingPoints));
     CHECKCUDAERR(cudaFree(d_shiftedValues));
@@ -202,7 +207,6 @@ __global__ void calcXis(Goldilocks::Element * d_xis, gl64_t *d_xiChallenge, uint
 void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks::Element *xiChallenge)
 {
 
-    double time = omp_get_wtime();
     uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
     int64_t *openingPoints = setupCtx.starkInfo.openingPoints.data();
     uint64_t nBits = setupCtx.starkInfo.starkStruct.nBits;
@@ -219,7 +223,6 @@ void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks:
     calcXis<<<nBlocks, nThreads>>>(h_params.xDivXSub, d_xiChallenge, Goldilocks::w(nBits).fe, nOpeningPoints, d_openingPoints);
     CHECKCUDAERR(cudaGetLastError());
     
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_xiChallenge));
     CHECKCUDAERR(cudaFree(d_openingPoints));
 }
@@ -389,17 +392,10 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, FRIProof<
 
     dim3 nThreads(256);
     dim3 nBlocks(size_eval);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time = omp_get_wtime();
     computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaGetLastError());
 
-    time = omp_get_wtime() - time;
-    // std::cout << "rick computeEvals_v2: " << time << std::endl;
-
     cudaMemcpy(evals, h_params.evals, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_evalsInfo));
 
     proof.proof.setEvals(evals);
@@ -567,7 +563,6 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper,
     fold<<<nBlocks, nThreads>>>(step, d_friPol, d_challenge, d_ppar, d_twiddles, Goldilocks::shift().fe, Goldilocks::w(prevBits).fe, nBitsExt, prevBits, currentBits);
     CHECKCUDAERR(cudaGetLastError());
 
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_challenge));
     CHECKCUDAERR(cudaFree(d_twiddles));
 }
@@ -602,17 +597,24 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     treeFRI->initSource();
     CHECKCUDAERR(cudaMemcpy(treeFRI->source, d_aux, pol2N * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
     
-    double time = omp_get_wtime();
     Goldilocks::Element *d_tree = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)];
+    cudaEvent_t point1, point2;
+    cudaEventCreate(&point1);
+    cudaEventCreate(&point2);
+    cudaEventRecord(point1);    
     Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_aux, treeFRI->width, treeFRI->height);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    if (merkleTime != nullptr) *merkleTime = time;
+    cudaEventRecord(point2);
+    if(merkleTime!= nullptr){
+        cudaEventSynchronize(point2);
+        float elapsedTime;
+        cudaEventElapsedTime(&elapsedTime, point1, point2);
+        *merkleTime = elapsedTime/1000;
+    }
+    cudaEventDestroy(point1);
+    cudaEventDestroy(point2);
     treeFRI->initNodes();
     CHECKCUDAERR(cudaMemcpy(treeFRI->nodes, d_tree, treeFRI->numNodes * sizeof(uint64_t), cudaMemcpyDeviceToHost));
     treeFRI->getRoot(&proof.proof.fri.treesFRI[step].root[0]);
-
-    CHECKCUDAERR(cudaDeviceSynchronize());
 }
 
 __global__ void getTreeTracePols(gl64_t *d_treeTrace, uint64_t traceWidth, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth)
@@ -718,14 +720,12 @@ void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQu
         dim3 nblocks((nQueries + nthreads.x - 1) / nthreads.x);
         genMerkleProof<<<nblocks, nthreads>>>((gl64_t *)trees[k]->get_nodes_ptr(), trees[k]->getMerkleTreeHeight(), d_friQueries, nQueries, d_buff + k * nQueries * maxBuffSize, maxBuffSize, maxTreeWidth, HASH_SIZE);
         CHECKCUDAERR(cudaGetLastError());
-        CHECKCUDAERR(cudaDeviceSynchronize());
     }
     CHECKCUDAERR(cudaGetLastError());
 
     CHECKCUDAERR(cudaMemcpy(buff, d_buff, maxBuffSize * nQueries * nTrees * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
 
     CHECKCUDAERR(cudaGetLastError());
-    CHECKCUDAERR(cudaDeviceSynchronize());
 
     // the constantTree path is done offline because it is allready in the CPU
     uint64_t aux_offset = (nStages + 1) * nQueries;
@@ -750,7 +750,6 @@ void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQu
         }
     }
     CHECKCUDAERR(cudaGetLastError());
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_buff));
     CHECKCUDAERR(cudaFree(d_friQueries));
 

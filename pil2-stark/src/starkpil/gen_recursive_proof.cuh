@@ -22,8 +22,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     TimerStart(STARK_GPU_PROOF);
     TimerStart(STARK_INITIALIZATION);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time0 = omp_get_wtime();
     
     double totalNTTTime = 0;
     double totalMerkleTime = 0;
@@ -115,7 +113,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     starks.commitStage_inplace(1, d_buffers->d_trace, d_buffers->d_aux_trace, d_buffers, &nttTime, &merkleTime);
     totalNTTTime += nttTime;
     totalMerkleTime += merkleTime;
-    CHECKCUDAERR(cudaDeviceSynchronize());
     offloadCommit(1, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
     starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
     min_challenge = setupCtx.starkInfo.challengesMap.size();
@@ -151,7 +148,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     expressionsCtx.calculateExpressions_gpu(d_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
 
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(destStruct.dest_gpu));
 
     Goldilocks3::copy((Goldilocks3::Element *)&gprod[0], &Goldilocks3::one());
@@ -172,7 +168,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     delete res;
     delete gprod;
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(d_grod));
 
    TimerStopAndLog(STARK_CALCULATE_GPROD);
@@ -360,7 +355,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     }
 
     // Free memory
-    CHECKCUDAERR(cudaDeviceSynchronize());
     if(h_params.pCustomCommitsFixed != nullptr)
         cudaFree(h_params.pCustomCommitsFixed);
     cudaFree(h_params.evals);
@@ -390,7 +384,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     
     double commit_time = TimerGetElapsed(STARK_COMMIT_STAGE_1) + TimerGetElapsed(STARK_COMMIT_STAGE_2) + TimerGetElapsed(STARK_STEP_Q_COMMIT);
     oss << std::fixed << std::setprecision(2) << commit_time << "s (" << (commit_time / time_total) * 100 << "%)";
-    zklog.trace("        COMMIT:          " + oss.str());
+    zklog.trace("        COMMIT:       " + oss.str());
     oss.str("");
     oss.clear();
 

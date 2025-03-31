@@ -8,9 +8,6 @@
 
 void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers) {
 
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time = omp_get_wtime();
-
     if (nCols > 0)
     {
         gl64_t *src = d_buffers->d_aux_trace;
@@ -31,11 +28,6 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64
         std::cout << "nCols must be greater than 0" << std::endl;
         assert(0);
     }
-
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    //std::cout << "genCommit_gpu " <<time<<std::endl;
-
 }
 
 #endif

@@ -64,7 +64,6 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers &proverHelpers,
 
 ExpressionsGPU::~ExpressionsGPU()
 {
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsets));
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsExtended));
     CHECKCUDAERR(cudaFree(h_deviceArgs.nextStrides));
@@ -152,16 +151,8 @@ void ExpressionsGPU::loadDeviceArgs(uint64_t domainSize, Dest &dest)
 
 void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended)
 {
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time = omp_get_wtime();
     loadDeviceArgs(domainSize, dest);
-    CHECKCUDAERR(cudaGetLastError());
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    //std::cout << "goal2_ setBufferTInfo time: " << time << std::endl;
 
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
     uint32_t nblocks_ = std::min(h_deviceArgs.nBlocks, (domainSize + h_deviceArgs.nRowsPack-1)/ h_deviceArgs.nRowsPack);
     uint32_t nThreads_ = nblocks_ == 1 ? domainSize : h_deviceArgs.nRowsPack;
     dim3 nBlocks =  nblocks_;
@@ -170,27 +161,15 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     size_t sharedMem = (bufferCommitsSize  + 9) * sizeof(Goldilocks::Element *) + 2 * nThreads_ * FIELD_EXTENSION * sizeof(Goldilocks::Element);
 
     computeExpressions_<<<nBlocks, nThreads, sharedMem>>>(d_params, d_deviceArgs);
-    CHECKCUDAERR(cudaGetLastError());
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime() - time;
-    //std::cout << "goal2_ de computeExpressions: " << time << std::endl;
-
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    time = omp_get_wtime();
     
     if (dest.dest != NULL)
     {
         CHECKCUDAERR(cudaMemcpy(dest.dest, dest.dest_gpu, dest.domainSize * dest.dim * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
     }
     
-    time = omp_get_wtime() - time;
-    //std::cout << "goal2_ de cudaMemcpy dests time: " << time << std::endl;
-
     
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(h_deviceArgs.dest_params));
     CHECKCUDAERR(cudaFree(d_deviceArgs));
-    CHECKCUDAERR(cudaGetLastError());
 }
 
 __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_deviceArgs, Goldilocks::Element *value, StepsParams* d_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic) {        

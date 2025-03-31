@@ -21,7 +21,6 @@ struct MaxSizes
 void *gen_device_commit_buffers(void *maxSizes_)
 {
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
-    CHECKCUDAERR(cudaSetDevice(0));
     DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
     buffers->recursive = maxSizes->recursive;
     CHECKCUDAERR(cudaMalloc(&buffers->d_aux_trace, maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
@@ -60,7 +59,6 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
-    CHECKCUDAERR(cudaSetDevice(0));
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, params->trace, sizeTrace, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstPols, &params->aux_trace[offsetConstPols], sizeConstPols, cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstTree, &params->aux_trace[offsetConstTree], sizeConstTree, cudaMemcpyHostToDevice));
@@ -84,7 +82,6 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     double time = omp_get_wtime();
 
-    CHECKCUDAERR(cudaSetDevice(0));
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t sizeTrace = N * (setupCtx->starkInfo.mapSectionsN["cm1"]) * sizeof(Goldilocks::Element);
     uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
@@ -116,7 +113,6 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = 0;
 
-    CHECKCUDAERR(cudaSetDevice(0));
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, trace, sizeTrace, cudaMemcpyHostToDevice));
     genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_buffers);
     time = omp_get_wtime() - time;

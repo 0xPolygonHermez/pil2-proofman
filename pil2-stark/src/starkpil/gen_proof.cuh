@@ -60,8 +60,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     
     TimerStart(STARK_GPU_PROOF);
     TimerStart(STARK_INITIALIZATION);
-    CHECKCUDAERR(cudaDeviceSynchronize());
-    double time0 = omp_get_wtime();
 
     double totalNTTTime = 0;
     double totalMerkleTime = 0;
@@ -355,7 +353,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     }
 
     // Free memory
-    CHECKCUDAERR(cudaDeviceSynchronize());
     CHECKCUDAERR(cudaFree(h_params.evals));
     CHECKCUDAERR(cudaFree(h_params.xDivXSub));
     CHECKCUDAERR(cudaFree(h_params.challenges));
@@ -383,7 +380,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     double commit_time = TimerGetElapsed(STARK_COMMIT_STAGE_1) + TimerGetElapsed(STARK_COMMIT_STAGE_2) + TimerGetElapsed(STARK_STEP_Q_COMMIT);
     oss << std::fixed << std::setprecision(2) << commit_time << "s (" << (commit_time / time_total) * 100 << "%)";
-    zklog.trace("        COMMIT:          " + oss.str());
+    zklog.trace("        COMMIT:       " + oss.str());
     oss.str("");
     oss.clear();
 
