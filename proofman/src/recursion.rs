@@ -107,7 +107,6 @@ pub fn gen_witness<F: PrimeField64>(
     setups: &SetupsVadcop<F>,
     proof: &Proof<F>,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
-
     let (airgroup_id, air_id) = (proof.airgroup_id, proof.air_id);
 
     assert!(proof.proof_type == ProofType::Basic || proof.proof_type == ProofType::Compressor);
@@ -125,7 +124,7 @@ pub fn gen_witness<F: PrimeField64>(
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
         let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
         timer_stop_and_log_info!(GENERATE_WITNESS);
-        Ok(Proof::new_witness(ProofType::Compressor, airgroup_id, air_id, proof.global_idx, circom_witness, 21))
+        Ok(Proof::new_witness(ProofType::Compressor, airgroup_id, air_id, proof.global_idx, circom_witness, 24))
     } else {
         timer_start_info!(GENERATE_WITNESS);
         let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
@@ -154,35 +153,36 @@ pub fn gen_witness<F: PrimeField64>(
 
         let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
         timer_stop_and_log_info!(GENERATE_WITNESS);
-        Ok(Proof::new_witness(ProofType::Recursive1, airgroup_id, air_id, proof.global_idx, circom_witness, 21))
+        Ok(Proof::new_witness(ProofType::Recursive1, airgroup_id, air_id, proof.global_idx, circom_witness, 24))
     }
 }
 
 pub fn gen_witness_aggregation<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    proof_1: &Proof<F>,
-    proof_2: &Proof<F>,
+    proofs: &[Proof<F>],
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     timer_start_info!(GENERATE_WITNESS_AGGREGATION);
-    assert!(proof_1.proof.len() == proof_2.proof.len());
+    assert!(proofs.len() == 3);
+    let proof_len = proofs[0].proof.len();
+    assert!(proof_len == proofs[1].proof.len() && proof_len == proofs[2].proof.len());
 
-    let airgroup_id = proof_1.airgroup_id;
-    assert!(airgroup_id == proof_2.airgroup_id);
+    let airgroup_id = proofs[0].airgroup_id;
+    assert!(airgroup_id == proofs[1].airgroup_id && airgroup_id == proofs[2].airgroup_id);
 
     let publics_circom_size: usize =
         pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
 
     let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
 
-    let updated_proof_size = 2 * proof_1.proof.len() + publics_circom_size;
+    let updated_proof_size = 3 * proof_len + publics_circom_size;
 
-    assert!(proof_1.proof.len() == proof_2.proof.len());
     let mut updated_proof_recursive2: Vec<u64> = create_buffer_fast(updated_proof_size);
 
-    updated_proof_recursive2[publics_circom_size..(publics_circom_size + proof_1.proof.len())]
-        .copy_from_slice(&proof_1.proof);
-    updated_proof_recursive2[publics_circom_size + proof_1.proof.len()..].copy_from_slice(&proof_2.proof);
+    updated_proof_recursive2[publics_circom_size..(publics_circom_size + proof_len)].copy_from_slice(&proofs[0].proof);
+    updated_proof_recursive2[publics_circom_size + proof_len..publics_circom_size + 2 * proof_len]
+        .copy_from_slice(&proofs[1].proof);
+    updated_proof_recursive2[publics_circom_size + 2 * proof_len..].copy_from_slice(&proofs[2].proof);
 
     let recursive2_verkey =
         pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2).display().to_string()
@@ -192,7 +192,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     let circom_witness = generate_witness::<F>(setup_recursive2, &updated_proof_recursive2)?;
 
     timer_stop_and_log_info!(GENERATE_WITNESS_AGGREGATION);
-    Ok(Proof::new_witness(ProofType::Recursive2, airgroup_id, 0, None, circom_witness, 21))
+    Ok(Proof::new_witness(ProofType::Recursive2, airgroup_id, 0, None, circom_witness, 24))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -320,7 +320,7 @@ pub fn generate_proof<F: PrimeField64>(
 pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    proofs: &[Proof<F>],
+    proofs: &[Vec<Proof<F>>],
     trace: &[F],
     prover_buffer: &[F],
     output_dir_path: PathBuf,
@@ -336,18 +336,28 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     let mut alives = vec![0; n_airgroups];
     let mut airgroup_proofs: Vec<Vec<Option<Vec<u64>>>> = Vec::with_capacity(n_airgroups);
 
+    let mut null_proofs: Vec<Vec<u64>> = vec![Vec::new(); n_airgroups];
+
     // Pre-process data before starting recursion loop
     for airgroup in 0..n_airgroups {
-        airgroup_proofs.push(vec![None; n_processes]);
-        if airgroup_instances_alive[airgroup][rank] == 1 {
-            airgroup_proofs[airgroup][rank] = Some(proofs[airgroup].proof.clone());
-        } else if rank == 0 {
-            let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2);
-            let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 10;
-            airgroup_proofs[airgroup][rank] = Some(vec![0; setup.proof_size as usize + publics_aggregation]);
-        }
+        let mut current_pos = 0;
         for p in 0..n_processes {
+            if p < rank {
+                current_pos += airgroup_instances_alive[airgroup][p];
+            }
             alives[airgroup] += airgroup_instances_alive[airgroup][p];
+        }
+        let setup = setups.get_setup(airgroup, 0, &ProofType::Recursive2);
+        let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup].len() + 10;
+        null_proofs[airgroup] = vec![0; setup.proof_size as usize + publics_aggregation];
+        airgroup_proofs.push(vec![None; alives[airgroup]]);
+
+        if !proofs[airgroup].is_empty() {
+            for i in 0..proofs[airgroup].len() {
+                airgroup_proofs[airgroup][current_pos + i] = Some(proofs[airgroup][i].proof.clone());
+            }
+        } else if rank == 0 {
+            airgroup_proofs[airgroup][0] = Some(vec![0; setup.proof_size as usize + publics_aggregation]);
         }
     }
 
@@ -360,8 +370,8 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
             //create a vector of sice indices length
             let mut alive = alives[airgroup];
             if alive > 1 {
-                for i in 0..alive / 2 {
-                    let j = i * 2;
+                for i in 0..(alive + 2) / 3 {
+                    let j = i * 3;
                     if airgroup_proofs[airgroup][j].is_none() {
                         continue;
                     }
@@ -377,6 +387,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             None,
                             airgroup_proofs[airgroup][j].clone().unwrap(),
                         );
+
                         let proof2 = Proof::new(
                             ProofType::Recursive2,
                             airgroup,
@@ -385,7 +396,15 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             airgroup_proofs[airgroup][j + 1].clone().unwrap(),
                         );
 
-                        let circom_witness = gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2)?;
+                        let proof_3 = if j + 2 < alive {
+                            airgroup_proofs[airgroup][j + 2].clone().unwrap()
+                        } else {
+                            null_proofs[airgroup].clone()
+                        };
+
+                        let proof3 = Proof::new(ProofType::Recursive2, airgroup, 0, None, proof_3);
+
+                        let circom_witness = gen_witness_aggregation::<F>(pctx, setups, &vec![proof1, proof2, proof3])?;
 
                         let recursive2_proof = generate_proof::<F>(
                             pctx,
@@ -402,10 +421,10 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                         log::info!("{}: ··· Recursive 2 Proof generated.", MY_NAME);
                     }
                 }
-                alive = (alive + 1) / 2;
+                alive = (alive + 2) / 3;
                 //compact elements
                 for i in 0..alive {
-                    airgroup_proofs[airgroup][i] = airgroup_proofs[airgroup][i * 2].clone();
+                    airgroup_proofs[airgroup][i] = airgroup_proofs[airgroup][i * 3].clone();
                 }
                 alives[airgroup] = alive;
                 if alive > 1 {
@@ -453,7 +472,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
     let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof)?;
-    let new_proof = Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, 21);
+    let new_proof = Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, 24);
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
     let final_vadcop_proof =
@@ -467,7 +486,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 #[allow(clippy::too_many_arguments)]
 pub fn generate_recursivef_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
-    setup: &Setup<F>,
+    setups: &SetupsVadcop<F>,
     proof: &[u64],
     trace: &[F],
     prover_buffer: &[F],
@@ -478,6 +497,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
+    let setup = setups.setup_recursivef.as_ref().unwrap();
     let p_setup: *mut c_void = (&setup.p_setup).into();
 
     let setup_path = pctx.global_info.get_setup_path("recursivef");
@@ -639,7 +659,7 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
 ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
     let mut max_trace = 0;
     let mut max_prover_size = 0;
-    let n_cols = 21;
+    let n_cols = 24;
 
     let instances = pctx.dctx_get_instances();
     let my_instances = pctx.dctx_get_my_instances();

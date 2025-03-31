@@ -38,9 +38,10 @@ use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{verify_constraints_proof, check_paths, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
-    gen_witness, gen_witness_aggregation, generate_proof, aggregate_recursive2_proofs, generate_vadcop_final_proof,
+    gen_witness, gen_witness_aggregation, generate_proof, generate_vadcop_final_proof, generate_fflonk_snark_proof,
+    generate_recursivef_proof,
 };
-// use crate::aggregate_proofs;
+use crate::aggregate_recursive2_proofs;
 
 use std::ffi::c_void;
 
@@ -574,20 +575,7 @@ where
 
         timer_start_info!(GENERATING_COMPRESSED_PROOFS);
 
-        let mut recursive2_proofs = vec![Proof::default(); pctx.global_info.air_groups.len()];
-        #[allow(clippy::needless_range_loop)]
-        for airgroup_id in 0..pctx.global_info.air_groups.len() {
-            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
-            let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
-            recursive2_proofs[airgroup_id] = Proof::new(
-                ProofType::Recursive2,
-                airgroup_id,
-                0,
-                None,
-                create_buffer_fast(setup.proof_size as usize + publics_aggregation),
-            );
-        }
-        let mut recursive2_initialized = vec![false; pctx.global_info.air_groups.len()];
+        let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
         for air_groups in my_air_groups.iter() {
             for my_instance_id in air_groups.iter() {
                 let instance_id = my_instances[*my_instance_id];
@@ -619,9 +607,9 @@ where
                     d_buffers_aggregation.lock().unwrap().get_ptr(),
                 )?;
 
-                if recursive2_initialized[airgroup_id] {
-                    let witness_recursive2 =
-                        gen_witness_aggregation(&pctx, &setups, &proof_recursive1, &recursive2_proofs[airgroup_id])?;
+                recursive2_proofs[airgroup_id].push(proof_recursive1);
+                if recursive2_proofs[airgroup_id].len() == 3 {
+                    let witness_recursive2 = gen_witness_aggregation(&pctx, &setups, &recursive2_proofs[airgroup_id])?;
                     let proof_recursive2 = generate_proof(
                         &pctx,
                         &setups,
@@ -631,13 +619,8 @@ where
                         &output_dir_path,
                         d_buffers_aggregation.lock().unwrap().get_ptr(),
                     )?;
-                    recursive2_proofs[airgroup_id] = proof_recursive2;
-                } else {
-                    recursive2_proofs[airgroup_id] = proof_recursive1;
-                    recursive2_initialized[airgroup_id] = true;
+                    recursive2_proofs[airgroup_id] = vec![proof_recursive2];
                 }
-
-                recursive2_initialized[airgroup_id] = true;
             }
         }
 
@@ -663,23 +646,20 @@ where
                 d_buffers_aggregation.lock().unwrap().get_ptr(),
             )?;
             if pctx.options.final_snark {
-                // TODO
-                // timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-                // let recursivef_proof = generate_recursivef_proof(
-                //     pctx,
-                //     setups.setup_recursivef.as_ref().unwrap(),
-                //     &final_proof,
-                //     circom_witness,
-                //     publics,
-                //     trace,
-                //     prover_buffer,
-                //     output_dir_path.clone(),
-                // )?;
-                // timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
+                timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
+                let recursivef_proof = generate_recursivef_proof(
+                    &pctx,
+                    &setups,
+                    &vadcop_final_proof.proof,
+                    &trace,
+                    &prover_buffer,
+                    output_dir_path.clone(),
+                )?;
+                timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
-                // timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-                // let _ = generate_fflonk_snark_proof(pctx, recursivef_proof, output_dir_path.clone());
-                // timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
+                timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
+                let _ = generate_fflonk_snark_proof(&pctx, recursivef_proof, output_dir_path.clone());
+                timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
             } else if pctx.options.verify_proofs {
                 let setup_path = pctx.global_info.get_setup_path("vadcop_final");
                 let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
