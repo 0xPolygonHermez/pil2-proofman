@@ -373,6 +373,16 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &
         setup.load_const_pols();
         setup.load_const_pols_tree();
     }
+
+    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+    setup_vadcop_final.load_const_pols();
+    setup_vadcop_final.load_const_pols_tree();
+
+    if pctx.options.final_snark {
+        let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
+        setup_recursivef.load_const_pols();
+        setup_recursivef.load_const_pols_tree();
+    }
 }
 
 pub fn add_publics_circom<F: PrimeField64>(

@@ -34,13 +34,13 @@ use transcript::FFITranscript;
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::{discover_max_sizes, discover_max_sizes_aggregation};
 use crate::{check_paths2, check_tree_paths, check_tree_paths_vadcop, initialize_fixed_pols_tree};
-use crate::verify_basic_proof;
-use crate::verify_global_constraints_proof;
+use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
+use crate::{verify_constraints_proof, check_paths, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
-    verify_constraints_proof, check_paths, print_summary_info, aggregate_proofs, get_buff_sizes,
-    generate_vadcop_recursive1_proof,
+    gen_witness, gen_witness_aggregation, generate_proof, aggregate_recursive2_proofs, generate_vadcop_final_proof,
 };
+// use crate::aggregate_proofs;
 
 use std::ffi::c_void;
 
@@ -557,15 +557,13 @@ where
         let d_buffers_aggregation =
             Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_aggregation_ptr))));
 
-        let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
-            let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
-            let circom_witness = Arc::new(create_buffer_fast(circom_witness_size));
-            let publics = Arc::new(create_buffer_fast(publics_size));
-            let trace = Arc::new(create_buffer_fast(trace_size));
-            let prover_buffer = Arc::new(create_buffer_fast(prover_buffer_size));
-            (circom_witness, publics, trace, prover_buffer)
+        let (trace, prover_buffer) = if pctx.options.aggregation {
+            let (trace_size, prover_buffer_size) = get_recursive_buffer_sizes(&pctx, &setups)?;
+            let trace = Arc::new(create_buffer_fast::<F>(trace_size));
+            let prover_buffer = Arc::new(create_buffer_fast::<F>(prover_buffer_size));
+            (trace, prover_buffer)
         } else {
-            (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
+            (Arc::new(Vec::new()), Arc::new(Vec::new()))
         };
 
         let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
@@ -574,56 +572,150 @@ where
         initialize_fixed_pols_tree(&pctx, &setups);
         timer_stop_and_log_info!(LOAD_CONST_FILES);
 
-        timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
+        timer_start_info!(GENERATING_COMPRESSED_PROOFS);
 
-        let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
+        let mut recursive2_proofs = vec![Proof::default(); pctx.global_info.air_groups.len()];
         #[allow(clippy::needless_range_loop)]
         for airgroup_id in 0..pctx.global_info.air_groups.len() {
             let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
             let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
-            recursive2_proofs[airgroup_id] = create_buffer_fast(setup.proof_size as usize + publics_aggregation);
+            recursive2_proofs[airgroup_id] = Proof::new(
+                ProofType::Recursive2,
+                airgroup_id,
+                0,
+                None,
+                create_buffer_fast(setup.proof_size as usize + publics_aggregation),
+            );
         }
         let mut recursive2_initialized = vec![false; pctx.global_info.air_groups.len()];
         for air_groups in my_air_groups.iter() {
-            let (airgroup_id, _, _) = instances[my_instances[air_groups[0]]];
             for my_instance_id in air_groups.iter() {
                 let instance_id = my_instances[*my_instance_id];
+                let (airgroup_id, air_id, _) = instances[instance_id];
 
-                generate_vadcop_recursive1_proof(
+                let mut proof = proofs[*my_instance_id].clone();
+
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    let witness = gen_witness(&pctx, &setups, &proofs[*my_instance_id])?;
+                    proof = generate_proof(
+                        &pctx,
+                        &setups,
+                        &witness,
+                        &trace,
+                        &prover_buffer,
+                        &output_dir_path,
+                        d_buffers_aggregation.lock().unwrap().get_ptr(),
+                    )?;
+                }
+
+                let witness_recursive1 = gen_witness(&pctx, &setups, &proof)?;
+                let proof_recursive1 = generate_proof(
                     &pctx,
                     &setups,
-                    instance_id,
-                    &proofs[*my_instance_id].proof,
-                    &circom_witness,
-                    &publics,
+                    &witness_recursive1,
                     &trace,
                     &prover_buffer,
-                    &mut recursive2_proofs[airgroup_id],
-                    recursive2_initialized[airgroup_id],
-                    output_dir_path.clone(),
+                    &output_dir_path,
                     d_buffers_aggregation.lock().unwrap().get_ptr(),
-                )
-                .expect("Failed to generate recursive proof");
+                )?;
+
+                if recursive2_initialized[airgroup_id] {
+                    let witness_recursive2 =
+                        gen_witness_aggregation(&pctx, &setups, &proof_recursive1, &recursive2_proofs[airgroup_id])?;
+                    let proof_recursive2 = generate_proof(
+                        &pctx,
+                        &setups,
+                        &witness_recursive2,
+                        &trace,
+                        &prover_buffer,
+                        &output_dir_path,
+                        d_buffers_aggregation.lock().unwrap().get_ptr(),
+                    )?;
+                    recursive2_proofs[airgroup_id] = proof_recursive2;
+                } else {
+                    recursive2_proofs[airgroup_id] = proof_recursive1;
+                    recursive2_initialized[airgroup_id] = true;
+                }
 
                 recursive2_initialized[airgroup_id] = true;
             }
         }
-        timer_stop_and_log_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
-        let agg_proof = aggregate_proofs(
-            Self::MY_NAME,
+
+        let agg_recursive2_proof = aggregate_recursive2_proofs(
             &pctx,
             &setups,
             &recursive2_proofs,
-            &circom_witness,
-            &publics,
             &trace,
             &prover_buffer,
             output_dir_path.clone(),
             d_buffers_aggregation.lock().unwrap().get_ptr(),
-        );
-        timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
+        )?;
+        pctx.dctx.read().unwrap().barrier();
 
-        agg_proof
+        if pctx.dctx_get_rank() == 0 {
+            let mut vadcop_final_proof = generate_vadcop_final_proof(
+                &pctx,
+                &setups,
+                &agg_recursive2_proof,
+                &trace,
+                &prover_buffer,
+                output_dir_path.clone(),
+                d_buffers_aggregation.lock().unwrap().get_ptr(),
+            )?;
+            if pctx.options.final_snark {
+                // TODO
+                // timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
+                // let recursivef_proof = generate_recursivef_proof(
+                //     pctx,
+                //     setups.setup_recursivef.as_ref().unwrap(),
+                //     &final_proof,
+                //     circom_witness,
+                //     publics,
+                //     trace,
+                //     prover_buffer,
+                //     output_dir_path.clone(),
+                // )?;
+                // timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
+
+                // timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
+                // let _ = generate_fflonk_snark_proof(pctx, recursivef_proof, output_dir_path.clone());
+                // timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
+            } else if pctx.options.verify_proofs {
+                let setup_path = pctx.global_info.get_setup_path("vadcop_final");
+                let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
+                let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
+                let verkey_path = setup_path.display().to_string() + ".verkey.json";
+
+                timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
+                let valid_proofs = verify_proof(
+                    vadcop_final_proof.proof.as_mut_ptr(),
+                    stark_info_path,
+                    expressions_bin_path,
+                    verkey_path,
+                    Some(pctx.get_publics().clone()),
+                    None,
+                    None,
+                );
+                timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
+                if !valid_proofs {
+                    log::info!(
+                        "{}: ··· {}",
+                        Self::MY_NAME,
+                        "\u{2717} Vadcop Final proof was not verified".bright_red().bold()
+                    );
+                    return Err("Vadcop Final proof was not verified".into());
+                } else {
+                    log::info!(
+                        "{}:     {}",
+                        Self::MY_NAME,
+                        "\u{2713} Vadcop Final proof was verified".bright_green().bold()
+                    );
+                }
+            }
+        }
+        timer_stop_and_log_info!(GENERATING_COMPRESSED_PROOFS);
+        timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
+        Ok(())
     }
 
     fn get_contribution(
@@ -651,7 +743,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn generate_proof_thread(
-        proofs: Arc<Mutex<Vec<Proof>>>,
+        proofs: Arc<Mutex<Vec<Proof<F>>>>,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         instance_id: usize,
@@ -718,7 +810,7 @@ where
 
             timer_stop_and_log_info!(GEN_PROOF);
             proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
-                Proof::new(ProofType::Basic, airgroup_id, air_id, proof);
+                Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof);
         })
     }
 

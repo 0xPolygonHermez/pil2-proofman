@@ -118,10 +118,7 @@ impl<F: Field> Setup<F> {
                     custom_commits_fixed_buffer_size,
                     proof_size,
                 )
-            } else if setup_type == &ProofType::Compressor
-                || setup_type == &ProofType::Recursive1
-                || setup_type == &ProofType::Recursive2
-            {
+            } else {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 (
@@ -130,19 +127,6 @@ impl<F: Field> Setup<F> {
                     expressions_bin,
                     const_pols,
                     const_pols_tree,
-                    const_pols_size,
-                    const_tree_size,
-                    prover_buffer_size,
-                    custom_commits_fixed_buffer_size,
-                    proof_size,
-                )
-            } else {
-                (
-                    stark_info,
-                    p_stark_info,
-                    expressions_bin,
-                    Vec::new(),
-                    Vec::new(),
                     const_pols_size,
                     const_tree_size,
                     prover_buffer_size,
