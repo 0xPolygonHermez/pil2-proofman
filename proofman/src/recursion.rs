@@ -29,12 +29,13 @@ type GetWitnessFinalFunc =
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
+#[derive(Debug)]
 pub struct MaxSizes {
     pub max_trace_area: u64,
     pub max_const_area: u64,
-    pub max_n_publics: u64,
     pub max_aux_trace_area: u64,
     pub max_const_tree_size: u64,
+    pub recursive: bool,
 }
 
 pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> MaxSizes {
@@ -42,11 +43,9 @@ pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
     let max_const_tree_size = 0;
     let max_const_area = 0;
 
-    let mut max_n_publics = 0;
     let mut max_aux_trace_area = 0;
 
     let mut update_max_values = |setup: &Setup<F>| {
-        max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
         max_aux_trace_area = max_aux_trace_area.max(setup.prover_buffer_size);
     };
 
@@ -60,13 +59,12 @@ pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
         update_max_values(setup);
     }
 
-    MaxSizes { max_trace_area, max_const_area, max_n_publics, max_aux_trace_area, max_const_tree_size }
+    MaxSizes { max_trace_area, max_const_area, max_aux_trace_area, max_const_tree_size, recursive: false }
 }
 
 pub fn discover_max_sizes_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> MaxSizes {
     let mut max_trace_area = 0;
     let mut max_const_area = 0;
-    let mut max_n_publics = 0;
     let mut max_aux_trace_area = 0;
     let mut max_const_tree_size = 0;
 
@@ -74,7 +72,6 @@ pub fn discover_max_sizes_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, setup
         let n = 1 << setup.stark_info.stark_struct.n_bits;
         max_trace_area = max_trace_area.max(setup.stark_info.map_sections_n["cm1"] * n);
         max_const_area = max_const_area.max(setup.stark_info.n_constants * n);
-        max_n_publics = max_n_publics.max(setup.stark_info.n_publics);
         max_aux_trace_area = max_aux_trace_area.max(setup.prover_buffer_size);
         max_const_tree_size = max_const_tree_size.max(setup.const_tree_size as u64);
     };
@@ -105,7 +102,7 @@ pub fn discover_max_sizes_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, setup
         update_max_values(setup);
     }
 
-    MaxSizes { max_trace_area, max_const_area, max_n_publics, max_aux_trace_area, max_const_tree_size }
+    MaxSizes { max_trace_area, max_const_area, max_aux_trace_area, max_const_tree_size, recursive: true }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -273,8 +270,8 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
             p_setup,
             trace.as_ptr() as *mut u8,
             prover_buffer.as_ptr() as *mut u8,
-           setup.get_const_ptr(),
-           setup.get_const_tree_ptr(),
+            setup.get_const_ptr(),
+            setup.get_const_tree_ptr(),
             publics.as_ptr() as *mut u8,
             recursive_proof.as_mut_ptr(),
             &proof_file,
@@ -345,8 +342,8 @@ pub fn generate_vadcop_recursive1_proof<F: PrimeField64>(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-       setup.get_const_ptr(),
-       setup.get_const_tree_ptr(),
+        setup.get_const_ptr(),
+        setup.get_const_tree_ptr(),
         publics.as_ptr() as *mut u8,
         recursive1_proof[publics_aggregation..].as_mut_ptr(),
         &proof_file,
@@ -525,8 +522,8 @@ pub fn generate_vadcop_recursive2_proof<F: PrimeField64>(
                             p_setup,
                             trace.as_ptr() as *mut u8,
                             prover_buffer.as_ptr() as *mut u8,
-                           setup.get_const_ptr(),
-                           setup.get_const_tree_ptr(),
+                            setup.get_const_ptr(),
+                            setup.get_const_tree_ptr(),
                             publics.as_ptr() as *mut u8,
                             recursive2_proof[publics_aggregation..].as_mut_ptr(),
                             &proof_file,

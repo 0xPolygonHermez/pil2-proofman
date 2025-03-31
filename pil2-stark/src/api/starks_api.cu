@@ -12,9 +12,9 @@ struct MaxSizes
 {
     uint64_t maxTraceArea;
     uint64_t maxConstArea;
-    uint64_t maxNPublics;
     uint64_t maxAuxTraceArea;
     uint64_t maxConstTreeSize;
+    bool recursive;
 };
 
 
@@ -23,22 +23,25 @@ void *gen_device_commit_buffers(void *maxSizes_)
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
     CHECKCUDAERR(cudaSetDevice(0));
     DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
-    CHECKCUDAERR(cudaMalloc(&buffers->d_trace, maxSizes->maxTraceArea * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->maxConstArea * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_constTree, maxSizes->maxConstTreeSize * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_publicInputs, maxSizes->maxNPublics * sizeof(Goldilocks::Element)));
+    buffers->recursive = maxSizes->recursive;
     CHECKCUDAERR(cudaMalloc(&buffers->d_aux_trace, maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
+    if(buffers->recursive) {
+        CHECKCUDAERR(cudaMalloc(&buffers->d_trace, maxSizes->maxTraceArea * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->maxConstArea * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc(&buffers->d_constTree, maxSizes->maxConstTreeSize * sizeof(Goldilocks::Element)));
+    }
     return (void *)buffers;
 }
 
 void gen_device_commit_buffers_free(void *d_buffers)
 {
     DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
-    CHECKCUDAERR(cudaFree(buffers->d_trace));
-    CHECKCUDAERR(cudaFree(buffers->d_constPols));
-    CHECKCUDAERR(cudaFree(buffers->d_constTree));
-    CHECKCUDAERR(cudaFree(buffers->d_publicInputs));
     CHECKCUDAERR(cudaFree(buffers->d_aux_trace));
+    if(buffers->recursive) {
+        CHECKCUDAERR(cudaFree(buffers->d_trace));
+        CHECKCUDAERR(cudaFree(buffers->d_constPols));
+        CHECKCUDAERR(cudaFree(buffers->d_constTree));
+    }
     delete buffers;
 }
 

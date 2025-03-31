@@ -359,6 +359,19 @@ void StarkInfo::setMapOffsets() {
     if(!gpu) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
         mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
+    } else {
+        uint64_t maxSizeHelper = boundaries.size() * NExtended;
+        if (recursive) {
+            maxSizeHelper += NExtended;
+        }
+        mapOffsets[std::make_pair("zi", true)] = mapTotalN;
+        if(recursive) {
+            mapOffsets[std::make_pair("x_n", false)] = mapTotalN;
+            mapOffsets[std::make_pair("x", true)] = mapTotalN + boundaries.size() * NExtended;
+        } else {
+            mapOffsets[std::make_pair("x", true)] = mapTotalN;
+        }
+        mapTotalN += maxSizeHelper;
     }
 
     mapOffsets[std::make_pair("f", true)] = mapTotalN;
@@ -406,6 +419,11 @@ void StarkInfo::setMapOffsets() {
     mapTotalN = std::max(mapTotalN, maxTotalN);
 
     if(gpu) {
+        mapOffsets[std::make_pair("buff_helper", false)] = mapOffsets[std::make_pair("f", true)] + NExtended * FIELD_EXTENSION;
+        if(mapOffsets[std::make_pair("buff_helper", false)] + NExtended * FIELD_EXTENSION > mapTotalN) {
+            mapTotalN = mapOffsets[std::make_pair("buff_helper", false)] + NExtended * FIELD_EXTENSION;
+        }
+
         mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
         mapTotalN += mapTotalNCustomCommitsFixed;
     }

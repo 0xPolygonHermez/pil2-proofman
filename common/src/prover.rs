@@ -15,7 +15,8 @@ pub enum ProverStatus {
 }
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ProofType {
-    #[default] Basic,
+    #[default]
+    Basic,
     Compressor,
     Recursive1,
     Recursive2,

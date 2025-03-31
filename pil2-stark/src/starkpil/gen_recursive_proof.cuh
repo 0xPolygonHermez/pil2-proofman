@@ -31,6 +31,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     double merkleTime = 0;
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
     ProverHelpers proverHelpers(setupCtx.starkInfo, true);
 
@@ -45,7 +46,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,
         aux_trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
-        publicInputs : (Goldilocks::Element *)d_buffers->d_publicInputs,
+        publicInputs : nullptr,
         proofValues : nullptr,
         challenges : nullptr,
         airgroupValues : nullptr,
@@ -60,10 +61,11 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     // Allocate memory and copy data
     Goldilocks::Element *evals = new Goldilocks::Element[setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION];
     Goldilocks::Element *challenges = new Goldilocks::Element[setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION];
-    CHECKCUDAERR(cudaMemcpy(h_params.publicInputs, publicInputs, setupCtx.starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMalloc(&h_params.publicInputs, setupCtx.starkInfo.nPublics * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&h_params.challenges, setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&h_params.xDivXSub, FIELD_EXTENSION * setupCtx.starkInfo.openingPoints.size() * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemcpy(h_params.publicInputs, publicInputs, setupCtx.starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     StepsParams* d_params;
     CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
@@ -144,6 +146,8 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     CHECKCUDAERR(cudaMalloc(&destStruct.dest_gpu, N * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
     destStruct.addParams(numFieldId, setupCtx.expressionsBin.expressionsInfo[numFieldId].destDim);
     destStruct.addParams(denFieldId, setupCtx.expressionsBin.expressionsInfo[denFieldId].destDim, true);
+    uint64_t xn_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x_n", false)];
+    CHECKCUDAERR(cudaMemcpy(h_params.aux_trace + xn_offset, proverHelpers.x_n, N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));            
 
     expressionsCtx.calculateExpressions_gpu(d_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
 
@@ -202,6 +206,10 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     TimerStart(STARK_STEP_Q);
     
     TimerStart(STARK_STEP_Q_EXPRESSIONS);
+    uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
+    uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
+    CHECKCUDAERR(cudaMemcpy(h_params.aux_trace + zi_offset, proverHelpers.zi, setupCtx.starkInfo.boundaries.size() * NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));            
+    CHECKCUDAERR(cudaMemcpy(h_params.aux_trace + x_offset, proverHelpers.x, NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));            
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
     TimerStopAndLog(STARK_STEP_Q_EXPRESSIONS);
 
@@ -288,6 +296,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
     uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
+    uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
     gl64_t *d_friPol = (gl64_t *)(h_params.aux_trace + friPol_offset);
     
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
@@ -297,7 +306,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     {
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        fold_inplace(step, friPol_offset, challenge, nBitsExt, prevBits, currentBits, d_buffers);
+        fold_inplace(step, friPol_offset, offset_helper, challenge, nBitsExt, prevBits, currentBits, d_buffers);
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {

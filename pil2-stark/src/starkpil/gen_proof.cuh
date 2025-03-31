@@ -84,10 +84,12 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
 
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetCm1,
         aux_trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
-        publicInputs : (Goldilocks::Element *)d_buffers->d_publicInputs,
+        publicInputs : nullptr,
         proofValues : nullptr,
         challenges : nullptr,
         airgroupValues : nullptr,
@@ -100,6 +102,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     };
     
     // Allocate memory and copy data
+    CHECKCUDAERR(cudaMalloc(&h_params.publicInputs, setupCtx.starkInfo.nPublics * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMemcpy(h_params.publicInputs, params.publicInputs, setupCtx.starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMalloc(&h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&h_params.challenges, setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
@@ -199,7 +202,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         }
     }
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-
+    uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
+    CHECKCUDAERR(cudaMemcpy(h_params.aux_trace + zi_offset, proverHelpers.zi, setupCtx.starkInfo.boundaries.size() * NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));            
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
     TimerStopAndLog(STARK_STEP_Q_EXPRESSIONS);
     TimerStart(STARK_STEP_Q_COMMIT);
@@ -272,7 +276,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStopAndLog(STARK_STEP_FRI_XIS);
 
     TimerStart(STARK_STEP_FRI_POLYNOMIAL);
-
+    uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
+    CHECKCUDAERR(cudaMemcpy(h_params.aux_trace + x_offset, proverHelpers.x, NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));            
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
 
     TimerStopAndLog(STARK_STEP_FRI_POLYNOMIAL);
@@ -280,6 +285,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
     uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
+    uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
     gl64_t *d_friPol = (gl64_t *)(h_params.aux_trace + friPol_offset);
     
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
@@ -289,7 +295,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     {
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        fold_inplace(step, friPol_offset, challenge, nBitsExt, prevBits, currentBits, d_buffers);
+        fold_inplace(step, friPol_offset, offset_helper, challenge, nBitsExt, prevBits, currentBits, d_buffers);
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {

@@ -837,8 +837,8 @@ struct DeviceCommitBuffers
     gl64_t *d_trace;
     gl64_t *d_constPols;
     gl64_t *d_constTree;
-    gl64_t *d_publicInputs;
     gl64_t *d_aux_trace;
+    bool recursive;
 };
 
 #undef inline

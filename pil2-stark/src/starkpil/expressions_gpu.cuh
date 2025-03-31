@@ -43,6 +43,10 @@ struct DeviceArguments
     uint64_t offsetTmp1;
     uint64_t offsetTmp3;
     uint64_t offsetDestVals;
+    
+    uint64_t xn_offset;
+    uint64_t x_offset;
+    uint64_t zi_offset;
 
     uint64_t *mapOffsets;  //rick: passar a uint32_t
     uint64_t *mapOffsetsExtended;
@@ -56,9 +60,6 @@ struct DeviceArguments
     uint64_t *mapSectionsN;
     uint64_t *mapSectionsNCustomFixed;
 
-    Goldilocks::Element *zi;
-    Goldilocks::Element *x_n;
-    Goldilocks::Element *x;
     Goldilocks::Element *numbers;
 
     // Dest

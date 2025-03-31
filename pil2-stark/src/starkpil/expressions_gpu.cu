@@ -27,6 +27,10 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers &proverHelpers,
     h_deviceArgs.nStages = nStages_;
     h_deviceArgs.nCustomCommits = nCustoms;
     h_deviceArgs.bufferCommitSize = 1 + nStages_ + 3 + nCustoms;
+    
+    h_deviceArgs.xn_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x_n", false)];
+    h_deviceArgs.x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
+    h_deviceArgs.zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
 
     CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsets, ns * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMalloc(&h_deviceArgs.mapOffsetsExtended, ns * sizeof(uint64_t)));
@@ -56,17 +60,6 @@ ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers &proverHelpers,
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.ops, parserArgs.ops, setupCtx.expressionsBin.nOpsTotal * sizeof(uint8_t), cudaMemcpyHostToDevice));
     CHECKCUDAERR(cudaMemcpy(h_deviceArgs.args, parserArgs.args, setupCtx.expressionsBin.nArgsTotal * sizeof(uint16_t), cudaMemcpyHostToDevice));
 
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.zi, setupCtx.starkInfo.boundaries.size() * NExtended * sizeof(Goldilocks::Element))); 
-    CHECKCUDAERR(cudaMalloc(&h_deviceArgs.x, NExtended * sizeof(Goldilocks::Element)));
-
-    CHECKCUDAERR(cudaMemcpy(h_deviceArgs.zi, proverHelpers.zi, setupCtx.starkInfo.boundaries.size() * h_deviceArgs.NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice)); 
-    CHECKCUDAERR(cudaMemcpy(h_deviceArgs.x, proverHelpers.x, NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));                                
-
-    if(proverHelpers.x_n != nullptr) {
-        CHECKCUDAERR(cudaMalloc(&h_deviceArgs.x_n, N * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMemcpy(h_deviceArgs.x_n, proverHelpers.x_n, N * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));                
-    }
-
 };
 
 ExpressionsGPU::~ExpressionsGPU()
@@ -80,11 +73,6 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapOffsetsCustomFixedExtended));
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapSectionsN));
     CHECKCUDAERR(cudaFree(h_deviceArgs.mapSectionsNCustomFixed));
-    CHECKCUDAERR(cudaFree(h_deviceArgs.zi));
-    if(proverHelpers.x_n != nullptr) {
-        CHECKCUDAERR(cudaFree(h_deviceArgs.x_n));
-    }
-    CHECKCUDAERR(cudaFree(h_deviceArgs.x));
     CHECKCUDAERR(cudaFree(h_deviceArgs.numbers));
     CHECKCUDAERR(cudaFree(h_deviceArgs.ops));
     CHECKCUDAERR(cudaFree(h_deviceArgs.args));
@@ -312,13 +300,13 @@ __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_devic
 #if DEBUG
             if(print) printf("Expression debug x or x_n\n");
 #endif
-            Goldilocks::Element *x = d_deviceArgs->domainExtended ? &d_deviceArgs->x[row] : &d_deviceArgs->x_n[row];
+            Goldilocks::Element *x = d_deviceArgs->domainExtended ? &d_params->aux_trace[d_deviceArgs->x_offset + row] : &d_params->aux_trace[d_deviceArgs->xn_offset + row];
             return x;
         } else {
 #if DEBUG
             if(print) printf("Expression debug zi\n");
 #endif
-            return &d_deviceArgs->zi[(boundary - 1)*d_deviceArgs->domainSize  + row];
+            return &d_params->aux_trace[d_deviceArgs->zi_offset + (boundary - 1)*d_deviceArgs->domainSize  + row];
         }
         break;
     }
@@ -329,9 +317,9 @@ __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_devic
 #endif
         if(dim == 1) { assert(0); }
         uint64_t o = args[i_args + 1];
-        Goldilocks3GPU::op_31_gpu(3, (gl64_t*)value, (gl64_t*) (&d_params->xDivXSub[o * FIELD_EXTENSION]), true,  (gl64_t*) &d_deviceArgs->x[row], false);
+        Goldilocks3GPU::op_31_gpu(3, (gl64_t*)value, (gl64_t*) (&d_params->xDivXSub[o * FIELD_EXTENSION]), true,  (gl64_t*) &d_params->aux_trace[d_deviceArgs->x_offset + row], false);
         getInversePolinomial__((gl64_t*) value, 3);  
-        Goldilocks3GPU::op_31_gpu(2, (gl64_t*)value, (gl64_t*)value, false, (gl64_t*) &d_deviceArgs->x[row], false);
+        Goldilocks3GPU::op_31_gpu(2, (gl64_t*)value, (gl64_t*)value, false, (gl64_t*) &d_params->aux_trace[d_deviceArgs->x_offset + row], false);
         return value;
         break;
     }
