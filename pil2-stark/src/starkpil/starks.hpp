@@ -15,10 +15,10 @@
 #include "transcriptBN128.hpp"
 #include "exit_process.hpp"
 #include "expressions_bin.hpp"
-#include "expressions_avx.hpp"
-#include "expressions_avx512.hpp"
 #include "expressions_pack.hpp"
 
+class gl64_t;
+struct DeviceCommitBuffers;
 
 template <typename ElementType>
 class Starks
@@ -32,8 +32,11 @@ public:
     MerkleTreeType **treesGL;
     MerkleTreeType **treesFRI;
 
+    NTT_Goldilocks ntt;
+    NTT_Goldilocks nttExtended;
+
 public:
-    Starks(SetupCtx& setupCtx_, ProverHelpers& proverHelpers_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr) : setupCtx(setupCtx_), proverHelpers(proverHelpers_)                           
+    Starks(SetupCtx& setupCtx_, ProverHelpers& proverHelpers_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr, bool initializeTrees = false) : setupCtx(setupCtx_), proverHelpers(proverHelpers_), ntt(1 << setupCtx.starkInfo.starkStruct.nBits), nttExtended(1 << setupCtx.starkInfo.starkStruct.nBitsExt)                     
     {
 
         uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -46,7 +49,7 @@ public:
         {
             std::string section = "cm" + to_string(i + 1);
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-            treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols, false, allocateNodes);
+            treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols, initializeTrees, allocateNodes || initializeTrees);
         }
 
         
@@ -64,7 +67,7 @@ public:
             uint64_t nGroups = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
             uint64_t groupSize = (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) / nGroups;
 
-            treesFRI[step] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION, false, allocateNodes);
+            treesFRI[step] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, nGroups, groupSize * FIELD_EXTENSION, initializeTrees, allocateNodes || initializeTrees);
         }
     };
     ~Starks()
@@ -84,13 +87,16 @@ public:
     
     void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper);
     void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, double *nttTime = nullptr, double *merkleTime=nullptr);
 
     void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void commitStage_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, double *nttTime=nullptr, double *merkleTime=nullptr);
     void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void computeQ_inplace(uint64_t step, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, double *nttTime=nullptr, double *merkleTime=nullptr);
     
-    void calculateImPolsExpressions(uint64_t step, StepsParams& params);
-    void calculateQuotientPolynomial(StepsParams& params);
-    void calculateFRIPolynomial(StepsParams& params);
+    void calculateImPolsExpressions(uint64_t step, StepsParams& params, ExpressionsCtx& expressionsCtx);
+    void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
+    void calculateFRIPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
 
     void computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv);
     void computeEvals(StepsParams &params, Goldilocks::Element *LEv, FRIProof<ElementType> &proof);

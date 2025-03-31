@@ -48,14 +48,14 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
         }
     }
 
-    Goldilocks::Element airgroupValues[starkInfo.airgroupValuesMap.size()  * FIELD_EXTENSION];
+    Goldilocks::Element airgroupValues[starkInfo.airgroupValuesSize];
     for(uint64_t i = 0; i < starkInfo.airgroupValuesMap.size() ; ++i) {
         for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
             airgroupValues[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["airgroupvalues"][i][j]);
         }
     }
 
-    Goldilocks::Element airValues[starkInfo.airValuesMap.size()  * FIELD_EXTENSION];
+    Goldilocks::Element airValues[starkInfo.airValuesSize];
     uint64_t a = 0;
     for(uint64_t i = 0; i < starkInfo.airValuesMap.size(); ++i) {
         if(starkInfo.airValuesMap[i].stage == 1) {
@@ -296,10 +296,9 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     
     Goldilocks::Element buff[FIELD_EXTENSION];
     Dest dest(buff, 1);
-    dest.addParams(setupCtx.expressionsBin.expressionsInfo[starkInfo.cExpId]);
-    std::vector<Dest> dests = {dest};
+    dest.addParams(starkInfo.cExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.cExpId].destDim);
     
-    expressionsPack.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, 1, false);
+    expressionsPack.calculateExpressions(params, dest, 1, false, false);
 
     Goldilocks::Element xN[3] = {Goldilocks::one(), Goldilocks::zero(), Goldilocks::zero()};
     for(uint64_t i = 0; i < uint64_t(1 << starkInfo.starkStruct.nBits); ++i) {
@@ -333,9 +332,8 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     zklog.trace("Verifying FRI queries consistency");
     Goldilocks::Element buffQueries[FIELD_EXTENSION*starkInfo.starkStruct.nQueries];
     Dest destQueries(buffQueries, starkInfo.starkStruct.nQueries);
-    destQueries.addParams(setupCtx.expressionsBin.expressionsInfo[starkInfo.friExpId]);
-    std::vector<Dest> destsQueries = {destQueries};
-    expressionsPack.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, destsQueries, starkInfo.starkStruct.nQueries, false);
+    destQueries.addParams(starkInfo.friExpId, setupCtx.expressionsBin.expressionsInfo[starkInfo.friExpId].destDim);
+    expressionsPack.calculateExpressions(params, destQueries, starkInfo.starkStruct.nQueries, false, false);
     bool isValidFRIConsistency = true;
 #pragma omp parallel for
     for(uint64_t q = 0; q < starkInfo.starkStruct.nQueries; ++q) {

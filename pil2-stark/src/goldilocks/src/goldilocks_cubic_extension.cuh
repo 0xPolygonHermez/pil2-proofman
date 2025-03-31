@@ -10,12 +10,11 @@
 #include "cuda_utils.cuh"
 
 #ifdef __USE_CUDA__
-# define inline __device__ __forceinline__
-# ifdef __GNUC__
-#  define asm __asm__ __volatile__
-# else
-#  define asm asm volatile
-# endif
+#ifdef __GNUC__
+#define asm __asm__ __volatile__
+#else
+#define asm asm volatile
+#endif
 #endif
 
 #define FIELD_EXTENSION 3
@@ -26,13 +25,14 @@ Prime: 0xFFFFFFFF00000001
 Irreducible polynomial: x^3 - x -1
 */
 
-__device__ __forceinline__ gl64_t neg_element(gl64_t x) {
+__device__ __forceinline__ gl64_t neg_element(gl64_t x)
+{
     gl64_t z = 0ul;
     return z - x;
 }
 
 // TODO: Review and optimize inv imlementation
-__device__ gl64_t inv_element(const gl64_t &in1)
+__device__ __forceinline__ gl64_t inv_element(const gl64_t &in1)
 {
     if (in1.is_zero())
     {
@@ -81,23 +81,23 @@ public:
 
     static const Element &zero() { return ZERO; };
 
-    static inline void zero(Element &result)
+    static __device__ __forceinline__ void zero(Element &result)
     {
         result[0] = 0ul;
         result[1] = 0ul;
         result[2] = 0ul;
     };
 
-    static inline const Element &one() { return ONE; };
+    static __device__ __forceinline__ const Element &one() { return ONE; };
 
-    static inline void one(Element &result)
+    static __device__ __forceinline__ void one(Element &result)
     {
         result[0] = 1ul;
         result[1] = 0ul;
         result[2] = 0ul;
     };
 
-    static inline bool isOne(Element &result)
+    static __device__ __forceinline__ bool isOne(Element &result)
     {
         return result[0].is_one() && result[1].is_zero() && result[2].is_zero();
     };
@@ -117,14 +117,14 @@ public:
         }
     };
 
-    static inline void fromU64(Element &result, uint64_t in1[FIELD_EXTENSION])
+    static __device__ __forceinline__ void fromU64(Element &result, uint64_t in1[FIELD_EXTENSION])
     {
         for (uint64_t i = 0; i < FIELD_EXTENSION; i++)
         {
             result[i] = in1[i];
         }
     }
-    static inline void fromS32(Element &result, int32_t in1[FIELD_EXTENSION])
+    static __device__ __forceinline__ void fromS32(Element &result, int32_t in1[FIELD_EXTENSION])
     {
         //  (in1 < 0) ? aux = static_cast<uint64_t>(in1) + GOLDILOCKS_PRIME : aux = static_cast<uint64_t>(in1);
         for (uint64_t i = 0; i < FIELD_EXTENSION; i++)
@@ -132,7 +132,7 @@ public:
             result[i] = (in1[i] < 0) ? static_cast<uint64_t>(in1[i]) + GOLDILOCKS_PRIME : static_cast<uint64_t>(in1[i]);
         }
     }
-    static inline void toU64(uint64_t (&result)[FIELD_EXTENSION], const Element &in1)
+    static __device__ __forceinline__ void toU64(uint64_t (&result)[FIELD_EXTENSION], const Element &in1)
     {
         for (uint64_t i = 0; i < FIELD_EXTENSION; i++)
         {
@@ -141,23 +141,23 @@ public:
     }
 
     // ======== ADD ========
-    static inline void add(Element &result, const Element &a, const uint64_t &b)
+    static __device__ __forceinline__ void add(Element &result, const Element &a, const uint64_t &b)
     {
         result[0] = a[0] + gl64_t(b);
         result[1] = a[1];
         result[2] = a[2];
     }
-    static inline void add(Element &result, const Element &a, const gl64_t b)
+    static __device__ __forceinline__ void add(Element &result, const Element &a, const gl64_t b)
     {
         result[0] = a[0] + b;
         result[1] = a[1];
         result[2] = a[2];
     }
-    static inline void add(Element &result, const gl64_t a, const Element &b)
+    static __device__ __forceinline__ void add(Element &result, const gl64_t a, const Element &b)
     {
         add(result, b, a);
     }
-    static inline void add(Element &result, const Element &a, const Element &b)
+    static __device__ __forceinline__ void add(Element &result, const Element &a, const Element &b)
     {
         for (uint64_t i = 0; i < FIELD_EXTENSION; i++)
         {
@@ -166,25 +166,25 @@ public:
     }
 
     // ======== SUB ========
-    static inline void sub(Element &result, Element &a, uint64_t &b)
+    static __device__ __forceinline__ void sub(Element &result, Element &a, uint64_t &b)
     {
         result[0] = a[0] - gl64_t(b);
         result[1] = a[1];
         result[2] = a[2];
     }
-    static inline void sub(Element &result, gl64_t a, Element const &b)
+    static __device__ __forceinline__ void sub(Element &result, gl64_t a, Element const &b)
     {
         result[0] = a - b[0];
         result[1] = neg_element(b[1]);
         result[2] = neg_element(b[2]);
     }
-    static inline void sub(Element &result, Element &a, gl64_t b)
+    static __device__ __forceinline__ void sub(Element &result, Element &a, gl64_t b)
     {
         result[0] = a[0] - b;
         result[1] = a[1];
         result[2] = a[2];
     }
-    static inline void sub(Element &result, Element &a, Element &b)
+    static __device__ __forceinline__ void sub(Element &result, Element &a, Element &b)
     {
         for (uint64_t i = 0; i < FIELD_EXTENSION; i++)
         {
@@ -193,17 +193,17 @@ public:
     }
 
     // ======== NEG ========
-    static inline void neg(Element &result, Element &a)
+    static __device__ __forceinline__ void neg(Element &result, Element &a)
     {
         sub(result, (Element &)zero(), a);
     }
 
     // ======== MUL ========
-    static inline void mul(Element *result, Element *a, Element *b)
+    static __device__ __forceinline__ void mul(Element *result, Element *a, Element *b)
     {
         mul(*result, *a, *b);
     }
-    static inline void mul(Element &result, Element &a, Element &b)
+    static __device__ __forceinline__ void mul(Element &result, Element &a, Element &b)
     {
         gl64_t A = (a[0] + a[1]) * (b[0] + b[1]);
         gl64_t B = (a[0] + a[2]) * (b[0] + b[2]);
@@ -217,17 +217,17 @@ public:
         result[1] = ((((A + C) - E) - E) - D);
         result[2] = B - G;
     };
-    static inline void mul(Element &result, Element &a, gl64_t &b)
+    static __device__ __forceinline__ void mul(Element &result, Element &a, gl64_t &b)
     {
         result[0] = a[0] * b;
         result[1] = a[1] * b;
         result[2] = a[2] * b;
     }
-    static inline void mul(Element &result, gl64_t a, Element &b)
+    static __device__ __forceinline__ void mul(Element &result, gl64_t a, Element &b)
     {
         mul(result, b, a);
     }
-    static inline void mul(Element &result, Element &a, uint64_t b)
+    static __device__ __forceinline__ void mul(Element &result, Element &a, uint64_t b)
     {
         result[0] = a[0] * b;
         result[1] = a[1] * b;
@@ -235,7 +235,7 @@ public:
     }
 
     // ======== DIV ========
-    static inline void div(Element &result, Element &a, gl64_t b)
+    static __device__ __forceinline__ void div(Element &result, Element &a, gl64_t b)
     {
         gl64_t b_inv = inv_element(b);
         mul(result, a, b_inv);
@@ -245,17 +245,17 @@ public:
     // TBD
 
     // ======== SQUARE ========
-    static inline void square(Element &result, Element &a)
+    static __device__ __forceinline__ void square(Element &result, Element &a)
     {
         mul(result, a, a);
     }
 
     // ======== INV ========
-    static inline void inv(Element *result, Element *a)
+    static __device__ __forceinline__ void inv(Element *result, Element *a)
     {
         inv(*result, *a);
     }
-    static inline void inv(Element &result, Element &a)
+    static __device__ __noinline__ void inv(Element &result, Element &a)
     {
         gl64_t aa = a[0] * a[0];
         gl64_t ac = a[0] * a[2];
@@ -286,120 +286,279 @@ public:
         result[2] = i3;
     }
 
-    /* Pack operations */
-
-    static inline void copy_pack( uint64_t nrowsPack, gl64_t *c_, const gl64_t *a_){
-        for(uint64_t irow =0; irow<nrowsPack; ++irow){
-            gl64_t::copy(c_[irow], a_[irow]);
-            gl64_t::copy(c_[nrowsPack + irow], a_[nrowsPack + irow]);
-            gl64_t::copy(c_[2*nrowsPack + irow], a_[2*nrowsPack + irow]);
-        }
-    }
-    static inline void add_pack( uint64_t nrowsPack, gl64_t *c_, const gl64_t *a_, const gl64_t *b_){
-        for(uint64_t irow =0; irow<nrowsPack; ++irow){
-            c_[irow] = a_[irow] + b_[irow];
-            c_[nrowsPack + irow] = a_[nrowsPack + irow] + b_[nrowsPack + irow];
-            c_[2*nrowsPack + irow] = a_[2*nrowsPack + irow] + b_[2*nrowsPack + irow];
-        }
-    }
-    static inline void sub_pack( uint64_t nrowsPack, gl64_t *c_, const gl64_t *a_, const gl64_t *b_){
-        for(uint64_t irow =0; irow<nrowsPack; ++irow){
-            c_[irow] = a_[irow] - b_[irow];
-            c_[nrowsPack + irow] = a_[nrowsPack + irow] - b_[nrowsPack + irow];
-            c_[2*nrowsPack + irow] = a_[2*nrowsPack + irow] - b_[2*nrowsPack + irow];
-        }
-    }
-    static inline void mul_pack(uint64_t nrowsPack, gl64_t *c_, const gl64_t *a_, const gl64_t *b_){
-        for (uint64_t i = 0; i < nrowsPack; ++i)
+    // ======== POW ========
+    static __device__ __forceinline__ void pow(Element &base, uint64_t exp, Element &result)
+    {
+        one(result);
+        while (exp > 0)
         {
-            gl64_t A = (a_[i] + a_[nrowsPack + i]) * (b_[i] + b_[nrowsPack + i]);
-            gl64_t B = (a_[i] + a_[2*nrowsPack + i]) * (b_[i] + b_[2*nrowsPack + i]);
-            gl64_t C = (a_[nrowsPack + i] + a_[2*nrowsPack + i]) * (b_[nrowsPack + i] + b_[2*nrowsPack + i]);
-            gl64_t D = a_[i] * b_[i];
-            gl64_t E = a_[nrowsPack + i] * b_[nrowsPack + i];
-            gl64_t F = a_[2*nrowsPack + i] * b_[2*nrowsPack + i];
-            gl64_t G = D - E;
-
-            c_[i] = (C + G) - F;
-            c_[nrowsPack + i] = ((((A + C) - E) - E) - D);
-            c_[2*nrowsPack + i] = B - G;
+            if (exp % 2 == 1)
+            {
+                mul(result, result, base);
+            }
+            mul(base, base, base);
+            exp /= 2;
         }
     }
-    static inline void mul_pack(uint64_t nrowsPack, gl64_t *c_, const gl64_t *a_, const gl64_t *challenge_, const gl64_t *challenge_ops_){
-        for (uint64_t i = 0; i < nrowsPack; ++i)
+
+    // ======== EXPRESSIONS ========
+    static __device__ __forceinline__ void copy_gpu(gl64_t *c_, const gl64_t *a_, bool const_a)
+    {
+        if (const_a)
         {
-            gl64_t A = (a_[i] + a_[nrowsPack + i]) * challenge_ops_[i];
-            gl64_t B = (a_[i] + a_[2*nrowsPack + i]) * challenge_ops_[nrowsPack + i];
-            gl64_t C = (a_[nrowsPack + i] + a_[2*nrowsPack + i]) * challenge_ops_[2*nrowsPack + i];
-            gl64_t D = a_[i] * challenge_[i];
-            gl64_t E = a_[nrowsPack + i] * challenge_[nrowsPack + i];
-            gl64_t F = a_[2*nrowsPack + i] * challenge_[2*nrowsPack + i];
-            gl64_t G = D - E;
-
-            c_[i] = (C + G) - F;
-            c_[nrowsPack + i] = ((((A + C) - E) - E) - D);
-            c_[2*nrowsPack + i] = B - G;
+            c_[threadIdx.x] = a_[0];
+            c_[blockDim.x + threadIdx.x] = a_[1];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2];
+        }
+        else
+        {
+            c_[threadIdx.x] = a_[threadIdx.x];
+            c_[blockDim.x + threadIdx.x] = a_[blockDim.x + threadIdx.x];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2 * blockDim.x + threadIdx.x];
         }
     }
+    static __device__ __forceinline__ void add_gpu(gl64_t *c_, const gl64_t *a_, bool const_a, const gl64_t *b_, bool const_b)
+    {
 
-    static inline void op_pack( uint64_t nrowsPack, uint64_t op, gl64_t *c, const gl64_t *a, const gl64_t *b){
+        if (const_a && const_b)
+        {
+            c_[threadIdx.x] = a_[0] + b_[0];
+            c_[blockDim.x + threadIdx.x] = a_[1] + b_[1];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2] + b_[2];
+        }
+        else if (const_a)
+        {
+            c_[threadIdx.x] = a_[0] + b_[threadIdx.x];
+            c_[blockDim.x + threadIdx.x] = a_[1] + b_[blockDim.x + threadIdx.x];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2] + b_[2 * blockDim.x + threadIdx.x];
+        }
+        else if (const_b)
+        {
+            c_[threadIdx.x] = a_[threadIdx.x] + b_[0];
+            c_[blockDim.x + threadIdx.x] = a_[blockDim.x + threadIdx.x] + b_[1];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2 * blockDim.x + threadIdx.x] + b_[2];
+        }
+        else
+        {
+            c_[threadIdx.x] = a_[threadIdx.x] + b_[threadIdx.x];
+            c_[blockDim.x + threadIdx.x] = a_[blockDim.x + threadIdx.x] + b_[blockDim.x + threadIdx.x];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2 * blockDim.x + threadIdx.x] + b_[2 * blockDim.x + threadIdx.x];
+        }
+    }
+    static __device__ __forceinline__ void sub_gpu(gl64_t *c_, const gl64_t *a_, bool const_a, const gl64_t *b_, bool const_b)
+    {
+        if (const_a && const_b)
+        {
+            c_[threadIdx.x] = a_[0] - b_[0];
+            c_[blockDim.x + threadIdx.x] = a_[1] - b_[1];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2] - b_[2];
+        }
+        else if (const_a)
+        {
+            c_[threadIdx.x] = a_[0] - b_[threadIdx.x];
+            c_[blockDim.x + threadIdx.x] = a_[1] - b_[blockDim.x + threadIdx.x];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2] - b_[2 * blockDim.x + threadIdx.x];
+        }
+        else if (const_b)
+        {
+            c_[threadIdx.x] = a_[threadIdx.x] - b_[0];
+            c_[blockDim.x + threadIdx.x] = a_[blockDim.x + threadIdx.x] - b_[1];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2 * blockDim.x + threadIdx.x] - b_[2];
+        }
+        else
+        {
+            c_[threadIdx.x] = a_[threadIdx.x] - b_[threadIdx.x];
+            c_[blockDim.x + threadIdx.x] = a_[blockDim.x + threadIdx.x] - b_[blockDim.x + threadIdx.x];
+            c_[2 * blockDim.x + threadIdx.x] = a_[2 * blockDim.x + threadIdx.x] - b_[2 * blockDim.x + threadIdx.x];
+        }
+    }
+    static __device__ __forceinline__ void mul_gpu(gl64_t *c_, const gl64_t *a_, bool const_a, const gl64_t *b_, bool const_b)
+    {
+
+        gl64_t A, B, C, D, E, F, G;
+
+        if (const_a && const_b)
+        {
+            A = (a_[0] + a_[1]) * (b_[0] + b_[1]);
+            B = (a_[0] + a_[2]) * (b_[0] + b_[2]);
+            C = (a_[1] + a_[2]) * (b_[1] + b_[2]);
+            D = a_[0] * b_[0];
+            E = a_[1] * b_[1];
+            F = a_[2] * b_[2];
+        }
+        else if (const_a)
+        {
+            A = (a_[0] + a_[1]) * (b_[threadIdx.x] + b_[blockDim.x + threadIdx.x]);
+            B = (a_[0] + a_[2]) * (b_[threadIdx.x] + b_[2 * blockDim.x + threadIdx.x]);
+            C = (a_[1] + a_[2]) * (b_[blockDim.x + threadIdx.x] + b_[2 * blockDim.x + threadIdx.x]);
+            D = a_[0] * b_[threadIdx.x];
+            E = a_[1] * b_[blockDim.x + threadIdx.x];
+            F = a_[2] * b_[2 * blockDim.x + threadIdx.x];
+        }
+        else if (const_b)
+        {
+            A = (a_[threadIdx.x] + a_[blockDim.x + threadIdx.x]) * (b_[0] + b_[1]);
+            B = (a_[threadIdx.x] + a_[2 * blockDim.x + threadIdx.x]) * (b_[0] + b_[2]);
+            C = (a_[blockDim.x + threadIdx.x] + a_[2 * blockDim.x + threadIdx.x]) * (b_[1] + b_[2]);
+            D = a_[threadIdx.x] * b_[0];
+            E = a_[blockDim.x + threadIdx.x] * b_[1];
+            F = a_[2 * blockDim.x + threadIdx.x] * b_[2];
+        }
+        else
+        {
+            A = (a_[threadIdx.x] + a_[blockDim.x + threadIdx.x]) * (b_[threadIdx.x] + b_[blockDim.x + threadIdx.x]);
+            B = (a_[threadIdx.x] + a_[2 * blockDim.x + threadIdx.x]) * (b_[threadIdx.x] + b_[2 * blockDim.x + threadIdx.x]);
+            C = (a_[blockDim.x + threadIdx.x] + a_[2 * blockDim.x + threadIdx.x]) * (b_[blockDim.x + threadIdx.x] + b_[2 * blockDim.x + threadIdx.x]);
+            D = a_[threadIdx.x] * b_[threadIdx.x];
+            E = a_[blockDim.x + threadIdx.x] * b_[blockDim.x + threadIdx.x];
+            F = a_[2 * blockDim.x + threadIdx.x] * b_[2 * blockDim.x + threadIdx.x];
+        }
+
+        G = D - E;
+        c_[threadIdx.x] = (C + G) - F;
+        c_[blockDim.x + threadIdx.x] = ((((A + C) - E) - E) - D);
+        c_[2 * blockDim.x + threadIdx.x] = B - G;
+    }
+
+    static __device__ __forceinline__ void op_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
+    {
         switch (op)
         {
+        case 0:
+            add_gpu(c, a, const_a, b, const_b);
+            break;
+        case 1:
+            sub_gpu(c, a, const_a, b, const_b);
+            break;
+        case 2:
+            mul_gpu(c, a, const_a, b, const_b);
+            break;
+        case 3:
+            sub_gpu(c, b, const_b, a, const_a);
+            break;
+        default:
+            assert(0);
+            break;
+        }
+    }
+    static __device__ __forceinline__ void op_31_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
+    {
+
+        if (const_a && const_b)
+        {
+            switch (op)
+            {
             case 0:
-                add_pack(nrowsPack, c, a, b);
+                c[threadIdx.x] = a[0] + b[0];
+                c[blockDim.x + threadIdx.x] = a[1];
+                c[2 * blockDim.x + threadIdx.x] = a[2];
                 break;
             case 1:
-                sub_pack(nrowsPack, c, a, b);
+                c[threadIdx.x] = a[0] - b[0];
+                c[blockDim.x + threadIdx.x] = a[1];
+                c[2 * blockDim.x + threadIdx.x] = a[2];
                 break;
             case 2:
-                mul_pack(nrowsPack, c, a, b);
+                c[threadIdx.x] = a[0] * b[0];
+                c[blockDim.x + threadIdx.x] = a[1] * b[0];
+                c[2 * blockDim.x + threadIdx.x] = a[2] * b[0];
                 break;
             case 3:
-                sub_pack(nrowsPack, c, b, a);
+                c[threadIdx.x] = b[0] - a[0];
+                c[blockDim.x + threadIdx.x] = -a[1];
+                c[2 * blockDim.x + threadIdx.x] = -a[2];
                 break;
             default:
                 assert(0);
                 break;
+            }
         }
-    }
-    static inline void op_31_pack( uint64_t nrowsPack, uint64_t op, gl64_t *c, const gl64_t *a, const gl64_t *b){
-        switch (op)
+        else if (const_a)
         {
+            switch (op)
+            {
             case 0:
-                for (uint64_t i = 0; i < nrowsPack; ++i)
-                {
-                    c[i] = a[i] + b[i];
-                    c[nrowsPack + i] = a[nrowsPack + i];
-                    c[2*nrowsPack + i] = a[2*nrowsPack + i];
-                }
+                c[threadIdx.x] = a[0] + b[threadIdx.x];
+                c[blockDim.x + threadIdx.x] = a[1];
+                c[2 * blockDim.x + threadIdx.x] = a[2];
                 break;
             case 1:
-                for (uint64_t i = 0; i < nrowsPack; ++i)
-                {
-                    c[i] = a[i] - b[i];
-                    c[nrowsPack + i] = a[nrowsPack + i];
-                    c[2*nrowsPack + i] = a[2*nrowsPack + i];
-                }
+                c[threadIdx.x] = a[0] - b[threadIdx.x];
+                c[blockDim.x + threadIdx.x] = a[1];
+                c[2 * blockDim.x + threadIdx.x] = a[2];
                 break;
             case 2:
-                for (uint64_t i = 0; i < nrowsPack; ++i)
-                {
-                    c[i] = a[i] * b[i];
-                    c[nrowsPack + i] = a[nrowsPack + i] * b[i];
-                    c[2*nrowsPack + i] = a[2*nrowsPack + i] * b[i];
-                }
+                c[threadIdx.x] = a[0] * b[threadIdx.x];
+                c[blockDim.x + threadIdx.x] = a[1] * b[threadIdx.x];
+                c[2 * blockDim.x + threadIdx.x] = a[2] * b[threadIdx.x];
                 break;
             case 3:
-                for (uint64_t i = 0; i < nrowsPack; ++i)
-                {
-                    c[i] = b[i] - a[i];
-                    c[nrowsPack + i] = -a[nrowsPack + i];
-                    c[2*nrowsPack + i] = -a[2*nrowsPack + i];
-                }
+                c[threadIdx.x] = b[threadIdx.x] - a[0];
+                c[blockDim.x + threadIdx.x] = -a[1];
+                c[2 * blockDim.x + threadIdx.x] = -a[2];
                 break;
             default:
                 assert(0);
                 break;
+            }
+        }
+        else if (const_b)
+        {
+            switch (op)
+            {
+            case 0:
+                c[threadIdx.x] = a[threadIdx.x] + b[0];
+                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
+                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
+                break;
+            case 1:
+                c[threadIdx.x] = a[threadIdx.x] - b[0];
+                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
+                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
+                break;
+            case 2:
+                c[threadIdx.x] = a[threadIdx.x] * b[0];
+                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] * b[0];
+                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] * b[0];
+                break;
+            case 3:
+                c[threadIdx.x] = b[0] - a[threadIdx.x];
+                c[blockDim.x + threadIdx.x] = -a[blockDim.x + threadIdx.x];
+                c[2 * blockDim.x + threadIdx.x] = -a[2 * blockDim.x + threadIdx.x];
+                break;
+            default:
+                assert(0);
+                break;
+            }
+        }
+        else
+        {
+            switch (op)
+            {
+            case 0:
+                c[threadIdx.x] = a[threadIdx.x] + b[threadIdx.x];
+                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
+                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
+                break;
+            case 1:
+                c[threadIdx.x] = a[threadIdx.x] - b[threadIdx.x];
+                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
+                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
+                break;
+            case 2:
+                c[threadIdx.x] = a[threadIdx.x] * b[threadIdx.x];
+                c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] * b[threadIdx.x];
+                c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] * b[threadIdx.x];
+                break;
+            case 3:
+                c[threadIdx.x] = b[threadIdx.x] - a[threadIdx.x];
+                c[blockDim.x + threadIdx.x] = -a[blockDim.x + threadIdx.x];
+                c[2 * blockDim.x + threadIdx.x] = -a[2 * blockDim.x + threadIdx.x];
+                break;
+            default:
+                assert(0);
+                break;
+            }
         }
     }
 };

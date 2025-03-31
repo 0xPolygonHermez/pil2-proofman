@@ -145,9 +145,9 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "cc"
-version = "1.2.16"
+version = "1.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be714c154be609ec7f5dad223a33bf1482fff90472de28f7362806e6d4832b8c"
+checksum = "1fcb57c740ae1daf453ae85f16e37396f672b039e00d9d866e07ddb24e328e3a"
 dependencies = [
  "shlex",
 ]
@@ -180,9 +180,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.32"
+version = "4.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6088f3ae8c3608d19260cd7445411865a485688711b78b5be70d78cd96136f83"
+checksum = "e958897981290da2a852763fe9cdb89cd36977a5d729023127095fa94d95e2ff"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -190,9 +190,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.32"
+version = "4.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22a7ef7f676155edfb82daa97f99441f3ebf4a58d5e32f295a56259f1b6facc8"
+checksum = "83b0f35019843db2160b5bb19ae09b4e6411ac33fc6a712003c33e03090e2489"
 dependencies = [
  "anstream",
  "anstyle",
@@ -358,7 +358,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fibonacci-square"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "env_logger",
  "log",
@@ -479,9 +479,9 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
 name = "jiff"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d699bc6dfc879fb1bf9bdff0d4c56f0884fc6f0d0eb0fba397a6d00cd9a6b85e"
+checksum = "c102670231191d07d37a35af3eb77f1f0dbf7a71be51a962dcd57ea607be7260"
 dependencies = [
  "jiff-static",
  "log",
@@ -492,9 +492,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-static"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d16e75759ee0aa64c57a56acbf43916987b20c77373cb7e808979e02b93c9f9"
+checksum = "4cdde31a9d349f1b1f51a0b3714a5940ac022976f4b49485fc04be052b183b4c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -562,9 +562,9 @@ checksum = "fe7db12097d22ec582439daf8618b8fdd1a7bef6270e9af3b1ebcd30893cf413"
 
 [[package]]
 name = "log"
-version = "0.4.26"
+version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30bde2b3dc3671ae49d8e2e9f044c7c005836e7a023ee57cffa25ab82764bb9e"
+checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 
 [[package]]
 name = "memchr"
@@ -681,9 +681,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.21.1"
+version = "1.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
+checksum = "c2806eaa3524762875e21c3dcd057bc4b7bfa01ce4da8d46be1cd43649e1cc6b"
 
 [[package]]
 name = "p3-dft"
@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "pil-std-lib"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "colored",
  "log",
@@ -845,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "pilout"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "log",
@@ -910,7 +910,7 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "blake3",
  "colored",
@@ -936,7 +936,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "blake3",
  "clap",
@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "env_logger",
  "log",
@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-hints"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
  "p3-field",
@@ -990,7 +990,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1000,14 +1000,14 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "proofman-util"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "colored",
  "p3-field",
@@ -1415,7 +1415,7 @@ dependencies = [
 
 [[package]]
 name = "transcript"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "proofman-starks-lib-c",
 ]
@@ -1634,7 +1634,7 @@ dependencies = [
 
 [[package]]
 name = "witness"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "colored",
  "env_logger",
@@ -1649,18 +1649,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.23"
+version = "0.8.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd97444d05a4328b90e75e503a34bad781f14e28a823ad3557f0750df1ebcbc6"
+checksum = "2586fea28e186957ef732a5f8b3be2da217d65c5969d4b1e17f973ebbe876879"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.23"
+version = "0.8.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6352c01d0edd5db859a63e2605f4ea3183ddbd15e2c4a9e7d32184df75e4f154"
+checksum = "a996a8f63c5c4448cd959ac1bab0aaa3306ccfd060472f85943ee0750f0169be"
 dependencies = [
  "proc-macro2",
  "quote",

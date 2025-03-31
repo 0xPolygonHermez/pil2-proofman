@@ -51,6 +51,10 @@ public:
     void getGroupProof(RawFr::Element *proof, uint64_t idx);
     
     void merkelize();
+    Goldilocks::Element* get_nodes_ptr() {
+        assert(false); //This function cannot be used, is just for compatibility
+        return source;
+    }
 
     bool verifyGroupProof(RawFr::Element* root, std::vector<std::vector<RawFr::Element>> &mp, uint64_t idx, std::vector<Goldilocks::Element> &v);
 

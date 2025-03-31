@@ -162,7 +162,7 @@ TEST(GOLDILOCKS_TEST, mt)
     alloc_pinned_mem(numElementsTree);
 
     TimerStart(merkletree_cuda_async);
-    PoseidonGoldilocks::merkletree_cuda_async(tree_a, input, NUM_COLUMNS, num_rows);
+    //PoseidonGoldilocks::merkletree_cuda_async(tree_a, input, NUM_COLUMNS, num_rows);
     TimerStopAndLog(merkletree_cuda_async);
 
     TimerStart(merkletree_cuda);

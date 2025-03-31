@@ -52,6 +52,7 @@ void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t co
     uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
 
     std::vector<ConstraintRowInfo> constraintInvalidRows;
+#pragma omp parallel for
     for(uint64_t i = 0; i < N; ++i) {
         auto [isValid, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], i);
         if(!isValid) {
@@ -84,41 +85,21 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
         nPols += setupCtx.starkInfo.mapSectionsN["cm" + to_string(stage)];
     }
 
-    Goldilocks::Element* pBuffer = new Goldilocks::Element[setupCtx.expressionsBin.constraintsInfoDebug.size() * N * FIELD_EXTENSION];
+    Goldilocks::Element* pBuffer = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
 
-    std::vector<uint64_t> destToConstraintIndex;
+    ProverHelpers proverHelpers;
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 
-    std::vector<Dest> dests;
     for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
         constraintsInfo[i].id = i;
         constraintsInfo[i].stage = setupCtx.expressionsBin.constraintsInfoDebug[i].stage;
         constraintsInfo[i].imPol = setupCtx.expressionsBin.constraintsInfoDebug[i].imPol;
 
         if(!constraintsInfo[i].skip) {
-            Dest constraintDest(&pBuffer[i*FIELD_EXTENSION*N], N);
-            constraintDest.addParams(setupCtx.expressionsBin.constraintsInfoDebug[i]);
-            dests.push_back(constraintDest);
-            destToConstraintIndex.push_back(i);
+            Dest constraintDest(pBuffer, N);
+            constraintDest.addParams(i, setupCtx.expressionsBin.constraintsInfoDebug[i].destDim);
+            expressionsCtx.calculateExpressions(params, constraintDest, N, false, false, true);
+            verifyConstraint(setupCtx, pBuffer, i, constraintsInfo[i]);
         }
-    }
-
-    ProverHelpers proverHelpers;
-    
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
-
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsConstraints, dests, N, false);
-
-#pragma omp parallel for
-    for (uint64_t i = 0; i < dests.size(); i++) {
-        uint64_t constraintIndex = destToConstraintIndex[i];
-        verifyConstraint(setupCtx, dests[i].dest, constraintIndex, constraintsInfo[constraintIndex]);
-    }
-    
-    delete[] pBuffer;
+    }    
 }

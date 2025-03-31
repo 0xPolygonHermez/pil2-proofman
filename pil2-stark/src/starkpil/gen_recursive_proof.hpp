@@ -12,13 +12,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     
     Starks<ElementType> starks(setupCtx, proverHelpers, pConstTree);
     
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
 
@@ -82,34 +76,34 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
 
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    Goldilocks::Element *res = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
-    Goldilocks::Element *gprod = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("buff_helper", false)] + N*FIELD_EXTENSION];
+    Goldilocks::Element *res = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
+    Goldilocks::Element *gprod = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("q", true)] + N*FIELD_EXTENSION];
 
     uint64_t gprodFieldId = setupCtx.expressionsBin.hints[0].fields[0].values[0].id;
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
     uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
 
     Dest destStruct(res, N);
-    destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[numFieldId]);
-    destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[denFieldId], true);
-    std::vector<Dest> dests = {destStruct};
+    destStruct.addParams(numFieldId, setupCtx.expressionsBin.expressionsInfo[numFieldId].destDim);
+    destStruct.addParams(denFieldId, setupCtx.expressionsBin.expressionsInfo[denFieldId].destDim, true);
 
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
+    expressionsCtx.calculateExpressions(params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, false);
 
     Goldilocks3::copy((Goldilocks3::Element *)&gprod[0], &Goldilocks3::one());
     for(uint64_t i = 1; i < N; ++i) {
         Goldilocks3::mul((Goldilocks3::Element *)&gprod[i * FIELD_EXTENSION], (Goldilocks3::Element *)&gprod[(i - 1) * FIELD_EXTENSION], (Goldilocks3::Element *)&res[(i - 1) * FIELD_EXTENSION]);
     }
 
-    Polinomial gprodTransposedPol;
-    setupCtx.starkInfo.getPolynomial(gprodTransposedPol, params.aux_trace, "cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
+
+    uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("cm2", false)] + setupCtx.starkInfo.cmPolsMap[gprodFieldId].stagePos;
+    uint64_t nCols = setupCtx.starkInfo.mapSectionsN["cm2"];
 #pragma omp parallel for
     for(uint64_t j = 0; j < N; ++j) {
-        std::memcpy(gprodTransposedPol[j], &gprod[j*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
+        std::memcpy(&params.aux_trace[offset + nCols*j], &gprod[j*FIELD_EXTENSION], FIELD_EXTENSION * sizeof(Goldilocks::Element));
     }
     
     TimerStart(CALCULATE_IM_POLS);
-    starks.calculateImPolsExpressions(2, params);
+    starks.calculateImPolsExpressions(2, params, expressionsCtx);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_2);
@@ -128,8 +122,10 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         }
     }
     
-    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
-
+    TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
+    starks.calculateQuotientPolynomial(params, expressionsCtx);
+    TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
+    
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
@@ -148,7 +144,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     }
 
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
-    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("buff_helper", false)]];
+    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("lev", false)]];
 
     starks.computeLEv(xiChallenge, LEv);
     starks.computeEvals(params ,LEv, proof);
@@ -177,7 +173,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     TimerStart(STARK_STEP_FRI);
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
-    starks.calculateFRIPolynomial(params);
+    starks.calculateFRIPolynomial(params, expressionsCtx);
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
@@ -228,7 +224,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     TimerStopAndLog(STARK_STEP_FRI);
 
-
+    proof.proof.setEvals(params.evals);
     if (setupCtx.starkInfo.starkStruct.verificationHashType == "BN128") {
         nlohmann::json zkin = proof.proof.proof2json();
         if(vadcop) {

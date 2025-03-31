@@ -6,11 +6,12 @@ use p3_field::BasedVectorSpace;
 use std::ops::Add;
 use proofman_common::{load_const_pols, load_const_pols_tree, CurveType};
 use proofman_common::{
-    calculate_fixed_tree, skip_prover_instance, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
+    calculate_fixed_tree, skip_prover_instance, Proof, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
 };
-
+use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c};
+use proofman_starks_lib_c::{gen_device_commit_buffers_c, gen_device_commit_buffers_free_c};
+use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c, get_const_offset_c};
 use std::collections::HashMap;
 use std::fs::File;
 use std::fmt::Write;
@@ -31,10 +32,11 @@ use std::{path::PathBuf, sync::Arc};
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
-
-use crate::{check_paths2, check_tree_paths, check_tree_paths_vadcop};
+use crate::{discover_max_sizes, discover_max_sizes_aggregation};
+use crate::{check_paths2, check_tree_paths, check_tree_paths_vadcop, initialize_fixed_pols_tree};
 use crate::verify_basic_proof;
 use crate::verify_global_constraints_proof;
+use crate::MaxSizes;
 use crate::{
     verify_constraints_proof, check_paths, print_summary_info, aggregate_proofs, get_buff_sizes,
     generate_vadcop_recursive1_proof,
@@ -44,6 +46,7 @@ use std::ffi::c_void;
 
 use proofman_util::{
     create_buffer_fast, timer_start_debug, timer_stop_and_log_debug, timer_start_info, timer_stop_and_log_info,
+    DeviceBuffer,
 };
 
 pub struct ProofMan<F> {
@@ -388,6 +391,15 @@ where
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
+        let setups = setups_handle.join().expect("Setups thread panicked");
+        if pctx.options.aggregation {
+            check_tree_paths_vadcop(&pctx, &setups)?;
+        }
+
+        let max_sizes = discover_max_sizes(&pctx, &sctx);
+        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+        let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
+
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !all && !pctx.dctx_is_my_instance(instance_id) {
                 continue;
@@ -411,6 +423,7 @@ where
                 aux_trace.clone(),
                 *all,
                 values.clone(),
+                d_buffers.clone(),
             ));
         }
 
@@ -426,10 +439,7 @@ where
 
         timer_start_info!(GENERATING_BASIC_PROOFS);
 
-        let const_tree = Arc::new(create_buffer_fast(sctx.max_const_tree_size));
-        let const_pols = Arc::new(create_buffer_fast(sctx.max_const_size));
-
-        let proofs = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
+        let proofs = Arc::new(Mutex::new(vec![Proof::default(); my_instances.len()]));
         let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
         let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
 
@@ -459,10 +469,9 @@ where
                     air_id,
                     output_dir_path.clone(),
                     aux_trace.clone(),
-                    const_pols.clone(),
-                    const_tree.clone(),
                     airgroup_values_air_instances.clone(),
                     gen_const_tree,
+                    d_buffers.clone(),
                 ));
                 gen_const_tree = false;
             }
@@ -494,11 +503,16 @@ where
             let mut valid_proofs = true;
 
             if pctx.options.verify_proofs {
+                timer_start_info!(VERIFYING_PROOFS);
                 let proofs_ = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
                 for instance_id in my_instances.iter() {
-                    valid_proofs =
-                        verify_basic_proof(&pctx, *instance_id, &proofs_[pctx.dctx_get_instance_idx(*instance_id)]);
+                    valid_proofs = verify_basic_proof(
+                        &pctx,
+                        *instance_id,
+                        &proofs_[pctx.dctx_get_instance_idx(*instance_id)].proof,
+                    );
                 }
+                timer_stop_and_log_info!(VERIFYING_PROOFS);
             }
 
             let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
@@ -517,6 +531,11 @@ where
             }
 
             if valid_proofs {
+                log::info!(
+                    "{}: ··· {}",
+                    Self::MY_NAME,
+                    "\u{2713} All proofs were successfully verified".bright_green().bold()
+                );
                 return Ok(None);
             } else {
                 return Err("Basic proofs were not verified".into());
@@ -531,8 +550,12 @@ where
             }
         });
 
-        let setups = setups_handle.join().expect("Setups thread panicked");
-        check_tree_paths_vadcop(&pctx, &setups)?;
+        gen_device_commit_buffers_free_c(d_buffers.lock().unwrap().get_ptr());
+
+        let max_sizes_aggregation = discover_max_sizes_aggregation(&pctx, &setups);
+        let max_sizes_aggregation_ptr = &max_sizes_aggregation as *const MaxSizes as *mut c_void;
+        let d_buffers_aggregation =
+            Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_aggregation_ptr))));
 
         let (circom_witness, publics, trace, prover_buffer) = if pctx.options.aggregation {
             let (circom_witness_size, publics_size, trace_size, prover_buffer_size) = get_buff_sizes(&pctx, &setups)?;
@@ -546,20 +569,12 @@ where
         };
 
         let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
+
+        timer_start_info!(LOAD_CONST_FILES);
+        initialize_fixed_pols_tree(&pctx, &setups);
+        timer_stop_and_log_info!(LOAD_CONST_FILES);
+
         timer_start_info!(GENERATING_COMPRESSOR_AND_RECURSIVE1_PROOF);
-        let const_tree_aggregation: Vec<F> =
-            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
-        let const_pols_aggregation: Vec<F> =
-            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
-
-        let const_tree_recursive2: Vec<F> =
-            create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_tree_size);
-        let const_pols_recursive2: Vec<F> = create_buffer_fast(setups.sctx_recursive2.as_ref().unwrap().max_const_size);
-
-        let mut current_airgroup_id = instances[my_instances[my_air_groups[0][0]]].0;
-        let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(current_airgroup_id, 0);
-        load_const_pols(&setup_recursive2.setup_path, setup_recursive2.const_pols_size, &const_pols_recursive2);
-        load_const_pols_tree(setup_recursive2, &const_tree_recursive2);
 
         let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
         #[allow(clippy::needless_range_loop)]
@@ -570,43 +585,7 @@ where
         }
         let mut recursive2_initialized = vec![false; pctx.global_info.air_groups.len()];
         for air_groups in my_air_groups.iter() {
-            let (airgroup_id, air_id, _) = instances[my_instances[air_groups[0]]];
-            if airgroup_id != current_airgroup_id {
-                current_airgroup_id = airgroup_id;
-                let setup_recursive2 = setups.sctx_recursive2.as_ref().unwrap().get_setup(current_airgroup_id, air_id);
-                load_const_pols(&setup_recursive2.setup_path, setup_recursive2.const_pols_size, &const_pols_recursive2);
-                load_const_pols_tree(setup_recursive2, &const_tree_recursive2);
-            }
-            let const_pols_compressor;
-            let const_tree_compressor;
-            let const_pols_recursive1;
-            let const_tree_recursive1;
-            let has_compressor = pctx.global_info.get_air_has_compressor(airgroup_id, air_id);
-            if has_compressor {
-                let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
-                load_const_pols_tree(setup, &const_tree);
-                const_tree_compressor = &const_tree;
-                const_pols_compressor = &const_pols;
-                let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-
-                load_const_pols(
-                    &setup_recursive1.setup_path,
-                    setup_recursive1.const_pols_size,
-                    &const_pols_aggregation,
-                );
-                load_const_pols_tree(setup_recursive1, &const_tree_aggregation);
-                const_tree_recursive1 = &const_tree_aggregation;
-                const_pols_recursive1 = &const_pols_aggregation;
-            } else {
-                let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
-                load_const_pols_tree(setup, &const_tree);
-                const_tree_compressor = &const_tree;
-                const_tree_recursive1 = &const_tree;
-                const_pols_compressor = &const_pols;
-                const_pols_recursive1 = &const_pols;
-            }
+            let (airgroup_id, _, _) = instances[my_instances[air_groups[0]]];
             for my_instance_id in air_groups.iter() {
                 let instance_id = my_instances[*my_instance_id];
 
@@ -614,20 +593,15 @@ where
                     &pctx,
                     &setups,
                     instance_id,
-                    &proofs[*my_instance_id],
+                    &proofs[*my_instance_id].proof,
                     &circom_witness,
                     &publics,
                     &trace,
                     &prover_buffer,
-                    const_pols_compressor,
-                    const_pols_recursive1,
-                    &const_pols_recursive2,
-                    const_tree_compressor,
-                    const_tree_recursive1,
-                    &const_tree_recursive2,
                     &mut recursive2_proofs[airgroup_id],
                     recursive2_initialized[airgroup_id],
                     output_dir_path.clone(),
+                    d_buffers_aggregation.lock().unwrap().get_ptr(),
                 )
                 .expect("Failed to generate recursive proof");
 
@@ -644,9 +618,8 @@ where
             &publics,
             &trace,
             &prover_buffer,
-            &const_pols,
-            &const_tree,
             output_dir_path.clone(),
+            d_buffers_aggregation.lock().unwrap().get_ptr(),
         );
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
@@ -660,10 +633,11 @@ where
         aux_trace_contribution_ptr: Arc<Vec<F>>,
         all: bool,
         values: Arc<Mutex<Vec<u64>>>,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
-            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr);
+            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr, d_buffers.clone());
 
             if !all {
                 pctx.free_instance(instance_id);
@@ -677,7 +651,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn generate_proof_thread(
-        proofs: Arc<Mutex<Vec<Vec<u64>>>>,
+        proofs: Arc<Mutex<Vec<Proof>>>,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         instance_id: usize,
@@ -685,10 +659,9 @@ where
         air_id: usize,
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
-        const_pols: Arc<Vec<F>>,
-        const_tree: Arc<Vec<F>>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
         gen_const_tree: bool,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
@@ -699,17 +672,21 @@ where
             let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
             timer_start_info!(GEN_PROOF);
 
+            let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
+            load_const_pols(
+                &setup.setup_path,
+                setup.const_pols_size,
+                &aux_trace[offset_const..offset_const + setup.const_pols_size],
+            );
+
             if gen_const_tree {
                 timer_start_debug!(GENERATING_CONST_TREE);
-                load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
-                load_const_pols_tree(setup, &const_tree);
+                load_const_pols_tree(setup, &aux_trace[0..setup.const_tree_size]);
                 timer_stop_and_log_debug!(GENERATING_CONST_TREE);
             }
 
             let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
-            steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
-            steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
 
             let p_steps_params: *mut u8 = (&steps_params).into();
 
@@ -731,6 +708,7 @@ where
                 airgroup_id as u64,
                 air_id as u64,
                 air_instance_id as u64,
+                d_buffers.lock().unwrap().get_ptr(),
             );
 
             airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
@@ -739,7 +717,8 @@ where
             pctx.free_instance(instance_id);
 
             timer_stop_and_log_info!(GEN_PROOF);
-            proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = proof;
+            proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
+                Proof::new(ProofType::Basic, airgroup_id, air_id, proof);
         })
     }
 
@@ -829,6 +808,7 @@ where
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
         pctx.set_global_challenge(2, &global_challenge);
+
         timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
     }
 
@@ -915,15 +895,26 @@ where
             }
         }
 
-        let n_airgroup_values = setup.stark_info.airgroupvalues_map.as_ref().unwrap().len();
-        let n_air_values = setup.stark_info.airvalues_map.as_ref().unwrap().len();
+        let n_airgroup_values = setup
+            .stark_info
+            .airgroupvalues_map
+            .as_ref()
+            .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
+            .unwrap_or(0);
+
+        let n_air_values = setup
+            .stark_info
+            .airvalues_map
+            .as_ref()
+            .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
+            .unwrap_or(0);
 
         if n_air_values > 0 && air_instance.airvalues.is_empty() {
-            air_instance.init_airvalues(n_air_values * 3);
+            air_instance.init_airvalues(n_air_values);
         }
 
         if n_airgroup_values > 0 && air_instance.airgroup_values.is_empty() {
-            air_instance.init_airgroup_values(n_airgroup_values * 3);
+            air_instance.init_airgroup_values(n_airgroup_values);
         }
     }
 
@@ -970,6 +961,7 @@ where
         sctx: &SetupCtx<F>,
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> Vec<u64> {
         let n_field_elements = 4;
 
@@ -989,6 +981,7 @@ where
             root.as_ptr() as *mut u8,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
+            d_buffers.lock().unwrap().get_ptr(),
         );
 
         let mut value = vec![F::ZERO; 10];

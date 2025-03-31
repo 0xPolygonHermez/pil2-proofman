@@ -160,8 +160,8 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
-     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
-     --output-dir examples/fibonacci-square/build/proofs
+     --output-dir examples/fibonacci-square/build/proofs \
+     --custom-commits rom=examples/fibonacci-square/build/rom.bin -y
 ```
 
 With recursion:
@@ -181,7 +181,6 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
 && cargo build \
-&& cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ -a \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
      --witness-lib ./target/debug/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \

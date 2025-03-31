@@ -1,6 +1,6 @@
 #include "starks.hpp"
 
-void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, bool prod) {
+void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx &expressionsCtx, bool prod) {
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
     uint64_t hint[1];
@@ -29,14 +29,14 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, bool prod) {
             hintOptions2[i] = options2;
         }
 
-        multiplyHintFields(setupCtx, params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2);
+        multiplyHintFields(setupCtx, params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2);
         
     }
 
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
-    accMulHintFields(setupCtx, params, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod);
+    accMulHintFields(setupCtx, params, expressionsCtx, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod);
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
@@ -47,17 +47,11 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     
+    params.pConstPolsAddress = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)]];
+    params.pConstPolsExtendedTreeAddress = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)]];
     Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
     
-    Goldilocks::Element *pBuffHelper = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)]];
-
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
@@ -71,28 +65,29 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStopAndLog(STARK_STEP_0);
 
     TimerStart(STARK_STEP_1);
-    starks.commitStage(1, params.trace, params.aux_trace, proof, pBuffHelper);
+    starks.commitStage(1, params.trace, params.aux_trace, proof, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_1", false)]]);
     TimerStopAndLog(STARK_STEP_1);
 
     starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
 
     TimerStart(STARK_STEP_2);
+    TimerStart(STARK_CALCULATE_WITNESS_STD);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
     }
 
-    calculateWitnessSTD(setupCtx, params, true);
-    calculateWitnessSTD(setupCtx, params, false);
-
+    calculateWitnessSTD(setupCtx, params, expressionsCtx, true);
+    calculateWitnessSTD(setupCtx, params, expressionsCtx, false);
+    TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);
     
     TimerStart(CALCULATE_IM_POLS);
-    starks.calculateImPolsExpressions(2, params);
+    starks.calculateImPolsExpressions(2, params, expressionsCtx);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage(2, nullptr, params.aux_trace, proof, pBuffHelper);
+    starks.commitStage(2, nullptr, params.aux_trace, proof, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_2", false)]]);
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
 
@@ -107,8 +102,6 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     // TODO: ADD PROOF VALUES ???
 
-    proof.proof.setAirgroupValues(params.airgroupValues);
-    proof.proof.setAirValues(params.airValues);
     TimerStopAndLog(STARK_STEP_2);
 
     TimerStart(STARK_STEP_Q);
@@ -119,11 +112,13 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             starks.getChallenge(transcript, params.challenges[i * FIELD_EXTENSION]);
         }
     }
-    
-    expressionsCtx.calculateExpression(params, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]], setupCtx.starkInfo.cExpId);
+
+    TimerStart(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
+    starks.calculateQuotientPolynomial(params, expressionsCtx);
+    TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
-    starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof);
+    starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof,  &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_3", false)]]);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
     TimerStopAndLog(STARK_STEP_Q);
@@ -140,9 +135,11 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     }
 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-    Goldilocks::Element* LEv = &pBuffHelper[0];
+    Goldilocks::Element* LEv = &params.aux_trace[setupCtx.starkInfo.mapOffsets[make_pair("lev", false)]];
 
+    TimerStart(CALCULATE_LEV);
     starks.computeLEv(xiChallenge, LEv);
+    TimerStopAndLog(CALCULATE_LEV);
     starks.computeEvals(params ,LEv, proof);
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
@@ -152,7 +149,6 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
         starks.calculateHash(hash, params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
         starks.addTranscript(transcript, hash, HASH_SIZE);
     }
-
     // Challenges for FRI polynomial
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
@@ -169,7 +165,7 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStart(STARK_STEP_FRI);
 
     TimerStart(COMPUTE_FRI_POLYNOMIAL);
-    starks.calculateFRIPolynomial(params);
+    starks.calculateFRIPolynomial(params, expressionsCtx);
     TimerStopAndLog(COMPUTE_FRI_POLYNOMIAL);
 
     Goldilocks::Element challenge[FIELD_EXTENSION];
@@ -221,6 +217,10 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStopAndLog(STARK_FRI_QUERIES);
 
     TimerStopAndLog(STARK_STEP_FRI);
+
+    proof.proof.setEvals(params.evals);
+    proof.proof.setAirgroupValues(params.airgroupValues);
+    proof.proof.setAirValues(params.airValues);
 
     proof.proof.proof2pointer(proofBuffer);
 

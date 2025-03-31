@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 
 use p3_field::Field;
-use proofman_starks_lib_c::{expressions_bin_new_c, get_const_tree_size_c};
+use proofman_starks_lib_c::expressions_bin_new_c;
 use proofman_util::create_buffer_fast;
 
 use crate::load_const_pols;
@@ -104,9 +104,8 @@ impl<F: Field> SetupRepository<F> {
                 for (air_id, _) in air_group.iter().enumerate() {
                     let setup = Setup::new(global_info, airgroup_id, air_id, setup_type, verify_constraints);
                     if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
-                        let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
-                        if max_const_tree_size < const_pols_tree_size {
-                            max_const_tree_size = const_pols_tree_size;
+                        if max_const_tree_size < setup.const_tree_size {
+                            max_const_tree_size = setup.const_tree_size;
                         }
                         if max_const_size < setup.const_pols_size {
                             max_const_size = setup.const_pols_size;
