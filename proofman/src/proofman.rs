@@ -645,6 +645,15 @@ where
                 output_dir_path.clone(),
                 d_buffers_aggregation.lock().unwrap().get_ptr(),
             )?;
+
+            let proof_id = Some(
+                blake3::hash(unsafe {
+                    std::slice::from_raw_parts(vadcop_final_proof.proof.as_ptr() as *const u8, vadcop_final_proof.proof.len() * 8)
+                })
+                .to_hex()
+                .to_string(),
+            );
+
             if pctx.options.final_snark {
                 timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
                 let recursivef_proof = generate_recursivef_proof(
@@ -692,10 +701,11 @@ where
                     );
                 }
             }
+            return Ok(proof_id);
         }
         timer_stop_and_log_info!(GENERATING_COMPRESSED_PROOFS);
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
-        Ok(())
+        Ok(None)
     }
 
     fn get_contribution(
