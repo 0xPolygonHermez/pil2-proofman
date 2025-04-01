@@ -17,15 +17,20 @@
 #define TPB_NTT_y 16
 #define SHIFT 7
 
+#define TRANSPOSE_TILE_DIM 32  // Tile size for shared memory
+#define TRANSPOSE_BLOCK_ROWS 8
+
 // #ifdef GPU_TIMING
 #include "timer_gl.hpp"
 // #endif
 
 
 __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols);
+__global__ void br_ntt_group_(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols);
 __global__ void br_ntt_group_new(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols);
 __global__ void intt_scale(gl64_t *data, gl64_t *r, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, bool extend);
 __global__ void reverse_permutation_new(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
+__global__ void reverse_permutation_column(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
 __global__ void reverse_permutation(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
 __global__ void reverse_permutation_1d(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
 __global__ void reverse_permutation_2d(gl64_t *data, uint32_t log_domain_size, uint32_t ncols);
@@ -38,6 +43,8 @@ __global__ void init_r_first_step(gl64_t *r, uint32_t log_domain_size);
 __global__ void init_r_second_step(gl64_t *r, uint32_t log_domain_size);
 void init_r(gl64_t *r, uint32_t log_domain_size);
 void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend);
+void ntt_cuda_( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend);
+__global__ void transpose_section(gl64_t *out, const gl64_t *in, uint64_t nCols, uint64_t domainSize);
 
 
 
@@ -272,8 +279,8 @@ __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_
 {
     uint32_t j = blockIdx.x;
     uint32_t col = threadIdx.x;
-    uint32_t start = domain_size >> 1;
-    twiddles = twiddles + start;
+    uint32_t start = domain_size >> 1; 
+    twiddles = twiddles + start; 
     if (j < domain_size / 2 && col < ncols)
     {
         uint32_t half_group_size = 1 << i;
@@ -290,6 +297,105 @@ __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_
     }
 }
 
+__global__ void br_ntt_group_(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols)
+{
+    uint32_t j = blockIdx.x;
+    uint32_t col = threadIdx.x;
+    uint32_t start = domain_size >> 1; //enviar
+    twiddles = twiddles + start; //enviar
+    if (j < domain_size / 2 && col < ncols)
+    {
+        uint32_t subgroup_size = 1 << i;    //subgroup := groups half
+        uint32_t group = j >> i;                     
+        uint32_t subgroup_offset = j & (subgroup_size - 1);     
+        uint32_t index1 = (group << (i + 1)) + subgroup_offset;
+        uint32_t index2 = index1 + subgroup_size;
+        gl64_t factor = twiddles[subgroup_offset * (domain_size >> i + 1)];
+        gl64_t odd_sub = data[index2 * ncols + col] * factor;
+        data[index2 * ncols + col] = data[index1 * ncols + col] - odd_sub;
+        data[index1 * ncols + col] = data[index1 * ncols + col] + odd_sub;
+    }
+}
+
+__global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, uint32_t domain_size, uint32_t ncols)
+{
+    __shared__ gl64_t tile[1024];
+    assert(blockDim.x == 256);
+    uint32_t row = blockIdx.x * 256 + threadIdx.x;
+    //assume domain_size is multiple of 256
+    uint32_t start = domain_size >> 1;
+    twiddles = twiddles + start;
+
+    for(int col_base = 0; col_base < ncols; col_base +=4){
+        
+        //copy data to tile
+        tile[threadIdx.x*4]   = data[row*ncols + col_base];
+        if(col_base + 3 < ncols){
+            tile[threadIdx.x*4+1] = data[row*ncols + col_base+1];
+            tile[threadIdx.x*4+2] = data[row*ncols + col_base+2];
+            tile[threadIdx.x*4+3] = data[row*ncols + col_base+3];
+        } else if(col_base + 2 < ncols){
+            tile[threadIdx.x*4+1] = data[row*ncols + col_base+1];
+            tile[threadIdx.x*4+2] = data[row*ncols + col_base+2];
+        } else if(col_base + 1 < ncols){
+            tile[threadIdx.x*4+1] = data[row*ncols + col_base+1];
+        }
+        
+        __syncthreads();
+
+        for(int i=0; i< 8; i++){
+            uint32_t j = threadIdx.x;
+            if (j < 128) //rick: here I'm only using half of threads
+            {
+                uint32_t subgroup_size = 1 << i;    //subgroup := groups half
+                uint32_t group = j >> i;                     
+                uint32_t subgroup_offset = j & (subgroup_size - 1);     
+                uint32_t index1 = (group << (i + 1)) + subgroup_offset;
+                uint32_t index2 = index1 + subgroup_size;
+                gl64_t factor = twiddles[subgroup_offset * (domain_size >> i + 1)];
+                
+                index1 = index1 << 2;
+                index2 = index2 << 2;
+                gl64_t odd_sub = tile[index2] * factor;
+                tile[index2] = tile[index1] - odd_sub;               
+                tile[index1] = tile[index1] + odd_sub;
+                
+                index1 = index1 + 1;
+                index2 = index2 + 1;
+                odd_sub = tile[index2] * factor;
+                tile[index2] = tile[index1] - odd_sub;               
+                tile[index1] = tile[index1] + odd_sub;
+
+                index1 = index1 + 1;
+                index2 = index2 + 1;
+                odd_sub = tile[index2] * factor;
+                tile[index2] = tile[index1] - odd_sub;               
+                tile[index1] = tile[index1] + odd_sub;
+
+                index1 = index1 + 1;
+                index2 = index2 + 1;
+                odd_sub = tile[index2] * factor;
+                tile[index2] = tile[index1] - odd_sub;               
+                tile[index1] = tile[index1] + odd_sub;                
+            }
+            __syncthreads();
+        }
+        // copy values to data
+        data[row*ncols + col_base]   = tile[threadIdx.x*4];
+        if(col_base + 3 < ncols){
+            data[row*ncols + col_base+1] = tile[threadIdx.x*4+1];
+            data[row*ncols + col_base+2] = tile[threadIdx.x*4+2];
+            data[row*ncols + col_base+3] = tile[threadIdx.x*4+3];
+        } else if(col_base + 2 < ncols){
+            data[row*ncols + col_base+1] = tile[threadIdx.x*4+1];
+            data[row*ncols + col_base+2] = tile[threadIdx.x*4+2];
+        } else if(col_base + 1 < ncols){
+            data[row*ncols + col_base+1] = tile[threadIdx.x*4+1];
+        }
+        __syncthreads();
+
+    }   
+}
 __global__ void br_ntt_group_new(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols)
 {
     uint32_t start = domain_size >> 1;
@@ -328,6 +434,25 @@ __global__ void intt_scale(gl64_t *data, gl64_t *r, uint32_t domain_size, uint32
     {
         data[index] = gl64_t((uint64_t)data[index]) * factor;
         // DEBUG: assert(data[index] < 18446744069414584321ULL);
+    }
+}
+
+__global__ void reverse_permutation_column(gl64_t *data, uint32_t log_domain_size, uint32_t ncols)
+{
+    uint64_t r = blockIdx.x * blockDim.x + threadIdx.x; 
+    uint64_t c = blockIdx.y * blockDim.y + threadIdx.y;   
+    uint64_t domain_size = 1 << log_domain_size;
+    gl64_t *column = &data[c * domain_size];
+
+    if(r < domain_size && c < ncols)
+    {
+        uint64_t rr = __brev(r) >> (32 - log_domain_size);
+        if (r < rr)
+        {
+            gl64_t tmp = column[r];
+            column[r] = data[rr];
+            column[rr] = tmp;
+        }
     }
 }
 
@@ -512,39 +637,127 @@ void init_r(gl64_t *r, uint32_t log_domain_size)
 }
 
 void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend)
-{
+{   
 
     uint32_t domain_size = 1 << log_domain_size;
 
     dim3 blockDim;
     dim3 gridDim;
-    /*if (domain_size > TPB_NTT)
-    {
-        blockDim = dim3(TPB_NTT);
-        gridDim = dim3(domain_size / TPB_NTT);
-    }
-    else
-    {
-        blockDim = dim3(domain_size);
-        gridDim = dim3(1);
-    }*/
-    /*uint32_t total_elements = (1 << log_domain_size) * ncols;
-    dim3 blockDim(TPB_NTT_x);
-    dim3 gridDim((total_elements + TPB_NTT_x - 1) / TPB_NTT_x);*/
+    /*cudaEvent_t point1, point2, point3, point4;
+    cudaEventCreate(&point1);
+    cudaEventCreate(&point2);
+    cudaEventCreate(&point3);
+    cudaEventCreate(&point4);*/
 
-    /*dim3 blockDim(TPB_NTT_x, TPB_NTT_y);
-    dim3 gridDim((ncols + TPB_NTT_x - 1) / TPB_NTT_x, ((1 << log_domain_size) + TPB_NTT_y - 1) / TPB_NTT_y);
 
-     printf("Grid dimensions: (%d, %d)\n", gridDim.x, gridDim.y);
-     printf("Block dimensions: (%d, %d)\n", blockDim.x, blockDim.y);*/
+    //dudaEventRecord(point1);
     blockDim = dim3(TPB_NTT);
     gridDim = dim3(8192);
-
-
     reverse_permutation_new<<<gridDim, blockDim, 0>>>(data, log_domain_size, ncols);
     CHECKCUDAERR(cudaGetLastError());
 
+    //cudaEventRecord(point2);
+    gl64_t *ptr_twiddles = fwd_twiddles;
+    if (inverse)
+    {
+        ptr_twiddles = inv_twiddles;
+    }
 
+
+    if(domain_size >= 256){
+        br_ntt_8_steps<<<domain_size / 256, 256>>>(data, ptr_twiddles, domain_size, ncols);
+        for (uint32_t i = 8; i < log_domain_size; i++)
+        {
+            br_ntt_group<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
+            CHECKCUDAERR(cudaGetLastError());
+        }
+    }else{
+        for (uint32_t i = 0; i < log_domain_size; i++)
+        {
+            br_ntt_group<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
+            CHECKCUDAERR(cudaGetLastError());
+        }
+    }
+
+    //cudaEventRecord(point3);
+
+    if (inverse)
+    {
+        intt_scale<<<domain_size, ncols, 0>>>(data, r, domain_size, log_domain_size, ncols, extend);
+        CHECKCUDAERR(cudaGetLastError());
+    }
+    /*cudaEventRecord(point4);
+    cudaEventSynchronize(point4);
+
+    float elapsedTime;
+    cudaEventElapsedTime(&elapsedTime, point1, point2);
+    std::cout << "Time for reverse permutation: " << elapsedTime / 1000 << " seconds" << std::endl;
+    cudaEventElapsedTime(&elapsedTime, point2, point3);
+    std::cout << "Time for NTT: " << elapsedTime / 1000 << " seconds" << std::endl;
+    cudaEventElapsedTime(&elapsedTime, point3, point4);
+    std::cout << "Time for intt_scale: " << elapsedTime / 1000 << " seconds" << std::endl;
+    cudaEventDestroy(point1);
+    cudaEventDestroy(point2);
+    cudaEventDestroy(point3);
+    cudaEventDestroy(point4);*/
+}
+
+
+void ntt_cuda_( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend)
+{   
+
+    //trasppose data
+    uint32_t domain_size = 1 << log_domain_size;
+    uint32_t total_elements = domain_size * ncols;
+    gl64_t *data_;
+    CHECKCUDAERR(cudaMalloc(&data_, total_elements * sizeof(gl64_t))); 
+
+    dim3 block_(TRANSPOSE_TILE_DIM, TRANSPOSE_BLOCK_ROWS);
+    dim3 grid_((domain_size + TRANSPOSE_TILE_DIM - 1) / TRANSPOSE_TILE_DIM, (ncols + TRANSPOSE_TILE_DIM - 1) / TRANSPOSE_TILE_DIM);   
+    cudaEvent_t point1_, point2_, point3_;
+    cudaEventCreate(&point1_);
+    cudaEventCreate(&point2_);
+    cudaEventCreate(&point3_);
+
+    cudaEventRecord(point1_);
+    cudaDeviceProp prop;
+    transpose_section<<<grid_,block_>>>(data_, data, ncols, domain_size);
+    cudaEventRecord(point2_);
+    block_ = dim3(512, 1);
+    grid_ = dim3((domain_size + block_.x - 1) / block_.x, (ncols + block_.y - 1) / block_.y);
+    reverse_permutation_column<<<grid_, block_>>>(data_, log_domain_size, ncols);
+    cudaEventRecord(point3_);    
+
+    cudaEventSynchronize(point3_);
+    float elapsedTime_;
+    cudaEventElapsedTime(&elapsedTime_, point1_, point2_);
+    std::cout << "Time for transpose: " << elapsedTime_ / 1000 << " seconds" << std::endl;
+    cudaEventElapsedTime(&elapsedTime_, point2_, point3_);
+    std::cout << "Time for reverse permutation: " << elapsedTime_ / 1000 << " seconds" << std::endl;
+    cudaEventDestroy(point1_);
+    cudaEventDestroy(point2_);
+    cudaEventDestroy(point3_);
+
+
+    CHECKCUDAERR(cudaGetLastError());
+    CHECKCUDAERR(cudaFree(data_));
+    dim3 blockDim;
+    dim3 gridDim;
+    
+    cudaEvent_t point1, point2, point3, point4;
+    cudaEventCreate(&point1);
+    cudaEventCreate(&point2);
+    cudaEventCreate(&point3);
+    cudaEventCreate(&point4);
+
+
+    cudaEventRecord(point1);
+    blockDim = dim3(TPB_NTT);
+    gridDim = dim3(8192);
+    reverse_permutation_new<<<gridDim, blockDim, 0>>>(data, log_domain_size, ncols);
+    CHECKCUDAERR(cudaGetLastError());
+
+    cudaEventRecord(point2);
     gl64_t *ptr_twiddles = fwd_twiddles;
     if (inverse)
     {
@@ -553,15 +766,57 @@ void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddl
 
     for (uint32_t i = 0; i < log_domain_size; i++)
     {
-        br_ntt_group<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
+        br_ntt_group_<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
         CHECKCUDAERR(cudaGetLastError());
     }
 
+    cudaEventRecord(point3);
 
     if (inverse)
     {
         intt_scale<<<domain_size, ncols, 0>>>(data, r, domain_size, log_domain_size, ncols, extend);
         CHECKCUDAERR(cudaGetLastError());
     }
+    cudaEventRecord(point4);
+    cudaEventSynchronize(point4);
+
+    float elapsedTime;
+    cudaEventElapsedTime(&elapsedTime, point1, point2);
+    std::cout << "Time for reverse permutation: " << elapsedTime / 1000 << " seconds" << std::endl;
+    cudaEventElapsedTime(&elapsedTime, point2, point3);
+    std::cout << "Time for NTT: " << elapsedTime / 1000 << " seconds" << std::endl;
+    cudaEventElapsedTime(&elapsedTime, point3, point4);
+    std::cout << "Time for intt_scale: " << elapsedTime / 1000 << " seconds" << std::endl;
+    cudaEventDestroy(point1);
+    cudaEventDestroy(point2);
+    cudaEventDestroy(point3);
+    cudaEventDestroy(point4);
 }
 
+__global__ void transpose_section(gl64_t *out, const gl64_t *in, uint64_t nCols, uint64_t domainSize) {
+    
+    __shared__ gl64_t tile[TRANSPOSE_TILE_DIM][TRANSPOSE_TILE_DIM + 1]; // Avoid bank conflicts
+
+    int row = blockIdx.x * TRANSPOSE_TILE_DIM + threadIdx.x; 
+    int col = blockIdx.y * TRANSPOSE_TILE_DIM + threadIdx.y; 
+
+    // Load from global memory to shared memory
+    for (int i = 0; i < TRANSPOSE_TILE_DIM; i += TRANSPOSE_BLOCK_ROWS) {
+        if ((row + i) < domainSize && col < nCols) {
+            tile[threadIdx.y + i][threadIdx.x] = in[(row + i) * nCols + col];
+        }
+    }
+    
+    __syncthreads();
+
+    // Transpose indices
+    row = blockIdx.y * TRANSPOSE_TILE_DIM + threadIdx.x;
+    col = blockIdx.x * TRANSPOSE_TILE_DIM + threadIdx.y;
+
+    // Store back to global memory
+    for (int i = 0; i < TRANSPOSE_TILE_DIM; i += TRANSPOSE_BLOCK_ROWS) {
+        if ((row + i) < nCols && col < domainSize) {
+            out[(row + i) * domainSize + col] = tile[threadIdx.x][threadIdx.y + i];
+        }
+    }
+}
