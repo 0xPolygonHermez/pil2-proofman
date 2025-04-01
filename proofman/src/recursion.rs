@@ -160,15 +160,16 @@ pub fn gen_witness_recursive<F: PrimeField64>(
 pub fn gen_witness_aggregation<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    proofs: &[Proof<F>],
+    proof1: &Proof<F>,
+    proof2: &Proof<F>,
+    proof3: &Proof<F>,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     timer_start_info!(GENERATE_WITNESS_AGGREGATION);
-    assert!(proofs.len() == 3);
-    let proof_len = proofs[0].proof.len();
-    assert!(proof_len == proofs[1].proof.len() && proof_len == proofs[2].proof.len());
+    let proof_len = proof1.proof.len();
+    assert!(proof_len == proof2.proof.len() && proof_len == proof3.proof.len());
 
-    let airgroup_id = proofs[0].airgroup_id;
-    assert!(airgroup_id == proofs[1].airgroup_id && airgroup_id == proofs[2].airgroup_id);
+    let airgroup_id = proof1.airgroup_id;
+    assert!(airgroup_id == proof2.airgroup_id && airgroup_id == proof3.airgroup_id);
 
     let publics_circom_size: usize =
         pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
@@ -179,10 +180,10 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
 
     let mut updated_proof_recursive2: Vec<u64> = create_buffer_fast(updated_proof_size);
 
-    updated_proof_recursive2[publics_circom_size..(publics_circom_size + proof_len)].copy_from_slice(&proofs[0].proof);
+    updated_proof_recursive2[publics_circom_size..(publics_circom_size + proof_len)].copy_from_slice(&proof1.proof);
     updated_proof_recursive2[publics_circom_size + proof_len..publics_circom_size + 2 * proof_len]
-        .copy_from_slice(&proofs[1].proof);
-    updated_proof_recursive2[publics_circom_size + 2 * proof_len..].copy_from_slice(&proofs[2].proof);
+        .copy_from_slice(&proof2.proof);
+    updated_proof_recursive2[publics_circom_size + 2 * proof_len..].copy_from_slice(&proof3.proof);
 
     let recursive2_verkey =
         pctx.global_info.get_air_setup_path(airgroup_id, 0, &ProofType::Recursive2).display().to_string()
@@ -394,7 +395,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
 
                         let proof3 = Proof::new(ProofType::Recursive2, airgroup, 0, None, proof_3);
 
-                        let circom_witness = gen_witness_aggregation::<F>(pctx, setups, &vec![proof1, proof2, proof3])?;
+                        let circom_witness = gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2, &proof3)?;
 
                         let recursive2_proof = generate_recursive_proof::<F>(
                             pctx,
@@ -697,4 +698,19 @@ fn get_witness_size<F: PrimeField64>(setup: &Setup<F>) -> Result<usize, Box<dyn 
     size_witness += n_adds;
 
     Ok(size_witness as usize)
+}
+
+pub fn total_recursive_proofs(mut n: usize) -> usize {
+    let mut total = 0;
+    while n > 1 {
+        let next = n / 3;
+        let rem = n % 3;
+        total += next;
+        if next != 0 {
+            n = next + rem;
+        } else if rem != 1 {
+            n = next;
+        }
+    }
+    total
 }

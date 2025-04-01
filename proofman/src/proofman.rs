@@ -39,7 +39,7 @@ use crate::MaxSizes;
 use crate::{verify_constraints_proof, check_paths, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
     gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof, generate_vadcop_final_proof,
-    generate_fflonk_snark_proof, generate_recursivef_proof,
+    generate_fflonk_snark_proof, generate_recursivef_proof, total_recursive_proofs,
 };
 use crate::aggregate_recursive2_proofs;
 
@@ -579,7 +579,10 @@ where
         timer_start_info!(GENERATING_COMPRESSED_PROOFS);
         timer_start_info!(GENERATING_RECURSIVE_PROOFS);
         let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
+        #[allow(unused_assignments)]
+        let mut load_const_tree = true;
         for air_groups in my_air_groups.iter() {
+            load_const_tree = true;
             for my_instance_id in air_groups.iter() {
                 let instance_id = my_instances[*my_instance_id];
                 let (airgroup_id, air_id, _) = instances[instance_id];
@@ -600,7 +603,7 @@ where
                         &prover_buffer,
                         &output_dir_path,
                         d_buffers_aggregation.lock().unwrap().get_ptr(),
-                        true,
+                        load_const_tree,
                     );
                     recursive_witness[*my_instance_id] = None;
                 }
@@ -619,28 +622,65 @@ where
                     &prover_buffer,
                     &output_dir_path,
                     d_buffers_aggregation.lock().unwrap().get_ptr(),
-                    true,
+                    load_const_tree,
                 );
-
                 recursive2_proofs[airgroup_id].push(proof_recursive1);
-                if recursive2_proofs[airgroup_id].len() == 3 {
-                    let witness_recursive2 = gen_witness_aggregation(&pctx, &setups, &recursive2_proofs[airgroup_id])?;
-                    let proof_recursive2 = generate_recursive_proof(
-                        &pctx,
-                        &setups,
-                        &witness_recursive2,
-                        &trace,
-                        &prover_buffer,
-                        &output_dir_path,
-                        d_buffers_aggregation.lock().unwrap().get_ptr(),
-                        true,
-                    );
-                    recursive2_proofs[airgroup_id] = vec![proof_recursive2];
-                }
+                load_const_tree = false;
             }
         }
 
+        let n_airgroups = pctx.global_info.air_groups.len();
+
+        let mut thread_handle_recursion: Option<std::thread::JoinHandle<()>> = None;
+        let recursive2_proofs = Arc::new(RwLock::new(recursive2_proofs));
+
+        let mut n_initial_proofs = vec![0; n_airgroups];
+        let mut n_rec2_proofs = vec![0; n_airgroups];
+        for airgroup in 0..n_airgroups {
+            n_initial_proofs[airgroup] = recursive2_proofs.read().unwrap()[airgroup].len();
+            n_rec2_proofs[airgroup] = total_recursive_proofs(n_initial_proofs[airgroup]);
+            load_const_tree = true;
+            for i in 0..n_rec2_proofs[airgroup] {
+                let witness_recursive2 = gen_witness_aggregation(
+                    &pctx,
+                    &setups,
+                    &recursive2_proofs.read().unwrap()[airgroup][3 * i],
+                    &recursive2_proofs.read().unwrap()[airgroup][3 * i + 1],
+                    &recursive2_proofs.read().unwrap()[airgroup][3 * i + 2],
+                )?;
+
+                // Join the previous thread (if any) before starting a new one
+                if let Some(handle) = thread_handle_recursion.take() {
+                    handle.join().unwrap();
+                }
+
+                thread_handle_recursion = Some(Self::generate_recursive_proof_thread(
+                    recursive2_proofs.clone(),
+                    pctx.clone(),
+                    setups.clone(),
+                    witness_recursive2,
+                    airgroup,
+                    trace.clone(),
+                    prover_buffer.clone(),
+                    output_dir_path.clone(),
+                    d_buffers_aggregation.clone(),
+                    load_const_tree,
+                ));
+
+                load_const_tree = false;
+            }
+        }
+
+        if let Some(handle) = thread_handle_recursion {
+            handle.join().unwrap();
+        }
+
         timer_stop_and_log_info!(GENERATING_RECURSIVE_PROOFS);
+
+        let mut recursive2_proofs = Arc::try_unwrap(recursive2_proofs).unwrap().into_inner().unwrap();
+        for airgroup in 0..n_airgroups {
+            recursive2_proofs[airgroup] = recursive2_proofs[airgroup][3 * n_rec2_proofs[airgroup]..].to_vec();
+        }
 
         let agg_recursive2_proof = aggregate_recursive2_proofs(
             &pctx,
@@ -823,6 +863,34 @@ where
             timer_stop_and_log_info!(GEN_PROOF);
             proofs.write().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
                 Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof);
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn generate_recursive_proof_thread(
+        recursive2_proofs: Arc<RwLock<Vec<Vec<Proof<F>>>>>,
+        pctx: Arc<ProofCtx<F>>,
+        setups: Arc<SetupsVadcop<F>>,
+        witness_recursive2: Proof<F>,
+        airgroup_id: usize,
+        trace: Arc<Vec<F>>,
+        prover_buffer: Arc<Vec<F>>,
+        output_dir_path: PathBuf,
+        d_buffers: Arc<Mutex<DeviceBuffer>>,
+        load_constants: bool,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let proof_recursive2 = generate_recursive_proof(
+                &pctx,
+                &setups,
+                &witness_recursive2,
+                &trace,
+                &prover_buffer,
+                &output_dir_path,
+                d_buffers.clone().lock().unwrap().get_ptr(),
+                load_constants,
+            );
+            recursive2_proofs.write().unwrap()[airgroup_id].push(proof_recursive2);
         })
     }
 
