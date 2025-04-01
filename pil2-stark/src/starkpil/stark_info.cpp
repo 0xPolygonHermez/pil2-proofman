@@ -340,6 +340,11 @@ void StarkInfo::setMapOffsets() {
         MerkleTreeGL mt(starkStruct.merkleTreeArity, true, NExtended, nConstants);
         uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
         mapTotalN += constTreeSize;
+
+        if(!gpu) {
+            mapOffsets[std::make_pair("const", false)] = mapTotalN;
+            mapTotalN += N * nConstants;
+        }
     }
 
     assert(nStages <= 2);
@@ -378,7 +383,7 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("q", true)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
 
-    if(!recursive) {
+    if(gpu && !recursive) {
         mapOffsets[std::make_pair("const", false)] = mapOffsets[std::make_pair("cm" + to_string(nStages), false)] + N * mapSectionsN["cm" + to_string(nStages)];
         assert(mapOffsets[std::make_pair("const", false)] + N * nConstants <= mapOffsets[std::make_pair("q", true)]);
     }

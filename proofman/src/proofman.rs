@@ -470,7 +470,7 @@ where
                     d_buffers.clone(),
                 ));
 
-                if previous_instance_id.is_some() {
+                if pctx.options.aggregation && previous_instance_id.is_some() {
                     let proof =
                         proofs.read().unwrap()[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())].clone();
                     let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
