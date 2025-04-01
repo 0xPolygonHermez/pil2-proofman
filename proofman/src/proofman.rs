@@ -331,9 +331,10 @@ where
 
         let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
 
+        timer_start_info!(REGISTERING_WITNESS);
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
-
         witness_lib.register_witness(wcm.clone());
+        timer_stop_and_log_info!(REGISTERING_WITNESS);
 
         Self::_generate_proof(output_dir_path, pctx, sctx, wcm)
     }
@@ -577,7 +578,6 @@ where
         timer_stop_and_log_info!(LOAD_CONST_FILES);
 
         timer_start_info!(GENERATING_COMPRESSED_PROOFS);
-        timer_start_info!(GENERATING_RECURSIVE_PROOFS);
         let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
         #[allow(unused_assignments)]
         let mut load_const_tree = true;
@@ -641,6 +641,12 @@ where
             n_rec2_proofs[airgroup] = total_recursive_proofs(n_initial_proofs[airgroup]);
             load_const_tree = true;
             for i in 0..n_rec2_proofs[airgroup] {
+                if i == n_rec2_proofs[airgroup] - 1 {
+                    if let Some(handle) = thread_handle_recursion.take() {
+                        handle.join().unwrap();
+                    }
+                }
+
                 let witness_recursive2 = gen_witness_aggregation(
                     &pctx,
                     &setups,
@@ -674,8 +680,6 @@ where
         if let Some(handle) = thread_handle_recursion {
             handle.join().unwrap();
         }
-
-        timer_stop_and_log_info!(GENERATING_RECURSIVE_PROOFS);
 
         let mut recursive2_proofs = Arc::try_unwrap(recursive2_proofs).unwrap().into_inner().unwrap();
         for airgroup in 0..n_airgroups {
