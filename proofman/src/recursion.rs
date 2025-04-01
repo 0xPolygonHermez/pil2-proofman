@@ -365,7 +365,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                     if airgroup_proofs[airgroup][j].is_none() {
                         continue;
                     }
-                    if j + 2 < alive {
+                    if (j + 2 < alive) || alive <= 3 {
                         if airgroup_proofs[airgroup][j + 1].is_none() {
                             panic!("Recursive2 proof is missing");
                         }
@@ -412,13 +412,17 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                         log::info!("{}: ··· Recursive 2 Proof generated.", MY_NAME);
                     }
                 }
-                alive = n_agg_proofs + n_remaining_proofs;
+                if n_agg_proofs > 0 {
+                    alive = n_agg_proofs + n_remaining_proofs;
+                } else {
+                    alive = 1;
+                }
+
                 //compact elements
                 for i in 0..n_agg_proofs {
                     airgroup_proofs[airgroup][i] = airgroup_proofs[airgroup][i * 3].clone();
                 }
 
-                println!("alive: {}", alive);
                 for i in 0..n_remaining_proofs {
                     airgroup_proofs[airgroup][n_agg_proofs + i] =
                         airgroup_proofs[airgroup][3 * n_agg_proofs + i].clone();
