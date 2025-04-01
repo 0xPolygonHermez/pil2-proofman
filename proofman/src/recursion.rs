@@ -102,7 +102,7 @@ pub fn discover_max_sizes_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, setup
     MaxSizes { max_trace_area, max_const_area, max_aux_trace_area, max_const_tree_size, recursive: true }
 }
 
-pub fn gen_witness<F: PrimeField64>(
+pub fn gen_witness_recursive<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     proof: &Proof<F>,
@@ -196,7 +196,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_proof<F: PrimeField64>(
+pub fn generate_recursive_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     witness: &Proof<F>,
@@ -204,7 +204,7 @@ pub fn generate_proof<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: &Path,
     d_buffers: *mut c_void,
-) -> Result<Proof<F>, Box<dyn std::error::Error>> {
+) -> Proof<F> {
     timer_start_info!(GEN_RECURSIVE_PROOF);
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
@@ -249,26 +249,12 @@ pub fn generate_proof<F: PrimeField64>(
 
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
-    let rust_lib_filename = setup.setup_path.display().to_string() + ".so";
-    let rust_lib_path = Path::new(rust_lib_filename.as_str());
-
-    if !rust_lib_path.exists() {
-        return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
-    }
-
-    let library: Library = unsafe { Library::new(rust_lib_path)? };
-
-    let size_witness = unsafe {
-        let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-        get_size_witness()
-    };
-
     get_committed_pols_c(
         witness.circom_witness.as_ptr() as *mut u8,
         exec_filename_ptr,
         trace.as_ptr() as *mut u8,
         publics.as_mut_ptr() as *mut u8,
-        size_witness,
+        setup.size_witness.unwrap(),
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
         witness.n_cols as u64,
@@ -310,9 +296,9 @@ pub fn generate_proof<F: PrimeField64>(
 
     timer_stop_and_log_info!(GEN_RECURSIVE_PROOF);
     if witness.proof_type == ProofType::Compressor || witness.proof_type == ProofType::Recursive1 {
-        Ok(Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof))
+        Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof)
     } else {
-        Ok(Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, None, new_proof))
+        Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, None, new_proof)
     }
 }
 
@@ -406,7 +392,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
 
                         let circom_witness = gen_witness_aggregation::<F>(pctx, setups, &vec![proof1, proof2, proof3])?;
 
-                        let recursive2_proof = generate_proof::<F>(
+                        let recursive2_proof = generate_recursive_proof::<F>(
                             pctx,
                             setups,
                             &circom_witness,
@@ -414,7 +400,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             prover_buffer,
                             &output_dir_path,
                             d_buffers,
-                        )?;
+                        );
 
                         airgroup_proofs[airgroup][j] = Some(recursive2_proof.proof);
 
@@ -476,7 +462,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
     let final_vadcop_proof =
-        generate_proof::<F>(pctx, setups, &new_proof, trace, prover_buffer, &output_dir_path, d_buffers)?;
+        generate_recursive_proof::<F>(pctx, setups, &new_proof, trace, prover_buffer, &output_dir_path, d_buffers);
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);
 
@@ -519,20 +505,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 
     let circom_witness = generate_witness::<F>(setup, &vadcop_final_proof)?;
 
-    let rust_lib_filename = setup.setup_path.display().to_string() + ".so";
-    let rust_lib_path = Path::new(rust_lib_filename.as_str());
-
-    if !rust_lib_path.exists() {
-        return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
-    }
-
-    let library: Library = unsafe { Library::new(rust_lib_path)? };
-
-    let size_witness = unsafe {
-        let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-        get_size_witness()
-    };
-
     let exec_filename = setup.setup_path.display().to_string() + ".exec";
     let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
     let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
@@ -544,7 +516,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         exec_filename_ptr,
         trace.as_ptr() as *mut u8,
         publics.as_ptr() as *mut u8,
-        size_witness,
+        setup.size_witness.unwrap(),
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
         13,
@@ -689,21 +661,9 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
 }
 
 fn get_witness_size<F: PrimeField64>(setup: &Setup<F>) -> Result<usize, Box<dyn std::error::Error>> {
-    let rust_lib_filename = setup.setup_path.display().to_string() + ".so";
-    let rust_lib_path = Path::new(rust_lib_filename.as_str());
-
-    if !rust_lib_path.exists() {
-        return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
-    }
-
-    let library: Library = unsafe { Library::new(rust_lib_path)? };
-
     let exec_filename = setup.setup_path.display().to_string() + ".exec";
 
-    let mut size_witness = unsafe {
-        let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-        get_size_witness()
-    };
+    let mut size_witness = setup.size_witness.unwrap();
 
     let mut file = File::open(exec_filename)?; // Open the file
 

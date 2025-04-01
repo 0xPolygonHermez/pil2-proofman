@@ -962,6 +962,7 @@ name = "proofman-common"
 version = "0.6.0"
 dependencies = [
  "env_logger",
+ "libloading",
  "log",
  "mpi",
  "p3-field",

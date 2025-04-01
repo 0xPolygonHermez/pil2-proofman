@@ -18,7 +18,7 @@ use std::fmt::Write;
 use std::io::Read;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 
 use p3_goldilocks::Goldilocks;
 
@@ -38,8 +38,8 @@ use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{verify_constraints_proof, check_paths, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
-    gen_witness, gen_witness_aggregation, generate_proof, generate_vadcop_final_proof, generate_fflonk_snark_proof,
-    generate_recursivef_proof,
+    gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof, generate_vadcop_final_proof,
+    generate_fflonk_snark_proof, generate_recursivef_proof,
 };
 use crate::aggregate_recursive2_proofs;
 
@@ -73,9 +73,9 @@ where
             false,
             pctx.options.aggregation,
             pctx.options.final_snark,
-        ));
+        )?);
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false);
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false)?;
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -348,18 +348,16 @@ where
 
         timer_start_info!(GENERATING_PROOFS);
 
-        let setups_handle = {
-            let pctx_clone = Arc::clone(&pctx);
+        let setups = Arc::new(SetupsVadcop::new(
+            &pctx.global_info,
+            pctx.options.verify_constraints,
+            pctx.options.aggregation,
+            pctx.options.final_snark,
+        )?);
 
-            std::thread::spawn(move || {
-                Arc::new(SetupsVadcop::new(
-                    &pctx_clone.global_info,
-                    pctx_clone.options.verify_constraints,
-                    pctx_clone.options.aggregation,
-                    pctx_clone.options.final_snark,
-                ))
-            })
-        };
+        if pctx.options.aggregation {
+            check_tree_paths_vadcop(&pctx, &setups)?;
+        }
 
         timer_start_info!(EXECUTE);
         wcm.execute();
@@ -391,11 +389,6 @@ where
         let aux_trace = Arc::new(create_buffer_fast(prover_buffer_size as usize));
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
-
-        let setups = setups_handle.join().expect("Setups thread panicked");
-        if pctx.options.aggregation {
-            check_tree_paths_vadcop(&pctx, &setups)?;
-        }
 
         let max_sizes = discover_max_sizes(&pctx, &sctx);
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
@@ -440,12 +433,13 @@ where
 
         timer_start_info!(GENERATING_BASIC_PROOFS);
 
-        let proofs = Arc::new(Mutex::new(vec![Proof::default(); my_instances.len()]));
-        let airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
-        let airgroup_values_air_instances = Arc::new(Mutex::new(airgroup_values_air_instances));
+        let proofs = Arc::new(RwLock::new(vec![Proof::default(); my_instances.len()]));
+        let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
 
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
+        let mut recursive_witness = vec![None; my_instances.len()];
+        let mut previous_instance_id = None;
         for air_groups in my_air_groups.iter() {
             let mut gen_const_tree = true;
             for my_instance_id in air_groups.iter() {
@@ -474,6 +468,15 @@ where
                     gen_const_tree,
                     d_buffers.clone(),
                 ));
+
+                if previous_instance_id.is_some() {
+                    let proof =
+                        proofs.read().unwrap()[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())].clone();
+                    let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
+                    recursive_witness[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())] = Some(witness);
+                }
+
+                previous_instance_id = Some(instance_id);
                 gen_const_tree = false;
             }
         }
@@ -584,33 +587,43 @@ where
                 let mut proof = proofs[*my_instance_id].clone();
 
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                    let witness = gen_witness(&pctx, &setups, &proofs[*my_instance_id])?;
-                    proof = generate_proof(
+                    if recursive_witness[*my_instance_id].is_none() {
+                        let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
+                        recursive_witness[*my_instance_id] = Some(witness);
+                    }
+                    let witness = recursive_witness[*my_instance_id].as_ref().unwrap();
+                    proof = generate_recursive_proof(
                         &pctx,
                         &setups,
-                        &witness,
+                        witness,
                         &trace,
                         &prover_buffer,
                         &output_dir_path,
                         d_buffers_aggregation.lock().unwrap().get_ptr(),
-                    )?;
+                    );
+                    recursive_witness[*my_instance_id] = None;
                 }
 
-                let witness_recursive1 = gen_witness(&pctx, &setups, &proof)?;
-                let proof_recursive1 = generate_proof(
+                if recursive_witness[*my_instance_id].is_none() {
+                    let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
+                    recursive_witness[*my_instance_id] = Some(witness);
+                }
+
+                let witness = recursive_witness[*my_instance_id].as_ref().unwrap();
+                let proof_recursive1 = generate_recursive_proof(
                     &pctx,
                     &setups,
-                    &witness_recursive1,
+                    witness,
                     &trace,
                     &prover_buffer,
                     &output_dir_path,
                     d_buffers_aggregation.lock().unwrap().get_ptr(),
-                )?;
+                );
 
                 recursive2_proofs[airgroup_id].push(proof_recursive1);
                 if recursive2_proofs[airgroup_id].len() == 3 {
                     let witness_recursive2 = gen_witness_aggregation(&pctx, &setups, &recursive2_proofs[airgroup_id])?;
-                    let proof_recursive2 = generate_proof(
+                    let proof_recursive2 = generate_recursive_proof(
                         &pctx,
                         &setups,
                         &witness_recursive2,
@@ -618,7 +631,7 @@ where
                         &prover_buffer,
                         &output_dir_path,
                         d_buffers_aggregation.lock().unwrap().get_ptr(),
-                    )?;
+                    );
                     recursive2_proofs[airgroup_id] = vec![proof_recursive2];
                 }
             }
@@ -635,6 +648,7 @@ where
         )?;
         pctx.dctx.read().unwrap().barrier();
 
+        let mut proof_id = None;
         if pctx.dctx_get_rank() == 0 {
             let mut vadcop_final_proof = generate_vadcop_final_proof(
                 &pctx,
@@ -646,9 +660,12 @@ where
                 d_buffers_aggregation.lock().unwrap().get_ptr(),
             )?;
 
-            let proof_id = Some(
+            proof_id = Some(
                 blake3::hash(unsafe {
-                    std::slice::from_raw_parts(vadcop_final_proof.proof.as_ptr() as *const u8, vadcop_final_proof.proof.len() * 8)
+                    std::slice::from_raw_parts(
+                        vadcop_final_proof.proof.as_ptr() as *const u8,
+                        vadcop_final_proof.proof.len() * 8,
+                    )
                 })
                 .to_hex()
                 .to_string(),
@@ -701,11 +718,10 @@ where
                     );
                 }
             }
-            return Ok(proof_id);
         }
         timer_stop_and_log_info!(GENERATING_COMPRESSED_PROOFS);
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
-        Ok(None)
+        Ok(proof_id)
     }
 
     fn get_contribution(
@@ -733,7 +749,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn generate_proof_thread(
-        proofs: Arc<Mutex<Vec<Proof<F>>>>,
+        proofs: Arc<RwLock<Vec<Proof<F>>>>,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         instance_id: usize,
@@ -799,7 +815,7 @@ where
             pctx.free_instance(instance_id);
 
             timer_stop_and_log_info!(GEN_PROOF);
-            proofs.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
+            proofs.write().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
                 Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof);
         })
     }
@@ -814,7 +830,7 @@ where
 
         let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options.clone());
         let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints));
+            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints)?);
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);

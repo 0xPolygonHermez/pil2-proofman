@@ -24,7 +24,7 @@ impl GetConstraintsCmd {
         println!();
 
         let global_info = GlobalInfo::new(&self.proving_key);
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false);
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false)?;
 
         initialize_logger(proofman_common::VerboseMode::Info);
 
