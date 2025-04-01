@@ -92,7 +92,7 @@ mkdir -p ./pil2-components/test/std/direct_update/build/ \
      --witness-lib ./target/debug/libdirect_update.so \
      --proving-key ./pil2-components/test/std/direct_update/build/provingKey \
 && cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libdirect_update.so \
+     --witness-lib ./target/release/libdirect_update.so \
      --proving-key ./pil2-components/test/std/direct_update/build/provingKey \
      --output-dir ./pil2-components/test/std/direct_update/build/proofs -y
 

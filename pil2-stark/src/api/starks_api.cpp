@@ -93,9 +93,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool verify_constraints, bool verify)
+void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bool verify, bool gpu)
 {
-    auto starkInfo = new StarkInfo(filename, verify_constraints, verify);
+    auto starkInfo = new StarkInfo(filename, recursive, verify_constraints, verify, gpu);
 
     return starkInfo;
 }
@@ -103,6 +103,16 @@ void *stark_info_new(char *filename, bool verify_constraints, bool verify)
 uint64_t get_proof_size(void *pStarkInfo) {
     StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
     return starkInfo->proofSize;
+}
+
+void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
+    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
+    starkInfo->setMemoryExpressions(nTmp1, nTmp3);
+}
+
+uint64_t get_const_pols_offset(void *pStarkInfo) {
+    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
+    return starkInfo->mapOffsets[std::make_pair("const", false)];
 }
 
 uint64_t get_map_total_n(void *pStarkInfo)
@@ -182,6 +192,27 @@ void *expressions_bin_new(char* filename, bool global, bool verifier)
 
     return expressionsBin;
 };
+
+uint64_t get_max_n_tmp1(void *pExpressionsBin) {
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxTmp1;
+};
+
+uint64_t get_max_n_tmp3(void *pExpressionsBin){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxTmp3;
+};
+
+uint64_t get_max_args(void *pExpressionsBin){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxArgs;
+};
+
+uint64_t get_max_ops(void *pExpressionsBin){
+    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
+    return expressionsBin->maxOps;
+};
+
 void expressions_bin_free(void *pExpressionsBin)
 {
     auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
@@ -192,7 +223,12 @@ void expressions_bin_free(void *pExpressionsBin)
 // ========================================================================================
 void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, uint64_t hintId, char* hintFieldName, void* hintOptions) 
 {
-    getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
+    ProverHelpers proverHelpers;
+
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+
+    getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
 
 uint64_t get_hint_field_values(void *pSetupCtx, uint64_t hintId, char* hintFieldName) {
@@ -221,15 +257,28 @@ void mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t nHints, uint64
         hintOptions2Vec[i] = *(HintFieldOptions *)hintOptions2[i];
     }
 
-    return multiplyHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, nHints, hintId, hintFieldNameDests.data(), hintFieldNames1.data(), hintFieldNames2.data(), hintOptions1Vec.data(), hintOptions2Vec.data());
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
+    ProverHelpers proverHelpers;
+
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+
+    return multiplyHintFields(setupCtx, *(StepsParams *)stepsParams, expressionsCtx, nHints, hintId, hintFieldNameDests.data(), hintFieldNames1.data(), hintFieldNames2.data(), hintOptions1Vec.data(), hintOptions2Vec.data());
 }
 
 void acc_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName, bool add) {
-    accHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName), add);
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
+    ProverHelpers proverHelpers;
+
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+    accHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName), add);
 }
 
 void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameDest, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add) {
-    accMulHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add);
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
+    ProverHelpers proverHelpers;
+
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+    accMulHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add);
 }
 
 uint64_t update_airgroupvalue(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *hintFieldNameAirgroupVal, char *hintFieldName1, char *hintFieldName2, void* hintOptions1, void *hintOptions2, bool add) {
@@ -250,33 +299,21 @@ uint64_t set_hint_field(void *pSetupCtx, void* params, void *values, uint64_t hi
 
 void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams)
 {
-     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
+    SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     StepsParams &params = *(StepsParams *)stepsParams;
 
-    std::vector<Dest> dests;
+    ProverHelpers proverHelpers;
+
+    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
         if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {
             Goldilocks::Element* pAddress = setupCtx.starkInfo.cmPolsMap[i].stage == 1 ? params.trace : params.aux_trace;
             Dest destStruct(&pAddress[setupCtx.starkInfo.mapOffsets[std::make_pair("cm" + to_string(step), false)] + setupCtx.starkInfo.cmPolsMap[i].stagePos], (1<< setupCtx.starkInfo.starkStruct.nBits), setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
-            destStruct.addParams(setupCtx.expressionsBin.expressionsInfo[setupCtx.starkInfo.cmPolsMap[i].expId], false);
-            
-            dests.push_back(destStruct);
+            destStruct.addParams(setupCtx.starkInfo.cmPolsMap[i].expId, setupCtx.starkInfo.cmPolsMap[i].dim, false);
+            expressionsCtx.calculateExpressions(params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, false);
         }
     }
-
-    if(dests.size() == 0) return;
-
-    ProverHelpers proverHelpers;
-
-#ifdef __AVX512__
-    ExpressionsAvx512 expressionsCtx(setupCtx, proverHelpers);
-#elif defined(__AVX2__)
-    ExpressionsAvx expressionsCtx(setupCtx, proverHelpers);
-#else
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
-#endif
-
-    expressionsCtx.calculateExpressions(params, setupCtx.expressionsBin.expressionsBinArgsExpressions, dests, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
 }
 
 void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile)
@@ -316,29 +353,32 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
     }
 }
 
-void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace) {
+#ifndef __USE_CUDA__
+void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers) {
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
     Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
     uint64_t N = 1 << nBits;
     uint64_t NExtended = 1 << nBitsExt;
 
-    NTT_Goldilocks ntt(N);
-    ntt.extendPol(auxTraceGL, traceGL, NExtended, N, nCols);
-
     MerkleTreeGL mt(arity, true, NExtended, nCols);
+
+    NTT_Goldilocks ntt(N);
+    ntt.extendPol(auxTraceGL, traceGL, NExtended, N, nCols, &auxTraceGL[NExtended * nCols + mt.numNodes]);
+
     mt.setSource(auxTraceGL);
     mt.setNodes(&auxTraceGL[NExtended * nCols]);
     mt.merkelize();
     mt.getRoot(rootGL);
 }
+#endif
 
-void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements)
+
+void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements, uint64_t nOutputs)
 {
     TranscriptGL transcriptHash(2, true);
     transcriptHash.put((Goldilocks::Element *)pBuffer, nElements);
-    transcriptHash.getState((Goldilocks::Element *)pValue);
-
+    transcriptHash.getState((Goldilocks::Element *)pValue, nOutputs);
 }
 
 // Transcript
@@ -354,17 +394,6 @@ void transcript_add(void *pTranscript, void *pInput, uint64_t size)
     auto input = (Goldilocks::Element *)pInput;
 
     transcript->put(input, size);
-}
-
-void transcript_add_polinomial(void *pTranscript, void *pPolinomial)
-{
-    auto transcript = (TranscriptGL *)pTranscript;
-    auto pol = (Polinomial *)pPolinomial;
-
-    for (uint64_t i = 0; i < pol->degree(); i++)
-    {
-        transcript->put(pol->operator[](i), pol->dim());
-    }
 }
 
 void transcript_free(void *pTranscript)
@@ -462,26 +491,36 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
     return setHintFieldGlobalConstraint(globalInfo, *(ExpressionsBin*)p_globalinfo_bin, (Goldilocks::Element *)proofValues, (Goldilocks::Element *)values, hintId, string(hintFieldName));
 }
 
+#ifndef __USE_CUDA__
 // Gen proof
 // =================================================================================
-void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile) {
+void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers) {
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
 }
 
 // Recursive proof
 // ================================================================================= 
-void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop) {
+void *gen_device_commit_buffers(void *max_sizes)
+{
+    return NULL;
+};
+
+void gen_device_commit_buffers_free(void *d_buffers) {}
+
+void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
     genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), vadcop);
 }
 
+#endif
+
 void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId,  airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file), false);
+    return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file), false);
 }
 
 void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {

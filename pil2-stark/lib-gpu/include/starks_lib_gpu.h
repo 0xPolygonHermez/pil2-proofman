@@ -16,9 +16,11 @@
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char* filename, bool verify_constraints, bool verify);
+    void *stark_info_new(char* filename, bool recursive, bool verify_constraints, bool verify, bool gpu);
     uint64_t get_proof_size(void *pStarkInfo);
+    void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
+    uint64_t get_const_pols_offset(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
 
     void stark_info_free(void *pStarkInfo);
@@ -35,6 +37,10 @@
     // Expressions Bin
     // ========================================================================================
     void *expressions_bin_new(char* filename, bool global, bool verifier);
+    uint64_t get_max_n_tmp1(void *pExpressionsBin);
+    uint64_t get_max_n_tmp3(void *pExpressionsBin);
+    uint64_t get_max_args(void *pExpressionsBin);
+    uint64_t get_max_ops(void *pExpressionsBin);
     void expressions_bin_free(void *pExpressionsBin);
 
     // Hints
@@ -56,14 +62,13 @@
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
     void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check);
 
-    void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace);
-    void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements);
+    void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers);
+    void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements, uint64_t nOutputs);
 
     // Transcript
     // =================================================================================
     void *transcript_new(uint64_t arity, bool custom);
     void transcript_add(void *pTranscript, void *pInput, uint64_t size);
-    void transcript_add_polinomial(void *pTranscript, void *pPolinomial);
     void transcript_free(void *pTranscript);
     void get_challenge(void *pTranscript, void *pElement);
 
@@ -87,8 +92,8 @@
     
     // Gen proof && Recursive Proof
     // =================================================================================
-    void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile);
-    void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop);
+    void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers);
+    void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers);
     void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
     void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file);
 
@@ -115,4 +120,9 @@
     uint64_t get_omp_max_threads();
     void set_omp_num_threads(uint64_t num_threads);
     
+// GPU calls
+// =================================================================================
+void *gen_device_commit_buffers(void *maxSizes);
+void gen_device_commit_buffers_free(void *d_buffers);
+
 #endif

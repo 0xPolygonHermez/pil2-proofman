@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::Read;
+use std::path::Path;
 
 use p3_field::Field;
 use proofman_starks_lib_c::write_custom_commit_c;
@@ -9,7 +10,7 @@ use crate::trace::Trace;
 pub fn write_custom_commit_trace<F: Field>(
     custom_trace: &mut dyn Trace<F>,
     blowup_factor: u64,
-    file_name: &str,
+    file_name: &Path,
     check: bool,
 ) -> Result<Vec<F>, Box<dyn std::error::Error>> {
     let buffer = custom_trace.get_buffer();
@@ -39,7 +40,7 @@ pub fn write_custom_commit_trace<F: Field>(
         n_extended,
         n_cols,
         buffer.as_ptr() as *mut u8,
-        file_name,
+        file_name.to_str().expect("Invalid file name"),
         check,
     );
 

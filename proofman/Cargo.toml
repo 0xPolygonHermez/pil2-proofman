@@ -1,6 +1,6 @@
 [package]
 name = "proofman"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 
 [dependencies]
@@ -9,6 +9,7 @@ proofman-macros = { path = "../macros" }
 proofman-hints = { path = "../hints" }
 proofman-util = { path = "../util" }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
+curves = { path = "../curves" }
 transcript = { path = "../transcript" }
 witness = { path = "../witness" }
 
@@ -24,9 +25,11 @@ serde_json.workspace = true
 rayon = "1.7"
 num-bigint = "0.4"
 num-traits = "0.2"
+blake3 = "1.3.1"
 
 [features]
 default = []
 no_lib_link = ["proofman-common/no_lib_link"]
 distributed = ["proofman-common/distributed", "dep:mpi"]
 diagnostic = ["proofman-macros/diagnostic"]
+gpu = ["proofman-starks-lib-c/gpu"]

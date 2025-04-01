@@ -5,7 +5,10 @@ use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use p3_field::PrimeField64;
 use rand::{
-    distr::{Distribution, StandardUniform}, rngs::StdRng, seq::SliceRandom, Rng, SeedableRng
+    distr::{Distribution, StandardUniform},
+    rngs::StdRng,
+    seq::SliceRandom,
+    Rng, SeedableRng,
 };
 
 use crate::SimpleLeftTrace;
@@ -14,7 +17,7 @@ define_wc_with_std!(SimpleLeft, "SimLeft ");
 
 impl<F: PrimeField64> WitnessComponent<F> for SimpleLeft<F>
 where
-StandardUniform: Distribution<F>,
+    StandardUniform: Distribution<F>,
 {
     execute!(SimpleLeftTrace, 1);
 

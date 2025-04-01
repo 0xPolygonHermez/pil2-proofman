@@ -4,7 +4,6 @@
 #include <string>
 #include <map>
 #include "binfile_utils.hpp"
-#include "polinomial.hpp"
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_base_field_avx.hpp"
 #include "goldilocks_base_field_avx512.hpp"
@@ -83,7 +82,7 @@ struct ParserArgs
 {
     uint8_t* ops;
     uint16_t* args;
-    uint64_t* numbers;
+    Goldilocks::Element* numbers;
     uint16_t* constPolsIds;
     uint16_t* cmPolsIds;
     uint16_t* challengesIds;
@@ -97,6 +96,10 @@ struct ParserArgs
 class ExpressionsBin
 {
 public:
+
+    uint32_t  nOpsTotal;
+    uint32_t  nArgsTotal;
+
     std::map<uint64_t, ParserParams> expressionsInfo;
 
     std::vector<ParserParams> constraintsInfoDebug;
@@ -109,6 +112,9 @@ public:
 
     uint64_t maxTmp1;
     uint64_t maxTmp3;
+
+    uint64_t maxArgs;
+    uint64_t maxOps;
     
     ~ExpressionsBin() {
         if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;
