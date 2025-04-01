@@ -204,6 +204,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: &Path,
     d_buffers: *mut c_void,
+    load_constants: bool,
 ) -> Proof<F> {
     timer_start_info!(GEN_RECURSIVE_PROOF);
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
@@ -288,6 +289,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         air_instance_id as u64,
         vadcop,
         d_buffers,
+        load_constants,
     );
 
     if add_aggregation_publics {
@@ -356,12 +358,14 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
             //create a vector of sice indices length
             let mut alive = alives[airgroup];
             if alive > 1 {
+                let n_agg_proofs = alive / 3;
+                let n_remaining_proofs = alive % 3;
                 for i in 0..(alive + 2) / 3 {
                     let j = i * 3;
                     if airgroup_proofs[airgroup][j].is_none() {
                         continue;
                     }
-                    if j + 1 < alive {
+                    if j + 2 < alive {
                         if airgroup_proofs[airgroup][j + 1].is_none() {
                             panic!("Recursive2 proof is missing");
                         }
@@ -400,6 +404,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             prover_buffer,
                             &output_dir_path,
                             d_buffers,
+                            true,
                         );
 
                         airgroup_proofs[airgroup][j] = Some(recursive2_proof.proof);
@@ -407,10 +412,16 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                         log::info!("{}: ··· Recursive 2 Proof generated.", MY_NAME);
                     }
                 }
-                alive = (alive + 2) / 3;
+                alive = n_agg_proofs + n_remaining_proofs;
                 //compact elements
-                for i in 0..alive {
+                for i in 0..n_agg_proofs {
                     airgroup_proofs[airgroup][i] = airgroup_proofs[airgroup][i * 3].clone();
+                }
+
+                println!("alive: {}", alive);
+                for i in 0..n_remaining_proofs {
+                    airgroup_proofs[airgroup][n_agg_proofs + i] =
+                        airgroup_proofs[airgroup][3 * n_agg_proofs + i].clone();
                 }
                 alives[airgroup] = alive;
                 if alive > 1 {
@@ -461,8 +472,16 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     let new_proof = Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, 24);
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
-    let final_vadcop_proof =
-        generate_recursive_proof::<F>(pctx, setups, &new_proof, trace, prover_buffer, &output_dir_path, d_buffers);
+    let final_vadcop_proof = generate_recursive_proof::<F>(
+        pctx,
+        setups,
+        &new_proof,
+        trace,
+        prover_buffer,
+        &output_dir_path,
+        d_buffers,
+        true,
+    );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);
 

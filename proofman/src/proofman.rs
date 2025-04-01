@@ -577,7 +577,7 @@ where
         timer_stop_and_log_info!(LOAD_CONST_FILES);
 
         timer_start_info!(GENERATING_COMPRESSED_PROOFS);
-
+        timer_start_info!(GENERATING_RECURSIVE_PROOFS);
         let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
         for air_groups in my_air_groups.iter() {
             for my_instance_id in air_groups.iter() {
@@ -600,6 +600,7 @@ where
                         &prover_buffer,
                         &output_dir_path,
                         d_buffers_aggregation.lock().unwrap().get_ptr(),
+                        true,
                     );
                     recursive_witness[*my_instance_id] = None;
                 }
@@ -618,6 +619,7 @@ where
                     &prover_buffer,
                     &output_dir_path,
                     d_buffers_aggregation.lock().unwrap().get_ptr(),
+                    true,
                 );
 
                 recursive2_proofs[airgroup_id].push(proof_recursive1);
@@ -631,11 +633,14 @@ where
                         &prover_buffer,
                         &output_dir_path,
                         d_buffers_aggregation.lock().unwrap().get_ptr(),
+                        true,
                     );
                     recursive2_proofs[airgroup_id] = vec![proof_recursive2];
                 }
             }
         }
+
+        timer_stop_and_log_info!(GENERATING_RECURSIVE_PROOFS);
 
         let agg_recursive2_proof = aggregate_recursive2_proofs(
             &pctx,
@@ -807,6 +812,7 @@ where
                 air_id as u64,
                 air_instance_id as u64,
                 d_buffers.lock().unwrap().get_ptr(),
+                gen_const_tree,
             );
 
             airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =

@@ -620,22 +620,38 @@ impl DistributionCtx {
                         if chunk < self.n_processes as usize { chunk } else { i_proof % self.n_processes as usize };
                     let left_idx = i * 3;
                     let mid_idx = i * 3 + 1;
+                    let right_idx = i * 3 + 2;
 
                     if owner_rank == self.rank as usize {
-                        for &idx in &[left_idx, mid_idx] {
-                            if group_proofs[idx].is_none() {
-                                let tag =
-                                    if idx == left_idx { i_proof * 3 + n_groups } else { i_proof * 3 + n_groups + 1 };
-                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
-                                group_proofs[idx] = Some(msg);
+                        for &idx in &[left_idx, mid_idx, right_idx] {
+                            if idx < alive {
+                                if group_proofs[idx].is_none() {
+                                    let tag = if idx == left_idx {
+                                        i_proof * 3 + n_groups
+                                    } else if idx == mid_idx {
+                                        i_proof * 3 + n_groups + 1
+                                    } else {
+                                        i_proof * 3 + n_groups + 2
+                                    };
+                                    let (msg, _status) =
+                                        self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
+                                    group_proofs[idx] = Some(msg);
+                                }
                             }
                         }
                     } else if self.n_processes > 1 {
-                        for &idx in &[left_idx, mid_idx] {
-                            if let Some(proof) = group_proofs[idx].take() {
-                                let tag =
-                                    if idx == left_idx { i_proof * 3 + n_groups } else { i_proof * 3 + n_groups + 1 };
-                                self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag as i32);
+                        for &idx in &[left_idx, mid_idx, right_idx] {
+                            if idx < alive {
+                                if let Some(proof) = group_proofs[idx].take() {
+                                    let tag = if idx == left_idx {
+                                        i_proof * 3 + n_groups
+                                    } else if idx == mid_idx {
+                                        i_proof * 3 + n_groups + 1
+                                    } else {
+                                        i_proof * 3 + n_groups + 2
+                                    };
+                                    self.world.process_at_rank(owner_rank as i32).send_with_tag(&proof[..], tag as i32);
+                                }
                             }
                         }
                     }
