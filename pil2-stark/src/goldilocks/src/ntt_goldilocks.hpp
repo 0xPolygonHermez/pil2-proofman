@@ -46,9 +46,9 @@ private:
     {
         return i == 0 ? 0 : N - i;
     }
-    inline Goldilocks::Element &root(u_int32_t domainPow, u_int64_t idx)
+    inline Goldilocks::Element &root(u_int32_t domain_log, u_int64_t idx)
     {
-        return roots[idx << (s - domainPow)];
+        return roots[idx << (s - domain_log)];
     }
     inline void computeR(int N)
     {
