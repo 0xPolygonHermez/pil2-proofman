@@ -361,7 +361,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
             if alive > 1 {
                 let n_agg_proofs = alive / 3;
                 let n_remaining_proofs = alive % 3;
-                for i in 0..(alive + 2) / 3 {
+                for i in 0..alive.div_ceil(3) {
                     let j = i * 3;
                     if airgroup_proofs[airgroup][j].is_none() {
                         continue;
