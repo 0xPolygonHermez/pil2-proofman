@@ -19,32 +19,48 @@ pub struct SetupsVadcop<F: Field> {
 }
 
 impl<F: Field> SetupsVadcop<F> {
-    pub fn new(global_info: &GlobalInfo, verify_constraints: bool, aggregation: bool, final_snark: bool) -> Self {
+    pub fn new(
+        global_info: &GlobalInfo,
+        verify_constraints: bool,
+        aggregation: bool,
+        final_snark: bool,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         if aggregation {
-            let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints);
-            let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints);
-            let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints);
-            let setup_vadcop_final = Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints);
+            let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints)?;
+            let sctx_recursive1 = SetupCtx::new(global_info, &ProofType::Recursive1, verify_constraints)?;
+            let sctx_recursive2 = SetupCtx::new(global_info, &ProofType::Recursive2, verify_constraints)?;
+            let setup_vadcop_final = Setup::new(global_info, 0, 0, &ProofType::VadcopFinal, verify_constraints)?;
             let mut setup_recursivef = None;
             if final_snark {
-                setup_recursivef = Some(Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints));
+                setup_recursivef = Some(Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints)?);
             }
 
-            SetupsVadcop {
+            Ok(SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
                 sctx_recursive1: Some(sctx_recursive1),
                 sctx_recursive2: Some(sctx_recursive2),
                 setup_vadcop_final: Some(setup_vadcop_final),
                 setup_recursivef,
-            }
+            })
         } else {
-            SetupsVadcop {
+            Ok(SetupsVadcop {
                 sctx_compressor: None,
                 sctx_recursive1: None,
                 sctx_recursive2: None,
                 setup_vadcop_final: None,
                 setup_recursivef: None,
-            }
+            })
+        }
+    }
+
+    pub fn get_setup(&self, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> &Setup<F> {
+        match setup_type {
+            ProofType::Compressor => self.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id),
+            ProofType::Recursive1 => self.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id),
+            ProofType::Recursive2 => self.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id),
+            ProofType::VadcopFinal => self.setup_vadcop_final.as_ref().unwrap(),
+            ProofType::RecursiveF => self.setup_recursivef.as_ref().unwrap(),
+            _ => panic!("Invalid setup type"),
         }
     }
 
@@ -80,7 +96,11 @@ unsafe impl<F: Field> Send for SetupRepository<F> {}
 unsafe impl<F: Field> Sync for SetupRepository<F> {}
 
 impl<F: Field> SetupRepository<F> {
-    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool) -> Self {
+    pub fn new(
+        global_info: &GlobalInfo,
+        setup_type: &ProofType,
+        verify_constraints: bool,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut setups = HashMap::new();
 
         let global_bin = match setup_type == &ProofType::Basic {
@@ -102,7 +122,7 @@ impl<F: Field> SetupRepository<F> {
         if setup_type != &ProofType::VadcopFinal {
             for (airgroup_id, air_group) in global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
-                    let setup = Setup::new(global_info, airgroup_id, air_id, setup_type, verify_constraints);
+                    let setup = Setup::new(global_info, airgroup_id, air_id, setup_type, verify_constraints)?;
                     if setup_type != &ProofType::Compressor || global_info.get_air_has_compressor(airgroup_id, air_id) {
                         if max_const_tree_size < setup.const_tree_size {
                             max_const_tree_size = setup.const_tree_size;
@@ -115,10 +135,10 @@ impl<F: Field> SetupRepository<F> {
                 }
             }
         } else {
-            setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints));
+            setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints)?);
         }
 
-        Self { setups, global_bin, global_info_file, max_const_tree_size, max_const_size }
+        Ok(Self { setups, global_bin, global_info_file, max_const_tree_size, max_const_size })
     }
 
     pub fn free(&self) {
@@ -137,11 +157,15 @@ pub struct SetupCtx<F: Field> {
 }
 
 impl<F: Field> SetupCtx<F> {
-    pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool) -> Self {
-        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints);
+    pub fn new(
+        global_info: &GlobalInfo,
+        setup_type: &ProofType,
+        verify_constraints: bool,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints)?;
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
-        SetupCtx { setup_repository, max_const_tree_size, max_const_size, setup_type: setup_type.clone() }
+        Ok(SetupCtx { setup_repository, max_const_tree_size, max_const_size, setup_type: setup_type.clone() })
     }
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> &Setup<F> {

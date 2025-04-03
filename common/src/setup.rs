@@ -1,6 +1,8 @@
 use std::os::raw::c_void;
-use std::path::PathBuf;
 use p3_field::Field;
+use std::path::{Path, PathBuf};
+
+use libloading::{Library, Symbol};
 
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
@@ -14,6 +16,8 @@ use crate::GlobalInfo;
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::load_const_pols;
+
+type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 #[derive(Debug, Clone)]
 #[repr(C)]
@@ -48,6 +52,7 @@ pub struct Setup<F: Field> {
     pub proof_size: u64,
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
+    pub size_witness: Option<u64>,
     pub air_name: String,
 }
 
@@ -58,7 +63,7 @@ impl<F: Field> Setup<F> {
         air_id: usize,
         setup_type: &ProofType,
         verify_constraints: bool,
-    ) -> Self {
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let setup_path = match setup_type {
             ProofType::VadcopFinal => global_info.get_setup_path("vadcop_final"),
             ProofType::RecursiveF => global_info.get_setup_path("recursivef"),
@@ -81,9 +86,22 @@ impl<F: Field> Setup<F> {
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
+            size_witness,
         ) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
             // If the condition is met, use None for each pointer
-            (StarkInfo::default(), std::ptr::null_mut(), std::ptr::null_mut(), Vec::new(), Vec::new(), 0, 0, 0, 0, 0)
+            (
+                StarkInfo::default(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                Vec::new(),
+                Vec::new(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                None,
+            )
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
@@ -103,6 +121,23 @@ impl<F: Field> Setup<F> {
 
             let const_tree_size = get_const_tree_size_c(p_stark_info) as usize;
 
+            let size_witness = if recursive {
+                let rust_lib_filename = setup_path.display().to_string() + ".so";
+                let rust_lib_path = Path::new(rust_lib_filename.as_str());
+
+                if !rust_lib_path.exists() {
+                    return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
+                }
+
+                let library: Library = unsafe { Library::new(rust_lib_path)? };
+
+                unsafe {
+                    let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
+                    Some(get_size_witness())
+                }
+            } else {
+                None
+            };
             if verify_constraints {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 load_const_pols(&setup_path, const_pols_size, &const_pols);
@@ -117,11 +152,9 @@ impl<F: Field> Setup<F> {
                     prover_buffer_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
+                    size_witness,
                 )
-            } else if setup_type == &ProofType::Compressor
-                || setup_type == &ProofType::Recursive1
-                || setup_type == &ProofType::Recursive2
-            {
+            } else {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 (
@@ -135,24 +168,12 @@ impl<F: Field> Setup<F> {
                     prover_buffer_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
-                )
-            } else {
-                (
-                    stark_info,
-                    p_stark_info,
-                    expressions_bin,
-                    Vec::new(),
-                    Vec::new(),
-                    const_pols_size,
-                    const_tree_size,
-                    prover_buffer_size,
-                    custom_commits_fixed_buffer_size,
-                    proof_size,
+                    size_witness,
                 )
             }
         };
 
-        Self {
+        Ok(Self {
             air_id,
             airgroup_id,
             stark_info,
@@ -164,10 +185,11 @@ impl<F: Field> Setup<F> {
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
+            size_witness,
             setup_path: setup_path.clone(),
             setup_type: setup_type.clone(),
             air_name: global_info.airs[airgroup_id][air_id].name.clone(),
-        }
+        })
     }
 
     pub fn free(&self) {
