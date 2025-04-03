@@ -124,10 +124,9 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, uint64_t N, uint
     }
 }
 
-void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
+void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
-    gl64_t * d_aux;
-    cudaMalloc(&d_aux, NExtended * sizeof(gl64_t) * std::max(qDim, ncols));
+    gl64_t * d_aux = d_buffers->d_aux_trace + offset_aux_fft;
 
     cudaEvent_t point1, point2, point3;
     cudaEventCreate(&point1);
@@ -191,14 +190,11 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
     cudaEventDestroy(point1);
     cudaEventDestroy(point2);
     cudaEventDestroy(point3);
-    cudaFree(d_aux);
-    
 }
 
-void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
+void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
-    gl64_t * d_aux;
-    cudaMalloc(&d_aux, ext_size * sizeof(gl64_t) * ncols);
+    gl64_t * d_aux = d_buffers->d_aux_trace + offset_aux_fft;
 
     cudaEvent_t point1, point2, point3;
     cudaEventCreate(&point1);
@@ -257,14 +253,12 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
     cudaEventDestroy(point1);
     cudaEventDestroy(point2);
     cudaEventDestroy(point3);
-    cudaFree(d_aux);
 }
 
-void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_data)
+void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, gl64_t* d_data)
 {
 
-    gl64_t * d_aux;
-    cudaMalloc(&d_aux, size * sizeof(gl64_t) * ncols);
+    gl64_t * d_aux = d_buffers->d_aux_trace + offset_aux_fft;
 
     gl64_t* d_r = d_buffers->d_aux_trace + offset_helper;
     gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + size;
@@ -282,8 +276,7 @@ void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_
 
     int lg2 = log2(size);
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2);
-    ntt_cuda_no_buffers(dst_src, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, false, d_aux);
-    cudaFree(d_aux);
+    ntt_cuda(dst_src, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, false, d_aux);
 }
 
 

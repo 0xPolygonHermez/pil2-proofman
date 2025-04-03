@@ -25,10 +25,12 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64
 
         NTT_Goldilocks ntt(N);
 
-        uint64_t offset_helper = NExtended * nCols + tree_size;
+        uint64_t offset_aux = NExtended * nCols + tree_size;
+
+        uint64_t offset_helper = offset_aux + NExtended * nCols;
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*) d_buffers->d_aux_trace + nCols * NExtended;
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, offset_helper, &nttTime, &merkleTime);
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, offset_aux, offset_helper, &nttTime, &merkleTime);
         CHECKCUDAERR(cudaMemcpy(&root[0], pNodes + tree_size - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost));   
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;

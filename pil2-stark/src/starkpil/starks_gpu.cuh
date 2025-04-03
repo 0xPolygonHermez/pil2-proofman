@@ -58,7 +58,7 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
 
 __global__ void fillLEv_2d(gl64_t* d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N);
 
-void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime=nullptr);
+void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime=nullptr);
 
 void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks::Element *xiChallenge);
 

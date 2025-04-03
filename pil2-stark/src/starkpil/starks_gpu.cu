@@ -103,7 +103,7 @@ __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, ui
     }
 }
 
-void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime)
+void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers,  uint64_t offset_aux_fft, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime)
 {
     uint64_t N = 1 << nBits;
 
@@ -136,7 +136,7 @@ void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64
     cudaEventRecord(point1);
 
     NTT_Goldilocks ntt(N);
-    ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_buffers, offset_helper, d_LEv);
+    ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_buffers, offset_aux_fft, offset_helper, d_LEv);
 
     cudaEventRecord(point2);
     if(nttTime!= nullptr){
