@@ -280,7 +280,9 @@ where
 
             if pctx.options.verify_constraints {
                 let valid = verify_constraints_proof(&pctx, &sctx, instance_id);
-                valid_constraints.fetch_and(valid, Ordering::Relaxed);
+                if !valid {
+                    valid_constraints.fetch_and(valid, Ordering::Relaxed);
+                }
             }
 
             airgroup_values_air_instances.lock().unwrap().push(pctx.get_air_instance_airgroup_values(
