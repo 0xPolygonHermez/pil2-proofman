@@ -46,7 +46,7 @@ use crate::aggregate_recursive2_proofs;
 use std::ffi::c_void;
 
 use proofman_util::{
-    create_buffer_fast, timer_start_debug, timer_stop_and_log_debug, timer_start_info, timer_stop_and_log_info,
+    create_buffer_fast, timer_start_info, timer_stop_and_log_info,
     DeviceBuffer,
 };
 
@@ -470,11 +470,14 @@ where
                     d_buffers.clone(),
                 ));
 
-                if pctx.options.aggregation && previous_instance_id.is_some() {
-                    let proof =
-                        proofs.read().unwrap()[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())].clone();
-                    let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
-                    recursive_witness[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())] = Some(witness);
+                if previous_instance_id.is_some() {
+                    pctx.free_instance(previous_instance_id.unwrap());
+                    if pctx.options.aggregation {
+                        let proof =
+                            proofs.read().unwrap()[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())].clone();
+                        let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
+                        recursive_witness[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())] = Some(witness);
+                    }
                 }
 
                 previous_instance_id = Some(instance_id);
@@ -820,16 +823,14 @@ where
             timer_start_info!(GEN_PROOF);
 
             let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
-            load_const_pols(
-                &setup.setup_path,
-                setup.const_pols_size,
-                &aux_trace[offset_const..offset_const + setup.const_pols_size],
-            );
-
+            
             if gen_const_tree {
-                timer_start_debug!(GENERATING_CONST_TREE);
+                load_const_pols(
+                    &setup.setup_path,
+                    setup.const_pols_size,
+                    &aux_trace[offset_const..offset_const + setup.const_pols_size],
+                );
                 load_const_pols_tree(setup, &aux_trace[0..setup.const_tree_size]);
-                timer_stop_and_log_debug!(GENERATING_CONST_TREE);
             }
 
             let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
