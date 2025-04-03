@@ -386,7 +386,9 @@ void StarkInfo::setMapOffsets() {
     LEvSize += openingPoints.size() * N * FIELD_EXTENSION;
 
     for(uint64_t stage = 1; stage <= nStages; stage++) {
-        uint64_t maxTotalNStage = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
+        uint64_t maxTotalNStage = gpu 
+            ? mapOffsets[std::make_pair("mt" + to_string(nStages), true)]
+            : mapOffsets[std::make_pair("mt" + to_string(stage), true)];
         mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
         maxTotalNStage += NExtended * mapSectionsN["cm" + to_string(stage)];
         if(gpu) {
