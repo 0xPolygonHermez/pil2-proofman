@@ -218,7 +218,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     TimerStopAndLog(STARK_STEP_Q);
 
     TimerStart(STARK_STEP_EVALS);
-    TimerStart(STARK_STEP_EVALS_CALCULATE_LEV);
     uint64_t xiChallengeIndex = 0;
     min_challenge = setupCtx.starkInfo.challengesMap.size();
     max_challenge = 0;
@@ -238,13 +237,19 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     Goldilocks::Element *xiChallenge = &challenges[xiChallengeIndex * FIELD_EXTENSION];
     gl64_t * d_LEv = (gl64_t *)  h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];;
 
-
-    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)], d_LEv, &nttTime);
-    totalNTTTime += nttTime;
-    TimerStopAndLog(STARK_STEP_EVALS_CALCULATE_LEV);
     TimerStart(STARK_STEP_EVMAP);
-
-    evmap_inplace(evals, h_params, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
+    for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += 4) {
+        std::vector<int64_t> openingPoints;
+        for(uint64_t j = 0; j < 4; ++j) {
+            if(i + j < setupCtx.starkInfo.openingPoints.size()) {
+                openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
+            }
+        }
+        computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)], d_LEv, &nttTime);
+        totalNTTTime += nttTime;
+        evmap_inplace(evals, h_params, proof, &starks, d_buffers, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
+    }
+    TimerStopAndLog(STARK_STEP_EVMAP);
 
     if (!setupCtx.starkInfo.starkStruct.hashCommits)
     {
@@ -270,7 +275,6 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         }
     }
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    TimerStopAndLog(STARK_STEP_EVMAP);
     TimerStopAndLog(STARK_STEP_EVALS);
 
     //--------------------------------

@@ -534,11 +534,14 @@ where
                 timer_start_info!(VERIFYING_PROOFS);
                 let proofs_ = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
                 for instance_id in my_instances.iter() {
-                    valid_proofs = verify_basic_proof(
+                    let valid_proof = verify_basic_proof(
                         &pctx,
                         *instance_id,
                         &proofs_[pctx.dctx_get_instance_idx(*instance_id)].proof,
                     );
+                    if !valid_proof {
+                        valid_proofs = false;
+                    }
                 }
                 timer_stop_and_log_info!(VERIFYING_PROOFS);
             }

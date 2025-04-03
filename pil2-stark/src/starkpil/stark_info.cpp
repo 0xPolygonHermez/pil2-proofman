@@ -383,7 +383,15 @@ void StarkInfo::setMapOffsets() {
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
-    LEvSize += openingPoints.size() * N * FIELD_EXTENSION;
+    uint64_t maxOpenings = std::min(openingPoints.size(), uint64_t(4));
+    LEvSize += maxOpenings * N * FIELD_EXTENSION;
+
+    if(gpu) {
+        mapOffsets[std::make_pair("extra_helper_fft_lev", false)] = LEvSize;
+        LEvSize += FIELD_EXTENSION * N;
+    }
+
+    maxTotalN = std::max(maxTotalN, LEvSize);
 
     for(uint64_t stage = 1; stage <= nStages; stage++) {
         uint64_t maxTotalNStage = gpu 
@@ -407,12 +415,8 @@ void StarkInfo::setMapOffsets() {
     }
     maxTotalN = std::max(maxTotalN, maxTotalNStageQ);
     
-    if(gpu) {
-        mapOffsets[std::make_pair("extra_helper_fft_lev", false)] = LEvSize;
-        LEvSize += 3 * N;
-    }
+    
 
-    maxTotalN = std::max(maxTotalN, LEvSize);
  
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
