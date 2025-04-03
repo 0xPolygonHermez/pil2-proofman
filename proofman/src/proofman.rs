@@ -19,6 +19,8 @@ use std::io::Read;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
+use std::sync::mpsc::channel;
+use std::sync::atomic::AtomicU64;
 
 use p3_goldilocks::Goldilocks;
 
@@ -45,10 +47,7 @@ use crate::aggregate_recursive2_proofs;
 
 use std::ffi::c_void;
 
-use proofman_util::{
-    create_buffer_fast, timer_start_info, timer_stop_and_log_info,
-    DeviceBuffer,
-};
+use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info, DeviceBuffer};
 
 pub struct ProofMan<F> {
     _phantom: std::marker::PhantomData<F>,
@@ -389,15 +388,49 @@ where
 
         let aux_trace = Arc::new(create_buffer_fast(prover_buffer_size as usize));
 
-        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
-
         let max_sizes = discover_max_sizes(&pctx, &sctx);
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
         let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
 
+        let (tx, rx) = channel::<usize>();
+        let max_pending_proofs = match cfg!(feature = "gpu") {
+            true => 10,
+            false => 1,
+        };
+
+        let proof_count = Arc::new(AtomicU64::new(0)); // shared between threads
+
+        // Spawn the proof runner thread
+        let proof_count_clone = Arc::clone(&proof_count);
+        let pctx_clone = pctx.clone();
+        let sctx_clone = sctx.clone();
+        let aux_trace_clone = aux_trace.clone();
+        let values_clone = values.clone();
+        let d_buffers_clone = d_buffers.clone();
+
+        let proof_thread = std::thread::spawn(move || {
+            while let Ok(instance_id) = rx.recv() {
+                let handle = Self::get_contribution(
+                    instance_id,
+                    pctx_clone.clone(),
+                    sctx_clone.clone(),
+                    aux_trace_clone.clone(),
+                    values_clone.clone(),
+                    d_buffers_clone.clone(),
+                );
+
+                handle.join().unwrap();
+                proof_count_clone.fetch_sub(1, Ordering::SeqCst); // mark one as done
+            }
+        });
+
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !all && !pctx.dctx_is_my_instance(instance_id) {
                 continue;
+            }
+
+            while proof_count.load(Ordering::SeqCst) >= max_pending_proofs {
+                std::hint::spin_loop();
             }
 
             wcm.calculate_witness(1, &[instance_id]);
@@ -406,25 +439,12 @@ where
                 continue;
             }
 
-            // Join the previous thread (if any) before starting a new one
-            if let Some(handle) = thread_handle.take() {
-                handle.join().unwrap();
-            }
-
-            thread_handle = Some(Self::get_contribution(
-                instance_id,
-                pctx.clone(),
-                sctx.clone(),
-                aux_trace.clone(),
-                *all,
-                values.clone(),
-                d_buffers.clone(),
-            ));
+            tx.send(instance_id).unwrap();
+            proof_count.fetch_add(1, Ordering::SeqCst);
         }
 
-        if let Some(handle) = thread_handle {
-            handle.join().unwrap()
-        }
+        drop(tx);
+        proof_thread.join().unwrap();
 
         let values_challenge = Arc::try_unwrap(values).unwrap().into_inner().unwrap();
 
@@ -471,13 +491,13 @@ where
                 ));
 
                 if previous_instance_id.is_some() {
-                    pctx.free_instance(previous_instance_id.unwrap());
                     if pctx.options.aggregation {
                         let proof =
                             proofs.read().unwrap()[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())].clone();
                         let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
                         recursive_witness[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())] = Some(witness);
                     }
+                    pctx.free_instance(previous_instance_id.unwrap());
                 }
 
                 previous_instance_id = Some(instance_id);
@@ -781,17 +801,12 @@ where
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         aux_trace_contribution_ptr: Arc<Vec<F>>,
-        all: bool,
         values: Arc<Mutex<Vec<u64>>>,
         d_buffers: Arc<Mutex<DeviceBuffer>>,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
             let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr, d_buffers.clone());
-
-            if !all {
-                pctx.free_instance(instance_id);
-            }
 
             for (id, value) in value.iter().enumerate().take(10) {
                 values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 10 + id] = *value;
@@ -823,7 +838,7 @@ where
             timer_start_info!(GEN_PROOF);
 
             let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
-            
+
             if gen_const_tree {
                 load_const_pols(
                     &setup.setup_path,
@@ -862,8 +877,6 @@ where
 
             airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
                 pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
-
-            pctx.free_instance(instance_id);
 
             timer_stop_and_log_info!(GEN_PROOF);
             proofs.write().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
@@ -1145,7 +1158,7 @@ where
         timer_start_info!(GET_CONTRIBUTION_AIR);
         let instances = pctx.dctx_get_instances();
 
-        let (airgroup_id, air_id, _) = instances[instance_id];
+        let (airgroup_id, air_id, all) = instances[instance_id];
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let setup = sctx.get_setup(airgroup_id, air_id);
 
@@ -1200,6 +1213,10 @@ where
         }
 
         calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64, 10);
+
+        if !all {
+            pctx.free_instance(instance_id);
+        }
 
         timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
 
