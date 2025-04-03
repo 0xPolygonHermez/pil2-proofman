@@ -214,7 +214,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStopAndLog(STARK_STEP_Q_COMMIT);
     TimerStopAndLog(STARK_STEP_Q);
     TimerStart(STARK_STEP_EVALS);
-    TimerStart(STARK_STEP_EVALS_CALCULATE_LEV);
 
     min_challenge = setupCtx.starkInfo.challengesMap.size();
     max_challenge = 0;
@@ -231,15 +230,24 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     Goldilocks::Element *xiChallenge = &params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-   gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
+    gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
-    
-    computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.openingPoints.size(), setupCtx.starkInfo.openingPoints.data(), d_buffers, setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)], d_LEv, &nttTime);
-    totalNTTTime += nttTime;
-    TimerStopAndLog(STARK_STEP_EVALS_CALCULATE_LEV);
     TimerStart(STARK_STEP_EVALS_EVMAP);
-    
-    evmap_inplace(params.evals, h_params, proof, &starks, d_buffers, (Goldilocks::Element*)d_LEv);
+    CHECKCUDAERR(cudaMemset(h_params.evals, 0, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += 4) {
+        std::vector<int64_t> openingPoints;
+        for(uint64_t j = 0; j < 4; ++j) {
+            if(i + j < setupCtx.starkInfo.openingPoints.size()) {
+                openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
+            }
+        }
+        uint64_t offset_aux_fft = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_lev", false)];
+        uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
+        computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), d_buffers, offset_aux_fft, offset_helper, d_LEv, &nttTime);
+        totalNTTTime += nttTime;
+        evmap_inplace(params.evals, h_params, proof, &starks, d_buffers, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
+    }
+    TimerStopAndLog(STARK_STEP_EVALS_EVMAP);
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
         starks.addTranscriptGL(transcript, params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
@@ -261,7 +269,6 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         }
     }
     CHECKCUDAERR(cudaMemcpy(h_params.challenges + min_challenge * FIELD_EXTENSION, params.challenges + min_challenge * FIELD_EXTENSION, (max_challenge - min_challenge + 1) * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-    TimerStopAndLog(STARK_STEP_EVALS_EVMAP);
     TimerStopAndLog(STARK_STEP_EVALS);
 
     //--------------------------------

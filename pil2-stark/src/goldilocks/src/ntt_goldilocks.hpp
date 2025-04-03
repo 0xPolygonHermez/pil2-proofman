@@ -46,9 +46,9 @@ private:
     {
         return i == 0 ? 0 : N - i;
     }
-    inline Goldilocks::Element &root(u_int32_t domainPow, u_int64_t idx)
+    inline Goldilocks::Element &root(u_int32_t domain_log, u_int64_t idx)
     {
-        return roots[idx << (s - domainPow)];
+        return roots[idx << (s - domain_log)];
     }
     inline void computeR(int N)
     {
@@ -187,9 +187,9 @@ public:
 
     #ifdef __USE_CUDA__
     // Calculating on a single GPU
-    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_helper, double *nttTime = nullptr, double *merkleTime = nullptr);
-    void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime=nullptr, double *merkleTime=nullptr);
-    void INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_helper, gl64_t* d_data = nullptr);
+    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, double *nttTime = nullptr, double *merkleTime = nullptr);
+    void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, double *nttTime=nullptr, double *merkleTime=nullptr);
+    void INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, gl64_t* d_data = nullptr);
     #endif  
 };
 

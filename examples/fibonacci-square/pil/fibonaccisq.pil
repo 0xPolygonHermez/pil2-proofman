@@ -35,6 +35,8 @@ airtemplate FibonacciSquare(const int N = 2**8) {
     L1' * (b - out) === 0;
 
     (a' - b) * (1 - L1') === 0;
+    (a'(2) - b') * (1 - L1'(2)) === 0;
+    (a'(3) - b'(2)) * (1 - L1'(3)) === 0;
 
     module * value1 - value2 === 0;
     2*fibo1[0] - fibo1[1] === 0;
