@@ -25,7 +25,7 @@
 // #endif
 
 __device__ __forceinline__ uint32_t root_idx(uint32_t log_domain_size, uint32_t step, uint32_t idx);
-__global__ void br_ntt_8_steps(gl64_t *dst, gl64_t *data, gl64_t *twiddles, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, uint32_t base_step, bool suffle);
+__global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, uint32_t base_step, bool suffle);
 __global__ void br_ntt_group(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols);
 __global__ void br_ntt_group_new(gl64_t *data, gl64_t *twiddles, uint32_t i, uint32_t domain_size, uint32_t ncols);
 __global__ void intt_scale(gl64_t *data, gl64_t *r, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, bool extend);
@@ -42,10 +42,8 @@ __global__ void init_r_small_size(gl64_t *r, uint32_t log_domain_size);
 __global__ void init_r_first_step(gl64_t *r, uint32_t log_domain_size);
 __global__ void init_r_second_step(gl64_t *r, uint32_t log_domain_size);
 void init_r(gl64_t *r, uint32_t log_domain_size);
-void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, gl64_t *d_aux);
-void ntt_cuda_( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend);
+void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend);
 __global__ void transpose_section(gl64_t *out, const gl64_t *in, uint64_t nCols, uint64_t domainSize);
-void ntt_cuda_no_buffers( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, gl64_t *d_aux);
 
 
 __global__ void transpose(uint64_t *dst, uint64_t *src, uint32_t nblocks, uint32_t nrows, uint32_t ncols, uint32_t ncols_last_block)
@@ -124,10 +122,8 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, uint64_t N, uint
     }
 }
 
-void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, double *nttTime, double *merkleTime)
+void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
-    gl64_t * d_aux = d_buffers->d_aux_trace + offset_aux_fft;
-
     cudaEvent_t point1, point2, point3;
     cudaEventCreate(&point1);
     cudaEventCreate(&point2);
@@ -158,7 +154,7 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext);
 
     // Intt
-    ntt_cuda(d_q, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, qDim, true, false, d_aux);
+    ntt_cuda(d_q, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, qDim, true, false);
 
 
     dim3 threads(128, 1, 1);
@@ -167,7 +163,7 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
     CHECKCUDAERR(cudaMemset(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t)));
 
 
-    ntt_cuda(d_cmQ, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false, d_aux);
+    ntt_cuda(d_cmQ, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false);
 
     cudaEventRecord(point2);
 
@@ -192,10 +188,8 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
     cudaEventDestroy(point3);
 }
 
-void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, double *nttTime, double *merkleTime)
+void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
-    gl64_t * d_aux = d_buffers->d_aux_trace + offset_aux_fft;
-
     cudaEvent_t point1, point2, point3;
     cudaEventCreate(&point1);
     cudaEventCreate(&point2);
@@ -228,9 +222,9 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
 
     CHECKCUDAERR(cudaMemcpy(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice));
     CHECKCUDAERR(cudaMemset(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t)));
-    ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, true, d_aux);
+    ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, true);
 
-    ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false, d_aux);
+    ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false);
 
     cudaEventRecord(point2);
 
@@ -255,10 +249,8 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
     cudaEventDestroy(point3);
 }
 
-void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_aux_fft, uint64_t offset_helper, gl64_t* d_data)
+void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_data)
 {
-
-    gl64_t * d_aux = d_buffers->d_aux_trace + offset_aux_fft;
 
     gl64_t* d_r = d_buffers->d_aux_trace + offset_helper;
     gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + size;
@@ -276,7 +268,7 @@ void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_
 
     int lg2 = log2(size);
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2);
-    ntt_cuda(dst_src, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, false, d_aux);
+    ntt_cuda(dst_src, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, false);
 }
 
 
@@ -307,7 +299,7 @@ __device__ __forceinline__ uint32_t root_idx(uint32_t log_domain_size, uint32_t 
     return idx << (log_domain_size - step);
 }
 
-__global__ void br_ntt_8_steps(gl64_t *dst, gl64_t *data, gl64_t *twiddles, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, uint32_t base_step, bool suffle)
+__global__ void br_ntt_8_steps(gl64_t *data, gl64_t *twiddles, uint32_t domain_size, uint32_t log_domain_size, uint32_t ncols, uint32_t base_step, bool suffle)
 {
     __shared__ gl64_t tile[1024];
 
@@ -316,22 +308,15 @@ __global__ void br_ntt_8_steps(gl64_t *dst, gl64_t *data, gl64_t *twiddles, uint
     twiddles = twiddles + start;
     uint32_t steps = min(log_domain_size - base_step, 8);
 
-    assert(blockDim.x == 256);
-    uint32_t row = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t row_dst;
-    if(suffle){
-        if(steps == 8){
-            row_dst = threadIdx.x * gridDim.x + blockIdx.x;  
-        }else{
-            uint32_t batchSize = 1 << steps;
-            uint32_t nBatches = domain_size / batchSize;
-            uint32_t b = row / batchSize;
-            uint32_t thid = row % batchSize;
-            row_dst = thid * nBatches + b;
-        }  
-    }else{
-        row_dst = row;
-    }
+    
+    uint32_t row;
+    row = blockIdx.x * blockDim.x + threadIdx.x;        
+    uint32_t bachSize = 1 << base_step;
+    uint32_t nBatches = domain_size / bachSize;
+    uint32_t thid = row / nBatches;
+    uint32_t b = row % nBatches;
+    row = b * bachSize + thid;
+    
 
     uint32_t remaining_steps = log_domain_size - (base_step+1); //remaining steps
     uint32_t remaining_msk = (1 << remaining_steps) - 1; 
@@ -402,16 +387,16 @@ __global__ void br_ntt_8_steps(gl64_t *dst, gl64_t *data, gl64_t *twiddles, uint
             __syncthreads();
         }
         // copy values to data
-        dst[row_dst*ncols + col_base] = tile[threadIdx.x*4];
+        data[row*ncols + col_base] = tile[threadIdx.x*4];
         if(col_base + 3 < ncols){
-            dst[row_dst*ncols + col_base+1] = tile[threadIdx.x*4+1];
-            dst[row_dst*ncols + col_base+2] = tile[threadIdx.x*4+2];
-            dst[row_dst*ncols + col_base+3] = tile[threadIdx.x*4+3];
+            data[row*ncols + col_base+1] = tile[threadIdx.x*4+1];
+            data[row*ncols + col_base+2] = tile[threadIdx.x*4+2];
+            data[row*ncols + col_base+3] = tile[threadIdx.x*4+3];
         } else if(col_base + 2 < ncols){
-            dst[row_dst*ncols + col_base+1] = tile[threadIdx.x*4+1];
-            dst[row_dst*ncols + col_base+2] = tile[threadIdx.x*4+2];
+            data[row*ncols + col_base+1] = tile[threadIdx.x*4+1];
+            data[row*ncols + col_base+2] = tile[threadIdx.x*4+2];
         } else if(col_base + 1 < ncols){
-            dst[row_dst*ncols + col_base+1] = tile[threadIdx.x*4+1];
+            data[row*ncols + col_base+1] = tile[threadIdx.x*4+1];
         }
     }   
 }
@@ -653,7 +638,7 @@ void init_r(gl64_t *r, uint32_t log_domain_size)
     }
 }
 
-void ntt_cuda_no_buffers( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, gl64_t* d_aux)
+void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend)
 {   
 
     uint32_t domain_size = 1 << log_domain_size;
@@ -672,66 +657,14 @@ void ntt_cuda_no_buffers( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t 
         ptr_twiddles = inv_twiddles;
     }
 
-    if(log_domain_size >= 8){
-        br_ntt_8_steps<<<domain_size / 256, 256>>>(data, data, ptr_twiddles, domain_size, log_domain_size, ncols,0, false);
-        for (uint32_t i = 8; i < log_domain_size; i++)
-        {
-            br_ntt_group<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
-            CHECKCUDAERR(cudaGetLastError());
-        }
-    }else{
-        for (uint32_t i = 0; i < log_domain_size; i++)
-        {
-            br_ntt_group<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
-            CHECKCUDAERR(cudaGetLastError());
-        }
+    for(uint32_t step = 0; step < log_domain_size; step+=8){
+        br_ntt_8_steps<<<domain_size / 256, 256>>>(data, ptr_twiddles, domain_size, log_domain_size, ncols, step, true);                   
     }
-    if (inverse)
-    {
-        intt_scale<<<domain_size, ncols, 0>>>(data, r, domain_size, log_domain_size, ncols, extend);
-        CHECKCUDAERR(cudaGetLastError());
-    }
-   
-}
-
-void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, gl64_t* d_aux)
-{   
-
-    uint32_t domain_size = 1 << log_domain_size;
-
-    dim3 blockDim;
-    dim3 gridDim;
     
-    blockDim = dim3(TPB_NTT);
-    gridDim = dim3(8192);
-    reverse_permutation_new<<<gridDim, blockDim, 0>>>(data, log_domain_size, ncols);
-    CHECKCUDAERR(cudaGetLastError());
-
-    gl64_t *ptr_twiddles = fwd_twiddles;
-    if (inverse)
-    {
-        ptr_twiddles = inv_twiddles;
-    }
-
-
-    if(log_domain_size > 16 && log_domain_size <= 24){
-        br_ntt_8_steps<<<domain_size / 256, 256>>>(d_aux, data, ptr_twiddles, domain_size, log_domain_size, ncols, 0, true);
-        br_ntt_8_steps<<<domain_size / 256, 256>>>(data, d_aux, ptr_twiddles, domain_size, log_domain_size, ncols, 8, true);
-        br_ntt_8_steps<<<domain_size / 256, 256>>>(d_aux, data, ptr_twiddles, domain_size, log_domain_size, ncols,16, true);
-        cudaMemcpy(data, d_aux, domain_size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice);
-    }else{
-        for (uint32_t i = 0; i < log_domain_size; i++)
-        {
-            br_ntt_group<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
-            CHECKCUDAERR(cudaGetLastError());
-        }
-    }
-
-
     if (inverse)
     {
         intt_scale<<<domain_size, ncols, 0>>>(data, r, domain_size, log_domain_size, ncols, extend);
-        CHECKCUDAERR(cudaGetLastError());
+        
     }
 }
 

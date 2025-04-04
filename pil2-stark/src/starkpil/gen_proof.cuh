@@ -240,9 +240,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
                 openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
             }
         }
-        uint64_t offset_aux_fft = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_lev", false)];
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
-        computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), d_buffers, offset_aux_fft, offset_helper, d_LEv, &nttTime);
+        computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), d_buffers, offset_helper, d_LEv, &nttTime);
         totalNTTTime += nttTime;
         evmap_inplace(params.evals, h_params, proof, &starks, d_buffers, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
     }
