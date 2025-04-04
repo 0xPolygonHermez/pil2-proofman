@@ -470,9 +470,9 @@ where
             None
         };
 
-        timer_start_info!(INITIALIZING);
-        initialize_size_witness(&pctx, &setups)?;
-        timer_stop_and_log_info!(INITIALIZING);
+        if pctx.options.aggregation {
+            initialize_size_witness(&pctx, &setups)?;
+        }
 
         timer_start_info!(GENERATING_BASIC_PROOFS);
 
