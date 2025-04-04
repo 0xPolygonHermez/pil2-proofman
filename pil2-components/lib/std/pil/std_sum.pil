@@ -38,7 +38,7 @@ function sum(const int name, const int type, const int opids[], const expr busid
         case 2: // Free
             update_piop_sum(name, 2, opids, busid, mul, expressions, direct_type);
         default:
-            error("Invalid sum type: ${type}");
+            error(`Invalid sum type: ${type}`);
     }
 }
 
@@ -113,7 +113,7 @@ private function update_piop_sum(const int name, const int proves, const int opi
             // Update constraints at the airgroup level
             on final airgroup piop_gsum_airgroup();
         default:
-            error("Invalid direct_type: ${direct_type}");
+            error(`Invalid direct_type: ${direct_type}`);
     }
 
     // Update the constraints at the proof level
@@ -244,7 +244,7 @@ private function find_repeated_proves() {
 
 }
 
-private function piop_gsum_air(const int blowupFactor = 2) {
+private function piop_gsum_air() {
     use air.std.gsum;
 
     const expr L1 = get_L1(); // [1,0,...]
@@ -328,7 +328,7 @@ private function piop_gsum_air(const int blowupFactor = 2) {
     // Create an intermediate for clusters of low-degree terms so that
     // the degree of the constraint is lower than the maximum allowed
     if (low_degree_len > 0) {
-        const int nIm = low_degree_len/blowupFactor;
+        const int nIm = low_degree_len/BLOWUP_FACTOR;
         if (nIm > 0) {
             col witness stage(2) im[nIm];
             for (int i = 0; i < nIm; i++) {
@@ -344,13 +344,13 @@ private function piop_gsum_air(const int blowupFactor = 2) {
 
                 expr prods = 1;
                 expr sums = 0;
-                for (int j = 0; j < blowupFactor; j++) {
-                    prods *= (gsum_e[low_degree_term[blowupFactor * i + j]] + std_gamma);
+                for (int j = 0; j < BLOWUP_FACTOR; j++) {
+                    prods *= (gsum_e[low_degree_term[BLOWUP_FACTOR * i + j]] + std_gamma);
 
-                    expr _partial = gsum_s[low_degree_term[blowupFactor * i + j]];
-                    for (int k = 0; k < blowupFactor; k++) {
+                    expr _partial = gsum_s[low_degree_term[BLOWUP_FACTOR * i + j]];
+                    for (int k = 0; k < BLOWUP_FACTOR; k++) {
                         if (k == j) continue;
-                        _partial *= (gsum_e[low_degree_term[blowupFactor * i + k]] + std_gamma);
+                        _partial *= (gsum_e[low_degree_term[BLOWUP_FACTOR * i + k]] + std_gamma);
                     }
                     sums += _partial;
                 }
@@ -364,7 +364,7 @@ private function piop_gsum_air(const int blowupFactor = 2) {
             }
         }
 
-        const int nRemTerms = low_degree_len % blowupFactor;
+        const int nRemTerms = low_degree_len % BLOWUP_FACTOR;
         // If there are remaining terms, add an extra cluster
         if (nRemTerms > 0) {
             col witness stage(2) im_extra;
@@ -372,12 +372,12 @@ private function piop_gsum_air(const int blowupFactor = 2) {
             expr prods = 1;
             expr sums = 0;
             for (int j = 0; j < nRemTerms; j++) {
-                prods *= (gsum_e[low_degree_term[blowupFactor * nIm + j]] + std_gamma);
+                prods *= (gsum_e[low_degree_term[BLOWUP_FACTOR * nIm + j]] + std_gamma);
 
-                expr _partial = gsum_s[low_degree_term[blowupFactor * nIm + j]];
+                expr _partial = gsum_s[low_degree_term[BLOWUP_FACTOR * nIm + j]];
                 for (int k = 0; k < nRemTerms; k++) {
                     if (k == j) continue;
-                    _partial *= (gsum_e[low_degree_term[blowupFactor * nIm + k]] + std_gamma);
+                    _partial *= (gsum_e[low_degree_term[BLOWUP_FACTOR * nIm + k]] + std_gamma);
                 }
                 sums += _partial;
             }
