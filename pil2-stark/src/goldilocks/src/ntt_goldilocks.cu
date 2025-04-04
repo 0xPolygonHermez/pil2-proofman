@@ -657,9 +657,19 @@ void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddl
         ptr_twiddles = inv_twiddles;
     }
 
-    for(uint32_t step = 0; step < log_domain_size; step+=8){
-        br_ntt_8_steps<<<domain_size / 256, 256>>>(data, ptr_twiddles, domain_size, log_domain_size, ncols, step, true);                   
+    if(log_domain_size >= 8) {
+         for(uint32_t step = 0; step < log_domain_size; step+=8){
+            br_ntt_8_steps<<<domain_size / 256, 256>>>(data, ptr_twiddles, domain_size, log_domain_size, ncols, step, true);
+            CHECKCUDAERR(cudaGetLastError());               
+        }
+    } else {
+        for (uint32_t i = 0; i < log_domain_size; i++)
+        {
+            br_ntt_group<<<domain_size / 2, ncols, 0>>>(data, ptr_twiddles, i, domain_size, ncols);
+            CHECKCUDAERR(cudaGetLastError());
+        }
     }
+   
     
     if (inverse)
     {

@@ -385,10 +385,10 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
     uint64_t maxOpenings = std::min(openingPoints.size(), uint64_t(4));
     LEvSize += maxOpenings * N * FIELD_EXTENSION;
-    mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
-    LEvSize += maxOpenings * N * FIELD_EXTENSION;
-
-    if(gpu) {    
+    if(!gpu) {
+        mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
+        LEvSize += maxOpenings * N * FIELD_EXTENSION;
+    } else {    
         mapOffsets[std::make_pair("extra_helper_fft_lev", false)] = LEvSize;
         LEvSize += FIELD_EXTENSION * N;
     }
@@ -396,12 +396,11 @@ void StarkInfo::setMapOffsets() {
     maxTotalN = std::max(maxTotalN, LEvSize);
 
     for(uint64_t stage = 1; stage <= nStages; stage++) {
-        uint64_t maxTotalNStage = gpu 
-            ? mapOffsets[std::make_pair("mt" + to_string(nStages), true)]
-            : mapOffsets[std::make_pair("mt" + to_string(stage), true)];
-        mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
-        maxTotalNStage += NExtended * mapSectionsN["cm" + to_string(stage)];
-        if(gpu) {
+        uint64_t maxTotalNStage = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
+        if(!gpu) {
+            mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
+            maxTotalNStage += NExtended * mapSectionsN["cm" + to_string(stage)];
+        } else {
             mapOffsets[std::make_pair("extra_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
             maxTotalNStage += FIELD_EXTENSION*NExtended;
         }
@@ -409,9 +408,10 @@ void StarkInfo::setMapOffsets() {
     }
 
     uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
-    mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
-    maxTotalNStageQ += NExtended * mapSectionsN["cm" + to_string(nStages + 1)];
-    if(gpu) {
+    if(!gpu) {
+        mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
+        maxTotalNStageQ += NExtended * mapSectionsN["cm" + to_string(nStages + 1)];
+    } else {
         mapOffsets[std::make_pair("extra_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
         maxTotalNStageQ += FIELD_EXTENSION*NExtended;
     }
