@@ -1,4 +1,4 @@
-use std::{error::Error, sync::Arc};
+use std::{any::Any, error::Error, sync::Arc};
 
 use crate::WitnessManager;
 use p3_field::Field;
@@ -9,6 +9,9 @@ pub type WitnessLibInitFn<F> = fn(VerboseMode) -> Result<Box<dyn WitnessLibrary<
 
 pub trait WitnessLibrary<F: Field> {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>);
+    fn get_execution_result(&self) -> Option<Box<dyn Any>> {
+        None
+    }
 }
 
 #[macro_export]

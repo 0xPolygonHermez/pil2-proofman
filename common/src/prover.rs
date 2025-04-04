@@ -13,14 +13,29 @@ pub enum ProverStatus {
     OpeningStage,
     StagesCompleted,
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum ProofType {
+    #[default]
     Basic,
     Compressor,
     Recursive1,
     Recursive2,
     VadcopFinal,
     RecursiveF,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Proof {
+    pub proof_type: ProofType,
+    pub airgroup_id: usize,
+    pub air_id: usize,
+    pub proof: Vec<u64>,
+}
+
+impl Proof {
+    pub fn new(proof_type: ProofType, airgroup_id: usize, air_id: usize, proof: Vec<u64>) -> Self {
+        Self { proof_type, airgroup_id, air_id, proof }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

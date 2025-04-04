@@ -1,6 +1,6 @@
 use p3_field::{Field, ExtensionField};
 
-use crate::SquaringFp5;
+use crate::goldilocks_quintic_extension::SquaringFp5;
 
 /// Trait for elliptic curves
 pub trait EllipticCurve<F: Field, K: ExtensionField<F> + SquaringFp5>: Clone {

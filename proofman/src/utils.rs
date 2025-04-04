@@ -1,11 +1,13 @@
 use log::info;
 use p3_field::PrimeField64;
 use num_traits::ToPrimitive;
-use proofman_starks_lib_c::get_const_tree_size_c;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use colored::*;
 
@@ -56,7 +58,8 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         n_instances = my_instances.len();
     }
 
-    for (instance_id, (airgroup_id, air_id, _)) in instances.iter().enumerate() {
+    let mut memory_tables = 0 as f64;
+    for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
         if !print[instance_id] {
             continue;
         }
@@ -66,10 +69,15 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         if !air_instance_map.contains_key(&air_name.clone()) {
             let setup = sctx.get_setup(*airgroup_id, *air_id);
             let n_bits = setup.stark_info.stark_struct.n_bits;
+            let memory_trace = (*setup.stark_info.map_sections_n.get("cm1").unwrap()
+                * (1 << (setup.stark_info.stark_struct.n_bits))) as f64
+                * 8.0;
             let memory_instance = setup.prover_buffer_size as f64 * 8.0;
             let memory_fixed =
                 (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
-
+            if *all {
+                memory_tables += memory_trace;
+            }
             let total_cols: u64 = setup
                 .stark_info
                 .map_sections_n
@@ -77,7 +85,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
                 .filter(|(key, _)| *key != "const")
                 .map(|(_, value)| *value)
                 .sum();
-            air_info.insert(air_name.clone(), (n_bits, total_cols, memory_fixed, memory_instance));
+            air_info.insert(air_name.clone(), (n_bits, total_cols, memory_fixed, memory_trace, memory_instance));
         }
         let air_instance_map_key = air_instance_map.entry(air_name).or_insert(0);
         *air_instance_map_key += 1;
@@ -96,7 +104,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         info!("{}:       Air Group [{}]", name, air_group);
         for air_name in air_names {
             let count = air_group_instances.get(air_name).unwrap();
-            let (n_bits, total_cols, _, _) = air_info.get(air_name).unwrap();
+            let (n_bits, total_cols, _, _, _) = air_info.get(air_name).unwrap();
             info!(
                 "{}:       {}",
                 name,
@@ -104,29 +112,6 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
             );
         }
     }
-    info!("{}: ----------------------------------------------------------", name);
-    info!("{}", format!("{}: --- TOTAL SETUP MEMORY USAGE ----------------------------", name).bright_white().bold());
-    let mut total_memory = 0f64;
-    info!(
-        "{}:       {}",
-        name,
-        format!("Fixed pols memory: {}", format_bytes(sctx.max_const_size as f64 * 8.0)).bright_white().bold()
-    );
-    total_memory += sctx.max_const_size as f64 * 8.0;
-    info!(
-        "{}:       {}",
-        name,
-        format!("Fixed pols tree memory: {}", format_bytes(sctx.max_const_tree_size as f64 * 8.0))
-            .bright_white()
-            .bold()
-    );
-    total_memory += sctx.max_const_tree_size as f64 * 8.0;
-    info!(
-        "{}:       {}",
-        name,
-        format!("Total setup memory required: {}", format_bytes(total_memory)).bright_white().bold()
-    );
-
     info!("{}: ----------------------------------------------------------", name);
     if pctx.options.verify_constraints {
         info!(
@@ -149,21 +134,38 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
 
         for air_name in air_names {
             let count = air_group_instances.get(air_name).unwrap();
-            let (_, _, _, memory_instance) = air_info.get(air_name).unwrap();
-            if max_prover_memory < *memory_instance {
-                max_prover_memory = *memory_instance;
+            let (_, _, _, memory_trace, memory_instance) = air_info.get(air_name).unwrap();
+            let gpu = cfg!(feature = "gpu");
+            if gpu {
+                if max_prover_memory < *memory_instance {
+                    max_prover_memory = *memory_instance;
+                }
+                info!(
+                    "{}:       · {}: {} per each of {} instance",
+                    name,
+                    air_name,
+                    format_bytes(*memory_instance),
+                    count,
+                );
+            } else {
+                if max_prover_memory < *memory_instance + *memory_trace {
+                    max_prover_memory = *memory_instance + *memory_trace;
+                }
+                info!(
+                    "{}:       · {}: {} + {} per each of {} instance | Total: {}",
+                    name,
+                    air_name,
+                    format_bytes(*memory_trace),
+                    format_bytes(*memory_instance),
+                    count,
+                    format_bytes(*memory_instance + *memory_trace)
+                );
             }
-            info!(
-                "{}:       {}",
-                name,
-                format!("· {}: {} per each of {} instance", air_name, format_bytes(*memory_instance), count,)
-            );
         }
     }
-    info!("{}:       {}", name, format!("Total prover memory required: {}", format_bytes(max_prover_memory)));
-    total_memory += max_prover_memory;
+    info!("{}:       Total memory required by proofman: {}", name, format_bytes(max_prover_memory));
     info!("{}: ----------------------------------------------------------", name);
-    info!("{}:       {}", name, format!("Total memory required by proofman: {}", format_bytes(total_memory)));
+    info!("{}:       Extra memory tables (CPU): {}", name, format_bytes(memory_tables));
     info!("{}: ----------------------------------------------------------", name);
 }
 
@@ -250,7 +252,7 @@ fn check_const_tree<F: PrimeField64>(
         const_pols_tree_path, flags
     );
 
-    let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+    let const_pols_tree_size = setup.const_tree_size;
     match fs::metadata(&const_pols_tree_path) {
         Ok(metadata) => {
             let actual_size = metadata.len() as usize;
@@ -335,6 +337,42 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     }
 
     Ok(())
+}
+
+pub fn initialize_fixed_pols_tree<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) {
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
+
+    let mut airs = Vec::new();
+    let mut seen = HashSet::new();
+
+    for instance_id in my_instances.iter() {
+        let (airgroup_id, air_id, _) = instances[*instance_id];
+        if seen.insert((airgroup_id, air_id)) {
+            airs.push((airgroup_id, air_id));
+        }
+    }
+
+    airs.iter().for_each(|&(airgroup_id, air_id)| {
+        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+            setup.load_const_pols();
+            setup.load_const_pols_tree();
+        }
+    });
+
+    airs.iter().for_each(|&(airgroup_id, air_id)| {
+        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+        setup.load_const_pols();
+        setup.load_const_pols_tree();
+    });
+
+    let n_airgroups = pctx.global_info.air_groups.len();
+    for airgroup in 0..n_airgroups {
+        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
+        setup.load_const_pols();
+        setup.load_const_pols_tree();
+    }
 }
 
 pub fn add_publics_circom<F: PrimeField64>(

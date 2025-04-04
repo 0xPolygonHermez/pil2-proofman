@@ -36,16 +36,30 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPcbb"]
-    pub fn stark_info_new(filename: *mut ::std::os::raw::c_char, verify_constraints:bool, verifier: bool) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z14stark_info_newPcbbbb"]
+    pub fn stark_info_new(
+        filename: *mut ::std::os::raw::c_char,
+        recursive: bool,
+        verify_constraints: bool,
+        verify: bool,
+        gpu: bool,
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z14get_proof_sizePv"]
     pub fn get_proof_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z22set_memory_expressionsPvmm"]
+    pub fn set_memory_expressions(pStarkInfo: *mut ::std::os::raw::c_void, nTmp1: u64, nTmp3: u64);
+}
+extern "C" {
     #[link_name = "\u{1}_Z15get_map_total_nPv"]
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z21get_const_pols_offsetPv"]
+    pub fn get_const_pols_offset(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z36get_map_total_n_custom_commits_fixedPv"]
@@ -104,6 +118,22 @@ extern "C" {
         global: bool,
         verifier: bool,
     ) -> *mut ::std::os::raw::c_void;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z14get_max_n_tmp1Pv"]
+    pub fn get_max_n_tmp1(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z14get_max_n_tmp3Pv"]
+    pub fn get_max_n_tmp3(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z12get_max_argsPv"]
+    pub fn get_max_args(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z11get_max_opsPv"]
+    pub fn get_max_ops(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z20expressions_bin_freePv"]
@@ -241,7 +271,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_"]
+    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_S_"]
     pub fn commit_witness(
         arity: u64,
         nBits: u64,
@@ -250,11 +280,17 @@ extern "C" {
         root: *mut ::std::os::raw::c_void,
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,
+        d_buffers: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14calculate_hashPvS_m"]
-    pub fn calculate_hash(pValue: *mut ::std::os::raw::c_void, pBuffer: *mut ::std::os::raw::c_void, nElements: u64);
+    #[link_name = "\u{1}_Z14calculate_hashPvS_mm"]
+    pub fn calculate_hash(
+        pValue: *mut ::std::os::raw::c_void,
+        pBuffer: *mut ::std::os::raw::c_void,
+        nElements: u64,
+        nOutputs: u64,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_newmb"]
@@ -263,13 +299,6 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z14transcript_addPvS_m"]
     pub fn transcript_add(pTranscript: *mut ::std::os::raw::c_void, pInput: *mut ::std::os::raw::c_void, size: u64);
-}
-extern "C" {
-    #[link_name = "\u{1}_Z25transcript_add_polinomialPvS_"]
-    pub fn transcript_add_polinomial(
-        pTranscript: *mut ::std::os::raw::c_void,
-        pPolinomial: *mut ::std::os::raw::c_void,
-    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z15transcript_freePv"]
@@ -372,7 +401,7 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPc"]
+    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         airgroupId: u64,
@@ -382,10 +411,11 @@ extern "C" {
         globalChallenge: *mut ::std::os::raw::c_void,
         proofBuffer: *mut u64,
         proofFile: *mut ::std::os::raw::c_char,
+        d_buffers: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_b"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
@@ -400,6 +430,7 @@ extern "C" {
         proofBuffer: *mut u64,
         proof_file: *mut ::std::os::raw::c_char,
         vadcop: bool,
+        d_buffers: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
@@ -495,4 +526,12 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z19set_omp_num_threadsm"]
     pub fn set_omp_num_threads(num_threads: u64);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z25gen_device_commit_buffersPv"]
+    pub fn gen_device_commit_buffers(maxSizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z30gen_device_commit_buffers_freePv"]
+    pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void);
 }

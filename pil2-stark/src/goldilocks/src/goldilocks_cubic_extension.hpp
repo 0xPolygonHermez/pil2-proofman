@@ -338,14 +338,17 @@ public:
 
     /* Pack operations */
 
+    static void copy_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const bool const_a);
     static void copy_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_);
-    static void add_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
-    static void sub_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
-    static void mul_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *b_);
-    static void mul_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const Goldilocks::Element *challenge_, const Goldilocks::Element *challenge_ops_);
+    static void add_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const bool const_a, const Goldilocks::Element *b_, const bool const_b);
+    static void sub_pack( uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const bool const_a, const Goldilocks::Element *b_, const bool const_b);
+    static void mul_pack(uint64_t nrowsPack, Goldilocks::Element *c_, const Goldilocks::Element *a_, const bool const_a, const Goldilocks::Element *b_, const bool const_b);
     
     static void op_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const Goldilocks::Element *b);
     static void op_31_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const Goldilocks::Element *b);
+
+    static void op_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const bool const_a, const Goldilocks::Element *b, const bool const_b);
+    static void op_31_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const bool const_a, const Goldilocks::Element *b, const bool const_b);
 
     /* AVX operations */
     static void copy_avx(Element_avx c_, const Element_avx a_);

@@ -9,6 +9,13 @@
 #define NUM_PHASES 3
 #define NUM_BLOCKS 1
 
+struct DeviceCommitBuffers;
+
+#ifdef __USE_CUDA__
+    class gl64_t;
+#endif
+
+
 class NTT_Goldilocks
 {
 private:
@@ -131,19 +138,20 @@ public:
             // calculate the first root of unity
             // mpz_powm(m_aux, m_nqr, m_aux, m_q);
             // roots[1] = Goldilocks::fromU64(mpz_get_ui(m_aux));
-            roots[1] = Goldilocks::w(domainPow);
 
             // modular inverse of 2
             mpz_set_ui(m_aux, 2);
             mpz_invert(m_aux, m_aux, m_q);
             powTwoInv[1] = Goldilocks::fromU64(mpz_get_ui(m_aux));
         }
-
-        // calculate the rest of roots of unity
-        for (uint64_t i = 2; i < nRoots; i++)
-        {
-            roots[i] = roots[i - 1] * roots[1];
-        }
+        // calculate roots of unity
+    #pragma omp parallel for
+        for (uint64_t k = 0; k < nRoots; k+=4096) {
+            roots[k] = Goldilocks::pow(Goldilocks::w(domainPow), k);
+            for(uint64_t j = k+1; j < std::min(k + 4096, nRoots); ++j) {
+                roots[j] = roots[j-1] * Goldilocks::w(domainPow);
+            }
+        }                
         Goldilocks::Element aux = roots[nRoots - 1] * roots[1];
         assert(Goldilocks::toU64(aux) == 1);
         for (uint64_t i = 2; i <= s; i++)
@@ -179,33 +187,10 @@ public:
 
     #ifdef __USE_CUDA__
     // Calculating on a single GPU
-    void LDE_MerkleTree_GPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, bool buildMerkleTree = true);
-    // Calculating on all GPUs, but we should copy data between devices using `cudaMemcpyPeerAsync`
-    void LDE_MerkleTree_MultiGPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, bool buildMerkleTree = true);
-    // Calculating on all GPUs but do transpose on CPU
-    // It is faster than copy data between devices becase we alloc host memory by `cudaMallocHost` which can accelerate cudaMemcpy
-    // Refer to `https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY.html#group__CUDART__MEMORY_1gab84100ae1fa1b12eaca660207ef585b`
-    void LDE_MerkleTree_MultiGPU_viaCPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, bool buildMerkleTree = true);
-    // Automatically select computing devices according to data scale
-    void LDE_MerkleTree_Auto(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t steps = 0);
-
-    void LDE_MerkleTree_MultiGPU_Init(u_int64_t size, u_int64_t ext_size, u_int64_t ncols);
-    void LDE_MerkleTree_MultiGPU_Free();
-
-    void Prepare_MultiGPU(u_int64_t size, u_int64_t ext_size, u_int64_t ncols, u_int64_t steps);
-    void LDE_MultiGPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, u_int64_t ncols_per_gpu, u_int64_t ncols_last_gpu, Goldilocks::Element *buffer);
-    void LDE_MerkleTree_Switch_MultiGPU(u_int64_t nrows_per_gpu);
-    void MerkleTree_MultiGPU(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t ncols, u_int64_t nrows_per_gpu, Goldilocks::Element *buffer);
-    void LDE_MerkleTree_Cleanup_MultiGPU();
-
-    void LDE_MerkleTree_MultiGPU_Steps(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t steps = 1);
-    void LDE_MultiGPU_Steps(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t steps = 1);
-
-    void LDE_MultiGPU_Full(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t steps = 1);
-
-    void extendPol_MultiGPU(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols, Goldilocks::Element *buffer = NULL, uint64_t PACK = 8);
-    void extendPol_GPU(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols);
-#endif  // __USE_CUDA__
+    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_helper, double *nttTime = nullptr, double *merkleTime = nullptr);
+    void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime=nullptr, double *merkleTime=nullptr);
+    void INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_helper, gl64_t* d_data = nullptr);
+    #endif  
 };
 
 // extend parameter is used to indicate tha the polinomial will be extended after the INTT

@@ -1,1 +1,1 @@
-CUDA_ARCH = sm_86
+CUDA_ARCH = sm_89

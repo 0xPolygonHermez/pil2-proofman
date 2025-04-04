@@ -5,8 +5,7 @@ use std::{
 
 use p3_field::Field;
 use proofman_starks_lib_c::{
-    calculate_const_tree_c, get_const_tree_size_c, load_const_pols_c, load_const_tree_c, write_const_tree_c,
-    write_fixed_cols_bin_c,
+    calculate_const_tree_c, load_const_pols_c, load_const_tree_c, write_const_tree_c, write_fixed_cols_bin_c,
 };
 use proofman_util::{create_buffer_fast, timer_start_debug, timer_stop_and_log_debug};
 
@@ -66,7 +65,7 @@ pub fn calculate_fixed_tree<F: Field>(setup: &Setup<F>) {
     const MY_NAME: &str = "Setup   ";
 
     let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
-    let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+    let const_pols_tree_size = setup.const_tree_size;
 
     let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
     let const_tree: Vec<F> = create_buffer_fast(const_pols_tree_size);
@@ -111,7 +110,7 @@ pub fn load_const_pols<F: Field>(setup_path: &Path, const_pols_size: usize, cons
 
 pub fn load_const_pols_tree<F: Field>(setup: &Setup<F>, const_tree: &[F]) {
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-    let const_pols_tree_size = get_const_tree_size_c(setup.p_setup.p_stark_info) as usize;
+    let const_pols_tree_size = setup.const_tree_size;
 
     log::debug!("FixedCol   : ··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 

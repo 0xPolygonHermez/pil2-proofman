@@ -7,7 +7,7 @@ use p3_field::PrimeField64;
 use p3_goldilocks::Goldilocks;
 use rand::{
     distr::{StandardUniform, Distribution},
-    Rng
+    Rng,
 };
 
 use crate::{

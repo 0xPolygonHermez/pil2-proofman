@@ -14,6 +14,84 @@ inline void Poseidon2Goldilocks::hash(Goldilocks::Element (&state)[CAPACITY], Go
     std::memcpy(state, aux, CAPACITY * sizeof(Goldilocks::Element));
 }
 
+inline void Poseidon2Goldilocks::hash_batch(Goldilocks::Element (&state)[4 * CAPACITY], Goldilocks::Element const (&input)[4 * SPONGE_WIDTH])
+{
+    Goldilocks::Element aux[4 * SPONGE_WIDTH];
+    hash_full_result_batch(aux, input);
+    std::memcpy(state, aux, CAPACITY * sizeof(Goldilocks::Element));
+    std::memcpy(&state[4], &aux[SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
+    std::memcpy(&state[8], &aux[2*SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
+    std::memcpy(&state[12], &aux[3*SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
+}
+
+
+inline void Poseidon2Goldilocks::matmul_m4_batch_avx(__m256i &st0, __m256i &st1, __m256i &st2, __m256i &st3) {
+    __m256i t0, t0_2, t1, t1_2, t2, t3, t4, t5, t6, t7;
+    Goldilocks::add_avx(t0, st0, st1);
+    Goldilocks::add_avx(t1, st2, st3);
+    Goldilocks::add_avx(t2, st1, st1);
+    Goldilocks::add_avx(t2, t2, t1);
+    Goldilocks::add_avx(t3, st3, st3);
+    Goldilocks::add_avx(t3, t3, t0);
+    Goldilocks::add_avx(t1_2, t1, t1);
+    Goldilocks::add_avx(t0_2, t0, t0);
+    Goldilocks::add_avx(t4, t1_2, t1_2);
+    Goldilocks::add_avx(t4, t4, t3);
+    Goldilocks::add_avx(t5, t0_2, t0_2);
+    Goldilocks::add_avx(t5, t5, t2);
+    Goldilocks::add_avx(t6, t3, t5);
+    Goldilocks::add_avx(t7, t2, t4);
+
+    Goldilocks::copy_avx(st0, t6);
+    Goldilocks::copy_avx(st1, t5);
+    Goldilocks::copy_avx(st2, t7);
+    Goldilocks::copy_avx(st3, t4);
+}
+
+inline void Poseidon2Goldilocks::matmul_external_batch_avx(__m256i *x) {
+    matmul_m4_batch_avx(x[0], x[1], x[2], x[3]);
+    matmul_m4_batch_avx(x[4], x[5], x[6], x[7]);
+    matmul_m4_batch_avx(x[8], x[9], x[10], x[11]);
+
+    __m256i stored[4];
+    Goldilocks::add_avx(stored[0], x[0], x[4]);
+    Goldilocks::add_avx(stored[0], stored[0], x[8]);
+    Goldilocks::add_avx(stored[1], x[1], x[5]);
+    Goldilocks::add_avx(stored[1], stored[1], x[9]);
+    Goldilocks::add_avx(stored[2], x[2], x[6]);
+    Goldilocks::add_avx(stored[2], stored[2], x[10]);
+    Goldilocks::add_avx(stored[3], x[3], x[7]);
+    Goldilocks::add_avx(stored[3], stored[3], x[11]);
+
+    for (int i = 0; i < SPONGE_WIDTH; ++i)
+    {
+        Goldilocks::add_avx(x[i], x[i], stored[i % 4]);
+    }
+}
+
+inline void Poseidon2Goldilocks::element_pow7_avx(__m256i &x) {
+    __m256i x2, x3, x4;
+    Goldilocks::square_avx(x2, x);
+    Goldilocks::mult_avx(x3, x, x2);
+    Goldilocks::square_avx(x4, x2);
+    Goldilocks::mult_avx(x, x3, x4);
+}
+
+inline void Poseidon2Goldilocks::pow7add_avx(__m256i *x, const Goldilocks::Element C_[SPONGE_WIDTH]) {
+    __m256i x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
+
+    __m256i c[SPONGE_WIDTH];
+    for (int i = 0; i < SPONGE_WIDTH; ++i)
+    {
+        c[i] = _mm256_set1_epi64x(C_[i].fe);
+        Goldilocks::add_avx(x[i], x[i], c[i]);
+        Goldilocks::square_avx(x2[i], x[i]);
+        Goldilocks::square_avx(x4[i], x2[i]);
+        Goldilocks::mult_avx(x3[i], x[i], x2[i]);
+        Goldilocks::mult_avx(x[i], x3[i], x4[i]);
+    }
+}
+
 inline void Poseidon2Goldilocks::matmul_external_avx(__m256i &st0, __m256i &st1, __m256i &st2)
 {
 

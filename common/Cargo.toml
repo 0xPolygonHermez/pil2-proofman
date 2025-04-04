@@ -1,6 +1,6 @@
 [package]
 name = "proofman-common"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 
 [dependencies]
@@ -24,3 +24,4 @@ default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
 distributed = ["dep:mpi"]
 diagnostic = ["proofman-macros/diagnostic"]
+gpu = ["proofman-starks-lib-c/gpu"]

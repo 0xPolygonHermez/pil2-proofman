@@ -13,7 +13,7 @@ struct GlobalConstraintInfo {
     uint64_t value[3];
 };
 
-void calculateGlobalExpression(json& globalInfo, Goldilocks::Element* dest, Goldilocks::Element* publics, Goldilocks::Element* challenges, Goldilocks::Element* proofValues_, Goldilocks::Element** airgroupValues, ParserArgs &parserArgs, ParserParams &parserParams) {
+void calculateGlobalExpression(json& globalInfo, Goldilocks::Element* dest, Goldilocks::Element* publics, Goldilocks::Element* challenges, Goldilocks::Element* proofValues, Goldilocks::Element** airgroupValues, ParserArgs &parserArgs, ParserParams &parserParams) {
 
     uint8_t* ops = &parserArgs.ops[parserParams.opsOffset];
     uint16_t* args = &parserArgs.args[parserParams.argsOffset];
@@ -22,27 +22,6 @@ void calculateGlobalExpression(json& globalInfo, Goldilocks::Element* dest, Gold
 
     Goldilocks::Element tmp1[parserParams.nTemp1];
     Goldilocks::Element tmp3[parserParams.nTemp3*FIELD_EXTENSION];
-
-    Goldilocks::Element proofValues[globalInfo["proofValuesMap"].size()*FIELD_EXTENSION];
-    uint64_t p = 0;
-    for(uint64_t i = 0; i < globalInfo["proofValuesMap"].size(); ++i) {
-        if(globalInfo["proofValuesMap"][i]["stage"] == 1) {
-            proofValues[i*FIELD_EXTENSION] = proofValues_[p];
-            proofValues[i*FIELD_EXTENSION + 1] = Goldilocks::zero();
-            proofValues[i*FIELD_EXTENSION + 2] = Goldilocks::zero();
-            p += 1;
-        } else {
-            proofValues[i*FIELD_EXTENSION] = proofValues_[p];
-            proofValues[i*FIELD_EXTENSION + 1] = proofValues_[p + 1];
-            proofValues[i*FIELD_EXTENSION + 2] = proofValues_[p + 2];
-            p += 3;
-        }
-    }
-
-    Goldilocks::Element numbers_[parserArgs.nNumbers];
-    for(uint64_t i = 0; i < parserArgs.nNumbers; ++i) {
-        numbers_[i] = Goldilocks::fromU64(parserArgs.numbers[i]);
-    }
 
     uint64_t nAirgroupValues = 0;
     for(uint64_t i = 0; i < globalInfo["aggTypes"].size(); ++i) {
@@ -56,45 +35,45 @@ void calculateGlobalExpression(json& globalInfo, Goldilocks::Element* dest, Gold
         c += globalInfo["aggTypes"][i].size() * FIELD_EXTENSION;
     }
 
-    Goldilocks::Element* expressions_params[10];
-    expressions_params[1] = tmp1;
-    expressions_params[2] = publics;
-    expressions_params[3] = numbers_;
-    expressions_params[5] = proofValues;
-    expressions_params[6] = tmp3;
-    expressions_params[7] = airgroupvalues;
-    expressions_params[8] = challenges;
+    Goldilocks::Element* expressions_params[7];
+    expressions_params[0] = tmp1;
+    expressions_params[1] = publics;
+    expressions_params[2] = parserArgs.numbers;
+    expressions_params[3] = proofValues;
+    expressions_params[4] = tmp3;
+    expressions_params[5] = airgroupvalues;
+    expressions_params[6] = challenges;
 
     for (uint64_t kk = 0; kk < parserParams.nOps; ++kk) {
         switch (ops[kk]) {
             case 0: {
                 // COPY dim1 to dim1
-                Goldilocks::copy_pack(1, &expressions_params[args[i_args]][args[i_args + 1]], &expressions_params[args[i_args + 2]][args[i_args + 3]]);
-                i_args += 5;
+                Goldilocks::copy_pack(1, &expressions_params[0][args[i_args]], &expressions_params[args[i_args + 1]][args[i_args + 2]]);
+                i_args += 3;
                 break;
             }
             case 1: {
                 // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
-                Goldilocks::op_pack(1, args[i_args], &expressions_params[args[i_args + 1]][args[i_args + 2]], &expressions_params[args[i_args + 3]][args[i_args + 4]], &expressions_params[args[i_args + 6]][args[i_args + 7]]);
-                i_args += 9;
+                Goldilocks::op_pack(1, args[i_args], &expressions_params[0][args[i_args + 1]], &expressions_params[args[i_args + 2]][args[i_args + 3]], &expressions_params[args[i_args + 4]][args[i_args + 5]]);
+                i_args += 6;
                 break;
             }
             case 2: {
                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
-                Goldilocks3::op_31_pack(1, args[i_args], &expressions_params[args[i_args + 1]][args[i_args + 2]], &expressions_params[args[i_args + 3]][args[i_args + 4]], &expressions_params[args[i_args + 6]][args[i_args + 7]]);
-                i_args += 9;
+                Goldilocks3::op_31_pack(1, args[i_args], &expressions_params[4][args[i_args + 1]], &expressions_params[args[i_args + 2]][args[i_args + 3]], &expressions_params[args[i_args + 4]][args[i_args + 5]]);
+                i_args += 6;
                 break;
             }
             case 3: {
                 // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
-                Goldilocks3::op_pack(1, args[i_args], &expressions_params[args[i_args + 1]][args[i_args + 2]], &expressions_params[args[i_args + 3]][args[i_args + 4]], &expressions_params[args[i_args + 6]][args[i_args + 7]]);
-                i_args += 9;
+                Goldilocks3::op_pack(1, args[i_args], &expressions_params[4][args[i_args + 1]], &expressions_params[args[i_args + 2]][args[i_args + 3]], &expressions_params[args[i_args + 4]][args[i_args + 5]]);
+                i_args += 6;
                 break;
             }
             case 4: {
                 // COPY dim3 to dim3
-                Goldilocks3::copy_pack(1, &expressions_params[args[i_args]][args[i_args + 1]], &expressions_params[args[i_args + 2]][args[i_args + 3]]);
-                i_args += 5;
+                Goldilocks3::copy_pack(1, &expressions_params[4][args[i_args]], &expressions_params[args[i_args + 1]][args[i_args + 2]]);
+                i_args += 3;
                 break;
             }
         }

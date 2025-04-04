@@ -289,9 +289,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.32"
+version = "4.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6088f3ae8c3608d19260cd7445411865a485688711b78b5be70d78cd96136f83"
+checksum = "e958897981290da2a852763fe9cdb89cd36977a5d729023127095fa94d95e2ff"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -299,9 +299,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.32"
+version = "4.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22a7ef7f676155edfb82daa97f99441f3ebf4a58d5e32f295a56259f1b6facc8"
+checksum = "83b0f35019843db2160b5bb19ae09b4e6411ac33fc6a712003c33e03090e2489"
 dependencies = [
  "anstream",
  "anstyle",
@@ -506,7 +506,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fibonacci-square"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "env_logger",
  "log",
@@ -910,9 +910,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.21.1"
+version = "1.21.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d75b0bedcc4fe52caa0e03d9f1151a323e4aa5e2d78ba3580400cd3c9e2bc4bc"
+checksum = "c2806eaa3524762875e21c3dcd057bc4b7bfa01ce4da8d46be1cd43649e1cc6b"
 
 [[package]]
 name = "overload"
@@ -1098,7 +1098,7 @@ dependencies = [
 
 [[package]]
 name = "pil-std-lib"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "colored",
  "log",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "pilout"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "log",
@@ -1192,9 +1192,11 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
+ "blake3",
  "colored",
+ "curves",
  "env_logger",
  "libloading",
  "log",
@@ -1216,7 +1218,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "blake3",
  "clap",
@@ -1239,7 +1241,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "env_logger",
  "log",
@@ -1259,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-hints"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
  "p3-field",
@@ -1270,7 +1272,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1300,14 +1302,14 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "proofman-util"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "colored",
  "p3-field",
@@ -1829,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "transcript"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "proofman-starks-lib-c",
 ]
@@ -2063,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "witness"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "colored",
  "env_logger",

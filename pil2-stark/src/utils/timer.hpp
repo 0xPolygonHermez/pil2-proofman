@@ -32,4 +32,7 @@ std::string DateAndTime(struct timeval &tv);
 #define TimerStopAndLogExpr(name)
 #endif
 
+#define TimerGetElapsed(name) TimeDiff(name##_start, name##_stop)/1000000.0
+
+
 #endif
