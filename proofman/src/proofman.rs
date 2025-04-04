@@ -387,12 +387,11 @@ where
             }
         }
 
-        // let aux_trace_size = match cfg!(feature = "gpu") {
-        //     true => sctx.max_const_tree_size + sctx.max_const_size,
-        //     false => prover_buffer_size as usize,
-        // };
-
-        let aux_trace = Arc::new(create_buffer_fast(prover_buffer_size as usize));
+        let aux_trace_size = match cfg!(feature = "gpu") {
+            true => sctx.max_const_tree_size + sctx.max_const_size,
+            false => prover_buffer_size as usize,
+        };
+        let aux_trace = Arc::new(create_buffer_fast(aux_trace_size));
 
         let max_sizes = discover_max_sizes(&pctx, &sctx);
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
@@ -400,7 +399,7 @@ where
 
         let (tx, rx) = channel::<usize>();
         let max_pending_proofs = match cfg!(feature = "gpu") {
-            true => 8,
+            true => 3,
             false => 1,
         };
 
@@ -459,13 +458,17 @@ where
 
         let setups = Arc::new(setup_aggregation_handle.join().unwrap());
 
-        check_tree_paths_vadcop(&pctx, &setups)?;
+        let mut init_const_tree_handle = if pctx.options.aggregation {
+            check_tree_paths_vadcop(&pctx, &setups)?;
 
-        let setups_clone = setups.clone();
-        let pctx_clone = pctx.clone();
-        let init_const_tree_handle = std::thread::spawn(move || {
-            initialize_fixed_pols_tree(&pctx_clone.clone(), &setups_clone);
-        });
+            let setups_clone = setups.clone();
+            let pctx_clone = pctx.clone();
+            Some(std::thread::spawn(move || {
+                initialize_fixed_pols_tree(&pctx_clone.clone(), &setups_clone);
+            }))
+        } else {
+            None
+        };
 
         timer_start_info!(INITIALIZING);
         initialize_size_witness(&pctx, &setups)?;
@@ -618,7 +621,9 @@ where
 
         let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
 
-        init_const_tree_handle.join().unwrap();
+        if let Some(handle) = init_const_tree_handle.take() {
+            handle.join().unwrap();
+        }
 
         timer_start_info!(GENERATING_COMPRESSED_PROOFS);
         let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
