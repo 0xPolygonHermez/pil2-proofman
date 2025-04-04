@@ -83,9 +83,8 @@ void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_tr
 
     if (nCols > 0)
     {
-        uint64_t offset_aux_fft = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_" + to_string(step), false)];
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_" + to_string(step), false)];
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, offset_aux_fft, offset_helper, nttTime, merkleTime);
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, offset_helper, nttTime, merkleTime);
     }
 #endif
 }
@@ -201,9 +200,8 @@ void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_aux_trace, D
 
     if (nCols > 0)
     {
-        uint64_t offset_aux_fft = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_" + to_string(step), false)];
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_" + to_string(step), false)];
-        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, S, N, NExtended, nCols, d_buffers, offset_aux_fft, offset_helper, nttTime, merkleTime);
+        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, S, N, NExtended, nCols, d_buffers, offset_helper, nttTime, merkleTime);
     }
 #endif
 }
