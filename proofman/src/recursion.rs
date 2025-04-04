@@ -256,7 +256,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         exec_filename_ptr,
         trace.as_ptr() as *mut u8,
         publics.as_mut_ptr() as *mut u8,
-        setup.size_witness.unwrap(),
+        setup.size_witness.read().unwrap().unwrap(),
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
         witness.n_cols as u64,
@@ -540,7 +540,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         exec_filename_ptr,
         trace.as_ptr() as *mut u8,
         publics.as_ptr() as *mut u8,
-        setup.size_witness.unwrap(),
+        setup.size_witness.read().unwrap().unwrap(),
         1 << (setup.stark_info.stark_struct.n_bits),
         setup.stark_info.n_publics,
         13,
@@ -687,7 +687,7 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
 fn get_witness_size<F: PrimeField64>(setup: &Setup<F>) -> Result<usize, Box<dyn std::error::Error>> {
     let exec_filename = setup.setup_path.display().to_string() + ".exec";
 
-    let mut size_witness = setup.size_witness.unwrap();
+    let mut size_witness = setup.size_witness.read().unwrap().unwrap();
 
     let mut file = File::open(exec_filename)?; // Open the file
 
