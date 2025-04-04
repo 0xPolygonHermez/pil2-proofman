@@ -401,7 +401,7 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_"]
+    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_b"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         airgroupId: u64,
@@ -412,10 +412,11 @@ extern "C" {
         proofBuffer: *mut u64,
         proofFile: *mut ::std::os::raw::c_char,
         d_buffers: *mut ::std::os::raw::c_void,
+        load_constants: bool,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_b"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
@@ -431,6 +432,7 @@ extern "C" {
         proof_file: *mut ::std::os::raw::c_char,
         vadcop: bool,
         d_buffers: *mut ::std::os::raw::c_void,
+        load_constants: bool,
     );
 }
 extern "C" {

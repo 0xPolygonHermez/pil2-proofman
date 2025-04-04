@@ -48,6 +48,17 @@ impl<F: Field> SetupsVadcop<F> {
         }
     }
 
+    pub fn get_setup(&self, airgroup_id: usize, air_id: usize, setup_type: &ProofType) -> &Setup<F> {
+        match setup_type {
+            ProofType::Compressor => self.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id),
+            ProofType::Recursive1 => self.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id),
+            ProofType::Recursive2 => self.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id),
+            ProofType::VadcopFinal => self.setup_vadcop_final.as_ref().unwrap(),
+            ProofType::RecursiveF => self.setup_recursivef.as_ref().unwrap(),
+            _ => panic!("Invalid setup type"),
+        }
+    }
+
     pub fn free(&self) {
         if self.sctx_compressor.is_some() {
             self.sctx_compressor.as_ref().unwrap().free();

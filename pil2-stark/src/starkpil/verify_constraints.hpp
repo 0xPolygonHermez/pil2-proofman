@@ -55,10 +55,13 @@ void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t co
 #pragma omp parallel for
     for(uint64_t i = 0; i < N; ++i) {
         auto [isValid, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], i);
-        if(!isValid) {
+        if (!isValid) {
+        #pragma omp critical
+        {
             constraintInvalidRows.push_back(rowInfo);
             constraintInfo.nrows++;
         }
+    }
     }
 
     uint64_t num_rows = std::min(constraintInfo.nrows, uint64_t(10));

@@ -1,6 +1,9 @@
 use std::os::raw::c_void;
-use std::path::PathBuf;
 use p3_field::Field;
+use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+
+use libloading::{Library, Symbol};
 
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
@@ -14,6 +17,8 @@ use crate::GlobalInfo;
 use crate::ProofType;
 use crate::StarkInfo;
 use crate::load_const_pols;
+
+type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 #[derive(Debug, Clone)]
 #[repr(C)]
@@ -48,6 +53,7 @@ pub struct Setup<F: Field> {
     pub proof_size: u64,
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
+    pub size_witness: RwLock<Option<u64>>,
     pub air_name: String,
 }
 
@@ -118,10 +124,7 @@ impl<F: Field> Setup<F> {
                     custom_commits_fixed_buffer_size,
                     proof_size,
                 )
-            } else if setup_type == &ProofType::Compressor
-                || setup_type == &ProofType::Recursive1
-                || setup_type == &ProofType::Recursive2
-            {
+            } else {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 (
@@ -130,19 +133,6 @@ impl<F: Field> Setup<F> {
                     expressions_bin,
                     const_pols,
                     const_pols_tree,
-                    const_pols_size,
-                    const_tree_size,
-                    prover_buffer_size,
-                    custom_commits_fixed_buffer_size,
-                    proof_size,
-                )
-            } else {
-                (
-                    stark_info,
-                    p_stark_info,
-                    expressions_bin,
-                    Vec::new(),
-                    Vec::new(),
                     const_pols_size,
                     const_tree_size,
                     prover_buffer_size,
@@ -164,6 +154,7 @@ impl<F: Field> Setup<F> {
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
+            size_witness: RwLock::new(None),
             setup_path: setup_path.clone(),
             setup_type: setup_type.clone(),
             air_name: global_info.airs[airgroup_id][air_id].name.clone(),
@@ -203,5 +194,24 @@ impl<F: Field> Setup<F> {
 
     pub fn get_const_tree_ptr(&self) -> *mut u8 {
         self.const_pols_tree.as_ptr() as *mut u8
+    }
+
+    pub fn set_size_witness(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let rust_lib_filename = self.setup_path.display().to_string() + ".so";
+        let rust_lib_path = Path::new(rust_lib_filename.as_str());
+
+        if !rust_lib_path.exists() {
+            return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
+        }
+
+        let library: Library = unsafe { Library::new(rust_lib_path)? };
+
+        let size_witness = unsafe {
+            let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
+            Some(get_size_witness())
+        };
+
+        *self.size_witness.write().unwrap() = size_witness;
+        Ok(())
     }
 }

@@ -10,7 +10,7 @@ function prod(const int name, const int type, const int opid, const expr express
         case 2: // Free
             update_piop_prod(name, 2, opid, sel, expressions, direct_type);
         default:
-            error("Invalid product type: ${type}");
+            error(`Invalid product type: ${type}`);
     }
 }
 
@@ -72,7 +72,7 @@ private function update_piop_prod(const int name, const int proves, const int op
             // Update the constraints at the airgroup level
             on final airgroup piop_gprod_airgroup();
         default:
-            error("Invalid direct_type: ${direct_type}");
+            error(`Invalid direct_type: ${direct_type}`);
     }
 
     // Update the constraints at the proof level
@@ -219,7 +219,7 @@ private function gprod_update_air_constraint_data(const int proves, const expr s
                 gprod_free_count++;
 
             default:
-                error("Invalid proves: ${proves}");
+                error(`Invalid proves: ${proves}`);
         }
     }
 }

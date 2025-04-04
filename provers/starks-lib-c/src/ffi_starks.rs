@@ -727,6 +727,7 @@ pub fn gen_proof_c(
     air_id: u64,
     instance_id: u64,
     d_buffers: *mut c_void,
+    load_constants: bool,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -742,6 +743,7 @@ pub fn gen_proof_c(
             proof_buffer,
             proof_file_ptr,
             d_buffers,
+            load_constants,
         );
     }
 }
@@ -763,6 +765,7 @@ pub fn gen_recursive_proof_c(
     instance_id: u64,
     vadcop: bool,
     d_buffers: *mut c_void,
+    load_constants: bool,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -786,6 +789,7 @@ pub fn gen_recursive_proof_c(
             proof_file_ptr,
             vadcop,
             d_buffers,
+            load_constants,
         );
     }
 }
@@ -1468,6 +1472,7 @@ pub fn gen_proof_c(
     _air_id: u64,
     _instance_id: u64,
     _d_buffers: *mut c_void,
+    _load_constants: bool,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
 }
@@ -1489,6 +1494,7 @@ pub fn gen_recursive_proof_c(
     _instance_id: u64,
     _vadcop: bool,
     _d_buffers: *mut c_void,
+    _load_constants: bool,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
 }

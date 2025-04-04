@@ -1,4 +1,3 @@
-require "baby_bear.pil";
 require "goldilocks.pil";
 
 // FIX: dynamic arrays not ready yet
@@ -101,11 +100,9 @@ const int PIOP_DIRECT_TYPE_GLOBAL = 2;
     name    | code | note
 ------------|------|-------------------------------------------------------------------------- 
  Goldilocks |  0   | 2^64 - 2^32 + 1
- BabyBear   |  1   | 2^31 - 2^27 + 1
 */
 
 const int FIELD_GOLDILOCKS = 0;
-const int FIELD_BABY_BEAR = 1;
 
 int ACTIVE_FIELD = FIELD_GOLDILOCKS;
 
@@ -126,17 +123,19 @@ switch (ACTIVE_FIELD) {
 
         k_coset = Goldilocks_k;
 
-    case FIELD_BABY_BEAR:
-        assert(length(BabyBear_Gen) <= length(GEN));
-
-        for (int i = 0; i < length(BabyBear_Gen); i++) {
-            GEN[i] = BabyBear_Gen[i];
-        }
-
-        k_coset = BabyBear_k;
-
     default:
         error("Unknown field");
+}
+
+// Set the blowup factor across the library
+int BLOWUP_FACTOR = 2;
+
+function set_blowup_factor(const int factor) {
+    if (factor < 1) {
+        error(`Blowup factor must be at least 1 but got ${factor}`);
+    }
+
+    BLOWUP_FACTOR = factor;
 }
 
 // Powers of 2

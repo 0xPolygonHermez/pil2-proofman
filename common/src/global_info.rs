@@ -40,9 +40,6 @@ pub struct GlobalInfo {
     #[serde(rename = "aggTypes")]
     pub agg_types: Vec<Vec<GlobalInfoAggType>>,
 
-    #[serde(rename = "stepsFRI")]
-    pub steps_fri: Vec<GlobalInfoStepsFRI>,
-
     #[serde(rename = "nPublics")]
     pub n_publics: usize,
     #[serde(rename = "numChallenges")]

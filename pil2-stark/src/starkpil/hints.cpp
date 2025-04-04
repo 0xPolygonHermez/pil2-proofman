@@ -494,7 +494,7 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
     }
 }
 
-void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, StepsParams* d_params) {
+void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, StepsParams* d_params, double* time_expressions) {
     if(setupCtx.expressionsBin.hints.size() == 0) {
         zklog.error("No hints were found.");
         exitProcess();
@@ -552,7 +552,9 @@ void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx&
         addHintField(setupCtx, params, hintId[i], destStruct, hintFieldName1[i], hintOptions1[i]);
         addHintField(setupCtx, params, hintId[i], destStruct, hintFieldName2[i], hintOptions2[i]);
 #ifdef __USE_CUDA__
+        double time_start = omp_get_wtime();
         opHintFieldsGPU(d_params, destStruct, nRows, false, GPUExpressionsCtx);
+        *time_expressions += omp_get_wtime() - time_start;
         
 #else
         expressionsCtx.calculateExpressions(params, destStruct, nRows, false, false);
@@ -628,7 +630,7 @@ uint64_t getHintId(SetupCtx& setupCtx, uint64_t hintId, std::string name) {
     return hintField->values[0].id;
 }
 
-void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, StepsParams * d_params) {
+void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, StepsParams * d_params, double* time_expressions) {
     
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     Hint hint = setupCtx.expressionsBin.hints[hintId];
@@ -656,7 +658,9 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
 
 #ifdef __USE_CUDA__
-    opHintFieldsGPU(d_params, destStruct, N, false, GPUExpressionsCtx);    
+    double time_start = omp_get_wtime();
+    opHintFieldsGPU(d_params, destStruct, N, false, GPUExpressionsCtx);
+    *time_expressions += omp_get_wtime() - time_start; 
 #else
     expressionsCtx.calculateExpressions(params, destStruct, N, false, false);
 #endif
@@ -687,7 +691,7 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
 #endif
 }
 
-uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, StepsParams * d_params) {
+uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, StepsParams * d_params, double* time_expressions) {
     
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -709,8 +713,10 @@ uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t h
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
 
 #ifdef __USE_CUDA__
+    double time_start = omp_get_wtime();
     opHintFieldsGPU(d_params, destStruct, 1, false, GPUExpressionsCtx); 
     opAirgroupValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldAirgroupVal.id, destStruct.dest_gpu, destStruct.dim, add);
+    *time_expressions += omp_get_wtime() - time_start;
 #else
     ProverHelpers proverHelpers;
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers, 1);

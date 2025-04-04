@@ -261,8 +261,10 @@ function range_check(const expr expression, const int min, const int max, const 
     const int absorb = predefined && min >= 0 && max <= MASK_16;
 
     if (predefined && !absorb) {
-        println(`The range [${min},${max}] cannot be absorbed into the predefined ranges. Using the specified range instead...`);
-        println(`Predefined ranges: U8=[0,${MASK_8}], U16=[0,${MASK_16}]`);
+        println(`The range [${min},${max}] cannot be absorbed into any predefined range. The range will be treated as a specified range.`);
+        println("Available predefined ranges:");
+        println(` -  U8: [0, ${MASK_8}]`);
+        println(` - U16: [0, ${MASK_16}]`);
     }
 
     // Define the range check assumes
@@ -354,7 +356,7 @@ function range_check_group(const expr expressions[], const int min, const int ma
 function multi_range_check(const expr expression, const int min1, const int max1, const int min2, const int max2, 
                            const expr range_sel = 1, const expr sel = 1, const int predefined = 0): int {
     if (predefined) {
-        error(`WIP: Multi range check cannot be predefined`);
+        error("WIP: Multi range check cannot be predefined");
     }
 
     if (min1 == min2 && max1 == max2) {
@@ -383,7 +385,7 @@ function multi_range_check(const expr expression, const int min1, const int max1
     // Note: This solution improves the naive solution:
     //   · range_check(expression, min1, max1, 0, sel*range_sel).
     //   · range_check(expression, min2, max2, 0, sel*(1-range_sel)).
-    // by just performing 1 assume and 2 proves instead
+    // by just performing 1 assumes and (at most) 2 proves instead
     //
     // Q: Can I do it with 1 assume and 1 prove? E.g.:
     // lookup_assumes_dynamic([opid1,opid2], range_sel*(opid1-opid2) - opid2, [expression], sel, PIOP_NAME_RANGE_CHECK);
@@ -401,7 +403,7 @@ function multi_range_check(const expr expression, const int min1, const int max1
  */
 function range_check_id(const int min, const int max, const int predefined = 0): int {
     if (predefined) {
-        error(`WIP: Range check id cannot be predefined`);
+        error("WIP: Range check id cannot be predefined");
     }
 
     range_validator(min, max);
@@ -456,7 +458,7 @@ function range_check_dynamic(const expr expression, const expr range_sel, const 
 private function check_dynamic_called() {
     use air.std.rcid;
     if (!called) {
-        error(`Dynamic range check was not called`);
+        error("Dynamic range check was not called");
     }
 }
 
@@ -481,6 +483,30 @@ private function range_validator(const int min, const int max) {
     } else if (min <= -PRIME) {
         error(`The minimum value of the range cannot be less than the negative field order ${-PRIME}`);
     }
+
+    // Save the range for stats
+    container proof.std.rc.stats alias rcstats {
+        int mins[ARRAY_SIZE];
+        int maxs[ARRAY_SIZE];
+        int reps[ARRAY_SIZE];
+        int count = 0;
+    }
+
+    // If the range has already been introduced, we increment the repetitions
+    for (int i = 0; i < rcstats.count; i++) {
+        if (rcstats.mins[i] == min && rcstats.maxs[i] == max) {
+            rcstats.reps[i]++;
+            return;
+        }
+    }
+
+    // Otherwise, we save the range
+    rcstats.mins[rcstats.count] = min;
+    rcstats.maxs[rcstats.count] = max;
+    rcstats.reps[rcstats.count] = 1;
+    rcstats.count++;
+
+    on final proof print_range_stats();
 }
 
 private function opid_process(const int min, const int max, const int predefined): int {
@@ -719,4 +745,13 @@ private function create_specified_metadata() {
 private function rc_issue_global_hints() {
     use proof.std.rc;
     @std_rc_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids};
+}
+
+private function print_range_stats() {
+    use proof.std.rc.stats;
+
+    println("Range check stats:");
+    for (int i = 0; i < count; i++) {
+        println(` - [${mins[i]},${maxs[i]}]: ${reps[i]} times`);
+    }
 }

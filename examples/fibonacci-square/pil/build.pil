@@ -4,6 +4,6 @@ require "module.pil"
 // Notice that these two components have a one-to-one reationship
 // As they have a different trace length, we need to create multiple module instances
 airgroup FiboCPU {
-    FibonacciSquare(N: 2**23);
+    FibonacciSquare(N: 2**22);
     Module(N: 2**20);
 }

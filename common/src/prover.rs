@@ -25,16 +25,36 @@ pub enum ProofType {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Proof {
+pub struct Proof<F: Field> {
     pub proof_type: ProofType,
     pub airgroup_id: usize,
     pub air_id: usize,
+    pub global_idx: Option<usize>,
     pub proof: Vec<u64>,
+    pub circom_witness: Vec<F>,
+    pub n_cols: usize,
 }
 
-impl Proof {
-    pub fn new(proof_type: ProofType, airgroup_id: usize, air_id: usize, proof: Vec<u64>) -> Self {
-        Self { proof_type, airgroup_id, air_id, proof }
+impl<F: Field> Proof<F> {
+    pub fn new(
+        proof_type: ProofType,
+        airgroup_id: usize,
+        air_id: usize,
+        global_idx: Option<usize>,
+        proof: Vec<u64>,
+    ) -> Self {
+        Self { proof_type, global_idx, airgroup_id, air_id, proof, circom_witness: Vec::new(), n_cols: 0 }
+    }
+
+    pub fn new_witness(
+        proof_type: ProofType,
+        airgroup_id: usize,
+        air_id: usize,
+        global_idx: Option<usize>,
+        circom_witness: Vec<F>,
+        n_cols: usize,
+    ) -> Self {
+        Self { proof_type, global_idx, airgroup_id, air_id, circom_witness, proof: Vec::new(), n_cols }
     }
 }
 

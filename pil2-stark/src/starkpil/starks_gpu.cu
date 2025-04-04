@@ -56,41 +56,6 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
     }
 }
 
-__global__ void fillLEv(uint64_t LEv_offset, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, gl64_t *d_aux_trace, uint64_t N)
-{
-
-    uint64_t i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < nOpeningPoints)
-    {
-        gl64_t w(1);
-        Goldilocks3GPU::Element xi;
-        Goldilocks3GPU::Element xiShifted;
-        uint64_t openingAbs = d_openingPoints[i] < 0 ? -d_openingPoints[i] : d_openingPoints[i];
-        gl64_t *LEv = (gl64_t *)d_aux_trace + LEv_offset;
-        gl64_t W(W_);
-        gl64_t shift(shift_);
-        gl64_t invShift = shift.reciprocal();
-        for (uint64_t j = 0; j < openingAbs; ++j)
-        {
-            w *= W;
-        }
-
-        if (d_openingPoints[i] < 0)
-        {
-            w = w.reciprocal();
-        }
-        Goldilocks3GPU::mul(xi, *((Goldilocks3GPU::Element *)d_xiChallenge), w);
-        Goldilocks3GPU::mul(xiShifted, xi, invShift);
-        Goldilocks3GPU::one((*(Goldilocks3GPU::Element *)&LEv[i * FIELD_EXTENSION]));
-
-        for (uint64_t k = 1; k < N; k++)
-        {
-            Goldilocks3GPU::mul((*(Goldilocks3GPU::Element *)&LEv[(k * nOpeningPoints + i) * FIELD_EXTENSION]), (*(Goldilocks3GPU::Element *)&LEv[((k - 1) * nOpeningPoints + i) * FIELD_EXTENSION]), xiShifted);
-        }
-    }
-}
-
-
 
 __global__ void fillLEv_2d(gl64_t *d_LEv,  uint64_t nOpeningPoints, uint64_t N, gl64_t *d_shiftedValues)
 {
@@ -227,57 +192,6 @@ void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks:
     CHECKCUDAERR(cudaFree(d_openingPoints));
 }
 
-__global__ void computeEvals(
-    uint64_t extendBits,
-    uint64_t size_eval,
-    uint64_t N,
-    uint64_t openingsSize,
-    uint64_t LEv_offset,
-    gl64_t *d_evals,
-    EvalInfo *d_evalInfo,
-    gl64_t *d_cmPols,
-    gl64_t *d_customComits,
-    gl64_t *d_fixedPols)
-{
-
-    uint64_t evalIdx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (evalIdx < size_eval)
-    {
-        gl64_t *LEv = (gl64_t *)d_cmPols + LEv_offset;
-        EvalInfo evalInfo = d_evalInfo[evalIdx];
-        gl64_t *pol;
-        if (evalInfo.type == 0)
-        {
-            pol = d_cmPols;
-        }
-        else if (evalInfo.type == 1)
-        {
-            pol = d_customComits;
-        }
-        else
-        {
-            pol = &d_fixedPols[2];
-        }
-
-        for (uint64_t k = 0; k < N; k++)
-        {
-            uint64_t row = (k << extendBits);
-            uint64_t pos = (evalInfo.openingPos + k * openingsSize) * FIELD_EXTENSION;
-            Goldilocks3GPU::Element res;
-            if (evalInfo.dim == 1)
-            {
-                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&LEv[pos]), pol[evalInfo.offset + row * evalInfo.stride]);
-            }
-            else
-            {
-                Goldilocks3GPU::mul(res, *((Goldilocks3GPU::Element *)&LEv[pos]), *((Goldilocks3GPU::Element *)(&pol[evalInfo.offset + row * evalInfo.stride])));
-            }
-            Goldilocks3GPU::add((Goldilocks3GPU::Element &)(d_evals[evalIdx * FIELD_EXTENSION]), (Goldilocks3GPU::Element &)(d_evals[evalIdx * FIELD_EXTENSION]), res);
-        }
-    }
-}
-
 __global__ void computeEvals_v2(
     uint64_t extendBits,
     uint64_t size_eval,
@@ -349,13 +263,13 @@ __global__ void computeEvals_v2(
         {
             for (int i = 0; i < FIELD_EXTENSION; i++)
             {
-                d_evals[evalIdx * FIELD_EXTENSION + i] = shared_sum[0][i];
+                d_evals[evalInfo.evalPos * FIELD_EXTENSION + i] = shared_sum[0][i];
             }
         }
     }
 }
 
-void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, Goldilocks::Element *d_LEv)
+void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv)
 {
 
     uint64_t offsetConstTree = starks->setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
@@ -364,38 +278,44 @@ void evmap_inplace(Goldilocks::Element * evals, StepsParams &h_params, FRIProof<
     uint64_t extendBits = starks->setupCtx.starkInfo.starkStruct.nBitsExt - starks->setupCtx.starkInfo.starkStruct.nBits;
     uint64_t size_eval = starks->setupCtx.starkInfo.evMap.size();
     uint64_t N = 1 << starks->setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t openingsSize = (uint64_t)starks->setupCtx.starkInfo.openingPoints.size();
-
-    CHECKCUDAERR(cudaMemset(h_params.evals, 0, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
 
     EvalInfo *evalsInfo = new EvalInfo[size_eval];
+
+    uint64_t nEvals = 0;
 
     for (uint64_t i = 0; i < size_eval; i++)
     {
         EvMap ev = starks->setupCtx.starkInfo.evMap[i];
+        auto it = std::find(openingPoints, openingPoints + nOpeningPoints, ev.prime);
+        bool containsPrime = it != openingPoints + nOpeningPoints;
+        if(!containsPrime) continue;
         string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom"
                                                                                            : "fixed";
         PolMap polInfo = type == "cm" ? starks->setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? starks->setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id]
                                                                                                        : starks->setupCtx.starkInfo.constPolsMap[ev.id];
-        evalsInfo[i].type = type == "cm" ? 0 : type == "custom" ? 1
+        evalsInfo[nEvals].type = type == "cm" ? 0 : type == "custom" ? 1
                                                                 : 2; //rick: harcoded
-        evalsInfo[i].offset = starks->setupCtx.starkInfo.getTraceOffset(type, polInfo, true);
-        evalsInfo[i].stride = starks->setupCtx.starkInfo.getTraceNColsSection(type, polInfo, true);
-        evalsInfo[i].dim = polInfo.dim;
-        evalsInfo[i].openingPos = ev.openingPos;
+        evalsInfo[nEvals].offset = starks->setupCtx.starkInfo.getTraceOffset(type, polInfo, true);
+        evalsInfo[nEvals].stride = starks->setupCtx.starkInfo.getTraceNColsSection(type, polInfo, true);
+        evalsInfo[nEvals].dim = polInfo.dim;
+        evalsInfo[nEvals].openingPos = std::distance(openingPoints, it);
+        evalsInfo[nEvals].evalPos = i;
+        nEvals++;
     }
 
     EvalInfo *d_evalsInfo;
-    CHECKCUDAERR(cudaMalloc(&d_evalsInfo, size_eval * sizeof(EvalInfo)));
-    CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfo, size_eval * sizeof(EvalInfo), cudaMemcpyHostToDevice));
-    delete[] evalsInfo;
+    CHECKCUDAERR(cudaMalloc(&d_evalsInfo, nEvals * sizeof(EvalInfo)));
+    CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfo, nEvals * sizeof(EvalInfo), cudaMemcpyHostToDevice));
 
     dim3 nThreads(256);
-    dim3 nBlocks(size_eval);
-    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, size_eval, N, openingsSize, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
+    dim3 nBlocks(nEvals);
+    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
     CHECKCUDAERR(cudaGetLastError());
 
-    cudaMemcpy(evals, h_params.evals, size_eval * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
+    for(uint64_t i = 0; i < nEvals; i++) {
+        CHECKCUDAERR(cudaMemcpy(&evals[evalsInfo[i].evalPos * FIELD_EXTENSION], h_params.evals + evalsInfo[i].evalPos * FIELD_EXTENSION, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    }
+    delete[] evalsInfo;
     CHECKCUDAERR(cudaFree(d_evalsInfo));
 
     proof.proof.setEvals(evals);

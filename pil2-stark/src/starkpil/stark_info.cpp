@@ -341,10 +341,8 @@ void StarkInfo::setMapOffsets() {
         uint64_t constTreeSize = (2 + (NExtended * nConstants) + numNodes);
         mapTotalN += constTreeSize;
 
-        if(!gpu) {
-            mapOffsets[std::make_pair("const", false)] = mapTotalN;
-            mapTotalN += N * nConstants;
-        }
+        mapOffsets[std::make_pair("const", false)] = mapTotalN;
+        mapTotalN += N * nConstants;
     }
 
     assert(nStages <= 2);
@@ -383,31 +381,44 @@ void StarkInfo::setMapOffsets() {
     mapOffsets[std::make_pair("q", true)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
 
-    if(gpu && !recursive) {
-        mapOffsets[std::make_pair("const", false)] = mapOffsets[std::make_pair("cm" + to_string(nStages), false)] + N * mapSectionsN["cm" + to_string(nStages)];
-        assert(mapOffsets[std::make_pair("const", false)] + N * nConstants <= mapOffsets[std::make_pair("q", true)]);
-    }
-
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
-    LEvSize += openingPoints.size() * N * FIELD_EXTENSION;
-
+    uint64_t maxOpenings = std::min(openingPoints.size(), uint64_t(4));
+    LEvSize += maxOpenings * N * FIELD_EXTENSION;
     if(!gpu) {
-        for(uint64_t stage = 1; stage <= nStages; stage++) {
-            mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
-            maxTotalN = std::max(maxTotalN, mapOffsets[std::make_pair("mt" + to_string(stage), true)] + NExtended * mapSectionsN["cm" + to_string(stage)]);
-        }
-
-        mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
-        maxTotalN = std::max(maxTotalN, mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] + NExtended * mapSectionsN["cm" + to_string(nStages + 1)]);
-    } else {
-        mapOffsets[std::make_pair("buff_helper_fft", false)] = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
-        maxTotalN = std::max(maxTotalN, mapOffsets[std::make_pair("buff_helper_fft", false)] + 3*NExtended);
         mapOffsets[std::make_pair("buff_helper_fft_lev", false)] = LEvSize;
-        LEvSize += 3 * N;
+        LEvSize += maxOpenings * N * FIELD_EXTENSION;
+    } else {    
+        mapOffsets[std::make_pair("extra_helper_fft_lev", false)] = LEvSize;
+        LEvSize += FIELD_EXTENSION * N;
     }
 
     maxTotalN = std::max(maxTotalN, LEvSize);
+
+    for(uint64_t stage = 1; stage <= nStages; stage++) {
+        uint64_t maxTotalNStage = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
+        if(!gpu) {
+            mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
+            maxTotalNStage += NExtended * mapSectionsN["cm" + to_string(stage)];
+        } else {
+            mapOffsets[std::make_pair("extra_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
+            maxTotalNStage += FIELD_EXTENSION*NExtended;
+        }
+        maxTotalN = std::max(maxTotalN, maxTotalNStage);
+    }
+
+    uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
+    if(!gpu) {
+        mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
+        maxTotalNStageQ += NExtended * mapSectionsN["cm" + to_string(nStages + 1)];
+    } else {
+        mapOffsets[std::make_pair("extra_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
+        maxTotalNStageQ += FIELD_EXTENSION*NExtended;
+    }
+    maxTotalN = std::max(maxTotalN, maxTotalNStageQ);
+    
+    
+
  
     for(uint64_t step = 0; step < starkStruct.steps.size() - 1; ++step) {
         uint64_t height = 1 << starkStruct.steps[step + 1].nBits;
