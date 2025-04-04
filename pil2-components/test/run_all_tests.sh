@@ -8,7 +8,7 @@ test_pipeline() {
     NAME=$1             # Test name (e.g. simple)
     BASE=$2             # Base directory (e.g. ./pil2-components/test/simple)
     SO_NAME=$3          # Name of the .so file (e.g. libsimple.so)
-    SETUP_ONLY=$4       # Whether to only until the setup phase
+    SETUP_ONLY=$4       # Whether to run only until the setup phase
 
     BUILD="$BASE/build"
     PIL_FILE="$BASE/$NAME.pil"
