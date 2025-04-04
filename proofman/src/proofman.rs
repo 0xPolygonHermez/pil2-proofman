@@ -41,7 +41,7 @@ use crate::MaxSizes;
 use crate::{verify_constraints_proof, check_paths, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
     gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof, generate_vadcop_final_proof,
-    generate_fflonk_snark_proof, generate_recursivef_proof, total_recursive_proofs,
+    generate_fflonk_snark_proof, generate_recursivef_proof, total_recursive_proofs, initialize_size_witness,
 };
 use crate::aggregate_recursive2_proofs;
 
@@ -72,9 +72,9 @@ where
             false,
             pctx.options.aggregation,
             pctx.options.final_snark,
-        )?);
+        ));
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false)?;
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false);
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -350,16 +350,15 @@ where
 
         timer_start_info!(GENERATING_PROOFS);
 
-        let setups = Arc::new(SetupsVadcop::new(
-            &pctx.global_info,
-            pctx.options.verify_constraints,
-            pctx.options.aggregation,
-            pctx.options.final_snark,
-        )?);
-
-        if pctx.options.aggregation {
-            check_tree_paths_vadcop(&pctx, &setups)?;
-        }
+        let pctx_clone = pctx.clone();
+        let setup_aggregation_handle = std::thread::spawn(move || {
+            SetupsVadcop::new(
+                &pctx_clone.global_info,
+                pctx_clone.options.verify_constraints,
+                pctx_clone.options.aggregation,
+                pctx_clone.options.final_snark,
+            )
+        });
 
         timer_start_info!(EXECUTE);
         wcm.execute();
@@ -388,7 +387,11 @@ where
             }
         }
 
-        let aux_trace = Arc::new(create_buffer_fast(prover_buffer_size as usize));
+        let aux_trace_size = match cfg!(feature = "gpu") {
+            true => sctx.max_const_tree_size + sctx.max_const_size,
+            false => prover_buffer_size as usize,
+        };
+        let aux_trace = Arc::new(create_buffer_fast(aux_trace_size));
 
         let max_sizes = discover_max_sizes(&pctx, &sctx);
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
@@ -396,13 +399,12 @@ where
 
         let (tx, rx) = channel::<usize>();
         let max_pending_proofs = match cfg!(feature = "gpu") {
-            true => 10,
+            true => 3,
             false => 1,
         };
 
         let proof_count = Arc::new(AtomicU64::new(0)); // shared between threads
 
-        // Spawn the proof runner thread
         let proof_count_clone = Arc::clone(&proof_count);
         let pctx_clone = pctx.clone();
         let sctx_clone = sctx.clone();
@@ -453,6 +455,24 @@ where
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
         Self::calculate_global_challenge(&pctx, values_challenge);
+
+        let setups = Arc::new(setup_aggregation_handle.join().unwrap());
+
+        let mut init_const_tree_handle = if pctx.options.aggregation {
+            check_tree_paths_vadcop(&pctx, &setups)?;
+
+            let setups_clone = setups.clone();
+            let pctx_clone = pctx.clone();
+            Some(std::thread::spawn(move || {
+                initialize_fixed_pols_tree(&pctx_clone.clone(), &setups_clone);
+            }))
+        } else {
+            None
+        };
+
+        if pctx.options.aggregation {
+            initialize_size_witness(&pctx, &setups)?;
+        }
 
         timer_start_info!(GENERATING_BASIC_PROOFS);
 
@@ -601,9 +621,9 @@ where
 
         let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
 
-        timer_start_info!(LOAD_CONST_FILES);
-        initialize_fixed_pols_tree(&pctx, &setups);
-        timer_stop_and_log_info!(LOAD_CONST_FILES);
+        if let Some(handle) = init_const_tree_handle.take() {
+            handle.join().unwrap();
+        }
 
         timer_start_info!(GENERATING_COMPRESSED_PROOFS);
         let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
@@ -927,7 +947,7 @@ where
 
         let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options.clone());
         let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints)?);
+            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints));
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
