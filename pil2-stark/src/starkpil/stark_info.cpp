@@ -395,6 +395,9 @@ void StarkInfo::setMapOffsets() {
 
     maxTotalN = std::max(maxTotalN, LEvSize);
 
+    mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
+    mapTotalN += NExtended * FIELD_EXTENSION;
+
     for(uint64_t stage = 1; stage <= nStages; stage++) {
         uint64_t maxTotalNStage = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
         if(!gpu) {
@@ -435,11 +438,6 @@ void StarkInfo::setMapOffsets() {
     mapTotalN = std::max(mapTotalN, maxTotalN);
 
     if(gpu) {
-        mapOffsets[std::make_pair("buff_helper", false)] = mapOffsets[std::make_pair("f", true)] + NExtended * FIELD_EXTENSION;
-        if(mapOffsets[std::make_pair("buff_helper", false)] + NExtended * FIELD_EXTENSION > mapTotalN) {
-            mapTotalN = mapOffsets[std::make_pair("buff_helper", false)] + NExtended * FIELD_EXTENSION;
-        }
-
         mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
         mapTotalN += mapTotalNCustomCommitsFixed;
     }
