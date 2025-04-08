@@ -59,19 +59,34 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+    double timeCopy = omp_get_wtime();
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, params->trace, sizeTrace, cudaMemcpyHostToDevice));
+    timeCopy = omp_get_wtime() - timeCopy;
+    double timeCopyConstants = omp_get_wtime();
     if(loadConstants) {
         CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstPols, &params->aux_trace[offsetConstPols], sizeConstPols, cudaMemcpyHostToDevice));
         CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstTree, &params->aux_trace[offsetConstTree], sizeConstTree, cudaMemcpyHostToDevice));
     }
+    timeCopyConstants = omp_get_wtime() - timeCopyConstants;
 
-    time = omp_get_wtime() - time;
     //std::cout << "rick genDeviceBuffers time: " << time << std::endl;
 
     time = omp_get_wtime();
     genProof_gpu(*setupCtx, airgroupId, airId, instanceId, *params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), d_buffers);
     time = omp_get_wtime() - time;
     //std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
+
+    std::ostringstream oss;
+    
+    oss << std::fixed << std::setprecision(2) << timeCopy << "s";
+    zklog.trace("        COPY_TRACE:   " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    oss << std::fixed << std::setprecision(2) << timeCopyConstants << "s";
+    zklog.trace("        COPY_CONST:   " + oss.str());
+    oss.str("");
+    oss.clear();
 }
 
 void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants)
@@ -117,9 +132,17 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = 0;
 
+    double timeCopy = omp_get_wtime();
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, trace, sizeTrace, cudaMemcpyHostToDevice));
+    timeCopy = omp_get_wtime() - timeCopy;
     genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_buffers);
     time = omp_get_wtime() - time;
-    //std::cout << "rick genRCommit_gpu time: " << time << std::endl;
+
+    std::ostringstream oss;
+
+    oss << std::fixed << std::setprecision(2) << timeCopy << "s (" << (timeCopy / time) * 100 << "%)";
+    zklog.trace("        COPY_TRACE:   " + oss.str());
+    oss.str("");
+    oss.clear();
 }
 #endif

@@ -483,7 +483,9 @@ where
 
         let mut recursive_witness = vec![None; my_instances.len()];
         let mut previous_instance_id = None;
-        for air_groups in my_air_groups.iter() {
+        for idx in 0..my_air_groups.len() {
+            let idx = (pctx.dctx_get_rank() + idx) % my_air_groups.len();
+            let air_groups = &my_air_groups[idx];
             let mut gen_const_tree = true;
             for my_instance_id in air_groups.iter() {
                 let instance_id = my_instances[*my_instance_id];
@@ -519,7 +521,11 @@ where
                         let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
                         recursive_witness[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())] = Some(witness);
                     }
-                    pctx.free_instance(previous_instance_id.unwrap());
+                    let pctx_clone = pctx.clone();
+                    let instance_id = previous_instance_id.unwrap();
+                    std::thread::spawn(move || {
+                        pctx_clone.free_instance(instance_id);
+                    });
                 }
 
                 previous_instance_id = Some(instance_id);
@@ -831,7 +837,7 @@ where
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
-            let value = Self::get_contribution_air(&pctx, &sctx, instance_id, ptr, d_buffers.clone());
+            let value = Self::get_contribution_air(pctx.clone(), &sctx, instance_id, ptr, d_buffers.clone());
 
             for (id, value) in value.iter().enumerate().take(10) {
                 values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 10 + id] = *value;
@@ -1172,7 +1178,7 @@ where
     }
 
     pub fn get_contribution_air(
-        pctx: &ProofCtx<F>,
+        pctx: Arc<ProofCtx<F>>,
         sctx: &SetupCtx<F>,
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
@@ -1240,7 +1246,10 @@ where
         calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64, 10);
 
         if !all {
-            pctx.free_instance(instance_id);
+            let pctx_clone = pctx.clone();
+            std::thread::spawn(move || {
+                pctx_clone.free_instance(instance_id);
+            });
         }
 
         timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
