@@ -445,7 +445,8 @@ void StarkInfo::setMapOffsets() {
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
-    uint64_t maxNBlocks, nrowsPack, mapBuffHelper;
+    uint64_t N = (1 << starkStruct.nBits);
+    uint64_t mapBuffHelper;
     if(verify) {
         maxNBlocks = 1;
         nrowsPack = starkStruct.nQueries;
@@ -456,8 +457,8 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             nrowsPack = NROWS_PACK;
             maxNBlocks = omp_get_max_threads();
         } else {
-            nrowsPack = 128; // TODO: SHOULD NOT BE HARDCODED
-            maxNBlocks = 2048; // TODO: SHOULD NOT BE HARDCODED
+            nrowsPack = 64; // TODO: SHOULD NOT BE HARDCODED
+            maxNBlocks = 4096; // TODO: SHOULD NOT BE HARDCODED
         }
     }
     
