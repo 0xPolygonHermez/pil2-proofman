@@ -293,6 +293,7 @@ void StarkInfo::load(json j)
         }
         mapOffsets[std::make_pair("q", true)] = mapTotalN;
         mapTotalN += NExtended * FIELD_EXTENSION;
+        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
     } else {
         setMapOffsets();
     }
