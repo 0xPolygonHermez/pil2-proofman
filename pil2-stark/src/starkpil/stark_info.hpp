@@ -163,6 +163,8 @@ public:
     uint64_t mapTotalN;
     uint64_t mapTotalNCustomCommitsFixed;
     
+    uint64_t maxNBlocks, nrowsPack;
+    
     uint64_t proofSize;
 
     uint64_t airValuesSize;
