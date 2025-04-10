@@ -641,6 +641,7 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
     HintFieldValue hintFieldDestVal = hintFieldDest->values[0];
 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
+    
     uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
 #ifdef __USE_CUDA__
         Goldilocks::Element* vals = new Goldilocks::Element[dim*N];

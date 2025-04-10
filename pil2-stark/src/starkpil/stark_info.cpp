@@ -268,6 +268,31 @@ void StarkInfo::load(json j)
                 mapTotalNCustomCommitsFixed += customCommits[i].stageWidths[0] * starkStruct.nQueries;
             }
         }
+    } else if(verify_constraints) {
+        uint64_t N = (1 << starkStruct.nBits);
+        uint64_t NExtended = (1 << starkStruct.nBitsExt);
+        mapTotalN = 0;
+
+        mapOffsets[std::make_pair("const", false)] = 0;
+
+        mapTotalNCustomCommitsFixed = 0;
+
+        // Set offsets for custom commits fixed
+        for(uint64_t i = 0; i < customCommits.size(); ++i) {
+            if(customCommits[i].stageWidths[0] > 0) {
+                mapOffsets[std::make_pair(customCommits[i].name + "0", false)] = mapTotalNCustomCommitsFixed;
+                mapTotalNCustomCommitsFixed += customCommits[i].stageWidths[0] * N;
+                mapOffsets[std::make_pair(customCommits[i].name + "0", true)] = mapTotalNCustomCommitsFixed;
+                mapTotalNCustomCommitsFixed += customCommits[i].stageWidths[0] * NExtended + getNumNodesMT(NExtended);
+            }
+        }
+
+        for(uint64_t stage = 1; stage <= nStages; stage++) {
+            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
+            mapTotalN += N * mapSectionsN["cm" + to_string(stage)];
+        }
+        mapOffsets[std::make_pair("q", true)] = mapTotalN;
+        mapTotalN += NExtended * FIELD_EXTENSION;
     } else {
         setMapOffsets();
     }
@@ -456,8 +481,6 @@ void StarkInfo::setMapOffsets() {
 }
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
-    uint64_t NExtended = (1 << starkStruct.nBitsExt);
-    uint64_t N = (1 << starkStruct.nBits);
     uint64_t mapBuffHelper;
     if(verify) {
         maxNBlocks = 1;
