@@ -142,8 +142,8 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
     expressionsBin->endReadSection();
     expressionsBin->startReadSection(BINARY_CONSTRAINTS_SECTION);
 
-    uint32_t nOpsDebug = expressionsBin->readU32LE();
-    uint32_t nArgsDebug = expressionsBin->readU32LE();
+    nOpsDebug = expressionsBin->readU32LE();
+    nArgsDebug = expressionsBin->readU32LE();
     uint32_t nNumbersDebug = expressionsBin->readU32LE();
     uint32_t nConstPolsIdsDebug = expressionsBin->readU32LE();
     uint32_t nCmPolsIdsDebug = expressionsBin->readU32LE();

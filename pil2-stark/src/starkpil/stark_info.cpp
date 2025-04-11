@@ -511,10 +511,6 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
         uint64_t values = 3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
         mapOffsets[std::make_pair("values", false)] = mapBuffHelper;
         mapBuffHelper += values;
-    } else {
-        uint64_t destVals = 2 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
-        mapOffsets[std::make_pair("destVals", false)] = mapBuffHelper;
-        mapBuffHelper += destVals;
     }
 
     if(mapBuffHelper > mapTotalN) {

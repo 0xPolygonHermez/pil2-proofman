@@ -99,6 +99,8 @@ public:
 
     uint32_t  nOpsTotal;
     uint32_t  nArgsTotal;
+    uint32_t  nOpsDebug;
+    uint32_t  nArgsDebug;
 
     std::map<uint64_t, ParserParams> expressionsInfo;
 
