@@ -98,8 +98,8 @@ public:
     void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateFRIPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);
 
-    void computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv);
-    void computeEvals(StepsParams &params, Goldilocks::Element *LEv, FRIProof<ElementType> &proof);
+    void computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv, std::vector<int64_t> &openingPoints);
+    void computeEvals(StepsParams &params, Goldilocks::Element *LEv, FRIProof<ElementType> &proof, std::vector<int64_t> &openingPoints);
 
     void calculateHash(ElementType* hash, Goldilocks::Element* buffer, uint64_t nElements);
 
@@ -110,7 +110,7 @@ public:
     // Following function are created to be used by the ffi interface
     void ffi_treesGL_get_root(uint64_t index, ElementType *dst);
 
-    void evmap(StepsParams& params, Goldilocks::Element *LEv);
+    void evmap(StepsParams& params, Goldilocks::Element *LEv, std::vector<int64_t> &openingPoints);
 };
 
 template class Starks<Goldilocks::Element>;
