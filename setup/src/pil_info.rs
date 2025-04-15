@@ -32,7 +32,6 @@ pub async fn pil_info(
         .collect();
     let mut res: HashMap<String, Value> = info_pil["res"].as_object().unwrap().clone().into_iter().collect();
 
-    let mut new_expressions = expressions.clone();
     let max_deg = (1
         << (res["starkStruct"]["nBitsExt"].as_u64().unwrap() as usize
             - res["starkStruct"]["nBits"].as_u64().unwrap() as usize))
@@ -56,7 +55,7 @@ pub async fn pil_info(
             let im_info_str = process_pil_data(&info_pil_json.to_string());
             im_info = serde_json::from_str(&im_info_str).expect("Failed to parse JSON");
 
-            new_expressions = im_info["newExpressions"].as_array().unwrap().clone();
+            expressions = im_info["newExpressions"].as_array().unwrap().clone();
         } else {
             im_info = calculate_intermediate_polynomials(
                 &mut expressions,
@@ -70,7 +69,7 @@ pub async fn pil_info(
 
         add_intermediate_polynomials(
             &mut res,
-            &mut new_expressions,
+            &mut expressions,
             &mut constraints,
             &mut symbols,
             &im_exps,
@@ -92,7 +91,7 @@ pub async fn pil_info(
         &mut res_value,
         &mut symbols,
         &constraints,
-        &mut new_expressions,
+        &mut expressions,
         &hints,
         options.get("debug").unwrap_or(&json!(false)).as_bool().unwrap(),
     );
