@@ -68,7 +68,7 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
     tracing::info!("Generating setup for each air group");
     for (airgroup_id, airgroup) in airout.pilout().air_groups.iter().enumerate() {
-        setup.push(vec![]);
+        //setup.push(vec![]);
         for (air_id, air) in airgroup.airs.iter().enumerate() {
             tracing::info!("Computing setup for air '{}'", air.name.as_ref().unwrap());
 

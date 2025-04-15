@@ -8,3 +8,4 @@ vendor
 .cargo
 MyLogFile.log
 .z3-trace
+pil2-stark/lib

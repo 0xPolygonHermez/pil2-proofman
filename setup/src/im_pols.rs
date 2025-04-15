@@ -1,6 +1,6 @@
 use std::hash::{Hash, DefaultHasher, Hasher};
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Map, Number, Value};
 
 pub trait HashCode: Hash {
     fn hash_code(&self) -> u64 {
@@ -16,10 +16,27 @@ pub trait HashCode: Hash {
 
 impl<T: Hash> HashCode for T {}
 
+pub fn validate_exp(exp: &Value) {
+    if exp["op"].is_null() {
+        tracing::debug!("bad exp: {:#?}", exp);
+        panic!("Expression is missing the 'op' field");
+    }
+    if exp["id"].is_null() {
+        tracing::debug!("bad exp: {:#?}", exp);
+        panic!("Expression is missing the 'id' field");
+    }
+    if exp["expDeg"].is_null() {
+        tracing::debug!("bad exp: {:#?}", exp);
+        panic!("Expression is missing the 'expDeg' field");
+    }
+    if exp["res"].is_null() {
+        tracing::debug!("bad exp: {:#?}", exp);
+        panic!("Expression is missing the 'res' field");
+    }
+}
+
 pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize) -> (Vec<usize>, isize) {
-    tracing::info!("exp: {:#?}", exp);
-    tracing::info!("exp keys: {:?}", exp.as_object().unwrap().keys().collect::<Vec<_>>());
-    tracing::info!("expressions: {:#?}", expressions);
+    validate_exp(&exp);
     let mut im_pols: Option<Vec<Value>> = Some(Vec::new());
     let absolute_max = max_deg;
     let mut abs_max_d = 0;
@@ -43,6 +60,7 @@ pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize)
         absolute_max: usize,
         abs_max_d: &mut isize,
     ) -> (Option<Vec<Value>>, isize) {
+        tracing::debug!("exp: {:#?}", exp);
         let exp_id_st = exp["id"].as_number().unwrap().to_string();
         let exp_id = exp_id_st.as_str();
         if im_pols.is_none() {
