@@ -36,7 +36,7 @@ pub fn validate_exp(exp: &Value) {
 }
 
 pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize) -> (Vec<usize>, isize) {
-    validate_exp(&exp);
+    //validate_exp(&exp);
     let mut im_pols: Option<Vec<Value>> = Some(Vec::new());
     let absolute_max = max_deg;
     let mut abs_max_d = 0;
@@ -61,8 +61,6 @@ pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize)
         abs_max_d: &mut isize,
     ) -> (Option<Vec<Value>>, isize) {
         tracing::debug!("exp: {:#?}", exp);
-        let exp_id_st = exp["id"].as_number().unwrap().to_string();
-        let exp_id = exp_id_st.as_str();
         if im_pols.is_none() {
             return (None, -1);
         }
@@ -81,15 +79,15 @@ pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize)
             "mul" => {
                 let mut eb: Option<Vec<Value>> = None;
                 let mut ed = 1;
-                let max_deg_here = exp["expDeg"].as_i64().unwrap() as isize;
+                let max_deg_here = exp["expDeg"].as_i64().unwrap_or(0) as isize;
                 let values = exp["values"].as_array_mut().unwrap();
                 if !["add", "mul", "sub", "exp"].contains(&values[0]["op"].as_str().unwrap())
-                    && values[0]["expDeg"].as_i64().unwrap() == 0
+                    && values[0]["expDeg"].as_i64().unwrap_or(0) == 0
                 {
                     return __calculate_im_pols(expressions, &mut values[1], im_pols, max_deg, absolute_max, abs_max_d);
                 }
                 if !["add", "mul", "sub", "exp"].contains(&values[1]["op"].as_str().unwrap())
-                    && values[1]["expDeg"].as_i64().unwrap() == 0
+                    && values[1]["expDeg"].as_i64().unwrap_or(0) == 0
                 {
                     return __calculate_im_pols(expressions, &mut values[0], im_pols, max_deg, absolute_max, abs_max_d);
                 }
@@ -142,10 +140,11 @@ pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize)
                 if max_deg < 1 {
                     return (None, -1);
                 }
+                let exp_id = exp["id"].as_number().unwrap().as_i64().unwrap();
                 if im_pols.is_some() {
                     // avoid unnecessary clone
                     if let Some(im_pols) = im_pols.clone() {
-                        if im_pols.iter().any(|im| im == exp_id) {
+                        if im_pols.iter().any(|im| im.as_i64().unwrap() == exp_id) {
                             return (Some(im_pols), 1);
                         }
                     }
@@ -169,14 +168,9 @@ pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize)
                     }
                 }
                 if !case_a {
-                    (e, d) = __calculate_im_pols(
-                        expressions,
-                        &mut exp.as_object_mut().unwrap()[exp_id],
-                        im_pols,
-                        max_deg,
-                        absolute_max,
-                        abs_max_d,
-                    )
+                    tracing::info!("exp_id: {}", exp_id);
+                    tracing::info!("{:?}", exp.as_object_mut().unwrap());
+                    (e, d) = __calculate_im_pols(expressions, exp, im_pols, max_deg, absolute_max, abs_max_d)
                 }
                 // if (e === false) {
                 //     return [false, -1];
@@ -198,7 +192,7 @@ pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize)
                         *abs_max_d = d;
                     }
                     let mut combined = e.unwrap_or(Vec::new());
-                    combined.push(exp_id.into());
+                    combined.push(exp_id.clone().into());
                     return (Some(combined), 1);
                 } else {
                     if exp["res"].as_array().is_none() {
