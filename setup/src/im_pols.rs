@@ -35,8 +35,7 @@ pub fn validate_exp(exp: &Value) {
     }
 }
 
-pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize) -> (Vec<usize>, isize) {
-    //validate_exp(&exp);
+pub fn calculate_im_pols(expressions: &mut Vec<Value>, exp: &mut Value, max_deg: usize) -> (Vec<usize>, isize) {
     let mut im_pols: Option<Vec<Value>> = Some(Vec::new());
     let absolute_max = max_deg;
     let mut abs_max_d = 0;
@@ -53,7 +52,7 @@ pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize)
     );
 
     fn __calculate_im_pols(
-        expressions: &[Value],
+        expressions: &mut Vec<Value>,
         exp: &mut Value,
         im_pols: &mut Option<Vec<Value>>,
         max_deg: usize,
@@ -170,7 +169,11 @@ pub fn calculate_im_pols(expressions: &[Value], exp: &mut Value, max_deg: usize)
                 if !case_a {
                     tracing::info!("exp_id: {}", exp_id);
                     tracing::info!("{:?}", exp.as_object_mut().unwrap());
-                    (e, d) = __calculate_im_pols(expressions, exp, im_pols, max_deg, absolute_max, abs_max_d)
+                    let mut exps = expressions.clone(); // clone to avoid borrowing issues
+                    let sub_exp = &mut expressions[exp_id as usize]; // isolate the mutable borrow
+                    (e, d) = __calculate_im_pols(&mut exps, sub_exp, im_pols, max_deg, absolute_max, abs_max_d);
+                    expressions[exp_id as usize] = exps[exp_id as usize].clone();
+                    // update the original
                 }
                 // if (e === false) {
                 //     return [false, -1];
@@ -447,7 +450,7 @@ pub fn calculate_added_cols(
 
 /// Computes intermediate polynomials for a given expression and returns a JSON object.
 pub fn calculate_intermediate_polynomials(
-    expressions: &mut [Value],
+    expressions: &mut Vec<Value>,
     c_exp_id: usize,
     max_q_deg: usize,
     q_dim: usize,
