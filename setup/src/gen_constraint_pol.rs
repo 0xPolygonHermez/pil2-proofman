@@ -119,7 +119,7 @@ pub fn generate_constraint_polynomial(
     ]));
 
     let exp = expressions[c_exp_id].clone();
-    let initial_q_degree = calculate_exp_deg(expressions, exp, &[]);
+    let initial_q_degree = calculate_exp_deg(expressions, &exp, &[]);
 
     println!("The maximum constraint degree is {} (without intermediate polynomials)", initial_q_degree);
     #[cfg(feature = "debug-fibonacci")]
