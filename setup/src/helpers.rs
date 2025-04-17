@@ -104,6 +104,7 @@ pub fn print_expressions(
     }
 }
 
+// MATCHES JS
 /// Gets the dimension of the expression at `exp_id`, mutably caching it
 /// in expressions[exp_id]["dim"] when `op == "exp"`.
 pub fn get_exp_dim(expressions: &mut [Value], exp_id: usize) -> usize {
