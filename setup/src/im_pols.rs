@@ -198,16 +198,30 @@ pub fn calculate_im_pols(expressions: &mut Vec<Value>, exp: &mut Value, max_deg:
                     combined.push(exp_id.clone().into());
                     return (Some(combined), 1);
                 } else {
+                    // If `exp["res"]` is not an array yet, make it one.
                     if exp["res"].as_array().is_none() {
                         exp["res"] = Value::Array(Vec::new());
                     }
                     let exp_res = exp["res"].as_array_mut().unwrap();
+
+                    // Make sure the array is large enough that we can do exp_res[absolute_max].
+                    while exp_res.len() <= absolute_max {
+                        exp_res.push(Value::Null);
+                    }
+
+                    // If the slot at exp_res[absolute_max] is not an object, turn it into an object.
                     if exp_res[absolute_max].as_object().is_none() {
                         exp_res[absolute_max] = Value::Object(Map::new());
                     }
-                    let Some(res_at_absolute_max) = exp_res[absolute_max].as_object_mut() else { unreachable!() };
+
+                    // Now it's safe to unwrap as_object_mut().
+                    let res_at_absolute_max = exp_res[absolute_max].as_object_mut().unwrap();
+
+                    // Insert [e, d] at the key im_pols.hash_code_string().
                     let hashcode = im_pols.hash_code_string();
-                    res_at_absolute_max[&hashcode] = Value::Array(vec![e.clone().into(), d.into()]);
+                    res_at_absolute_max.insert(hashcode, Value::Array(vec![e.clone().into(), d.into()]));
+
+                    // Finally, return (e, d).
                     return (e, d);
                 }
             }
