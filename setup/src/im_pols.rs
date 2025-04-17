@@ -16,25 +16,6 @@ pub trait HashCode: Hash {
 
 impl<T: Hash> HashCode for T {}
 
-pub fn validate_exp(exp: &Value) {
-    if exp["op"].is_null() {
-        tracing::debug!("bad exp: {:#?}", exp);
-        panic!("Expression is missing the 'op' field");
-    }
-    if exp["id"].is_null() {
-        tracing::debug!("bad exp: {:#?}", exp);
-        panic!("Expression is missing the 'id' field");
-    }
-    if exp["expDeg"].is_null() {
-        tracing::debug!("bad exp: {:#?}", exp);
-        panic!("Expression is missing the 'expDeg' field");
-    }
-    if exp["res"].is_null() {
-        tracing::debug!("bad exp: {:#?}", exp);
-        panic!("Expression is missing the 'res' field");
-    }
-}
-
 pub fn calculate_im_pols(expressions: &mut Vec<Value>, exp: &mut Value, max_deg: usize) -> (Vec<usize>, isize) {
     let mut im_pols: Option<Vec<Value>> = Some(Vec::new());
     let absolute_max = max_deg;
