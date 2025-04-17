@@ -120,6 +120,7 @@ pub fn get_exp_dim(expressions: &mut [Value], exp_id: usize) -> usize {
     dim
 }
 
+// MATCHES JS
 fn get_exp_dim_inner(exp: &mut Value, expressions: &mut [Value]) -> usize {
     // If exp["dim"] is already defined and non-null, just return it.
     if let Some(dim_val) = exp.get("dim") {
