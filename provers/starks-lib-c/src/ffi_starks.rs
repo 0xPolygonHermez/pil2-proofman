@@ -992,6 +992,12 @@ pub fn gen_device_commit_buffers_free_c(d_buffers: *mut ::std::os::raw::c_void) 
     }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+pub fn set_device_c(mpi_rank: u32) {
+    unsafe {
+        set_device(mpi_rank);
+    }
+}
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -1631,4 +1637,9 @@ pub fn gen_device_commit_buffers_free_c(_d_buffers: *mut ::std::os::raw::c_void)
         "ffi     ",
         "gen_device_commit_buffers_free: This is a mock call because there is no linked library"
     );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_device_c(_mpi_rank: u32) {
+    trace!("{}: ··· {}", "ffi     ", "set_device: This is a mock call because there is no linked library");
 }

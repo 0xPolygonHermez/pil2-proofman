@@ -500,13 +500,6 @@ void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t in
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_commit_buffers(void *max_sizes)
-{
-    return NULL;
-};
-
-void gen_device_commit_buffers_free(void *d_buffers) {}
-
 void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers, bool loadConstants) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
@@ -599,3 +592,19 @@ uint64_t get_omp_max_threads(){
 void set_omp_num_threads(uint64_t num_threads){
     omp_set_num_threads(num_threads);
 }
+
+// GPU calls
+// =================================================================================
+
+#ifndef __USE_CUDA__
+
+void *gen_device_commit_buffers(void *max_sizes)
+{
+    return NULL;
+}
+
+void gen_device_commit_buffers_free(void *d_buffers) {}
+
+void set_device(uint32_t mpi_rank){}
+
+#endif

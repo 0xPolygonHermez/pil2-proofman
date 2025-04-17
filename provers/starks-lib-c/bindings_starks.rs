@@ -537,3 +537,7 @@ extern "C" {
     #[link_name = "\u{1}_Z30gen_device_commit_buffers_freePv"]
     pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void);
 }
+unsafe extern "C" {
+    #[link_name = "\u{1}_Z10set_devicej"]
+    pub fn set_device(mpi_rank: u32);
+}
