@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 
 use crate::helpers::get_exp_dim;
 
+// MATCHES JS
 /// Struct for managing expressions and operations
 #[derive(Debug, Clone)]
 pub struct ExpressionOps {
@@ -10,6 +11,7 @@ pub struct ExpressionOps {
     pub dim: usize,
 }
 
+// MATCHES JS
 impl ExpressionOps {
     /// Creates a new `ExpressionOps` instance with the given stage and dimension.
     pub fn new(stage: usize, dim: usize) -> Self {
