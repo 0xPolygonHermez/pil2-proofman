@@ -78,7 +78,7 @@ pub fn grand_product_plookup(
             t_exp_val.as_object_mut().unwrap().insert("stage".to_string(), json!(stage1));
 
             expressions_array.push(t_exp_val);
-            let t_dim = get_exp_dim(&expressions_array, pu_ctx["tExpId"].as_u64().unwrap() as usize);
+            let t_dim = get_exp_dim(&mut expressions_array, pu_ctx["tExpId"].as_u64().unwrap() as usize);
 
             // ✅ Witness Commitments
             pu_ctx.insert("h1Id", json!(n_commitments));

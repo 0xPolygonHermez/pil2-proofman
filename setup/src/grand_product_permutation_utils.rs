@@ -71,7 +71,7 @@ pub fn grand_product_permutation(
             let mut t_exp_val = json!(t_exp.unwrap());
             t_exp_val.as_object_mut().unwrap().insert("stage".to_string(), json!(stage));
             expressions_array.push(t_exp_val);
-            let t_dim = get_exp_dim(&expressions_array, pe_ctx["tExpId"].as_u64().unwrap() as usize);
+            let t_dim = get_exp_dim(&mut expressions_array, pe_ctx["tExpId"].as_u64().unwrap() as usize);
             expressions_array[pe_ctx["tExpId"].as_u64().unwrap() as usize]
                 .as_object_mut()
                 .unwrap()
@@ -96,7 +96,7 @@ pub fn grand_product_permutation(
             let mut f_exp_val = json!(f_exp.unwrap());
             f_exp_val.as_object_mut().unwrap().insert("stage".to_string(), json!(stage));
             expressions_array.push(f_exp_val);
-            let f_dim = get_exp_dim(&expressions_array, pe_ctx["fExpId"].as_u64().unwrap() as usize);
+            let f_dim = get_exp_dim(&mut expressions_array, pe_ctx["fExpId"].as_u64().unwrap() as usize);
             expressions_array[pe_ctx["fExpId"].as_u64().unwrap() as usize]
                 .as_object_mut()
                 .unwrap()
@@ -119,12 +119,12 @@ pub fn grand_product_permutation(
             let num_exp = e.add(f, gamma.clone());
             pe_ctx.insert("numId", json!(expressions_array.len()));
             expressions_array.push(json!(num_exp));
-            let num_dim = get_exp_dim(&expressions_array, pe_ctx["numId"].as_u64().unwrap() as usize);
+            let num_dim = get_exp_dim(&mut expressions_array, pe_ctx["numId"].as_u64().unwrap() as usize);
 
             let den_exp = e.add(t, gamma.clone());
             pe_ctx.insert("denId", json!(expressions_array.len()));
             expressions_array.push(json!(den_exp));
-            let den_dim = get_exp_dim(&expressions_array, pe_ctx["denId"].as_u64().unwrap() as usize);
+            let den_dim = get_exp_dim(&mut expressions_array, pe_ctx["denId"].as_u64().unwrap() as usize);
 
             let c2 = e.sub(
                 e.mul(zp.clone(), e.exp(pe_ctx["denId"].as_u64().unwrap() as usize, 0, stage)),

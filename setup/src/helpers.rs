@@ -104,33 +104,72 @@ pub fn print_expressions(
     }
 }
 
-/// Gets the dimensionality of an expression by its ID.
-pub fn get_exp_dim(expressions: &[Value], exp_id: usize) -> usize {
-    fn _get_exp_dim(exp: &Value, expressions: &[Value]) -> usize {
-        match exp.get("dim") {
-            Some(dim) if !dim.is_null() => dim.as_u64().unwrap_or(1) as usize,
-            _ => match exp.get("op").and_then(|op| op.as_str()) {
-                Some("add") | Some("sub") | Some("mul") => exp["values"]
-                    .as_array()
-                    .unwrap_or(&vec![])
-                    .iter()
-                    .map(|v| _get_exp_dim(v, expressions))
-                    .max()
-                    .unwrap_or(1),
-                Some("exp") => {
-                    let id = exp["id"].as_u64().unwrap_or(0) as usize;
+/// Gets the dimension of the expression at `exp_id`, mutably caching it
+/// in expressions[exp_id]["dim"] when `op == "exp"`.
+pub fn get_exp_dim(expressions: &mut [Value], exp_id: usize) -> usize {
+    // 1) Temporarily take out the expression from the array to avoid aliasing
+    let mut exp = std::mem::take(&mut expressions[exp_id]);
 
-                    _get_exp_dim(&expressions[id], expressions)
-                }
-                Some("cm") | Some("custom") => exp.get("dim").and_then(|d| d.as_u64()).unwrap_or(1) as usize,
-                Some("const") | Some("number") | Some("public") | Some("x") | Some("Zi") => 1,
-                Some("challenge") | Some("eval") | Some("xDivXSubXi") => 3,
-                _ => panic!("Exp op not defined: {}", exp.get("op").unwrap_or(&json!("unknown"))),
-            },
+    // 2) Compute dimension
+    let dim = get_exp_dim_inner(&mut exp, expressions);
+
+    // 3) Put the expression back
+    expressions[exp_id] = exp;
+
+    dim
+}
+
+fn get_exp_dim_inner(exp: &mut Value, expressions: &mut [Value]) -> usize {
+    // If exp["dim"] is already defined and non-null, just return it.
+    if let Some(dim_val) = exp.get("dim") {
+        if !dim_val.is_null() {
+            return dim_val.as_u64().unwrap_or(1) as usize;
         }
     }
 
-    _get_exp_dim(&expressions[exp_id], expressions)
+    // Otherwise, match on exp["op"]
+    match exp.get("op").and_then(|op| op.as_str()) {
+        // ---------------- add / sub / mul ------------------
+        // In JS, we do `Math.max(...exp.values.map(...))` without caching in `exp.dim`.
+        Some("add") | Some("sub") | Some("mul") => {
+            let values = exp["values"].as_array_mut().expect("Expected 'values' to be an array");
+            let max_dim = values.iter_mut().map(|child| get_exp_dim_inner(child, expressions)).max().unwrap_or(1);
+            max_dim
+        }
+
+        // ---------------- exp ------------------
+        // In JS: we do `exp.dim = _getExpDim(expressions[exp.id])` then return `exp.dim`.
+        Some("exp") => {
+            let child_id = exp["id"].as_u64().unwrap_or(0) as usize;
+
+            // Temporarily remove the child from the array
+            let mut child_exp = std::mem::take(&mut expressions[child_id]);
+
+            // Recursively compute child's dimension
+            let child_dim = get_exp_dim_inner(&mut child_exp, expressions);
+
+            // Put child back
+            expressions[child_id] = child_exp;
+
+            // Cache child's dim into exp["dim"]
+            exp["dim"] = Value::from(child_dim);
+
+            child_dim
+        }
+
+        // ---------------- cm / custom ------------------
+        // JS: returns `exp.dim || 1` but does not store it back
+        Some("cm") | Some("custom") => exp.get("dim").and_then(|v| v.as_u64()).unwrap_or(1) as usize,
+
+        // ---------------- const / number / public / x / Zi => 1 ----------------
+        Some("const") | Some("number") | Some("public") | Some("x") | Some("Zi") => 1,
+
+        // ---------------- challenge / eval / xDivXSubXi => 3 ----------------
+        Some("challenge") | Some("eval") | Some("xDivXSubXi") => 3,
+
+        // ---------------- unknown op => panic ----------------
+        other => panic!("Exp op not defined: {:?}", other),
+    }
 }
 
 /// Adds metadata information to an expression.

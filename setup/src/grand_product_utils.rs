@@ -76,14 +76,14 @@ pub fn grand_product_connection(
             let mut num_exp_val = json!(num_exp);
             num_exp_val.as_object_mut().unwrap().insert("stage".to_string(), json!(stage));
             expressions_array.push(num_exp_val);
-            let n_dim = get_exp_dim(&expressions_array, ci_ctx["numId"].as_u64().unwrap() as usize);
+            let n_dim = get_exp_dim(&mut expressions_array, ci_ctx["numId"].as_u64().unwrap() as usize);
 
             // Store denominator in expressions
             ci_ctx.insert("denId", json!(expressions_array.len()));
             let mut den_exp_val = json!(den_exp);
             den_exp_val.as_object_mut().unwrap().insert("stage".to_string(), json!(stage));
             expressions_array.push(den_exp_val);
-            let d_dim = get_exp_dim(&expressions_array, ci_ctx["denId"].as_u64().unwrap() as usize);
+            let d_dim = get_exp_dim(&mut expressions_array, ci_ctx["denId"].as_u64().unwrap() as usize);
 
             // Compute ks values
             let ks = get_ks(fr_mul, ci["pols"].as_array().unwrap().len() - 1, k);
