@@ -23,203 +23,203 @@ pub fn calculate_im_pols(expressions: &mut Vec<Value>, exp: &mut Value, max_deg:
 
     let (re, rd) = __calculate_im_pols(expressions, exp, &mut im_pols, max_deg, absolute_max, &mut abs_max_d);
 
-    return (
-        re.unwrap_or(Vec::new())
+    (
+        re.unwrap_or_else(Vec::new)
             .into_iter()
-            .map(|i| i.as_number().unwrap().as_u64().unwrap().try_into().unwrap())
-            // the most dangerous line of rust ever typed ^
+            .map(|i| i.as_number().unwrap().as_u64().unwrap() as usize)
             .collect::<Vec<_>>(),
         rd.max(abs_max_d) - 1,
-    );
+    )
+}
 
-    fn __calculate_im_pols(
-        expressions: &mut Vec<Value>,
-        exp: &mut Value,
-        im_pols: &mut Option<Vec<Value>>,
-        max_deg: usize,
-        absolute_max: usize,
-        abs_max_d: &mut isize,
-    ) -> (Option<Vec<Value>>, isize) {
-        tracing::debug!("exp: {:#?}", exp);
-        if im_pols.is_none() {
-            return (None, -1);
-        }
-        match exp["op"].as_str().unwrap() {
-            "add" | "sub" => {
-                let mut md = 0;
-                for value in exp["values"].as_array_mut().unwrap() {
-                    let d;
-                    (*im_pols, d) = __calculate_im_pols(expressions, value, im_pols, max_deg, absolute_max, abs_max_d);
-                    if d < md {
-                        md = d;
-                    }
+fn __calculate_im_pols(
+    expressions: &mut Vec<Value>,
+    exp: &mut Value,
+    im_pols: &mut Option<Vec<Value>>,
+    max_deg: usize,
+    absolute_max: usize,
+    abs_max_d: &mut isize,
+) -> (Option<Vec<Value>>, isize) {
+    if im_pols.is_none() {
+        return (None, -1);
+    }
+
+    match exp["op"].as_str().unwrap() {
+        "add" | "sub" => {
+            // Track the maximum d (the JS code used `if d>md then md=d`)
+            let mut md = 0;
+            let values = exp["values"].as_array_mut().unwrap();
+            for value in values {
+                let d;
+                (*im_pols, d) = __calculate_im_pols(expressions, value, im_pols, max_deg, absolute_max, abs_max_d);
+                if d > md {
+                    md = d;
                 }
-                return (im_pols.clone(), md);
             }
-            "mul" => {
-                let mut eb: Option<Vec<Value>> = None;
-                let mut ed = 1;
-                let max_deg_here = exp["expDeg"].as_i64().unwrap_or(0) as isize;
-                let values = exp["values"].as_array_mut().unwrap();
-                if !["add", "mul", "sub", "exp"].contains(&values[0]["op"].as_str().unwrap())
-                    && values[0]["expDeg"].as_i64().unwrap_or(0) == 0
-                {
-                    return __calculate_im_pols(expressions, &mut values[1], im_pols, max_deg, absolute_max, abs_max_d);
-                }
-                if !["add", "mul", "sub", "exp"].contains(&values[1]["op"].as_str().unwrap())
-                    && values[1]["expDeg"].as_i64().unwrap_or(0) == 0
-                {
-                    return __calculate_im_pols(expressions, &mut values[0], im_pols, max_deg, absolute_max, abs_max_d);
-                }
-                if max_deg_here <= max_deg.try_into().unwrap() {
-                    return (im_pols.clone(), max_deg_here);
-                }
-                for _ in 0..max_deg {
-                    let r = max_deg - 1;
-                    let (mut e1, d1) =
-                        __calculate_im_pols(expressions, &mut values[0], im_pols, 1, absolute_max, abs_max_d);
-                    let (e2, d2) =
-                        __calculate_im_pols(expressions, &mut values[1], &mut e1, r, absolute_max, abs_max_d);
-                    /*
-                    if(e2 !== false && (eb === false || e2.length < eb.length)) {
-                        eb = e2;
-                        ed = d1+d2;
-                    }
-                    */
-                    if e2.is_some() && eb.is_some() {
-                        // avoid unnecessary clone
-                        if let Some(e2) = e2 {
-                            let eb_len = if let Some(_eb) = eb.clone() {
-                                let len = _eb.len();
-                                eb = Some(_eb);
-                                len
-                            } else {
-                                eb = None;
-                                0
-                            };
-                            if eb.is_none() || e2.len() < eb_len {
-                                eb = Some(e2);
+            (im_pols.clone(), md)
+        }
+
+        "mul" => {
+            let max_deg_here = exp["expDeg"].as_i64().unwrap_or(0) as isize;
+            let values = exp["values"].as_array_mut().unwrap();
+
+            // If either child is constant (deg=0), no need for multi-split
+            if !["add", "mul", "sub", "exp"].contains(&values[0]["op"].as_str().unwrap())
+                && values[0]["expDeg"].as_i64().unwrap_or(0) == 0
+            {
+                return __calculate_im_pols(expressions, &mut values[1], im_pols, max_deg, absolute_max, abs_max_d);
+            }
+            if !["add", "mul", "sub", "exp"].contains(&values[1]["op"].as_str().unwrap())
+                && values[1]["expDeg"].as_i64().unwrap_or(0) == 0
+            {
+                return __calculate_im_pols(expressions, &mut values[0], im_pols, max_deg, absolute_max, abs_max_d);
+            }
+
+            // If total deg is <= max_deg, just return
+            if max_deg_here <= max_deg as isize {
+                return (im_pols.clone(), max_deg_here);
+            }
+
+            // We try all partitions l + r = max_deg
+            let mut eb: Option<Vec<Value>> = None;
+            let mut ed: isize = -1;
+            for l in 0..=max_deg {
+                let r = max_deg - l;
+
+                // Make e1 mutable so we can pass &mut e1 into the next call
+                let (mut e1, d1) =
+                    __calculate_im_pols(expressions, &mut values[0], im_pols, l, absolute_max, abs_max_d);
+                let (e2, d2) = __calculate_im_pols(expressions, &mut values[1], &mut e1, r, absolute_max, abs_max_d);
+
+                // if(e2 !== false && (eb === false || e2.length < eb.length))
+                if let Some(e2v) = e2 {
+                    match eb {
+                        None => {
+                            eb = Some(e2v);
+                            ed = d1 + d2;
+                        }
+                        Some(ref current_eb) => {
+                            if e2v.len() < current_eb.len() {
+                                eb = Some(e2v);
                                 ed = d1 + d2;
                             }
                         }
                     }
+
                     // if (eb !== false && eb.length == imPols.length) return [eb, ed];
-                    // Cannot do it better.
-                    if eb.is_some() && im_pols.is_some() {
-                        // avoid unnecessary clone
-                        if let (Some(eb), Some(im_pols)) = (eb.clone(), im_pols.clone()) {
-                            if eb.len() == im_pols.len() {
-                                return (Some(eb), ed);
-                            }
+                    if let (Some(ref this_eb), Some(ref im_p)) = (eb.as_ref(), im_pols.as_ref()) {
+                        if this_eb.len() == im_p.len() {
+                            return (Some((*this_eb).clone()), ed);
                         }
                     }
-                }
-                return (eb, ed);
-            }
-            "exp" => {
-                if max_deg < 1 {
-                    return (None, -1);
-                }
-                let exp_id = exp["id"].as_number().unwrap().as_i64().unwrap();
-                if im_pols.is_some() {
-                    // avoid unnecessary clone
-                    if let Some(im_pols) = im_pols.clone() {
-                        if im_pols.iter().any(|im| im.as_i64().unwrap() == exp_id) {
-                            return (Some(im_pols), 1);
-                        }
-                    }
-                }
-                // let e,d;
-                // if(exp.res && exp.res[absoluteMax] && exp.res[absoluteMax][JSON.stringify(imPols)]) {
-                //     [e,d] = exp.res[absoluteMax][JSON.stringify(imPols)];
-                // } else {
-                //     [e,d] = _calculateImPols(expressions, expressions[exp.id], imPols, absoluteMax);
-                // }
-                let mut e = None;
-                let mut d = -1;
-                let mut case_a = false;
-                if let Some(exp_res) = exp["res"].as_array() {
-                    if let Some(res_at_absolute_max) = exp_res.get(absolute_max) {
-                        if let Some(res_at_hash) = res_at_absolute_max[im_pols.hash_code_string()].as_array() {
-                            e = res_at_hash[0].as_array().cloned();
-                            d = res_at_hash[1].as_number().map(|n| n.as_i64().unwrap() as isize).unwrap_or(-1);
-                            case_a = true;
-                        }
-                    }
-                }
-                if !case_a {
-                    tracing::info!("exp_id: {}", exp_id);
-                    tracing::info!("{:?}", exp.as_object_mut().unwrap());
-                    let mut exps = expressions.clone(); // clone to avoid borrowing issues
-                    let sub_exp = &mut expressions[exp_id as usize]; // isolate the mutable borrow
-                    (e, d) = __calculate_im_pols(&mut exps, sub_exp, im_pols, max_deg, absolute_max, abs_max_d);
-                    expressions[exp_id as usize] = exps[exp_id as usize].clone();
-                    // update the original
-                }
-                // if (e === false) {
-                //     return [false, -1];
-                // }
-                if e.is_none() {
-                    return (None, -1);
-                }
-                // if (d > maxDeg) {
-                //     if (d>absMaxD) absMaxD = d;
-                //     return [[...e, exp.id], 1];
-                // } else {
-                //     if(!exp.res) exp.res = {};
-                //     if(!exp.res[absoluteMax]) exp.res[absoluteMax] = {};
-                //     exp.res[absoluteMax][JSON.stringify(imPols)] = [e, d];
-                //     return exp.res[absoluteMax][JSON.stringify(imPols)];
-                // }
-                if d > max_deg as isize {
-                    if d > *abs_max_d {
-                        *abs_max_d = d;
-                    }
-                    let mut combined = e.unwrap_or(Vec::new());
-                    combined.push(exp_id.clone().into());
-                    return (Some(combined), 1);
-                } else {
-                    // If `exp["res"]` is not an array yet, make it one.
-                    if exp["res"].as_array().is_none() {
-                        exp["res"] = Value::Array(Vec::new());
-                    }
-                    let exp_res = exp["res"].as_array_mut().unwrap();
-
-                    // Make sure the array is large enough that we can do exp_res[absolute_max].
-                    while exp_res.len() <= absolute_max {
-                        exp_res.push(Value::Null);
-                    }
-
-                    // If the slot at exp_res[absolute_max] is not an object, turn it into an object.
-                    if exp_res[absolute_max].as_object().is_none() {
-                        exp_res[absolute_max] = Value::Object(Map::new());
-                    }
-
-                    // Now it's safe to unwrap as_object_mut().
-                    let res_at_absolute_max = exp_res[absolute_max].as_object_mut().unwrap();
-
-                    // Insert [e, d] at the key im_pols.hash_code_string().
-                    let hashcode = im_pols.hash_code_string();
-                    res_at_absolute_max.insert(hashcode, Value::Array(vec![e.clone().into(), d.into()]));
-
-                    // Finally, return (e, d).
-                    return (e, d);
                 }
             }
-            _ => {
-                if let Some(exp_deg) = exp["expDeg"].as_number() {
-                    if *exp_deg == 0.into() {
-                        return (im_pols.clone(), 0);
-                    } else if max_deg < 1 {
-                        return (None, -1);
-                    } else {
-                        return (im_pols.clone(), 1);
+
+            (eb, ed)
+        }
+
+        "exp" => {
+            if max_deg < 1 {
+                return (None, -1);
+            }
+
+            let exp_id = exp["id"].as_i64().unwrap();
+            // if (imPols.findIndex(im => im===exp.id) !== -1) return [imPols,1];
+            if let Some(ref pols) = im_pols {
+                if pols.iter().any(|im| im.as_i64().unwrap() == exp_id) {
+                    return (im_pols.clone(), 1);
+                }
+            }
+
+            // Check the cache
+            let mut e = None;
+            let mut d = -1;
+            let mut found_in_cache = false;
+
+            if let Some(exp_res) = exp["res"].as_array() {
+                if let Some(slot) = exp_res.get(absolute_max) {
+                    if let Some(arr_at_hash) = slot[im_pols.hash_code_string()].as_array() {
+                        e = arr_at_hash[0].as_array().cloned();
+                        d = arr_at_hash[1].as_number().map(|n| n.as_i64().unwrap() as isize).unwrap_or(-1);
+                        found_in_cache = true;
                     }
+                }
+            }
+
+            if !found_in_cache {
+                // We do: [e,d] = _calculateImPols(expressions, expressions[exp.id], imPols, absoluteMax)
+                // But we can't borrow exps_clone[exp_id] and exps_clone at the same time mutably
+                let mut exps_clone = expressions.clone();
+
+                // Temporarily remove the subexp from exps_clone to avoid overlapping mutable borrows
+                use std::mem;
+                let mut subexp_value = mem::take(&mut exps_clone[exp_id as usize]);
+
+                (e, d) = __calculate_im_pols(
+                    &mut exps_clone,
+                    &mut subexp_value,
+                    im_pols,
+                    absolute_max,
+                    absolute_max,
+                    abs_max_d,
+                );
+
+                // Put the subexp back
+                exps_clone[exp_id as usize] = subexp_value;
+
+                // Write back to the original expressions
+                expressions[exp_id as usize] = exps_clone[exp_id as usize].clone();
+            }
+
+            // if(e===false) return [false, -1];
+            if e.is_none() {
+                return (None, -1);
+            }
+
+            // if(d>maxDeg) { if(d>absMaxD) absMaxD=d; return [[...e, exp.id],1]; }
+            if d > max_deg as isize {
+                if d > *abs_max_d {
+                    *abs_max_d = d;
+                }
+                let mut combined = e.unwrap();
+                combined.push(exp_id.into());
+                return (Some(combined), 1);
+            } else {
+                // else we store in exp.res[absoluteMax][JSON.stringify(imPols)] = [e, d]
+                if exp["res"].as_array().is_none() {
+                    exp["res"] = Value::Array(Vec::new());
+                }
+                let exp_res = exp["res"].as_array_mut().unwrap();
+
+                // ensure the array is big enough
+                while exp_res.len() <= absolute_max {
+                    exp_res.push(Value::Null);
+                }
+                if exp_res[absolute_max].as_object().is_none() {
+                    exp_res[absolute_max] = Value::Object(Map::new());
+                }
+                let obj = exp_res[absolute_max].as_object_mut().unwrap();
+
+                let hashcode = im_pols.hash_code_string();
+                obj.insert(hashcode, Value::Array(vec![e.clone().into(), d.into()]));
+                return (e, d);
+            }
+        }
+
+        _ => {
+            // Default logic: same as JS
+            if let Some(exp_deg) = exp["expDeg"].as_number() {
+                if *exp_deg == 0.into() {
+                    return (im_pols.clone(), 0);
                 } else if max_deg < 1 {
                     return (None, -1);
                 } else {
                     return (im_pols.clone(), 1);
                 }
+            } else if max_deg < 1 {
+                return (None, -1);
+            } else {
+                return (im_pols.clone(), 1);
             }
         }
     }
