@@ -20,6 +20,7 @@ struct MaxSizes
 
 void *gen_device_commit_buffers(void *maxSizes_)
 {
+
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
     DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
     buffers->recursive = maxSizes->recursive;
@@ -144,5 +145,19 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     zklog.trace("        COPY_TRACE:   " + oss.str());
     oss.str("");
     oss.clear();
+}
+
+// Function to set the CUDA device based on the MPI rank
+// Needs to be evolved to ensuer global balance between mpi ranks and GPU devices
+void set_device(uint32_t mpi_rank){
+    int deviceCount;
+    cudaGetDeviceCount(&deviceCount);
+    if (deviceCount == 0) {
+        std::cerr << "No CUDA devices found." << std::endl;
+        exit(1);
+    }
+    int device = mpi_rank % deviceCount;
+    cudaSetDevice(device);
+    cudaDeviceSynchronize();
 }
 #endif

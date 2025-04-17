@@ -10,7 +10,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{gen_device_commit_buffers_c, gen_device_commit_buffers_free_c};
+use proofman_starks_lib_c::{gen_device_commit_buffers_c, gen_device_commit_buffers_free_c, set_device_c};
 use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c, get_const_offset_c};
 use std::collections::HashMap;
 use std::fs::File;
@@ -955,6 +955,7 @@ where
         let sctx: Arc<SetupCtx<F>> =
             Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints));
         pctx.set_weights(&sctx);
+        set_device_c(pctx.dctx.read().unwrap().rank as u32); // (if GPU mode active) sets the GPU device it will be used by this rank
 
         let pctx = Arc::new(pctx);
         if !pctx.options.verify_constraints {
