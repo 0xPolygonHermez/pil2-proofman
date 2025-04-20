@@ -377,7 +377,7 @@ where
         let my_air_groups = pctx.dctx_get_my_air_groups();
         let mpi_node_rank = pctx.dctx_get_node_rank() as u32;
 
-        let values = Arc::new(Mutex::new(vec![0; my_=instances.len() * 10]));
+        let values = Arc::new(Mutex::new(vec![0; my_instances.len() * 10]));
 
         let mut prover_buffer_size = 0;
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
