@@ -206,7 +206,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     output_dir_path: &Path,
     d_buffers: *mut c_void,
     load_constants: bool,
-    mpi_rank: u32,
+    mpi_node_rank: u32,
 ) -> Proof<F> {
     timer_start_info!(GEN_RECURSIVE_PROOF);
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
@@ -292,7 +292,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         vadcop,
         d_buffers,
         load_constants,
-        mpi_rank,
+        mpi_node_rank,
     );
 
     if add_aggregation_publics {
@@ -316,7 +316,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
-    mpi_rank: u32,
+    mpi_node_rank: u32,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -409,7 +409,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             &output_dir_path,
                             d_buffers,
                             true,
-                            mpi_rank,
+                            mpi_node_rank,
                         );
 
                         airgroup_proofs[airgroup][j] = Some(recursive2_proof.proof);
@@ -479,7 +479,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
     let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof)?;
     let new_proof = Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, 24);
-    let mpi_rank = pctx.dctx.read().unwrap().rank as u32;
+    let mpi_node_rank = pctx.dctx.read().unwrap().node_rank as u32;
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
     let final_vadcop_proof = generate_recursive_proof::<F>(
@@ -491,7 +491,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         &output_dir_path,
         d_buffers,
         true,
-        mpi_rank,
+        mpi_node_rank,
     );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);
