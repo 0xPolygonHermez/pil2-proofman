@@ -174,6 +174,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 // Needs to be evolved to ensuer global balance between mpi ranks and GPU devices
 void set_device(uint32_t mpi_rank){
     int deviceCount;
+    println!("Device set_device mpi_rank: ", mpi_rank);
     cudaGetDeviceCount(&deviceCount);
     if (deviceCount == 0) {
         std::cerr << "No CUDA devices found." << std::endl;
