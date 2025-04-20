@@ -209,10 +209,6 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
     gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + ext_size;
     gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*ext_size;
 
-    int device;
-    cudaGetDevice(&device); 
-    std::cout << "Device: " << device << std::endl;
-
     CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, ext_size * sizeof(uint64_t)))
     CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, ext_size * sizeof(uint64_t)));
     CHECKCUDAERR(cudaMemset(d_r, 0, ext_size * sizeof(uint64_t)));
