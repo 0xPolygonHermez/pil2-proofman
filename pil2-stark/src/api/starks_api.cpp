@@ -354,7 +354,7 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
 }
 
 #ifndef __USE_CUDA__
-void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers) {
+void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers, uint32_t mpi_rank) {
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
     Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
@@ -494,13 +494,13 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
 #ifndef __USE_CUDA__
 // Gen proof
 // =================================================================================
-void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool loadConstants) {
+void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool loadConstants, uint32_t mpi_rank)  {
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
 }
 
 // Recursive proof
 // ================================================================================= 
-void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers, bool loadConstants) {
+void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers, bool loadConstants, uint32_t mpi_rank) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
@@ -598,12 +598,12 @@ void set_omp_num_threads(uint64_t num_threads){
 
 #ifndef __USE_CUDA__
 
-void *gen_device_commit_buffers(void *max_sizes)
+void *gen_device_commit_buffers(void *max_sizes,  uint32_t mpi_rank)
 {
     return NULL;
 }
 
-void gen_device_commit_buffers_free(void *d_buffers) {}
+void gen_device_commit_buffers_free(void *d_buffers,  uint32_t mpi_rank) {}
 
 void set_device(uint32_t mpi_rank){}
 
