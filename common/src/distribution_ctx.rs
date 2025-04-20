@@ -41,6 +41,7 @@ pub struct DistributionCtx {
     pub airgroup_instances_alives: Vec<Vec<usize>>,
     pub glob2loc: Vec<Option<usize>>,
     pub balance_distribution: bool,
+    pub node_rank: i32,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -63,6 +64,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("balance_distribution", &self.balance_distribution)
                 .field("roots_gatherv_count", &self.roots_gatherv_count)
                 .field("roots_gatherv_displ", &self.roots_gatherv_displ)
+                .field("node_rank", &self.node_rank)
                 .finish()
         }
         #[cfg(not(feature = "distributed"))]
@@ -81,6 +83,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("airgroup_instances_alives", &self.airgroup_instances_alives)
                 .field("glob2loc", &self.glob2loc)
                 .field("balance_distribution", &self.balance_distribution)
+                .field("node_rank", &self.node_rank)
                 .finish()
         }
     }
@@ -112,6 +115,7 @@ impl DistributionCtx {
                 airgroup_instances_alives: Vec::new(),
                 glob2loc: Vec::new(),
                 balance_distribution: true,
+                node_rank: 0,
             }
         }
         #[cfg(not(feature = "distributed"))]
@@ -130,6 +134,7 @@ impl DistributionCtx {
                 airgroup_instances_alives: Vec::new(),
                 glob2loc: Vec::new(),
                 balance_distribution: false,
+                node_rank: 0,
             }
         }
     }
@@ -323,6 +328,7 @@ impl DistributionCtx {
         // Calculate the partial sums of owners_count
         #[cfg(feature = "distributed")]
         {
+            self.set_node_rank();
             let mut total_instances = 0;
             for i in 0..self.n_processes as usize {
                 self.roots_gatherv_displ[i] = total_instances;
@@ -372,6 +378,20 @@ impl DistributionCtx {
         self.glob2loc = vec![None; self.n_instances];
         for (loc_idx, glob_idx) in self.my_instances.iter().enumerate() {
             self.glob2loc[*glob_idx] = Some(loc_idx);
+        }
+    }
+
+    pub fn set_node_rank(&mut self){
+        #[cfg(feature = "distributed")]
+        {
+            let local_comm = self.world.split_shared(self.rank);
+            self.node_rank = local_comm.rank();
+            println!("Node rank: {} rank:{}", self.node_rank, self.rank);
+
+        }
+        #[cfg(not(feature = "distributed"))]
+        {
+            self.node_rank = 0;
         }
     }
 
