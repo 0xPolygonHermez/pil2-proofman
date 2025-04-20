@@ -18,7 +18,7 @@ struct MaxSizes
 };
 
 
-void *gen_device_commit_buffers(void *maxSizes_)
+void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_rank)
 {
 
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
@@ -33,7 +33,7 @@ void *gen_device_commit_buffers(void *maxSizes_)
     return (void *)buffers;
 }
 
-void gen_device_commit_buffers_free(void *d_buffers)
+void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_rank)
 {
     DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
     CHECKCUDAERR(cudaFree(buffers->d_aux_trace));
@@ -45,7 +45,7 @@ void gen_device_commit_buffers_free(void *d_buffers)
     delete buffers;
 }
 
-void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants) {
+void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants, uint32_t mpi_rank) {
 
     double time = omp_get_wtime();
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -90,7 +90,7 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     oss.clear();
 }
 
-void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants)
+void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants, uint32_t mpi_rank)
 {
 
     json globalInfo;
@@ -120,7 +120,7 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
     // std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 }
 
-void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_) {
+void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_, uint32_t mpi_rank) {
 
     double time = omp_get_wtime();
 
@@ -158,6 +158,7 @@ void set_device(uint32_t mpi_rank){
     }
     int device = mpi_rank % deviceCount;
     cudaSetDevice(device);
+    printf("Using CUDA device %d for MPI rank %d\n", device, mpi_rank);
     cudaDeviceSynchronize();
 }
 #endif

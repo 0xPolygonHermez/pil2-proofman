@@ -127,7 +127,7 @@ void init_gpu_const(int nDevices = 0)
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, PoseidonGoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_S, PoseidonGoldilocksConstants::S, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
         }
-        CHECKCUDAERR(cudaSetDevice(0));
+        //CHECKCUDAERR(cudaSetDevice(0));
     }
 }
 
