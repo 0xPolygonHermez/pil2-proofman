@@ -22,7 +22,24 @@ pub fn calculate_im_pols(expressions: &mut Vec<Value>, exp: &mut Value, max_deg:
     let absolute_max = max_deg;
     let mut abs_max_d = 0;
 
+    tracing::info!(
+        "expressions.len(): {}, max_deg: {}, absolute_max: {}, abs_max_d: {}",
+        expressions.len(),
+        max_deg,
+        absolute_max,
+        abs_max_d
+    );
     let (re, rd) = __calculate_im_pols(expressions, exp, &mut im_pols, max_deg, absolute_max, &mut abs_max_d);
+    tracing::info!(
+        "expressions.len(): {}, max_deg: {}, absolute_max: {}, abs_max_d: {}",
+        expressions.len(),
+        max_deg,
+        absolute_max,
+        abs_max_d
+    );
+
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!((re.clone(), rd.clone()), (Some(vec![39.into()]), 2));
 
     (
         re.unwrap_or_else(Vec::new).into_iter().map(|v| v.as_number().unwrap().as_u64().unwrap() as usize).collect(),
