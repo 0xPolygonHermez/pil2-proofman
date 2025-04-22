@@ -32,16 +32,18 @@ struct DeviceArguments
     uint64_t domainSize;
     bool domainExtended;
     uint64_t nRowsPack;
-    uint64_t nBlocks;
     uint64_t k_min;
     uint64_t k_max;
-    uint32_t maxTemp1Size;
-    uint32_t maxTemp3Size;
+    uint32_t maxTmp1;
+    uint32_t maxTmp3;
     uint32_t nStages;
     uint32_t nCustomCommits;
     uint32_t bufferCommitSize;
     uint64_t offsetTmp1;
     uint64_t offsetTmp3;
+    
+    uint64_t cExpId;
+    bool recursive;
     
     uint64_t xn_offset;
     uint64_t x_offset;
@@ -66,6 +68,7 @@ struct DeviceArguments
     uint64_t dest_domainSize;
     uint64_t dest_offset = 0;
     uint64_t dest_dim = 1;
+    uint64_t dest_id = 0;
     uint32_t dest_nParams;
     DestParamsGPU *dest_params;
 
@@ -89,12 +92,12 @@ class ExpressionsGPU : public ExpressionsCtx
 {
 public:
     uint32_t nRowsPack;
-    uint32_t nBlocks;
+    
    
     DeviceArguments *d_deviceArgs;
     DeviceArguments h_deviceArgs;
 
-    ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers& proverHelpers, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
+    ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers& proverHelpers, uint32_t nRowsPack = 128);
     ~ExpressionsGPU();
 
     void loadDeviceArgs(uint64_t domainSize, Dest &dest);

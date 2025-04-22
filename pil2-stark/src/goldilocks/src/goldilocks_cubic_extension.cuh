@@ -410,6 +410,79 @@ public:
             break;
         }
     }
+
+    static __device__ __forceinline__ void add_31_gpu_no_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+        c[threadIdx.x] = a[threadIdx.x] + b[threadIdx.x];
+        c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
+        c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
+    }
+
+    static __device__ __forceinline__ void sub_13_gpu_a_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+        c[threadIdx.x] = b[threadIdx.x] - a[0];
+        c[blockDim.x + threadIdx.x] = -a[1];
+        c[2 * blockDim.x + threadIdx.x] = -a[2];
+    }
+
+    static __device__ __forceinline__ void sub_13_gpu_b_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+        c[threadIdx.x] = b[0] - a[threadIdx.x];
+        c[blockDim.x + threadIdx.x] = -a[blockDim.x + threadIdx.x];
+        c[2 * blockDim.x + threadIdx.x] = -a[2 * blockDim.x + threadIdx.x];
+    }
+
+    static __device__ __forceinline__ void mul_31_gpu_no_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+        c[threadIdx.x] = a[threadIdx.x] * b[threadIdx.x];
+        c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] * b[threadIdx.x];
+        c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] * b[threadIdx.x];
+    }
+
+    static __device__ __forceinline__ void mul_31_gpu_a_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+        c[threadIdx.x] = a[0] * b[threadIdx.x];
+        c[blockDim.x + threadIdx.x] = a[1] * b[threadIdx.x];
+        c[2 * blockDim.x + threadIdx.x] = a[2] * b[threadIdx.x];
+    }
+
+    static __device__ __forceinline__ void sub_gpu_b_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+        c[threadIdx.x] = a[threadIdx.x] - b[0];
+        c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] - b[1];
+        c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] - b[2];
+    }
+
+    static __device__ __forceinline__ void add_gpu_no_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+        c[threadIdx.x] = a[threadIdx.x] + b[threadIdx.x];
+        c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] + b[blockDim.x + threadIdx.x];
+        c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] + b[2 * blockDim.x + threadIdx.x];
+    }
+
+    static __device__ __forceinline__ void mul_gpu_b_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+        gl64_t A = (a[threadIdx.x] + a[blockDim.x + threadIdx.x]) * (b[0] + b[1]);
+        gl64_t B = (a[threadIdx.x] + a[2 * blockDim.x + threadIdx.x]) * (b[0] + b[2]);
+        gl64_t C = (a[blockDim.x + threadIdx.x] + a[2 * blockDim.x + threadIdx.x]) * (b[1] + b[2]);
+        gl64_t D = a[threadIdx.x] * b[0];
+        gl64_t E = a[blockDim.x + threadIdx.x] * b[1];
+        gl64_t F = a[2 * blockDim.x + threadIdx.x] * b[2];
+        
+
+        gl64_t G = D - E;
+        c[threadIdx.x] = (C + G) - F;
+        c[blockDim.x + threadIdx.x] = ((((A + C) - E) - E) - D);
+        c[2 * blockDim.x + threadIdx.x] = B - G;
+    }
+
+    static __device__ __forceinline__ void mul_gpu_no_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
+        gl64_t A = (a[threadIdx.x] + a[blockDim.x + threadIdx.x]) * (b[threadIdx.x] + b[blockDim.x + threadIdx.x]);
+        gl64_t B = (a[threadIdx.x] + a[2 * blockDim.x + threadIdx.x]) * (b[threadIdx.x] + b[2 * blockDim.x + threadIdx.x]);
+        gl64_t C = (a[blockDim.x + threadIdx.x] + a[2 * blockDim.x + threadIdx.x]) * (b[blockDim.x + threadIdx.x] + b[2 * blockDim.x + threadIdx.x]);
+        gl64_t D = a[threadIdx.x] * b[threadIdx.x];
+        gl64_t E = a[blockDim.x + threadIdx.x] * b[blockDim.x + threadIdx.x];
+        gl64_t F = a[2 * blockDim.x + threadIdx.x] * b[2 * blockDim.x + threadIdx.x];
+        
+
+        gl64_t G = D - E;
+        c[threadIdx.x] = (C + G) - F;
+        c[blockDim.x + threadIdx.x] = ((((A + C) - E) - E) - D);
+        c[2 * blockDim.x + threadIdx.x] = B - G;
+    }
+
     static __device__ __forceinline__ void op_31_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
     {
 

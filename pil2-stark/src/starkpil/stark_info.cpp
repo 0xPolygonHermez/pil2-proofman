@@ -369,6 +369,11 @@ void StarkInfo::setMapOffsets() {
 
         mapOffsets[std::make_pair("const", false)] = mapTotalN;
         mapTotalN += N * nConstants;
+
+        if(gpu) {
+            mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
+            mapTotalN += mapTotalNCustomCommitsFixed;
+        }
     }
 
     assert(nStages <= 2);
@@ -474,11 +479,6 @@ void StarkInfo::setMapOffsets() {
     }
 
     mapTotalN = std::max(mapTotalN, maxTotalN);
-
-    if(gpu) {
-        mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
-        mapTotalN += mapTotalNCustomCommitsFixed;
-    }
 }
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
@@ -487,25 +487,25 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
         maxNBlocks = 1;
         nrowsPack = starkStruct.nQueries;
         mapBuffHelper = mapTotalN;
-    } else {
+    } else if(!gpu) {
+        nrowsPack = NROWS_PACK;
+        maxNBlocks = omp_get_max_threads();
         mapBuffHelper =  mapOffsets[std::make_pair("mem_exps", false)];
-        if(!gpu) {
-            nrowsPack = NROWS_PACK;
-            maxNBlocks = omp_get_max_threads();
-        } else {
-            nrowsPack = 64; // TODO: SHOULD NOT BE HARDCODED
-            maxNBlocks = 4096; // TODO: SHOULD NOT BE HARDCODED
-        }
+    } else {
+        nrowsPack = 128;
+        maxNBlocks = (1 << (starkStruct.nBitsExt)) / nrowsPack;
+        mapBuffHelper =  mapOffsets[std::make_pair("mem_exps", false)];
     }
     
-    
-    uint64_t memoryTmp1 = nTmp1 * nrowsPack * maxNBlocks;
-    mapOffsets[std::make_pair("tmp1", false)] = mapBuffHelper;
-    mapBuffHelper += memoryTmp1;
+    if(!gpu || recursive) {
+        int64_t memoryTmp1 = nTmp1 * nrowsPack * maxNBlocks;
+        mapOffsets[std::make_pair("tmp1", false)] = mapBuffHelper;
+        mapBuffHelper += memoryTmp1;
 
-    uint64_t memoryTmp3 = nTmp3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
-    mapOffsets[std::make_pair("tmp3", false)] = mapBuffHelper;
-    mapBuffHelper += memoryTmp3;
+        uint64_t memoryTmp3 = nTmp3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;
+        mapOffsets[std::make_pair("tmp3", false)] = mapBuffHelper;
+        mapBuffHelper += memoryTmp3;
+    }
 
     if(!gpu) {
         uint64_t values = 3 * FIELD_EXTENSION * nrowsPack * maxNBlocks;

@@ -751,11 +751,168 @@ void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, Ste
         domainSize = 1 << setupCtx.starkInfo.starkStruct.nBits;
         domainExtended = false;
     }
-    Dest destStruct(NULL, domainSize, 0, expressionId);
-    destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
-    destStruct.dest_gpu = dest_gpu;
+
+    if(expressionId == setupCtx.starkInfo.cExpId && !setupCtx.starkInfo.recursive) {
+        Dest destStruct(NULL, domainSize, 0, expressionId);
+        for (uint64_t i = 0; i < setupCtx.expressionsBin.constraintsInfoDebug.size(); i++) {
+            destStruct.addParams(i, setupCtx.expressionsBin.constraintsInfoDebug[i].destDim);
+        }
+        destStruct.dest_gpu = dest_gpu;
+        expressionsCtx.calculateExpressions_gpu(d_params, destStruct, domainSize, domainExtended);
+    } else {
+        Dest destStruct(NULL, domainSize, 0, expressionId);
+        destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
+        destStruct.dest_gpu = dest_gpu;
+        expressionsCtx.calculateExpressions_gpu(d_params, destStruct, domainSize, domainExtended);
+    }
+}
+
+__global__  void computeFRIExpression(uint64_t domainSize, uint64_t nOpeningPoints, gl64_t *d_fri, uint64_t* d_countsPerOpeningPos, EvalInfo **d_evalInfo, gl64_t *d_evals, gl64_t *vf1, gl64_t *vf2, gl64_t *d_cmPols, gl64_t *d_xDivXSub, gl64_t *x, gl64_t *d_fixedPols, gl64_t *d_customComits)
+{
+    int chunk_idx = blockIdx.x;
+    uint64_t nchunks = domainSize / blockDim.x;
+
+    extern __shared__ Goldilocks::Element shared[];
+
+    while (chunk_idx < nchunks) {
+        gl64_t *accum = (gl64_t *)shared;
+        gl64_t *res = accum + blockDim.x * FIELD_EXTENSION;
+
+        uint64_t i = chunk_idx * blockDim.x;
+        for(uint64_t o = 0; o < nOpeningPoints; ++o) {
+            for(uint64_t j = 0; j < d_countsPerOpeningPos[o]; ++j) {
+                gl64_t* eval = d_evals + i * FIELD_EXTENSION;
+                EvalInfo evalInfo = d_evalInfo[o][j];
+                gl64_t *pol;
+                if (evalInfo.type == 0)
+                {
+                    pol = d_cmPols;
+                }
+                else if (evalInfo.type == 1)
+                {
+                    pol = d_customComits;
+                }
+                else
+                {
+                    pol = &d_fixedPols[2];
+                }
+                gl64_t *d_pol_value = &pol[evalInfo.offset + i * evalInfo.stride];
+                if(evalInfo.dim == 1) {
+                    Goldilocks3GPU::sub_13_gpu_b_const((gl64_t*)res, d_pol_value, eval);
+                } else {
+                    Goldilocks3GPU::sub_gpu_b_const((gl64_t*)res, d_pol_value, eval);
+                }
+                if(j == 0) {
+                    Goldilocks3GPU::copy_gpu(accum, (gl64_t *)res, false);
+                } else {
+                    Goldilocks3GPU::mul_gpu_b_const(accum, accum, vf2);
+                    Goldilocks3GPU::add_gpu_no_const(accum, accum, (gl64_t *)res);
+                }
+            }
+
+            const gl64_t* xDivX = &d_xDivXSub[o * FIELD_EXTENSION];
+            Goldilocks3GPU::sub_13_gpu_a_const((gl64_t*)res, xDivX, x);
+            Goldilocks3GPU::Element aux;
+            aux[0] = res[threadIdx.x];
+            aux[1] = res[blockDim.x + threadIdx.x];
+            aux[2] = res[2 * blockDim.x + threadIdx.x];
+            Goldilocks3GPU::inv(aux, aux);
+            res[threadIdx.x] = aux[0];
+            res[blockDim.x + threadIdx.x] = aux[1];
+            res[2 * blockDim.x + threadIdx.x] = aux[2];
+            Goldilocks3GPU::mul_31_gpu_no_const((gl64_t*)res, (gl64_t*)res, x);
+
+            if(o == 0) {
+                Goldilocks3GPU::copy_gpu(d_fri + i * FIELD_EXTENSION, accum, false);
+            } else {
+                Goldilocks3GPU::mul_gpu_b_const(d_fri + i * FIELD_EXTENSION, d_fri + i * FIELD_EXTENSION, vf1);
+                Goldilocks3GPU::add_gpu_no_const(d_fri + i * FIELD_EXTENSION, d_fri + i * FIELD_EXTENSION, accum);
+            }
+        }
+    }
+}
+
+void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params) {
+    Goldilocks::Element *dest = (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]);
+
+    uint64_t size_eval = setupCtx.starkInfo.evMap.size();
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    uint64_t nOpeningPoints = setupCtx.starkInfo.openingPoints.size();
+    EvalInfo **evalsInfoByOpeningPos = new EvalInfo*[nOpeningPoints];
+    uint64_t* countsPerOpeningPos = new uint64_t[nOpeningPoints](); 
+
+    for (uint64_t i = 0; i < size_eval; i++)
+    {
+        countsPerOpeningPos[setupCtx.starkInfo.evMap[i].openingPos]++;
+    }
+
+    for (uint64_t pos = 0; pos < nOpeningPoints; pos++) {
+        evalsInfoByOpeningPos[pos] = new EvalInfo[countsPerOpeningPos[pos]];
+    }
+
+    std::fill(countsPerOpeningPos, countsPerOpeningPos + nOpeningPoints, 0);
     
-    expressionsCtx.calculateExpressions_gpu(d_params, destStruct, domainSize, domainExtended);
+    for (uint64_t i = 0; i < size_eval; i++)
+    {
+        EvMap ev = setupCtx.starkInfo.evMap[i];
+        string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom"
+                                                                                           : "fixed";
+        PolMap polInfo = type == "cm" ? setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id]
+                                                                                                       : setupCtx.starkInfo.constPolsMap[ev.id];
+        EvalInfo* evInfo = &evalsInfoByOpeningPos[ev.openingPos][countsPerOpeningPos[ev.openingPos]];
+        evInfo->type = type == "cm" ? 0 : type == "custom" ? 1
+                                                                : 2; //rick: harcoded
+        evInfo->offset = setupCtx.starkInfo.getTraceOffset(type, polInfo, true);
+        evInfo->stride = setupCtx.starkInfo.getTraceNColsSection(type, polInfo, true);
+        evInfo->dim = polInfo.dim;
+        countsPerOpeningPos[ev.openingPos]++;
+    }
+
+    EvalInfo** d_evalsInfoByOpeningPos;
+    CHECKCUDAERR(cudaMalloc(&d_evalsInfoByOpeningPos, nOpeningPoints * sizeof(EvalInfo*)));
+    
+    uint64_t* d_countsPerOpeningPos;
+    CHECKCUDAERR(cudaMalloc(&d_countsPerOpeningPos, nOpeningPoints * sizeof(uint64_t)));
+
+    for (uint64_t pos = 0; pos < nOpeningPoints; pos++) {
+        EvalInfo* d_posArray;
+        CHECKCUDAERR(cudaMalloc(&d_posArray, countsPerOpeningPos[pos] * sizeof(EvalInfo)));
+        CHECKCUDAERR(cudaMemcpy(d_posArray, evalsInfoByOpeningPos[pos], 
+                            countsPerOpeningPos[pos] * sizeof(EvalInfo), 
+                            cudaMemcpyHostToDevice));
+        
+        // Copy pointer to device array of pointers
+        CHECKCUDAERR(cudaMemcpy(&d_evalsInfoByOpeningPos[pos], &d_posArray, 
+                            sizeof(EvalInfo*), 
+                            cudaMemcpyHostToDevice));
+    }
+
+    CHECKCUDAERR(cudaMemcpy(d_countsPerOpeningPos, countsPerOpeningPos,
+                       nOpeningPoints * sizeof(uint64_t),
+                       cudaMemcpyHostToDevice));
+
+    uint32_t nthreads_ = 128;
+    uint32_t nblocks_ = (N + nthreads_-1)/ nthreads_;
+    dim3 nThreads(nthreads_);    
+    dim3 nBlocks(nblocks_);
+    // computeFRIExpression<<<nBlocks, nThreads, sharedMem>>>(N, nOpeningPoints, d_countsPerOpeningPos, d_evalsInfoByOpeningPos, d_params);
+    CHECKCUDAERR(cudaGetLastError());
+
+    for (uint64_t pos = 0; pos < nOpeningPoints; pos++) {
+        EvalInfo* d_posArray;
+        CHECKCUDAERR(cudaMemcpy(&d_posArray, &d_evalsInfoByOpeningPos[pos], 
+                            sizeof(EvalInfo*), 
+                            cudaMemcpyDeviceToHost));
+        CHECKCUDAERR(cudaFree(d_posArray));
+        
+        delete[] evalsInfoByOpeningPos[pos];
+    }
+
+    CHECKCUDAERR(cudaFree(d_evalsInfoByOpeningPos));
+    CHECKCUDAERR(cudaFree(d_countsPerOpeningPos));
+
+    delete[] evalsInfoByOpeningPos;
+    delete[] countsPerOpeningPos;
 
 }
 
