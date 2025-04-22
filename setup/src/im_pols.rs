@@ -301,6 +301,8 @@ pub fn calculate_intermediate_polynomials(
 
     // First calculation
     let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, &mut c_exp, d);
+    #[cfg(feature = "debug-fibonacci")]
+    assert_eq!(q_deg, 1);
     let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg as usize, q_dim);
     d += 1;
 
