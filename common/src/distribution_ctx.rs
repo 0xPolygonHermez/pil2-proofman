@@ -93,10 +93,14 @@ impl DistributionCtx {
     pub fn new() -> Self {
         #[cfg(feature = "distributed")]
         {
+            double time = std::time::Instant::now();
             let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
             let world = universe.world();
             let rank = world.rank();
             let n_processes = world.size();
+            double time = time.elapsed().as_secs_f64();
+            println!("MPI initialized in {} seconds", time);
+
             DistributionCtx {
                 rank,
                 n_processes,
