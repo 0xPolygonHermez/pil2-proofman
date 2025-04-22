@@ -281,7 +281,7 @@ unsafe extern "C" {
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
-        mpi_rank: u32,
+        mpi_node_rank: u32,
     );
 }
 unsafe extern "C" {
@@ -414,7 +414,7 @@ unsafe extern "C" {
         proofFile: *mut ::std::os::raw::c_char,
         d_buffers: *mut ::std::os::raw::c_void,
         loadConstants: bool,
-        mpi_rank: u32,
+        mpi_node_rank: u32,
     );
 }
 unsafe extern "C" {
@@ -435,7 +435,7 @@ unsafe extern "C" {
         vadcop: bool,
         d_buffers: *mut ::std::os::raw::c_void,
         loadConstants: bool,
-        mpi_rank: u32,
+        mpi_node_rank: u32,
     );
 }
 unsafe extern "C" {
@@ -536,14 +536,14 @@ unsafe extern "C" {
     #[link_name = "\u{1}_Z25gen_device_commit_buffersPvj"]
     pub fn gen_device_commit_buffers(
         maxSizes: *mut ::std::os::raw::c_void,
-        mpi_rank: u32,
+        mpi_node_rank: u32,
     ) -> *mut ::std::os::raw::c_void;
 }
 unsafe extern "C" {
     #[link_name = "\u{1}_Z30gen_device_commit_buffers_freePvj"]
-    pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void, mpi_rank: u32);
+    pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void, mpi_node_rank: u32);
 }
 unsafe extern "C" {
     #[link_name = "\u{1}_Z10set_devicej"]
-    pub fn set_device(mpi_rank: u32);
+    pub fn set_device(mpi_node_rank: u32);
 }

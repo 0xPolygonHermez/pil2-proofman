@@ -18,9 +18,9 @@ struct MaxSizes
 };
 
 
-void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_rank)
+void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
 {
-    set_device(mpi_rank);
+    set_device(mpi_node_rank);
     int device;
     cudaGetDevice(&device); 
     std::cout << "Device gen_device_commit_buffers: " << device << std::endl;
@@ -37,9 +37,9 @@ void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_rank)
     return (void *)buffers;
 }
 
-void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_rank)
+void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank)
 {
-    set_device(mpi_rank);
+    set_device(mpi_node_rank);
     int device;
     cudaGetDevice(&device); 
     std::cout << "Device gen_device_commit_buffers_free: " << device << std::endl;
@@ -54,10 +54,10 @@ void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_rank)
     delete buffers;
 }
 
-void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants, uint32_t mpi_rank) {
+void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants, uint32_t mpi_node_rank) {
 
     double time = omp_get_wtime();
-    set_device(mpi_rank);
+    set_device(mpi_node_rank);
     int device;
     cudaGetDevice(&device); 
     std::cout << "Device gen_proof: " << device << std::endl;
@@ -104,10 +104,10 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     oss.clear();
 }
 
-void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants, uint32_t mpi_rank)
+void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants, uint32_t mpi_node_rank)
 {
 
-    set_device(mpi_rank);
+    set_device(mpi_node_rank);
     int device;
     cudaGetDevice(&device); 
     std::cout << "Device gen_recursive_proof: " << device << std::endl;
@@ -139,10 +139,10 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
     // std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 }
 
-void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_, uint32_t mpi_rank) {
+void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_, uint32_t mpi_node_rank) {
 
     double time = omp_get_wtime();
-    set_device(mpi_rank);
+    set_device(mpi_node_rank);
     int device;
     cudaGetDevice(&device); 
     std::cout << "Device commit_witness: " << device << std::endl;
@@ -172,17 +172,15 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 
 // Function to set the CUDA device based on the MPI rank
 // Needs to be evolved to ensuer global balance between mpi ranks and GPU devices
-void set_device(uint32_t mpi_rank){
+void set_device(uint32_t mpi_node_rank){
     int deviceCount;
-    printf("Device set_device mpi_rank: %d\n", mpi_rank);
     cudaGetDeviceCount(&deviceCount);
     if (deviceCount == 0) {
         std::cerr << "No CUDA devices found." << std::endl;
         exit(1);
     }
-    int device = mpi_rank % deviceCount;
+    int device = mpi_node_rank % deviceCount;
     cudaSetDevice(device);
-    printf("Using CUDA device %d for MPI rank %d\n", device, mpi_rank);
     cudaDeviceSynchronize();
 }
 #endif

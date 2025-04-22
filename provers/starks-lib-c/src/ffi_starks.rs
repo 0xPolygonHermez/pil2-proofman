@@ -493,7 +493,7 @@ pub fn commit_witness_c(
     witness: *mut u8,
     aux_trace: *mut u8,
     d_buffers: *mut c_void,
-    mpi_rank: u32,
+    mpi_node_rank: u32,
 ) {
     unsafe {
         commit_witness(
@@ -505,7 +505,7 @@ pub fn commit_witness_c(
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
             d_buffers,
-            mpi_rank,
+            mpi_node_rank,
         );
     }
 }
@@ -730,7 +730,7 @@ pub fn gen_proof_c(
     instance_id: u64,
     d_buffers: *mut c_void,
     load_constants: bool,
-    mpi_rank: u32,
+    mpi_node_rank: u32,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -747,7 +747,7 @@ pub fn gen_proof_c(
             proof_file_ptr,
             d_buffers,
             load_constants,
-            mpi_rank,
+            mpi_node_rank,
         );
     }
 }
@@ -770,7 +770,7 @@ pub fn gen_recursive_proof_c(
     vadcop: bool,
     d_buffers: *mut c_void,
     load_constants: bool,
-    mpi_rank: u32,
+    mpi_node_rank: u32,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -795,7 +795,7 @@ pub fn gen_recursive_proof_c(
             vadcop,
             d_buffers,
             load_constants,
-            mpi_rank,
+            mpi_node_rank,
         );
     }
 }
@@ -987,21 +987,21 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_commit_buffers_c(max_sizes: *mut ::std::os::raw::c_void, mpi_rank: u32) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_commit_buffers(max_sizes, mpi_rank) }
+pub fn gen_device_commit_buffers_c(max_sizes: *mut ::std::os::raw::c_void, mpi_node_rank: u32) -> *mut ::std::os::raw::c_void {
+    unsafe { gen_device_commit_buffers(max_sizes, mpi_node_rank) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_commit_buffers_free_c(d_buffers: *mut ::std::os::raw::c_void, mpi_rank: u32) {
+pub fn gen_device_commit_buffers_free_c(d_buffers: *mut ::std::os::raw::c_void, mpi_node_rank: u32) {
     unsafe {
-        gen_device_commit_buffers_free(d_buffers, mpi_rank);
+        gen_device_commit_buffers_free(d_buffers, mpi_node_rank);
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn set_device_c(mpi_rank: u32) {
+pub fn set_device_c(mpi_node_rank: u32) {
     unsafe {
-        set_device(mpi_rank);
+        set_device(mpi_node_rank);
     }
 }
 // ------------------------
@@ -1301,7 +1301,7 @@ pub fn commit_witness_c(
     _witness: *mut u8,
     _aux_trace: *mut u8,
     _d_buffers: *mut c_void,
-    _mpi_rank: u32,
+    _mpi_node_rank: u32,
 ) {
     trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
 }
@@ -1486,7 +1486,7 @@ pub fn gen_proof_c(
     _instance_id: u64,
     _d_buffers: *mut c_void,
     _load_constants: bool,
-    _mpi_rank: u32,
+    _mpi_node_rank: u32,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
 }
@@ -1509,7 +1509,7 @@ pub fn gen_recursive_proof_c(
     _vadcop: bool,
     _d_buffers: *mut c_void,
     _load_constants: bool,
-    _mpi_rank: u32,
+    _mpi_node_rank: u32,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
 }
@@ -1630,7 +1630,7 @@ pub fn set_omp_num_threads(_num_threads: u64) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void, _mpi_rank: u32) -> *mut ::std::os::raw::c_void {
+pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void, _mpi_node_rank: u32) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",
         "ffi     ",
@@ -1640,7 +1640,7 @@ pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void, _mpi
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_commit_buffers_free_c(_d_buffers: *mut ::std::os::raw::c_void, _mpi_rank: u32) {
+pub fn gen_device_commit_buffers_free_c(_d_buffers: *mut ::std::os::raw::c_void, _mpi_node_rank: u32) {
     trace!(
         "{}: ··· {}",
         "ffi     ",
@@ -1649,6 +1649,6 @@ pub fn gen_device_commit_buffers_free_c(_d_buffers: *mut ::std::os::raw::c_void,
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn set_device_c(_mpi_rank: u32) {
+pub fn set_device_c(_mpi_node_rank: u32) {
     trace!("{}: ··· {}", "ffi     ", "set_device: This is a mock call because there is no linked library");
 }
