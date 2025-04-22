@@ -239,7 +239,7 @@ pub fn calculate_added_cols(
     q_deg: usize,
     q_dim: usize,
 ) -> usize {
-    let q_cols = std::cmp::max(q_deg, 0) * q_dim; // Clamp q_deg to zero if negative
+    let q_cols = q_deg * q_dim;
     let mut im_cols = 0;
 
     for &index in im_exps {
