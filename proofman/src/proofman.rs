@@ -360,7 +360,6 @@ where
             )
         });
 
-
         timer_start_info!(EXECUTE);
         wcm.execute();
         timer_stop_and_log_info!(EXECUTE);
@@ -486,7 +485,7 @@ where
         let mut recursive_witness = vec![None; my_instances.len()];
         let mut previous_instance_id = None;
         for idx in 0..my_air_groups.len() {
-            let idx = (pctx.dctx_get_rank() as usize + idx) % my_air_groups.len();
+            let idx = (pctx.dctx_get_rank() + idx) % my_air_groups.len();
             let air_groups = &my_air_groups[idx];
             let mut gen_const_tree = true;
             for my_instance_id in air_groups.iter() {
@@ -694,7 +693,6 @@ where
 
         let mut n_initial_proofs = vec![0; n_airgroups];
         let mut n_rec2_proofs = vec![0; n_airgroups];
-
         for airgroup in 0..n_airgroups {
             n_initial_proofs[airgroup] = recursive2_proofs.read().unwrap()[airgroup].len();
             n_rec2_proofs[airgroup] = total_recursive_proofs(n_initial_proofs[airgroup]);
@@ -965,7 +963,6 @@ where
         let sctx: Arc<SetupCtx<F>> =
             Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints));
         pctx.set_weights(&sctx);
-        set_device_c(pctx.dctx.read().unwrap().rank as u32); // (if GPU mode active) sets the GPU device it will be used by this rank
 
         let pctx = Arc::new(pctx);
         if !pctx.options.verify_constraints {
@@ -1198,7 +1195,6 @@ where
         let n_field_elements = 4;
 
         timer_start_info!(GET_CONTRIBUTION_AIR);
-        println!("{}: Getting contribution for instance {} rank {}", Self::MY_NAME, instance_id, pctx.dctx_get_node_rank());
         let instances = pctx.dctx_get_instances();
 
         let (airgroup_id, air_id, all) = instances[instance_id];
