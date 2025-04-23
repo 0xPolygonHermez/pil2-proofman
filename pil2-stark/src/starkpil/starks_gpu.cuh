@@ -99,7 +99,7 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsC
 
 void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams* d_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse = false);
 
-void calculateFRIExpression(SetupCtx& setupCtx, StepsParams* d_params);
+void calculateFRIExpression(SetupCtx& setupCtx, StepsParams &h_params);
 void offloadCommit(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, FRIProof<Goldilocks::Element> &proof, SetupCtx &setupCtx);
 void offloadCommitFRI(uint64_t step, MerkleTreeGL *treeFRI, FRIProof<Goldilocks::Element> &proof, SetupCtx &setupCtx);
 #endif

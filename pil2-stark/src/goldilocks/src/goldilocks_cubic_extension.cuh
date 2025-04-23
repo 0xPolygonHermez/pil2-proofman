@@ -417,16 +417,10 @@ public:
         c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
     }
 
-    static __device__ __forceinline__ void sub_13_gpu_a_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
-        c[threadIdx.x] = b[threadIdx.x] - a[0];
-        c[blockDim.x + threadIdx.x] = -a[1];
-        c[2 * blockDim.x + threadIdx.x] = -a[2];
-    }
-
     static __device__ __forceinline__ void sub_13_gpu_b_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
-        c[threadIdx.x] = b[0] - a[threadIdx.x];
-        c[blockDim.x + threadIdx.x] = -a[blockDim.x + threadIdx.x];
-        c[2 * blockDim.x + threadIdx.x] = -a[2 * blockDim.x + threadIdx.x];
+        c[threadIdx.x] = a[threadIdx.x] - b[0];
+        c[blockDim.x + threadIdx.x] = -b[1];
+        c[2 * blockDim.x + threadIdx.x] = -b[2];
     }
 
     static __device__ __forceinline__ void mul_31_gpu_no_const(gl64_t *c, const gl64_t *a, const gl64_t *b) {
