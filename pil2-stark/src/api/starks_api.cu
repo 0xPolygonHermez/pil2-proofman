@@ -21,10 +21,6 @@ struct MaxSizes
 void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
 {
     set_device(mpi_node_rank);
-    int device;
-    cudaGetDevice(&device); 
-    std::cout << "Device gen_device_commit_buffers: " << device << std::endl;
-
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
     DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
     buffers->recursive = maxSizes->recursive;
@@ -40,10 +36,6 @@ void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
 void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank)
 {
     set_device(mpi_node_rank);
-    int device;
-    cudaGetDevice(&device); 
-    std::cout << "Device gen_device_commit_buffers_free: " << device << std::endl;
-
     DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
     CHECKCUDAERR(cudaFree(buffers->d_aux_trace));
     if(buffers->recursive) {
@@ -58,10 +50,6 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
 
     double time = omp_get_wtime();
     set_device(mpi_node_rank);
-    int device;
-    cudaGetDevice(&device); 
-    std::cout << "Device gen_proof: " << device << std::endl;
-
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
@@ -106,11 +94,7 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
 
 void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants, uint32_t mpi_node_rank)
 {
-
     set_device(mpi_node_rank);
-    int device;
-    cudaGetDevice(&device); 
-    std::cout << "Device gen_recursive_proof: " << device << std::endl;
 
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
@@ -143,9 +127,6 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 
     double time = omp_get_wtime();
     set_device(mpi_node_rank);
-    int device;
-    cudaGetDevice(&device); 
-    std::cout << "Device commit_witness: " << device << std::endl;
 
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     uint64_t N = 1 << nBits;
@@ -181,6 +162,5 @@ void set_device(uint32_t mpi_node_rank){
     }
     int device = mpi_node_rank % deviceCount;
     cudaSetDevice(device);
-    cudaDeviceSynchronize();
 }
 #endif
