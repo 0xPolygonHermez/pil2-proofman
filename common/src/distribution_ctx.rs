@@ -381,7 +381,7 @@ impl DistributionCtx {
         }
     }
 
-    pub fn set_node_rank(&mut self){
+    pub fn set_node_rank(&mut self) {
         #[cfg(feature = "distributed")]
         {
             let local_comm = self.world.split_shared(self.rank);
