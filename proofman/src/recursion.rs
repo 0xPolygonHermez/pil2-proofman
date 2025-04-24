@@ -353,7 +353,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
         }
     }
 
-    // agregation loop
+    // agregation loop 
     loop {
         dctx.barrier();
         dctx.distribute_recursive2_proofs(&alives, &mut airgroup_proofs);
