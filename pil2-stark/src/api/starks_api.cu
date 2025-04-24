@@ -7,6 +7,8 @@
 #include "gen_recursive_proof.cuh"
 #include "gen_proof.cuh"
 #include "gen_commit.cuh"
+#include "poseidon2_goldilocks.cu"
+#include <cuda_runtime.h>
 
 struct MaxSizes
 {
@@ -30,7 +32,27 @@ void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
         CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->maxConstArea * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&buffers->d_constTree, maxSizes->maxConstTreeSize * sizeof(Goldilocks::Element)));
     }
+    init_gpu_const_2();
     return (void *)buffers;
+}
+
+void set_max_size_thread(void *d_buffers, uint64_t maxSizeThread, uint64_t nThreads) {
+    DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
+    buffers->max_size_thread = maxSizeThread;
+    buffers->n_threads = nThreads;
+
+    if (buffers->streams != nullptr) {
+        for (uint64_t i = 0; i < buffers->n_threads; i++) {
+            cudaStreamDestroy(buffers->streams[i]);
+        }
+        delete[] buffers->streams;
+        buffers->streams = nullptr;
+    }
+    
+    buffers->streams = new cudaStream_t[nThreads];
+    for (uint64_t i = 0; i < nThreads; i++) {
+        CHECKCUDAERR(cudaStreamCreate(&buffers->streams[i]));
+    }
 }
 
 void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank)
@@ -42,6 +64,13 @@ void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank)
         CHECKCUDAERR(cudaFree(buffers->d_trace));
         CHECKCUDAERR(cudaFree(buffers->d_constPols));
         CHECKCUDAERR(cudaFree(buffers->d_constTree));
+    }
+    if (buffers->streams != nullptr) {
+        for (uint64_t i = 0; i < buffers->n_threads; i++) {
+            cudaStreamDestroy(buffers->streams[i]);
+        }
+        delete[] buffers->streams;
+        buffers->streams = nullptr;
     }
     delete buffers;
 }
@@ -123,8 +152,9 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
     // std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 }
 
-void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_, uint32_t mpi_node_rank) {
+void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {
 
+    double full_time = omp_get_wtime();
     double time = omp_get_wtime();
     set_device(mpi_node_rank);
 
@@ -134,13 +164,16 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    cudaStream_t stream = d_buffers->streams[thread_id];
+
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + thread_id*d_buffers->max_size_thread;
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = 0;
 
     double timeCopy = omp_get_wtime();
-    CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, trace, sizeTrace, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetStage1, trace, sizeTrace, cudaMemcpyHostToDevice));
     timeCopy = omp_get_wtime() - timeCopy;
-    genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_buffers);
+    genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_aux_trace, stream);
     time = omp_get_wtime() - time;
 
     std::ostringstream oss;
@@ -149,6 +182,33 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     zklog.trace("        COPY_TRACE:   " + oss.str());
     oss.str("");
     oss.clear();
+    oss << std::fixed << std::setprecision(2) << time << "s";
+    zklog.trace("        TIME:   " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    full_time = omp_get_wtime() - full_time;
+    CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    oss << std::fixed << std::setprecision(2) << full_time << "s ";
+    zklog.trace("        FULL TIME:   " + oss.str());
+
+    
+}
+
+uint64_t check_gpu_memory(uint32_t mpi_node_rank) {
+    set_device(mpi_node_rank);
+    uint64_t freeMem, totalMem;
+    cudaError_t err = cudaMemGetInfo(&freeMem, &totalMem);
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error: " << cudaGetErrorString(err) << std::endl;
+        return 0;
+    }
+
+    std::cout << "Free memory: " << freeMem / (1024.0 * 1024.0) << " MB" << std::endl;
+    std::cout << "Total memory: " << totalMem / (1024.0 * 1024.0) << " MB" << std::endl;
+
+    return freeMem;
 }
 
 // Function to set the CUDA device based on the MPI rank

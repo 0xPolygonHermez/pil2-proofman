@@ -22,7 +22,7 @@
     uint64_t get_map_total_n(void *pStarkInfo);
     uint64_t get_const_pols_offset(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
-
+    uint64_t get_tree_size(void *pStarkInfo);
     void stark_info_free(void *pStarkInfo);
 
     // Const Pols
@@ -62,7 +62,7 @@
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
     void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check);
 
-    void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers, uint32_t mpi_node_rank);
+    void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, uint64_t thread_id, void *d_buffers, uint32_t mpi_node_rank);
     void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements, uint64_t nOutputs);
 
     // Transcript
@@ -125,5 +125,7 @@
     void *gen_device_commit_buffers(void *maxSizes, uint32_t mpi_node_rank);
     void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank);
     void set_device(uint32_t mpi_node_rank);
+    void set_max_size_thread(void *d_buffers, uint64_t maxSizeThread, uint64_t nThreads);
+    uint64_t check_gpu_memory(uint32_t mpi_node_rank);
 
 #endif

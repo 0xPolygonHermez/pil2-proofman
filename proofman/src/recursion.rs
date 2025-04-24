@@ -35,6 +35,26 @@ pub struct MaxSizes {
     pub recursive: bool,
 }
 
+pub fn discover_max_sizes_contribution<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> u64 {
+    let mut max_contribution_area = 0;
+
+    let instances = pctx.dctx_get_instances();
+    let my_instances = pctx.dctx_get_my_instances();
+
+    for instance_id in my_instances {
+        let (airgroup_id, air_id, _) = instances[instance_id];
+        let setup = sctx.get_setup(airgroup_id, air_id);
+        let n = 1 << setup.stark_info.stark_struct.n_bits;
+        let n_extended = 1 << setup.stark_info.stark_struct.n_bits_ext;
+        let trace_size = setup.stark_info.map_sections_n["cm1"] * n;
+        let trace_ext_size = setup.stark_info.map_sections_n["cm1"] * n_extended;
+        let tree_size = get_tree_size_c(setup.p_setup.p_stark_info);
+        max_contribution_area = max_contribution_area.max(trace_size + trace_ext_size + tree_size + 3 * n_extended);
+    }
+
+    max_contribution_area
+}
+
 pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> MaxSizes {
     let max_trace_area = 0;
     let max_const_tree_size = 0;

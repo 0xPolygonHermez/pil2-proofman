@@ -825,6 +825,9 @@ struct DeviceCommitBuffers
     gl64_t *d_constTree;
     gl64_t *d_aux_trace;
     bool recursive;
+    uint64_t max_size_thread;
+    uint64_t n_threads;
+    cudaStream_t *streams;
 };
 
 #undef inline

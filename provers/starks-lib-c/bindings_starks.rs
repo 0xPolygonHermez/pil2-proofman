@@ -58,6 +58,10 @@ extern "C" {
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z13get_tree_sizePv"]
+    pub fn get_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
     #[link_name = "\u{1}_Z21get_const_pols_offsetPv"]
     pub fn get_const_pols_offset(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
@@ -271,7 +275,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_S_j"]
+    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_mS_j"]
     pub fn commit_witness(
         arity: u64,
         nBits: u64,
@@ -280,6 +284,7 @@ extern "C" {
         root: *mut ::std::os::raw::c_void,
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,
+        thread_id: u64,
         d_buffers: *mut ::std::os::raw::c_void,
         mpi_node_rank: u32,
     );
@@ -546,4 +551,10 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z10set_devicej"]
     pub fn set_device(mpi_node_rank: u32);
+    #[link_name = "\u{1}_Z19set_max_size_threadPvmm"]
+    pub fn set_max_size_thread(d_buffers: *mut ::std::os::raw::c_void, maxSizeThread: u64, nThreads: u64);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z16check_gpu_memoryj"]
+    pub fn check_gpu_memory(mpi_node_rank: u32) -> u64;
 }

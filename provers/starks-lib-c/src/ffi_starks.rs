@@ -75,6 +75,11 @@ pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_tree_size(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn get_const_offset_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_const_pols_offset(p_stark_info) }
 }
@@ -492,6 +497,7 @@ pub fn commit_witness_c(
     root: *mut u8,
     witness: *mut u8,
     aux_trace: *mut u8,
+    thread_id: u64,
     d_buffers: *mut c_void,
     mpi_node_rank: u32,
 ) {
@@ -504,6 +510,7 @@ pub fn commit_witness_c(
             root as *mut std::os::raw::c_void,
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
+            thread_id,
             d_buffers,
             mpi_node_rank,
         );
@@ -995,6 +1002,18 @@ pub fn gen_device_commit_buffers_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn set_max_size_thread_c(_d_buffers: *mut ::std::os::raw::c_void, max_size_thread: u64, n_threads: u64) {
+    unsafe {
+        set_max_size_thread(_d_buffers, max_size_thread, n_threads);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn check_gpu_memory_c(mpi_node_rank: u32) -> u64 {
+    unsafe { check_gpu_memory(mpi_node_rank) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn gen_device_commit_buffers_free_c(d_buffers: *mut ::std::os::raw::c_void, mpi_node_rank: u32) {
     unsafe {
         gen_device_commit_buffers_free(d_buffers, mpi_node_rank);
@@ -1040,6 +1059,12 @@ pub fn stark_info_new_c(
 #[cfg(feature = "no_lib_link")]
 pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
+    100000000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_tree_size_c(_p_stark_info: *mut c_void) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_tree_size: This is a mock call because there is no linked library");
     100000000
 }
 
@@ -1303,6 +1328,7 @@ pub fn commit_witness_c(
     _root: *mut u8,
     _witness: *mut u8,
     _aux_trace: *mut u8,
+    _thread_id: u64,
     _d_buffers: *mut c_void,
     _mpi_node_rank: u32,
 ) {
@@ -1643,6 +1669,18 @@ pub fn gen_device_commit_buffers_c(
         "gen_device_commit_buffers: This is a mock call because there is no linked library"
     );
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn set_max_size_thread_c(_d_buffers: *mut ::std::os::raw::c_void, _max_size_thread: u64, _n_threads: u64) {
+    trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn check_gpu_memory_c(_mpi_node_rank: u32) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "check_gpu_memory: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]

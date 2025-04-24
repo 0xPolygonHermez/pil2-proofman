@@ -161,14 +161,14 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage_inplace(1, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers, &nttTime, &merkleTime);
+    starks.commitStage_inplace(1, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, &nttTime, &merkleTime);
     totalNTTTime += nttTime;
     totalMerkleTime += merkleTime;
     offloadCommit(1, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
     
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_buffers, &nttTime, &merkleTime);
+    starks.commitStage_inplace(2, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, &nttTime, &merkleTime);
     totalNTTTime += nttTime;
     totalMerkleTime += merkleTime;
     offloadCommit(2, starks.treesGL, (gl64_t*)h_params.aux_trace, proof, setupCtx);
@@ -204,7 +204,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
     TimerStopAndLog(STARK_STEP_Q_EXPRESSIONS);
     TimerStart(STARK_STEP_Q_COMMIT);
-    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, d_buffers, &nttTime, &merkleTime);
+    starks.commitStage_inplace(setupCtx.starkInfo.nStages + 1, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, &nttTime, &merkleTime);
     totalNTTTime += nttTime;
     totalMerkleTime += merkleTime;
     offloadCommit(setupCtx.starkInfo.nStages + 1, starks.treesGL, (gl64_t *)h_params.aux_trace, proof, setupCtx);
@@ -241,9 +241,9 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
             }
         }
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
-        computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), d_buffers, offset_helper, d_LEv, &nttTime);
+        computeLEv_inplace(xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), (gl64_t *)h_params.aux_trace, offset_helper, d_LEv, &nttTime);
         totalNTTTime += nttTime;
-        evmap_inplace(params.evals, h_params, proof, &starks, d_buffers, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
+        evmap_inplace(params.evals, h_params, proof, &starks, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
     }
     TimerStopAndLog(STARK_STEP_EVALS_EVMAP);
 
@@ -306,7 +306,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     {
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        fold_inplace(step, friPol_offset, offset_helper, challenge, nBitsExt, prevBits, currentBits, d_buffers);
+        fold_inplace(step, friPol_offset, offset_helper, challenge, nBitsExt, prevBits, currentBits, (gl64_t *)h_params.aux_trace);
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
@@ -338,10 +338,10 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     starks.addTranscriptGL(transcriptPermutation, challenge, FIELD_EXTENSION);
     transcriptPermutation.getPermutations(friQueries, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
 
-    gl64_t *d_constTree = d_buffers->d_aux_trace + offsetConstTree;
+    gl64_t *d_constTree = (gl64_t *)h_params.aux_trace + offsetConstTree;
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
-    proveQueries_inplace(setupCtx, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees, d_buffers, d_constTree, setupCtx.starkInfo.nStages, h_params);
+    proveQueries_inplace(setupCtx, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees, (gl64_t *)h_params.aux_trace, d_constTree, setupCtx.starkInfo.nStages, h_params);
     
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
         proveFRIQueries_inplace(setupCtx, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesFRI[step - 1]);
