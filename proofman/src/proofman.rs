@@ -374,6 +374,7 @@ where
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
         let my_air_groups = pctx.dctx_get_my_air_groups();
+        let mpi_node_rank = pctx.dctx_get_node_rank() as u32;
 
         let values = Arc::new(Mutex::new(vec![0; my_instances.len() * 10]));
 
@@ -395,7 +396,7 @@ where
 
         let max_sizes = discover_max_sizes(&pctx, &sctx);
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-        let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
+        let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr, mpi_node_rank))));
 
         let (tx, rx) = channel::<usize>();
         let max_pending_proofs = match cfg!(feature = "gpu") {
@@ -609,12 +610,12 @@ where
             }
         });
 
-        gen_device_commit_buffers_free_c(d_buffers.lock().unwrap().get_ptr());
+        gen_device_commit_buffers_free_c(d_buffers.lock().unwrap().get_ptr(), mpi_node_rank);
 
         let max_sizes_aggregation = discover_max_sizes_aggregation(&pctx, &setups);
         let max_sizes_aggregation_ptr = &max_sizes_aggregation as *const MaxSizes as *mut c_void;
         let d_buffers_aggregation =
-            Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_aggregation_ptr))));
+            Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_aggregation_ptr, mpi_node_rank))));
 
         let (trace, prover_buffer) = if pctx.options.aggregation {
             let (trace_size, prover_buffer_size) = get_recursive_buffer_sizes(&pctx, &setups)?;
@@ -658,6 +659,7 @@ where
                         &output_dir_path,
                         d_buffers_aggregation.lock().unwrap().get_ptr(),
                         load_const_tree,
+                        mpi_node_rank,
                     );
                     recursive_witness[*my_instance_id] = None;
                 }
@@ -677,6 +679,7 @@ where
                     &output_dir_path,
                     d_buffers_aggregation.lock().unwrap().get_ptr(),
                     load_const_tree,
+                    mpi_node_rank,
                 );
                 recursive2_proofs[airgroup_id].push(proof_recursive1);
                 load_const_tree = false;
@@ -725,6 +728,7 @@ where
                     output_dir_path.clone(),
                     d_buffers_aggregation.clone(),
                     load_const_tree,
+                    mpi_node_rank,
                 ));
 
                 load_const_tree = false;
@@ -748,6 +752,7 @@ where
             &prover_buffer,
             output_dir_path.clone(),
             d_buffers_aggregation.lock().unwrap().get_ptr(),
+            mpi_node_rank,
         )?;
         pctx.dctx.read().unwrap().barrier();
 
@@ -904,6 +909,7 @@ where
                 air_instance_id as u64,
                 d_buffers.lock().unwrap().get_ptr(),
                 gen_const_tree,
+                pctx.dctx_get_node_rank() as u32,
             );
 
             airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
@@ -927,6 +933,7 @@ where
         output_dir_path: PathBuf,
         d_buffers: Arc<Mutex<DeviceBuffer>>,
         load_constants: bool,
+        mpi_node_rank: u32,
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let proof_recursive2 = generate_recursive_proof(
@@ -938,6 +945,7 @@ where
                 &output_dir_path,
                 d_buffers.clone().lock().unwrap().get_ptr(),
                 load_constants,
+                mpi_node_rank,
             );
             recursive2_proofs.write().unwrap()[airgroup_id].push(proof_recursive2);
         })
@@ -1203,6 +1211,7 @@ where
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
             d_buffers.lock().unwrap().get_ptr(),
+            pctx.dctx_get_node_rank() as u32,
         );
 
         let mut value = vec![F::ZERO; 10];
