@@ -39,7 +39,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, pConstTree, nullptr, false);
 
-    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, 128, 2048); 
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, setupCtx.starkInfo.nrowsPack, setupCtx.starkInfo.maxNBlocks); 
 
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,
@@ -288,7 +288,16 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     TimerStart(STARK_STEP_FRI_POLYNOMIAL);
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
+    for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
+        Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
+        starks.treesFRI[step]->setSource(src);
 
+        if(setupCtx.starkInfo.starkStruct.verificationHashType == "GL") {
+            Goldilocks::Element *pBuffNodesGL = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)];
+            ElementType *pBuffNodes = (ElementType *)pBuffNodesGL;
+            starks.treesFRI[step]->setNodes(pBuffNodes);
+        }
+    }
     TimerStopAndLog(STARK_STEP_FRI_POLYNOMIAL);
     TimerStart(STARK_STEP_FRI_FOLDING);
 
@@ -342,9 +351,9 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     proveQueries_inplace(setupCtx, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees, d_buffers, d_constTree, setupCtx.starkInfo.nStages, h_params);
     
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
-
-        FRI<Goldilocks::Element>::proveFRIQueries(friQueries, setupCtx.starkInfo.starkStruct.nQueries, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, proof, starks.treesFRI[step - 1]);
+        proveFRIQueries_inplace(setupCtx, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesFRI[step - 1]);
     }
+
 
     FRI<Goldilocks::Element>::setFinalPol(proof, foldedFRIPol, setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits);
     TimerStopAndLog(STARK_STEP_FRI_QUERIES);

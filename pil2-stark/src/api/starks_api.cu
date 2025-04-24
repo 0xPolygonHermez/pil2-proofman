@@ -18,8 +18,9 @@ struct MaxSizes
 };
 
 
-void *gen_device_commit_buffers(void *maxSizes_)
+void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
 {
+    set_device(mpi_node_rank);
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
     DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
     buffers->recursive = maxSizes->recursive;
@@ -32,8 +33,9 @@ void *gen_device_commit_buffers(void *maxSizes_)
     return (void *)buffers;
 }
 
-void gen_device_commit_buffers_free(void *d_buffers)
+void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank)
 {
+    set_device(mpi_node_rank);
     DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
     CHECKCUDAERR(cudaFree(buffers->d_aux_trace));
     if(buffers->recursive) {
@@ -44,9 +46,10 @@ void gen_device_commit_buffers_free(void *d_buffers)
     delete buffers;
 }
 
-void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants) {
+void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants, uint32_t mpi_node_rank) {
 
     double time = omp_get_wtime();
+    set_device(mpi_node_rank);
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
@@ -59,23 +62,39 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
     uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+    double timeCopy = omp_get_wtime();
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, params->trace, sizeTrace, cudaMemcpyHostToDevice));
+    timeCopy = omp_get_wtime() - timeCopy;
+    double timeCopyConstants = omp_get_wtime();
     if(loadConstants) {
         CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstPols, &params->aux_trace[offsetConstPols], sizeConstPols, cudaMemcpyHostToDevice));
         CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstTree, &params->aux_trace[offsetConstTree], sizeConstTree, cudaMemcpyHostToDevice));
     }
+    timeCopyConstants = omp_get_wtime() - timeCopyConstants;
 
-    time = omp_get_wtime() - time;
     //std::cout << "rick genDeviceBuffers time: " << time << std::endl;
 
     time = omp_get_wtime();
     genProof_gpu(*setupCtx, airgroupId, airId, instanceId, *params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), d_buffers);
     time = omp_get_wtime() - time;
     //std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
+
+    std::ostringstream oss;
+    
+    oss << std::fixed << std::setprecision(2) << timeCopy << "s";
+    zklog.trace("        COPY_TRACE:   " + oss.str());
+    oss.str("");
+    oss.clear();
+
+    oss << std::fixed << std::setprecision(2) << timeCopyConstants << "s";
+    zklog.trace("        COPY_CONST:   " + oss.str());
+    oss.str("");
+    oss.clear();
 }
 
-void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants)
+void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants, uint32_t mpi_node_rank)
 {
+    set_device(mpi_node_rank);
 
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
@@ -104,9 +123,10 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
     // std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 }
 
-void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_) {
+void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_, uint32_t mpi_node_rank) {
 
     double time = omp_get_wtime();
+    set_device(mpi_node_rank);
 
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     uint64_t N = 1 << nBits;
@@ -117,9 +137,30 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = 0;
 
+    double timeCopy = omp_get_wtime();
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, trace, sizeTrace, cudaMemcpyHostToDevice));
+    timeCopy = omp_get_wtime() - timeCopy;
     genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_buffers);
     time = omp_get_wtime() - time;
-    //std::cout << "rick genRCommit_gpu time: " << time << std::endl;
+
+    std::ostringstream oss;
+
+    oss << std::fixed << std::setprecision(2) << timeCopy << "s (" << (timeCopy / time) * 100 << "%)";
+    zklog.trace("        COPY_TRACE:   " + oss.str());
+    oss.str("");
+    oss.clear();
+}
+
+// Function to set the CUDA device based on the MPI rank
+// Needs to be evolved to ensuer global balance between mpi ranks and GPU devices
+void set_device(uint32_t mpi_node_rank){
+    int deviceCount;
+    cudaGetDeviceCount(&deviceCount);
+    if (deviceCount == 0) {
+        std::cerr << "No CUDA devices found." << std::endl;
+        exit(1);
+    }
+    int device = mpi_node_rank % deviceCount;
+    cudaSetDevice(device);
 }
 #endif

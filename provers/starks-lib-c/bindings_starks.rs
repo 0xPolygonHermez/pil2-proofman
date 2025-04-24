@@ -271,7 +271,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_S_"]
+    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_S_j"]
     pub fn commit_witness(
         arity: u64,
         nBits: u64,
@@ -281,6 +281,7 @@ extern "C" {
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
+        mpi_node_rank: u32,
     );
 }
 extern "C" {
@@ -401,7 +402,7 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_b"]
+    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_bj"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         airgroupId: u64,
@@ -412,11 +413,12 @@ extern "C" {
         proofBuffer: *mut u64,
         proofFile: *mut ::std::os::raw::c_char,
         d_buffers: *mut ::std::os::raw::c_void,
-        load_constants: bool,
+        loadConstants: bool,
+        mpi_node_rank: u32,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_b"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_bj"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
@@ -432,7 +434,8 @@ extern "C" {
         proof_file: *mut ::std::os::raw::c_char,
         vadcop: bool,
         d_buffers: *mut ::std::os::raw::c_void,
-        load_constants: bool,
+        loadConstants: bool,
+        mpi_node_rank: u32,
     );
 }
 extern "C" {
@@ -530,10 +533,17 @@ extern "C" {
     pub fn set_omp_num_threads(num_threads: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z25gen_device_commit_buffersPv"]
-    pub fn gen_device_commit_buffers(maxSizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z25gen_device_commit_buffersPvj"]
+    pub fn gen_device_commit_buffers(
+        maxSizes: *mut ::std::os::raw::c_void,
+        mpi_node_rank: u32,
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z30gen_device_commit_buffers_freePv"]
-    pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void);
+    #[link_name = "\u{1}_Z30gen_device_commit_buffers_freePvj"]
+    pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void, mpi_node_rank: u32);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z10set_devicej"]
+    pub fn set_device(mpi_node_rank: u32);
 }

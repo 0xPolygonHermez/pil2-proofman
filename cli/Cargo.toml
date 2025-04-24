@@ -1,6 +1,6 @@
 [package]
 name = "proofman-cli"
-version = "0.7.0"
+version = "0.7.1"
 authors = ["Polygon Labs"]
 edition = "2021"
 readme = "README.md"
