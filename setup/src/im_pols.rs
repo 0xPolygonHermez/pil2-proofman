@@ -56,6 +56,7 @@ fn __calculate_im_pols(
     absolute_max: usize,
     abs_max_d: &mut isize,
 ) -> (Option<Vec<Value>>, isize) {
+    println!("{}", exp.to_string());
     if im_pols.is_none() {
         return (None, -1);
     }
