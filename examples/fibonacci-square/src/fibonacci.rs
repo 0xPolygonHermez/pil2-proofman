@@ -32,7 +32,15 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
         instance_ids
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _core_id: usize,
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             let instance_id = instance_ids[0];
 

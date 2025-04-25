@@ -200,7 +200,15 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
         Vec::new()
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _core_id: usize,
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
 

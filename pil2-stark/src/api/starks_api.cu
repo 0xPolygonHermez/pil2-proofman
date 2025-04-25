@@ -222,5 +222,6 @@ void set_device(uint32_t mpi_node_rank){
     }
     int device = mpi_node_rank % deviceCount;
     cudaSetDevice(device);
+    cudaFree(0);
 }
 #endif

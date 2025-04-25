@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use p3_field::Field;
 use serde::Deserialize;
 use std::fs;
+use std::sync::Arc;
 use sysinfo::{System, SystemExt, ProcessExt};
+use rayon::{ThreadPool, ThreadPoolBuilder};
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
     env_logger::builder()
@@ -228,4 +230,17 @@ pub fn print_memory_usage() {
     } else {
         println!("Could not get process information.");
     }
+}
+
+pub fn create_pool(core_id: usize, n_cores: usize) -> ThreadPool {
+    let cores = Arc::new(core_affinity::get_core_ids().expect("Failed to get core IDs"));
+    ThreadPoolBuilder::new()
+        .num_threads(n_cores)
+        .thread_name(move |i| format!("pool{}_thread{}", core_id, i))
+        .start_handler(move |thread_index| {
+            let core = cores[core_id + thread_index];
+            core_affinity::set_for_current(core);
+        })
+        .build()
+        .unwrap()
 }

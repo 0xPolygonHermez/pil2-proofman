@@ -54,3 +54,39 @@ impl ProofExecutionManager {
         self.proofs_ready.fetch_sub(1, Ordering::SeqCst);
     }
 }
+
+pub struct WitnessComputationManager {
+    pub max_concurrent_pools: usize,
+    active_pools: Arc<AtomicUsize>,
+    pools_available: Arc<Box<[AtomicBool]>>,
+}
+
+impl WitnessComputationManager {
+    pub fn new(max_concurrent_pools: usize) -> Self {
+        let pools_available =
+            Arc::new((0..max_concurrent_pools).map(|_| AtomicBool::new(true)).collect::<Vec<_>>().into_boxed_slice());
+
+        Self { max_concurrent_pools, pools_available, active_pools: Arc::new(AtomicUsize::new(0)) }
+    }
+
+    pub fn try_claim_thread(&self, thread_id: usize) -> bool {
+        if thread_id >= self.max_concurrent_pools {
+            return false;
+        }
+        if self.pools_available[thread_id].compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            self.active_pools.fetch_add(1, Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn get_pools_running(&self) -> usize {
+        self.active_pools.load(Ordering::Acquire)
+    }
+
+    pub fn witness_completed(&self, thread_id: usize) {
+        self.pools_available[thread_id].store(true, Ordering::Release);
+        self.active_pools.fetch_sub(1, Ordering::SeqCst);
+    }
+}

@@ -1674,7 +1674,6 @@ pub fn gen_device_commit_buffers_c(
 #[cfg(feature = "no_lib_link")]
 pub fn set_max_size_thread_c(_d_buffers: *mut ::std::os::raw::c_void, _max_size_thread: u64, _n_threads: u64) {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
-    0
 }
 
 #[cfg(feature = "no_lib_link")]

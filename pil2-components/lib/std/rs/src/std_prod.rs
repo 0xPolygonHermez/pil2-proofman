@@ -234,7 +234,15 @@ impl<F: PrimeField64> StdProd<F> {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _core_id: usize,
+        _n_cores: usize,
+    ) {
         let std_prod_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");
 
         if std_prod_users_id.is_empty() {

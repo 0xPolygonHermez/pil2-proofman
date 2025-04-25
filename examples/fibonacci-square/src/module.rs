@@ -28,7 +28,15 @@ impl<F: PrimeField64> Module<F> {
 impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
     execute!(ModuleTrace, FibonacciSquareTrace::<usize>::NUM_ROWS / ModuleTrace::<usize>::NUM_ROWS);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _core_id: usize,
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
             let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());

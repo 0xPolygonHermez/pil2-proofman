@@ -247,7 +247,15 @@ impl<F: PrimeField64> StdSum<F> {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _core_id: usize,
+        _n_cores: usize,
+    ) {
         let std_sum_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users");
 
         if std_sum_users_id.is_empty() {

@@ -19,7 +19,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::fmt::Write;
 use std::io::Read;
-use rayon::prelude::*;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
@@ -36,7 +35,10 @@ use std::{path::PathBuf, sync::Arc};
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
-use crate::{discover_max_sizes, discover_max_sizes_aggregation, discover_max_sizes_contribution, ProofExecutionManager};
+use crate::{
+    discover_max_sizes, discover_max_sizes_aggregation, discover_max_sizes_contribution, ProofExecutionManager,
+    WitnessComputationManager,
+};
 use crate::{check_paths2, check_tree_paths, check_tree_paths_vadcop, initialize_fixed_pols_tree};
 use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
@@ -200,7 +202,9 @@ where
                 continue;
             };
 
-            wcm.calculate_witness(1, &[instance_id]);
+            let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+
+            wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
 
             // Join the previous thread (if any) before starting a new one
             if let Some(handle) = thread_handle.take() {
@@ -275,7 +279,8 @@ where
                 }
             }
 
-            wcm.calculate_witness(2, &[instance_id]);
+            let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+            wcm.calculate_witness(2, &[instance_id], 0, max_num_threads);
             Self::calculate_im_pols(2, &sctx, &pctx, instance_id);
 
             wcm.debug(&[instance_id]);
@@ -436,13 +441,21 @@ where
         };
         let aux_trace = Arc::new(create_buffer_fast(aux_trace_size));
 
-        let max_pending_proofs = match cfg!(feature = "gpu") {
-            true => 2 * max_number_contributions as usize,
-            false => 1,
-        };
-
         let proof_manager = ProofExecutionManager::new(max_number_contributions);
         let proof_manager = Arc::new(proof_manager);
+
+        let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let (threads_per_pool, max_concurrent_pools) = match cfg!(feature = "gpu") {
+            true => {
+                let threads_per_pool = 4;
+                let max_concurrent_pools = max_num_threads / threads_per_pool;
+                (threads_per_pool, max_concurrent_pools)
+            }
+            false => (max_num_threads, 1),
+        };
+
+        let witness_manager = WitnessComputationManager::new(max_concurrent_pools);
+        let witness_manager = Arc::new(witness_manager);
 
         let (ready_tx, ready_rx) = crossbeam_channel::unbounded::<usize>();
 
@@ -469,7 +482,8 @@ where
                             );
 
                             for (id, value) in value.iter().enumerate().take(10) {
-                                values_clone.lock().unwrap()[pctx_clone.dctx_get_instance_idx(instance_id) * 10 + id] = *value;
+                                values_clone.lock().unwrap()[pctx_clone.dctx_get_instance_idx(instance_id) * 10 + id] =
+                                    *value;
                             }
                             manager.proof_completed(thread_id);
                         }
@@ -478,36 +492,65 @@ where
             })
             .collect();
 
+        let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
+
+        let witness_pools: Vec<_> = (0..max_concurrent_pools)
+            .map(|thread_id| {
+                let witness_rx = witness_rx.clone();
+                let ready_tx = ready_tx.clone();
+                let manager = witness_manager.clone();
+                let pctx_clone = pctx.clone();
+                let proof_manager = proof_manager.clone();
+                let wcm_clone = wcm.clone();
+
+                std::thread::spawn(move || {
+                    while let Ok(instance_id) = witness_rx.recv() {
+                        if manager.try_claim_thread(thread_id) {
+                            wcm_clone.calculate_witness(
+                                1,
+                                &[instance_id],
+                                threads_per_pool * thread_id,
+                                threads_per_pool,
+                            );
+                            manager.witness_completed(thread_id);
+                            if pctx_clone.dctx_is_my_instance(instance_id) {
+                                proof_manager.set_new_proof_ready();
+                                ready_tx.send(instance_id).unwrap();
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+
         for instance_id in my_instances.iter() {
             let (_, _, all) = instances[*instance_id];
-            if all { continue; }
-
-            wcm.calculate_witness(1, &[*instance_id]);
-        
-            proof_manager.set_new_proof_ready();
-    
-            while proof_manager.get_proofs_ready() > max_pending_proofs {
-                std::thread::yield_now();
+            if !all {
+                while witness_manager.get_pools_running() >= witness_manager.max_concurrent_pools {
+                    std::thread::yield_now();
+                }
+                witness_tx.send(*instance_id).unwrap();
             }
-    
-            ready_tx.send(*instance_id).unwrap();
-            
         }
 
-        timer_start_info!(CALCULATING_TABLES);
+        while witness_manager.get_pools_running() > 0 {
+            std::thread::yield_now();
+        }
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if *all {
-                wcm.calculate_witness(1, &[instance_id]);   
-                
-                if pctx.dctx_is_my_instance(instance_id) {
-                    proof_manager.set_new_proof_ready();    
-                    ready_tx.send(instance_id).unwrap();
+                while witness_manager.get_pools_running() >= witness_manager.max_concurrent_pools {
+                    std::thread::yield_now();
                 }
+
+                witness_tx.send(instance_id).unwrap();
             }
         }
 
-        timer_stop_and_log_info!(CALCULATING_TABLES);
+        drop(witness_tx);
+        for pool in witness_pools {
+            pool.join().unwrap();
+        }
 
         drop(ready_tx);
         for worker in workers {
@@ -631,7 +674,7 @@ where
         //         let (_, _, all) = instances[instance_id];
 
         //         if !all {
-        //             wcm.calculate_witness(1, &[instance_id]);
+        //             wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
         //         }
 
         //         proof_manager.set_new_proof_ready();
@@ -665,7 +708,7 @@ where
                 let (airgroup_id, air_id, all) = instances[instance_id];
 
                 if !all {
-                    wcm.calculate_witness(1, &[instance_id]);
+                    wcm.calculate_witness(1, &[instance_id], 0, 32);
                 }
 
                 // Join the previous thread (if any) before starting a new one
