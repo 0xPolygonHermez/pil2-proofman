@@ -6,6 +6,9 @@
 #include "goldilocks_cubic_extension.hpp"
 #include "poseidon2_goldilocks.hpp"
 #include "zklog.hpp"
+#include "gl64_t.cuh"
+#include "cuda_utils.cuh"
+#include "cuda_utils.hpp"
 
 #define TRANSCRIPT_STATE_SIZE 4
 #define TRANSCRIPT_PENDING_SIZE 8

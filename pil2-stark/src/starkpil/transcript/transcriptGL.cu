@@ -1,5 +1,10 @@
 #include "transcriptGL.cuh"
+#include "poseidon2_goldilocks.cuh"
+
 #include "math.h"
+
+__device__ __constant__ gl64_t GPU_C[118];
+__device__ __constant__ gl64_t GPU_D[12];
 
 void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size)
 {
@@ -9,10 +14,15 @@ void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size)
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor) 
 {
 
-    __shared__ gl64_t GPU_C_SM[118];
-    __shared__ gl64_t GPU_D_SM[12];
-    mymemcpy((uint64_t *)GPU_C_SM, GPU_C, 118);
-    mymemcpy((uint64_t *)GPU_D_SM, GPU_D, 12);
+    static int initialized = 0;
+
+    if (initialized == 0)
+    {
+        initialized = 1;
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+    
+    }
     
     while(*pending_cursor < TRANSCRIPT_PENDING_SIZE) {
         pending[*pending_cursor].fe = 0;
@@ -27,7 +37,7 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     {
         inputs[i + TRANSCRIPT_PENDING_SIZE] = state[i];
     }
-    Poseidon2Goldilocks:hash_full_result_seq_2(out, inputs, GPU_C_SM, GPU_D_SM);
+    hash_full_result_seq_2(out, inputs, GPU_C, GPU_D);
 
     *out_cursor = TRANSCRIPT_OUT_SIZE;
     for (int i = 0; i < TRANSCRIPT_PENDING_SIZE; i++)
