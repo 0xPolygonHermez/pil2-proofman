@@ -1,7 +1,8 @@
-use serde_json::{Map, Value};
+use crate::helpers::print_expressions;
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use crate::utils::print_expressions;
 
+/// Mirrors the JS `map` helper, mutating `res`, `constraints`, etc.
 pub fn map(
     res: &mut HashMap<String, Value>,
     symbols: &[Value],
@@ -9,206 +10,257 @@ pub fn map(
     constraints: &mut [Value],
     options: &Value,
 ) {
+    /* ───────────────── 1. symbols → res.*Maps ───────────────── */
     map_symbols(res, symbols);
     set_stage_info_symbols(res, symbols);
 
-    for constraint in constraints.iter_mut() {
-        if let Some(filename) = constraint["filename"].as_str() {
-            if filename == format!("{}.ImPol", res["name"].as_str().unwrap()) {
-                constraint["imPol"] = Value::Bool(true);
-                if !options["recursion"].as_bool().unwrap_or(false) {
-                    constraint["line"] = Value::String(print_expressions(
-                        res,
-                        &expressions[constraint["e"].as_u64().unwrap() as usize],
-                        expressions,
-                        true,
-                    ));
-                } else {
-                    constraint["line"] = Value::String(String::new());
-                }
+    /* ───────────────── 2. decorate constraints ───────────────── */
+    for cons in constraints.iter_mut() {
+        if cons.get("filename") == Some(&json!(format!("{}.ImPol", res["name"].as_str().unwrap()))) {
+            cons["imPol"] = json!(true);
+
+            if !options["recursion"].as_bool().unwrap_or(false) {
+                let e_idx = cons["e"].as_u64().unwrap() as usize;
+                cons["line"] = json!(print_expressions(res, &expressions[e_idx], expressions, true));
+            } else {
+                cons["line"] = json!(""); // recursion path: blank line
             }
         }
-        if let Some(line) = constraint["line"].as_str() {
-            constraint["line"] = Value::String(format!("{} == 0", line));
+        if let Some(line) = cons["line"].as_str() {
+            cons["line"] = json!(format!("{line} == 0"));
         }
     }
+
+    /* ───────────────── 3. intermediate polys info ────────────── */
+    // ensure the holder exists once
+    res.entry("imPolsInfo".into()).or_insert_with(|| json!({ "baseField": [], "extendedField": [] }));
+
+    /*  gather OWNED copies, then immutable borrow ends before we mutate `res` */
+    let im_pols: Vec<Value> = res
+        .get("cmPolsMap")
+        .and_then(Value::as_array)
+        .map_or(Vec::new(), |arr| arr.iter().filter(|v| v.get("imPol") == Some(&json!(true))).cloned().collect());
 
     println!("----------------- INTERMEDIATE POLYNOMIALS -----------------");
 
-    res.entry("imPolsInfo".to_string()).or_insert_with(|| {
-        let mut im_pols_info = Map::new();
-        im_pols_info.insert("baseField".to_string(), Value::Array(vec![]));
-        im_pols_info.insert("extendedField".to_string(), Value::Array(vec![]));
-        Value::Object(im_pols_info)
-    });
+    for (idx, im) in im_pols.iter().enumerate() {
+        if options["recursion"].as_bool().unwrap_or(false) {
+            continue; // recursion => skip printing / storing text
+        }
 
-    let im_pols: Vec<Value> = res
-        .get("cmPolsMap")
-        .and_then(|v| v.as_array())
-        .unwrap_or(&vec![])
-        .iter()
-        .filter(|i| i.get("imPol").and_then(Value::as_bool).unwrap_or(false))
-        .cloned()
-        .collect();
+        let exp_id = im["expId"].as_u64().unwrap() as usize;
+        let text = print_expressions(res, &expressions[exp_id], expressions, false);
 
-    for (i, im_pol) in im_pols.iter().enumerate() {
-        if !options["recursion"].as_bool().unwrap_or(false) {
-            let im_pol_expression =
-                print_expressions(res, &expressions[im_pol["expId"].as_u64().unwrap() as usize], expressions, false);
-            if i > 0 {
-                println!("------------------------------------------------------------");
-            }
-            println!("Intermediate polynomial {} columns: {}", i, im_pol["dim"]);
-            println!("{}", im_pol_expression);
+        if idx > 0 {
+            println!("------------------------------------------------------------");
+        }
+        println!("Intermediate polynomial {idx} columns: {}", im["dim"]);
+        println!("{text}");
 
-            if let Some(im_pols_info) = res.get_mut("imPolsInfo").and_then(Value::as_object_mut) {
-                if im_pol["dim"].as_u64().unwrap() == 1 {
-                    if let Some(base_field) = im_pols_info.get_mut("baseField").and_then(Value::as_array_mut) {
-                        base_field.push(Value::String(im_pol_expression));
-                    }
-                } else if let Some(extended_field) = im_pols_info.get_mut("extendedField").and_then(Value::as_array_mut)
-                {
-                    extended_field.push(Value::String(im_pol_expression));
-                }
-            }
+        // push into the correct bucket
+        let bucket = if im["dim"] == json!(1) { "baseField" } else { "extendedField" };
+        if let Some(arr) = res
+            .get_mut("imPolsInfo")
+            .and_then(Value::as_object_mut)
+            .and_then(|obj| obj.get_mut(bucket))
+            .and_then(Value::as_array_mut)
+        {
+            arr.push(json!(text));
         }
     }
 
-    let cm1_count = res
-        .get("cmPolsMap")
-        .and_then(|v| v.as_array())
-        .unwrap_or(&vec![])
-        .iter()
-        .filter(|p| {
-            p.get("stage").map(|s| s == "cm1").unwrap_or(false)
-                && !p.get("imPol").and_then(Value::as_bool).unwrap_or(false)
-        })
-        .count();
+    /* ───────────────── 4. nCommitmentsStage1 counter ─────────── */
+    let cm1_cnt = res.get("cmPolsMap").and_then(Value::as_array).map_or(0, |arr| {
+        arr.iter().filter(|p| p.get("stage") == Some(&json!("cm1")) && p.get("imPol") != Some(&json!(true))).count()
+    });
 
-    res.insert("nCommitmentsStage1".to_string(), Value::Number(cm1_count.into()));
+    res.insert("nCommitmentsStage1".into(), json!(cm1_cnt));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// below: helpers that mimic the JS helpers 1-for-1
+// ─────────────────────────────────────────────────────────────────────────────
+
 fn map_symbols(res: &mut HashMap<String, Value>, symbols: &[Value]) {
-    for symbol in symbols.iter() {
-        let symbol_type = symbol["type"].as_str().unwrap_or("");
-        match symbol_type {
-            "fixed" | "witness" | "custom" => {
-                add_pol(res, symbol);
-            }
+    for sym in symbols {
+        match sym["type"].as_str().unwrap_or("") {
+            "fixed" | "witness" | "custom" => add_pol(res, sym),
             "challenge" => {
-                res.entry("challengesMap".to_string())
-                    .or_insert_with(|| Value::Object(Map::new()))
-                    .as_object_mut()
-                    .unwrap()
-                    .insert(symbol["id"].to_string(), symbol.clone());
+                res.entry("challengesMap".into()).or_insert_with(|| json!({})).as_object_mut().unwrap().insert(
+                    sym["id"].to_string(),
+                    json!({ "name": sym["name"], "stage": sym["stage"], "dim": sym["dim"], "stageId": sym["stageId"] }),
+                );
             }
             "public" => {
-                res.entry("publicsMap".to_string())
-                    .or_insert_with(|| Value::Object(Map::new()))
+                res.entry("publicsMap".into())
+                    .or_insert_with(|| json!({}))
                     .as_object_mut()
                     .unwrap()
-                    .insert(symbol["id"].to_string(), symbol.clone());
+                    .insert(
+                        sym["id"].to_string(),
+                        json!({ "name": sym["name"], "stage": sym["stage"], "lengths": sym.get("lengths").cloned().unwrap_or(json!(null)) }),
+                    );
             }
             "airgroupvalue" => {
-                res.entry("airgroupValuesMap".to_string())
-                    .or_insert_with(|| Value::Object(Map::new()))
+                res.entry("airgroupValuesMap".into())
+                    .or_insert_with(|| json!({}))
                     .as_object_mut()
                     .unwrap()
-                    .insert(symbol["id"].to_string(), symbol.clone());
+                    .insert(
+                        sym["id"].to_string(),
+                        json!({ "name": sym["name"], "stage": sym["stage"], "lengths": sym.get("lengths").cloned().unwrap_or(json!(null)) }),
+                    );
             }
             "airvalue" => {
-                res.entry("airValuesMap".to_string())
-                    .or_insert_with(|| Value::Object(Map::new()))
+                res.entry("airValuesMap".into())
+                    .or_insert_with(|| json!({}))
                     .as_object_mut()
                     .unwrap()
-                    .insert(symbol["id"].to_string(), symbol.clone());
+                    .insert(
+                        sym["id"].to_string(),
+                        json!({ "name": sym["name"], "stage": sym["stage"], "lengths": sym.get("lengths").cloned().unwrap_or(json!(null)) }),
+                    );
+            }
+            "proofvalue" => {
+                res.entry("proofValuesMap".into())
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .unwrap()
+                    .insert(
+                        sym["id"].to_string(),
+                        json!({ "name": sym["name"], "stage": sym["stage"], "lengths": sym.get("lengths").cloned().unwrap_or(json!(null)) }),
+                    );
             }
             _ => {}
         }
     }
 }
 
-fn add_pol(res: &mut HashMap<String, Value>, symbol: &Value) {
-    let ref_map = match symbol["type"].as_str().unwrap() {
-        "fixed" => "constPolsMap",
-        "witness" => "cmPolsMap",
-        "custom" => "customCommitsMap",
-        _ => panic!("Invalid symbol type"),
+/// Insert a fixed/witness/custom symbol into the appropriate *PolsMap,
+/// replicating the side-effects on `mapSectionsN`.
+fn add_pol(res: &mut HashMap<String, Value>, sym: &Value) {
+    // Which top-level vector are we inserting into?
+    let (ref_key, stage, dim, pos) = match sym["type"].as_str().unwrap() {
+        "fixed" => ("constPolsMap", 0, sym["dim"].as_u64().unwrap(), sym["polId"].as_u64().unwrap() as usize),
+        "witness" => (
+            "cmPolsMap",
+            sym["stage"].as_u64().unwrap(),
+            sym["dim"].as_u64().unwrap(),
+            sym["polId"].as_u64().unwrap() as usize,
+        ),
+        "custom" => (
+            "customCommitsMap",
+            sym["stage"].as_u64().unwrap(),
+            sym["dim"].as_u64().unwrap(),
+            sym["polId"].as_u64().unwrap() as usize,
+        ),
+        _ => unreachable!(),
     };
 
-    println!("symbol: {:#?}", symbol);
+    // Resolve the array we are inserting into (for custom we go one level deeper).
+    let target_arr: &mut Vec<Value> = if sym["type"] == json!("custom") {
+        // res.customCommitsMap[commitId]
+        let cid = sym["commitId"].as_u64().unwrap() as usize;
+        res.entry("customCommitsMap".into()).or_insert_with(|| json!([]));
+        let outer = res.get_mut("customCommitsMap").unwrap().as_array_mut().unwrap();
+        if outer.len() <= cid {
+            outer.resize(cid + 1, json!([]));
+        }
+        outer[cid].as_array_mut().unwrap()
+    } else {
+        // constPolsMap or cmPolsMap
+        res.entry(ref_key.into()).or_insert_with(|| json!([]));
+        res.get_mut(ref_key).unwrap().as_array_mut().unwrap()
+    };
 
-    let pos = symbol["polId"].as_u64().unwrap() as usize;
+    // Ensure correct length and insert
+    if target_arr.len() <= pos {
+        target_arr.resize(pos + 1, Value::Null);
+    }
+
     let mut entry = Map::from_iter(vec![
-        ("stage".to_string(), symbol["stage"].clone()),
-        ("name".to_string(), symbol["name"].clone()),
-        ("dim".to_string(), symbol["dim"].clone()),
-        ("polsMapId".to_string(), Value::Number(pos.into())),
+        ("stage".into(), sym["stage"].clone()),
+        ("name".into(), sym["name"].clone()),
+        ("dim".into(), sym["dim"].clone()),
+        ("polsMapId".into(), json!(pos)),
     ]);
 
-    if let Some(stage_id) = symbol["stageId"].as_u64() {
-        entry.insert("stageId".to_string(), Value::Number(stage_id.into()));
+    // stageId for fixed is always its polId
+    if sym["type"] == json!("fixed") {
+        entry.insert("stageId".into(), json!(sym["polId"]));
+    } else if !sym["stageId"].is_null() {
+        entry.insert("stageId".into(), sym["stageId"].clone());
     }
 
-    if let Some(lengths) = symbol["lengths"].as_array() {
-        entry.insert("lengths".to_string(), Value::Array(lengths.clone()));
+    if let Some(l) = sym.get("lengths") {
+        entry.insert("lengths".into(), l.clone());
+    }
+    if sym["imPol"].as_bool().unwrap_or(false) {
+        entry.insert("imPol".into(), json!(true));
+        entry.insert("expId".into(), sym["expId"].clone());
     }
 
-    if let Some(im_pol) = symbol["imPol"].as_bool() {
-        entry.insert("imPol".to_string(), Value::Bool(im_pol));
-        entry.insert("expId".to_string(), symbol["expId"].clone());
-    }
+    target_arr[pos] = Value::Object(entry);
 
-    res.entry(ref_map.to_string())
-        .or_insert_with(|| Value::Array(vec![]))
-        .as_array_mut()
-        .unwrap()
-        .push(Value::Object(entry));
+    // Update mapSectionsN counters
+    let sec_key = match sym["type"].as_str().unwrap() {
+        "fixed" => "const".to_string(),
+        "witness" => format!("cm{}", stage),
+        "custom" => {
+            let cid = sym["commitId"].as_u64().unwrap() as usize;
+            let name = res["customCommits"][cid]["name"].as_str().unwrap();
+            format!("{}{}", name, stage)
+        }
+        _ => unreachable!(),
+    };
+    let ms = res.entry("mapSectionsN".into()).or_insert_with(|| json!({})).as_object_mut().unwrap();
+    *ms.entry(sec_key).or_insert(json!(0)) = json!(ms.get(sec_key.as_str()).and_then(Value::as_u64).unwrap_or(0) + dim);
 }
 
+/// Mirrors JS `setStageInfoSymbols`.
 fn set_stage_info_symbols(res: &mut HashMap<String, Value>, symbols: &[Value]) {
     let q_stage = res["nStages"].as_u64().unwrap_or(0) + 1;
 
-    for symbol in symbols.iter() {
-        let symbol_type = symbol["type"].as_str().unwrap_or("");
-        if !["fixed", "witness", "custom"].contains(&symbol_type) {
+    for sym in symbols {
+        let typ = sym["type"].as_str().unwrap_or("");
+        if !["fixed", "witness", "custom"].contains(&typ) {
             continue;
         }
 
-        if symbol_type == "witness" || symbol_type == "custom" {
-            let pols_map_opt = if symbol_type == "witness" {
-                res.get_mut("cmPolsMap").and_then(Value::as_array_mut)
+        if typ == "witness" || typ == "custom" {
+            // find the vector where this pol lives
+            let (pols_map, pol_id) = if typ == "witness" {
+                (res.get_mut("cmPolsMap").unwrap().as_array_mut().unwrap(), sym["polId"].as_u64().unwrap() as usize)
             } else {
-                let commit_id = symbol["commitId"].as_u64().unwrap();
-                res.get_mut("customCommitsMap")
-                    .and_then(|m| m.get_mut(commit_id.to_string()))
-                    .and_then(Value::as_array_mut)
+                let cid = sym["commitId"].as_u64().unwrap() as usize;
+                (
+                    res.get_mut("customCommitsMap").unwrap().as_array_mut().unwrap()[cid].as_array_mut().unwrap(),
+                    sym["polId"].as_u64().unwrap() as usize,
+                )
             };
 
-            if let Some(pols_map) = pols_map_opt {
-                let pol_id = symbol["polId"].as_u64().unwrap() as usize;
+            // previous pols in same stage
+            let prev: Vec<&Value> = pols_map.iter().take(pol_id).filter(|p| p["stage"] == sym["stage"]).collect();
 
-                let stage_pos: u64 = pols_map
-                    .iter()
-                    .take(pol_id)
-                    .filter(|p| p["stage"] == symbol["stage"])
-                    .map(|p| p["dim"].as_u64().unwrap_or(0))
-                    .sum();
+            let stage_pos: u64 = prev.iter().map(|p| p["dim"].as_u64().unwrap()).sum();
 
-                let stage_id = if symbol["stageId"].is_null() {
-                    if symbol["stage"] == Value::Number(q_stage.into()) {
-                        pols_map.iter().take(pol_id).filter(|p| p["stage"] == symbol["stage"]).count()
-                    } else {
-                        pols_map.iter().position(|p| p["name"] == symbol["name"]).unwrap_or(0)
-                    }
+            let stage_id = if sym["stageId"].is_null() {
+                if sym["stage"] == json!(q_stage) {
+                    prev.len() as u64
                 } else {
-                    symbol["stageId"].as_u64().unwrap() as usize
-                };
-
-                if let Some(pols_entry) = pols_map.get_mut(pol_id) {
-                    pols_entry["stagePos"] = Value::Number(stage_pos.into());
-                    pols_entry["stageId"] = Value::Number(stage_id.into());
+                    pols_map
+                        .iter()
+                        .filter(|p| p["stage"] == sym["stage"])
+                        .position(|p| p["name"] == sym["name"])
+                        .unwrap_or(0) as u64
                 }
+            } else {
+                sym["stageId"].as_u64().unwrap()
+            };
+
+            if let Some(p_entry) = pols_map.get_mut(pol_id) {
+                p_entry["stagePos"] = json!(stage_pos);
+                p_entry["stageId"] = json!(stage_id);
             }
         }
     }

@@ -1,138 +1,110 @@
-use crate::utils::{format_expressions, format_constraints, format_symbols, format_hints};
+use crate::utils::{buf2bint, format_constraints, format_expressions, format_hints, format_symbols};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::{collections::HashMap, fs, path::Path};
 
 /// Extracts and processes PIL information from `pilout`, mirroring JavaScript logic.
-pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String, Value>) -> HashMap<String, Value> {
-    res.insert("airId".to_string(), pilout["airId"].clone());
-    res.insert("airGroupId".to_string(), pilout["airGroupId"].clone());
+/// Rust equivalent of JS `getPiloutInfo(res, pilout)`
+///
+/// *Everything* is 1-to-1 with the JS except that Rust returns a single
+/// `serde_json::Value` object containing `{ expressions, hints, constraints, symbols }`.
+/// Rust equivalent of JS `getPiloutInfo(res, pilout)`
+pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &Value) -> Value {
+    // ─── 1.  copy AIR identifiers ────────────────────────────────────────────
+    res.insert("airId".into(), pilout["airId"].clone());
+    res.insert("airgroupId".into(), pilout["airgroupId"].clone());
 
-    let constraints = format_constraints(&json!(pilout));
+    // ─── 2.  constraints (always needed) ─────────────────────────────────────
+    let constraints = format_constraints(pilout); // Vec<Value>
 
-    let save_symbols = !pilout.contains_key("symbols");
-    let (expressions, mut symbols) = if save_symbols {
-        let e = format_expressions(pilout, true, false);
-        (e["expressions"].clone(), e["symbols"].clone())
+    // ─── 3.  expressions (+ maybe symbols) ───────────────────────────────────
+    let save_symbols = pilout.get("symbols").is_none();
+    let expr_pkg = format_expressions(pilout, save_symbols, /*global=*/ false);
+
+    // Convert expressions → Vec<Value>
+    let mut expressions_vec: Vec<Value> =
+        expr_pkg["expressions"].as_array().expect("expressions must be array").clone();
+
+    // Collect symbols as Vec<Value>
+    let mut symbols_val: Vec<Value> = if save_symbols {
+        expr_pkg["symbols"].as_array().expect("symbols").clone()
     } else {
-        let e = format_expressions(pilout, false, false);
-        (e["expressions"].clone(), json!(format_symbols(pilout, false)))
+        // format_symbols now needs the `global` flag
+        format_symbols(pilout, /*global=*/ false)
     };
 
-    // Filter symbols
-    symbols = json!(symbols
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|s| {
-            let symbol_type = s["type"].as_str().unwrap_or("");
-            symbol_type != "witness" && symbol_type != "fixed"
-                || (s["airId"] == res["airId"] && s["airGroupId"] == res["airGroupId"])
-        })
-        .cloned()
-        .collect::<Vec<Value>>());
+    // ─── 4.  filter symbols like the JS does ─────────────────────────────────
+    symbols_val.retain(|s| {
+        let t = s["type"].as_str().unwrap_or("");
+        !["witness", "fixed"].contains(&t) || (s["airId"] == res["airId"] && s["airgroupId"] == res["airgroupId"])
+    });
 
-    let air_group_values = pilout.get("airGroupValues").cloned().unwrap_or(json!([]));
+    // ─── 5.  derive counters on `res` ────────────────────────────────────────
+    res.insert("pilPower".into(), json!((pilout["numRows"].as_u64().unwrap() as f64).log2()));
+    res.insert("nCommitments".into(), json!(symbols_val.iter().filter(|s| s["type"] == "witness").count()));
+    res.insert("nConstants".into(), json!(symbols_val.iter().filter(|s| s["type"] == "fixed").count()));
+    res.insert("nPublics".into(), json!(symbols_val.iter().filter(|s| s["type"] == "public").count()));
+    res.insert("airGroupValues".into(), pilout.get("airGroupValues").cloned().unwrap_or(json!([])));
 
-    res.insert(
-        "pilPower".to_string(),
-        json!(pilout["numRows"].as_u64().map(|n| (n as f64).log2()).unwrap_or(0.0).round() as u32),
-    );
-
-    let witness_symbols = symbols
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|s| s["type"] == "witness" && s["airId"] == res["airId"] && s["airGroupId"] == res["airGroupId"])
-        .count();
-
-    let fixed_symbols = symbols
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|s| s["type"] == "fixed" && s["airId"] == res["airId"] && s["airGroupId"] == res["airGroupId"])
-        .count();
-
-    let public_symbols = symbols.as_array().unwrap().iter().filter(|s| s["type"] == "public").count();
-
-    res.insert("nCommitments".to_string(), json!(witness_symbols));
-    res.insert("nConstants".to_string(), json!(fixed_symbols));
-    res.insert("nPublics".to_string(), json!(public_symbols));
-    res.insert("airGroupValues".to_string(), air_group_values.clone());
-
-    let num_challenges = pilout.get("numChallenges").and_then(|v| v.as_array());
-
-    res.insert(
-        "nStages".to_string(),
-        json!(num_challenges.map(|v| v.len()).unwrap_or_else(|| {
-            let max_stage =
-                symbols.as_array().unwrap().iter().map(|s| s["stage"].as_u64().unwrap_or(0)).max().unwrap_or(0);
-            (max_stage as usize) + 1 // Ensure `numChallenges.length` matches JavaScript logic
-        })),
-    );
-
-    let mut pilout = pilout.clone();
-    if !pilout.contains_key("hints") {
-        pilout.insert("hints".to_string(), json!([]));
+    // nStages: either explicit numChallenges or max stage among symbols
+    if let Some(ch) = pilout.get("numChallenges") {
+        res.insert("nStages".into(), json!(ch.as_array().unwrap().len()));
+    } else {
+        let max_stage = symbols_val.iter().map(|s| s["stage"].as_u64().unwrap_or(0)).max().unwrap_or(0);
+        res.insert("nStages".into(), json!(max_stage));
     }
-    let air_hints = pilout["hints"]
-        .as_array()
-        .map(|hints| {
-            hints
-                .iter()
-                .filter(|h| h["airId"] == res["airId"] && h["airGroupId"] == res["airGroupId"])
-                .cloned()
-                .collect::<Vec<Value>>()
+
+    // ─── 6.  hints ───────────────────────────────────────────────────────────
+    let air_hints: Vec<Value> = pilout
+        .get("hints")
+        .and_then(Value::as_array)
+        .map(|v| {
+            v.iter().filter(|h| h["airId"] == res["airId"] && h["airGroupId"] == res["airgroupId"]).cloned().collect()
         })
         .unwrap_or_default();
 
-    let mut symbols_vec = symbols.as_array().unwrap().clone();
-    let mut expressions_vec = expressions.as_array().unwrap().clone();
+    // Convert symbols_val → Vec<HashMap<..>> for format_hints
+    let mut symbols_hash: Vec<HashMap<String, Value>> =
+        symbols_val.iter().map(|v| v.as_object().unwrap().clone().into_iter().collect()).collect();
 
-    let hints = format_hints(&pilout, &air_hints, &mut symbols_vec, &mut expressions_vec, save_symbols, false);
+    // format_hints needs &mut Vec<HashMap<..>>, &mut Vec<Value>, save_symbols, global
+    let hints =
+        format_hints(pilout, &air_hints, &mut symbols_hash, &mut expressions_vec, save_symbols, /*global=*/ false);
 
-    res.insert("customCommits".to_string(), pilout.get("customCommits").cloned().unwrap_or(json!([])));
+    // symbols_hash → back to Vec<Value> so the returned JSON matches JS
+    symbols_val = symbols_hash.into_iter().map(|hm| Value::Object(hm.into_iter().collect())).collect();
 
-    let mut custom_commits_map = vec![];
+    // ─── 7.  customCommits bookkeeping (identical to JS) ─────────────────────
+    let custom_commits = pilout.get("customCommits").cloned().unwrap_or(json!([]));
+    res.insert("customCommits".into(), custom_commits.clone());
 
-    if let Some(commits) = res.remove("customCommits").and_then(|v| v.as_array().cloned()) {
-        for commit in commits.iter() {
-            let mut commit_map = vec![];
-            if let Some(stage_widths) = commit["stageWidths"].as_array() {
-                for (j, width) in stage_widths.iter().enumerate() {
-                    if width.as_u64().unwrap_or(0) > 0 {
-                        res.entry("mapSectionsN".to_string())
-                            .or_insert_with(|| json!(HashMap::<String, Value>::new()))
-                            .as_object_mut()
-                            .unwrap()
-                            .insert(format!("{}{}", commit["name"], j), json!(0));
-                    }
-                    commit_map.push(json!({}));
+    // Fill mapSectionsN & customCommitsMap
+    let mut cc_map: Vec<Value> = vec![];
+    if let Some(arr) = custom_commits.as_array() {
+        for cc in arr {
+            let mut stages = vec![];
+            for (j, w) in cc["stageWidths"].as_array().unwrap().iter().enumerate() {
+                if w.as_u64().unwrap() > 0 {
+                    res.entry("mapSectionsN".into())
+                        .or_insert_with(|| json!({}))
+                        .as_object_mut()
+                        .unwrap()
+                        .insert(format!("{}{}", cc["name"], j), json!(0));
                 }
+                stages.push(json!(null));
             }
-            custom_commits_map.push(json!(commit_map));
+            cc_map.push(json!(stages));
         }
-        res.insert("customCommits".to_string(), json!(commits)); // Put it back after processing
     }
+    res.insert("customCommitsMap".into(), json!(cc_map));
 
-    res.insert("customCommitsMap".to_string(), json!(custom_commits_map));
-
+    // ─── 8.  final object exactly like the JS returns ────────────────────────
     json!({
-        "expressions": expressions,
-        "hints": hints,
+        "expressions": Value::Array(expressions_vec),
+        "hints":       hints,
         "constraints": constraints,
-        "symbols": symbols
+        "symbols":     Value::Array(symbols_val)
     })
-    .as_object()
-    .unwrap()
-    .clone()
-    .into_iter()
-    .map(|(k, v)| (k.clone(), v.clone())) // Convert `serde_json::Map` to `HashMap<String, Value>`
-    .collect()
 }
-
-use crate::utils::buf2bint;
-use std::fs;
-use std::path::Path;
 
 /// Processes fixed polynomials from PIL2 and saves them to a file.
 pub fn get_fixed_pols_pil2(
