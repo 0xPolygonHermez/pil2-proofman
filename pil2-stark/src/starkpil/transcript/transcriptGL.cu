@@ -6,23 +6,9 @@
 __device__ __constant__ gl64_t GPU_C[118];
 __device__ __constant__ gl64_t GPU_D[12];
 
-void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size)
-{
-   _add<<<1,1>>>(input, size, state, pending, out, pending_cursor, out_cursor, state_cursor);
-}
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor) 
 {
-
-    static int initialized = 0;
-
-    if (initialized == 0)
-    {
-        initialized = 1;
-        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-    
-    }
     
     while(*pending_cursor < TRANSCRIPT_PENDING_SIZE) {
         pending[*pending_cursor].fe = 0;
@@ -37,7 +23,7 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     {
         inputs[i + TRANSCRIPT_PENDING_SIZE] = state[i];
     }
-    hash_full_result_seq_2(out, inputs, GPU_C, GPU_D);
+    hash_full_result_seq_2((gl64_t*)out, (gl64_t*)inputs, GPU_C, GPU_D);
 
     *out_cursor = TRANSCRIPT_OUT_SIZE;
     for (int i = 0; i < TRANSCRIPT_PENDING_SIZE; i++)
@@ -51,6 +37,15 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     }
 }
 
+__device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor){
+    if (*out_cursor == 0)
+    {
+        _updateState(state, pending, out, pending_cursor, out_cursor, state_cursor);
+    }
+    Goldilocks::Element res = out[(TRANSCRIPT_OUT_SIZE - *out_cursor) % TRANSCRIPT_OUT_SIZE];
+    *out_cursor=*out_cursor - 1;
+    return res;
+}
 
 __global__ void _add(Goldilocks::Element* input, uint64_t size,  Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor)
 {
@@ -66,62 +61,49 @@ __global__ void _add(Goldilocks::Element* input, uint64_t size,  Goldilocks::Ele
     }
 }
 
-void TranscriptGL_GPU::getField(uint64_t* output)
+__global__ void _getField(uint64_t* output, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor)
 {
     for (int i = 0; i < 3; i++)
     {
-        Goldilocks::Element val = getFields1();
+        Goldilocks::Element val = _getFields1(state, pending, out, pending_cursor, out_cursor, state_cursor);
         output[i] = val.fe;
     }
+   
 }
 
-void TranscriptGL_GPU::getState(Goldilocks::Element* output) {
-    /*if(pending_cursor > 0) {
-        _updateState();
-    }
-    std::memcpy(output, state, TRANSCRIPT_STATE_SIZE * sizeof(Goldilocks::Element));*/
-}
-
-void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs) {
-    /*if(pending_cursor > 0) {
-        _updateState();
-    }
-    std::memcpy(output, state, nOutputs * sizeof(Goldilocks::Element));8*/
-}
-
-Goldilocks::Element TranscriptGL_GPU::getFields1()
+__global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor)
 {
-    /*if (out_cursor == 0)
+    if (*pending_cursor > 0)
     {
-        _updateState();
+        _updateState(state, pending, out, pending_cursor, out_cursor, state_cursor);
     }
-    Goldilocks::Element res = out[(TRANSCRIPT_OUT_SIZE - out_cursor) % TRANSCRIPT_OUT_SIZE];
-    out_cursor--;
-    return res;*/
+    for (int i = 0; i < nOutputs; i++)
+    {
+        output[i] = state[i];
+    }
 }
 
-void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits)
-{
-    /*uint64_t totalBits = n * nBits;
+__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor){
+
+    uint64_t totalBits = n * nBits;
 
     uint64_t NFields = floor((float)(totalBits - 1) / 63) + 1;
-    Goldilocks::Element fields[NFields];
+    Goldilocks::Element* fields = new Goldilocks::Element[NFields];
 
     for (uint64_t i = 0; i < NFields; i++)
     {
-        fields[i] = getFields1();
+        fields[i] = _getFields1(state, pending, out, pending_cursor, out_cursor, state_cursor);
     }
-    
-    std::string permutation = " ";
 
     uint64_t curField = 0;
     uint64_t curBit = 0;
+    gl64_t* fields_ = (gl64_t*)fields;
     for (uint64_t i = 0; i < n; i++)
     {
         uint64_t a = 0;
         for (uint64_t j = 0; j < nBits; j++)
         {
-            uint64_t bit = (Goldilocks::toU64(fields[curField]) >> curBit) & 1;
+            uint64_t bit = (uint64_t(fields_[curField]) >> curBit) & 1;
             if (bit)
                 a = a + (1 << j);
             curBit++;
@@ -132,6 +114,44 @@ void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits
             }
         }
         res[i] = a;
-        permutation += std::to_string(a) + " ";
-    }*/
+    }
+    delete[] fields;
+}
+
+
+void TranscriptGL_GPU::init_const()
+{
+    static int initialized = 0;
+    if (initialized == 0)
+    {
+        initialized = 1;
+        
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+       
+    }
+}
+
+void TranscriptGL_GPU::put(Goldilocks::Element *input, uint64_t size)
+{
+   _add<<<1,1>>>(input, size, state, pending, out, pending_cursor, out_cursor, state_cursor);
+}
+
+void TranscriptGL_GPU::getField(uint64_t* output)
+{
+    _getField<<<1, 1>>>(output, state, pending, out, pending_cursor, out_cursor, state_cursor);
+    
+} 
+
+void TranscriptGL_GPU::getState(Goldilocks::Element* output) {
+    __getState<<<1, 1>>>(output, TRANSCRIPT_STATE_SIZE, state, pending, out, pending_cursor, out_cursor, state_cursor);
+}
+
+void TranscriptGL_GPU::getState(Goldilocks::Element* output, uint64_t nOutputs) {
+    __getState<<<1, 1>>>(output, nOutputs, state, pending, out, pending_cursor, out_cursor, state_cursor);
+}
+
+void TranscriptGL_GPU::getPermutations(uint64_t *res, uint64_t n, uint64_t nBits)
+{
+   __getPermutations<<<1, 1>>>(res, n, nBits, state, pending, out, pending_cursor, out_cursor, state_cursor);
 }

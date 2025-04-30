@@ -7,6 +7,7 @@
 #include "gl64_t.cuh"
 #include "expressions_gpu.cuh"
 #include "starks_gpu.cuh"
+#include "transcriptGL.cuh"
 #include <iomanip>
 
 // TOTO list: //rick
@@ -128,6 +129,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
     
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
+    TranscriptGL_GPU d_transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
+
     TimerStopAndLog(STARK_INITIALIZATION);
     TimerStart(STARK_STEP_0);
     for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {

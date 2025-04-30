@@ -14,8 +14,12 @@
 #define TRANSCRIPT_PENDING_SIZE 8
 #define TRANSCRIPT_OUT_SIZE 12
 
+
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
-__global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
+__device__ Goldilocks::Element _getFields1(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);__global__ void _add(Goldilocks::Element* input, uint64_t size, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
+__global__ void _getField(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
+__global__ void __getState(Goldilocks::Element* output, uint64_t nOutputs, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
+__global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor);
 
 class TranscriptGL_GPU
 {
@@ -45,6 +49,7 @@ public:
         cudaMemset(pending_cursor, 0, sizeof(uint));
         cudaMemset(out_cursor, 0, sizeof(uint));
         cudaMemset(state_cursor, 0, sizeof(uint));
+        init_const();
     }
     ~TranscriptGL_GPU()
     {
@@ -55,12 +60,15 @@ public:
         cudaFree(out_cursor);
         cudaFree(state_cursor);
     }
+    
     void put(Goldilocks::Element *input, uint64_t size);
     void getField(uint64_t *output);
     void getState(Goldilocks::Element* output);
     void getState(Goldilocks::Element* output, uint64_t nOutputs);
     void getPermutations(uint64_t *res, uint64_t n, uint64_t nBits);
-    Goldilocks::Element getFields1();
+
+private:
+    void init_const();
 };
 
 #endif
