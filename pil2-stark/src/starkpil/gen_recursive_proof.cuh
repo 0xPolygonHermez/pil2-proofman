@@ -351,11 +351,11 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     // TODO: WRONG, d_queries_buff not declared
-    proveQueries_inplace(setupCtx, d_constTree, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesGL, nTrees, d_buffers, d_constTree, setupCtx.starkInfo.nStages, h_params);
+    proveQueries_inplace(setupCtx, d_constTree, friQueries, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_buffers, d_constTree, setupCtx.starkInfo.nStages, h_params);
     
     for(uint64_t step = 1; step < setupCtx.starkInfo.starkStruct.steps.size(); ++step) {
         // TODO: WRONG, d_queries_buff not declared
-        proveFRIQueries_inplace(setupCtx, d_constTree, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, friQueries, setupCtx.starkInfo.starkStruct.nQueries, proof, starks.treesFRI[step - 1]);
+        proveFRIQueries_inplace(setupCtx, d_constTree, step, setupCtx.starkInfo.starkStruct.steps[step].nBits, friQueries, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step - 1]);
     }
 
 
