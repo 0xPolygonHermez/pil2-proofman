@@ -43,6 +43,7 @@ void TranscriptGL::getField(uint64_t* output)
         Goldilocks::Element val = getFields1();
         output[i] = val.fe;
     }
+    cout << "OUTPUT " << output[0] << " " << output[1] << " " << output[2] << endl;
 }
 
 void TranscriptGL::getState(Goldilocks::Element* output) {

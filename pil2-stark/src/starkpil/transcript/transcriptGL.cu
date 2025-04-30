@@ -12,7 +12,7 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     
     while(*pending_cursor < TRANSCRIPT_PENDING_SIZE) {
         pending[*pending_cursor].fe = 0;
-        *pending_cursor++;
+        (*pending_cursor) += 1;
     }
     Goldilocks::Element inputs[TRANSCRIPT_OUT_SIZE];
     for (int i = 0; i < TRANSCRIPT_PENDING_SIZE; i++)
@@ -52,7 +52,7 @@ __global__ void _add(Goldilocks::Element* input, uint64_t size,  Goldilocks::Ele
     for (uint64_t i = 0; i < size; i++)
     {
         pending[*pending_cursor] = input[i];
-        *pending_cursor++;
+        (*pending_cursor) += 1;
         *out_cursor = 0;
         if (*pending_cursor == TRANSCRIPT_PENDING_SIZE)
         {
@@ -68,6 +68,7 @@ __global__ void _getField(uint64_t* output, Goldilocks::Element* state, Goldiloc
         Goldilocks::Element val = _getFields1(state, pending, out, pending_cursor, out_cursor, state_cursor);
         output[i] = val.fe;
     }
+    printf("output GPU: %llu %llu %llu\n", output[0], output[1], output[2]);
    
 }
 
