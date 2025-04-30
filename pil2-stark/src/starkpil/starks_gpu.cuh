@@ -60,9 +60,9 @@ __global__ void insertTracePol(Goldilocks::Element *d_aux_trace, uint64_t offset
 
 __global__ void fillLEv_2d(gl64_t* d_LEv, gl64_t *d_xiChallenge, uint64_t W_, uint64_t nOpeningPoints, int64_t *d_openingPoints, uint64_t shift_, uint64_t N);
 
-void computeLEv_inplace(Goldilocks::Element *xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime=nullptr);
+void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime=nullptr);
 
-void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks::Element *xiChallenge);
+void calculateXis_inplace(SetupCtx &setupCtx, StepsParams &h_params, Goldilocks::Element *d_xiChallenge);
 
 __global__ void computeEvals_v2(
     uint64_t extendBits,
@@ -80,7 +80,7 @@ void commitStage_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL**treesG
 void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_witness, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, TranscriptGL_GPU *d_transcript, double *nttTime = nullptr, double *merkleTime=nullptr);
 void computeQ_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, TranscriptGL_GPU *d_transcript, double *nttTime=nullptr, double *merkleTime=nullptr);
 
-void evmap_inplace(Goldilocks::Element * evals, StepsParams &d_params, FRIProof<Goldilocks::Element> &proof, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv_);
+void evmap_inplace(StepsParams &d_params, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv_);
 
 __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_twiddles, uint32_t ncols);
 
@@ -90,7 +90,7 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper,
 
 __global__ void transposeFRI(gl64_t *d_aux, gl64_t *pol, uint64_t degree, uint64_t width);
 
-void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &d_param, uint64_t step, FRIProof<Goldilocks::Element> &proof, gl64_t *pol, MerkleTreeGL *treeFRI, uint64_t currentBits, uint64_t nextBits, TranscriptGL_GPU *d_transcript, double * merkleTime=nullptr);
+void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &d_param, uint64_t step, gl64_t *pol, MerkleTreeGL *treeFRI, uint64_t currentBits, uint64_t nextBits, TranscriptGL_GPU *d_transcript, double * merkleTime=nullptr);
 
 __global__ void getTreeTracePols(gl64_t *d_treeTrace, uint64_t traceWidth, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth);
 
@@ -98,8 +98,10 @@ __device__ void genMerkleProof_(gl64_t *nodes, gl64_t *proof, uint64_t idx, uint
 
 __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t sizeLeaves, uint64_t *d_friQueries, uint64_t nQueries, gl64_t *d_buffer, uint64_t bufferWidth, uint64_t maxTreeWidth, uint64_t nFieldElements);
 
-void proveQueries_inplace(SetupCtx& setupCtx, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, gl64_t* d_const_tree, uint32_t nStages, StepsParams &d_params);
-void proveFRIQueries_inplace(SetupCtx& setupCtx, uint64_t step, uint64_t currentBits, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL *treeFRI);
+__global__ void moduleQueries(uint64_t* d_friQueries, uint64_t nQueries, uint64_t currentBits);
+
+void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL **trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, gl64_t* d_const_tree, uint32_t nStages, StepsParams &d_params);
+void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t step, uint64_t currentBits, uint64_t *friQueries, uint64_t nQueries, FRIProof<Goldilocks::Element> &fproof, MerkleTreeGL *treeFRI);
 
 void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams& h_params, StepsParams *d_params, int64_t step);
 
@@ -110,4 +112,5 @@ void calculateHash(Goldilocks::Element* hash, SetupCtx &setupCtx, Goldilocks::El
 void offloadCommit(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, FRIProof<Goldilocks::Element> &proof, SetupCtx &setupCtx);
 void offloadCommitFRI(uint64_t step, MerkleTreeGL *treeFRI, FRIProof<Goldilocks::Element> &proof, SetupCtx &setupCtx);
 void offloadFinalPol(gl64_t *d_fri_pol, FRIProof<Goldilocks::Element> &proof, uint64_t nBits);
+void offloadQueries(gl64_t *d_queries_buff, MerkleTreeGL **treesGL, FRIProof<Goldilocks::Element> &proof, uint64_t nTrees, uint64_t nQueries);
 #endif

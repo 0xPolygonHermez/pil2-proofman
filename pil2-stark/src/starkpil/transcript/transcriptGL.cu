@@ -68,7 +68,6 @@ __global__ void _getField(uint64_t* output, Goldilocks::Element* state, Goldiloc
         Goldilocks::Element val = _getFields1(state, pending, out, pending_cursor, out_cursor, state_cursor);
         output[i] = val.fe;
     }
-    printf("output GPU: %llu %llu %llu\n", output[0], output[1], output[2]);
    
 }
 
