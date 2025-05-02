@@ -761,21 +761,42 @@ pub fn format_expression(
             let exp_op = pil_expr.as_object().unwrap().keys().next().unwrap();
 
             /* replicate the JS “skip to lhs” micro-optimisation */
-            let skip_to_lhs = exp_op != "mul" && exp_op != "neg" && {
-                let lhs_key = pil_expr[exp_op]["lhs"].as_object().unwrap().keys().next().unwrap();
-                let rhs_key = pil_expr[exp_op]["rhs"].as_object().unwrap().keys().next().unwrap();
-                lhs_key != "expression" && rhs_key == "constant" && {
-                    // constant RHS must be zero
-                    let c_val = &pil_expr[exp_op]["rhs"]["constant"]["value"];
-                    let zero = match c_val {
-                        Value::String(s) => buf_to_u128(s.as_bytes()),
-                        Value::Array(a) => {
-                            let bytes: Vec<u8> = a.iter().map(|v| v.as_u64().unwrap() as u8).collect();
-                            buf_to_u128(&bytes)
+            /* ───── JS “skip-to-lhs” optimisation … rewritten with Option-checks ─── */
+            let skip_to_lhs = {
+                // (1) only applicable when the operator is **not** mul / neg
+                if exp_op == "mul" || exp_op == "neg" {
+                    false
+                } else {
+                    // grab lhs / rhs objects (may be absent)
+                    if let (Some(lhs), Some(rhs)) = (pil_expr[exp_op].get("lhs"), pil_expr[exp_op].get("rhs")) {
+                        // top-level keys of lhs / rhs
+                        let empty_string = "".to_string();
+                        let lhs_key = lhs.as_object().and_then(|o| o.keys().next()).unwrap_or(&empty_string);
+                        let rhs_key = rhs.as_object().and_then(|o| o.keys().next()).unwrap_or(&empty_string);
+
+                        // we can only skip when lhs is *not* an `expression`
+                        // and rhs is a constant equal to zero
+                        if lhs_key != "expression" && rhs_key == "constant" {
+                            if let Some(c_val) = rhs["constant"].get("value") {
+                                let zero = if c_val.is_string() {
+                                    buf_to_u128(c_val.as_str().unwrap().as_bytes())
+                                } else if c_val.is_array() {
+                                    let bytes: Vec<u8> =
+                                        c_val.as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u8).collect();
+                                    buf_to_u128(&bytes)
+                                } else {
+                                    1 /* non-zero sentinel */
+                                };
+                                zero == 0
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
                         }
-                        _ => 1, // non-zero fallback ⇒ no skip
-                    };
-                    zero == 0
+                    } else {
+                        false
+                    }
                 }
             };
 
