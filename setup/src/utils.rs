@@ -911,6 +911,8 @@ pub fn format_expression(
         }
 
         // ---------------------------------------------------------------- default
+        "operation" => formatted = format_expression(pilout, symbols, &exp["operation"], save_symbols, global),
+        "operand" => formatted = format_expression(pilout, symbols, &exp["operand"], save_symbols, global),
         _ => panic!("Unknown op: {:?}", exp),
     }
 
