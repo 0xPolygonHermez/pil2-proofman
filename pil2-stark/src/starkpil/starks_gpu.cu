@@ -41,6 +41,14 @@ Goldilocks::Element omegas_inv_[33] = {
     0x16d265893b5b7e85,
 };
 
+__global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Element shift, Goldilocks::Element w) {
+    uint32_t k = blockIdx.x * blockDim.x + threadIdx.x;
+    if (k >= NExtended) return;
+
+    gl64_t w_k = gl64_t(w.fe) ^ k;
+    x[k] = gl64_t(shift.fe) * w_k;
+}
+
 void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers, TranscriptGL_GPU *d_transcript, double *nttTime, double *merkleTime)
 {
     if (step <= setupCtx.starkInfo.nStages)
@@ -333,15 +341,15 @@ __global__ void computeEvals_v2(
     }
 }
 
-void evmap_inplace(StepsParams &h_params, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv)
+void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, DeviceCommitBuffers *d_buffers, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv)
 {
 
-    uint64_t offsetConstTree = starks->setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
+    uint64_t offsetConstTree = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
     gl64_t *d_constTree = (gl64_t *)h_params.pConstPolsExtendedTreeAddress;
 
-    uint64_t extendBits = starks->setupCtx.starkInfo.starkStruct.nBitsExt - starks->setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t size_eval = starks->setupCtx.starkInfo.evMap.size();
-    uint64_t N = 1 << starks->setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t extendBits = setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t size_eval = setupCtx.starkInfo.evMap.size();
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
 
     EvalInfo *evalsInfo = new EvalInfo[size_eval];
 
@@ -349,18 +357,18 @@ void evmap_inplace(StepsParams &h_params, Starks<Goldilocks::Element> *starks, D
 
     for (uint64_t i = 0; i < size_eval; i++)
     {
-        EvMap ev = starks->setupCtx.starkInfo.evMap[i];
+        EvMap ev = setupCtx.starkInfo.evMap[i];
         auto it = std::find(openingPoints, openingPoints + nOpeningPoints, ev.prime);
         bool containsPrime = it != openingPoints + nOpeningPoints;
         if(!containsPrime) continue;
         string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom"
                                                                                            : "fixed";
-        PolMap polInfo = type == "cm" ? starks->setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? starks->setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id]
-                                                                                                       : starks->setupCtx.starkInfo.constPolsMap[ev.id];
+        PolMap polInfo = type == "cm" ? setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id]
+                                                                                                       : setupCtx.starkInfo.constPolsMap[ev.id];
         evalsInfo[nEvals].type = type == "cm" ? 0 : type == "custom" ? 1
                                                                 : 2; //rick: harcoded
-        evalsInfo[nEvals].offset = starks->setupCtx.starkInfo.getTraceOffset(type, polInfo, true);
-        evalsInfo[nEvals].stride = starks->setupCtx.starkInfo.getTraceNColsSection(type, polInfo, true);
+        evalsInfo[nEvals].offset = setupCtx.starkInfo.getTraceOffset(type, polInfo, true);
+        evalsInfo[nEvals].stride = setupCtx.starkInfo.getTraceNColsSection(type, polInfo, true);
         evalsInfo[nEvals].dim = polInfo.dim;
         evalsInfo[nEvals].openingPos = std::distance(openingPoints, it);
         evalsInfo[nEvals].evalPos = i;
@@ -750,8 +758,6 @@ void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, Ste
 }
 
 void writeProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, uint64_t *proof_buffer, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, std::string proofFile) {
-    Starks<Goldilocks::Element> starks(setupCtx, nullptr, nullptr, false);
-
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
 
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -787,13 +793,35 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, uint64_t *
     Goldilocks::Element *d_queries_buff = h_aux_trace + offsetProofQueries;
     CHECKCUDAERR(cudaMemcpy(queries, d_queries_buff, queriesProofSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
     int count = 0;
-    for (uint k = 0; k < nTrees; k++)
+    for (uint k = 0; k < setupCtx.starkInfo.nStages + 1; k++)
     {
         for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
         {
-            uint64_t width = starks.treesGL[k]->getMerkleTreeWidth();
-            uint64_t proofLength = starks.treesGL[k]->getMerkleProofLength();
-            uint64_t numSiblings = starks.treesGL[k]->getNumSiblings();
+            uint64_t width = setupCtx.starkInfo.mapSectionsN["cm" + to_string(k + 1)];
+            uint64_t proofLength = (uint64_t)ceil(log10(NExtended) / log10(setupCtx.starkInfo.starkStruct.merkleTreeArity));
+            uint64_t numSiblings = (setupCtx.starkInfo.starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+            MerkleProof<Goldilocks::Element> mkProof(width, proofLength, numSiblings, (void *) &queries[count * setupCtx.starkInfo.maxProofBuffSize], setupCtx.starkInfo.maxTreeWidth);
+            proof.proof.fri.trees.polQueries[i].push_back(mkProof);
+            ++count;
+        }
+    }
+
+    for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
+    {
+        uint64_t width = setupCtx.starkInfo.nConstants;
+        uint64_t proofLength = (uint64_t)ceil(log10(NExtended) / log10(setupCtx.starkInfo.starkStruct.merkleTreeArity));
+        uint64_t numSiblings = (setupCtx.starkInfo.starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+        MerkleProof<Goldilocks::Element> mkProof(width, proofLength, numSiblings, (void *) &queries[count * setupCtx.starkInfo.maxProofBuffSize], setupCtx.starkInfo.maxTreeWidth);
+        proof.proof.fri.trees.polQueries[i].push_back(mkProof);
+        ++count;
+    }
+
+    if(nTrees > setupCtx.starkInfo.nStages + 2){
+        for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
+        {
+            uint64_t width = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
+            uint64_t proofLength = (uint64_t)ceil(log10(NExtended) / log10(setupCtx.starkInfo.starkStruct.merkleTreeArity));
+            uint64_t numSiblings = (setupCtx.starkInfo.starkStruct.merkleTreeArity - 1) * HASH_SIZE;
             MerkleProof<Goldilocks::Element> mkProof(width, proofLength, numSiblings, (void *) &queries[count * setupCtx.starkInfo.maxProofBuffSize], setupCtx.starkInfo.maxTreeWidth);
             proof.proof.fri.trees.polQueries[i].push_back(mkProof);
             ++count;
@@ -806,10 +834,10 @@ void writeProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, uint64_t *
         for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
         {
             Goldilocks::Element *queriesFRI = &queries[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize];
-            uint64_t width = starks.treesFRI[step]->getMerkleTreeWidth();
-            uint64_t proofLength = starks.treesFRI[step]->getMerkleProofLength();
-            uint64_t proofSize = starks.treesFRI[step]->getMerkleProofSize();
-            uint64_t numSiblings = starks.treesFRI[step]->getNumSiblings();
+            uint64_t width = FIELD_EXTENSION * (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) / (1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
+            uint64_t proofLength = (uint64_t)ceil(log10(1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits) / log10(setupCtx.starkInfo.starkStruct.merkleTreeArity));
+            uint64_t numSiblings = (setupCtx.starkInfo.starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+            uint64_t proofSize = proofLength * numSiblings;
             uint64_t buffSize = width + proofSize;
             MerkleProof<Goldilocks::Element> mkProof(width, proofLength, numSiblings, (void *)&queriesFRI[i * buffSize], width);
             proof.proof.fri.treesFRI[step].polQueries[i].push_back(mkProof);

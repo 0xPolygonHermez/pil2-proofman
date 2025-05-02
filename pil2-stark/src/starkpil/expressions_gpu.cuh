@@ -91,7 +91,7 @@ public:
     DeviceArguments *d_deviceArgs;
     DeviceArguments h_deviceArgs;
 
-    ExpressionsGPU(SetupCtx &setupCtx, ProverHelpers& proverHelpers, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
+    ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();
 
     void loadDeviceArgs(uint64_t domainSize, Dest &dest);

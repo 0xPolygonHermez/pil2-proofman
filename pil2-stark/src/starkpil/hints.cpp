@@ -318,7 +318,7 @@ void getHintField(
                 ProverHelpers proverHelpers;
 
             if(hintOptions.compilation_time) {
-                ExpressionsPack expressionsCtx(setupCtx, proverHelpers, 1);
+                ExpressionsPack expressionsCtx(setupCtx, &proverHelpers, 1);
                 expressionsCtx.calculateExpression(params, hintFieldInfo.values, hintFieldVal.id, hintOptions.inverse, true);
             } else {
                 expressionsCtx.calculateExpression(params, hintFieldInfo.values, hintFieldVal.id, hintOptions.inverse, false);
@@ -635,7 +635,7 @@ uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t h
     addHintField(setupCtx, params, hintId, destStruct, hintFieldName2, hintOptions2);
 
     ProverHelpers proverHelpers;
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers, 1);
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers, 1);
     expressionsCtx.calculateExpressions(params, destStruct, 1, false, false);
 
     Goldilocks::Element *airgroupValue = &params.airgroupValues[FIELD_EXTENSION*hintFieldAirgroupVal.id];

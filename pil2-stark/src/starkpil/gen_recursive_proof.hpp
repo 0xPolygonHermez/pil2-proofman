@@ -12,7 +12,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     
     Starks<ElementType> starks(setupCtx, pConstTree);
     
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
 
