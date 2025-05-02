@@ -203,15 +203,6 @@ uint64_t get_max_n_tmp3(void *pExpressionsBin){
     return expressionsBin->maxTmp3;
 };
 
-uint64_t get_max_args(void *pExpressionsBin){
-    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
-    return expressionsBin->maxArgs;
-};
-
-uint64_t get_max_ops(void *pExpressionsBin){
-    auto expressionsBin = (ExpressionsBin *)pExpressionsBin;
-    return expressionsBin->maxOps;
-};
 
 void expressions_bin_free(void *pExpressionsBin)
 {

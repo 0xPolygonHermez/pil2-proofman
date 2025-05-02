@@ -6,8 +6,8 @@
 
 extern __shared__ Goldilocks::Element scratchpad[];
 
-#define DEBUG 0
-#define DEBUG_ROW 0
+#define DEBUG 1
+#define DEBUG_ROW 1
 __device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t dimA,  bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps);
 __device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimRes, int i);
 
@@ -297,8 +297,14 @@ __device__ __forceinline__ Goldilocks::Element* load__(
     if (type == 5) {
         const gl64_t* xDivX = (gl64_t*)&dParams->xDivXSub[argIdx * FIELD_EXTENSION];
         const gl64_t* x = (gl64_t*)&dParams->aux_trace[dArgs->x_offset + row];
+        #if DEBUG
+            printArguments((Goldilocks::Element *)x, 1, false, &dParams->xDivXSub[argIdx * FIELD_EXTENSION], 3, true, row, 3, 0, 0);
+        #endif
         Goldilocks3GPU::sub_13_gpu_b_const((gl64_t*)temp, x, xDivX);
         getInversePolinomial__((gl64_t*)temp, 3);
+        #if DEBUG
+            printArguments(temp, 3, false, &dParams->aux_trace[dArgs->x_offset + row], 1, false, row, 2, 0, 0);
+        #endif
         Goldilocks3GPU::mul_31_gpu_no_const((gl64_t*)temp, (gl64_t*)temp, x);
         return temp;
     }
@@ -466,18 +472,18 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
 }
 
 __device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t dimA, bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps){
-    bool print = (threadIdx.x == 0  && i == DEBUG_ROW);
+    bool print = (i + threadIdx.x == DEBUG_ROW);
     if(print){
         printf("Expression debug op: %lu of %lu with type %lu\n", op, nOps, op_type);
         if(a!= NULL){
             for(uint32_t i = 0; i < dimA; i++){
-                Goldilocks::Element val = constA ? a[i] : a[i*blockDim.x];
+                Goldilocks::Element val = constA ? a[i] : a[i*blockDim.x + 1];
                 printf("Expression debug a[%d]: %lu (constant %u)\n", i, val.fe % GOLDILOCKS_PRIME, constA);
             }
         }
         if(b!= NULL){
             for(uint32_t i = 0; i < dimB; i++){
-                Goldilocks::Element val = constB ? b[i] : b[i*blockDim.x];
+                Goldilocks::Element val = constB ? b[i] : b[i*blockDim.x + 1];
                 printf("Expression debug b[%d]: %lu (constant %u)\n", i, val.fe % GOLDILOCKS_PRIME, constB);
             }
 
@@ -486,10 +492,10 @@ __device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t 
 }
 
 __device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimRes, int i){
-    bool print = threadIdx.x == 0  && i == DEBUG_ROW;
+    bool print = (i + threadIdx.x == DEBUG_ROW);
     if(print){
         for(uint32_t i = 0; i < dimRes; i++){
-            printf("Expression debug res[%d]: %lu\n", i, res[i*blockDim.x].fe % GOLDILOCKS_PRIME);
+            printf("Expression debug res[%d]: %lu\n", i, res[i*blockDim.x + 1].fe % GOLDILOCKS_PRIME);
         }
     }
 }

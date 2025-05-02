@@ -17,38 +17,18 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
 
     maxTmp1 = expressionsBin->readU32LE();
     maxTmp3 = expressionsBin->readU32LE();
-    maxArgs = expressionsBin->readU32LE();
-    maxOps = expressionsBin->readU32LE();
-
-    // expressionsBin->readU32LE();
-    // expressionsBin->readU32LE();
 
     uint32_t nOpsExpressions = expressionsBin->readU32LE();
     nOpsTotal = nOpsExpressions;
     uint32_t nArgsExpressions = expressionsBin->readU32LE();
     nArgsTotal = nArgsExpressions;
     uint32_t nNumbersExpressions = expressionsBin->readU32LE();
-    uint32_t nConstPolsIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nCmPolsIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nChallengesIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nPublicsIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nAirgroupValuesIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nAirValuesIdsExpressions = expressionsBin->readU32LE();
-    uint64_t nCustomCommitsPolsIdsExpressions = expressionsBin->readU32LE();
 
     expressionsBinArgsExpressions.ops = new uint8_t[nOpsExpressions];
     expressionsBinArgsExpressions.args = new uint16_t[nArgsExpressions];
     expressionsBinArgsExpressions.numbers = new Goldilocks::Element[nNumbersExpressions];
-    expressionsBinArgsExpressions.constPolsIds = new uint16_t[nConstPolsIdsExpressions];
-    expressionsBinArgsExpressions.cmPolsIds = new uint16_t[nCmPolsIdsExpressions];
-    expressionsBinArgsExpressions.challengesIds = new uint16_t[nChallengesIdsExpressions];
-    expressionsBinArgsExpressions.publicsIds = new uint16_t[nPublicsIdsExpressions];
-    expressionsBinArgsExpressions.airgroupValuesIds = new uint16_t[nAirgroupValuesIdsExpressions];
-    expressionsBinArgsExpressions.airValuesIds = new uint16_t[nAirValuesIdsExpressions];
-    expressionsBinArgsExpressions.customCommitsPolsIds = new uint16_t[nCustomCommitsPolsIdsExpressions];
     expressionsBinArgsExpressions.nNumbers = nNumbersExpressions;
 
-    uint64_t nCustomCommits = expressionsBin->readU32LE();
     uint64_t nExpressions = expressionsBin->readU32LE();
 
     for(uint64_t i = 0; i < nExpressions; ++i) {
@@ -70,33 +50,6 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
         parserParamsExpression.nArgs = expressionsBin->readU32LE();
         parserParamsExpression.argsOffset = expressionsBin->readU32LE();
 
-        parserParamsExpression.nConstPolsUsed = expressionsBin->readU32LE();
-        parserParamsExpression.constPolsOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nCmPolsUsed = expressionsBin->readU32LE();
-        parserParamsExpression.cmPolsOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nChallengesUsed = expressionsBin->readU32LE();
-        parserParamsExpression.challengesOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nPublicsUsed = expressionsBin->readU32LE();
-        parserParamsExpression.publicsOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nAirgroupValuesUsed = expressionsBin->readU32LE();
-        parserParamsExpression.airgroupValuesOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nAirValuesUsed = expressionsBin->readU32LE();
-        parserParamsExpression.airValuesOffset = expressionsBin->readU32LE();
-        
-        std::vector<uint32_t> nCustomCommitsPolsUsed(nCustomCommits);
-        std::vector<uint32_t> customCommitsOffset(nCustomCommits);
-        for(uint64_t j = 0; j < nCustomCommits; ++j) {
-            nCustomCommitsPolsUsed[j] = expressionsBin->readU32LE();
-            customCommitsOffset[j] = expressionsBin->readU32LE();
-        }
-        parserParamsExpression.nCustomCommitsPolsUsed = nCustomCommitsPolsUsed;
-        parserParamsExpression.customCommitsOffset = customCommitsOffset;
-
         parserParamsExpression.line = expressionsBin->readString();
 
         expressionsInfo[expId] = parserParamsExpression;
@@ -112,60 +65,18 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
         expressionsBinArgsExpressions.numbers[j] = Goldilocks::fromU64(expressionsBin->readU64LE());
     }
 
-    for(uint64_t j = 0; j < nConstPolsIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.constPolsIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nCmPolsIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.cmPolsIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nChallengesIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.challengesIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nPublicsIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.publicsIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nAirgroupValuesIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.airgroupValuesIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nAirValuesIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.airValuesIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nCustomCommitsPolsIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.customCommitsPolsIds[j] = expressionsBin->readU16LE();
-    }
     expressionsBin->endReadSection();
     expressionsBin->startReadSection(BINARY_CONSTRAINTS_SECTION);
 
     nOpsDebug = expressionsBin->readU32LE();
     nArgsDebug = expressionsBin->readU32LE();
     uint32_t nNumbersDebug = expressionsBin->readU32LE();
-    uint32_t nConstPolsIdsDebug = expressionsBin->readU32LE();
-    uint32_t nCmPolsIdsDebug = expressionsBin->readU32LE();
-    uint32_t nChallengesIdsDebug = expressionsBin->readU32LE();
-    uint32_t nPublicsIdsDebug = expressionsBin->readU32LE();
-    uint32_t nAirgroupValuesIdsDebug = expressionsBin->readU32LE();
-    uint32_t nAirValuesIdsDebug = expressionsBin->readU32LE();
-    uint64_t nCustomCommitsPolsIdsDebug = expressionsBin->readU32LE();
 
     expressionsBinArgsConstraints.ops = new uint8_t[nOpsDebug];
     expressionsBinArgsConstraints.args = new uint16_t[nArgsDebug];
     expressionsBinArgsConstraints.numbers = new Goldilocks::Element[nNumbersDebug];
-    expressionsBinArgsConstraints.constPolsIds = new uint16_t[nConstPolsIdsDebug];
-    expressionsBinArgsConstraints.cmPolsIds = new uint16_t[nCmPolsIdsDebug];
-    expressionsBinArgsConstraints.challengesIds = new uint16_t[nChallengesIdsDebug];
-    expressionsBinArgsConstraints.publicsIds = new uint16_t[nPublicsIdsDebug];
-    expressionsBinArgsConstraints.airgroupValuesIds = new uint16_t[nAirgroupValuesIdsDebug];
-    expressionsBinArgsConstraints.airValuesIds = new uint16_t[nAirValuesIdsDebug];
-    expressionsBinArgsConstraints.customCommitsPolsIds = new uint16_t[nCustomCommitsPolsIdsDebug];
     expressionsBinArgsConstraints.nNumbers = nNumbersDebug;
     
-    uint64_t nCustomCommitsC = expressionsBin->readU32LE();
 
     uint32_t nConstraints = expressionsBin->readU32LE();
 
@@ -191,33 +102,6 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
         parserParamsConstraint.nArgs = expressionsBin->readU32LE();
         parserParamsConstraint.argsOffset = expressionsBin->readU32LE();
 
-        parserParamsConstraint.nConstPolsUsed = expressionsBin->readU32LE();
-        parserParamsConstraint.constPolsOffset = expressionsBin->readU32LE();
-
-        parserParamsConstraint.nCmPolsUsed = expressionsBin->readU32LE();
-        parserParamsConstraint.cmPolsOffset = expressionsBin->readU32LE();
-
-        parserParamsConstraint.nChallengesUsed = expressionsBin->readU32LE();
-        parserParamsConstraint.challengesOffset = expressionsBin->readU32LE();
-
-        parserParamsConstraint.nPublicsUsed = expressionsBin->readU32LE();
-        parserParamsConstraint.publicsOffset = expressionsBin->readU32LE();
-
-        parserParamsConstraint.nAirgroupValuesUsed = expressionsBin->readU32LE();
-        parserParamsConstraint.airgroupValuesOffset = expressionsBin->readU32LE();
-
-        parserParamsConstraint.nAirValuesUsed = expressionsBin->readU32LE();
-        parserParamsConstraint.airValuesOffset = expressionsBin->readU32LE();
-
-        std::vector<uint32_t> nCustomCommitsPolsUsedC(nCustomCommitsC);
-        std::vector<uint32_t> customCommitsOffsetC(nCustomCommitsC);
-        for(uint64_t j = 0; j < nCustomCommitsC; ++j) {
-            nCustomCommitsPolsUsedC[j] = expressionsBin->readU32LE();
-            customCommitsOffsetC[j] = expressionsBin->readU32LE();
-        }
-        parserParamsConstraint.nCustomCommitsPolsUsed = nCustomCommitsPolsUsedC;
-        parserParamsConstraint.customCommitsOffset = customCommitsOffsetC;
-
         parserParamsConstraint.imPol = bool(expressionsBin->readU32LE());
         parserParamsConstraint.line = expressionsBin->readString();
 
@@ -235,33 +119,6 @@ void ExpressionsBin::loadExpressionsBin(BinFileUtils::BinFile *expressionsBin) {
         expressionsBinArgsConstraints.numbers[j] = Goldilocks::fromU64(expressionsBin->readU64LE());
     }
 
-    for(uint64_t j = 0; j < nConstPolsIdsDebug; ++j) {
-        expressionsBinArgsConstraints.constPolsIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nCmPolsIdsDebug; ++j) {
-        expressionsBinArgsConstraints.cmPolsIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nChallengesIdsDebug; ++j) {
-        expressionsBinArgsConstraints.challengesIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nPublicsIdsDebug; ++j) {
-        expressionsBinArgsConstraints.publicsIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nAirgroupValuesIdsDebug; ++j) {
-        expressionsBinArgsConstraints.airgroupValuesIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nAirValuesIdsDebug; ++j) {
-        expressionsBinArgsConstraints.airValuesIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nCustomCommitsPolsIdsDebug; ++j) {
-        expressionsBinArgsConstraints.customCommitsPolsIds[j] = expressionsBin->readU16LE();
-    }
     expressionsBin->endReadSection();
     expressionsBin->startReadSection(BINARY_HINTS_SECTION);
 
@@ -323,36 +180,16 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
     
     maxTmp1 = expressionsBin->readU32LE();
     maxTmp3 = expressionsBin->readU32LE();
-    maxArgs = expressionsBin->readU32LE();
-    maxOps = expressionsBin->readU32LE();
     
-    // expressionsBin->readU32LE();
-    // expressionsBin->readU32LE();
-
     uint32_t nOpsExpressions = expressionsBin->readU32LE();
     uint32_t nArgsExpressions = expressionsBin->readU32LE();
     uint32_t nNumbersExpressions = expressionsBin->readU32LE();
-    uint32_t nConstPolsIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nCmPolsIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nChallengesIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nPublicsIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nAirgroupValuesIdsExpressions = expressionsBin->readU32LE();
-    uint32_t nAirValuesIdsExpressions = expressionsBin->readU32LE();
-    uint64_t nCustomCommitsPolsIdsExpressions = expressionsBin->readU32LE();
 
     expressionsBinArgsExpressions.ops = new uint8_t[nOpsExpressions];
     expressionsBinArgsExpressions.args = new uint16_t[nArgsExpressions];
     expressionsBinArgsExpressions.numbers = new Goldilocks::Element[nNumbersExpressions];
-    expressionsBinArgsExpressions.constPolsIds = new uint16_t[nConstPolsIdsExpressions];
-    expressionsBinArgsExpressions.cmPolsIds = new uint16_t[nCmPolsIdsExpressions];
-    expressionsBinArgsExpressions.challengesIds = new uint16_t[nChallengesIdsExpressions];
-    expressionsBinArgsExpressions.publicsIds = new uint16_t[nPublicsIdsExpressions];
-    expressionsBinArgsExpressions.airgroupValuesIds = new uint16_t[nAirgroupValuesIdsExpressions];
-    expressionsBinArgsExpressions.airValuesIds = new uint16_t[nAirValuesIdsExpressions];
-    expressionsBinArgsExpressions.customCommitsPolsIds = new uint16_t[nCustomCommitsPolsIdsExpressions];
     expressionsBinArgsExpressions.nNumbers = nNumbersExpressions;
 
-    uint64_t nCustomCommits = expressionsBin->readU32LE();
     uint64_t nExpressions = expressionsBin->readU32LE();
 
     for(uint64_t i = 0; i < nExpressions; ++i) {
@@ -374,33 +211,6 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
         parserParamsExpression.nArgs = expressionsBin->readU32LE();
         parserParamsExpression.argsOffset = expressionsBin->readU32LE();
 
-        parserParamsExpression.nConstPolsUsed = expressionsBin->readU32LE();
-        parserParamsExpression.constPolsOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nCmPolsUsed = expressionsBin->readU32LE();
-        parserParamsExpression.cmPolsOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nChallengesUsed = expressionsBin->readU32LE();
-        parserParamsExpression.challengesOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nPublicsUsed = expressionsBin->readU32LE();
-        parserParamsExpression.publicsOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nAirgroupValuesUsed = expressionsBin->readU32LE();
-        parserParamsExpression.airgroupValuesOffset = expressionsBin->readU32LE();
-
-        parserParamsExpression.nAirValuesUsed = expressionsBin->readU32LE();
-        parserParamsExpression.airValuesOffset = expressionsBin->readU32LE();
-        
-        std::vector<uint32_t> nCustomCommitsPolsUsed(nCustomCommits);
-        std::vector<uint32_t> customCommitsOffset(nCustomCommits);
-        for(uint64_t j = 0; j < nCustomCommits; ++j) {
-            nCustomCommitsPolsUsed[j] = expressionsBin->readU32LE();
-            customCommitsOffset[j] = expressionsBin->readU32LE();
-        }
-        parserParamsExpression.nCustomCommitsPolsUsed = nCustomCommitsPolsUsed;
-        parserParamsExpression.customCommitsOffset = customCommitsOffset;
-
         parserParamsExpression.line = expressionsBin->readString();
 
         expressionsInfo[expId] = parserParamsExpression;
@@ -414,34 +224,6 @@ void ExpressionsBin::loadVerifierBin(BinFileUtils::BinFile *expressionsBin) {
     }
     for(uint64_t j = 0; j < nNumbersExpressions; ++j) {
         expressionsBinArgsExpressions.numbers[j] = Goldilocks::fromU64(expressionsBin->readU64LE());
-    }
-
-    for(uint64_t j = 0; j < nConstPolsIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.constPolsIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nCmPolsIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.cmPolsIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nChallengesIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.challengesIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nPublicsIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.publicsIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nAirgroupValuesIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.airgroupValuesIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nAirValuesIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.airValuesIds[j] = expressionsBin->readU16LE();
-    }
-
-    for(uint64_t j = 0; j < nCustomCommitsPolsIdsExpressions; ++j) {
-        expressionsBinArgsExpressions.customCommitsPolsIds[j] = expressionsBin->readU16LE();
     }
 
     expressionsBin->endReadSection();

@@ -56,20 +56,6 @@ struct ParserParams
     uint32_t opsOffset = 0;
     uint32_t nArgs = 0;
     uint32_t argsOffset = 0;
-    uint32_t nConstPolsUsed = 0;
-    uint32_t constPolsOffset = 0;
-    uint32_t nCmPolsUsed = 0;
-    uint32_t cmPolsOffset = 0;
-    uint32_t nChallengesUsed = 0;
-    uint32_t challengesOffset = 0;
-    uint32_t nPublicsUsed = 0;
-    uint32_t publicsOffset = 0;
-    uint32_t nAirgroupValuesUsed = 0;
-    uint32_t airgroupValuesOffset = 0;
-    uint32_t nAirValuesUsed = 0;
-    uint32_t airValuesOffset = 0;
-    std::vector<uint32_t> nCustomCommitsPolsUsed;
-    std::vector<uint32_t> customCommitsOffset;
     uint32_t firstRow = 0;
     uint32_t lastRow = 0;
     uint32_t destDim = 0;
@@ -83,13 +69,6 @@ struct ParserArgs
     uint8_t* ops;
     uint16_t* args;
     Goldilocks::Element* numbers;
-    uint16_t* constPolsIds;
-    uint16_t* cmPolsIds;
-    uint16_t* challengesIds;
-    uint16_t* publicsIds;
-    uint16_t* airgroupValuesIds;
-    uint16_t* airValuesIds;
-    uint16_t* customCommitsPolsIds;
     uint64_t nNumbers;
 };
 
@@ -114,32 +93,15 @@ public:
 
     uint64_t maxTmp1;
     uint64_t maxTmp3;
-
-    uint64_t maxArgs;
-    uint64_t maxOps;
     
     ~ExpressionsBin() {
         if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;
         if (expressionsBinArgsExpressions.args) delete[] expressionsBinArgsExpressions.args;
         if (expressionsBinArgsExpressions.numbers) delete[] expressionsBinArgsExpressions.numbers;
-        if (expressionsBinArgsExpressions.constPolsIds) delete[] expressionsBinArgsExpressions.constPolsIds;
-        if (expressionsBinArgsExpressions.cmPolsIds) delete[] expressionsBinArgsExpressions.cmPolsIds;
-        if (expressionsBinArgsExpressions.challengesIds) delete[] expressionsBinArgsExpressions.challengesIds;
-        if (expressionsBinArgsExpressions.publicsIds) delete[] expressionsBinArgsExpressions.publicsIds;
-        if (expressionsBinArgsExpressions.airgroupValuesIds) delete[] expressionsBinArgsExpressions.airgroupValuesIds;
-        if (expressionsBinArgsExpressions.airValuesIds) delete[] expressionsBinArgsExpressions.airValuesIds;
-        if (expressionsBinArgsExpressions.customCommitsPolsIds) delete[] expressionsBinArgsExpressions.customCommitsPolsIds;
 
         if (expressionsBinArgsConstraints.ops) delete[] expressionsBinArgsConstraints.ops;
         if (expressionsBinArgsConstraints.args) delete[] expressionsBinArgsConstraints.args;
         if (expressionsBinArgsConstraints.numbers) delete[] expressionsBinArgsConstraints.numbers;
-        if (expressionsBinArgsConstraints.constPolsIds) delete[] expressionsBinArgsConstraints.constPolsIds;
-        if (expressionsBinArgsConstraints.cmPolsIds) delete[] expressionsBinArgsConstraints.cmPolsIds;
-        if (expressionsBinArgsConstraints.challengesIds) delete[] expressionsBinArgsConstraints.challengesIds;
-        if (expressionsBinArgsConstraints.publicsIds) delete[] expressionsBinArgsConstraints.publicsIds;
-        if (expressionsBinArgsConstraints.airgroupValuesIds) delete[] expressionsBinArgsConstraints.airgroupValuesIds;
-        if (expressionsBinArgsConstraints.airValuesIds) delete[] expressionsBinArgsConstraints.airValuesIds;
-        if (expressionsBinArgsConstraints.customCommitsPolsIds) delete[] expressionsBinArgsConstraints.customCommitsPolsIds;
     };
 
     /* Constructor */

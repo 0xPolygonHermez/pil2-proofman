@@ -192,16 +192,6 @@ pub fn get_max_n_tmp3_c(p_expressions_bin: *mut c_void) -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_max_n_args_c(p_expressions_bin: *mut c_void) -> u64 {
-    unsafe { get_max_args(p_expressions_bin) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_max_n_ops_c(p_expressions_bin: *mut c_void) -> u64 {
-    unsafe { get_max_ops(p_expressions_bin) }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
 pub fn expressions_bin_free_c(p_expressions_bin: *mut c_void) {
     unsafe {
         expressions_bin_free(p_expressions_bin);

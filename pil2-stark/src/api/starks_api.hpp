@@ -39,8 +39,6 @@
     void *expressions_bin_new(char* filename, bool global, bool verifier);
     uint64_t get_max_n_tmp1(void *pExpressionsBin);
     uint64_t get_max_n_tmp3(void *pExpressionsBin);
-    uint64_t get_max_args(void *pExpressionsBin);
-    uint64_t get_max_ops(void *pExpressionsBin);
     void expressions_bin_free(void *pExpressionsBin);
 
     // Hints

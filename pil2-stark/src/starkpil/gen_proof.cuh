@@ -281,7 +281,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     TimerStart(STARK_STEP_FRI_POLYNOMIAL);
     uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
     CHECKCUDAERR(cudaMemcpy(h_params.aux_trace + x_offset, proverHelpers.x, NExtended * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));            
-    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
+    // calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
+    calculateFRIExpression(setupCtx, h_params);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
@@ -290,6 +291,12 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
             Goldilocks::Element *pBuffNodesGL = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)];
             starks.treesFRI[step]->setNodes(pBuffNodesGL);
         }
+    }
+
+    Goldilocks::Element copy[FIELD_EXTENSION * 129];
+    CHECKCUDAERR(cudaMemcpy(copy, h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)], FIELD_EXTENSION * 129 * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost));
+    for(uint64_t i = 0; i < 129; i++) {
+        cout << i << " " << copy[i*FIELD_EXTENSION].fe << " " << copy[i*FIELD_EXTENSION + 1].fe << " " << copy[i*FIELD_EXTENSION + 2].fe << endl;
     }
     TimerStopAndLog(STARK_STEP_FRI_POLYNOMIAL);
     TimerStart(STARK_STEP_FRI_FOLDING);
