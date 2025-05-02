@@ -58,16 +58,16 @@ extern "C" {
     pub fn get_map_total_n(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z13get_tree_sizePv"]
-    pub fn get_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
-}
-extern "C" {
     #[link_name = "\u{1}_Z21get_const_pols_offsetPv"]
     pub fn get_const_pols_offset(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z36get_map_total_n_custom_commits_fixedPv"]
     pub fn get_map_total_n_custom_commits_fixed(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z13get_tree_sizePv"]
+    pub fn get_tree_size(pStarkInfo: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z15stark_info_freePv"]
@@ -290,6 +290,18 @@ extern "C" {
     );
 }
 extern "C" {
+    #[link_name = "\u{1}_Z15get_commit_rootmmmPvmS_j"]
+    pub fn get_commit_root(
+        arity: u64,
+        nBitsExt: u64,
+        nCols: u64,
+        root: *mut ::std::os::raw::c_void,
+        thread_id: u64,
+        d_buffers: *mut ::std::os::raw::c_void,
+        mpi_node_rank: u32,
+    );
+}
+extern "C" {
     #[link_name = "\u{1}_Z14calculate_hashPvS_mm"]
     pub fn calculate_hash(
         pValue: *mut ::std::os::raw::c_void,
@@ -407,9 +419,10 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_bj"]
+    #[link_name = "\u{1}_Z9gen_proofPvmmmmS_S_PmPcS_bj"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
+        threadId: u64,
         airgroupId: u64,
         airId: u64,
         instanceId: u64,
@@ -551,8 +564,16 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z10set_devicej"]
     pub fn set_device(mpi_node_rank: u32);
-    #[link_name = "\u{1}_Z19set_max_size_threadPvmm"]
-    pub fn set_max_size_thread(d_buffers: *mut ::std::os::raw::c_void, maxSizeThread: u64, nThreads: u64);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z19set_max_size_threadPvmmmm"]
+    pub fn set_max_size_thread(
+        d_buffers: *mut ::std::os::raw::c_void,
+        maxSizeTrace: u64,
+        maxSizeThread: u64,
+        maxSizeContribution: u64,
+        nThreads: u64,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z16check_gpu_memoryj"]

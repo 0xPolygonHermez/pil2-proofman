@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 
 use p3_field::Field;
-use proofman_starks_lib_c::expressions_bin_new_c;
+use proofman_starks_lib_c::{expressions_bin_new_c, get_tree_size_c};
 use proofman_util::create_buffer_fast;
 
 use crate::load_const_pols;
@@ -83,6 +83,9 @@ pub struct SetupRepository<F: Field> {
     setups: HashMap<(usize, usize), Setup<F>>,
     max_const_tree_size: usize,
     max_const_size: usize,
+    max_prover_buffer_size: usize,
+    max_prover_trace_size: usize,
+    max_prover_contribution_area: usize,
     global_bin: Option<*mut c_void>,
     global_info_file: String,
 }
@@ -108,6 +111,9 @@ impl<F: Field> SetupRepository<F> {
 
         let mut max_const_tree_size = 0;
         let mut max_const_size = 0;
+        let mut max_prover_buffer_size = 0;
+        let mut max_prover_trace_size = 0;
+        let mut max_prover_contribution_area = 0;
 
         // Initialize Hashmap for each airgroup_id, air_id
         if setup_type != &ProofType::VadcopFinal {
@@ -121,6 +127,17 @@ impl<F: Field> SetupRepository<F> {
                         if max_const_size < setup.const_pols_size {
                             max_const_size = setup.const_pols_size;
                         }
+                        if max_prover_buffer_size < setup.prover_buffer_size {
+                            max_prover_buffer_size = setup.prover_buffer_size;
+                        }
+                        let n = 1 << setup.stark_info.stark_struct.n_bits;
+                        let n_extended = 1 << setup.stark_info.stark_struct.n_bits_ext;
+                        let trace_size = setup.stark_info.map_sections_n["cm1"] * n;
+                        let trace_ext_size = setup.stark_info.map_sections_n["cm1"] * n_extended;
+                        let tree_size = get_tree_size_c(setup.p_setup.p_stark_info);
+                        max_prover_trace_size = max_prover_trace_size.max(trace_size);
+                        max_prover_contribution_area =
+                            max_prover_contribution_area.max(trace_size + trace_ext_size + tree_size + 3 * n_extended);
                     }
                     setups.insert((airgroup_id, air_id), setup);
                 }
@@ -129,7 +146,16 @@ impl<F: Field> SetupRepository<F> {
             setups.insert((0, 0), Setup::new(global_info, 0, 0, setup_type, verify_constraints));
         }
 
-        Self { setups, global_bin, global_info_file, max_const_tree_size, max_const_size }
+        Self {
+            setups,
+            global_bin,
+            global_info_file,
+            max_const_tree_size,
+            max_const_size,
+            max_prover_buffer_size: max_prover_buffer_size as usize,
+            max_prover_trace_size: max_prover_trace_size as usize,
+            max_prover_contribution_area: max_prover_contribution_area as usize,
+        }
     }
 
     pub fn free(&self) {
@@ -144,6 +170,9 @@ pub struct SetupCtx<F: Field> {
     setup_repository: SetupRepository<F>,
     pub max_const_tree_size: usize,
     pub max_const_size: usize,
+    pub max_prover_buffer_size: usize,
+    pub max_prover_trace_size: usize,
+    pub max_prover_contribution_area: usize,
     setup_type: ProofType,
 }
 
@@ -152,7 +181,18 @@ impl<F: Field> SetupCtx<F> {
         let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints);
         let max_const_tree_size = setup_repository.max_const_tree_size;
         let max_const_size = setup_repository.max_const_size;
-        SetupCtx { setup_repository, max_const_tree_size, max_const_size, setup_type: setup_type.clone() }
+        let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
+        let max_prover_trace_size = setup_repository.max_prover_trace_size;
+        let max_prover_contribution_area = setup_repository.max_prover_contribution_area;
+        SetupCtx {
+            setup_repository,
+            max_const_tree_size,
+            max_const_size,
+            max_prover_buffer_size,
+            max_prover_trace_size,
+            max_prover_contribution_area,
+            setup_type: setup_type.clone(),
+        }
     }
 
     pub fn get_setup(&self, airgroup_id: usize, air_id: usize) -> &Setup<F> {

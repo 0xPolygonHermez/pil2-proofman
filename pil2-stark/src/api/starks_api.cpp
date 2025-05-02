@@ -379,6 +379,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     mt.merkelize();
     mt.getRoot(rootGL);
 }
+void get_commit_root(uint64_t arity, uint64_t nBitsExt, uint64_t nCols, void *root, uint64_t thread_id, void *d_buffers, uint32_t mpi_node_rank) {}
 #endif
 
 
@@ -502,7 +503,7 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
 #ifndef __USE_CUDA__
 // Gen proof
 // =================================================================================
-void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool loadConstants, uint32_t mpi_node_rank)  {
+void gen_proof(void *pSetupCtx, uint64_t threadId, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool loadConstants, uint32_t mpi_node_rank)  {
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
 }
 
@@ -513,7 +514,9 @@ void *gen_device_commit_buffers(void *max_sizes, uint32_t mpi_node_rank)
     return NULL;
 };
 
-void set_max_size_thread(void *d_buffers, uint64_t maxSizeThread, uint64_t nThreads) {}
+void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread, uint64_t nThreads) {}
+
+void set_device(uint32_t mpi_node_rank){}
 
 uint64_t check_gpu_memory(uint32_t mpi_node_rank) { return 0; }
 
@@ -611,19 +614,3 @@ uint64_t get_omp_max_threads(){
 void set_omp_num_threads(uint64_t num_threads){
     omp_set_num_threads(num_threads);
 }
-
-// GPU calls
-// =================================================================================
-
-#ifndef __USE_CUDA__
-
-void *gen_device_commit_buffers(void *max_sizes,  uint32_t mpi_node_rank)
-{
-    return NULL;
-}
-
-void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank) {}
-
-void set_device(uint32_t mpi_node_rank){}
-
-#endif

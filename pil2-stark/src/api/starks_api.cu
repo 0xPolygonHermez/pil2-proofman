@@ -36,9 +36,11 @@ void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
     return (void *)buffers;
 }
 
-void set_max_size_thread(void *d_buffers, uint64_t maxSizeThread, uint64_t nThreads) {
+void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeProverBuffer, uint64_t nThreads) {
     DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
-    buffers->max_size_thread = maxSizeThread;
+    buffers->max_size_prover_buffer = maxSizeProverBuffer;
+    buffers->max_size_trace = maxSizeTrace;
+    buffers->max_size_contribution = maxSizeContribution;
     buffers->n_threads = nThreads;
 
     if (buffers->streams != nullptr) {
@@ -52,6 +54,11 @@ void set_max_size_thread(void *d_buffers, uint64_t maxSizeThread, uint64_t nThre
     buffers->streams = new cudaStream_t[nThreads];
     for (uint64_t i = 0; i < nThreads; i++) {
         CHECKCUDAERR(cudaStreamCreate(&buffers->streams[i]));
+    }
+
+    buffers->pinned_buffers = new Goldilocks::Element*[nThreads];
+    for (uint64_t i = 0; i < nThreads; i++) {
+        CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers[i]), maxSizeTrace * sizeof(Goldilocks::Element)));
     }
 }
 
@@ -75,13 +82,15 @@ void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank)
     delete buffers;
 }
 
-void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants, uint32_t mpi_node_rank) {
+void gen_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants, uint32_t mpi_node_rank) {
 
     double time = omp_get_wtime();
     set_device(mpi_node_rank);
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
+
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + threadId*d_buffers->max_size_prover_buffer;
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t sizeTrace = N * (setupCtx->starkInfo.mapSectionsN["cm1"]) * sizeof(Goldilocks::Element);
@@ -92,21 +101,18 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
     uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
     double timeCopy = omp_get_wtime();
-    CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, params->trace, sizeTrace, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetStage1, params->trace, sizeTrace, cudaMemcpyHostToDevice));
     timeCopy = omp_get_wtime() - timeCopy;
     double timeCopyConstants = omp_get_wtime();
     if(loadConstants) {
-        CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstPols, &params->aux_trace[offsetConstPols], sizeConstPols, cudaMemcpyHostToDevice));
-        CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstTree, &params->aux_trace[offsetConstTree], sizeConstTree, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetConstPols, params->pConstPolsAddress, sizeConstPols, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetConstTree, params->pConstPolsExtendedTreeAddress, sizeConstTree, cudaMemcpyHostToDevice));
     }
     timeCopyConstants = omp_get_wtime() - timeCopyConstants;
 
-    //std::cout << "rick genDeviceBuffers time: " << time << std::endl;
-
     time = omp_get_wtime();
-    genProof_gpu(*setupCtx, airgroupId, airId, instanceId, *params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), d_buffers);
+    genProof_gpu(*setupCtx, airgroupId, airId, instanceId, *params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), d_aux_trace);
     time = omp_get_wtime() - time;
-    //std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 
     std::ostringstream oss;
     
@@ -144,60 +150,67 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
     }
     
     time = omp_get_wtime() - time;
-    // std::cout << "rick genDeviceBuffers time: " << time << std::endl;
 
     time = omp_get_wtime();
     genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), d_buffers, vadcop);
     time = omp_get_wtime() - time;
-    // std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 }
 
 void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {
 
-    double full_time = omp_get_wtime();
     double time = omp_get_wtime();
+    cudaEvent_t commitWitness;
+    cudaEventCreate(&commitWitness);
     set_device(mpi_node_rank);
 
-    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     uint64_t N = 1 << nBits;
-    uint64_t NExtended = 1 << nBitsExt;
-
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     cudaStream_t stream = d_buffers->streams[thread_id];
 
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + thread_id*d_buffers->max_size_thread;
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + thread_id*d_buffers->max_size_contribution;
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = 0;
 
-    double timeCopy = omp_get_wtime();
-    CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetStage1, trace, sizeTrace, cudaMemcpyHostToDevice));
-    timeCopy = omp_get_wtime() - timeCopy;
-    genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_aux_trace, stream);
+    Goldilocks::parcpy(d_buffers->pinned_buffers[thread_id], (Goldilocks::Element *)trace, N * nCols, 4);
+    CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetStage1, d_buffers->pinned_buffers[thread_id], sizeTrace, cudaMemcpyHostToDevice, stream));
+    cudaEventRecord(commitWitness, stream);
+    genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, stream);
+    cudaEventSynchronize(commitWitness);
     time = omp_get_wtime() - time;
 
     std::ostringstream oss;
-
-    oss << std::fixed << std::setprecision(2) << timeCopy << "s (" << (timeCopy / time) * 100 << "%)";
-    zklog.trace("        COPY_TRACE:   " + oss.str());
-    oss.str("");
-    oss.clear();
     oss << std::fixed << std::setprecision(2) << time << "s";
-    zklog.trace("        TIME:   " + oss.str());
+    zklog.trace("        TIME COPY:   " + oss.str());
     oss.str("");
-    oss.clear();
+    oss.clear();    
+}
 
-    full_time = omp_get_wtime() - full_time;
+void get_commit_root(uint64_t arity, uint64_t nBitsExt, uint64_t nCols, void *root, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {\
+    double time = omp_get_wtime();
+
+    uint64_t NExtended = 1 << nBitsExt;
+
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    cudaStream_t stream = d_buffers->streams[thread_id];
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + thread_id*d_buffers->max_size_contribution;
+
+    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
+    Goldilocks::Element *pNodes = (Goldilocks::Element*) d_aux_trace + nCols * NExtended;
+    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, arity);
+    CHECKCUDAERR(cudaMemcpyAsync(rootGL, pNodes + tree_size - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     CHECKCUDAERR(cudaStreamSynchronize(stream));
+    time = omp_get_wtime() - time;
 
-    oss << std::fixed << std::setprecision(2) << full_time << "s ";
-    zklog.trace("        FULL TIME:   " + oss.str());
-
-    
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2) << time << "s";
+    zklog.trace("        TIME COMMIT:   " + oss.str());
+    oss.str("");
+    oss.clear();    
 }
 
 uint64_t check_gpu_memory(uint32_t mpi_node_rank) {
-    set_device(mpi_node_rank);
+    set_device(0);
     uint64_t freeMem, totalMem;
     cudaError_t err = cudaMemGetInfo(&freeMem, &totalMem);
     if (err != cudaSuccess) {
@@ -222,6 +235,5 @@ void set_device(uint32_t mpi_node_rank){
     }
     int device = mpi_node_rank % deviceCount;
     cudaSetDevice(device);
-    cudaFree(0);
 }
 #endif

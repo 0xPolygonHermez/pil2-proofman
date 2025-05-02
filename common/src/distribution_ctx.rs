@@ -13,7 +13,6 @@ use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 #[cfg(feature = "distributed")]
 use std::sync::atomic::Ordering;
-
 use p3_field::Field;
 
 use crate::GlobalInfo;

@@ -518,6 +518,29 @@ pub fn commit_witness_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_commit_root_c(
+    arity: u64,
+    n_bits_ext: u64,
+    n_cols: u64,
+    root: *mut u8,
+    thread_id: u64,
+    d_buffers: *mut c_void,
+    mpi_node_rank: u32,
+) {
+    unsafe {
+        get_commit_root(
+            arity,
+            n_bits_ext,
+            n_cols,
+            root as *mut std::os::raw::c_void,
+            thread_id,
+            d_buffers,
+            mpi_node_rank,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn calculate_hash_c(pValue: *mut u8, pBuffer: *mut u8, nElements: u64, nOutputs: u64) {
     unsafe {
         calculate_hash(pValue as *mut std::os::raw::c_void, pBuffer as *mut std::os::raw::c_void, nElements, nOutputs);
@@ -732,6 +755,7 @@ pub fn gen_proof_c(
     p_global_challenge: *mut u8,
     proof_buffer: *mut u64,
     proof_file: &str,
+    thread_id: u64,
     airgroup_id: u64,
     air_id: u64,
     instance_id: u64,
@@ -745,6 +769,7 @@ pub fn gen_proof_c(
     unsafe {
         gen_proof(
             p_setup,
+            thread_id,
             airgroup_id,
             air_id,
             instance_id,
@@ -1002,9 +1027,15 @@ pub fn gen_device_commit_buffers_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn set_max_size_thread_c(_d_buffers: *mut ::std::os::raw::c_void, max_size_thread: u64, n_threads: u64) {
+pub fn set_max_size_thread_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    max_size_trace: u64,
+    max_size_contribution: u64,
+    max_size_buffer: u64,
+    n_threads: u64,
+) {
     unsafe {
-        set_max_size_thread(_d_buffers, max_size_thread, n_threads);
+        set_max_size_thread(d_buffers, max_size_trace, max_size_contribution, max_size_buffer, n_threads);
     }
 }
 
@@ -1336,6 +1367,19 @@ pub fn commit_witness_c(
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn get_commit_root_c(
+    _arity: u64,
+    _n_bits_ext: u64,
+    _n_cols: u64,
+    _root: *mut u8,
+    _thread_id: u64,
+    _d_buffers: *mut c_void,
+    _mpi_node_rank: u32,
+) {
+    trace!("{}: ··· {}", "ffi     ", "get_commit_root: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn calculate_hash_c(_pValue: *mut u8, _pBuffer: *mut u8, _nElements: u64, _nOutputs: u64) {
     trace!("{}: ··· {}", "ffi     ", "calculate_hash: This is a mock call because there is no linked library");
 }
@@ -1510,6 +1554,7 @@ pub fn gen_proof_c(
     _p_global_challenge: *mut u8,
     _proof_buffer: *mut u64,
     _proof_file: &str,
+    _thread_id: u64,
     _airgroup_id: u64,
     _air_id: u64,
     _instance_id: u64,
@@ -1672,7 +1717,13 @@ pub fn gen_device_commit_buffers_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn set_max_size_thread_c(_d_buffers: *mut ::std::os::raw::c_void, _max_size_thread: u64, _n_threads: u64) {
+pub fn set_max_size_thread_c(
+    _d_buffers: *mut ::std::os::raw::c_void,
+    _max_size_trace: u64,
+    _max_size_contribution: u64,
+    _max_size_buffer: u64,
+    _n_threads: u64,
+) {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
 }
 

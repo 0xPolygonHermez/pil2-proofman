@@ -22,6 +22,7 @@ class NTT_Goldilocks
 {
 private:
     u_int32_t s = 0;
+    bool init;
     u_int32_t nThreads;
     uint64_t nqr;
     Goldilocks::Element *roots;
@@ -68,10 +69,13 @@ private:
     void reversePermutation(Goldilocks::Element *dst, uint64_t strideDst, uint64_t offsetDst,  Goldilocks::Element *src, uint64_t strideSrc, uint64_t offsetSrc, u_int64_t size, uint64_t ncols);
 
 public:
+    NTT_Goldilocks() {
+        init = false;
+    }
 
     NTT_Goldilocks(u_int64_t maxDomainSize, u_int32_t _nThreads = 0, int extension_ = 1)
     {
-
+        init = true;
         r = NULL;
         r_ = NULL;
         if (maxDomainSize == 0)
@@ -168,6 +172,8 @@ public:
     };
     ~NTT_Goldilocks()
     {
+        if(!init) return;
+
         if (s != 0)
         {
             free(roots);
@@ -189,7 +195,7 @@ public:
 
     #ifdef __USE_CUDA__
     // Calculating on a single GPU
-    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, gl64_t* d_aux_trace, uint64_t offset_helper, cudaStream_t stream = 0, double *nttTime = nullptr, double *merkleTime = nullptr);
+    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t ncols, gl64_t* d_aux_trace, uint64_t offset_helper, cudaStream_t stream = 0, double *nttTime = nullptr, double *merkleTime = nullptr);
     void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t nCols, gl64_t* d_aux_trace, uint64_t offset_helper, double *nttTime=nullptr, double *merkleTime=nullptr);
     void INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, gl64_t* d_aux_trace, uint64_t offset_helper, gl64_t* d_data = nullptr);
     #endif  

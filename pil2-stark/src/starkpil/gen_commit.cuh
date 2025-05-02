@@ -9,11 +9,12 @@
 #define PRINT_TIME_SUMMARY 1
 
 
-void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64_t NExtended, uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream) {
+void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream = 0) {
 
     double nttTime;
     double merkleTime;
 
+    uint64_t NExtended = 1 << nBitsExtended;
     if (nCols > 0)
     {
         gl64_t *src = d_aux_trace;
@@ -21,15 +22,14 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64
         gl64_t *dst = d_aux_trace;
         uint64_t offset_dst = 0;
 
-        uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, 3);
+        uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, arity);
 
-        NTT_Goldilocks ntt(N);
+        NTT_Goldilocks ntt;
 
         uint64_t offset_aux = NExtended * nCols + tree_size;
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*) d_aux_trace + nCols * NExtended;
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_aux_trace, offset_aux, stream, &nttTime, &merkleTime);
-        CHECKCUDAERR(cudaMemcpy(&root[0], pNodes + tree_size - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost));   
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, d_aux_trace, offset_aux, stream, &nttTime, &merkleTime);
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;
         assert(0);

@@ -56,7 +56,7 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& params, Expression
     updateAirgroupValue(setupCtx, params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, d_params, time_expressions);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers) {
+void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, gl64_t *d_aux_trace) {
     
     TimerStart(STARK_GPU_PROOF);
     TimerStart(STARK_INITIALIZATION);
@@ -71,7 +71,7 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     uint64_t offsetConstTree = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
-    Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, &params.aux_trace[offsetConstTree], params.pCustomCommitsFixed, false); 
+    Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed, false); 
 
     uint64_t nFieldElements = setupCtx.starkInfo.starkStruct.verificationHashType == std::string("BN128") ? 1 : HASH_SIZE;
     CHECKCUDAERR(cudaGetLastError());    
@@ -85,8 +85,8 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
     StepsParams h_params = {
-        trace : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetCm1,
-        aux_trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
+        trace : (Goldilocks::Element *)d_aux_trace + offsetCm1,
+        aux_trace : (Goldilocks::Element *)d_aux_trace,
         publicInputs : nullptr,
         proofValues : nullptr,
         challenges : nullptr,
@@ -94,9 +94,9 @@ void genProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint6
         airValues : nullptr,
         evals : nullptr,
         xDivXSub : nullptr, //rick: canviar nom per xi_s
-        pConstPolsAddress : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetConstPols,
-        pConstPolsExtendedTreeAddress : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetConstTree,
-        pCustomCommitsFixed : (Goldilocks::Element *)d_buffers->d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)],
+        pConstPolsAddress : (Goldilocks::Element *)d_aux_trace + offsetConstPols,
+        pConstPolsExtendedTreeAddress : (Goldilocks::Element *)d_aux_trace + offsetConstTree,
+        pCustomCommitsFixed : (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)],
     };
     
     // Allocate memory and copy data

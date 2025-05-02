@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <cassert>
+#include "goldilocks_base_field.hpp"
 
 namespace gl64_device
 {
@@ -825,9 +826,12 @@ struct DeviceCommitBuffers
     gl64_t *d_constTree;
     gl64_t *d_aux_trace;
     bool recursive;
-    uint64_t max_size_thread;
+    uint64_t max_size_prover_buffer;
+    uint64_t max_size_trace;
+    uint64_t max_size_contribution;
     uint64_t n_threads;
     cudaStream_t *streams;
+    Goldilocks::Element **pinned_buffers;
 };
 
 #undef inline
