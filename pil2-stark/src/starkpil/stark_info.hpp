@@ -127,7 +127,10 @@ public:
     uint64_t nConstants;
     
     uint64_t nStages;
-
+    uint64_t maxProofBuffSize;
+    uint64_t maxProofSize;
+    uint64_t maxTreeWidth;
+    
     vector<CustomCommits> customCommits;
 
     vector<PolMap> cmPolsMap;

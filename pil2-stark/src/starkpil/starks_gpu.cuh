@@ -80,11 +80,11 @@ void commitStage_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL**treesG
 void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_witness, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, TranscriptGL_GPU *d_transcript, double *nttTime = nullptr, double *merkleTime=nullptr);
 void computeQ_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, TranscriptGL_GPU *d_transcript, double *nttTime=nullptr, double *merkleTime=nullptr);
 
-void evmap_inplace(StepsParams &d_params, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv_);
+void evmap_inplace(StepsParams &h_params, Starks<Goldilocks::Element> *starks, DeviceCommitBuffers *d_buffers, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv_);
 
 __device__ void intt_tinny(gl64_t *data, uint32_t N, uint32_t logN, gl64_t *d_twiddles, uint32_t ncols);
 
-__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_ppar, gl64_t *d_twiddles, uint64_t shift_, uint64_t W_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits);
+__global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t *d_ppar, Goldilocks::Element omega_inv, gl64_t *d_twiddles, uint64_t shift_, uint64_t W_, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits);
 
 void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper, Goldilocks::Element *challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, DeviceCommitBuffers *d_buffers);
 
@@ -100,18 +100,14 @@ __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t sizeLeaves, uint64_t *d
 
 __global__ void moduleQueries(uint64_t* d_friQueries, uint64_t nQueries, uint64_t currentBits);
 
-void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *friQueries, uint64_t nQueries, MerkleTreeGL **trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, gl64_t* d_const_tree, uint32_t nStages, StepsParams &d_params);
+void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *friQueries, uint64_t nQueries, MerkleTreeGL **trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, gl64_t* d_const_tree, uint32_t nStages);
 void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t step, uint64_t currentBits, uint64_t *friQueries, uint64_t nQueries, MerkleTreeGL *treeFRI);
 
-void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams& h_params, StepsParams *d_params, int64_t step);
+void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams &h_params, int64_t step);
 
-void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams* d_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse = false);
+void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams* h_params,Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse = false);
 
 void calculateHash(Goldilocks::Element* hash, SetupCtx &setupCtx, Goldilocks::Element* buffer, uint64_t nElements);
 
-void offloadCommit(uint64_t step, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, FRIProof<Goldilocks::Element> &proof, SetupCtx &setupCtx);
-void offloadCommitFRI(uint64_t step, MerkleTreeGL *treeFRI, FRIProof<Goldilocks::Element> &proof, SetupCtx &setupCtx);
-void offloadFinalPol(gl64_t *d_fri_pol, FRIProof<Goldilocks::Element> &proof, uint64_t nBits);
-void offloadQueries(gl64_t *d_queries_buff, MerkleTreeGL **treesGL, FRIProof<Goldilocks::Element> &proof, uint64_t nTrees, uint64_t nQueries);
-void offloadQueriesFRI(gl64_t *d_queries_buff, MerkleTreeGL *treeFRI, uint64_t step, uint64_t nQueries, FRIProof<Goldilocks::Element> &proof);
+void writeProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, uint64_t *proof_buffer, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, std::string proofFile);
 #endif

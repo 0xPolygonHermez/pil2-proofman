@@ -10,7 +10,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
 
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     
-    Starks<ElementType> starks(setupCtx, proverHelpers, pConstTree);
+    Starks<ElementType> starks(setupCtx, pConstTree);
     
     ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
 

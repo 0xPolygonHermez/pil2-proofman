@@ -104,9 +104,12 @@ __global__ void transpose_opt(uint64_t *dst, uint64_t *src, uint32_t nblocks, ui
     }
 }
 
-__global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, uint64_t N, uint64_t qDeg, uint64_t qDim)
+__global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Element shiftIn, uint64_t N, uint64_t qDeg, uint64_t qDim)
 {
-
+    d_S[0] = gl64_t::one();
+    for(uint64_t i = 1; i < qDeg; ++i) {
+        d_S[i] = gl64_t(shiftIn.fe) * d_S[i - 1];
+    }
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= N)
         return;
@@ -122,7 +125,7 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, uint64_t N, uint
     }
 }
 
-void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
+void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
     cudaEvent_t point1, point2, point3;
     cudaEventCreate(&point1);
@@ -131,15 +134,14 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
 
     cudaEventRecord(point1);
 
-    gl64_t* d_r = d_buffers->d_aux_trace + offset_helper;
+    gl64_t* d_S = d_buffers->d_aux_trace + offset_helper;
+    gl64_t* d_r = d_buffers->d_aux_trace + offset_helper + qDeg;
     gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + NExtended;
     gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*NExtended;
 
     gl64_t *d_q = d_buffers->d_aux_trace + offset_q;
     gl64_t *d_cmQ = d_buffers->d_aux_trace + offset_cmQ;
-    gl64_t *d_S;
-    CHECKCUDAERR(cudaMalloc(&d_S, qDeg * sizeof(gl64_t))); //rick
-    CHECKCUDAERR(cudaMemcpy(d_S, S, qDeg * sizeof(gl64_t), cudaMemcpyHostToDevice));
+
     if (ncols == 0 || NExtended == 0)
     {
         return;
@@ -159,7 +161,7 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
 
     dim3 threads(128, 1, 1);
     dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
-    applyS<<<blocks, threads>>>(d_cmQ, d_q, d_S, N, qDeg, qDim);
+    applyS<<<blocks, threads>>>(d_cmQ, d_q, d_S, shiftIn, N, qDeg, qDim);
     CHECKCUDAERR(cudaMemset(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t)));
 
 

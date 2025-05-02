@@ -371,6 +371,67 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += N * nConstants;
     }
 
+    if(gpu) {
+        mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
+        mapTotalN += mapTotalNCustomCommitsFixed;
+
+        mapOffsets[std::make_pair("publics", false)] = mapTotalN;
+        mapTotalN += nPublics;
+
+        mapOffsets[std::make_pair("airgroupvalues", false)] = mapTotalN;
+        mapTotalN += airgroupValuesSize;
+
+        mapOffsets[std::make_pair("airvalues", false)] = mapTotalN;
+        mapTotalN += airValuesSize;
+
+        mapOffsets[std::make_pair("proofvalues", false)] = mapTotalN;
+        mapTotalN += proofValuesSize;
+
+        mapOffsets[std::make_pair("evals", false)] = mapTotalN;
+        mapTotalN += evMap.size() * FIELD_EXTENSION;
+
+        mapOffsets[std::make_pair("challenges", false)] = mapTotalN;
+        mapTotalN += challengesMap.size() * FIELD_EXTENSION;
+
+        mapOffsets[std::make_pair("xdivxsub", false)] = mapTotalN;
+        mapTotalN += openingPoints.size() * FIELD_EXTENSION;
+
+        mapOffsets[std::make_pair("fri_queries", false)] = mapTotalN;
+        mapTotalN += starkStruct.nQueries;
+
+        mapOffsets[std::make_pair("challenge", false)] = mapTotalN;
+        mapTotalN += HASH_SIZE;
+
+        maxTreeWidth = 0;
+        for (auto it = mapSectionsN.begin(); it != mapSectionsN.end(); it++) 
+        {
+            uint64_t treeWidth = it->second;
+            if(treeWidth > maxTreeWidth) {
+                maxTreeWidth = treeWidth;
+            }
+        }
+        for(uint64_t i = 0; i < starkStruct.steps.size() - 1; ++i) {
+            uint64_t nGroups = 1 << starkStruct.steps[i + 1].nBits;
+            uint64_t groupSize = (1 << starkStruct.steps[i].nBits) / nGroups;
+            uint64_t treeWidth = groupSize * FIELD_EXTENSION;
+            if(treeWidth > maxTreeWidth) {
+                maxTreeWidth = treeWidth;
+            }
+        }
+
+        maxProofSize = ceil(log10(1 << starkStruct.nBitsExt) / log10(starkStruct.merkleTreeArity)) * (starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+
+        maxProofBuffSize = maxTreeWidth + maxProofSize;
+        uint64_t nTrees = 1 + (nStages + 1) + customCommits.size();
+        uint64_t nTreesFRI = starkStruct.steps.size() - 1;
+    
+        uint64_t queriesProofSize = (nTrees + nTreesFRI) * maxProofBuffSize * starkStruct.nQueries;
+
+        mapOffsets[std::make_pair("proof_queries", false)] = mapTotalN;
+        mapTotalN += queriesProofSize;
+    }
+
+    
     assert(nStages <= 2);
 
     uint64_t maxTotalN = 0;
@@ -428,13 +489,16 @@ void StarkInfo::setMapOffsets() {
         LEvSize += maxOpenings * N * FIELD_EXTENSION;
     } else {    
         mapOffsets[std::make_pair("extra_helper_fft_lev", false)] = LEvSize;
-        LEvSize += FIELD_EXTENSION * N;
+        LEvSize += FIELD_EXTENSION * N + openingPoints.size() * FIELD_EXTENSION;
     }
 
     maxTotalN = std::max(maxTotalN, LEvSize);
 
     mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
     mapTotalN += NExtended * FIELD_EXTENSION;
+    if(starkStruct.steps.size() > 1) {
+        mapTotalN += (1 << (starkStruct.steps[0].nBits - starkStruct.steps[1].nBits)) >> 1;
+    }
 
     for(uint64_t stage = 1; stage <= nStages; stage++) {
         uint64_t maxTotalNStage = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
@@ -443,7 +507,7 @@ void StarkInfo::setMapOffsets() {
             maxTotalNStage += NExtended * mapSectionsN["cm" + to_string(stage)];
         } else {
             mapOffsets[std::make_pair("extra_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
-            maxTotalNStage += FIELD_EXTENSION*NExtended;
+            maxTotalNStage += FIELD_EXTENSION*NExtended + qDeg;
         }
         maxTotalN = std::max(maxTotalN, maxTotalNStage);
     }
@@ -474,11 +538,6 @@ void StarkInfo::setMapOffsets() {
     }
 
     mapTotalN = std::max(mapTotalN, maxTotalN);
-
-    if(gpu) {
-        mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
-        mapTotalN += mapTotalNCustomCommitsFixed;
-    }
 }
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {

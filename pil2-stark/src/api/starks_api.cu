@@ -70,6 +70,10 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
         CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstPols, &params->aux_trace[offsetConstPols], sizeConstPols, cudaMemcpyHostToDevice));
         CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetConstTree, &params->aux_trace[offsetConstTree], sizeConstTree, cudaMemcpyHostToDevice));
     }
+    if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
+        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_buffers->d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+        CHECKCUDAERR(cudaMemcpy(pCustomCommitsFixed, params->pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    }
     timeCopyConstants = omp_get_wtime() - timeCopyConstants;
 
     //std::cout << "rick genDeviceBuffers time: " << time << std::endl;
