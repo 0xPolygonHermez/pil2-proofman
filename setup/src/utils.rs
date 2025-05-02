@@ -937,6 +937,7 @@ pub fn format_expression(
         "challenge" => {
             let idx = raw_body["idx"].as_u64().unwrap();
             let stage = raw_body["stage"].as_u64().unwrap();
+            tracing::info!("challenge: {idx} {stage}");
             let prior: u64 = pilout["numChallenges"]
                 .as_array()
                 .unwrap()
@@ -1140,6 +1141,28 @@ pub fn add_symbol(pilout: &Value, symbols: &mut Vec<HashMap<String, Value>>, exp
             }
         }
 
+        // ────────────────────────────────────────── custom  -> custom
+        "custom" => {
+            if symbols.iter().all(|s| {
+                !(s["type"] == "custom"
+                    && s["commitId"] == exp["commitId"]
+                    && s["stage"] == json!(stage)
+                    && s["stageId"] == json!(stage_id))
+            }) {
+                let dim = if stage == 1 { 1 } else { 3 };
+                symbols.push(HashMap::from([
+                    ("type".into(), json!("custom")),
+                    ("commitId".into(), exp["commitId"].clone()),
+                    ("polId".into(), json!(id)),
+                    ("stageId".into(), json!(stage_id)),
+                    ("stage".into(), json!(stage)),
+                    ("dim".into(), json!(dim)),
+                    ("name".into(), json!(format!("{}.custom_{}_{}_{}", pil_name, exp["commitId"], stage, stage_id))),
+                    ("airId".into(), json!(air_id)),
+                    ("airgroupId".into(), json!(airgroup_id)),
+                ]));
+            }
+        }
         // ------------------------------------------------------------------ unknown op
         _ => panic!("Unknown operation {}", op),
     }
