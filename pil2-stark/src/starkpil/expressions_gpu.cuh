@@ -95,7 +95,7 @@ public:
     ~ExpressionsGPU();
 
     void loadDeviceArgs(uint64_t domainSize, Dest &dest);
-    void calculateExpressions_gpu(StepsParams *h_params, Dest dest, uint64_t domainSize, bool domainExtended);
+    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended);
     
 };
 #endif

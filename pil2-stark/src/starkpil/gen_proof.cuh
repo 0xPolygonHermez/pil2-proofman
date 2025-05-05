@@ -15,7 +15,7 @@
 #define PRINT_TIME_SUMMARY 1
 
 
-void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, ExpressionsCtx &expressionsCtx, bool prod, ExpressionsGPU *expressionsCtxGPU, double *time_expressions) {
+void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams& d_params, ExpressionsCtx &expressionsCtx, bool prod, ExpressionsGPU *expressionsCtxGPU, double *time_expressions) {
 
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
@@ -45,14 +45,14 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, Expressi
             hintOptions2[i] = options2;
         }
 
-        multiplyHintFieldsGPU(setupCtx, h_params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, time_expressions);
+        multiplyHintFieldsGPU(setupCtx, h_params, d_params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, time_expressions);
     }
 
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
-    accMulHintFieldsGPU(setupCtx, h_params, expressionsCtx, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, time_expressions);
-    updateAirgroupValueGPU(setupCtx, h_params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, time_expressions);
+    accMulHintFieldsGPU(setupCtx, h_params, d_params, expressionsCtx, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, time_expressions);
+    updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, time_expressions);
 }
 
 void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
@@ -116,6 +116,11 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
         pCustomCommitsFixed,
     };
     
+    StepsParams* d_params;
+    CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
+    CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
+    
+
     Goldilocks::Element *d_challenge = (Goldilocks::Element *)d_aux_trace + offsetChallenge;
            
     uint64_t *friQueries_gpu = (uint64_t *)d_aux_trace + offsetFriQueries;
@@ -140,13 +145,13 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     
     TimerStart(STARK_CALCULATE_WITNESS_STD);
     double time_expressions = 0;
-    calculateWitnessSTD_gpu(setupCtx, h_params, expressionsCtx_, true, &expressionsCtx, &time_expressions);
-    calculateWitnessSTD_gpu(setupCtx, h_params, expressionsCtx_, false, &expressionsCtx, &time_expressions);
+    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, expressionsCtx_, true, &expressionsCtx, &time_expressions);
+    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, expressionsCtx_, false, &expressionsCtx, &time_expressions);
 
     TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);
 
     TimerStart(CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, 2);
+    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, *d_params, 2);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_1);
@@ -179,7 +184,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     }
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt);
-    calculateExpression(setupCtx, expressionsCtx, &h_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
+    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
     TimerStopAndLog(STARK_STEP_Q_EXPRESSIONS);
     TimerStart(STARK_STEP_Q_COMMIT);
     commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, &d_transcript, &nttTime, &merkleTime);
@@ -249,7 +254,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     dim3 threads(256);
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
     computeX_kernel<<<blocks, threads>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
-    calculateExpression(setupCtx, expressionsCtx, &h_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
+    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
@@ -304,6 +309,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     TimerStopAndLog(STARK_STEP_FRI_QUERIES);
     TimerStopAndLog(STARK_STEP_FRI);
     TimerStopAndLog(STARK_GPU_PROOF);
+
+    CHECKCUDAERR(cudaFree(d_params));
 
 #if PRINT_TIME_SUMMARY
 

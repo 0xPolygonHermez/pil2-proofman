@@ -64,6 +64,11 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         pCustomCommitsFixed : nullptr,
     };
     
+    StepsParams* d_params;
+    CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
+    CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
+    
+
     prepare_evmap(setupCtx, d_buffers->d_aux_trace);
 
     // Allocate memory and copy data
@@ -164,7 +169,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
    TimerStopAndLog(STARK_CALCULATE_GPROD);
 
     TimerStart(CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, 2);
+    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, *d_params, 2);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
 
@@ -191,7 +196,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     dim3 threads_x(256);
     dim3 blocks_x((NExtended + threads_x.x - 1) / threads_x.x);
     computeX_kernel<<<blocks_x, threads_x>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));            
-    calculateExpression(setupCtx, expressionsCtx, &h_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
+    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
     TimerStopAndLog(STARK_STEP_Q_EXPRESSIONS);
 
     TimerStart(STARK_STEP_Q_COMMIT);
@@ -257,7 +262,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     TimerStart(STARK_STEP_FRI_POLYNOMIAL);
     computeX_kernel<<<blocks_x, threads_x>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
-    calculateExpression(setupCtx, expressionsCtx, &h_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
+    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
@@ -319,6 +324,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     TimerStopAndLog(STARK_POSTPROCESS);
     TimerStopAndLog(STARK_GPU_PROOF);
 
+    cudaFree(d_params);
     #if PRINT_TIME_SUMMARY
 
     double time_total = TimerGetElapsed(STARK_GPU_PROOF);
