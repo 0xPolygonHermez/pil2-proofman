@@ -19,6 +19,7 @@ struct DeviceCommitBuffers;
 class NTT_Goldilocks
 {
 private:
+    bool init = false;
     u_int32_t s = 0;
     u_int32_t nThreads;
     uint64_t nqr;
@@ -66,10 +67,11 @@ private:
     void reversePermutation(Goldilocks::Element *dst, uint64_t strideDst, uint64_t offsetDst,  Goldilocks::Element *src, uint64_t strideSrc, uint64_t offsetSrc, u_int64_t size, uint64_t ncols);
 
 public:
+    NTT_Goldilocks() {};
 
     NTT_Goldilocks(u_int64_t maxDomainSize, u_int32_t _nThreads = 0, int extension_ = 1)
     {
-
+        init = true;
         r = NULL;
         r_ = NULL;
         if (maxDomainSize == 0)
@@ -166,18 +168,20 @@ public:
     };
     ~NTT_Goldilocks()
     {
-        if (s != 0)
-        {
-            free(roots);
-            free(powTwoInv);
-        }
-        if (r != NULL)
-        {
-            delete[] r;
-        }
-        if (r_ != NULL)
-        {
-            delete[] r_;
+        if(init) {
+            if (s != 0)
+            {
+                free(roots);
+                free(powTwoInv);
+            }
+            if (r != NULL)
+            {
+                delete[] r;
+            }
+            if (r_ != NULL)
+            {
+                delete[] r_;
+            }
         }
     }
     

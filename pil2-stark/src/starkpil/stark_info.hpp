@@ -17,6 +17,16 @@ using namespace std;
 /* StarkInfo class contains the contents of the file zkevm.starkinfo.json,
    which is parsed during the constructor */
 
+struct EvalInfo
+{
+    uint64_t type; // 0: cm, 1: custom, 2: fixed
+    uint64_t offset;
+    uint64_t stride;
+    uint64_t dim;
+    uint64_t openingPos;
+    uint64_t evalPos;
+};
+
 typedef enum
 {
     const_ = 0,

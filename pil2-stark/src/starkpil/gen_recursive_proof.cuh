@@ -64,6 +64,8 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         pCustomCommitsFixed : nullptr,
     };
     
+    prepare_evmap(setupCtx, d_buffers->d_aux_trace);
+
     // Allocate memory and copy data
     CHECKCUDAERR(cudaMemcpy(h_params.publicInputs, publicInputs, setupCtx.starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
@@ -214,6 +216,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     gl64_t * d_LEv = (gl64_t *)  h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];;
 
     TimerStart(STARK_STEP_EVMAP);
+    uint64_t count = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += 4) {
         std::vector<int64_t> openingPoints;
         for(uint64_t j = 0; j < 4; ++j) {
@@ -224,7 +227,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
         computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), d_buffers->d_aux_trace, offset_helper, d_LEv, &nttTime);
         totalNTTTime += nttTime;
-        evmap_inplace(setupCtx, h_params, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
+        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
     }
     TimerStopAndLog(STARK_STEP_EVMAP);
 

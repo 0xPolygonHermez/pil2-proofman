@@ -122,6 +122,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     
     TranscriptGL_GPU d_transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 
+    prepare_evmap(setupCtx, d_aux_trace);
+
     gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
@@ -202,6 +204,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
 
     TimerStart(STARK_STEP_EVALS_EVMAP);
     CHECKCUDAERR(cudaMemset(h_params.evals, 0, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    uint64_t count = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += 4) {
         std::vector<int64_t> openingPoints;
         for(uint64_t j = 0; j < 4; ++j) {
@@ -212,7 +215,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
         computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), d_aux_trace, offset_helper, d_LEv, &nttTime);
         totalNTTTime += nttTime;
-        evmap_inplace(setupCtx, h_params, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
+        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
     }
     TimerStopAndLog(STARK_STEP_EVALS_EVMAP);
 
