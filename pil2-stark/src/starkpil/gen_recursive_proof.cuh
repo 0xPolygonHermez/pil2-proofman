@@ -39,7 +39,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, pConstTree, nullptr, false);
 
-    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers, setupCtx.starkInfo.nrowsPack, setupCtx.starkInfo.maxNBlocks); 
+    ExpressionsGPU expressionsCtx(setupCtx, proverHelpers);
 
     StepsParams h_params = {
         trace : (Goldilocks::Element *)d_buffers->d_trace,

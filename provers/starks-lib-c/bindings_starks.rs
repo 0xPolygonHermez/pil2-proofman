@@ -128,14 +128,6 @@ extern "C" {
     pub fn get_max_n_tmp3(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z12get_max_argsPv"]
-    pub fn get_max_args(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
-}
-extern "C" {
-    #[link_name = "\u{1}_Z11get_max_opsPv"]
-    pub fn get_max_ops(pExpressionsBin: *mut ::std::os::raw::c_void) -> u64;
-}
-extern "C" {
     #[link_name = "\u{1}_Z20expressions_bin_freePv"]
     pub fn expressions_bin_free(pExpressionsBin: *mut ::std::os::raw::c_void);
 }
