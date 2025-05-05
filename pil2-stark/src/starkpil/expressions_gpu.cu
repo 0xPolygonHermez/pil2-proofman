@@ -6,8 +6,8 @@
 
 extern __shared__ Goldilocks::Element scratchpad[];
 
-#define DEBUG 1
-#define DEBUG_ROW 1
+#define DEBUG 0
+#define DEBUG_ROW 0
 __device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t dimA,  bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps);
 __device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimRes, int i);
 
@@ -273,8 +273,26 @@ __device__ __forceinline__ Goldilocks::Element* load__(
         const uint64_t pos = logicalRow * nCols + argIdx;
 
         if (type == 1 && !dArgs->domainExtended) {
+#if DEBUG
+        if(print) {
+            if(isCyclic) {
+                printf("Expression debug trace cyclic: %lu\n",logicalRow * nCols + argIdx );
+            } else {
+                printf("Expression debug trace\n");
+            }
+        }
+#endif
             temp[threadIdx.x] = dParams->trace[pos];
         } else {
+#if DEBUG
+        if(print) {
+            if(isCyclic) {
+                printf("Expression debug aux_trace cyclic %lu\n", offset + logicalRow * nCols + argIdx);
+            } else {
+                printf("Expression debug aux_trace\n");
+            }
+        }
+#endif
             #pragma unroll
             for (uint64_t d = 0; d < dim; d++) {
                 temp[threadIdx.x + d * blockDim.x] =
@@ -286,6 +304,15 @@ __device__ __forceinline__ Goldilocks::Element* load__(
 
     // Special case: x, x_n, zi
     if (type == 4) {
+#if DEBUG
+            if(print) {
+                if(argIdx == 0) {
+                    printf("Expression debug x or x_n\n");
+                } else {
+                    printf("Expression debug zi\n");
+                }
+            }
+#endif
         return (argIdx == 0)
             ? (dArgs->domainExtended
                 ? &dParams->aux_trace[dArgs->x_offset + row]
@@ -295,6 +322,9 @@ __device__ __forceinline__ Goldilocks::Element* load__(
 
     // xi^-1 = inv(x - x_i)
     if (type == 5) {
+#if DEBUG
+        if(print) printf("Expression debug xi\n");
+#endif
         const gl64_t* xDivX = (gl64_t*)&dParams->xDivXSub[argIdx * FIELD_EXTENSION];
         const gl64_t* x = (gl64_t*)&dParams->aux_trace[dArgs->x_offset + row];
         #if DEBUG
@@ -310,6 +340,15 @@ __device__ __forceinline__ Goldilocks::Element* load__(
     }
 
     // Custom commits
+#if DEBUG
+        if(print) {
+            if(isCyclic) {
+                printf("Expression debug customCommits cyclic\n");
+            } else {
+                printf("Expression debug customCommits\n");
+            }
+        }
+#endif
     const uint64_t idx = type - (dArgs->nStages + 4);
     const uint64_t offset = dArgs->mapOffsetsCustomExps[idx];
     const uint64_t nCols = dArgs->mapSectionsNCustomFixed[idx];
