@@ -66,6 +66,8 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     uint64_t offsetAirgroupValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
     uint64_t offsetAirValues = setupCtx->starkInfo.mapOffsets[std::make_pair("airvalues", false)];
     uint64_t offsetProofValues = setupCtx->starkInfo.mapOffsets[std::make_pair("proofvalues", false)];
+    uint64_t offsetChallenge = setupCtx->starkInfo.mapOffsets[std::make_pair("challenge", false)];
+
     double timeCopy = omp_get_wtime();
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, params->trace, sizeTrace, cudaMemcpyHostToDevice));
     timeCopy = omp_get_wtime() - timeCopy;
@@ -89,12 +91,17 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     if (setupCtx->starkInfo.airValuesSize > 0) {
         CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetAirValues, params->airValues, setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     }
+
+    Goldilocks::Element *d_global_challenge = (Goldilocks::Element *)d_buffers->d_aux_trace + offsetChallenge;
+    CHECKCUDAERR(cudaMemcpy(d_global_challenge, globalChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+           
     timeCopyConstants = omp_get_wtime() - timeCopyConstants;
 
     //std::cout << "rick genDeviceBuffers time: " << time << std::endl;
 
     time = omp_get_wtime();
-    genProof_gpu(*setupCtx, airgroupId, airId, instanceId, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile), d_buffers);
+    genProof_gpu(*setupCtx, d_buffers->d_aux_trace);
+    getProof_gpu(*setupCtx, airgroupId, airId, instanceId, proofBuffer, string(proofFile), d_buffers->d_aux_trace);
     time = omp_get_wtime() - time;
     //std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;
 

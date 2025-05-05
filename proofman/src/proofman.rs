@@ -918,11 +918,9 @@ where
                 .as_ref()
                 .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
                 .unwrap_or(0);
-    
-            let airgroup_values: Vec<F> = proof[0..n_airgroup_values].to_vec()
-                .iter()
-                .map(|&x| F::from_u64(x))
-                .collect();
+
+            let airgroup_values: Vec<F> =
+                proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
 
             airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
 
@@ -1047,6 +1045,13 @@ where
         let global_challenge = [F::ZERO; 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
+        println!(
+            "{}: Global challenge: [{}, {}, {}]",
+            Self::MY_NAME,
+            global_challenge[0],
+            global_challenge[1],
+            global_challenge[2]
+        );
         pctx.set_global_challenge(2, &global_challenge);
 
         timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);

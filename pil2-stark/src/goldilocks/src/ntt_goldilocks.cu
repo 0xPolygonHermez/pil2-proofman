@@ -125,7 +125,7 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Elem
     }
 }
 
-void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t NExtended, uint64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
+void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t NExtended, uint64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
     cudaEvent_t point1, point2, point3;
     cudaEventCreate(&point1);
@@ -134,22 +134,18 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
 
     cudaEventRecord(point1);
 
-    gl64_t* d_S = d_buffers->d_aux_trace + offset_helper;
-    gl64_t* d_r = d_buffers->d_aux_trace + offset_helper + qDeg;
-    gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + NExtended;
-    gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*NExtended;
+    gl64_t* d_S = d_aux_trace + offset_helper;
+    gl64_t* d_r = d_aux_trace + offset_helper + qDeg;
+    gl64_t* d_forwardTwiddleFactors = d_aux_trace + offset_helper + NExtended;
+    gl64_t* d_inverseTwiddleFactors = d_aux_trace + offset_helper + 2*NExtended;
 
-    gl64_t *d_q = d_buffers->d_aux_trace + offset_q;
-    gl64_t *d_cmQ = d_buffers->d_aux_trace + offset_cmQ;
+    gl64_t *d_q = d_aux_trace + offset_q;
+    gl64_t *d_cmQ = d_aux_trace + offset_cmQ;
 
     if (ncols == 0 || NExtended == 0)
     {
         return;
     }
-
-    CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, NExtended * sizeof(uint64_t)))
-    CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, NExtended * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMemset(d_r, 0, NExtended * sizeof(uint64_t)));
 
     // Init twiddle factors
     int lg2ext = log2(NExtended);
@@ -190,7 +186,7 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
     cudaEventDestroy(point3);
 }
 
-void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime, double *merkleTime)
+void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, double *nttTime, double *merkleTime)
 {
     cudaEvent_t point1, point2, point3;
     cudaEventCreate(&point1);
@@ -207,14 +203,9 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
         return;
     }
 
-    gl64_t* d_r = d_buffers->d_aux_trace + offset_helper;
-    gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + ext_size;
-    gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*ext_size;
-
-
-    CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, ext_size * sizeof(uint64_t)))
-    CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, ext_size * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMemset(d_r, 0, ext_size * sizeof(uint64_t)));
+    gl64_t* d_r = d_aux_trace + offset_helper;
+    gl64_t* d_forwardTwiddleFactors = d_aux_trace + offset_helper + ext_size;
+    gl64_t* d_inverseTwiddleFactors = d_aux_trace + offset_helper + 2*ext_size;
 
     int lg2 = log2(size);
     int lg2ext = log2(ext_size);
@@ -224,6 +215,7 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
 
     CHECKCUDAERR(cudaMemcpy(d_dst_ntt_, d_src_ntt_, size * ncols * sizeof(gl64_t), cudaMemcpyDeviceToDevice));
     CHECKCUDAERR(cudaMemset(d_dst_ntt_ + size * ncols, 0, (ext_size - size) * ncols * sizeof(gl64_t)));
+
     ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, true);
 
     ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false);
@@ -251,22 +243,18 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
     cudaEventDestroy(point3);
 }
 
-void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_data)
+void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_data)
 {
 
-    gl64_t* d_r = d_buffers->d_aux_trace + offset_helper;
-    gl64_t* d_forwardTwiddleFactors = d_buffers->d_aux_trace + offset_helper + size;
-    gl64_t* d_inverseTwiddleFactors = d_buffers->d_aux_trace + offset_helper + 2*size;
+    gl64_t* d_r = d_aux_trace + offset_helper;
+    gl64_t* d_forwardTwiddleFactors = d_aux_trace + offset_helper + size;
+    gl64_t* d_inverseTwiddleFactors = d_aux_trace + offset_helper + 2*size;
 
-    gl64_t *dst_src = d_data == nullptr ? d_buffers->d_aux_trace + data_offset : d_data;
+    gl64_t *dst_src = d_data == nullptr ? d_aux_trace + data_offset : d_data;
     if (ncols == 0 || size == 0)
     {
         return;
     }
-
-    CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, size * sizeof(uint64_t)))
-    CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, size * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMemset(d_r, 0, size * sizeof(uint64_t)));
 
     int lg2 = log2(size);
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2);

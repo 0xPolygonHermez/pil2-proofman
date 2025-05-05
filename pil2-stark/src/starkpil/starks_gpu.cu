@@ -41,6 +41,46 @@ Goldilocks::Element omegas_inv_[33] = {
     0x16d265893b5b7e85,
 };
 
+void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsExt) {
+    uint64_t NExtended = 1 << nBitsExt;
+    uint64_t extendBits = nBitsExt - nBits;
+    uint64_t extend = (1 << extendBits);
+
+    Goldilocks::Element w = Goldilocks::w(extendBits);
+    Goldilocks::Element sn = Goldilocks::shift();
+    for (uint64_t i = 0; i < nBits; i++) Goldilocks::square(sn, sn);
+    
+    buildZHInv_kernel<<<1, extend>>>((gl64_t *)d_zi, extend, NExtended, w, sn);
+
+    // TODO!
+    // for(uint64_t i = 1; i < boundaries.size(); ++i) {
+    //         Boundary boundary = boundaries[i];
+    //     if(boundary.name == "everyRow") {
+    //         buildZHInv(nBits, nBitsExt);
+    //     } else if(boundary.name == "firstRow") {
+    //         buildOneRowZerofierInv(nBits, nBitsExt, i, 0);
+    //     } else if(boundary.name == "lastRow") {
+    //         buildOneRowZerofierInv(nBits, nBitsExt, i, N);
+    //     } else if(boundary.name == "everyFrame") {
+    //         buildFrameZerofierInv(nBits, nBitsExt, i, boundary.offsetMin, boundary.offsetMax);
+    //     }
+    // }
+}
+
+__global__ void buildZHInv_kernel(gl64_t *d_zi, uint64_t extend, uint64_t NExtended, Goldilocks::Element w, Goldilocks::Element sn) {
+    uint32_t k = threadIdx.x;
+
+    if (k < extend) {
+        gl64_t w_k = gl64_t(w.fe) ^ k;
+        d_zi[k] = (gl64_t(sn.fe) * w_k) - gl64_t::one();
+        d_zi[k] = d_zi[k].reciprocal();
+    }
+
+    for (uint64_t i = k + extend; i < NExtended; i += extend) {
+        d_zi[i] = d_zi[k];
+    }
+}
+
 __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Element shift, Goldilocks::Element w) {
     uint32_t k = blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= NExtended) return;
@@ -49,19 +89,19 @@ __global__ void computeX_kernel(gl64_t *x, uint64_t NExtended, Goldilocks::Eleme
     x[k] = gl64_t(shift.fe) * w_k;
 }
 
-void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers, TranscriptGL_GPU *d_transcript, double *nttTime, double *merkleTime)
+void commitStage_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, double *nttTime, double *merkleTime)
 {
     if (step <= setupCtx.starkInfo.nStages)
     {
-        extendAndMerkelize_inplace(step, setupCtx, treesGL, d_trace, d_aux_trace, d_buffers, d_transcript, nttTime, merkleTime);
+        extendAndMerkelize_inplace(step, setupCtx, treesGL, d_trace, d_aux_trace, d_transcript, nttTime, merkleTime);
     }
     else
     {
-        computeQ_inplace(step, setupCtx, treesGL, d_aux_trace, d_buffers, d_transcript, nttTime, merkleTime);
+        computeQ_inplace(step, setupCtx, treesGL, d_aux_trace, d_transcript, nttTime, merkleTime);
     }
 }
 
-void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL** treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers, TranscriptGL_GPU *d_transcript, double *nttTime, double *merkleTime)
+void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL** treesGL, gl64_t *d_trace, gl64_t *d_aux_trace, TranscriptGL_GPU *d_transcript, double *nttTime, double *merkleTime)
 {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -83,7 +123,7 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     if (nCols > 0)
     {
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_" + to_string(step), false)];
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers, offset_helper, nttTime, merkleTime);
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_aux_trace, offset_helper, nttTime, merkleTime);
         uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
         if(d_transcript != nullptr) {
             d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE);
@@ -91,7 +131,7 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     }
 }
 
-void computeQ_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace, DeviceCommitBuffers *d_buffers,TranscriptGL_GPU *d_transcript, double *nttTime, double *merkleTime)
+void computeQ_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL, gl64_t *d_aux_trace,TranscriptGL_GPU *d_transcript, double *nttTime, double *merkleTime)
 {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -115,7 +155,7 @@ void computeQ_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL,
     {
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_" + to_string(step), false)];
         NTT_Goldilocks nttExtended(NExtended);
-        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, shiftIn, N, NExtended, nCols, d_buffers, offset_helper, nttTime, merkleTime);
+        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, shiftIn, N, NExtended, nCols, d_aux_trace, offset_helper, nttTime, merkleTime);
         uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
         if(d_transcript != nullptr) {
             d_transcript->put(&pNodes[tree_size - HASH_SIZE], HASH_SIZE);
@@ -186,12 +226,12 @@ __global__ void evalXiShifted(gl64_t* d_shiftedValues, gl64_t *d_xiChallenge, ui
     }
 }
 
-void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime)
+void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint64_t nOpeningPoints, int64_t *openingPoints, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_LEv, double *nttTime)
 {
     uint64_t N = 1 << nBits;
 
     int64_t *d_openingPoints;
-    gl64_t * d_shiftedValues = d_buffers->d_aux_trace + offset_helper;
+    gl64_t * d_shiftedValues = d_aux_trace + offset_helper;
 
     cudaMalloc(&d_openingPoints, nOpeningPoints * sizeof(int64_t));
     cudaMemcpy(d_openingPoints, openingPoints, nOpeningPoints * sizeof(int64_t), cudaMemcpyHostToDevice);
@@ -214,7 +254,7 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     cudaEventRecord(point1);
 
     NTT_Goldilocks ntt(N);
-    ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_buffers, offset_helper + nOpeningPoints * FIELD_EXTENSION, d_LEv);
+    ntt.INTT_inplace(0, N, FIELD_EXTENSION * nOpeningPoints, d_aux_trace, offset_helper + nOpeningPoints * FIELD_EXTENSION, d_LEv);
 
     cudaEventRecord(point2);
     if(nttTime!= nullptr){
@@ -341,7 +381,7 @@ __global__ void computeEvals_v2(
     }
 }
 
-void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, DeviceCommitBuffers *d_buffers, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv)
+void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv)
 {
 
     uint64_t offsetConstTree = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
@@ -381,7 +421,7 @@ void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, DeviceCommitBuffer
 
     dim3 nThreads(256);
     dim3 nBlocks(nEvals);
-    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)d_buffers->d_aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
+    computeEvals_v2<<<nBlocks, nThreads, nThreads.x * sizeof(Goldilocks3GPU::Element)>>>(extendBits, nEvals, N, nOpeningPoints, (gl64_t *)h_params.evals, d_evalsInfo, (gl64_t *)h_params.aux_trace, d_constTree, (gl64_t *)h_params.pCustomCommitsFixed, (gl64_t *)d_LEv);
     CHECKCUDAERR(cudaGetLastError());
 
     delete[] evalsInfo;
@@ -523,14 +563,14 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
     }
 }
 
-void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper, Goldilocks::Element *d_challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, DeviceCommitBuffers *d_buffers)
+void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper, Goldilocks::Element *d_challenge, uint64_t nBitsExt, uint64_t prevBits, uint64_t currentBits, gl64_t *d_aux_trace)
 {
 
     uint32_t ratio = 1 << (prevBits - currentBits);
     uint64_t halfRatio = ratio >> 1;
-    gl64_t *d_friPol = (gl64_t *)(d_buffers->d_aux_trace + friPol_offset);
-    gl64_t *d_twiddles = (gl64_t *)d_buffers->d_aux_trace + offset_helper;
-    gl64_t *d_ppar = (gl64_t *)d_buffers->d_aux_trace + offset_helper + halfRatio;
+    gl64_t *d_friPol = (gl64_t *)(d_aux_trace + friPol_offset);
+    gl64_t *d_twiddles = (gl64_t *)d_aux_trace + offset_helper;
+    gl64_t *d_ppar = (gl64_t *)d_aux_trace + offset_helper + halfRatio;
 
     uint64_t sizeFoldedPol = 1 << currentBits;
 
@@ -641,7 +681,7 @@ __global__ void genMerkleProof(gl64_t *d_nodes, uint64_t nLeaves, uint64_t *d_fr
     }
 }
 
-void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *d_friQueries, uint64_t nQueries, MerkleTreeGL **trees, uint64_t nTrees, DeviceCommitBuffers *d_buffers, gl64_t* d_constTree, uint32_t nStages)
+void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *d_friQueries, uint64_t nQueries, MerkleTreeGL **trees, uint64_t nTrees, gl64_t *d_aux_trace, gl64_t* d_constTree, uint32_t nStages)
 {   
     uint64_t maxBuffSize = setupCtx.starkInfo.maxProofBuffSize;
     uint64_t maxTreeWidth = setupCtx.starkInfo.maxTreeWidth;
@@ -654,7 +694,7 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
         {
             std::string section = "cm" + to_string(k+1);
             uint64_t offset = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
-            getTreeTracePols<<<nBlocks, nThreads>>>(d_buffers->d_aux_trace + offset, trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
+            getTreeTracePols<<<nBlocks, nThreads>>>(d_aux_trace + offset, trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
         }
         else if (k == nStages + 1)
         {
@@ -663,7 +703,7 @@ void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *
             uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
             uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
-            getTreeTracePols<<<nBlocks, nThreads>>>(d_buffers->d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
+            getTreeTracePols<<<nBlocks, nThreads>>>(d_aux_trace + offset + N*nCols, trees[k]->getMerkleTreeWidth(), d_friQueries, nQueries, d_queries_buff + k * nQueries * maxBuffSize, maxBuffSize);
         }
     }
     CHECKCUDAERR(cudaGetLastError());
