@@ -131,6 +131,18 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
 
             /* prepare PIL JSON for helpers -------------------------------- */
             let mut air_json = serde_json::to_value(air)?;
+            /* ---------- PATCH: unwrap deprecated `{constraint:{…}}` ---- */
+            if let Some(arr) = air_json.get_mut("constraints").and_then(Value::as_array_mut) {
+                for c in arr {
+                    if c.get("constraint").is_some() {
+                        if let Some(inner) = c.get_mut("constraint") {
+                            let replacement = inner.take();
+                            *c = replacement;
+                        }
+                    }
+                }
+            }
+
             air_json["airId"] = Value::Number(air_id.into());
             air_json["airGroupId"] = Value::Number(airgroup_id.into());
 
