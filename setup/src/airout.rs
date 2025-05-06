@@ -13,7 +13,7 @@ use pilout::{
 
 /* ────────────────────────── JS constant mirrors ────────────────────────── */
 
-mod consts {
+pub mod consts {
     pub const IM_COL: i32 = 0;
     pub const FIXED_COL: i32 = 1;
     pub const PERIODIC_COL: i32 = 2;
@@ -166,13 +166,13 @@ impl AirOut {
             tracing::info!("[AirOut    ]     #Symbols: {}", pil.symbols.len());
         }
 
-        for (ag_idx, ag) in pil.air_groups.iter().enumerate() {
+        for (_ag_idx, ag) in pil.air_groups.iter().enumerate() {
             tracing::info!(
                 "[AirOut    ]         > Airgroup '{}': ({} airs)",
                 ag.name.as_deref().unwrap_or("<unnamed>"),
                 ag.airs.len()
             );
-            for (air_idx, air) in ag.airs.iter().enumerate() {
+            for (_air_idx, air) in ag.airs.iter().enumerate() {
                 tracing::info!(
                     "[AirOut    ]             + Air '{}'  rows: {}  stages: {}",
                     air.name.as_deref().unwrap_or("<unnamed>"),
