@@ -46,7 +46,12 @@ impl<F: PrimeField64> Std<F> {
         Arc::new(Self { range_check, std_prod, std_sum })
     }
 
-    pub fn new_dev(wcm: Arc<WitnessManager<F>>, register_u8: bool, register_u16: bool, register_specified_ranges: bool) -> Arc<Self> {
+    pub fn new_dev(
+        wcm: Arc<WitnessManager<F>>,
+        register_u8: bool,
+        register_u16: bool,
+        register_specified_ranges: bool,
+    ) -> Arc<Self> {
         let pctx = wcm.get_pctx();
         let sctx = wcm.get_sctx();
 
