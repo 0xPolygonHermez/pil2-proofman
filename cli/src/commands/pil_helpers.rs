@@ -366,7 +366,11 @@ impl PilHelpersCmd {
 
         let mut tt = TinyTemplate::new();
         tt.add_template("mod.rs", MOD_RS)?;
+        #[cfg(not(feature = "dev"))]
         tt.add_template("traces.rs", include_str!("../../assets/templates/pil_helpers_trace.rs.tt"))?;
+
+        #[cfg(feature = "dev")]
+        tt.add_template("traces_dev.rs", include_str!("../../assets/templates/pil_helpers_trace.rs.tt"))?;
 
         // Write the files
         // --------------------------------------------
@@ -374,9 +378,16 @@ impl PilHelpersCmd {
         fs::write(pil_helpers_path.join("mod.rs"), MOD_RS)?;
 
         // Write traces.rs
+        #[cfg(not(feature = "dev"))]
         fs::write(
             pil_helpers_path.join("traces.rs"),
             tt.render("traces.rs", &context)?.replace("&lt;", "<").replace("&gt;", ">"),
+        )?;
+
+        #[cfg(feature = "dev")]
+        fs::write(
+            pil_helpers_path.join("traces_dev.rs"),
+            tt.render("traces_dev.rs", &context)?.replace("&lt;", "<").replace("&gt;", ">"),
         )?;
 
         Ok(())
