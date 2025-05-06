@@ -71,14 +71,14 @@ public:
         return result[0].is_one() && result[1].is_zero() && result[2].is_zero();
     };
 
-    static void copy(Element &dst, const Element &src)
+    static __device__ __forceinline__ void copy(Element &dst, const Element &src)
     {
         for (uint64_t i = 0; i < FIELD_EXTENSION; i++)
         {
             dst[i] = src[i];
         }
     };
-    static void copy(Element *dst, const Element *src)
+    static __device__ __forceinline__ void copy(Element *dst, const Element *src)
     {
         for (uint64_t i = 0; i < FIELD_EXTENSION; i++)
         {

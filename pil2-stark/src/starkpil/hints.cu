@@ -3,10 +3,10 @@
 #include "expressions_pack.hpp"
 #include "polinomial.hpp"
 
-void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx, cudaStream_t stream){
+void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx){
 
     ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
-    expressionsCtx->calculateExpressions_gpu( d_params, dest, nRows, domainExtended, stream);
+    expressionsCtx->calculateExpressions_gpu( d_params, dest, nRows, domainExtended);
 }
 
 __global__ void setPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *values, uint64_t deg, uint64_t dim, uint64_t nCols) {
@@ -109,7 +109,7 @@ uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     return hintFieldVal.id;
 }
 
-void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, double* time_expressions, cudaStream_t stream) {
+void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, double* time_expressions) {
     if(setupCtx.expressionsBin.hints.size() == 0) {
         zklog.error("No hints were found.");
         exitProcess();
@@ -157,12 +157,12 @@ void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParam
         addHintField(setupCtx, h_params, hintId[i], destStruct, hintFieldName1[i], hintOptions1[i]);
         addHintField(setupCtx, h_params, hintId[i], destStruct, hintFieldName2[i], hintOptions2[i]);
         double time_start = omp_get_wtime();
-        opHintFieldsGPU(&d_params, destStruct, nRows, false, GPUExpressionsCtx, stream);
+        opHintFieldsGPU(&d_params, destStruct, nRows, false, GPUExpressionsCtx);
         *time_expressions += omp_get_wtime() - time_start;
     }
 }
 
-void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions, cudaStream_t stream) {
+void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -182,30 +182,25 @@ void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 
     double time_start = omp_get_wtime();
-    opHintFieldsGPU(&d_params, destStruct, N, false, GPUExpressionsCtx, stream);
-    *time_expressions += omp_get_wtime() - time_start; 
-    for(uint64_t i = 1; i < N; ++i) {
-        if(add) {
-            if(dim == 1) {
-                Goldilocks::add(vals[i], vals[i], vals[(i - 1)]);
-            } else {
-                Goldilocks3::add((Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[(i - 1) * FIELD_EXTENSION]);
-            }
-        } else {
-            if(dim == 1) {
-                Goldilocks::mul(vals[i], vals[i], vals[(i - 1)]);
-            } else {
-                Goldilocks3::mul((Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[(i - 1) * FIELD_EXTENSION]);
-            }
-        }
-    }
+    opHintFieldsGPU(&d_params, destStruct, N, false, GPUExpressionsCtx);
+    *time_expressions += omp_get_wtime() - time_start;
+    
+    // copy vals to the GPU
+    Goldilocks::Element* vals_gpu;
+    cudaMalloc((void**)&vals_gpu, dim*N*sizeof(Goldilocks::Element));
+    cudaMemcpy(vals_gpu, vals, dim*N*sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
+    Goldilocks::Element* helpers;
+    cudaMalloc((void**)&helpers, dim*N*sizeof(Goldilocks::Element));
+    
+    accOperation(vals, N, add, dim);
+    accOperationGPU((gl64_t *)vals_gpu, N, add, dim, (gl64_t *)helpers);
     setHintFieldGPU(setupCtx, h_params, vals, hintId, hintFieldNameDest);
     setHintFieldGPU(setupCtx, h_params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
 
     delete[] vals;
 }
 
-uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions, cudaStream_t stream) {
+uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions) {
     
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -224,10 +219,326 @@ uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, Steps
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 
     double time_start = omp_get_wtime();
-    opHintFieldsGPU(&d_params, destStruct, 1, false, GPUExpressionsCtx, stream); 
+    opHintFieldsGPU(&d_params, destStruct, 1, false, GPUExpressionsCtx); 
     opAirgroupValueGPU(h_params.airgroupValues + FIELD_EXTENSION*hintFieldAirgroupVal.id, destStruct.dest_gpu, destStruct.dim, add);
     *time_expressions += omp_get_wtime() - time_start;
     return hintFieldAirgroupVal.id;
 }
 
+ 
+void accOperation(Goldilocks::Element* vals, uint64_t N, bool add, uint32_t dim) {
+    for(uint64_t i = 1; i < N; ++i) {
+        if(add) {
+            if(dim == 1) {
+                Goldilocks::add(vals[i], vals[i], vals[(i - 1)]);
+            } else {
+                Goldilocks3::add((Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[(i - 1) * FIELD_EXTENSION]);
+            }
+        } else {
+            if(dim == 1) {
+                Goldilocks::mul(vals[i], vals[i], vals[(i - 1)]);
+            } else {
+                Goldilocks3::mul((Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[i * FIELD_EXTENSION], (Goldilocks3::Element &)vals[(i - 1) * FIELD_EXTENSION]);
+            }
+        }
+    }
 
+}
+
+
+//
+//Algorithm based in: https://www.eecs.umich.edu/courses/eecs570/hw/parprefix.pdf
+//
+// todo: bank collisions pending
+
+__device__ void scan_sum_1(gl64_t* temp, uint32_t N){
+
+    uint32_t thid = threadIdx.x;
+    int offset = 1;
+
+    // build sum in place up the tree 
+    for (int d = N>>1; d > 0; d >>= 1) 
+    {
+        __syncthreads();
+        if (thid < d)
+        {
+            int ai = offset*(2*thid+1)-1;
+            int bi = offset*(2*thid+2)-1;
+            temp[bi] += temp[ai];
+        }
+        offset *= 2;
+    }
+    
+    // clear the last element
+    if (thid == 0) { 
+        temp[(N- 1)].set_val(0); 
+    } 
+
+    // traverse down tree & build scan
+    for (int d = 1; d < N; d *= 2) 
+    {
+        offset >>= 1;
+        __syncthreads();
+        if (thid < d)
+        {
+            int ai = offset*(2*thid+1)-1;
+            int bi = offset*(2*thid+2)-1;
+            gl64_t t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] += t;
+        }
+    }
+}
+
+__device__ void scan_prod_1(gl64_t* temp, uint32_t N){
+
+    uint32_t thid = threadIdx.x;
+    int offset = 1;
+
+    // build sum in place up the tree 
+    for (int d = N>>1; d > 0; d >>= 1) 
+    {
+        __syncthreads();
+        if (thid < d)
+        {
+            int ai = offset*(2*thid+1)-1;
+            int bi = offset*(2*thid+2)-1;
+            temp[bi] *= temp[ai];
+        }
+        offset *= 2;
+    }
+    
+    // clear the last element
+    if (thid == 0) { 
+        temp[(N- 1)].set_val(1); 
+    } 
+
+    // traverse down tree & build scan
+    for (int d = 1; d < N; d *= 2) 
+    {
+        offset >>= 1;
+        __syncthreads();
+        if (thid < d)
+        {
+            int ai = offset*(2*thid+1)-1;
+            int bi = offset*(2*thid+2)-1;
+            gl64_t t = temp[ai];
+            temp[ai] = temp[bi];
+            temp[bi] *= t;
+        }
+    }
+}
+
+__device__ void scan_sum_3(gl64_t* temp, uint32_t N){
+    
+    uint32_t thid = threadIdx.x;
+    int offset = 1;
+
+    // build sum in place up the tree 
+    for (int d = N>>1; d > 0; d >>= 1) 
+    {
+        __syncthreads();
+        if (thid < d)
+        {
+            int ai = 3 * (offset*(2*thid+1)-1);
+            int bi = 3 * (offset*(2*thid+2)-1);
+            assert(bi < 6*blockDim.x);
+            assert(ai < 6*blockDim.x);
+            Goldilocks3GPU::add(*((Goldilocks3GPU::Element *)&temp[bi]), *((Goldilocks3GPU::Element *)&temp[bi]), *((Goldilocks3GPU::Element *)&temp[ai]));
+        }
+        offset *= 2;
+    }
+    __syncthreads(); 
+    // clear the last element
+    if (thid == 0) { 
+        temp[3*(N- 1)].set_val(0); 
+        temp[3*(N- 1)+1].set_val(0);
+        temp[3*(N- 1)+2].set_val(0);
+    } 
+
+    // traverse down tree & build scan
+    for (int d = 1; d < N; d *= 2) 
+    {
+        offset >>= 1;
+        __syncthreads();
+        if (thid < d)
+        {
+            int ai = 3 * (offset*(2*thid+1)-1);
+            int bi = 3 * (offset*(2*thid+2)-1);
+            Goldilocks3GPU::Element t;
+            Goldilocks3GPU::copy((Goldilocks3GPU::Element *)&t, (Goldilocks3GPU::Element *)&temp[ai]);
+            Goldilocks3GPU::copy((Goldilocks3GPU::Element *)&temp[ai], (Goldilocks3GPU::Element *)&temp[bi]);
+            Goldilocks3GPU::add(*((Goldilocks3GPU::Element *)&temp[bi]), *((Goldilocks3GPU::Element *)&temp[bi]), t);
+        }
+    }
+
+}
+
+__device__ void scan_prod_3(gl64_t* temp, uint32_t N){
+    
+    uint32_t thid = threadIdx.x;
+    int offset = 1;
+
+    // build sum in place up the tree 
+    for (int d = N>>1; d > 0; d >>= 1) 
+    {
+        __syncthreads();
+        if (thid < d)
+        {
+            int ai = 3 * (offset*(2*thid+1)-1);
+            int bi = 3 * (offset*(2*thid+2)-1);
+            Goldilocks3GPU::mul(*((Goldilocks3GPU::Element *)&temp[bi]), *((Goldilocks3GPU::Element *)&temp[bi]), *((Goldilocks3GPU::Element *)&temp[ai]));
+        }
+        offset *= 2;
+    }
+    __syncthreads(); 
+    // clear the last element
+    if (thid == 0) { 
+        temp[3*(N- 1)].set_val(1); 
+        temp[3*(N- 1)+1].set_val(0);
+        temp[3*(N- 1)+2].set_val(0);
+    } 
+
+    // traverse down tree & build scan
+    for (int d = 1; d < N; d *= 2) 
+    {
+        offset >>= 1;
+        __syncthreads();
+        if (thid < d)
+        {
+            int ai = 3 * (offset*(2*thid+1)-1);
+            int bi = 3 * (offset*(2*thid+2)-1);
+            Goldilocks3GPU::Element t;
+            Goldilocks3GPU::copy((Goldilocks3GPU::Element *)&t, (Goldilocks3GPU::Element *)&temp[ai]);
+            Goldilocks3GPU::copy((Goldilocks3GPU::Element *)&temp[ai], (Goldilocks3GPU::Element *)&temp[bi]);
+            Goldilocks3GPU::mul(*((Goldilocks3GPU::Element *)&temp[bi]), *((Goldilocks3GPU::Element *)&temp[bi]), t);
+        }
+    }
+
+}
+
+__global__ void prescan(gl64_t *g_odata, gl64_t *g_idata, bool isSum, uint32_t chunk, uint32_t dim, uint32_t N)
+{
+    extern __shared__ gl64_t temp[]; 
+
+    uint32_t thid = threadIdx.x;
+    uint32_t indx1 = (blockIdx.x * blockDim.x + thid)*2;
+    uint32_t indx2 = (blockIdx.x * blockDim.x + thid)*2 + 1;
+    uint32_t pos1 = (indx1+1) * chunk -1;
+    uint32_t pos2 = (indx2+1) * chunk -1;
+
+    uint32_t dimx2xthid = (dim << 1) * thid;
+    uint32_t dimxpos1 = dim * pos1;
+    uint32_t dimxpos2 = dim * pos2;
+
+    for(uint32_t i=0; i<dim; i++){
+        temp[dimx2xthid+i] = g_idata[dimxpos1+i]; 
+        temp[dimx2xthid+dim+i] = g_idata[dimxpos2+i]; 
+    }
+
+    // build sum in place up the tree
+    if(isSum) {
+        if(dim == 1) {
+           scan_sum_1(temp, blockDim.x*2);
+        } else {
+           scan_sum_3(temp, blockDim.x*2);
+        }
+    } else {
+        if(dim == 1) {
+            scan_prod_1(temp, blockDim.x*2);
+        } else {
+            scan_prod_3(temp, blockDim.x*2);
+        }
+    }
+    
+    __syncthreads();
+    // exclusive scan has been evaluated but wee need inclusive
+    
+    uint32_t dimxindx1 = dim * indx1;
+    uint32_t dimxindx2 = dim * indx2;
+    uint32_t indxtmp1 = dimx2xthid+dim;
+    uint32_t indxtmp2 = dimx2xthid+(dim << 1);
+    if(indxtmp2 < dim*2*blockDim.x){
+        for(uint32_t i=0; i<dim; i++){
+            g_odata[dimxindx1+i] = temp[indxtmp1+i];
+            g_odata[dimxindx2+i] = temp[indxtmp2+i];
+        }
+    } else{
+        assert(indxtmp2 == dim*2*blockDim.x);
+        for(uint32_t i=0; i<dim; i++){
+            g_odata[dimxindx1+i] = temp[indxtmp1+i];
+        }
+        indxtmp2 -= dim;
+        if(dim == 1){
+            if(isSum)
+                g_odata[dimxindx2] = temp[indxtmp2] + g_idata[dimxpos2];
+            else{
+                g_odata[dimxindx2] = temp[indxtmp2] * g_idata[dimxpos2];
+            }
+        } else {
+            if(isSum){
+                Goldilocks3GPU::add(*((Goldilocks3GPU::Element *)&g_odata[dimxindx2]), *((Goldilocks3GPU::Element *)&temp[indxtmp2]), *((Goldilocks3GPU::Element *)&g_idata[dimxpos2]));
+            } else {
+                Goldilocks3GPU::mul(*((Goldilocks3GPU::Element *)&g_odata[dimxindx2]), *((Goldilocks3GPU::Element *)&temp[indxtmp2]), *((Goldilocks3GPU::Element *)&g_idata[dimxpos2]));
+            }
+        }
+    }
+} 
+
+__global__ void prescan_correction(gl64_t *g_odata, gl64_t* correction, bool isSum, uint32_t dim, uint32_t N){
+
+    if(blockIdx.x == 0) {
+        return;
+    }
+    uint32_t pos_out = (blockIdx.x * blockDim.x + threadIdx.x) * dim;
+    uint32_t pos_corr = (blockIdx.x-1) * dim;
+
+    if(isSum) {
+        if(dim == 1) {
+            g_odata[pos_out] = g_odata[pos_out] + correction[pos_corr];
+        } else {
+            Goldilocks3GPU::add(*((Goldilocks3GPU::Element *)&g_odata[pos_out]), *((Goldilocks3GPU::Element *)&g_odata[pos_out]), *((Goldilocks3GPU::Element *)&correction[pos_corr]));
+        }
+    } else {
+        if(dim == 1) {
+            g_odata[pos_out] = g_odata[pos_out] * correction[pos_corr];
+        } else {
+            Goldilocks3GPU::mul(*((Goldilocks3GPU::Element *)&g_odata[pos_out]), *((Goldilocks3GPU::Element *)&g_odata[pos_out]), *((Goldilocks3GPU::Element *)&correction[pos_corr]));
+        }
+    }
+}
+
+void accOperationGPU(gl64_t* vals, uint64_t N, bool add, uint32_t dim, gl64_t* helper) {
+    
+    
+    gl64_t* helper1;
+    gl64_t* helper2;
+    uint32_t nthreads1 = min(256, (uint32_t)N>>1);
+    dim3 threads1(nthreads1);
+    dim3 blocks1((N + 2*threads1.x - 1) / (2*threads1.x));
+    prescan<<<blocks1, threads1, 2*dim*threads1.x*sizeof(gl64_t)>>>(vals, vals, add, 1, dim, N);  
+    if(N > 2*nthreads1){
+
+        helper1 = helper;
+        uint32_t N2 = blocks1.x;
+        uint32_t nthreads2 = min(256, N2>>1);
+        dim3 threads2(nthreads2);
+        dim3 blocks2((N2 + 2*threads2.x - 1) / (2*threads2.x));
+        prescan<<<blocks2, threads2, 2*dim*threads2.x*sizeof(gl64_t)>>>(helper1, vals, add, nthreads1 << 1, dim, N2);
+        
+        if( N2 > nthreads2){
+            
+            helper2 = helper + dim*N2;
+            uint32_t N3 = blocks2.x;
+            assert(N3 <= 2048);
+            uint32_t nthreads3 = N3 >> 1;
+            dim3 threads3(nthreads3);
+            dim3 blocks3(1);
+            prescan<<<blocks3, threads3, 2*dim*threads3.x*sizeof(gl64_t)>>>(helper2, helper1, add, nthreads2 << 1, dim, N3);
+            prescan_correction<<<blocks2, 2*threads2.x>>>(helper1, helper2, add, dim, N2);
+
+        }
+        prescan_correction<<<blocks1, 2*threads1.x>>>(vals, helper1, add, dim, N);
+    }
+    CHECKCUDAERR(cudaGetLastError());
+}
