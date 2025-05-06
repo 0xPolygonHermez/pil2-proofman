@@ -9,11 +9,12 @@
 #define PRINT_TIME_SUMMARY 1
 
 
-void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers) {
+void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, DeviceCommitBuffers *d_buffers) {
 
     double nttTime;
     double merkleTime;
 
+    uint64_t NExtended = 1 << nBitsExt;
     if (nCols > 0)
     {
         gl64_t *src = d_buffers->d_aux_trace;
@@ -28,7 +29,7 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t N, uint64
         uint64_t offset_aux = NExtended * nCols + tree_size;
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*) d_buffers->d_aux_trace + nCols * NExtended;
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, N, NExtended, nCols, d_buffers->d_aux_trace, offset_aux, &nttTime, &merkleTime);
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, d_buffers->d_aux_trace, offset_aux, &nttTime, &merkleTime);
         CHECKCUDAERR(cudaMemcpy(&root[0], pNodes + tree_size - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost));   
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;

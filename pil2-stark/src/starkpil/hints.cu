@@ -3,10 +3,10 @@
 #include "expressions_pack.hpp"
 #include "polinomial.hpp"
 
-void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx){
+void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx, cudaStream_t stream){
 
     ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
-    expressionsCtx->calculateExpressions_gpu( d_params, dest, nRows, domainExtended);
+    expressionsCtx->calculateExpressions_gpu( d_params, dest, nRows, domainExtended, stream);
 }
 
 __global__ void setPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *values, uint64_t deg, uint64_t dim, uint64_t nCols) {
@@ -109,7 +109,7 @@ uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     return hintFieldVal.id;
 }
 
-void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, double* time_expressions) {
+void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, double* time_expressions, cudaStream_t stream) {
     if(setupCtx.expressionsBin.hints.size() == 0) {
         zklog.error("No hints were found.");
         exitProcess();
@@ -157,12 +157,12 @@ void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParam
         addHintField(setupCtx, h_params, hintId[i], destStruct, hintFieldName1[i], hintOptions1[i]);
         addHintField(setupCtx, h_params, hintId[i], destStruct, hintFieldName2[i], hintOptions2[i]);
         double time_start = omp_get_wtime();
-        opHintFieldsGPU(&d_params, destStruct, nRows, false, GPUExpressionsCtx);
+        opHintFieldsGPU(&d_params, destStruct, nRows, false, GPUExpressionsCtx, stream);
         *time_expressions += omp_get_wtime() - time_start;
     }
 }
 
-void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions) {
+void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions, cudaStream_t stream) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -182,7 +182,7 @@ void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 
     double time_start = omp_get_wtime();
-    opHintFieldsGPU(&d_params, destStruct, N, false, GPUExpressionsCtx);
+    opHintFieldsGPU(&d_params, destStruct, N, false, GPUExpressionsCtx, stream);
     *time_expressions += omp_get_wtime() - time_start; 
     for(uint64_t i = 1; i < N; ++i) {
         if(add) {
@@ -205,7 +205,7 @@ void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
     delete[] vals;
 }
 
-uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions) {
+uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions, cudaStream_t stream) {
     
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -224,7 +224,7 @@ uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, Steps
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 
     double time_start = omp_get_wtime();
-    opHintFieldsGPU(&d_params, destStruct, 1, false, GPUExpressionsCtx); 
+    opHintFieldsGPU(&d_params, destStruct, 1, false, GPUExpressionsCtx, stream); 
     opAirgroupValueGPU(h_params.airgroupValues + FIELD_EXTENSION*hintFieldAirgroupVal.id, destStruct.dest_gpu, destStruct.dim, add);
     *time_expressions += omp_get_wtime() - time_start;
     return hintFieldAirgroupVal.id;

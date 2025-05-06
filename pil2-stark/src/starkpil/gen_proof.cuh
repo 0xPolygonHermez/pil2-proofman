@@ -15,7 +15,7 @@
 #define PRINT_TIME_SUMMARY 1
 
 
-void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams& d_params, ExpressionsCtx &expressionsCtx, bool prod, ExpressionsGPU *expressionsCtxGPU, double *time_expressions) {
+void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams& d_params, ExpressionsCtx &expressionsCtx, bool prod, ExpressionsGPU *expressionsCtxGPU, double *time_expressions, cudaStream_t stream = 0) {
 
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
@@ -45,17 +45,17 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
             hintOptions2[i] = options2;
         }
 
-        multiplyHintFieldsGPU(setupCtx, h_params, d_params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, time_expressions);
+        multiplyHintFieldsGPU(setupCtx, h_params, d_params, expressionsCtx, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, time_expressions, stream);
     }
 
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
-    accMulHintFieldsGPU(setupCtx, h_params, d_params, expressionsCtx, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, time_expressions);
-    updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, time_expressions);
+    accMulHintFieldsGPU(setupCtx, h_params, d_params, expressionsCtx, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, time_expressions, stream);
+    updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, time_expressions, stream);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
+void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, cudaStream_t stream = 0) {
     
     TimerStart(STARK_GPU_PROOF);
     TimerStart(STARK_INITIALIZATION);
@@ -120,12 +120,17 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
     CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
     
+    int64_t *d_openingPoints;
+    cudaMalloc(&d_openingPoints, setupCtx.starkInfo.openingPoints.size() * sizeof(int64_t));
+    cudaMemcpy(d_openingPoints, setupCtx.starkInfo.openingPoints.data(), setupCtx.starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice);
+
 
     Goldilocks::Element *d_challenge = (Goldilocks::Element *)d_aux_trace + offsetChallenge;
            
     uint64_t *friQueries_gpu = (uint64_t *)d_aux_trace + offsetFriQueries;
     
-    TranscriptGL_GPU d_transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
+    TranscriptGL_GPU d_transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
+    TranscriptGL_GPU d_transcript_helper(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
 
     prepare_evmap(setupCtx, d_aux_trace);
 
@@ -135,33 +140,33 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
 
     TimerStopAndLog(STARK_INITIALIZATION);
     TimerStart(STARK_STEP_0);
-    d_transcript.put(d_challenge, FIELD_EXTENSION);
+    d_transcript.put(d_challenge, FIELD_EXTENSION, stream);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
-            d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION]);
+            d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
     TimerStopAndLog(STARK_STEP_0);
     
     TimerStart(STARK_CALCULATE_WITNESS_STD);
     double time_expressions = 0;
-    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, expressionsCtx_, true, &expressionsCtx, &time_expressions);
-    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, expressionsCtx_, false, &expressionsCtx, &time_expressions);
+    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, expressionsCtx_, true, &expressionsCtx, &time_expressions, stream);
+    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, expressionsCtx_, false, &expressionsCtx, &time_expressions, stream);
 
     TimerStopAndLog(STARK_CALCULATE_WITNESS_STD);
 
     TimerStart(CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, *d_params, 2);
+    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, *d_params, 2, stream);
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_1);
-    commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, nullptr, &nttTime, &merkleTime);
+    commitStage_inplace(1, setupCtx, starks.treesGL, (gl64_t*) h_params.trace, (gl64_t*)h_params.aux_trace, nullptr, &nttTime, &merkleTime, stream);
     totalNTTTime += nttTime;
     totalMerkleTime += merkleTime;
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
     
     TimerStart(STARK_COMMIT_STAGE_2);
-    commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, &d_transcript, &nttTime, &merkleTime);
+    commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, &d_transcript, &nttTime, &merkleTime, stream);
     totalNTTTime += nttTime;
     totalMerkleTime += merkleTime;
 
@@ -169,7 +174,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     for(uint64_t i = 0; i < setupCtx.starkInfo.airValuesMap.size(); i++) {
         if(setupCtx.starkInfo.airValuesMap[i].stage == 1) a++;
         if(setupCtx.starkInfo.airValuesMap[i].stage == 2) {
-            d_transcript.put(&h_params.airValues[a], FIELD_EXTENSION);
+            d_transcript.put(&h_params.airValues[a], FIELD_EXTENSION, stream);
             a += 3;
         }
     }
@@ -179,12 +184,12 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 1) {
-            d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION]);
+            d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
-    computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt);
-    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId);
+    computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
+    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, stream);
     TimerStopAndLog(STARK_STEP_Q_EXPRESSIONS);
     TimerStart(STARK_STEP_Q_COMMIT);
     commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, &d_transcript, &nttTime, &merkleTime);
@@ -200,7 +205,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 2) {
             if(setupCtx.starkInfo.challengesMap[i].stageId == 0) xiChallengeIndex = i;
-            d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION]);
+            d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
 
@@ -208,7 +213,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     gl64_t * d_LEv = (gl64_t *) h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];
 
     TimerStart(STARK_STEP_EVALS_EVMAP);
-    CHECKCUDAERR(cudaMemset(h_params.evals, 0, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMemsetAsync(h_params.evals, 0, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), stream));
     uint64_t count = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += 4) {
         std::vector<int64_t> openingPoints;
@@ -218,43 +223,42 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
             }
         }
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
-        computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), d_aux_trace, offset_helper, d_LEv, &nttTime);
+        computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), &d_openingPoints[i], d_aux_trace, offset_helper, d_LEv, &nttTime, stream);
         totalNTTTime += nttTime;
-        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
+        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv, stream);
     }
     TimerStopAndLog(STARK_STEP_EVALS_EVMAP);
 
     if(!setupCtx.starkInfo.starkStruct.hashCommits) {
-        d_transcript.put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
+        d_transcript.put(h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
     } else {
-        calculateHash(d_challenge, setupCtx, h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION);
-        d_transcript.put(d_challenge, HASH_SIZE);
+        calculateHash(&d_transcript_helper, d_challenge, setupCtx, h_params.evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION, stream);
+        d_transcript.put(d_challenge, HASH_SIZE, stream);
     }
 
     // Challenges for FRI polynomial
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 3) {
-            d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION]);
+            d_transcript.getField((uint64_t *)&h_params.challenges[i * FIELD_EXTENSION], stream);
         }
     }
     TimerStopAndLog(STARK_STEP_EVALS);
-
     //--------------------------------
     // 6. Compute FRI
     //--------------------------------
     TimerStart(STARK_STEP_FRI);
     TimerStart(STARK_STEP_FRI_XIS);
 
-    calculateXis_inplace(setupCtx, h_params, d_xiChallenge);    
+    calculateXis_inplace(setupCtx, h_params, d_openingPoints, d_xiChallenge, stream);    
     TimerStopAndLog(STARK_STEP_FRI_XIS);
 
     TimerStart(STARK_STEP_FRI_POLYNOMIAL);
     uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
     dim3 threads(256);
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
-    computeX_kernel<<<blocks, threads>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
-    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId);
+    computeX_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
+    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId, false, stream);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
@@ -277,40 +281,43 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace) {
     {
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        fold_inplace(step, friPol_offset, offset_helper, d_challenge, nBitsExt, prevBits, currentBits, d_aux_trace);
+        fold_inplace(step, friPol_offset, offset_helper, d_challenge, nBitsExt, prevBits, currentBits, d_aux_trace, stream);
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, &d_transcript, &merkleTime);
+            merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, &d_transcript, &merkleTime, stream);
             totalMerkleTime += merkleTime;
         }
         else
         {
             if(!setupCtx.starkInfo.starkStruct.hashCommits) {
-                d_transcript.put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
+                d_transcript.put((Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
             } else {
-                calculateHash(d_challenge, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION);
-                d_transcript.put(d_challenge, HASH_SIZE);
+                calculateHash(&d_transcript_helper, d_challenge, setupCtx, (Goldilocks::Element *)d_friPol, (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) * FIELD_EXTENSION, stream);
+                d_transcript.put(d_challenge, HASH_SIZE, stream);
             }
         }
-        d_transcript.getField((uint64_t *)d_challenge);
+        d_transcript.getField((uint64_t *)d_challenge, stream);
     }
     TimerStopAndLog(STARK_STEP_FRI_FOLDING);
    
     TimerStart(STARK_STEP_FRI_QUERIES);
-    TranscriptGL_GPU d_transcriptPermutation(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
-    d_transcriptPermutation.put(d_challenge, FIELD_EXTENSION);
-    d_transcriptPermutation.getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits);
+    d_transcript_helper.reset(stream);
+    d_transcript_helper.put(d_challenge, FIELD_EXTENSION, stream);
+    d_transcript_helper.getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, stream);
 
-    proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_aux_trace + offsetConstTree, setupCtx.starkInfo.nStages);
+    proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_aux_trace + offsetConstTree, setupCtx.starkInfo.nStages, stream);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
-        proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step]);
+        proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
     }
     TimerStopAndLog(STARK_STEP_FRI_QUERIES);
     TimerStopAndLog(STARK_STEP_FRI);
     TimerStopAndLog(STARK_GPU_PROOF);
 
+    cudaStreamSynchronize(stream);
+
     CHECKCUDAERR(cudaFree(d_params));
+    CHECKCUDAERR(cudaFree(d_openingPoints));
 
 #if PRINT_TIME_SUMMARY
 

@@ -68,7 +68,6 @@ struct DeviceArguments
     uint64_t dest_offset = 0;
     uint64_t dest_dim = 1;
     uint32_t dest_nParams;
-    DestParamsGPU *dest_params;
 
     // Expressions bin
     uint8_t *ops;
@@ -80,7 +79,7 @@ __device__ __noinline__ void multiplyPolynomials__(DeviceArguments *deviceArgs, 
 __device__ __noinline__ bool caseNoOprations__(StepsParams *h_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row);
 __device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim);
 __device__ __noinline__ Goldilocks::Element*  load__(DeviceArguments *d_deviceArgs, Goldilocks::Element *value, StepsParams* h_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic);
-__global__  void computeExpressions_(StepsParams *h_params, DeviceArguments *d_deviceArgs);
+__global__  void computeExpressions_(StepsParams *h_params, DeviceArguments *d_deviceArgs, DestParamsGPU *d_destParams);
 
 class ExpressionsGPU : public ExpressionsCtx
 {
@@ -91,11 +90,14 @@ public:
     DeviceArguments *d_deviceArgs;
     DeviceArguments h_deviceArgs;
 
+    DestParamsGPU *d_dest_params;
+    DestParamsGPU *h_dest_params;
+
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();
 
-    void loadDeviceArgs(uint64_t domainSize, Dest &dest);
-    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended);
+    void loadDeviceArgs(uint64_t domainSize, Dest &dest, cudaStream_t stream = 0);
+    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, cudaStream_t stream = 0);
     
 };
 #endif

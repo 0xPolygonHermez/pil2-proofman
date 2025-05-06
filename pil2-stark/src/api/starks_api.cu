@@ -7,6 +7,9 @@
 #include "gen_recursive_proof.cuh"
 #include "gen_proof.cuh"
 #include "gen_commit.cuh"
+#include "poseidon2_goldilocks.cu"
+#include <cuda_runtime.h>
+
 
 struct MaxSizes
 {
@@ -30,6 +33,7 @@ void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
         CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->maxConstArea * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&buffers->d_constTree, maxSizes->maxConstTreeSize * sizeof(Goldilocks::Element)));
     }
+    init_gpu_const_2();
     return (void *)buffers;
 }
 
@@ -156,8 +160,6 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     uint64_t N = 1 << nBits;
-    uint64_t NExtended = 1 << nBitsExt;
-
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
@@ -166,7 +168,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     double timeCopy = omp_get_wtime();
     CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetStage1, trace, sizeTrace, cudaMemcpyHostToDevice));
     timeCopy = omp_get_wtime() - timeCopy;
-    genCommit_gpu(arity, rootGL, N, NExtended, nCols, d_buffers);
+    genCommit_gpu(arity, rootGL, nBits, nBitsExt, nCols, d_buffers);
     time = omp_get_wtime() - time;
 
     std::ostringstream oss;

@@ -208,7 +208,7 @@ void Poseidon2Goldilocks::merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uin
         return;
     }
 
-    init_gpu_const_2();
+    // init_gpu_const_2();
     u32 actual_tpb = TPB;
     u32 actual_blks = num_rows / TPB + 1;
 
@@ -250,14 +250,14 @@ void Poseidon2Goldilocks::merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uin
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void Poseidon2Goldilocks::merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads, uint64_t dim)
+void Poseidon2Goldilocks::merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
 {
     if (num_rows == 0)
     {
         return;
     }
 
-    init_gpu_const_2(); // this needs to be done only once !!
+    // init_gpu_const_2(); // this needs to be done only once !!
     u32 actual_tpb = TPB;
     u32 actual_blks = (num_rows + TPB - 1) / TPB;
 
@@ -267,7 +267,7 @@ void Poseidon2Goldilocks::merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_
         actual_tpb = num_rows;
         actual_blks = 1;
     }
-    linear_hash_gpu_coalesced_2<<<actual_blks, actual_tpb, actual_tpb * 12 * 8>>>(d_tree, d_input, num_cols * dim, num_rows); // rick: el 12 aqeust harcoded no please!!
+    linear_hash_gpu_coalesced_2<<<actual_blks, actual_tpb, actual_tpb * 12 * 8, stream>>>(d_tree, d_input, num_cols * dim, num_rows); // rick: el 12 aqeust harcoded no please!!
     CHECKCUDAERR(cudaGetLastError());
 
     // Build the merkle tree
@@ -281,7 +281,7 @@ void Poseidon2Goldilocks::merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_
         if (extraZeros > 0){
 
             //std::memset(&cursor[nextIndex + pending * CAPACITY], 0, extraZeros * CAPACITY * sizeof(Goldilocks::Element));
-            CHECKCUDAERR(cudaMemset((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t)));
+            CHECKCUDAERR(cudaMemsetAsync((uint64_t *)(d_tree + nextIndex + pending * CAPACITY), 0, extraZeros * CAPACITY * sizeof(uint64_t), stream));
         }
         if (nextN < TPB)
         {
@@ -293,7 +293,7 @@ void Poseidon2Goldilocks::merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_
             actual_tpb = TPB;
             actual_blks = nextN / TPB + 1;
         }
-        hash_gpu_3<<<actual_blks, actual_tpb>>>(nextN, nextIndex, pending + extraZeros, d_tree);       
+        hash_gpu_3<<<actual_blks, actual_tpb, 0, stream>>>(nextN, nextIndex, pending + extraZeros, d_tree);       
         nextIndex += (pending + extraZeros) * CAPACITY;
         pending = (pending + (arity - 1)) / arity;
         nextN = (pending + (arity - 1)) / arity;
@@ -336,7 +336,7 @@ void Poseidon2Goldilocks::merkletree_cuda_streams(uint32_t arity, uint64_t **d_t
     uint64_t numElementsTree = MerklehashGoldilocks::getTreeNumElements(num_rows, arity);
     CHECKCUDAERR(cudaMalloc(d_tree, numElementsTree * sizeof(uint64_t)));
 
-    init_gpu_const_2(); // this needs to be done only once !!
+    // init_gpu_const_2(); // this needs to be done only once !!
     // rick: we are assuming here that TPB is a power of 2
     int num_streams = 8; // note: must be a power of two
     uint64_t rows_per_stream = num_rows / num_streams;
