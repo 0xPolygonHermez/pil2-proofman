@@ -141,7 +141,11 @@ where
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), public_inputs_path, input_data_path));
 
-        let mut witness_lib = Self::init_witness_lib(witness_lib_path, &pctx)?;
+        timer_start_info!(CREATE_WITNESS_LIB);
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(pctx.options.verbose_mode)?;
+        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         Self::_verify_proof_constraints(pctx, sctx, wcm, &mut *witness_lib)
     }
@@ -324,7 +328,11 @@ where
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), public_inputs_path, input_data_path));
 
-        let mut witness_lib = Self::init_witness_lib(witness_lib_path, &pctx)?;
+        timer_start_info!(CREATE_WITNESS_LIB);
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(pctx.options.verbose_mode)?;
+        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         Self::_generate_proof(output_dir_path, pctx, sctx, wcm, &mut *witness_lib)
     }
@@ -1191,22 +1199,6 @@ where
         Ok((pctx, sctx))
     }
 
-    fn init_witness_lib(
-        witness_lib_path: PathBuf,
-        pctx: &ProofCtx<F>,
-    ) -> Result<Box<dyn WitnessLibrary<F>>, Box<dyn std::error::Error>> {
-        info!("Initializing witness");
-
-        // Load the witness computation dynamic library
-        timer_start_info!(CREATE_WITNESS_LIB);
-        let library = unsafe { Library::new(&witness_lib_path)? };
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let witness_lib = witness_lib(pctx.options.verbose_mode)?;
-        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
-
-        Ok(witness_lib)
-    }
-
     fn calculate_global_challenge(pctx: &ProofCtx<F>, values: Vec<u64>) {
         timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
         let transcript = FFITranscript::new(2, true);
@@ -1250,9 +1242,9 @@ where
         println!(
             "{}: ··· Global challenge: {} {} {}",
             Self::MY_NAME,
-            global_challenge[0].to_string().bright_green().bold(),
-            global_challenge[1].to_string().bright_green().bold(),
-            global_challenge[2].to_string().bright_green().bold()
+            global_challenge[0],
+            global_challenge[1],
+            global_challenge[2]
         );
         pctx.set_global_challenge(2, &global_challenge);
 
