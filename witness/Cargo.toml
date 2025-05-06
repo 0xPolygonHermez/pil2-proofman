@@ -13,11 +13,8 @@ p3-goldilocks.workspace = true
 p3-field.workspace = true
 
 colored.workspace = true
-mpi = { version = "0.8.0", optional = true }
 serde_json.workspace = true
-
 
 [features]
 default = []
 no_lib_link = []
-distributed = []

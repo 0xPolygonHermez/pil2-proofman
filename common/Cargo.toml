@@ -2,6 +2,7 @@
 name = "proofman-common"
 version = "0.7.1"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 libloading = "0.8.4"
@@ -23,6 +24,7 @@ sysinfo = "0.22.5"
 [features]
 default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
+disable-distributed = []
 distributed = ["dep:mpi"]
 diagnostic = ["proofman-macros/diagnostic"]
 gpu = ["proofman-starks-lib-c/gpu"]
