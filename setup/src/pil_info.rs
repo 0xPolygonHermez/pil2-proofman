@@ -19,6 +19,7 @@ pub async fn pil_info(
     options: HashMap<String, Value>,
 ) -> HashMap<String, Value> {
     let mut pil_clone = pil.clone();
+    // tracing::info!("pil.constraints {:#?}", pil_clone["constraints"]);
     let info_pil = prepare_pil(f, &mut pil_clone, stark_struct, pil2, &options);
 
     let mut expressions = info_pil["expressions"].as_array().unwrap().clone();

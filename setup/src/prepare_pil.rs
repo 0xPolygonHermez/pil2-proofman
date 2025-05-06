@@ -13,6 +13,7 @@ pub fn prepare_pil(
     pil2: bool,
     options: &HashMap<String, Value>,
 ) -> HashMap<String, Value> {
+    //tracing::info!("pil.constraints {:#?}", pil["constraints"]);
     /* ──────────────────────── header & trivial fields ─────────────────────── */
     let mut res = HashMap::<String, Value>::new();
     res.insert("name".into(), pil["name"].clone());

@@ -1,14 +1,17 @@
+//! src/setup_cmd.rs
+//! (rewritten to mirror the JS reference 1-for-1)
+
+use num_bigint::BigUint;
 use num_traits::ToPrimitive;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::fs as async_fs;
 use tracing::info;
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
-
-use num_bigint::BigUint;
 
 use crate::{
     airout::AirOut,
@@ -20,11 +23,27 @@ use crate::{
     witness_calculator::{generate_fixed_cols, Symbol},
 };
 
+/* ───────────────────────────── helper types ────────────────────────────── */
+
+/// What JS keeps per-air inside `setup[ag][air]`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AirSetup {
+    pub stark_info: Value,
+    pub verifier_info: Value,
+    pub expressions_info: Value,
+    pub stats: Value,
+    pub const_root: Option<Value>,
+    pub has_compressor: bool,
+}
+
+/* ───────────────────────────── main entry ──────────────────────────────── */
+
 pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("build_dir: {:?}", build_dir.as_ref());
     tracing::info!("Attempting to load airout file from '{}'", config.airout.airout_filename.display());
     let airout = AirOut::from_file(&config.airout.airout_filename)?;
     tracing::info!("Successfully loaded airout file");
+
     let setup_options = SetupOptions {
         opt_im_pols: config.setup.opt_im_pols,
         const_tree: config.setup.const_tree.clone(),
@@ -33,21 +52,25 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
         settings: config.setup.settings.clone(),
     };
 
-    let mut setup: Vec<Vec<StarkStruct>> = vec![];
-    let mut stark_structs = vec![];
-    let mut min_final_degree = 5;
+    /* ────────────────────── pre-allocate setup skeleton ─────────────────── */
+    let mut setup: Vec<Vec<AirSetup>> =
+        airout.pilout().air_groups.iter().map(|ag| vec![AirSetup::default(); ag.airs.len()]).collect();
 
-    // Determine minimum final degree across all air groups
+    let mut stark_structs = vec![];
+    let mut min_final_degree = 5usize;
+
+    /* ────────────── pass 1: compute global min_final_degree ─────────────── */
     tracing::info!("Determining minimum final degree across all air groups");
     for airgroup in &airout.pilout().air_groups {
         for air in &airgroup.airs {
-            let name = match { air.name.as_ref().map(|s| s.as_str()) } {
-                Some(name) => name,
+            let name = match air.name.as_ref().map(|s| s.as_str()) {
+                Some(n) => n,
                 None => {
                     info!("Air name not found");
                     continue;
                 }
             };
+
             let settings = config
                 .setup
                 .settings
@@ -55,202 +78,199 @@ pub async fn setup_cmd(config: &Config, build_dir: impl AsRef<Path>) -> Result<(
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or(AirSettings { stark_struct: None, final_degree: min_final_degree });
 
-            let air_num_rows: u32 = air.num_rows.unwrap_or(0);
+            let n_rows = air.num_rows.unwrap_or(0);
 
-            min_final_degree = if let Some(stark_struct) = &settings.stark_struct {
-                stark_struct.steps.last().map_or(min_final_degree, |step| step.n_bits)
+            min_final_degree = if let Some(ss) = &settings.stark_struct {
+                ss.steps.last().map_or(min_final_degree, |step| step.n_bits)
             } else {
-                min_final_degree.min((log2(air_num_rows) + 1).try_into().unwrap())
+                min_final_degree.min((log2(n_rows) + 1) as usize)
             };
         }
     }
     tracing::info!("Minimum final degree: {}", min_final_degree);
 
+    /* ───────────────────── pass 2: per-air setup proper ─────────────────── */
     tracing::info!("Generating setup for each air group");
     for (airgroup_id, airgroup) in airout.pilout().air_groups.iter().enumerate() {
-        //setup.push(vec![]);
         for (air_id, air) in airgroup.airs.iter().enumerate() {
-            tracing::info!("Computing setup for air '{}'", air.name.as_ref().unwrap());
+            let air_name = air.name.as_ref().unwrap();
+            tracing::info!("Computing setup for air '{}'", air_name);
 
+            /* settings ----------------------------------------------------- */
             let settings = config
                 .setup
                 .settings
-                .get(air.name.as_ref().unwrap())
+                .get(air_name)
                 .and_then(|v| serde_json::from_value(v.clone()).ok())
                 .unwrap_or(AirSettings { stark_struct: None, final_degree: min_final_degree });
             tracing::info!("Settings: {:?}", settings);
 
+            /* directories -------------------------------------------------- */
             let files_dir = build_dir
                 .as_ref()
                 .join(&airgroup.name.clone().unwrap())
                 .join(air_id.to_string())
                 .join("airs")
-                .join(air.name.as_ref().unwrap())
+                .join(air_name)
                 .join("air");
             tracing::info!("Creating directory '{}'", files_dir.display());
-
             async_fs::create_dir_all(&files_dir).await?;
 
-            tracing::info!("Generating setup for air '{}'", air.name.as_ref().unwrap());
-            let air_num_rows: u32 = air.num_rows.unwrap().try_into().unwrap();
-
-            tracing::info!("Generating STARK struct for air '{}'", air.name.as_ref().unwrap());
+            /* stark struct ------------------------------------------------- */
+            let n_rows_u32: u32 = air.num_rows.unwrap().try_into().unwrap();
             let stark_struct = settings
                 .stark_struct
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| generate_stark_struct(&settings, log2(air_num_rows).try_into().unwrap()));
+                .clone()
+                .unwrap_or_else(|| generate_stark_struct(&settings, log2(n_rows_u32) as usize));
             stark_structs.push(stark_struct.clone());
 
-            // Generate Fixed Columns
-            let field_modulus = BigUint::from(1u32) << 256; // Placeholder modulus
-            tracing::info!("Generating fixed columns for air '{}'", air.name.as_ref().unwrap());
-            let fixed_pols = generate_fixed_cols(airout.pilout().symbols.clone(), air_num_rows, field_modulus);
+            /* fixed columns ------------------------------------------------ */
+            let field_modulus = BigUint::from(1u32) << 256; // placeholder
+            tracing::info!("Generating fixed columns for air '{}'", air_name);
+            let fixed_pols = generate_fixed_cols(airout.pilout().symbols.clone(), n_rows_u32, field_modulus);
 
+            /* prepare PIL JSON for helpers -------------------------------- */
             let mut air_json = serde_json::to_value(air)?;
-            air_json["airId"] = Value::Number(air_id.to_string().parse().unwrap());
-            air_json["airGroupId"] = Value::Number(airgroup_id.to_string().parse().unwrap());
-            let mut fixed_pols_map = fixed_pols.to_hashmap();
+            air_json["airId"] = Value::Number(air_id.into());
+            air_json["airGroupId"] = Value::Number(airgroup_id.into());
 
+            let mut fixed_pols_map = fixed_pols.to_hashmap();
             let air_json_map: HashMap<String, Value> = serde_json::from_value(air_json.clone())?;
-            tracing::info!("Getting fixed polynomials for air '{}'", air.name.as_ref().unwrap());
+
+            tracing::info!("Getting fixed polynomials for air '{}'", air_name);
             get_fixed_pols_pil2(files_dir.to_str().unwrap(), &air_json_map, &mut fixed_pols_map)?;
 
-            // STARK Setup
-            tracing::info!("Running STARK setup for air '{}'", air.name.as_ref().unwrap());
-            let stark_setup_result = stark_setup(air_json, &stark_struct, &setup_options).await?;
-            tracing::info!("STARK setup completed for air '{}'", air.name.as_ref().unwrap());
-            let json_output = serde_json::to_string_pretty(&stark_setup_result)?;
+            /* STARK setup -------------------------------------------------- */
+            tracing::info!("Running STARK setup for air '{}'", air_name);
+            let raw = stark_setup(air_json.clone(), &stark_struct, &setup_options).await?;
+            tracing::info!("STARK setup completed for air '{}'", air_name);
 
-            tracing::info!(
-                "Writing STARK setup output to '{}'",
-                files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())).display()
-            );
-            async_fs::write(files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())), json_output)
-                .await?;
+            setup[airgroup_id][air_id] = AirSetup {
+                stark_info: raw.stark_info.clone(),
+                verifier_info: raw.verifier_info.clone(),
+                expressions_info: raw.expressions_info.clone(),
+                stats: raw.stats,
+                const_root: None,
+                has_compressor: false,
+            };
 
-            // Compute Constant Tree
-            tracing::info!("Computing constant tree for air '{}'", air.name.as_ref().unwrap());
+            /* write JSON side-files --------------------------------------- */
+            async_fs::write(
+                files_dir.join(format!("{}.starkinfo.json", air_name)),
+                serde_json::to_string_pretty(&raw.stark_info)?,
+            )
+            .await?;
+            async_fs::write(
+                files_dir.join(format!("{}.verifierinfo.json", air_name)),
+                serde_json::to_string_pretty(&raw.verifier_info)?,
+            )
+            .await?;
+            async_fs::write(
+                files_dir.join(format!("{}.expressionsinfo.json", air_name)),
+                serde_json::to_string_pretty(&raw.expressions_info)?,
+            )
+            .await?;
+
+            /* constant tree ------------------------------------------------ */
+            tracing::info!("Computing constant tree for air '{}'", air_name);
             let const_tree_cmd = format!(
                 "{} -c {} -s {} -v {}",
                 setup_options.const_tree.display(),
-                files_dir.join(format!("{}.const", air.name.as_ref().unwrap())).display(),
-                files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())).display(),
-                files_dir.join(format!("{}.verkey.json", air.name.as_ref().unwrap())).display()
+                files_dir.join(format!("{}.const", air_name)).display(),
+                files_dir.join(format!("{}.starkinfo.json", air_name)).display(),
+                files_dir.join(format!("{}.verkey.json", air_name)).display()
             );
-
             tracing::info!("Running command: '{}'", const_tree_cmd);
             let output = tokio::process::Command::new("sh").arg("-c").arg(&const_tree_cmd).output().await?;
-
             tracing::info!("Constant tree output: {}", String::from_utf8_lossy(&output.stdout));
 
-            tracing::info!(
-                "Reading constant root from '{}'",
-                files_dir.join(format!("{}.verkey.json", air.name.as_ref().unwrap())).display()
-            );
-            let const_root = serde_json::from_str::<Value>(
-                &tokio::fs::read_to_string(files_dir.join(format!("{}.verkey.json", air.name.as_ref().unwrap())))
-                    .await?,
+            /* store constRoot --------------------------------------------- */
+            let const_root: Value = serde_json::from_str(
+                &tokio::fs::read_to_string(files_dir.join(format!("{}.verkey.json", air_name))).await?,
             )?;
+            setup[airgroup_id][air_id].const_root = Some(const_root);
 
-            setup[airgroup_id][air_id].const_root = Some(const_root.clone());
-
-            // Compute Bin File
+            /* bin file ----------------------------------------------------- */
             let bin_cmd = format!(
                 "{} -s {} -e {} -b {}",
                 setup_options.bin_file.display(),
-                files_dir.join(format!("{}.starkinfo.json", air.name.as_ref().unwrap())).display(),
-                files_dir.join(format!("{}.expressionsinfo.json", air.name.as_ref().unwrap())).display(),
-                files_dir.join(format!("{}.bin", air.name.as_ref().unwrap())).display()
+                files_dir.join(format!("{}.starkinfo.json", air_name)).display(),
+                files_dir.join(format!("{}.expressionsinfo.json", air_name)).display(),
+                files_dir.join(format!("{}.bin", air_name)).display()
             );
-
             tracing::info!("Running command: '{}'", bin_cmd);
             let output = tokio::process::Command::new("sh").arg("-c").arg(&bin_cmd).output().await?;
-
             tracing::info!("Bin file output: {}", String::from_utf8_lossy(&output.stdout));
-
-            setup[airgroup_id].push(stark_struct);
         }
     }
 
-    // Generate Final Recursive Setup
+    /* ────────────────────── aggregation / global setup ──────────────────── */
     if config.setup.gen_aggregation_setup {
         tracing::info!("Generating final recursive setup");
         let (global_info, global_constraints) = set_airout_info(&airout, &stark_structs);
 
-        tracing::info!("Writing global info and constraints to '{}'", build_dir.as_ref().join("provingKey").display());
         async_fs::write(
             build_dir.as_ref().join("provingKey/pilout.globalInfo.json"),
             serde_json::to_string_pretty(&global_info)?,
         )
         .await?;
-
-        tracing::info!("Writing global constraints to '{}'", build_dir.as_ref().join("provingKey").display());
         async_fs::write(
             build_dir.as_ref().join("provingKey/pilout.globalConstraints.json"),
             serde_json::to_string_pretty(&global_constraints)?,
         )
         .await?;
 
-        // Compute Global Bin File
+        /* global bin ----------------------------------------------------- */
         let global_bin_cmd = format!(
             "{} -g -e {} -b {}",
             setup_options.bin_file.display(),
             build_dir.as_ref().join("provingKey/pilout.globalConstraints.json").display(),
             build_dir.as_ref().join("provingKey/pilout.globalConstraints.bin").display()
         );
-
         tracing::info!("Running command: '{}'", global_bin_cmd);
         let output = tokio::process::Command::new("sh").arg("-c").arg(&global_bin_cmd).output().await?;
-
         info!("Global bin file output: {}", String::from_utf8_lossy(&output.stdout));
     }
 
     tracing::info!("Setup completed successfully");
-
     Ok(())
 }
 
+/* ───────────────────────────── utilities ───────────────────────────────── */
+
 pub fn generate_stark_struct(settings: &AirSettings, n_bits: usize) -> StarkStruct {
-    // Extract or calculate parameters with defaults
-    let hash_commits = true; // Default to true as in JavaScript
-    let blowup_factor = 1; // Default value for blowupFactor
+    let hash_commits = true;
+    let blowup_factor = 1usize;
     let mut n_queries = (128.0 / blowup_factor as f64).ceil() as usize;
 
-    if let Some(stark_struct) = &settings.stark_struct {
-        n_queries = stark_struct.steps.last().map_or(n_queries, |step| step.n_bits.max(n_queries));
+    if let Some(ss) = &settings.stark_struct {
+        n_queries = ss.steps.last().map_or(n_queries, |step| step.n_bits.max(n_queries));
     }
 
-    // Default values for foldingFactor and finalDegree
-    let folding_factor = 4;
+    let folding_factor = 4usize;
     let final_degree = settings.final_degree.max(5);
-
-    // Determine `VerificationType`
-    let verification_hash_type = VerificationType::from_final_degree(final_degree);
-
-    // Initialize nBitsExt
+    let verification = VerificationType::from_final_degree(final_degree);
     let n_bits_ext = n_bits + blowup_factor;
 
-    // Initialize the StarkStruct
-    let mut stark_struct = StarkStruct {
+    let mut ss = StarkStruct {
         n_bits,
         n_bits_ext,
         n_queries,
-        verification_hash_type,
+        verification_hash_type: verification,
         hash_commits,
         const_root: None,
         steps: vec![Step { n_bits: n_bits_ext }],
     };
 
-    // Compute FRI steps
-    let mut fri_step_bits = n_bits_ext;
-    while fri_step_bits > final_degree {
-        fri_step_bits = (fri_step_bits - folding_factor).max(final_degree);
-        stark_struct.steps.push(Step { n_bits: fri_step_bits });
+    let mut fri_bits = n_bits_ext;
+    while fri_bits > final_degree {
+        fri_bits = (fri_bits - folding_factor).max(final_degree);
+        ss.steps.push(Step { n_bits: fri_bits });
     }
-
-    stark_struct
+    ss
 }
+
+/* ───────────────────────────── stark_setup ─────────────────────────────── */
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StarkSetupResult {
@@ -260,11 +280,10 @@ pub struct StarkSetupResult {
     pub stats: Value,
 }
 
-/// Helper function for field multiplication
 fn multiply_f64(a: f64, b: f64) -> f64 {
-    let f3g = F3g::new(); // Instantiate inside the function to avoid captures
-    let result = f3g.mul(&BigUint::from(a as u64), &BigUint::from(b as u64));
-    result.to_f64().unwrap_or(0.0) // Convert BigUint to f64 safely
+    let f3g = F3g::new();
+    let res = f3g.mul(&BigUint::from(a as u64), &BigUint::from(b as u64));
+    res.to_f64().unwrap_or(0.0)
 }
 
 pub async fn stark_setup(
@@ -272,21 +291,11 @@ pub async fn stark_setup(
     stark_struct: &StarkStruct,
     setup_options: &SetupOptions,
 ) -> Result<StarkSetupResult, Box<dyn std::error::Error>> {
-    // Check if pil2 mode is enabled
     let pil2 = setup_options.settings.get("pil2").and_then(|v| v.as_bool()).unwrap_or(true);
 
-    // Convert setup_options to a HashMap<String, Value> for compatibility with pil_info
     let options_map: HashMap<String, Value> = serde_json::from_value(serde_json::to_value(setup_options)?)?;
 
-    // Call `pil_info`, using the function pointer `multiply_f64`
-    let pil_result = pil_info(
-        multiply_f64, // Pass the function pointer
-        &air_json,
-        pil2,
-        &serde_json::to_value(stark_struct)?,
-        options_map,
-    )
-    .await;
+    let pil_result = pil_info(multiply_f64, &air_json, pil2, &serde_json::to_value(stark_struct)?, options_map).await;
 
     Ok(StarkSetupResult {
         stark_info: pil_result["pilInfo"].clone(),
@@ -295,6 +304,8 @@ pub async fn stark_setup(
         stats: pil_result["stats"].clone(),
     })
 }
+
+/* ───────────────────────────── data structs ────────────────────────────── */
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -311,6 +322,8 @@ pub struct Air {
     pub num_rows: usize,
     pub symbols: Vec<Symbol>,
 }
+
+/* setup-level config ------------------------------------------------------ */
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -329,6 +342,8 @@ pub struct AirSettings {
     pub final_degree: usize,
 }
 
+/* STARK struct ------------------------------------------------------------ */
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum VerificationType {
@@ -337,8 +352,8 @@ pub enum VerificationType {
 }
 
 impl VerificationType {
-    pub fn from_final_degree(final_degree: usize) -> Self {
-        if final_degree > 10 {
+    fn from_final_degree(fd: usize) -> Self {
+        if fd > 10 {
             VerificationType::BN128
         } else {
             VerificationType::GL
