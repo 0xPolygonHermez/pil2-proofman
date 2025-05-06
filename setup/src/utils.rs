@@ -298,44 +298,41 @@ pub fn format_hints(
     hints
 }
 
-/// Formats constraints from `pilout`, mimicking the original JavaScript function.
-pub fn format_constraints(pilout: &Value) -> Vec<Value> {
-    let mut constraints = Vec::new();
+/// Rust port of JS `formatConstraints` **with strict validation**.
+///
+/// *Panics* if any element follows the deprecated wrapper-object layout
+/// `{ "constraint": { everyRow: { … } } }`.
+pub fn format_constraints(pilout: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
 
-    if let Some(pilout_constraints) = pilout["constraints"].as_array() {
-        for constraint_obj in pilout_constraints {
-            if let Some(constraint_inner) = constraint_obj.get("constraint") {
-                let valid_boundaries = ["everyRow", "firstRow", "lastRow", "everyFrame"];
-
-                if let Some(boundary) = valid_boundaries.iter().find_map(|&key| constraint_inner.get(key).map(|_| key))
-                {
-                    let constraint_data = &constraint_inner[boundary];
-
-                    let mut constraint = json!({
-                        "boundary": boundary, // Now correctly sets "everyRow", etc.
-                        "e": constraint_data["expressionIdx"]["idx"],
-                        "line": constraint_data["debugLine"]
-                    });
-
-                    if boundary == "everyFrame" {
-                        constraint["offsetMin"] = constraint_data["offsetMin"].clone();
-                        constraint["offsetMax"] = constraint_data["offsetMax"].clone();
-                    }
-
-                    constraints.push(constraint);
-                } else {
-                    println!(
-                        "⚠️ Warning: Constraint boundary not recognized inside 'constraint': {:?}",
-                        constraint_inner
-                    );
-                }
-            } else {
-                println!("⚠️ Warning: Constraint object does not contain a 'constraint' key: {:?}", constraint_obj);
+    if let Some(arr) = pilout.get("constraints").and_then(|v| v.as_array()) {
+        for (idx, raw) in arr.iter().enumerate() {
+            // ---- reject the obsolete format -----------------------------------
+            if raw.get("constraint").is_some() {
+                panic!(
+                    "format_constraints: element #{idx} uses the deprecated \
+                     {{ \"constraint\": {{ ... }} }} layout; \
+                     please feed the canonical PIL-out JSON."
+                );
             }
+
+            // ---- canonical path ------------------------------------------------
+            let (boundary, body) = raw.as_object().and_then(|m| m.iter().next()).expect("constraint object is empty");
+
+            let mut c = serde_json::json!({
+                "boundary": boundary,
+                "e":        body["expressionIdx"]["idx"],
+                "line":     body["debugLine"],
+            });
+
+            if boundary == "everyFrame" {
+                c["offsetMin"] = body["offsetMin"].clone();
+                c["offsetMax"] = body["offsetMax"].clone();
+            }
+            out.push(c);
         }
     }
-
-    constraints
+    out
 }
 
 /// Prints a formatted expression from the given data.
