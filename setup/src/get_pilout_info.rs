@@ -2,6 +2,7 @@ use crate::utils::{format_expressions, format_constraints, format_symbols, forma
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+// 100% correct
 /// Extracts and processes PIL information from `pilout`, mirroring JavaScript logic.
 pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String, Value>) -> HashMap<String, Value> {
     res.insert("airId".to_string(), pilout["airId"].clone());
@@ -59,16 +60,17 @@ pub fn get_pilout_info(res: &mut HashMap<String, Value>, pilout: &HashMap<String
     res.insert("nPublics".to_string(), json!(public_symbols));
     res.insert("airGroupValues".to_string(), air_group_values.clone());
 
-    let num_challenges = pilout.get("numChallenges").and_then(|v| v.as_array());
+    // --- nStages -------------------------------------------------------------
+    // • If pilout.numChallenges exists ➜ its length.
+    // • Otherwise ➜ the maximum stage appearing in symbols (no “+ 1” like before).
+    let n_stages_val = if let Some(arr) = pilout.get("numChallenges").and_then(Value::as_array) {
+        arr.len()
+    } else {
+        symbols.as_array().and_then(|syms| syms.iter().map(|s| s["stage"].as_u64().unwrap_or(0)).max()).unwrap_or(0)
+            as usize
+    };
 
-    res.insert(
-        "nStages".to_string(),
-        json!(num_challenges.map(|v| v.len()).unwrap_or_else(|| {
-            let max_stage =
-                symbols.as_array().unwrap().iter().map(|s| s["stage"].as_u64().unwrap_or(0)).max().unwrap_or(0);
-            (max_stage as usize) + 1 // Ensure `numChallenges.length` matches JavaScript logic
-        })),
-    );
+    res.insert("nStages".to_string(), json!(n_stages_val));
 
     let mut pilout = pilout.clone();
     if !pilout.contains_key("hints") {
