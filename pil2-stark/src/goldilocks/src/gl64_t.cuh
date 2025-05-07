@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cassert>
 #include "goldilocks_base_field.hpp"
+#include "gpu_timer.cuh"
 
 namespace gl64_device
 {
@@ -833,6 +834,7 @@ struct DeviceCommitBuffers
     uint64_t max_size_contribution;
     uint64_t n_threads;
     cudaStream_t *streams;
+    TimerGPU *timers;
     Goldilocks::Element **pinned_buffers;
 };
 

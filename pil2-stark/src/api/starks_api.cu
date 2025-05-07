@@ -44,6 +44,7 @@ void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSiz
     buffers->n_threads = nThreads;
 
     if (buffers->streams != nullptr) {
+        delete[] buffers->timers;
         for (uint64_t i = 0; i < buffers->n_threads; i++) {
             cudaStreamDestroy(buffers->streams[i]);
         }
@@ -52,8 +53,10 @@ void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSiz
     }
     
     buffers->streams = new cudaStream_t[nThreads];
+    buffers->timers = new TimerGPU[nThreads];
     for (uint64_t i = 0; i < nThreads; i++) {
         CHECKCUDAERR(cudaStreamCreate(&buffers->streams[i]));
+        buffers->timers[i].init(buffers->streams[i]);
     }
 
     buffers->pinned_buffers = new Goldilocks::Element*[nThreads];
@@ -73,11 +76,11 @@ void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank)
         CHECKCUDAERR(cudaFree(buffers->d_constTree));
     }
     if (buffers->streams != nullptr) {
+        delete[] buffers->timers;
         for (uint64_t i = 0; i < buffers->n_threads; i++) {
             cudaStreamDestroy(buffers->streams[i]);
         }
         delete[] buffers->streams;
-        buffers->streams = nullptr;
     }
     delete buffers;
 }
@@ -89,6 +92,8 @@ void gen_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
+    cudaStream_t stream = d_buffers->streams[threadId];
+    TimerGPU timer = d_buffers->timers[threadId];
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + threadId*d_buffers->max_size_prover_buffer;
 
@@ -136,9 +141,6 @@ void gen_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
     timeCopyConstants = omp_get_wtime() - timeCopyConstants;
 
     time = omp_get_wtime();
-    cudaStream_t stream;
-    CHECKCUDAERR(cudaStreamCreate(&stream));
-    TimerGPU timer(stream);
     genProof_gpu(*setupCtx, d_buffers->d_aux_trace, timer, stream);
     getProof_gpu(*setupCtx, airgroupId, airId, instanceId, proofBuffer, string(proofFile), d_buffers->d_aux_trace);
     time = omp_get_wtime() - time;
@@ -203,6 +205,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     cudaStream_t stream = d_buffers->streams[thread_id];
+    TimerGPU timer = d_buffers->timers[thread_id];
 
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + thread_id*d_buffers->max_size_contribution;
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
@@ -211,7 +214,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     Goldilocks::parcpy(d_buffers->pinned_buffers[thread_id], (Goldilocks::Element *)trace, N * nCols, 4);
     CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetStage1, d_buffers->pinned_buffers[thread_id], sizeTrace, cudaMemcpyHostToDevice, stream));
     cudaEventRecord(commitWitness, stream);
-    genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, stream);
+    genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, timer, stream);
     cudaEventSynchronize(commitWitness);
     time = omp_get_wtime() - time;
 
@@ -229,6 +232,7 @@ void get_commit_root(uint64_t arity, uint64_t nBitsExt, uint64_t nCols, void *ro
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     cudaStream_t stream = d_buffers->streams[thread_id];
+    TimerGPU timer = d_buffers->timers[thread_id];
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + thread_id*d_buffers->max_size_contribution;
 
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
@@ -236,6 +240,13 @@ void get_commit_root(uint64_t arity, uint64_t nBitsExt, uint64_t nCols, void *ro
     uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, arity);
     CHECKCUDAERR(cudaMemcpyAsync(rootGL, pNodes + tree_size - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     CHECKCUDAERR(cudaStreamSynchronize(stream));
+
+    TimerSyncAndLogAllGPU(timer);
+
+ #if PRINT_TIME_SUMMARY
+    TimerSyncCategoriesGPU(timer);
+#endif
+
     time = omp_get_wtime() - time;
 
     std::ostringstream oss;
@@ -273,16 +284,4 @@ void set_device(uint32_t mpi_node_rank){
     cudaSetDevice(device);
 }
 
-// Function to set the CUDA device based on the MPI rank
-// Needs to be evolved to ensuer global balance between mpi ranks and GPU devices
-void set_device(uint32_t mpi_node_rank){
-    int deviceCount;
-    cudaGetDeviceCount(&deviceCount);
-    if (deviceCount == 0) {
-        std::cerr << "No CUDA devices found." << std::endl;
-        exit(1);
-    }
-    int device = mpi_node_rank % deviceCount;
-    cudaSetDevice(device);
-}
 #endif

@@ -6,8 +6,6 @@
 #include "gl64_t.cuh"
 #include "starks_gpu.cuh"
 
-#define PRINT_TIME_SUMMARY 1
-
 
 void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream = 0) {
 
@@ -35,32 +33,6 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
     }
 
     TimerStopGPU(timer, GEN_COMMIT_GPU);
-
-    TimerSyncAndLogAllGPU(timer);
-
-    TimerSyncCategoriesGPU(timer);
-
-    #if PRINT_TIME_SUMMARY
-
-    double time_total = TimerGetElapsedGPU(timer, GEN_COMMIT_GPU);
-    double nttTime = TimerGetElapsedCategoryGPU(timer, NTT);
-    double merkleTime = TimerGetElapsedCategoryGPU(timer, MERKLE_TREE);
-
-    std::ostringstream oss;
-
-    zklog.trace("    TIMES SUMMARY: ");
-    
-    oss << std::fixed << std::setprecision(2) << nttTime << "s (" << (nttTime / time_total) * 100 << "%)";
-    zklog.trace("        NTT:          " + oss.str());
-    oss.str("");
-    oss.clear();
-
-    oss << std::fixed << std::setprecision(2) << merkleTime << "s (" << (merkleTime / time_total) * 100 << "%)";
-    zklog.trace("        MERKLE:       " + oss.str());
-    oss.str("");
-    oss.clear();
-
-    #endif
 }
 
 #endif

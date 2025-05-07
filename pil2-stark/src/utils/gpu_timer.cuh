@@ -21,7 +21,12 @@ public:
     std::vector<std::string> order;
     cudaStream_t stream;
 
-    TimerGPU(cudaStream_t s = 0) : stream(s) {}
+    TimerGPU() {}
+    TimerGPU(cudaStream_t s) : stream(s) {}
+
+    void init(cudaStream_t s) {
+        stream = s;
+    }
 
     void start(const std::string& name) {
         if (timers.find(name) == timers.end()) {
@@ -192,6 +197,18 @@ public:
             cudaEventDestroy(entry.start);
             cudaEventDestroy(entry.stop);
         }
+
+        for (auto& [_, entries] : multiTimers) {
+            for (auto& entry : entries) {
+                cudaEventDestroy(entry.start);
+                cudaEventDestroy(entry.stop);
+            }
+        }
+
+        timers.clear();
+        multiTimers.clear();
+        activeCategoryTimers.clear();
+        order.clear();
     }
 };
 
