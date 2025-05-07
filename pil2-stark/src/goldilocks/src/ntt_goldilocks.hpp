@@ -5,6 +5,7 @@
 #include <cassert>
 #include <gmp.h>
 #include <omp.h>
+#include "gpu_timer.hpp"
 #ifdef __USE_CUDA__
     #include <cuda_runtime.h>
 #endif
@@ -193,8 +194,8 @@ public:
 
     #ifdef __USE_CUDA__
     // Calculating on a single GPU
-    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t ncols, gl64_t* d_aux_trace, uint64_t offset_helper, double *nttTime = nullptr, double *merkleTime = nullptr, cudaStream_t stream = 0);
-    void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, double *nttTime=nullptr, double *merkleTime=nullptr, cudaStream_t stream = 0);
+    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t ncols, gl64_t* d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream = 0);
+    void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream = 0);
     void INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_int64_t ncols, gl64_t* d_aux_trace, uint64_t offset_helper, gl64_t* d_data = nullptr, cudaStream_t stream = 0);
     #endif  
 };

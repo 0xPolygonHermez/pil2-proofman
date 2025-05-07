@@ -16,6 +16,7 @@
 #include "exit_process.hpp"
 #include "expressions_bin.hpp"
 #include "expressions_pack.hpp"
+#include "hints.hpp"
 
 class gl64_t;
 struct DeviceCommitBuffers;

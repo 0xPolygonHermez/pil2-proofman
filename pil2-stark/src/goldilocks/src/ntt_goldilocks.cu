@@ -125,15 +125,10 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Elem
     }
 }
 
-void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t n_bits_ext, uint64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, double *nttTime, double *merkleTime, cudaStream_t stream)
+void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t n_bits_ext, uint64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
 {
-    // cudaEvent_t point1, point2, point3;
-    // cudaEventCreate(&point1);
-    // cudaEventCreate(&point2);
-    // cudaEventCreate(&point3);
-
-    // cudaEventRecord(point1);
-
+   
+    TimerStartCategoryGPU(timer, NTT);
     uint64_t NExtended = 1 << n_bits_ext;
     gl64_t* d_S = d_aux_trace + offset_helper;
     gl64_t* d_r = d_aux_trace + offset_helper + qDeg;
@@ -162,38 +157,15 @@ void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offs
 
 
     ntt_cuda(d_cmQ, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits_ext, ncols, false, false, stream);
-
-    // cudaEventRecord(point2);
-
+    TimerStopCategoryGPU(timer, NTT);
+    TimerStartCategoryGPU(timer, MERKLE_TREE);
     Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, ncols, NExtended, stream);
-
-    // cudaEventRecord(point3);
-    
-    // if(nttTime!= nullptr){
-    //     cudaEventSynchronize(point2);
-    //     float elapsedTime;
-    //     cudaEventElapsedTime(&elapsedTime, point1, point2);
-    //     *nttTime = elapsedTime/1000;
-    // }
-    // if(merkleTime!= nullptr){ 
-    //     cudaEventSynchronize(point3);
-    //     float elapsedTime;
-    //     cudaEventElapsedTime(&elapsedTime, point2, point3);
-    //     *merkleTime = elapsedTime/1000;
-    // }
-    // cudaEventDestroy(point1);
-    // cudaEventDestroy(point2);
-    // cudaEventDestroy(point3);
+    TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
-void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, double *nttTime, double *merkleTime, cudaStream_t stream)
+void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
 {
-    // cudaEvent_t point1, point2, point3;
-    // cudaEventCreate(&point1);
-    // cudaEventCreate(&point2);
-    // cudaEventCreate(&point3);
-    // cudaEventRecord(point1);
-
+    TimerStartCategoryGPU(timer, NTT);
     uint64_t size = 1 << n_bits;
     uint64_t ext_size = 1 << n_bits_ext;
     gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
@@ -219,27 +191,10 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
 
     ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits_ext, ncols, false, false, stream);
 
-    // cudaEventRecord(point2);
-
+    TimerStopCategoryGPU(timer, NTT);
+    TimerStartCategoryGPU(timer, MERKLE_TREE);
     Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, ncols, ext_size, stream);
-    
-    // cudaEventRecord(point3);
-    
-    // if(nttTime!= nullptr){
-    //     cudaEventSynchronize(point2);
-    //     float elapsedTime;
-    //     cudaEventElapsedTime(&elapsedTime, point1, point2);
-    //     *nttTime = elapsedTime/1000;
-    // }
-    // if(merkleTime!= nullptr){ 
-    //     cudaEventSynchronize(point3);
-    //     float elapsedTime;
-    //     cudaEventElapsedTime(&elapsedTime, point2, point3);
-    //     *merkleTime = elapsedTime/1000;
-    // }
-    // cudaEventDestroy(point1);
-    // cudaEventDestroy(point2);
-    // cudaEventDestroy(point3);
+    TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
 void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_data, cudaStream_t stream)

@@ -871,18 +871,21 @@ where
             let p_setup: *mut c_void = (&setup.p_setup).into();
             let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
             let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-            timer_start_info!(GEN_PROOF);
-
-            let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
 
             if gen_const_tree {
+                timer_start_info!(LOAD_CONSTANTS);
+                let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
+
                 load_const_pols(
                     &setup.setup_path,
                     setup.const_pols_size,
                     &aux_trace[offset_const..offset_const + setup.const_pols_size],
                 );
                 load_const_pols_tree(setup, &aux_trace[0..setup.const_tree_size]);
+                timer_stop_and_log_info!(LOAD_CONSTANTS);
             }
+            
+            timer_start_info!(GEN_PROOF);
 
             let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;

@@ -3,10 +3,10 @@
 #include "expressions_pack.hpp"
 #include "polinomial.hpp"
 
-void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx){
+void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx, cudaStream_t stream){
 
     ExpressionsGPU* expressionsCtx = (ExpressionsGPU*)GPUExpressionsCtx;
-    expressionsCtx->calculateExpressions_gpu( d_params, dest, nRows, domainExtended);
+    expressionsCtx->calculateExpressions_gpu( d_params, dest, nRows, domainExtended, stream);
 }
 
 __global__ void setPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *values, uint64_t deg, uint64_t dim, uint64_t nCols) {
@@ -18,7 +18,7 @@ __global__ void setPolynomial_(Goldilocks::Element *pol, Goldilocks::Element *va
     }
 }
 
-void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *aux_trace, Goldilocks::Element *values, uint64_t idPol) {
+void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *aux_trace, Goldilocks::Element *values, uint64_t idPol, cudaStream_t stream) {
     PolMap polInfo = setupCtx.starkInfo.cmPolsMap[idPol];
     uint64_t deg = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t dim = polInfo.dim;
@@ -26,19 +26,14 @@ void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *aux_trace, Goldil
     uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
     uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
     offset += polInfo.stagePos;
-    uint64_t offset_values = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
     
-    // copy values into the GPU
-    Goldilocks::Element* d_values = aux_trace + offset_values;
-    CHECKCUDAERR(cudaMemcpy(d_values, values, deg * dim * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-
-    dim3 threds(512);
-    dim3 blocks((deg + threds.x - 1) / threds.x);
-    setPolynomial_<<<blocks, threds>>>(aux_trace + offset, d_values, deg, dim, nCols);    
+    dim3 threads(512);
+    dim3 blocks((deg + threads.x - 1) / threads.x);
+    setPolynomial_<<<blocks, threads, 0, stream>>>(aux_trace + offset, values, deg, dim, nCols);    
 }
 
-void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size){
-    CHECKCUDAERR(cudaMemcpy(target, src, size * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size, cudaStream_t stream) {
+    CHECKCUDAERR(cudaMemcpyAsync(target, src, size * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice, stream));
 }
 
 __global__ void opAirgroupValue_(gl64_t * airgroupValue,  gl64_t* val, uint32_t dim, bool add){
@@ -66,7 +61,7 @@ void opAirgroupValueGPU(Goldilocks::Element * airgroupValue,  Goldilocks::Elemen
     opAirgroupValue_<<<1, 1>>>((gl64_t*)airgroupValue, (gl64_t*)val, dim, add);
 }
 
-uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element* values, uint64_t hintId, std::string hintFieldName) {
+uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element* values, uint64_t hintId, std::string hintFieldName, cudaStream_t stream) {
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
     auto hintField = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldName](const HintField& hintField) {
@@ -87,18 +82,18 @@ uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
 
     auto hintFieldVal = hintField->values[0];
     if(hintFieldVal.operand == opType::cm) {
-        setPolynomialGPU(setupCtx, params.aux_trace, values, hintFieldVal.id);
+        setPolynomialGPU(setupCtx, params.aux_trace, values, hintFieldVal.id, stream);
     } else if(hintFieldVal.operand == opType::airgroupvalue) {
         if(setupCtx.starkInfo.airgroupValuesMap[hintFieldVal.id].stage > 1) {
-            copyValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldVal.id, values, FIELD_EXTENSION);      
+            copyValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldVal.id, values, FIELD_EXTENSION, stream);      
         } else {
-            copyValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldVal.id, values, 1);
+            copyValueGPU(params.airgroupValues + FIELD_EXTENSION*hintFieldVal.id, values, 1, stream);
         }
     } else if(hintFieldVal.operand == opType::airvalue) {
         if(setupCtx.starkInfo.airValuesMap[hintFieldVal.id].stage > 1) {
-            copyValueGPU(params.airValues + FIELD_EXTENSION*hintFieldVal.id, values, FIELD_EXTENSION);
+            copyValueGPU(params.airValues + FIELD_EXTENSION*hintFieldVal.id, values, FIELD_EXTENSION, stream);
         } else {
-            copyValueGPU(params.airValues + FIELD_EXTENSION*hintFieldVal.id, values, 1);
+            copyValueGPU(params.airValues + FIELD_EXTENSION*hintFieldVal.id, values, 1, stream);
         }
     } else {
         zklog.error("Only committed pols and airgroupvalues can be set");
@@ -109,7 +104,7 @@ uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::El
     return hintFieldVal.id;
 }
 
-void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, double* time_expressions) {
+void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, cudaStream_t stream) {
     if(setupCtx.expressionsBin.hints.size() == 0) {
         zklog.error("No hints were found.");
         exitProcess();
@@ -156,13 +151,12 @@ void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParam
 
         addHintField(setupCtx, h_params, hintId[i], destStruct, hintFieldName1[i], hintOptions1[i]);
         addHintField(setupCtx, h_params, hintId[i], destStruct, hintFieldName2[i], hintOptions2[i]);
-        double time_start = omp_get_wtime();
-        opHintFieldsGPU(&d_params, destStruct, nRows, false, GPUExpressionsCtx);
-        *time_expressions += omp_get_wtime() - time_start;
+        
+        opHintFieldsGPU(&d_params, destStruct, nRows, false, GPUExpressionsCtx, stream);
     }
 }
 
-void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions) {
+void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, cudaStream_t stream) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -174,33 +168,24 @@ void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
     uint64_t dim = setupCtx.starkInfo.cmPolsMap[hintFieldDestVal.id].dim;
     
     uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
-    Goldilocks::Element* vals = new Goldilocks::Element[dim*N];
+    Goldilocks::Element* vals_gpu = h_params.aux_trace + offsetAuxTrace;
     
-    Dest destStruct(vals, 1 << setupCtx.starkInfo.starkStruct.nBits, 0);
-    destStruct.dest_gpu = h_params.aux_trace + offsetAuxTrace;
+    Dest destStruct(nullptr, 1 << setupCtx.starkInfo.starkStruct.nBits, 0);
+    destStruct.dest_gpu = vals_gpu;
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 
-    double time_start = omp_get_wtime();
-    opHintFieldsGPU(&d_params, destStruct, N, false, GPUExpressionsCtx);
-    *time_expressions += omp_get_wtime() - time_start;
+    opHintFieldsGPU(&d_params, destStruct, N, false, GPUExpressionsCtx, stream);
     
     // copy vals to the GPU
-    Goldilocks::Element* vals_gpu;
-    cudaMalloc((void**)&vals_gpu, dim*N*sizeof(Goldilocks::Element));
-    cudaMemcpy(vals_gpu, vals, dim*N*sizeof(Goldilocks::Element), cudaMemcpyHostToDevice);
-    Goldilocks::Element* helpers;
-    cudaMalloc((void**)&helpers, dim*N*sizeof(Goldilocks::Element));
-    
-    accOperation(vals, N, add, dim);
-    accOperationGPU((gl64_t *)vals_gpu, N, add, dim, (gl64_t *)helpers);
-    setHintFieldGPU(setupCtx, h_params, vals, hintId, hintFieldNameDest);
-    setHintFieldGPU(setupCtx, h_params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
+    Goldilocks::Element* helpers = h_params.aux_trace + offsetAuxTrace + dim*N;    
+    accOperationGPU((gl64_t *)vals_gpu, N, add, dim, (gl64_t *)helpers, stream);
 
-    delete[] vals;
+    setHintFieldGPU(setupCtx, h_params, vals_gpu, hintId, hintFieldNameDest,stream);
+    setHintFieldGPU(setupCtx, h_params, &vals_gpu[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal, stream);
 }
 
-uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions) {
+uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, cudaStream_t stream) {
     
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -218,10 +203,8 @@ uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, Steps
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName1, hintOptions1);
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 
-    double time_start = omp_get_wtime();
-    opHintFieldsGPU(&d_params, destStruct, 1, false, GPUExpressionsCtx); 
+    opHintFieldsGPU(&d_params, destStruct, 1, false, GPUExpressionsCtx, stream); 
     opAirgroupValueGPU(h_params.airgroupValues + FIELD_EXTENSION*hintFieldAirgroupVal.id, destStruct.dest_gpu, destStruct.dim, add);
-    *time_expressions += omp_get_wtime() - time_start;
     return hintFieldAirgroupVal.id;
 }
 
@@ -508,37 +491,32 @@ __global__ void prescan_correction(gl64_t *g_odata, gl64_t* correction, bool isS
     }
 }
 
-void accOperationGPU(gl64_t* vals, uint64_t N, bool add, uint32_t dim, gl64_t* helper) {
-    
-    
+void accOperationGPU(gl64_t* vals, uint64_t N, bool add, uint32_t dim, gl64_t* helper, cudaStream_t stream) {    
     gl64_t* helper1;
     gl64_t* helper2;
     uint32_t nthreads1 = min(256, (uint32_t)N>>1);
     dim3 threads1(nthreads1);
     dim3 blocks1((N + 2*threads1.x - 1) / (2*threads1.x));
-    prescan<<<blocks1, threads1, 2*dim*threads1.x*sizeof(gl64_t)>>>(vals, vals, add, 1, dim, N);  
+    prescan<<<blocks1, threads1, 2*dim*threads1.x*sizeof(gl64_t), stream>>>(vals, vals, add, 1, dim, N);  
     if(N > 2*nthreads1){
-
         helper1 = helper;
         uint32_t N2 = blocks1.x;
         uint32_t nthreads2 = min(256, N2>>1);
         dim3 threads2(nthreads2);
         dim3 blocks2((N2 + 2*threads2.x - 1) / (2*threads2.x));
-        prescan<<<blocks2, threads2, 2*dim*threads2.x*sizeof(gl64_t)>>>(helper1, vals, add, nthreads1 << 1, dim, N2);
-        
-        if( N2 > nthreads2){
-            
+        prescan<<<blocks2, threads2, 2*dim*threads2.x*sizeof(gl64_t), stream>>>(helper1, vals, add, nthreads1 << 1, dim, N2);
+        if(N2 > 2*nthreads2){
             helper2 = helper + dim*N2;
             uint32_t N3 = blocks2.x;
             assert(N3 <= 2048);
             uint32_t nthreads3 = N3 >> 1;
             dim3 threads3(nthreads3);
             dim3 blocks3(1);
-            prescan<<<blocks3, threads3, 2*dim*threads3.x*sizeof(gl64_t)>>>(helper2, helper1, add, nthreads2 << 1, dim, N3);
-            prescan_correction<<<blocks2, 2*threads2.x>>>(helper1, helper2, add, dim, N2);
+            prescan<<<blocks3, threads3, 2*dim*threads3.x*sizeof(gl64_t), stream>>>(helper2, helper1, add, nthreads2 << 1, dim, N3);
+            prescan_correction<<<blocks2, 2*threads2.x, 0, stream>>>(helper1, helper2, add, dim, N2);
 
         }
-        prescan_correction<<<blocks1, 2*threads1.x>>>(vals, helper1, add, dim, N);
+        prescan_correction<<<blocks1, 2*threads1.x, 0, stream>>>(vals, helper1, add, dim, N);
     }
     CHECKCUDAERR(cudaGetLastError());
 }

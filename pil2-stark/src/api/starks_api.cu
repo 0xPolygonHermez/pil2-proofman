@@ -104,7 +104,10 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     //std::cout << "rick genDeviceBuffers time: " << time << std::endl;
 
     time = omp_get_wtime();
-    genProof_gpu(*setupCtx, d_buffers->d_aux_trace);
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+    TimerGPU timer(stream);
+    genProof_gpu(*setupCtx, d_buffers->d_aux_trace, timer, stream);
     getProof_gpu(*setupCtx, airgroupId, airId, instanceId, proofBuffer, string(proofFile), d_buffers->d_aux_trace);
     time = omp_get_wtime() - time;
     //std::cout << "rick genRecursiveProof_gpu time: " << time << std::endl;

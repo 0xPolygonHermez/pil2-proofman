@@ -20,6 +20,8 @@ template <typename ElementType>
 void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers, bool vadcop, cudaStream_t stream = 0)
 {
 
+    TimerGPU timer(stream);
+
     TimerStart(STARK_GPU_PROOF);
     TimerStart(STARK_INITIALIZATION);
     
@@ -118,7 +120,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     TimerStopAndLog(STARK_STEP_0);    
 
     TimerStart(STARK_COMMIT_STAGE_1);
-    commitStage_inplace(1, setupCtx, starks.treesGL, d_buffers->d_trace, d_buffers->d_aux_trace, &d_transcript, &nttTime, &merkleTime);
+    commitStage_inplace(1, setupCtx, starks.treesGL, d_buffers->d_trace, d_buffers->d_aux_trace, &d_transcript, timer);
     totalNTTTime += nttTime;
     totalMerkleTime += merkleTime;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -132,15 +134,18 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
 
     TimerStart(STARK_CALCULATE_GPROD);
-    
-    Goldilocks::Element *res = new Goldilocks::Element[N * FIELD_EXTENSION];
-    Goldilocks::Element *gprod = new Goldilocks::Element[N * FIELD_EXTENSION];
+
     uint64_t gprodFieldId = setupCtx.expressionsBin.hints[0].fields[0].values[0].id;
     uint64_t numFieldId = setupCtx.expressionsBin.hints[0].fields[1].values[0].id;
     uint64_t denFieldId = setupCtx.expressionsBin.hints[0].fields[2].values[0].id;
 
-    Dest destStruct(res, N);
-    CHECKCUDAERR(cudaMalloc(&destStruct.dest_gpu, N * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
+    uint64_t offsetAuxTrace = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
+    Goldilocks::Element* vals_gpu = h_params.aux_trace + offsetAuxTrace;
+    Goldilocks::Element* vals_gpu_shifted = vals_gpu + FIELD_EXTENSION;
+    Goldilocks::Element* helpers = h_params.aux_trace + offsetAuxTrace + FIELD_EXTENSION*N + FIELD_EXTENSION;  
+
+    Dest destStruct(nullptr, N);
+    destStruct.dest_gpu = vals_gpu_shifted;
     destStruct.addParams(numFieldId, setupCtx.expressionsBin.expressionsInfo[numFieldId].destDim);
     destStruct.addParams(denFieldId, setupCtx.expressionsBin.expressionsInfo[denFieldId].destDim, true);
     uint64_t xn_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x_n", false)];
@@ -149,29 +154,12 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     computeX_kernel<<<blocks_, threads_>>>((gl64_t *)h_params.aux_trace + xn_offset, N, Goldilocks::one(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits));
     expressionsCtx.calculateExpressions_gpu(&h_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false);
 
-    CHECKCUDAERR(cudaFree(destStruct.dest_gpu));
+    accOperationGPU((gl64_t *)vals_gpu_shifted, N, false, FIELD_EXTENSION, (gl64_t *)helpers);
+   
+    setProdIdentity3<<<1,1>>>((gl64_t *)vals_gpu);
+    setPolynomialGPU(setupCtx, h_params.aux_trace, vals_gpu, gprodFieldId);
 
-    Goldilocks3::copy((Goldilocks3::Element *)&gprod[0], &Goldilocks3::one());
-    for(uint64_t i = 1; i < N; ++i) {
-        Goldilocks3::mul((Goldilocks3::Element *)&gprod[i * FIELD_EXTENSION], (Goldilocks3::Element *)&gprod[(i - 1) * FIELD_EXTENSION], (Goldilocks3::Element *)&res[(i - 1) * FIELD_EXTENSION]);
-    }
-
-    Goldilocks::Element *d_grod;
-    CHECKCUDAERR(cudaMalloc(&d_grod, N * FIELD_EXTENSION * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMemcpy(d_grod, gprod, N * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-
-    uint64_t offset = setupCtx.starkInfo.getTraceOffset("cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
-    uint64_t nCols = setupCtx.starkInfo.getTraceNColsSection("cm", setupCtx.starkInfo.cmPolsMap[gprodFieldId], false);
-
-    dim3 nThreads(256);
-    dim3 nBlocks((N + nThreads.x - 1) / nThreads.x);
-    insertTracePol<<<nBlocks, nThreads>>>((Goldilocks::Element *)d_buffers->d_aux_trace, offset, nCols, d_grod, FIELD_EXTENSION, N);
-
-    delete res;
-    delete gprod;
-    CHECKCUDAERR(cudaFree(d_grod));
-
-   TimerStopAndLog(STARK_CALCULATE_GPROD);
+    TimerStopAndLog(STARK_CALCULATE_GPROD);
 
     TimerStart(CALCULATE_IM_POLS);
     calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, *d_params, 2);
@@ -179,7 +167,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
 
     TimerStart(STARK_COMMIT_STAGE_2);
-    commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, &d_transcript, &nttTime, &merkleTime);
+    commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, &d_transcript, timer);
     totalNTTTime += nttTime;
     totalMerkleTime += merkleTime;
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
@@ -206,7 +194,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     TimerStart(STARK_STEP_Q_COMMIT);
 
-    commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, nullptr, d_buffers->d_aux_trace, &d_transcript, &nttTime, &merkleTime);
+    commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, nullptr, d_buffers->d_aux_trace, &d_transcript, timer);
     totalNTTTime += nttTime;
     totalMerkleTime += merkleTime;
     TimerStopAndLog(STARK_STEP_Q_COMMIT);
@@ -235,9 +223,9 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
             }
         }
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
-        computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), openingPoints.data(), d_buffers->d_aux_trace, offset_helper, d_LEv, &nttTime);
+        computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), &d_openingPoints[i], d_buffers->d_aux_trace, offset_helper, d_LEv, timer);
         totalNTTTime += nttTime;
-        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv);
+        evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv, timer);
     }
     TimerStopAndLog(STARK_STEP_EVMAP);
 
@@ -294,7 +282,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
-            merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, &d_transcript, &merkleTime);
+            merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, &d_transcript, timer);
             totalMerkleTime += merkleTime;
         }
         else

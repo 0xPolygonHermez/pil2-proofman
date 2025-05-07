@@ -1,4 +1,7 @@
 #include "expressions_ctx.hpp"
+#ifdef __USE_CUDA__
+    #include <cuda_runtime.h>
+#endif
 
 typedef enum {
     Field = 0,
@@ -63,15 +66,15 @@ void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest
 void accHintField(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName, bool add);
 
 #ifdef __USE_CUDA__
-void opHintFieldsGPU(StepsParams* d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx);
-void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *values, uint64_t idPol);
-void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size);
+void opHintFieldsGPU(StepsParams* d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx, cudaStream_t stream = 0);
+void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *values, uint64_t idPol, cudaStream_t stream = 0);
+void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size, cudaStream_t stream = 0);
 void opAirgroupValueGPU(Goldilocks::Element * airgroupValue,  Goldilocks::Element* val, uint32_t dim, bool add);
-uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element* values, uint64_t hintId, std::string hintFieldName);
-void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, double* time_expressions = nullptr);
-void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions = nullptr);
-uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, double* time_expressions = nullptr);
-void accOperationGPU(gl64_t* vals, uint64_t N, bool add, uint32_t dim, gl64_t* helper);
+uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams &params, Goldilocks::Element* values, uint64_t hintId, std::string hintFieldName, cudaStream_t stream = 0);
+void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx, cudaStream_t stream = 0);
+void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, cudaStream_t stream = 0);
+uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams &d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, cudaStream_t stream = 0);
+void accOperationGPU(gl64_t* vals, uint64_t N, bool add, uint32_t dim, gl64_t* helper, cudaStream_t stream = 0);
 #endif
 
 uint64_t setHintField(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element* values, uint64_t hintId, std::string hintFieldName);

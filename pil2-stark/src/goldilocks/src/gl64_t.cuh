@@ -252,6 +252,13 @@ public:
         return ret;
     }
 
+    static inline const gl64_t zero()
+    {
+        gl64_t ret;
+        ret.val = 0;
+        return ret;
+    }
+
 #ifdef GL64_PARTIALLY_REDUCED
     inline bool is_zero() const { return val == 0 | val == MOD; }
     inline bool is_one() const { return val == 1 | val == MOD + 1; }
@@ -259,11 +266,6 @@ public:
     inline bool is_zero() const { return val == 0; }
     inline bool is_one() const { return val == 1; }
 #endif
-
-    inline void zero()
-    {
-        val = 0;
-    }
 
     friend inline gl64_t czero(const gl64_t &a, int set_z)
     {

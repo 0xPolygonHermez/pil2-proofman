@@ -11,8 +11,10 @@
 
 void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, DeviceCommitBuffers *d_buffers) {
 
-    double nttTime;
-    double merkleTime;
+    cudaStream_t stream;
+    CHECKCUDAERR(cudaStreamCreate(&stream));
+    TimerGPU timer(stream);
+    TimerStartGPU(timer, GEN_COMMIT_GPU);
 
     uint64_t NExtended = 1 << nBitsExt;
     if (nCols > 0)
@@ -29,16 +31,24 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t nBits, ui
         uint64_t offset_aux = NExtended * nCols + tree_size;
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*) d_buffers->d_aux_trace + nCols * NExtended;
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, d_buffers->d_aux_trace, offset_aux, &nttTime, &merkleTime);
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExt, nCols, d_buffers->d_aux_trace, offset_aux, timer);
         CHECKCUDAERR(cudaMemcpy(&root[0], pNodes + tree_size - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost));   
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;
         assert(0);
     }
 
+    TimerStopGPU(timer, GEN_COMMIT_GPU);
+
+    TimerSyncAndLogAllGPU(timer);
+
+    TimerSyncCategoriesGPU(timer);
+
     #if PRINT_TIME_SUMMARY
 
-    double time_total = nttTime + merkleTime;
+    double time_total = TimerGetElapsedGPU(timer, GEN_COMMIT_GPU);
+    double nttTime = TimerGetElapsedCategoryGPU(timer, NTT);
+    double merkleTime = TimerGetElapsedCategoryGPU(timer, MERKLE_TREE);
 
     std::ostringstream oss;
 

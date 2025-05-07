@@ -2,7 +2,6 @@
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
 #include "verify_constraints.hpp"
-#include "hints.hpp"
 #include "global_constraints.hpp"
 #include "gen_recursive_proof.hpp"
 #include "gen_proof.hpp"
