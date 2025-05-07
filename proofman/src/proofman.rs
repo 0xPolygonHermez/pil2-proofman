@@ -579,9 +579,7 @@ where
 
         let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
 
-        let number_proofs = 1; // TODO: COMPLETELY PROVISIONAL
-
-        let proofs_manager = ProofExecutionManager::new(number_proofs);
+        let proofs_manager = ProofExecutionManager::new(max_number_proofs);
         let proofs_manager = Arc::new(proofs_manager);
 
         let (proof_tx, proof_rx) = crossbeam_channel::unbounded::<(usize, usize)>();
@@ -629,7 +627,7 @@ where
             })
             .collect();
 
-        let workers: Vec<_> = (0..number_proofs)
+        let workers: Vec<_> = (0..max_number_proofs)
             .map(|thread_id| {
                 let instances_clone = instances.clone();
                 let proof_rx = proof_rx.clone();
@@ -1107,7 +1105,6 @@ where
         }
 
         let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
-        steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
         steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
         steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
 

@@ -7,7 +7,7 @@
 #include "starks_gpu.cuh"
 
 
-void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream = 0) {
+void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream) {
 
     TimerStartGPU(timer, GEN_COMMIT_GPU);
 

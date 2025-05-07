@@ -120,29 +120,29 @@ void gen_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
         CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetConstTree, params->pConstPolsExtendedTreeAddress, sizeConstTree, cudaMemcpyHostToDevice));
     }
     if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
-        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_buffers->d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
+        Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
         CHECKCUDAERR(cudaMemcpy(pCustomCommitsFixed, params->pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     }
-    CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetPublicInputs, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetPublicInputs, params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
 
     if (setupCtx->starkInfo.proofValuesSize > 0) {
-        CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetProofValues, params->proofValues, setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetProofValues, params->proofValues, setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     }
     if (setupCtx->starkInfo.airgroupValuesSize > 0) {
-        CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetAirgroupValues, params->airgroupValues, setupCtx->starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetAirgroupValues, params->airgroupValues, setupCtx->starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     }
     if (setupCtx->starkInfo.airValuesSize > 0) {
-        CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetAirValues, params->airValues, setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetAirValues, params->airValues, setupCtx->starkInfo.airValuesSize * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     }
 
-    Goldilocks::Element *d_global_challenge = (Goldilocks::Element *)d_buffers->d_aux_trace + offsetChallenge;
+    Goldilocks::Element *d_global_challenge = (Goldilocks::Element *)d_aux_trace + offsetChallenge;
     CHECKCUDAERR(cudaMemcpy(d_global_challenge, globalChallenge, FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
            
     timeCopyConstants = omp_get_wtime() - timeCopyConstants;
 
     time = omp_get_wtime();
-    genProof_gpu(*setupCtx, d_buffers->d_aux_trace, timer, stream);
-    getProof_gpu(*setupCtx, airgroupId, airId, instanceId, proofBuffer, string(proofFile), d_buffers->d_aux_trace);
+    genProof_gpu(*setupCtx, d_aux_trace, timer, stream);
+    getProof_gpu(*setupCtx, airgroupId, airId, instanceId, proofBuffer, string(proofFile), d_aux_trace);
     time = omp_get_wtime() - time;
 
     std::ostringstream oss;

@@ -97,8 +97,8 @@ public:
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();
 
-    void loadDeviceArgs(uint64_t domainSize, Dest &dest, cudaStream_t stream = 0);
-    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, TimerGPU &timer, cudaStream_t stream = 0);
+    void loadDeviceArgs(uint64_t domainSize, Dest &dest, cudaStream_t stream);
+    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, TimerGPU &timer, cudaStream_t stream);
     
 };
 #endif

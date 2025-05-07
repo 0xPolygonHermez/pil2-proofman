@@ -57,8 +57,8 @@ __global__ void opAirgroupValue_(gl64_t * airgroupValue,  gl64_t* val, uint32_t 
     }
         
 }
-void opAirgroupValueGPU(Goldilocks::Element * airgroupValue,  Goldilocks::Element* val, uint32_t dim, bool add){
-    opAirgroupValue_<<<1, 1>>>((gl64_t*)airgroupValue, (gl64_t*)val, dim, add);
+void opAirgroupValueGPU(Goldilocks::Element * airgroupValue,  Goldilocks::Element* val, uint32_t dim, bool add, cudaStream_t stream){
+    opAirgroupValue_<<<1, 1, 0, stream>>>((gl64_t*)airgroupValue, (gl64_t*)val, dim, add);
 }
 
 uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element* values, uint64_t hintId, std::string hintFieldName, cudaStream_t stream) {
@@ -204,7 +204,7 @@ uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, Steps
     addHintField(setupCtx, h_params, hintId, destStruct, hintFieldName2, hintOptions2);
 
     opHintFieldsGPU(&d_params, destStruct, 1, false, GPUExpressionsCtx, timer, stream); 
-    opAirgroupValueGPU(h_params.airgroupValues + FIELD_EXTENSION*hintFieldAirgroupVal.id, destStruct.dest_gpu, destStruct.dim, add);
+    opAirgroupValueGPU(h_params.airgroupValues + FIELD_EXTENSION*hintFieldAirgroupVal.id, destStruct.dest_gpu, destStruct.dim, add, stream);
     return hintFieldAirgroupVal.id;
 }
 
