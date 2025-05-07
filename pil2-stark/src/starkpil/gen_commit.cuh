@@ -9,10 +9,9 @@
 #define PRINT_TIME_SUMMARY 1
 
 
-void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, cudaStream_t stream = 0) {
+void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream = 0) {
 
-    double nttTime;
-    double merkleTime;
+    TimerStartGPU(timer, GEN_COMMIT_GPU);
 
     uint64_t NExtended = 1 << nBitsExtended;
     if (nCols > 0)
@@ -24,20 +23,28 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
 
         uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, arity);
 
-        NTT_Goldilocks ntt;
+        NTT_Goldilocks_GPU ntt;
 
         uint64_t offset_aux = NExtended * nCols + tree_size;
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*) d_aux_trace + nCols * NExtended;
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, d_aux_trace, offset_aux, stream, &nttTime, &merkleTime);
+        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, d_aux_trace, offset_aux, timer, stream);
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;
         assert(0);
     }
 
+    TimerStopGPU(timer, GEN_COMMIT_GPU);
+
+    TimerSyncAndLogAllGPU(timer);
+
+    TimerSyncCategoriesGPU(timer);
+
     #if PRINT_TIME_SUMMARY
 
-    double time_total = nttTime + merkleTime;
+    double time_total = TimerGetElapsedGPU(timer, GEN_COMMIT_GPU);
+    double nttTime = TimerGetElapsedCategoryGPU(timer, NTT);
+    double merkleTime = TimerGetElapsedCategoryGPU(timer, MERKLE_TREE);
 
     std::ostringstream oss;
 

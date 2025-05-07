@@ -2,7 +2,7 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "gl64_t.cuh"
-#include "poseidon2_goldilocks.hpp"
+#include "poseidon2_goldilocks.cuh"
 #include "ntt_goldilocks.cuh"
 #include "goldilocks_cubic_extension.cuh"
 #include "omp.h"
@@ -104,9 +104,12 @@ __global__ void transpose_opt(uint64_t *dst, uint64_t *src, uint32_t nblocks, ui
     }
 }
 
-__global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, uint64_t N, uint64_t qDeg, uint64_t qDim)
+__global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Element shiftIn, uint64_t N, uint64_t qDeg, uint64_t qDim)
 {
-
+    d_S[0] = gl64_t::one();
+    for(uint64_t i = 1; i < qDeg; ++i) {
+        d_S[i] = gl64_t(shiftIn.fe) * d_S[i - 1];
+    }
     int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= N)
         return;
@@ -122,83 +125,49 @@ __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, uint64_t N, uint
     }
 }
 
-void NTT_Goldilocks::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, double *nttTime, double *merkleTime)
+void NTT_Goldilocks_GPU::computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t n_bits_ext, uint64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
 {
-    cudaEvent_t point1, point2, point3;
-    cudaEventCreate(&point1);
-    cudaEventCreate(&point2);
-    cudaEventCreate(&point3);
-
-    cudaEventRecord(point1);
-
-    gl64_t* d_r = d_aux_trace + offset_helper;
+   
+    TimerStartCategoryGPU(timer, NTT);
+    uint64_t NExtended = 1 << n_bits_ext;
+    gl64_t* d_S = d_aux_trace + offset_helper;
+    gl64_t* d_r = d_aux_trace + offset_helper + qDeg;
     gl64_t* d_forwardTwiddleFactors = d_aux_trace + offset_helper + NExtended;
     gl64_t* d_inverseTwiddleFactors = d_aux_trace + offset_helper + 2*NExtended;
 
     gl64_t *d_q = d_aux_trace + offset_q;
     gl64_t *d_cmQ = d_aux_trace + offset_cmQ;
-    gl64_t *d_S;
-    CHECKCUDAERR(cudaMalloc(&d_S, qDeg * sizeof(gl64_t))); //rick
-    CHECKCUDAERR(cudaMemcpy(d_S, S, qDeg * sizeof(gl64_t), cudaMemcpyHostToDevice));
+
     if (ncols == 0 || NExtended == 0)
     {
         return;
     }
 
-    CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, NExtended * sizeof(uint64_t)))
-    CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, NExtended * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMemset(d_r, 0, NExtended * sizeof(uint64_t)));
-
     // Init twiddle factors
-    int lg2ext = log2(NExtended);
-    init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext);
+    init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits_ext, stream);
 
     // Intt
-    ntt_cuda(d_q, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, qDim, true, false);
+    ntt_cuda(d_q, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits_ext, qDim, true, false, stream);
 
 
     dim3 threads(128, 1, 1);
     dim3 blocks((N + threads.x - 1) / threads.x, 1, 1);
-    applyS<<<blocks, threads>>>(d_cmQ, d_q, d_S, N, qDeg, qDim);
-    CHECKCUDAERR(cudaMemset(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t)));
+    applyS<<<blocks, threads, 0, stream>>>(d_cmQ, d_q, d_S, shiftIn, N, qDeg, qDim);
+    CHECKCUDAERR(cudaMemsetAsync(d_cmQ + N * qDeg * qDim, 0, (NExtended - N) * qDeg * qDim * sizeof(gl64_t), stream));
 
 
-    ntt_cuda(d_cmQ, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2ext, ncols, false, false);
-
-    cudaEventRecord(point2);
-
-    Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, ncols, NExtended);
-
-    cudaEventRecord(point3);
-    
-    if(nttTime!= nullptr){
-        cudaEventSynchronize(point2);
-        float elapsedTime;
-        cudaEventElapsedTime(&elapsedTime, point1, point2);
-        *nttTime = elapsedTime/1000;
-    }
-    if(merkleTime!= nullptr){ 
-        cudaEventSynchronize(point3);
-        float elapsedTime;
-        cudaEventElapsedTime(&elapsedTime, point2, point3);
-        *merkleTime = elapsedTime/1000;
-    }
-    cudaEventDestroy(point1);
-    cudaEventDestroy(point2);
-    cudaEventDestroy(point3);
+    ntt_cuda(d_cmQ, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits_ext, ncols, false, false, stream);
+    TimerStopCategoryGPU(timer, NTT);
+    TimerStartCategoryGPU(timer, MERKLE_TREE);
+    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_cmQ, ncols, NExtended, stream);
+    TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
-void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, cudaStream_t stream, double *nttTime, double *merkleTime)
+void NTT_Goldilocks_GPU::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t *d_dst_ntt, uint64_t offset_dst_ntt, gl64_t *d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream)
 {
-    // cudaEvent_t point1, point2, point3;
-    // cudaEventCreate(&point1);
-    // cudaEventCreate(&point2);
-    // cudaEventCreate(&point3);
-    // cudaEventRecord(point1, stream);
-
+    TimerStartCategoryGPU(timer, NTT);
     uint64_t size = 1 << n_bits;
     uint64_t ext_size = 1 << n_bits_ext;
-
     gl64_t *d_dst_ntt_ = &d_dst_ntt[offset_dst_ntt];
     gl64_t *d_src_ntt_ = &d_src_ntt[offset_src_ntt];
 
@@ -211,11 +180,6 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
     gl64_t* d_forwardTwiddleFactors = d_aux_trace + offset_helper + ext_size;
     gl64_t* d_inverseTwiddleFactors = d_aux_trace + offset_helper + 2*ext_size;
 
-
-    CHECKCUDAERR(cudaMemsetAsync(d_forwardTwiddleFactors, 0, ext_size * sizeof(uint64_t), stream));
-    CHECKCUDAERR(cudaMemsetAsync(d_inverseTwiddleFactors, 0, ext_size * sizeof(uint64_t), stream));
-    CHECKCUDAERR(cudaMemsetAsync(d_r, 0, ext_size * sizeof(uint64_t), stream));
-
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits, stream);
     init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits_ext, stream);
     init_r(d_r, n_bits, stream);
@@ -226,32 +190,17 @@ void NTT_Goldilocks::LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl6
     ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits, ncols, true, true, stream);
 
     ntt_cuda(d_dst_ntt_, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits_ext, ncols, false, false, stream);
-    // cudaEventRecord(point2, stream);
 
-    Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, ncols, ext_size, stream);
-
-    // cudaEventRecord(point3, stream);
-    
-    // if(nttTime!= nullptr){
-    //     cudaEventSynchronize(point2);
-    //     float elapsedTime;
-    //     cudaEventElapsedTime(&elapsedTime, point1, point2);
-    //     *nttTime = elapsedTime/1000;
-    // }
-    // if(merkleTime!= nullptr){ 
-    //     cudaEventSynchronize(point3);
-    //     float elapsedTime;
-    //     cudaEventElapsedTime(&elapsedTime, point2, point3);
-    //     *merkleTime = elapsedTime/1000;
-    // }
-    // cudaEventDestroy(point1);
-    // cudaEventDestroy(point2);
-    // cudaEventDestroy(point3);
+    TimerStopCategoryGPU(timer, NTT);
+    TimerStartCategoryGPU(timer, MERKLE_TREE);
+    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(3, (uint64_t*) d_tree, (uint64_t *)d_dst_ntt_, ncols, ext_size, stream);
+    TimerStopCategoryGPU(timer, MERKLE_TREE);
 }
 
-void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, gl64_t* d_aux_trace, uint64_t offset_helper, gl64_t* d_data)
+void NTT_Goldilocks_GPU::INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_int64_t ncols, gl64_t *d_aux_trace, uint64_t offset_helper, gl64_t* d_data, cudaStream_t stream)
 {
 
+    uint64_t size = 1 << n_bits;
     gl64_t* d_r = d_aux_trace + offset_helper;
     gl64_t* d_forwardTwiddleFactors = d_aux_trace + offset_helper + size;
     gl64_t* d_inverseTwiddleFactors = d_aux_trace + offset_helper + 2*size;
@@ -262,13 +211,8 @@ void NTT_Goldilocks::INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_
         return;
     }
 
-    CHECKCUDAERR(cudaMemset(d_forwardTwiddleFactors, 0, size * sizeof(uint64_t)))
-    CHECKCUDAERR(cudaMemset(d_inverseTwiddleFactors, 0, size * sizeof(uint64_t)));
-    CHECKCUDAERR(cudaMemset(d_r, 0, size * sizeof(uint64_t)));
-
-    int lg2 = log2(size);
-    init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2);
-    ntt_cuda(dst_src, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, lg2, ncols, true, false);
+    init_twiddle_factors(d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits, stream);
+    ntt_cuda(dst_src, d_r, d_forwardTwiddleFactors, d_inverseTwiddleFactors, n_bits, ncols, true, false, stream);
 }
 
 
@@ -674,6 +618,7 @@ void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddl
     if (inverse)
     {
         intt_scale<<<domain_size, ncols, 0, stream>>>(data, r, domain_size, log_domain_size, ncols, extend);
+        
     }
 }
 

@@ -29,7 +29,7 @@ TEST(GOLDILOCKS_TEST, full_gpu)
     cudaMallocManaged(&bb, (uint64_t)(FFT_SIZE << BLOWUP_FACTOR) * NUM_COLUMNS * sizeof(Goldilocks::Element));
     cudaMallocManaged(&cc, (uint64_t)(FFT_SIZE << BLOWUP_FACTOR) * NUM_COLUMNS * sizeof(Goldilocks::Element));
 
-    NTT_Goldilocks ntt(FFT_SIZE);
+    NTT_Goldilocks_GPU ntt(FFT_SIZE);
     warmup_all_gpus();
     alloc_pinned_mem((uint64_t)(FFT_SIZE << BLOWUP_FACTOR) * NUM_COLUMNS);
 
@@ -99,7 +99,7 @@ TEST(GOLDILOCKS_TEST, lde)
 
     cudaMallocHost(&buffer, (uint64_t)(FFT_SIZE << BLOWUP_FACTOR) * 128 * sizeof(Goldilocks::Element));
 
-    NTT_Goldilocks ntt(FFT_SIZE);
+    NTT_Goldilocks_GPU ntt(FFT_SIZE);
 
     for (uint i = 0; i < 2; i++)
     {
@@ -191,7 +191,7 @@ TEST(GOLDILOCKS_TEST, full_cpu)
     Goldilocks::Element *b = (Goldilocks::Element *)malloc((uint64_t)(FFT_SIZE << BLOWUP_FACTOR) * NUM_COLUMNS * sizeof(Goldilocks::Element));
     Goldilocks::Element *c = (Goldilocks::Element *)malloc((uint64_t)(FFT_SIZE << BLOWUP_FACTOR) * NUM_COLUMNS * sizeof(Goldilocks::Element));
 
-    NTT_Goldilocks ntt(FFT_SIZE);
+    NTT_Goldilocks_GPU ntt(FFT_SIZE);
 
     for (uint i = 0; i < 2; i++)
     {

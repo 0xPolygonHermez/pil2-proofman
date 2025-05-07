@@ -59,35 +59,6 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
     treesGL[step - 1]->merkelize();
     treesGL[step - 1]->getRoot(&proof.proof.roots[step - 1][0]);
 }
-template <typename ElementType>
-void Starks<ElementType>::extendAndMerkelize_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, double *nttTime, double *merkleTime)
-{
-#ifdef __USE_CUDA__
-
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    std::string section = "cm" + to_string(step);
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-
-    gl64_t *src = step == 1 ? d_trace : d_aux_trace;
-    uint64_t offset_src = step == 1 ? 0 : setupCtx.starkInfo.mapOffsets[make_pair(section, false)];
-    gl64_t *dst = d_aux_trace;
-    uint64_t offset_dst = setupCtx.starkInfo.mapOffsets[make_pair(section, true)];
-    Goldilocks::Element * dstGL = (Goldilocks::Element*) (d_aux_trace);
-
-    treesGL[step - 1]->setSource(dstGL + offset_dst);
-    Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
-    treesGL[step - 1]->setNodes((ElementType*) pNodes);
-    
-    NTT_Goldilocks ntt(N);
-
-    if (nCols > 0)
-    {
-        uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_" + to_string(step), false)];
-        ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, 0, nttTime, merkleTime);
-    }
-#endif
-}
 
 template <typename ElementType>
 void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *aux_trace, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper)
@@ -100,19 +71,6 @@ void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace,
     else
     {
         computeQ(step, aux_trace, proof, pBuffHelper);
-    }
-}
-
-template <typename ElementType>
-void Starks<ElementType>::commitStage_inplace(uint64_t step, gl64_t *d_trace, gl64_t *d_aux_trace, double *nttTime, double *merkleTime)
-{
-    if (step <= setupCtx.starkInfo.nStages)
-    {
-        extendAndMerkelize_inplace(step, d_trace, d_aux_trace, nttTime, merkleTime);
-    }
-    else
-    {
-        computeQ_inplace(step, d_aux_trace, nttTime, merkleTime);
     }
 }
 
@@ -171,40 +129,6 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
     
 }
 
-template <typename ElementType>
-void Starks<ElementType>::computeQ_inplace(uint64_t step, gl64_t *d_aux_trace, double *nttTime, double *merkleTime)
-{
-#ifdef __USE_CUDA__
-
-    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
-    std::string section = "cm" + to_string(step);
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
-
-    uint64_t offset_cmQ = setupCtx.starkInfo.mapOffsets[std::make_pair(section, true)];
-    uint64_t offset_q = setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)];
-    uint64_t qDeg = setupCtx.starkInfo.qDeg;
-    uint64_t qDim = setupCtx.starkInfo.qDim;
-
-    Goldilocks::Element S[setupCtx.starkInfo.qDeg];
-    Goldilocks::Element shiftIn = Goldilocks::exp(Goldilocks::inv(Goldilocks::shift()), N);
-    S[0] = Goldilocks::one();
-    for(uint64_t i = 1; i < setupCtx.starkInfo.qDeg; i++) {
-        S[i] = Goldilocks::mul(S[i - 1], shiftIn);
-    }
-    Goldilocks::Element* d_aux_traceGL = (Goldilocks::Element*) d_aux_trace;
-
-    treesGL[step - 1]->setSource( d_aux_traceGL + offset_q);
-    Goldilocks::Element *pNodes = d_aux_traceGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
-    treesGL[step - 1]->setNodes(( ElementType*)pNodes);
-
-    if (nCols > 0)
-    {
-        uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_" + to_string(step), false)];
-        nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, S, N, NExtended, nCols, d_aux_trace, offset_helper, nttTime, merkleTime);
-    }
-#endif
-}
 
 template <typename ElementType>
 void Starks<ElementType>::computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv, std::vector<int64_t> &openingPoints) {

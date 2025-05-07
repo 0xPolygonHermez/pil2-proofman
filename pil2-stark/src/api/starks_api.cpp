@@ -2,7 +2,6 @@
 #include "proof2zkinStark.hpp"
 #include "starks.hpp"
 #include "verify_constraints.hpp"
-#include "hints.hpp"
 #include "global_constraints.hpp"
 #include "gen_recursive_proof.hpp"
 #include "gen_proof.hpp"
@@ -234,7 +233,7 @@ void get_hint_field(void *pSetupCtx, void* stepsParams, void* hintFieldValues, u
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
 
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
     getHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, (HintFieldInfo *) hintFieldValues, hintId, string(hintFieldName), *(HintFieldOptions *) hintOptions);
 }
@@ -268,7 +267,7 @@ void mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t nHints, uint64
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
 
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
     return multiplyHintFields(setupCtx, *(StepsParams *)stepsParams, expressionsCtx, nHints, hintId, hintFieldNameDests.data(), hintFieldNames1.data(), hintFieldNames2.data(), hintOptions1Vec.data(), hintOptions2Vec.data());
 }
@@ -277,7 +276,7 @@ void acc_hint_field(void *pSetupCtx, void* stepsParams, uint64_t hintId, char *h
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
 
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
     accHintField(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName), add);
 }
 
@@ -285,7 +284,7 @@ void acc_mul_hint_fields(void *pSetupCtx, void* stepsParams, uint64_t hintId, ch
     SetupCtx &setupCtx = *(SetupCtx *)pSetupCtx;
     ProverHelpers proverHelpers;
 
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
     accMulHintFields(*(SetupCtx *)pSetupCtx, *(StepsParams *)stepsParams, expressionsCtx, hintId, string(hintFieldNameDest), string(hintFieldNameAirgroupVal), string(hintFieldName1), string(hintFieldName2),*(HintFieldOptions *)hintOptions1,  *(HintFieldOptions *)hintOptions2, add);
 }
 
@@ -312,7 +311,7 @@ void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsPar
 
     ProverHelpers proverHelpers;
 
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
     for(uint64_t i = 0; i < setupCtx.starkInfo.cmPolsMap.size(); i++) {
         if(setupCtx.starkInfo.cmPolsMap[i].imPol && setupCtx.starkInfo.cmPolsMap[i].stage == step) {

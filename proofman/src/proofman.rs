@@ -1100,8 +1100,10 @@ where
         let const_tree = &aux_trace[offset..offset + setup.const_tree_size];
 
         if gen_const_tree {
+            timer_start_info!(LOAD_CONSTANTS);
             load_const_pols(&setup.setup_path, setup.const_pols_size, const_pols);
             load_const_pols_tree(setup, const_tree);
+            timer_stop_and_log_info!(LOAD_CONSTANTS);
         }
 
         let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
@@ -1135,8 +1137,17 @@ where
             pctx.dctx_get_node_rank() as u32,
         );
 
-        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
-            pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
+        let n_airgroup_values = setup
+                .stark_info
+                .airgroupvalues_map
+                .as_ref()
+                .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
+                .unwrap_or(0);
+
+            let airgroup_values: Vec<F> =
+                proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
+
+            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
 
         timer_stop_and_log_info!(GEN_PROOF);
         proofs.write().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
@@ -1239,7 +1250,7 @@ where
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
         println!(
-            "{}: ··· Global challenge: {} {} {}",
+            "{}: Global challenge: [{}, {}, {}]",
             Self::MY_NAME,
             global_challenge[0],
             global_challenge[1],
