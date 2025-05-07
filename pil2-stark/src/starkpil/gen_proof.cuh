@@ -15,7 +15,7 @@
 #define PRINT_TIME_SUMMARY 1
 
 
-void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams& d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, cudaStream_t stream = 0) {
+void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams& d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, TimerGPU &timer, cudaStream_t stream = 0) {
 
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
@@ -45,22 +45,21 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
             hintOptions2[i] = options2;
         }
 
-        multiplyHintFieldsGPU(setupCtx, h_params, d_params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, stream);
+        multiplyHintFieldsGPU(setupCtx, h_params, d_params, nImTotalHints, imHints, hintFieldDest, hintField1, hintField2, hintOptions1, hintOptions2, expressionsCtxGPU, timer, stream);
     }
 
     HintFieldOptions options1;
     HintFieldOptions options2;
     options2.inverse = true;
-    accMulHintFieldsGPU(setupCtx, h_params, d_params, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, stream);
-    updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, stream);
+    accMulHintFieldsGPU(setupCtx, h_params, d_params, hint[0], "reference", "result", "numerator_air", "denominator_air",options1, options2, !prod,expressionsCtxGPU, timer, stream);
+    updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, timer, stream);
 }
 
 void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream = 0) {
     
     TimerStart(GEN_PROOF_GPU);
     TimerStartGPU(timer, STARK_GPU_PROOF);
-    TimerStartGPU(timer, STARK_INITIALIZATION);
-
+    TimerStartGPU(timer, STARK_STEP_0);
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
@@ -133,8 +132,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
 
-    TimerStopGPU(timer, STARK_INITIALIZATION);
-    TimerStartGPU(timer, STARK_STEP_0);
     d_transcript.put(d_challenge, FIELD_EXTENSION, stream);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++) {
         if(setupCtx.starkInfo.challengesMap[i].stage == 2) {
@@ -144,13 +141,13 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     TimerStopGPU(timer, STARK_STEP_0);
     
     TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
-    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, true, &expressionsCtx, stream);
-    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, false, &expressionsCtx, stream);
+    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, true, &expressionsCtx, timer, stream);
+    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, false, &expressionsCtx, timer, stream);
 
     TimerStopGPU(timer, STARK_CALCULATE_WITNESS_STD);
 
     TimerStartGPU(timer, CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, *d_params, 2, stream);
+    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, *d_params, 2, timer, stream);
     TimerStopGPU(timer, CALCULATE_IM_POLS);
 
     TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
@@ -170,7 +167,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     }
     TimerStopGPU(timer, STARK_COMMIT_STAGE_2);
     TimerStartGPU(timer, STARK_STEP_Q);
-    TimerStartGPU(timer, STARK_STEP_Q_EXPRESSIONS);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if(setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 1) {
@@ -179,12 +175,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     }
     uint64_t zi_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("zi", true)];
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
-    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, stream);
-    TimerStopGPU(timer, STARK_STEP_Q_EXPRESSIONS);
-    TimerStartGPU(timer, STARK_STEP_Q_COMMIT);
+    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, timer, stream);
     commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, (gl64_t *)h_params.trace, (gl64_t *)h_params.aux_trace, &d_transcript, timer);
-
-    TimerStopGPU(timer, STARK_STEP_Q_COMMIT);
     TimerStopGPU(timer, STARK_STEP_Q);
     TimerStartGPU(timer, STARK_STEP_EVALS);
 
@@ -233,17 +225,12 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     // 6. Compute FRI
     //--------------------------------
     TimerStartGPU(timer, STARK_STEP_FRI);
-    TimerStartGPU(timer, STARK_STEP_FRI_XIS);
-
     calculateXis_inplace(setupCtx, h_params, d_openingPoints, d_xiChallenge, stream);    
-    TimerStopGPU(timer, STARK_STEP_FRI_XIS);
-
-    TimerStartGPU(timer, STARK_STEP_FRI_POLYNOMIAL);
     uint64_t x_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x", true)];
     dim3 threads(256);
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
     computeX_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
-    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId, false, stream);
+    calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId, false, timer, stream);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
@@ -253,9 +240,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
             starks.treesFRI[step]->setNodes(pBuffNodesGL);
         }
     }
-    TimerStopGPU(timer, STARK_STEP_FRI_POLYNOMIAL);
-    TimerStartGPU(timer, STARK_STEP_FRI_FOLDING);
-
     uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
     uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
     gl64_t *d_friPol = (gl64_t *)(h_params.aux_trace + friPol_offset);
@@ -266,8 +250,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     {
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        fold_inplace(step, friPol_offset, offset_helper, d_challenge, nBitsExt, prevBits, currentBits, d_aux_trace, stream);
-
+        fold_inplace(step, friPol_offset, offset_helper, d_challenge, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
             merkelizeFRI_inplace(setupCtx, h_params, step, d_friPol, starks.treesFRI[step], currentBits, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, &d_transcript, timer, stream);
@@ -282,10 +265,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
             }
         }
         d_transcript.getField((uint64_t *)d_challenge, stream);
-    }
-    TimerStopGPU(timer, STARK_STEP_FRI_FOLDING);
-   
-    TimerStartGPU(timer, STARK_STEP_FRI_QUERIES);
+    }   
+    TimerStartCategoryGPU(timer, FRI);
     d_transcript_helper.reset(stream);
     d_transcript_helper.put(d_challenge, FIELD_EXTENSION, stream);
     d_transcript_helper.getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, stream);
@@ -294,7 +275,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
         proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
     }
-    TimerStopGPU(timer, STARK_STEP_FRI_QUERIES);
+    TimerStopCategoryGPU(timer, FRI);
     TimerStopGPU(timer, STARK_STEP_FRI);
     TimerStopGPU(timer, STARK_GPU_PROOF);
 
@@ -310,68 +291,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     TimerStopAndLog(GEN_PROOF_GPU);
 
 #if PRINT_TIME_SUMMARY
-
-    double time_total = TimerGetElapsedGPU(timer, STARK_GPU_PROOF);
-    double ntt_time = TimerGetElapsedCategoryGPU(timer, NTT);
-    double merkletree_time = TimerGetElapsedCategoryGPU(timer, MERKLE_TREE);
-    std::ostringstream oss;
-
-    zklog.trace("    TIMES SUMMARY: ");
-
-    double expressions_time = TimerGetElapsedGPU(timer, CALCULATE_IM_POLS) + TimerGetElapsedGPU(timer, STARK_STEP_Q_EXPRESSIONS) + TimerGetElapsedGPU(timer, STARK_CALCULATE_WITNESS_STD) + TimerGetElapsedGPU(timer, STARK_STEP_FRI_POLYNOMIAL);
-    oss << std::fixed << std::setprecision(2) << expressions_time << "s (" << (expressions_time / time_total) * 100 << "%)";
-    zklog.trace("        EXPRESSIONS:  " + oss.str());
-    oss.str("");
-    oss.clear();
-
-    double commit_time = TimerGetElapsedGPU(timer, STARK_COMMIT_STAGE_1) + TimerGetElapsedGPU(timer, STARK_COMMIT_STAGE_2) + TimerGetElapsedGPU(timer, STARK_STEP_Q_COMMIT);
-    oss << std::fixed << std::setprecision(2) << commit_time << "s (" << (commit_time / time_total) * 100 << "%)";
-    zklog.trace("        COMMIT:       " + oss.str());
-    oss.str("");
-    oss.clear();
-
-    double evmap_time = TimerGetElapsedGPU(timer, STARK_STEP_EVALS);
-    double evmap_time_no_ntt = TimerGetElapsedCategoryGPU(timer, EVALS);
-    cout << evmap_time_no_ntt << endl;
-    oss << std::fixed << std::setprecision(2) << evmap_time << "s (" << (evmap_time / time_total) * 100 << "%)";
-    zklog.trace("        EVALUATIONS:  " + oss.str());
-    oss.str("");
-    oss.clear();
-
-    double fri_time = TimerGetElapsedGPU(timer, STARK_STEP_FRI) - TimerGetElapsedGPU(timer, STARK_STEP_FRI_POLYNOMIAL);
-    oss << std::fixed << std::setprecision(2) << fri_time << "s (" << (fri_time / time_total) * 100 << "%)";
-    zklog.trace("        FRI:          " + oss.str());
-    oss.str("");
-    oss.clear();
-
-    double others_time = TimerGetElapsedGPU(timer, STARK_INITIALIZATION) + TimerGetElapsedGPU(timer, STARK_STEP_0);
-    oss << std::fixed << std::setprecision(2) << others_time << "s (" << (others_time / time_total) * 100 << "%)";
-    zklog.trace("        OTHERS:       " + oss.str());
-    oss.str("");
-    oss.clear();
-
-    if (others_time + commit_time + evmap_time + expressions_time + fri_time >= time_total ||
-        others_time + commit_time + evmap_time + expressions_time + fri_time <= 0.99 * time_total) {
-        oss << std::fixed << std::setprecision(2) << (others_time + commit_time + evmap_time + expressions_time + fri_time);
-        std::string calculated_time = oss.str();
-        oss.str("");
-        oss.clear();
-        oss << std::fixed << std::setprecision(2) << time_total;
-        std::string total_time = oss.str();
-        zklog.error("    TIME SUMMARY ERROR: " + calculated_time + " != " + total_time);
-    }
-    zklog.trace("    KERNELS CONTRIBUTIONS: ");
-    
-    oss << std::fixed << std::setprecision(2) << ntt_time << "s (" << (ntt_time / time_total) * 100 << "%)";
-    zklog.trace("        NTT:          " + oss.str());
-    oss.str("");
-    oss.clear();
-
-    oss << std::fixed << std::setprecision(2) << merkletree_time << "s (" << (merkletree_time / time_total) * 100 << "%)";
-    zklog.trace("        MERKLE:       " + oss.str());
-    oss.str("");
-    oss.clear();
-
+    TimerLogCategoryContributionsGPU(timer, STARK_GPU_PROOF);
 #endif
 }
 

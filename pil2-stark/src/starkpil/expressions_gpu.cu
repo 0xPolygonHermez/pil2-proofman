@@ -154,7 +154,7 @@ void ExpressionsGPU::loadDeviceArgs(uint64_t domainSize, Dest &dest, cudaStream_
     CHECKCUDAERR(cudaMemcpyAsync(d_dest_params, h_dest_params, h_deviceArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream)); 
 }
 
-void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, cudaStream_t stream)
+void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, TimerGPU &timer, cudaStream_t stream)
 {
     loadDeviceArgs(domainSize, dest, stream);
 
@@ -165,7 +165,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
 
     size_t sharedMem = (bufferCommitsSize  + 9) * sizeof(Goldilocks::Element *) + 2 * nThreads_ * FIELD_EXTENSION * sizeof(Goldilocks::Element);
 
-    computeExpressions_<<<nBlocks, nThreads, sharedMem, stream>>>(d_params, d_deviceArgs, d_dest_params);     
+    TimerStartCategoryGPU(timer, EXPRESSIONS);
+    computeExpressions_<<<nBlocks, nThreads, sharedMem, stream>>>(d_params, d_deviceArgs, d_dest_params);
+    TimerStopCategoryGPU(timer, EXPRESSIONS);    
 }
 
 __device__ __forceinline__ Goldilocks::Element*  load__(DeviceArguments *d_deviceArgs, Goldilocks::Element *value, StepsParams* d_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic) {        

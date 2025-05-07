@@ -143,6 +143,49 @@ public:
         activeCategoryTimers.clear();
     }
 
+    void logCategoryContributions(const std::string& total_name) {
+        double time_total = getTimeSec(total_name);
+
+        if (multiTimers.empty()) return;
+
+        zklog.trace("     KERNELS CONTRIBUTIONS:");
+
+        std::vector<std::pair<std::string, double>> category_times;
+        double accounted_time = 0.0;
+
+        // Collect and compute total times
+        for (const auto& [category, entries] : multiTimers) {
+            double total_sec = getCategoryTotalTimeSec(category);
+            accounted_time += total_sec;
+            category_times.emplace_back(category, total_sec);
+        }
+
+        // Sort by descending time
+        std::sort(category_times.begin(), category_times.end(),
+                [](const auto& a, const auto& b) {
+                    return a.second > b.second;
+                });
+
+        // Format and log
+        std::ostringstream oss;
+        for (const auto& [category, total_sec] : category_times) {
+            oss << std::fixed << std::setprecision(2) << total_sec << "s (";
+            oss << std::setprecision(2) << (total_sec / time_total) * 100.0 << "%";
+            oss << ")";
+            zklog.trace("        " + category + std::string(15 - std::min<size_t>(15, category.size()), ' ') + ":  " + oss.str());
+            oss.str("");
+            oss.clear();
+        }
+
+        double other_time = time_total - accounted_time;
+        if (other_time < 0.0) other_time = 0.0;
+
+        oss << std::fixed << std::setprecision(2) << other_time << "s (";
+        oss << std::setprecision(2) << (other_time / time_total) * 100.0 << "%";
+        oss << ")";
+        zklog.trace("        OTHER" + std::string(15 - 5, ' ') + ":  " + oss.str());
+    }
+
     ~TimerGPU() {
         for (auto& [_, entry] : timers) {
             cudaEventDestroy(entry.start);
@@ -184,5 +227,8 @@ inline std::string makeTimerName(const std::string& base, int id) {
 
 #define TimerGetElapsedCategoryGPU(timer, category) \
     (timer.getCategoryTotalTimeSec(#category))
+
+#define TimerLogCategoryContributionsGPU(timer, total_name) \
+    (timer.logCategoryContributions(#total_name))
 
 #endif // TIMER_GPU_HPP
