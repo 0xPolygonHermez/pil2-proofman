@@ -884,7 +884,7 @@ where
                 load_const_pols_tree(setup, &aux_trace[0..setup.const_tree_size]);
                 timer_stop_and_log_info!(LOAD_CONSTANTS);
             }
-            
+
             timer_start_info!(GEN_PROOF);
 
             let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);

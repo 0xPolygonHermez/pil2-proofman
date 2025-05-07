@@ -1,6 +1,8 @@
 #ifndef TIMER_GPU_HPP
 #define TIMER_GPU_HPP
 
+
+#ifdef __USE_CUDA__
 #include <unordered_map>
 #include <string>
 #include <cuda_runtime.h>
@@ -232,3 +234,4 @@ inline std::string makeTimerName(const std::string& base, int id) {
     (timer.logCategoryContributions(#total_name))
 
 #endif // TIMER_GPU_HPP
+#endif
