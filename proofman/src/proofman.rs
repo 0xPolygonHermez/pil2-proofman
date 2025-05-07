@@ -521,8 +521,7 @@ where
             if *all {
                 let mut sent = false;
                 while !sent {
-                    if witness_manager.try_claim_thread().is_some() {
-                        witness_manager.set_pending_witness();
+                    if witness_manager.are_tables_ready() && witness_manager.try_claim_thread().is_some() {
                         witness_tx.send(instance_id).unwrap();
                         sent = true;
                     } else {
