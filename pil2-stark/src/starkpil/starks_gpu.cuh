@@ -3,6 +3,9 @@
 
 #include "expressions_gpu.cuh"
 #include "transcriptGL.cuh"
+#include "ntt_goldilocks.cuh"
+#include "poseidon2_goldilocks.cuh"
+#include "hints.cuh"
 
 class gl64_t;
 

@@ -4,9 +4,6 @@
 #include "poseidon2_goldilocks_constants.hpp"
 #include "goldilocks_base_field.hpp"
 #include <immintrin.h>
-#ifdef __USE_CUDA__
-    #include <cuda_runtime.h>
-#endif
 #define RATE 8
 #define CAPACITY 4
 #define HASH_SIZE 4
@@ -81,12 +78,6 @@ public:
     // void static hash_avx512(Goldilocks::Element (&state)[4 * CAPACITY], const Goldilocks::Element (&input)[4 * SPONGE_WIDTH]);
     // void static linear_hash_avx512(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
     // void static merkletree_avx512(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t arity, int nThreads = 0, uint64_t dim = 1);
-#endif
-
-#ifdef __USE_CUDA__
-    void static merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
-    void static merkletree_cuda_streams(uint32_t arity, uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
-    void static merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream = 0, int nThreads = 0, uint64_t dim = 1);
 #endif
 };
 

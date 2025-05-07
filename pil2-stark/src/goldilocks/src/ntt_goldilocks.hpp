@@ -5,19 +5,10 @@
 #include <cassert>
 #include <gmp.h>
 #include <omp.h>
-#include "gpu_timer.hpp"
-#ifdef __USE_CUDA__
-    #include <cuda_runtime.h>
-#endif
 #define NUM_PHASES 3
 #define NUM_BLOCKS 1
 
 struct DeviceCommitBuffers;
-
-#ifdef __USE_CUDA__
-    class gl64_t;
-#endif
-
 
 class NTT_Goldilocks
 {
@@ -191,13 +182,6 @@ public:
     void NTT(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ncols = 1, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, u_int64_t nblock = NUM_BLOCKS, bool inverse = false, bool extend = false);
     inline void INTT(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ncols = 1, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, u_int64_t nblock = NUM_BLOCKS, bool extend = false);    
     void extendPol(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, u_int64_t nblock = NUM_BLOCKS);
-
-    #ifdef __USE_CUDA__
-    // Calculating on a single GPU
-    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits, u_int64_t n_bits_ext, u_int64_t ncols, gl64_t* d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream = 0);
-    void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N, uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace, uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream = 0);
-    void INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_int64_t ncols, gl64_t* d_aux_trace, uint64_t offset_helper, gl64_t* d_data = nullptr, cudaStream_t stream = 0);
-    #endif  
 };
 
 // extend parameter is used to indicate tha the polinomial will be extended after the INTT

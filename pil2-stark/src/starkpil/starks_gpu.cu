@@ -131,7 +131,7 @@ void extendAndMerkelize_inplace(uint64_t step, SetupCtx& setupCtx, MerkleTreeGL*
     Goldilocks::Element *pNodes = dstGL + setupCtx.starkInfo.mapOffsets[make_pair("mt" + to_string(step), true)];
     treesGL[step - 1]->setNodes(pNodes);
     
-    NTT_Goldilocks ntt;
+    NTT_Goldilocks_GPU ntt;
 
     if (nCols > 0)
     {
@@ -167,7 +167,7 @@ void computeQ_inplace(uint64_t step, SetupCtx &setupCtx, MerkleTreeGL **treesGL,
     if (nCols > 0)
     {
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_" + to_string(step), false)];
-        NTT_Goldilocks nttExtended;
+        NTT_Goldilocks_GPU nttExtended;
         nttExtended.computeQ_inplace(pNodes, offset_cmQ, offset_q, qDeg, qDim, shiftIn, N, setupCtx.starkInfo.starkStruct.nBitsExt, nCols, d_aux_trace, offset_helper, timer, stream);
         uint64_t tree_size = treesGL[step - 1]->getNumNodes(NExtended);
         if(d_transcript != nullptr) {
@@ -260,7 +260,7 @@ void computeLEv_inplace(Goldilocks::Element *d_xiChallenge, uint64_t nBits, uint
     CHECKCUDAERR(cudaGetLastError());
 
     TimerStartCategoryGPU(timer, NTT);
-    NTT_Goldilocks ntt;
+    NTT_Goldilocks_GPU ntt;
     ntt.INTT_inplace(0, nBits, FIELD_EXTENSION * nOpeningPoints, d_aux_trace, offset_helper + nOpeningPoints * FIELD_EXTENSION, d_LEv, stream);
     TimerStopCategoryGPU(timer, NTT);
    
@@ -629,7 +629,7 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &h_params, uint64_t st
     transposeFRI<<<nBlocks, nThreads, 0, stream>>>((gl64_t *)treeFRI->source, (gl64_t *)pol, pol2N, width);
     
     TimerStartCategoryGPU(timer, MERKLE_TREE);
-    Poseidon2Goldilocks::merkletree_cuda_coalesced(3, (uint64_t*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height);
+    Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(3, (uint64_t*) treeFRI->nodes, (uint64_t *)treeFRI->source, treeFRI->width, treeFRI->height);
     TimerStopCategoryGPU(timer, MERKLE_TREE);
 
     uint64_t tree_size = treeFRI->numNodes;

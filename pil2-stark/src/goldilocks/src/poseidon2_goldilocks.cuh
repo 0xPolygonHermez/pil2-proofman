@@ -4,6 +4,7 @@
 #include "gl64_t.cuh"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
+#include "poseidon2_goldilocks.hpp"
 
 __global__ void linear_hash_gpu_2_2_tree_2(uint64_t *output, uint64_t *input, uint32_t size, uint32_t num_rows);
 __global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t size, uint32_t num_rows);
@@ -127,6 +128,17 @@ __device__ __forceinline__ void hash_full_result_seq_2(gl64_t *state, const gl64
         pow7add_2(state, &(GPU_C_GL[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + N_PARTIAL_ROUNDS + r * SPONGE_WIDTH]));
         matmul_external_(state);
     }
-   
 }
+
+
+class Poseidon2GoldilocksGPU : public Poseidon2Goldilocks {
+public:
+    using Poseidon2Goldilocks::Poseidon2Goldilocks;
+
+    void static merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
+    void static merkletree_cuda_streams(uint32_t arity, uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
+    void static merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream = 0, int nThreads = 0, uint64_t dim = 1);
+};
+
+
 #endif

@@ -4,6 +4,7 @@
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include "gl64_t.cuh"
+#include "gpu_timer.cuh"
 #include "goldilocks_cubic_extension.cuh"
 #include <omp.h>
 

@@ -6,7 +6,8 @@
 #include "gl64_t.cuh"
 #include "expressions_gpu.cuh"
 #include "starks_gpu.cuh"
-#include "gpu_timer.hpp"
+#include "hints.cuh"
+#include "gpu_timer.cuh"
 #include <iomanip>
 
 // TOTO list: //rick

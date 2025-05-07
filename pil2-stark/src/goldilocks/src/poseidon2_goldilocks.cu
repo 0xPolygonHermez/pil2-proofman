@@ -201,7 +201,7 @@ __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
     hash_one_2((gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY]), pol_input, threadIdx.x);
 }
 
-void Poseidon2Goldilocks::merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads, uint64_t dim)
+void Poseidon2GoldilocksGPU::merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads, uint64_t dim)
 {
     if (num_rows == 0)
     {
@@ -250,7 +250,7 @@ void Poseidon2Goldilocks::merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uin
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void Poseidon2Goldilocks::merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
+void Poseidon2GoldilocksGPU::merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads, uint64_t dim)
 {
     if (num_rows == 0)
     {
@@ -325,7 +325,7 @@ __global__ void hash_gpu_3(uint32_t nextN, uint64_t *cursor_in, uint64_t *cursor
     hash_one_2((gl64_t *)(&cursor_out[tid * CAPACITY]), pol_input, threadIdx.x);
 }
 
-void Poseidon2Goldilocks::merkletree_cuda_streams(uint32_t arity, uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads, uint64_t dim)
+void Poseidon2GoldilocksGPU::merkletree_cuda_streams(uint32_t arity, uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads, uint64_t dim)
 {
     if (num_rows == 0)
     {

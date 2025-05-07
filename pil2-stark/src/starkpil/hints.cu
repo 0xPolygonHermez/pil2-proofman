@@ -1,4 +1,4 @@
-#include "hints.hpp"
+#include "hints.cuh"
 #include "expressions_gpu.cuh"
 #include "expressions_pack.hpp"
 #include "polinomial.hpp"

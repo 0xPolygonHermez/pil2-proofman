@@ -26,7 +26,7 @@ void genCommit_gpu(uint64_t arity, Goldilocks::Element* root, uint64_t nBits, ui
 
         uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, 3);
 
-        NTT_Goldilocks ntt;
+        NTT_Goldilocks_GPU ntt;
 
         uint64_t offset_aux = NExtended * nCols + tree_size;
 
