@@ -16,7 +16,7 @@
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char* filename, bool recursive, bool verify_constraints, bool verify, bool gpu);
+    void *stark_info_new(char* filename, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate);
     uint64_t get_proof_size(void *pStarkInfo);
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
@@ -126,6 +126,7 @@
     void *gen_device_commit_buffers(void *maxSizes, uint32_t mpi_node_rank);
     void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank);
     void set_device(uint32_t mpi_node_rank);
+    void load_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, std::string proofType);
     void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread, uint64_t nThreads);
     uint64_t check_gpu_memory(uint32_t mpi_node_rank);
 

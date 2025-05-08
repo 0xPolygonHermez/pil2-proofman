@@ -36,13 +36,14 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14stark_info_newPcbbbb"]
+    #[link_name = "\u{1}_Z14stark_info_newPcbbbbb"]
     pub fn stark_info_new(
         filename: *mut ::std::os::raw::c_char,
         recursive: bool,
         verify_constraints: bool,
         verify: bool,
         gpu: bool,
+        preallocate: bool,
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
@@ -564,6 +565,20 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z10set_devicej"]
     pub fn set_device(mpi_node_rank: u32);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z19load_const_pols_gpummmPvPcmS0_mS0_"]
+    pub fn load_const_pols_gpu(
+        airgroupId: u64,
+        airId: u64,
+        initial_offset: u64,
+        d_buffers: *mut ::std::os::raw::c_void,
+        constFilename: *mut ::std::os::raw::c_char,
+        constSize: u64,
+        constTreeFilename: *mut ::std::os::raw::c_char,
+        constTreeSize: u64,
+        proofType: *mut ::std::os::raw::c_char,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z19set_max_size_threadPvmmmm"]

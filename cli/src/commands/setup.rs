@@ -40,7 +40,15 @@ impl CheckSetupCmd {
         match self.field {
             Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
                 self.proving_key.clone(),
-                ProofOptions::new(false, verbose_mode, self.aggregation, self.final_snark, false, DebugInfo::default()),
+                ProofOptions::new(
+                    false,
+                    verbose_mode,
+                    self.aggregation,
+                    self.final_snark,
+                    false,
+                    false,
+                    DebugInfo::default(),
+                ),
             )?,
         };
 

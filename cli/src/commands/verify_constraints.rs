@@ -80,7 +80,7 @@ impl VerifyConstraintsCmd {
                 self.proving_key.clone(),
                 PathBuf::new(),
                 custom_commits_map,
-                ProofOptions::new(true, self.verbose.into(), false, false, false, debug_info),
+                ProofOptions::new(true, self.verbose.into(), false, false, false, false, debug_info),
             )?,
         };
 

@@ -822,6 +822,11 @@ public:
     }
 };
 
+struct AirInstanceInfo {
+    uint64_t const_pols_offset;
+    uint64_t const_tree_offset;
+};
+
 struct DeviceCommitBuffers
 {
     gl64_t *d_trace;
@@ -836,6 +841,7 @@ struct DeviceCommitBuffers
     cudaStream_t *streams;
     TimerGPU *timers;
     Goldilocks::Element **pinned_buffers;
+    std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, AirInstanceInfo>> air_instances;
 };
 
 #undef inline

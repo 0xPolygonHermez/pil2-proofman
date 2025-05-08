@@ -56,7 +56,7 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
     updateAirgroupValueGPU(setupCtx, h_params, d_params, hint[0], "result", "numerator_direct", "denominator_direct", options1, options2, !prod, expressionsCtxGPU, timer, stream);
 }
 
-void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream) {
+void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, TimerGPU &timer, cudaStream_t stream) {
     
     TimerStart(GEN_PROOF_GPU);
     TimerStartGPU(timer, STARK_GPU_PROOF);
@@ -64,9 +64,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
-    uint64_t offsetConstTree = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
-
-    Goldilocks::Element *pConstPolsExtendedTreeAddress = (Goldilocks::Element *)d_aux_trace + offsetConstTree;
+    Goldilocks::Element *pConstPolsAddress = (Goldilocks::Element *)d_const_pols;
+    Goldilocks::Element *pConstPolsExtendedTreeAddress = (Goldilocks::Element *)d_const_tree;
     Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
     
     Starks<Goldilocks::Element> starks(setupCtx, nullptr, nullptr, false);
@@ -83,7 +82,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     ExpressionsGPU expressionsCtx(setupCtx, setupCtx.starkInfo.nrowsPack, setupCtx.starkInfo.maxNBlocks);
 
     uint64_t offsetCm1 = setupCtx.starkInfo.mapOffsets[std::make_pair("cm1", false)];
-    uint64_t offsetConstPols = setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)];
     uint64_t offsetPublicInputs = setupCtx.starkInfo.mapOffsets[std::make_pair("publics", false)];
     uint64_t offsetAirgroupValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
     uint64_t offsetAirValues = setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
@@ -106,7 +104,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
         airValues : (Goldilocks::Element *)d_aux_trace + offsetAirValues,
         evals : (Goldilocks::Element *)d_aux_trace + offsetEvals,
         xDivXSub : (Goldilocks::Element *)d_aux_trace + offsetXDivXSub,
-        pConstPolsAddress : (Goldilocks::Element *)d_aux_trace + offsetConstPols,
+        pConstPolsAddress,
         pConstPolsExtendedTreeAddress,
         pCustomCommitsFixed,
     };
@@ -272,7 +270,7 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, TimerGPU &timer, cuda
     d_transcript_helper.put(d_challenge, FIELD_EXTENSION, stream);
     d_transcript_helper.getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, stream);
 
-    proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_aux_trace + offsetConstTree, setupCtx.starkInfo.nStages, stream);
+    proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_const_tree, setupCtx.starkInfo.nStages, stream);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
         proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
     }

@@ -3,7 +3,7 @@ use p3_field::PrimeField64;
 use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
-
+use std::sync::Arc;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -14,6 +14,8 @@ use colored::*;
 use std::error::Error;
 
 use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
+use proofman_util::DeviceBuffer;
+use proofman_starks_lib_c::load_const_pols_gpu_c;
 
 pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
     let mpi_rank = pctx.dctx_get_rank();
@@ -290,10 +292,12 @@ fn check_const_tree<F: PrimeField64>(
 }
 
 pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Result<(), Box<dyn Error>> {
-    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-        for (air_id, _) in air_group.iter().enumerate() {
-            let setup = sctx.get_setup(airgroup_id, air_id);
-            check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
+    if !pctx.options.verify_constraints {
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let setup = sctx.get_setup(airgroup_id, air_id);
+                check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
+            }
         }
     }
     Ok(())
@@ -303,6 +307,9 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
 ) -> Result<(), Box<dyn Error>> {
+    if pctx.options.aggregation {
+        return Ok(());
+    }
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
@@ -339,49 +346,75 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     Ok(())
 }
 
-pub fn initialize_fixed_pols_tree<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) {
-    let instances = pctx.dctx_get_instances();
-    let my_instances = pctx.dctx_get_my_instances();
-
-    let mut airs = Vec::new();
-    let mut seen = HashSet::new();
-
-    for instance_id in my_instances.iter() {
-        let (airgroup_id, air_id, _) = instances[*instance_id];
-        if seen.insert((airgroup_id, air_id)) {
-            airs.push((airgroup_id, air_id));
+pub fn initialize_fixed_pols_tree<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+    setups: &SetupsVadcop<F>,
+    d_buffers: Arc<DeviceBuffer>,
+) {
+    let gpu = cfg!(feature = "gpu");
+    if gpu && pctx.options.preallocate {
+        let mut offset = 0;
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                println!("Loading const pols in GPU for airgroup {} and air {}", airgroup_id, air_id);
+                let setup = sctx.get_setup(airgroup_id, air_id);
+                let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
+                let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+                let proof_type: &str = setup.setup_type.clone().into();
+                println!("PROOF TYPE: {}", proof_type);
+                load_const_pols_gpu_c(
+                    airgroup_id as u64,
+                    air_id as u64,
+                    offset,
+                    d_buffers.get_ptr(),
+                    &const_pols_path,
+                    setup.const_pols_size as u64,
+                    &const_pols_tree_path,
+                    setup.const_tree_size as u64,
+                    proof_type,
+                );
+                offset += setup.const_pols_size as u64;
+                offset += setup.const_tree_size as u64;
+            }
         }
     }
 
-    airs.iter().for_each(|&(airgroup_id, air_id)| {
-        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+    if pctx.options.aggregation {
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                    setup.load_const_pols();
+                    setup.load_const_pols_tree();
+                }
+            }
+        }
+
+        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                setup.load_const_pols();
+                setup.load_const_pols_tree();
+            }
+        }
+
+        let n_airgroups = pctx.global_info.air_groups.len();
+        for airgroup in 0..n_airgroups {
+            let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
             setup.load_const_pols();
             setup.load_const_pols_tree();
         }
-    });
 
-    airs.iter().for_each(|&(airgroup_id, air_id)| {
-        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-        setup.load_const_pols();
-        setup.load_const_pols_tree();
-    });
+        let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
+        setup_vadcop_final.load_const_pols();
+        setup_vadcop_final.load_const_pols_tree();
 
-    let n_airgroups = pctx.global_info.air_groups.len();
-    for airgroup in 0..n_airgroups {
-        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
-        setup.load_const_pols();
-        setup.load_const_pols_tree();
-    }
-
-    let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    setup_vadcop_final.load_const_pols();
-    setup_vadcop_final.load_const_pols_tree();
-
-    if pctx.options.final_snark {
-        let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-        setup_recursivef.load_const_pols();
-        setup_recursivef.load_const_pols_tree();
+        if pctx.options.final_snark {
+            let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
+            setup_recursivef.load_const_pols();
+            setup_recursivef.load_const_pols_tree();
+        }
     }
 }
 

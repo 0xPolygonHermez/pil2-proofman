@@ -24,6 +24,19 @@ pub enum ProofType {
     RecursiveF,
 }
 
+impl From<ProofType> for &'static str {
+    fn from(p: ProofType) -> Self {
+        match p {
+            ProofType::Basic => "basic",
+            ProofType::Compressor => "compressor",
+            ProofType::Recursive1 => "recursive1",
+            ProofType::Recursive2 => "recursive2",
+            ProofType::VadcopFinal => "vadcop_final",
+            ProofType::RecursiveF => "recursive_f",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Proof<F: Field> {
     pub proof_type: ProofType,

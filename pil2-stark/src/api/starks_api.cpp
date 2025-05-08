@@ -92,9 +92,9 @@ void get_hint_ids_by_name(void *p_expression_bin, uint64_t* hintIds, char* hintN
 
 // StarkInfo
 // ========================================================================================
-void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bool verify, bool gpu)
+void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate)
 {
-    auto starkInfo = new StarkInfo(filename, recursive, verify_constraints, verify, gpu);
+    auto starkInfo = new StarkInfo(filename, recursive, verify_constraints, verify, gpu, preallocate);
 
     return starkInfo;
 }
@@ -520,6 +520,8 @@ void set_device(uint32_t mpi_node_rank){}
 uint64_t check_gpu_memory(uint32_t mpi_node_rank) { return 0; }
 
 void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank) {}
+
+void load_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
 
 void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers, bool loadConstants, uint32_t mpi_node_rank) {
     json globalInfo;

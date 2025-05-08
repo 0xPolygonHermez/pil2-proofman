@@ -20,7 +20,7 @@ pub fn verify_proof_from_file<F: Field>(
     proof_values: Option<Vec<F>>,
     challenges: Option<Vec<F>>,
 ) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, true, false);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, true, false, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
@@ -62,7 +62,7 @@ pub fn verify_proof<F: Field>(
     proof_values: Option<Vec<F>>,
     global_challenge: Option<Vec<F>>,
 ) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, true, false);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, true, false, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
@@ -102,7 +102,7 @@ pub fn verify_proof_bn128<F: Field>(
     verkey_path: String,
     publics: Option<Vec<F>>,
 ) -> bool {
-    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, true, false);
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, true, false, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
     let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);

@@ -61,11 +61,12 @@ pub fn stark_info_new_c(
     verify_constraints: bool,
     verify: bool,
     gpu: bool,
+    preallocate: bool,
 ) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, recursive, verify_constraints, verify, gpu)
+        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, recursive, verify_constraints, verify, gpu, preallocate)
     }
 }
 
@@ -1057,6 +1058,43 @@ pub fn set_device_c(mpi_node_rank: u32) {
         set_device(mpi_node_rank);
     }
 }
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn load_const_pols_gpu_c(
+    airgroup_id: u64,
+    air_id: u64,
+    initial_offset: u64,
+    d_buffers: *mut ::std::os::raw::c_void,
+    const_filename: &str,
+    const_size: u64,
+    const_tree_filename: &str,
+    const_tree_size: u64,
+    proof_type: &str,
+) {
+    let const_filename_name = CString::new(const_filename).unwrap();
+    let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_tree_filename_name = CString::new(const_tree_filename).unwrap();
+    let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        load_const_pols_gpu(
+            airgroup_id,
+            air_id,
+            initial_offset,
+            d_buffers,
+            const_filename_ptr,
+            const_size,
+            const_tree_filename_ptr,
+            const_tree_size,
+            proof_type_ptr,
+        );
+    }
+}
+
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
@@ -1082,6 +1120,7 @@ pub fn stark_info_new_c(
     _verify_constraints: bool,
     _verify: bool,
     _gpu: bool,
+    _preallocate: bool,
 ) -> *mut c_void {
     trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
@@ -1745,4 +1784,19 @@ pub fn gen_device_commit_buffers_free_c(_d_buffers: *mut ::std::os::raw::c_void,
 #[cfg(feature = "no_lib_link")]
 pub fn set_device_c(_mpi_node_rank: u32) {
     trace!("{}: ··· {}", "ffi     ", "set_device: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn load_const_pols_gpu_c(
+    _airgroup_id: u64,
+    _air_id: u64,
+    _initial_offset: u64,
+    _d_buffers: *mut ::std::os::raw::c_void,
+    _const_filename: &str,
+    _const_size: u64,
+    _const_tree_filename: &str,
+    _const_tree_size: u64,
+    _proof_type: &str,
+) {
+    trace!("{}: ··· {}", "ffi     ", "load_const_pols_gpu_: This is a mock call because there is no linked library");
 }

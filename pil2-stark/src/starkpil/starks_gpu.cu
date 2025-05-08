@@ -418,7 +418,6 @@ void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, ui
 {
 
     TimerStartCategoryGPU(timer, EVALS);
-    uint64_t offsetConstTree = setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)];
     gl64_t *d_constTree = (gl64_t *)h_params.pConstPolsExtendedTreeAddress;
 
     uint64_t extendBits = setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits;

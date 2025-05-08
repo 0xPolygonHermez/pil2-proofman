@@ -55,6 +55,9 @@ pub struct ProveCmd {
     #[clap(short = 'y', long, default_value_t = false)]
     pub verify_proofs: bool,
 
+    #[clap(short = 'c', long, default_value_t = false)]
+    pub preallocate: bool,
+
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
@@ -119,6 +122,7 @@ impl ProveCmd {
                         self.aggregation,
                         self.final_snark,
                         self.verify_proofs,
+                        false,
                         debug_info,
                     ),
                 )?,
@@ -138,6 +142,7 @@ impl ProveCmd {
                         self.aggregation,
                         self.final_snark,
                         self.verify_proofs,
+                        self.preallocate,
                         debug_info,
                     ),
                 )?,

@@ -172,6 +172,7 @@ public:
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
+    bool preallocate = false;
 
     uint64_t mapTotalN;
     uint64_t mapTotalNCustomCommitsFixed;
@@ -185,7 +186,7 @@ public:
     uint64_t proofValuesSize;
 
     /* Constructor */
-    StarkInfo(string file, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false);
+    StarkInfo(string file, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false, bool preallocate = false);
 
     /* Loads data from a json object */
     void load (json j);
