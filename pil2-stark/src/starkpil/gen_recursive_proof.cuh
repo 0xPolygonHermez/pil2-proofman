@@ -60,7 +60,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     };
     
     StepsParams* d_params;
-    CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
+    CHECKCUDAERR(cudaMalloc((void **) &d_params, sizeof(StepsParams)));
     CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
     
     int64_t *d_openingPoints;
@@ -135,7 +135,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     dim3 threads_(256);
     dim3 blocks_((N + threads_.x - 1) / threads_.x);
     computeX_kernel<<<blocks_, threads_, 0, stream>>>((gl64_t *)h_params.aux_trace + xn_offset, N, Goldilocks::one(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits));
-    expressionsCtx.calculateExpressions_gpu(&h_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, timer, stream);
+    expressionsCtx.calculateExpressions_gpu(d_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, timer, stream);
 
     accOperationGPU((gl64_t *)vals_gpu_shifted, N, false, FIELD_EXTENSION, (gl64_t *)helpers, stream);
    
@@ -145,7 +145,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     TimerStopGPU(timer,STARK_CALCULATE_GPROD);
 
     TimerStartGPU(timer, CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, *d_params, 2, timer, stream);
+    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, d_params, 2, timer, stream);
     TimerStopGPU(timer, CALCULATE_IM_POLS);
 
 

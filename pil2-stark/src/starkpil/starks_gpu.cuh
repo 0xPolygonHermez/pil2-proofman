@@ -105,7 +105,7 @@ void merkelizeFRI_inplace(SetupCtx& setupCtx, StepsParams &d_param, uint64_t ste
 void proveQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t *friQueries, uint64_t nQueries, MerkleTreeGL **trees, uint64_t nTrees, gl64_t *d_aux_trace, gl64_t* d_const_tree, uint32_t nStages, cudaStream_t stream = 0);
 void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_t step, uint64_t currentBits, uint64_t *friQueries, uint64_t nQueries, MerkleTreeGL *treeFRI, cudaStream_t stream = 0);
 
-void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams &h_params, StepsParams &d_params, int64_t step, TimerGPU& timer, cudaStream_t stream = 0);
+void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams &h_params, StepsParams *d_params, int64_t step, TimerGPU& timer, cudaStream_t stream = 0);
 
 void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams* d_params, Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse, TimerGPU& timer, cudaStream_t stream = 0);
 
