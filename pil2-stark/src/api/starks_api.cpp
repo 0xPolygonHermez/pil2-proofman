@@ -506,6 +506,8 @@ void gen_proof(void *pSetupCtx, uint64_t threadId, uint64_t airgroupId, uint64_t
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
 }
 
+void get_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint32_t mpi_node_rank) {}
+
 // Recursive proof
 // ================================================================================= 
 void *gen_device_commit_buffers(void *max_sizes, uint32_t mpi_node_rank)

@@ -1,16 +1,18 @@
-use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Condvar};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct ProofExecutionManager {
-    pub max_concurrent_proofs: usize,
-    thread_available: Arc<Box<[AtomicBool]>>,
+    max_concurrent_proofs: usize,
+    thread_state: Arc<(Mutex<Vec<bool>>, Condvar)>,
     instance_info: Arc<Box<[(AtomicUsize, AtomicUsize)]>>,
 }
 
 impl ProofExecutionManager {
     pub fn new(max_concurrent_proofs: usize) -> Self {
-        let thread_available =
-            Arc::new((0..max_concurrent_proofs).map(|_| AtomicBool::new(true)).collect::<Vec<_>>().into_boxed_slice());
+        let thread_state = Arc::new((
+            Mutex::new(vec![true; max_concurrent_proofs]),
+            Condvar::new(),
+        ));
 
         let instance_info = Arc::new(
             (0..max_concurrent_proofs)
@@ -18,13 +20,28 @@ impl ProofExecutionManager {
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
         );
-        Self { max_concurrent_proofs, thread_available, instance_info }
+
+        Self { max_concurrent_proofs, thread_state, instance_info }
     }
 
-    pub fn try_claim_thread(&self) -> Option<usize> {
-        (0..self.max_concurrent_proofs).find(|&thread_id| {
-            self.thread_available[thread_id].compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire).is_ok()
-        })
+    pub fn claim_thread(&self) -> usize {
+        let (lock, cvar) = &*self.thread_state;
+        let mut threads = lock.lock().unwrap();
+
+        loop {
+            if let Some(index) = threads.iter().position(|&available| available) {
+                threads[index] = false;
+                return index;
+            }
+            threads = cvar.wait(threads).unwrap(); // Wait for a signal
+        }
+    }
+
+    pub fn release_thread(&self, thread_id: usize) {
+        let (lock, cvar) = &*self.thread_state;
+        let mut threads = lock.lock().unwrap();
+        threads[thread_id] = true;
+        cvar.notify_one();
     }
 
     pub fn set_instance_info(&self, thread_id: usize, instance_id: usize, instance_size: usize) {
@@ -38,46 +55,64 @@ impl ProofExecutionManager {
             self.instance_info[thread_id].1.load(Ordering::Acquire),
         )
     }
-
-    pub fn proof_completed(&self, thread_id: usize) {
-        self.thread_available[thread_id].store(true, Ordering::Release);
-    }
 }
 
 #[derive(Debug)]
 pub struct WitnessComputationManager {
     pub max_concurrent_pools: usize,
-    pending_witness: Arc<AtomicUsize>,
-    pub pools_available: Arc<Box<[AtomicBool]>>,
+    pool_state: Arc<(Mutex<Vec<bool>>, Condvar)>,
+    pending_witness: Arc<(Mutex<usize>, Condvar)>,
 }
 
 impl WitnessComputationManager {
     pub fn new(max_concurrent_pools: usize) -> Self {
-        let pools_available =
-            Arc::new((0..max_concurrent_pools).map(|_| AtomicBool::new(true)).collect::<Vec<_>>().into_boxed_slice());
-
-        Self { max_concurrent_pools, pools_available, pending_witness: Arc::new(AtomicUsize::new(0)) }
+        let pool_state = Arc::new((
+            Mutex::new(vec![true; max_concurrent_pools]),
+            Condvar::new(),
+        ));
+        let pending_witness = Arc::new((Mutex::new(0), Condvar::new()));
+        Self { max_concurrent_pools, pool_state, pending_witness }
     }
 
-    pub fn try_claim_thread(&self) -> Option<usize> {
-        (0..self.max_concurrent_pools).find(|&thread_id| {
-            self.pools_available[thread_id].compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire).is_ok()
-        })
+    pub fn claim_thread(&self) -> usize {
+        let (lock, cvar) = &*self.pool_state;
+        let mut pools = lock.lock().unwrap();
+
+        loop {
+            if let Some(index) = pools.iter().position(|&available| available) {
+                pools[index] = false;
+                return index;
+            }
+            pools = cvar.wait(pools).unwrap();
+        }
     }
 
-    pub fn set_thread_available(&self, thread_id: usize) {
-        self.pools_available[thread_id].store(true, Ordering::SeqCst);
+    pub fn release_thread(&self, thread_id: usize) {
+        let (lock, cvar) = &*self.pool_state;
+        let mut pools = lock.lock().unwrap();
+        pools[thread_id] = true;
+        cvar.notify_one();
     }
 
-    pub fn set_pending_witness(&self) -> usize {
-        self.pending_witness.fetch_add(1, Ordering::SeqCst)
+    pub fn set_pending_witness(&self) {
+        let (lock, cvar) = &*self.pending_witness;
+        let mut pending = lock.lock().unwrap();
+        *pending += 1;
+        cvar.notify_all();
     }
 
     pub fn set_witness_completed(&self) {
-        self.pending_witness.fetch_sub(1, Ordering::SeqCst);
+        let (lock, cvar) = &*self.pending_witness;
+        let mut pending = lock.lock().unwrap();
+        *pending -= 1;
+        cvar.notify_all();
     }
 
-    pub fn are_tables_ready(&self) -> bool {
-        self.pending_witness.load(Ordering::Acquire) == 0
+    pub fn wait_until_tables_ready(&self) {
+        let (lock, cvar) = &*self.pending_witness;
+        let mut pending = lock.lock().unwrap();
+        while *pending > 0 {
+            pending = cvar.wait(pending).unwrap();
+        }
     }
 }

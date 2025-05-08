@@ -152,7 +152,17 @@ impl<F: Field> SetupRepository<F> {
                         let trace_size = setup.stark_info.map_sections_n["cm1"] * n;
                         let trace_ext_size = setup.stark_info.map_sections_n["cm1"] * n_extended;
                         let tree_size = get_tree_size_c(setup.p_setup.p_stark_info);
-                        max_prover_trace_size = max_prover_trace_size.max(trace_size);
+                        let mut total_prover_trace_size = trace_size as usize;
+                        total_prover_trace_size += setup.stark_info.n_publics as usize;
+                        total_prover_trace_size += setup.stark_info.airvalues_map.as_ref().map_or(0, |v| 3 * v.len());
+                        total_prover_trace_size += setup.stark_info.airgroupvalues_map.as_ref().map_or(0, |v| 3 * v.len());
+                        total_prover_trace_size += global_info.proof_values_map.as_ref().map_or(0, |v| 3 * v.len());
+                        total_prover_trace_size += 3;
+                        // if !preallocate {
+                        //     total_prover_trace_size += setup.const_pols_size as usize;
+                        //     total_prover_trace_size += setup.const_tree_size as usize;
+                        // }
+                        max_prover_trace_size = max_prover_trace_size.max(total_prover_trace_size);
                         max_prover_contribution_area =
                             max_prover_contribution_area.max(trace_size + trace_ext_size + tree_size + 3 * n_extended);
                         total_const_size += setup.const_pols_size + setup.const_tree_size;

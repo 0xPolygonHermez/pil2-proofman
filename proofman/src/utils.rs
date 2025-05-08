@@ -307,7 +307,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
 ) -> Result<(), Box<dyn Error>> {
-    if pctx.options.aggregation {
+    if !pctx.options.aggregation {
         return Ok(());
     }
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();

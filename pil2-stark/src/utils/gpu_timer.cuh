@@ -150,6 +150,9 @@ public:
     }
 
     void logCategoryContributions(const std::string& total_name) {
+        auto it = timers.find(total_name);
+        if (it == timers.end()) return;
+
         double time_total = getTimeSec(total_name);
 
         if (multiTimers.empty()) return;

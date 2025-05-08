@@ -27,7 +27,7 @@ use p3_goldilocks::Goldilocks;
 
 use p3_field::PrimeField64;
 use proofman_starks_lib_c::{
-    gen_proof_c, commit_witness_c, get_commit_root_c, calculate_hash_c, load_custom_commit_c,
+    gen_proof_c, get_proof_c, commit_witness_c, get_commit_root_c, calculate_hash_c, load_custom_commit_c,
     calculate_impols_expressions_c,
 };
 
@@ -422,7 +422,13 @@ where
         let values = Arc::new((0..my_instances.len() * 10).map(|_| AtomicU64::new(0)).collect::<Vec<_>>());
 
         let aux_trace_size = match cfg!(feature = "gpu") {
-            true => max_number_proofs * (sctx.max_const_tree_size + sctx.max_const_size),
+            true => {
+                if pctx.options.preallocate {
+                    0
+                } else {
+                    max_number_proofs * (sctx.max_const_tree_size + sctx.max_const_size)
+                }
+            }
             false => sctx.max_prover_buffer_size,
         };
         let aux_trace: Arc<Vec<F>> = Arc::new(create_buffer_fast(aux_trace_size));
@@ -475,12 +481,13 @@ where
                         for (id, v) in value.iter().enumerate().take(10) {
                             values_clone[base_idx + id].store(*v, Ordering::Relaxed);
                         }
-                        contributions_manager.proof_completed(thread_id);
 
                         let (_, _, all) = instances[instance_id];
                         if !all {
                             pctx_clone.free_instance(instance_id);
                         }
+
+                        contributions_manager.release_thread(thread_id);
                     }
                 })
             })
@@ -505,50 +512,27 @@ where
                         }
 
                         if pctx_clone.dctx_is_my_instance(instance_id) {
-                            let mut sent = false;
-                            while !sent {
-                                if let Some(thread_id) = contributions_manager.try_claim_thread() {
-                                    contributions_tx.send((instance_id, thread_id)).unwrap();
-                                    sent = true;
-                                } else {
-                                    std::thread::yield_now();
-                                }
-                            }
-                        } else {
-                            witness_manager.set_thread_available(thread_id);
+                            let contrib_thread_id = contributions_manager.claim_thread();
+                            contributions_tx.send((instance_id, contrib_thread_id)).unwrap();
                         }
                     }
                 })
             })
             .collect();
 
-        for instance_id in my_instances.iter() {
-            let (_, _, all) = instances[*instance_id];
-            if !all {
-                let mut sent = false;
-                while !sent {
-                    if witness_manager.try_claim_thread().is_some() {
-                        witness_manager.set_pending_witness();
-                        witness_tx.send(*instance_id).unwrap();
-                        sent = true;
-                    } else {
-                        std::thread::yield_now();
-                    }
-                }
+        for (instance_id, (_, _, all)) in instances.iter().enumerate() {
+            if !*all && pctx.dctx_is_my_instance(instance_id) {
+                let thread_id = witness_manager.claim_thread(); 
+                witness_manager.set_pending_witness();
+                witness_tx.send(instance_id).unwrap();
             }
         }
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if *all {
-                let mut sent = false;
-                while !sent {
-                    if witness_manager.are_tables_ready() && witness_manager.try_claim_thread().is_some() {
-                        witness_tx.send(instance_id).unwrap();
-                        sent = true;
-                    } else {
-                        std::thread::yield_now();
-                    }
-                }
+                witness_manager.wait_until_tables_ready();
+                let thread_id = witness_manager.claim_thread();
+                witness_tx.send(instance_id).unwrap();
             }
         }
 
@@ -563,6 +547,7 @@ where
         }
 
         drop(contributions_manager);
+        drop(witness_manager);
 
         timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
         let values_challenge = Arc::try_unwrap(values)
@@ -589,6 +574,9 @@ where
         let proofs_manager = ProofExecutionManager::new(max_number_proofs);
         let proofs_manager = Arc::new(proofs_manager);
 
+        let witness_manager = WitnessComputationManager::new(max_concurrent_pools);
+        let witness_manager = Arc::new(witness_manager);
+
         let (proof_tx, proof_rx) = crossbeam_channel::unbounded::<(usize, usize)>();
         let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
 
@@ -611,6 +599,7 @@ where
         let witness_pools: Vec<_> = (0..max_concurrent_pools)
             .map(|thread_id| {
                 let witness_rx = witness_rx.clone();
+                let witness_manager = witness_manager.clone();
                 let proof_tx = proof_tx.clone();
                 let pctx_clone = pctx.clone();
                 let proof_manager = proofs_manager.clone();
@@ -618,17 +607,8 @@ where
                 std::thread::spawn(move || {
                     while let Ok(instance_id) = witness_rx.recv() {
                         wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
-                        if pctx_clone.dctx_is_my_instance(instance_id) {
-                            let mut sent = false;
-                            while !sent {
-                                if let Some(thread_id) = proof_manager.try_claim_thread() {
-                                    proof_tx.send((instance_id, thread_id)).unwrap();
-                                    sent = true;
-                                } else {
-                                    std::thread::yield_now();
-                                }
-                            }
-                        }
+                        let proof_thread_id = proof_manager.claim_thread();
+                        proof_tx.send((instance_id, proof_thread_id)).unwrap();
                     }
                 })
             })
@@ -666,20 +646,17 @@ where
                             instance_id,
                             airgroup_id,
                             air_id,
+                            all,
                             output_dir_path_clone.clone(),
                             aux_trace_clone.clone(),
                             airgroup_values_air_instances_clone.clone(),
                             gen_const_tree,
                             d_buffers_clone.clone(),
+                            witness_manager.clone(),
+                            witness_thread_id,
                         );
 
-                        proof_manager.proof_completed(thread_id);
-
-                        if !all {
-                            witness_manager.set_thread_available(witness_thread_id);
-                        }
-
-                        pctx_clone.free_instance(instance_id);
+                        proof_manager.release_thread(thread_id);
 
                         if pctx_clone.options.aggregation {
                             witness_recursive_tx.send(instance_id).unwrap();
@@ -691,26 +668,13 @@ where
 
         for instance_id in my_instances.iter() {
             let (_, _, all) = instances[*instance_id];
+        
             if all {
-                let mut sent = false;
-                while !sent {
-                    if proofs_manager.try_claim_thread().is_some() {
-                        proof_tx.send((*instance_id, 0)).unwrap();
-                        sent = true;
-                    } else {
-                        std::thread::yield_now();
-                    }
-                }
+                let thread_id = proofs_manager.claim_thread();
+                proof_tx.send((*instance_id, thread_id)).unwrap();
             } else {
-                let mut sent = false;
-                while !sent {
-                    if witness_manager.try_claim_thread().is_some() {
-                        witness_tx.send(*instance_id).unwrap();
-                        sent = true;
-                    } else {
-                        std::thread::yield_now();
-                    }
-                }
+                let thread_id = witness_manager.claim_thread();
+                witness_tx.send(*instance_id).unwrap();
             }
         }
 
@@ -1088,19 +1052,22 @@ where
         instance_id: usize,
         airgroup_id: usize,
         air_id: usize,
+        all: bool,
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
         airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
         gen_const_tree: bool,
         d_buffers: Arc<DeviceBuffer>,
+        witness_manager: Arc<WitnessComputationManager>,
+        witness_thread_id: usize,
     ) {
+        timer_start_info!(GEN_PROOF);
         Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
 
         let setup = sctx.get_setup(airgroup_id, air_id);
         let p_setup: *mut c_void = (&setup.p_setup).into();
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-        timer_start_info!(GEN_PROOF);
 
         let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
 
@@ -1147,6 +1114,27 @@ where
             pctx.dctx_get_node_rank() as u32,
         );
 
+        if !all {
+            witness_manager.release_thread(witness_thread_id);
+        }
+        
+        let pctx_clone = pctx.clone();
+        std::thread::spawn(move || {
+            pctx_clone.free_instance(instance_id);
+        });
+        
+        get_proof_c(
+            p_setup,
+            proof.as_mut_ptr(),
+            &proof_file,
+            thread_id as u64,
+            airgroup_id as u64,
+            air_id as u64,
+            air_instance_id as u64,
+            d_buffers.get_ptr(),
+            pctx.dctx_get_node_rank() as u32,
+        );
+
         let n_airgroup_values = setup
             .stark_info
             .airgroupvalues_map
@@ -1158,9 +1146,9 @@ where
 
         airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
 
-        timer_stop_and_log_info!(GEN_PROOF);
         proofs.write().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
             Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof);
+        timer_stop_and_log_info!(GEN_PROOF);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1462,7 +1450,7 @@ where
             pctx.dctx_get_node_rank() as u32,
         );
 
-        witness_manager.set_thread_available(witness_thread_id);
+        witness_manager.release_thread(witness_thread_id);
 
         if !all {
             let pctx_clone = pctx.clone();

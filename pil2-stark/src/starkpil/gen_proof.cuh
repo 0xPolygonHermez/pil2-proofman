@@ -58,7 +58,6 @@ void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsPar
 
 void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, TimerGPU &timer, cudaStream_t stream) {
     
-    TimerStart(GEN_PROOF_GPU);
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -280,21 +279,9 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
 
     CHECKCUDAERR(cudaFree(d_params));
     CHECKCUDAERR(cudaFree(d_openingPoints));
-
-    cudaStreamSynchronize(stream);
-    
-    TimerSyncAndLogAllGPU(timer); 
-
-    TimerSyncCategoriesGPU(timer);
-    
-    TimerStopAndLog(GEN_PROOF_GPU);
-
-#if PRINT_TIME_SUMMARY
-    TimerLogCategoryContributionsGPU(timer, STARK_GPU_PROOF);
-#endif
 }
 
-void getProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, uint64_t *proofBuffer, std::string proofFile, gl64_t *d_aux_trace) {
+void getProof_gpu(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, uint64_t *proofBuffer, std::string proofFile, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream) {
     TimerStart(STARK_POSTPROCESS);
     writeProof(setupCtx, (Goldilocks::Element *)d_aux_trace, proofBuffer, airgroupId, airId, instanceId, proofFile);
     TimerStopAndLog(STARK_POSTPROCESS);

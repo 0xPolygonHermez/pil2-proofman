@@ -787,6 +787,37 @@ pub fn gen_proof_c(
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
+pub fn get_proof_c(
+    p_setup: *mut c_void,
+    proof_buffer: *mut u64,
+    proof_file: &str,
+    thread_id: u64,
+    airgroup_id: u64,
+    air_id: u64,
+    instance_id: u64,
+    d_buffers: *mut c_void,
+    mpi_node_rank: u32,
+) {
+    let proof_file_name = CString::new(proof_file).unwrap();
+    let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        get_proof(
+            p_setup,
+            thread_id,
+            airgroup_id,
+            air_id,
+            instance_id,
+            proof_buffer,
+            proof_file_ptr,
+            d_buffers,
+            mpi_node_rank,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_c(
     p_setup_ctx: *mut c_void,
     p_witness: *mut u8,
@@ -1602,6 +1633,22 @@ pub fn gen_proof_c(
     _mpi_node_rank: u32,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn get_proof_c(
+    _p_setup: *mut c_void,
+    _proof_buffer: *mut u64,
+    _proof_file: &str,
+    _thread_id: u64,
+    _airgroup_id: u64,
+    _air_id: u64,
+    _instance_id: u64,
+    _d_buffers: *mut c_void,
+    _mpi_node_rank: u32,
+) {
+    trace!("{}: ··· {}", "ffi     ", "get_proof: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

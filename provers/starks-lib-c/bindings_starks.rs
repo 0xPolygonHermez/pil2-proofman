@@ -437,6 +437,20 @@ extern "C" {
     );
 }
 extern "C" {
+    #[link_name = "\u{1}_Z9get_proofPvmmmmPmPcS_j"]
+    pub fn get_proof(
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+        threadId: u64,
+        airgroupId: u64,
+        airId: u64,
+        instanceId: u64,
+        proofBuffer: *mut u64,
+        proofFile: *mut ::std::os::raw::c_char,
+        d_buffers_: *mut ::std::os::raw::c_void,
+        mpi_node_rank: u32,
+    );
+}
+extern "C" {
     #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_bj"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
@@ -585,8 +599,8 @@ extern "C" {
     pub fn set_max_size_thread(
         d_buffers: *mut ::std::os::raw::c_void,
         maxSizeTrace: u64,
-        maxSizeThread: u64,
         maxSizeContribution: u64,
+        maxSizeThread: u64,
         nThreads: u64,
     );
 }

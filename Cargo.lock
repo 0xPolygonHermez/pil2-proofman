@@ -965,6 +965,7 @@ dependencies = [
  "proofman-macros",
  "proofman-starks-lib-c",
  "proofman-util",
+ "rand 0.9.1",
  "rayon",
  "serde_json",
  "transcript",
