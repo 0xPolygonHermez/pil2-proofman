@@ -5,8 +5,8 @@
 
 #define LOG_NUM_BANKS 5
 #define CONFLICT_FREE_OFFSET(n) \
-  ((n) >> LOG_NUM_BANKS) + ((n) >> (2 * LOG_NUM_BANKS))
-
+   0
+//((n) >> LOG_NUM_BANKS)
 
 void opHintFieldsGPU(StepsParams *d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx, TimerGPU &timer, cudaStream_t stream){
 
@@ -394,7 +394,7 @@ __device__ void scan_prod_3(gl64_t* temp, uint32_t N){
     __syncthreads(); 
     // clear the last element
     if (thid == 0) { 
-        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))].set_val(0); 
+        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))].set_val(1); 
         temp[3*(N- 1)+1+CONFLICT_FREE_OFFSET(3*(N- 1)+1)].set_val(0);
         temp[3*(N- 1)+2+CONFLICT_FREE_OFFSET(3*(N- 1)+2)].set_val(0);
     } 
