@@ -761,7 +761,7 @@ void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_
     CHECKCUDAERR(cudaGetLastError());
 }
 
-void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams &h_params, StepsParams &d_params, int64_t step, TimerGPU &timer, cudaStream_t stream){
+void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams &h_params, StepsParams *d_params, int64_t step, TimerGPU &timer, cudaStream_t stream){
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBits);
     std::vector<Dest> dests;
@@ -773,7 +773,7 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsC
             Dest destStruct(NULL, domainSize, setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
             destStruct.addParams(setupCtx.starkInfo.cmPolsMap[i].expId, setupCtx.starkInfo.cmPolsMap[i].dim, false);
             destStruct.dest_gpu = (Goldilocks::Element *)(pAddress + offset);            
-            expressionsCtx.calculateExpressions_gpu(&d_params, destStruct, domainSize, false, timer, stream);
+            expressionsCtx.calculateExpressions_gpu(d_params, destStruct, domainSize, false, timer, stream);
         }
     }
         

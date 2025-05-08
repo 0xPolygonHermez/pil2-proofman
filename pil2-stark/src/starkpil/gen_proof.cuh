@@ -16,7 +16,7 @@
 #define PRINT_TIME_SUMMARY 1
 
 
-void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams& d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, TimerGPU &timer, cudaStream_t stream) {
+void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, TimerGPU &timer, cudaStream_t stream) {
 
     std::string name = prod ? "gprod_col" : "gsum_col";
     if(setupCtx.expressionsBin.getNumberHintIdsByName(name) == 0) return;
@@ -140,13 +140,13 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     TimerStopGPU(timer, STARK_STEP_0);
     
     TimerStartGPU(timer, STARK_CALCULATE_WITNESS_STD);
-    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, true, &expressionsCtx, timer, stream);
-    calculateWitnessSTD_gpu(setupCtx, h_params, *d_params, false, &expressionsCtx, timer, stream);
+    calculateWitnessSTD_gpu(setupCtx, h_params, d_params, true, &expressionsCtx, timer, stream);
+    calculateWitnessSTD_gpu(setupCtx, h_params, d_params, false, &expressionsCtx, timer, stream);
 
     TimerStopGPU(timer, STARK_CALCULATE_WITNESS_STD);
 
     TimerStartGPU(timer, CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, *d_params, 2, timer, stream);
+    calculateImPolsExpressions(setupCtx, expressionsCtx, h_params, d_params, 2, timer, stream);
     TimerStopGPU(timer, CALCULATE_IM_POLS);
 
     TimerStartGPU(timer, STARK_COMMIT_STAGE_1);

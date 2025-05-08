@@ -65,7 +65,7 @@ pub struct ProveCmd {
     #[clap(short = 'd', long)]
     pub debug: Option<Option<String>>,
 
-    #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
+    #[clap(short = 's', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
 }
 
