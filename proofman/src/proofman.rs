@@ -513,7 +513,7 @@ where
 
                         if pctx_clone.dctx_is_my_instance(instance_id) {
                             let contrib_thread_id = contributions_manager.claim_thread();
-                            contributions_tx.send((instance_id, contrib_thread_id)).unwrap();
+                            contributions_tx.send((instance_id, thread_id)).unwrap();
                         }
                     }
                 })
@@ -608,7 +608,7 @@ where
                     while let Ok(instance_id) = witness_rx.recv() {
                         wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
                         let proof_thread_id = proof_manager.claim_thread();
-                        proof_tx.send((instance_id, proof_thread_id)).unwrap();
+                        proof_tx.send((instance_id, thread_id)).unwrap();
                     }
                 })
             })
@@ -1450,6 +1450,7 @@ where
             pctx.dctx_get_node_rank() as u32,
         );
 
+        println!("WINTESS THREAD ID {}", witness_thread_id);
         witness_manager.release_thread(witness_thread_id);
 
         if !all {
