@@ -1853,6 +1853,7 @@ pub fn gen_device_commit_buffers_c(
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn set_max_size_thread_c(
     _d_buffers: *mut ::std::os::raw::c_void,
     _max_size_trace: u64,
@@ -1887,6 +1888,7 @@ pub fn set_device_c(_mpi_node_rank: u32) {
 }
 
 #[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn load_const_pols_gpu_c(
     _airgroup_id: u64,
     _air_id: u64,

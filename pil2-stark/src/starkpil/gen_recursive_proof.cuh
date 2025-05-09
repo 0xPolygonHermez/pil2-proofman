@@ -15,7 +15,7 @@
 // fer que lo dels arbres vagi igual (primer arreglar els de gen_proof)
 
 template <typename ElementType>
-void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, Goldilocks::Element *proof_buffer_pinned, TimerGPU &timer, cudaStream_t stream)
+void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, Goldilocks::Element *proof_buffer_pinned, TimerGPU &timer, cudaStream_t stream)
 {
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
@@ -23,7 +23,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, G
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
 
-    Goldilocks::Element *pConstPolsExtendedTreeAddress = (Goldilocks::Element *)d_buffers->d_constTree;
+    Goldilocks::Element *pConstPolsExtendedTreeAddress = (Goldilocks::Element *)d_const_tree;
 
     Starks<Goldilocks::Element> starks(setupCtx, nullptr, nullptr, false);
     starks.treesGL[setupCtx.starkInfo.nStages + 1]->setSource(&pConstPolsExtendedTreeAddress[2]);
@@ -40,16 +40,16 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, G
     uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
 
     StepsParams h_params = {
-        trace : (Goldilocks::Element *)d_buffers->d_trace,
-        aux_trace : (Goldilocks::Element *)d_buffers->d_aux_trace,
-        publicInputs : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetPublicInputs,
+        trace : (Goldilocks::Element *)d_trace,
+        aux_trace : (Goldilocks::Element *)d_aux_trace,
+        publicInputs : (Goldilocks::Element *)d_aux_trace + offsetPublicInputs,
         proofValues : nullptr,
-        challenges : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetChallenges,
+        challenges : (Goldilocks::Element *)d_aux_trace + offsetChallenges,
         airgroupValues : nullptr,
         airValues : nullptr,
-        evals : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetEvals,
-        xDivXSub : (Goldilocks::Element *)d_buffers->d_aux_trace + offsetXDivXSub,
-        pConstPolsAddress : (Goldilocks::Element *)d_buffers->d_constPols,
+        evals : (Goldilocks::Element *)d_aux_trace + offsetEvals,
+        xDivXSub : (Goldilocks::Element *)d_aux_trace + offsetXDivXSub,
+        pConstPolsAddress : (Goldilocks::Element *)d_const_pols,
         pConstPolsExtendedTreeAddress,
         pCustomCommitsFixed : nullptr,
     };
@@ -62,16 +62,16 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, G
     cudaMalloc(&d_openingPoints, setupCtx.starkInfo.openingPoints.size() * sizeof(int64_t));
     cudaMemcpy(d_openingPoints, setupCtx.starkInfo.openingPoints.data(), setupCtx.starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice);
 
-    uint64_t *friQueries_gpu = (uint64_t *)d_buffers->d_aux_trace + offsetFriQueries;
+    uint64_t *friQueries_gpu = (uint64_t *)d_aux_trace + offsetFriQueries;
 
-    Goldilocks::Element *challenge_gpu = (Goldilocks::Element *)d_buffers->d_aux_trace + offsetChallenge;
+    Goldilocks::Element *challenge_gpu = (Goldilocks::Element *)d_aux_trace + offsetChallenge;
 
     TranscriptGL_GPU d_transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
     TranscriptGL_GPU d_transcript_helper(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, stream);
 
-    prepare_evmap(setupCtx, d_buffers->d_aux_trace);
+    prepare_evmap(setupCtx, d_aux_trace);
 
-    gl64_t *d_queries_buff = (gl64_t *)d_buffers->d_aux_trace + offsetProofQueries;
+    gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
 
@@ -100,7 +100,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, G
     }
     TimerStopGPU(timer, STARK_STEP_0);
     TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
-    commitStage_inplace(1, setupCtx, starks.treesGL, d_buffers->d_trace, d_buffers->d_aux_trace, &d_transcript, timer, stream);
+    commitStage_inplace(1, setupCtx, starks.treesGL, d_trace, d_aux_trace, &d_transcript, timer, stream);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if (setupCtx.starkInfo.challengesMap[i].stage == 2)
@@ -164,7 +164,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, G
     computeX_kernel<<<blocks_x, threads_x, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));            
     calculateExpression(setupCtx, expressionsCtx, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, timer, stream);
 
-    commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, nullptr, d_buffers->d_aux_trace, &d_transcript, timer, stream);
+    commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, nullptr, d_aux_trace, &d_transcript, timer, stream);
     TimerStopGPU(timer, STARK_STEP_Q);
     TimerStartGPU(timer, STARK_STEP_EVALS);
     uint64_t xiChallengeIndex = 0;
@@ -188,7 +188,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, G
             }
         }
         uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("extra_helper_fft_lev", false)];
-        computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), &d_openingPoints[i], d_buffers->d_aux_trace, offset_helper, d_LEv, timer, stream);
+        computeLEv_inplace(d_xiChallenge, setupCtx.starkInfo.starkStruct.nBits, openingPoints.size(), &d_openingPoints[i], d_aux_trace, offset_helper, d_LEv, timer, stream);
         evmap_inplace(setupCtx, h_params, count++, openingPoints.size(), openingPoints.data(), (Goldilocks::Element*)d_LEv, timer, stream);
     }
 
@@ -236,7 +236,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, G
     {
         uint64_t currentBits = setupCtx.starkInfo.starkStruct.steps[step].nBits;
         uint64_t prevBits = step == 0 ? currentBits : setupCtx.starkInfo.starkStruct.steps[step - 1].nBits;
-        fold_inplace(step, friPol_offset, offset_helper, challenge_gpu, nBitsExt, prevBits, currentBits, d_buffers->d_aux_trace, timer, stream);
+        fold_inplace(step, friPol_offset, offset_helper, challenge_gpu, nBitsExt, prevBits, currentBits, d_aux_trace, timer, stream);
 
         if (step < setupCtx.starkInfo.starkStruct.steps.size() - 1)
         {
@@ -259,15 +259,14 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, G
     d_transcript_helper.put(challenge_gpu, FIELD_EXTENSION, stream);
     d_transcript_helper.getPermutations(friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, setupCtx.starkInfo.starkStruct.steps[0].nBits, stream);
 
-    gl64_t *d_constTree = d_buffers->d_constTree;
-    proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_buffers->d_aux_trace, d_constTree, setupCtx.starkInfo.nStages, stream);
+    proveQueries_inplace(setupCtx, d_queries_buff, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesGL, nTrees, d_aux_trace, d_const_tree, setupCtx.starkInfo.nStages, stream);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) {
         proveFRIQueries_inplace(setupCtx, &d_queries_buff[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize], step + 1, setupCtx.starkInfo.starkStruct.steps[step + 1].nBits, friQueries_gpu, setupCtx.starkInfo.starkStruct.nQueries, starks.treesFRI[step], stream);
     }
     TimerStopCategoryGPU(timer, FRI);
     TimerStopGPU(timer, STARK_STEP_FRI);
 
-    setProof(setupCtx, (Goldilocks::Element *)d_buffers->d_aux_trace, proof_buffer_pinned, stream);
+    setProof(setupCtx, (Goldilocks::Element *)d_aux_trace, proof_buffer_pinned, stream);
 
     TimerStopGPU(timer, STARK_GPU_PROOF);
 

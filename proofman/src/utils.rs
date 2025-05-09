@@ -380,7 +380,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
         }
     }
 
-    if pctx.options.aggregation {
+    if pctx.options.aggregation && !gpu {
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {

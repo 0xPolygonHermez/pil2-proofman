@@ -44,8 +44,11 @@ impl<F: Field> SetupsVadcop<F> {
                     Some(Setup::new(global_info, 0, 0, &ProofType::RecursiveF, verify_constraints, false));
             }
 
-            let total_const_size =
-                sctx_compressor.total_const_size + sctx_recursive1.total_const_size + sctx_recursive2.total_const_size;
+            let total_const_size = sctx_compressor.total_const_size
+                + sctx_recursive1.total_const_size
+                + sctx_recursive2.total_const_size
+                + setup_vadcop_final.const_pols_size
+                + setup_vadcop_final.const_tree_size;
 
             let vadcop_final_trace_size = setup_vadcop_final.stark_info.map_sections_n["cm1"]
                 * (1 << setup_vadcop_final.stark_info.stark_struct.n_bits)
@@ -229,10 +232,10 @@ impl<F: Field> SetupRepository<F> {
             max_const_tree_size,
             max_const_size,
             max_prover_buffer_size: max_prover_buffer_size as usize,
-            max_prover_trace_size: max_prover_trace_size,
+            max_prover_trace_size,
             max_prover_contribution_area: max_prover_contribution_area as usize,
             max_proof_size: max_proof_size as usize,
-            total_const_size: total_const_size,
+            total_const_size,
         }
     }
 

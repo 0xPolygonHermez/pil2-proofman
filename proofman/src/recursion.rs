@@ -32,7 +32,6 @@ pub struct MaxSizes {
     pub max_const_area: u64,
     pub max_aux_trace_area: u64,
     pub max_const_tree_size: u64,
-    pub recursive: bool,
 }
 
 pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> MaxSizes {
@@ -56,50 +55,7 @@ pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F
         update_max_values(setup);
     }
 
-    MaxSizes { max_trace_area, max_const_area, max_aux_trace_area, max_const_tree_size, recursive: false }
-}
-
-pub fn discover_max_sizes_aggregation<F: PrimeField64>(pctx: &ProofCtx<F>, setups: &SetupsVadcop<F>) -> MaxSizes {
-    let mut max_trace_area = 0;
-    let mut max_const_area = 0;
-    let mut max_aux_trace_area = 0;
-    let mut max_const_tree_size = 0;
-
-    let mut update_max_values = |setup: &Setup<F>| {
-        let n = 1 << setup.stark_info.stark_struct.n_bits;
-        max_trace_area = max_trace_area.max(setup.stark_info.map_sections_n["cm1"] * n);
-        max_const_area = max_const_area.max(setup.stark_info.n_constants * n);
-        max_aux_trace_area = max_aux_trace_area.max(setup.prover_buffer_size);
-        max_const_tree_size = max_const_tree_size.max(setup.const_tree_size as u64);
-    };
-
-    let instances = pctx.dctx_get_instances();
-    let my_instances = pctx.dctx_get_my_instances();
-
-    for instance_id in my_instances {
-        let (airgroup_id, air_id, _) = instances[instance_id];
-
-        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
-            update_max_values(setup);
-        }
-
-        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-        update_max_values(setup);
-
-        let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, air_id);
-        update_max_values(setup);
-    }
-
-    if let Some(setup) = setups.setup_vadcop_final.as_ref() {
-        update_max_values(setup);
-    }
-
-    if let Some(setup) = setups.setup_recursivef.as_ref() {
-        update_max_values(setup);
-    }
-
-    MaxSizes { max_trace_area, max_const_area, max_aux_trace_area, max_const_tree_size, recursive: true }
+    MaxSizes { max_trace_area, max_const_area, max_aux_trace_area, max_const_tree_size }
 }
 
 pub fn gen_witness_recursive<F: PrimeField64>(
@@ -306,7 +262,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         p_setup,
         new_proof[initial_idx..].as_mut_ptr(),
         &proof_file,
-        0 as u64,
+        0_u64,
         airgroup_id as u64,
         air_id as u64,
         air_instance_id as u64,
