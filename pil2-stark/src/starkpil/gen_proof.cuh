@@ -13,7 +13,6 @@
 // TOTO list: //rick
 // carregar-me els d_trees
 // _inplace not good name
-#define PRINT_TIME_SUMMARY 1
 
 
 void calculateWitnessSTD_gpu(SetupCtx& setupCtx, StepsParams& h_params, StepsParams *d_params, bool prod, ExpressionsGPU *expressionsCtxGPU, TimerGPU &timer, cudaStream_t stream) {

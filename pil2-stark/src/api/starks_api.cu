@@ -211,7 +211,7 @@ void get_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     cudaStream_t stream = d_buffers->streams[threadId];
-    TimerGPU &timer = d_buffers->timers[threadId];
+    TimerGPU timer = d_buffers->timers[threadId];
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     
@@ -295,7 +295,7 @@ void get_commit_root(uint64_t arity, uint64_t nBitsExt, uint64_t nCols, void *ro
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     cudaStream_t stream = d_buffers->streams[thread_id];
-    TimerGPU &timer = d_buffers->timers[thread_id];
+    TimerGPU timer = d_buffers->timers[thread_id];
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     memcpy((Goldilocks::Element *)root, d_buffers->pinned_buffers_proof[thread_id], HASH_SIZE * sizeof(uint64_t));

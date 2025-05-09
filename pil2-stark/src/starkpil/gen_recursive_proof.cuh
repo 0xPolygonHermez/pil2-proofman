@@ -9,8 +9,6 @@
 #include "starks_gpu.cuh"
 #include <iomanip>
 
-#define PRINT_TIME_SUMMARY 1
-
 // TOTO list: 
 // fer que lo dls params vagi igual
 // evitar copies inecetssaries
@@ -60,7 +58,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     };
     
     StepsParams* d_params;
-    CHECKCUDAERR(cudaMalloc(&d_params, sizeof(StepsParams)));
+    CHECKCUDAERR(cudaMalloc((void **) &d_params, sizeof(StepsParams)));
     CHECKCUDAERR(cudaMemcpy(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice));
     
     int64_t *d_openingPoints;
@@ -283,9 +281,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     TimerStopAndLog(GEN_RECURSIVE_PROOF_GPU);
 
-#if PRINT_TIME_SUMMARY
     TimerLogCategoryContributionsGPU(timer, STARK_GPU_PROOF);
-#endif
 
     TimerStart(STARK_POSTPROCESS);
     writeProofRecursive(setupCtx, h_params.aux_trace, proofBuffer, airgroupId, airId, instanceId, proofFile);
