@@ -37,12 +37,12 @@ __global__ void reverse_permutation_2d(gl64_t *data, uint32_t log_domain_size, u
 __global__ void init_twiddle_factors_small_size(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size);
 __global__ void init_twiddle_factors_first_step(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size);
 __global__ void init_twiddle_factors_second_step(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size);
-void init_twiddle_factors(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, cudaStream_t stream = 0);
+void init_twiddle_factors(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, cudaStream_t stream);
 __global__ void init_r_small_size(gl64_t *r, uint32_t log_domain_size);
 __global__ void init_r_first_step(gl64_t *r, uint32_t log_domain_size);
 __global__ void init_r_second_step(gl64_t *r, uint32_t log_domain_size);
-void init_r(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream = 0);
-void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream = 0);
+void init_r(gl64_t *r, uint32_t log_domain_size, cudaStream_t stream);
+void ntt_cuda( gl64_t *data, gl64_t *r, gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t log_domain_size, uint32_t ncols, bool inverse, bool extend, cudaStream_t stream);
 __global__ void transpose_section(gl64_t *out, const gl64_t *in, uint64_t nCols, uint64_t domainSize);
 
 

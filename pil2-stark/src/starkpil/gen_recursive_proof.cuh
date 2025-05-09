@@ -9,15 +9,13 @@
 #include "starks_gpu.cuh"
 #include <iomanip>
 
-#define PRINT_TIME_SUMMARY 1
-
 // TOTO list: 
 // fer que lo dls params vagi igual
 // evitar copies inecetssaries
 // fer que lo dels arbres vagi igual (primer arreglar els de gen_proof)
 
 template <typename ElementType>
-void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers, bool vadcop, TimerGPU &timer, cudaStream_t stream = 0)
+void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers, bool vadcop, TimerGPU &timer, cudaStream_t stream)
 {
 
     TimerStart(GEN_RECURSIVE_PROOF_GPU);
@@ -283,9 +281,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 
     TimerStopAndLog(GEN_RECURSIVE_PROOF_GPU);
 
-#if PRINT_TIME_SUMMARY
     TimerLogCategoryContributionsGPU(timer, STARK_GPU_PROOF);
-#endif
 
     TimerStart(STARK_POSTPROCESS);
     writeProof(setupCtx, h_params.aux_trace, proofBuffer, airgroupId, airId, instanceId, proofFile);

@@ -7,6 +7,8 @@
 #include <cuda_runtime.h>
 #include "zklog.hpp"
 
+#define LOG_TIME_GPU 0
+
 struct TimerEntry {
     cudaEvent_t start;
     cudaEvent_t stop;
@@ -199,6 +201,7 @@ inline std::string makeTimerName(const std::string& base, int id) {
     return base + "_" + to_string(id);
 }
 
+#if LOG_TIME_GPU
 #define TimerStartIdGPU(timer, name, id) \
     timer.start(makeTimerName(#name, id)); \
 
@@ -232,4 +235,24 @@ inline std::string makeTimerName(const std::string& base, int id) {
 #define TimerLogCategoryContributionsGPU(timer, total_name) \
     (timer.logCategoryContributions(#total_name))
 
-#endif // TIMER_GPU_HPP
+#else 
+#define TimerStartIdGPU(timer, name, id)
+#define TimerStopIdGPU(timer, name, id)
+#define TimerStartCategoryGPU(timer, category)
+#define TimerStopCategoryGPU(timer, category)
+#define TimerStartGPU(timer, name)
+#define TimerStopGPU(timer, name)
+#define TimerStopAndLogGPU(timer, name)
+#define TimerGetElapsedGPU(timer, name) 0.0
+#define TimerSyncAndLogAllGPU(timer)
+#define TimerSyncCategoriesGPU(timer)
+#define TimerResetGPU(timer)
+#define TimerGetElapsedCategoryGPU(timer, category) 0.0
+#define TimerLogCategoryContributionsGPU(timer, total_name)
+#define TimerSyncAndLogAllGPU(timer)
+#define TimerSyncCategoriesGPU(timer)
+#define TimerResetGPU(timer)
+#define TimerGetElapsedCategoryGPU(timer, category) 0.0
+#define TimerLogCategoryContributionsGPU(timer, total_name)
+#endif
+#endif
