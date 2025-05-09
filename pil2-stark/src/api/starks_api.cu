@@ -33,11 +33,14 @@ void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
     return (void *)buffers;
 }
 
-void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeProverBuffer, uint64_t nThreads) {
+void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeProverBuffer, uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxProofSizeThread, uint64_t nThreads) {
     DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
     buffers->max_size_prover_buffer = maxSizeProverBuffer;
     buffers->max_size_trace = maxSizeTrace;
     buffers->max_size_contribution = maxSizeContribution;
+    buffers->max_size_const = maxSizeConst;
+    buffers->max_size_const_tree = maxSizeConstTree;
+    buffers->max_size_proof = maxProofSizeThread;
     buffers->n_threads = nThreads;
 
     if (buffers->streams != nullptr) {
@@ -57,8 +60,19 @@ void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSiz
     }
 
     buffers->pinned_buffers = new Goldilocks::Element*[nThreads];
+    buffers->pinned_buffers_proof = new Goldilocks::Element*[nThreads];
     for (uint64_t i = 0; i < nThreads; i++) {
         CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers[i]), maxSizeTrace * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers_proof[i]), maxProofSizeThread * sizeof(Goldilocks::Element)));
+    }
+
+    if (maxSizeConst > 0) {
+        buffers->pinned_buffers_const = new Goldilocks::Element*[nThreads];
+        buffers->pinned_buffers_const_tree = new Goldilocks::Element*[nThreads];
+        for (uint64_t i = 0; i < nThreads; i++) {
+            CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers_const[i]), maxSizeConst * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers_const_tree[i]), maxSizeConstTree * sizeof(Goldilocks::Element)));
+        }
     }
 }
 
@@ -105,7 +119,7 @@ void load_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_o
     delete[] constTree;
 }
 
-void gen_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants, uint32_t mpi_node_rank) {
+void gen_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params_, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, bool loadConstants, char *constPolsPath,  char *constTreePath, uint32_t mpi_node_rank) {
     set_device(mpi_node_rank);
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
@@ -123,31 +137,20 @@ void gen_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
   
     auto key = std::make_pair(airgroupId, airId);
     auto it = d_buffers->air_instances.find(key);
-    gl64_t *d_const_pols;
-    gl64_t *d_const_tree;
-    if (it != d_buffers->air_instances.end() && it->second.find("basic") != it->second.end()) {
-        AirInstanceInfo& instance = it->second["basic"];
-        d_const_pols = d_buffers->d_constPols + instance.const_pols_offset;
-        d_const_tree = d_buffers->d_constPols + instance.const_tree_offset;
-    } else {
-        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
-        uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
-        if(loadConstants) {
-            CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetConstPols, params->pConstPolsAddress, sizeConstPols, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetConstTree, params->pConstPolsExtendedTreeAddress, sizeConstTree, cudaMemcpyHostToDevice));
-        }
-        d_const_pols = d_aux_trace + offsetConstPols;
-        d_const_tree = d_aux_trace + offsetConstTree;
-    }
-
+    
+    uint64_t offset = 0;
     // TODO!
     if (setupCtx->starkInfo.mapTotalNCustomCommitsFixed > 0) {
         Goldilocks::Element *pCustomCommitsFixed = (Goldilocks::Element *)d_aux_trace + setupCtx->starkInfo.mapOffsets[std::make_pair("custom_fixed", false)];
         CHECKCUDAERR(cudaMemcpy(pCustomCommitsFixed, params->pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     }
 
+    if (it == d_buffers->air_instances.end() && loadConstants) {
+        loadFileParallel(d_buffers->pinned_buffers_const[threadId], constPolsPath, sizeConstPols);
+        loadFileParallel(d_buffers->pinned_buffers_const_tree[threadId], constTreePath, sizeConstTree);
+    }
     Goldilocks::parcpy(d_buffers->pinned_buffers[threadId], (Goldilocks::Element *)params->trace, N * nCols, 4);
-    uint64_t offset = N * nCols;
+    offset = N * nCols;
     memcpy(&d_buffers->pinned_buffers[threadId][offset], params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
     offset += setupCtx->starkInfo.nPublics;
     memcpy(&d_buffers->pinned_buffers[threadId][offset], params->proofValues, setupCtx->starkInfo.proofValuesSize * sizeof(Goldilocks::Element));
@@ -183,8 +186,24 @@ void gen_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
         offset += setupCtx->starkInfo.airValuesSize;
     }
     CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetChallenge, &d_buffers->pinned_buffers[threadId][offset], FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
+    offset += FIELD_EXTENSION;
 
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, timer, stream);
+    gl64_t *d_const_pols;
+    gl64_t *d_const_tree;
+    if (it != d_buffers->air_instances.end() && it->second.find("basic") != it->second.end()) {
+        AirInstanceInfo& instance = it->second["basic"];
+        d_const_pols = d_buffers->d_constPols + instance.const_pols_offset;
+        d_const_tree = d_buffers->d_constPols + instance.const_tree_offset;
+    } else {
+        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
+        uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+        CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetConstPols, d_buffers->pinned_buffers_const[threadId], sizeConstPols, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetConstTree, d_buffers->pinned_buffers_const_tree[threadId], sizeConstTree, cudaMemcpyHostToDevice));
+        d_const_pols = d_aux_trace + offsetConstPols;
+        d_const_tree = d_aux_trace + offsetConstTree;
+    }
+
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, d_buffers->pinned_buffers_proof[threadId], timer, stream);
 }
 
 void get_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, uint64_t* proofBuffer, char *proofFile, void *d_buffers_, uint32_t mpi_node_rank) {
@@ -193,7 +212,6 @@ void get_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     cudaStream_t stream = d_buffers->streams[threadId];
     TimerGPU &timer = d_buffers->timers[threadId];
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + threadId*d_buffers->max_size_prover_buffer;
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     
@@ -203,7 +221,7 @@ void get_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
     
     TimerLogCategoryContributionsGPU(timer, STARK_GPU_PROOF);
 
-    getProof_gpu(*setupCtx, airgroupId, airId, instanceId, proofBuffer, string(proofFile), d_aux_trace, timer, stream);
+    writeProof(*setupCtx, d_buffers->pinned_buffers_proof[threadId], proofBuffer, airgroupId, airId, instanceId, proofFile);
 
     TimerResetGPU(timer);
 }

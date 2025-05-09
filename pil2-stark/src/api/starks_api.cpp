@@ -502,7 +502,7 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
 #ifndef __USE_CUDA__
 // Gen proof
 // =================================================================================
-void gen_proof(void *pSetupCtx, uint64_t threadId, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool loadConstants, uint32_t mpi_node_rank)  {
+void gen_proof(void *pSetupCtx, uint64_t threadId, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool loadConstants, char *constPolsPath,  char *constTreePath, uint32_t mpi_node_rank)  {
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
 }
 
@@ -515,7 +515,7 @@ void *gen_device_commit_buffers(void *max_sizes, uint32_t mpi_node_rank)
     return NULL;
 };
 
-void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread, uint64_t nThreads) {}
+void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread, uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxProofSizeThread, uint64_t nThreads) {}
 
 void set_device(uint32_t mpi_node_rank){}
 

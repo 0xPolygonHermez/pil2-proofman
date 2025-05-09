@@ -762,10 +762,18 @@ pub fn gen_proof_c(
     instance_id: u64,
     d_buffers: *mut c_void,
     load_constants: bool,
+    const_pols_path: &str,
+    const_tree_path: &str,
     mpi_node_rank: u32,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_filename_name = CString::new(const_pols_path).unwrap();
+    let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_tree_filename_name = CString::new(const_tree_path).unwrap();
+    let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
         gen_proof(
@@ -780,6 +788,8 @@ pub fn gen_proof_c(
             proof_file_ptr,
             d_buffers,
             load_constants,
+            const_filename_ptr,
+            const_tree_filename_ptr,
             mpi_node_rank,
         );
     }
@@ -1059,15 +1069,19 @@ pub fn gen_device_commit_buffers_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn set_max_size_thread_c(
     d_buffers: *mut ::std::os::raw::c_void,
     max_size_trace: u64,
     max_size_contribution: u64,
     max_size_buffer: u64,
+    max_size_const: u64,
+    max_size_const_tree: u64,
+    max_proof_size: u64,
     n_threads: u64,
 ) {
     unsafe {
-        set_max_size_thread(d_buffers, max_size_trace, max_size_contribution, max_size_buffer, n_threads);
+        set_max_size_thread(d_buffers, max_size_trace, max_size_contribution, max_size_buffer, max_size_const, max_size_const_tree, max_proof_size, n_threads);
     }
 }
 
@@ -1630,6 +1644,8 @@ pub fn gen_proof_c(
     _instance_id: u64,
     _d_buffers: *mut c_void,
     _load_constants: bool,
+    _const_pols_path: &str,
+    _const_tree_path: &str,
     _mpi_node_rank: u32,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
@@ -1808,6 +1824,9 @@ pub fn set_max_size_thread_c(
     _max_size_trace: u64,
     _max_size_contribution: u64,
     _max_size_buffer: u64,
+    _max_size_const: u64,
+    _max_size_const_tree: u64,
+    _max_proof_size: u64,
     _n_threads: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");

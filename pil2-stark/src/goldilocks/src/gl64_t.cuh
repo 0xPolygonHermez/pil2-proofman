@@ -837,10 +837,16 @@ struct DeviceCommitBuffers
     uint64_t max_size_prover_buffer;
     uint64_t max_size_trace;
     uint64_t max_size_contribution;
+    uint64_t max_size_proof;
+    uint64_t max_size_const;
+    uint64_t max_size_const_tree;
     uint64_t n_threads;
     cudaStream_t *streams;
     TimerGPU *timers;
     Goldilocks::Element **pinned_buffers;
+    Goldilocks::Element **pinned_buffers_proof;
+    Goldilocks::Element **pinned_buffers_const;
+    Goldilocks::Element **pinned_buffers_const_tree;
     std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, AirInstanceInfo>> air_instances;
 };
 

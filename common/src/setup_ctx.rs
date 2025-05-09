@@ -100,6 +100,7 @@ pub struct SetupRepository<F: Field> {
     max_prover_buffer_size: usize,
     max_prover_trace_size: usize,
     max_prover_contribution_area: usize,
+    max_proof_size: usize,
     total_const_size: usize,
     global_bin: Option<*mut c_void>,
     global_info_file: String,
@@ -129,6 +130,7 @@ impl<F: Field> SetupRepository<F> {
         let mut max_prover_buffer_size = 0;
         let mut max_prover_trace_size = 0;
         let mut max_prover_contribution_area = 0;
+        let mut max_proof_size = 0;
         let mut total_const_size = 0;
 
         // Initialize Hashmap for each airgroup_id, air_id
@@ -166,6 +168,7 @@ impl<F: Field> SetupRepository<F> {
                         max_prover_contribution_area =
                             max_prover_contribution_area.max(trace_size + trace_ext_size + tree_size + 3 * n_extended);
                         total_const_size += setup.const_pols_size + setup.const_tree_size;
+                        max_proof_size = max_proof_size.max(2*setup.proof_size);
                     }
                     setups.insert((airgroup_id, air_id), setup);
                 }
@@ -183,6 +186,7 @@ impl<F: Field> SetupRepository<F> {
             max_prover_buffer_size: max_prover_buffer_size as usize,
             max_prover_trace_size: max_prover_trace_size as usize,
             max_prover_contribution_area: max_prover_contribution_area as usize,
+            max_proof_size: max_proof_size as usize,
             total_const_size: total_const_size as usize,
         }
     }
@@ -202,6 +206,7 @@ pub struct SetupCtx<F: Field> {
     pub max_prover_buffer_size: usize,
     pub max_prover_trace_size: usize,
     pub max_prover_contribution_area: usize,
+    pub max_proof_size: usize,
     pub total_const_size: usize,
     setup_type: ProofType,
 }
@@ -214,6 +219,7 @@ impl<F: Field> SetupCtx<F> {
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
         let max_prover_trace_size = setup_repository.max_prover_trace_size;
         let max_prover_contribution_area = setup_repository.max_prover_contribution_area;
+        let max_proof_size = setup_repository.max_proof_size;
         let total_const_size = setup_repository.total_const_size;
         SetupCtx {
             setup_repository,
@@ -222,6 +228,7 @@ impl<F: Field> SetupCtx<F> {
             max_prover_buffer_size,
             max_prover_trace_size,
             max_prover_contribution_area,
+            max_proof_size,
             total_const_size,
             setup_type: setup_type.clone(),
         }

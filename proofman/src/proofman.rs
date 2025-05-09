@@ -23,6 +23,10 @@ use std::sync::atomic::{AtomicU64, AtomicBool};
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
+
 use p3_goldilocks::Goldilocks;
 
 use p3_field::PrimeField64;
@@ -519,7 +523,7 @@ where
                 })
             })
             .collect();
-
+        
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all && pctx.dctx_is_my_instance(instance_id) {
                 let thread_id = witness_manager.claim_thread(); 
@@ -666,15 +670,17 @@ where
             })
             .collect();
 
-        for instance_id in my_instances.iter() {
-            let (_, _, all) = instances[*instance_id];
-        
-            if all {
+        for (instance_id, (_, _, all)) in instances.iter().enumerate() {
+            if *all && pctx.dctx_is_my_instance(instance_id) {
                 let thread_id = proofs_manager.claim_thread();
-                proof_tx.send((*instance_id, thread_id)).unwrap();
-            } else {
+                proof_tx.send((instance_id, thread_id)).unwrap();
+            }
+        }
+
+        for (instance_id, (_, _, all)) in instances.iter().enumerate() {
+            if !*all && pctx.dctx_is_my_instance(instance_id) {
                 let thread_id = witness_manager.claim_thread();
-                witness_tx.send(*instance_id).unwrap();
+                witness_tx.send(instance_id).unwrap();
             }
         }
 
@@ -1032,11 +1038,24 @@ where
             false => 1,
         };
 
+        let max_size_const = match cfg!(feature = "gpu") && !pctx.options.preallocate {
+            true => sctx.max_const_size as u64,
+            false => 0,
+        };
+
+        let max_size_const_tree = match cfg!(feature = "gpu") && !pctx.options.preallocate {
+            true => sctx.max_const_tree_size as u64,
+            false => 0,
+        };
+
         set_max_size_thread_c(
             d_buffers.get_ptr(),
             sctx.max_prover_trace_size as u64,
             sctx.max_prover_contribution_area as u64,
             sctx.max_prover_buffer_size as u64,
+            max_size_const,
+            max_size_const_tree,
+            sctx.max_proof_size as u64,
             max_number_proofs as u64,
         );
 
@@ -1073,8 +1092,7 @@ where
 
         let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
 
-        let gpu = cfg!(feature = "gpu");
-        if gpu && !pctx.options.preallocate {
+        if cfg!(not(feature = "gpu")) {
             let offset = thread_id * (sctx.max_const_tree_size + sctx.max_const_size);
             let const_pols = &aux_trace[offset + offset_const..offset + offset_const + setup.const_pols_size];
             let const_tree = &aux_trace[offset..offset + setup.const_tree_size];
@@ -1099,6 +1117,9 @@ where
 
         let mut proof: Vec<u64> = create_buffer_fast(setup.proof_size as usize);
 
+        let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
+        let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+
         gen_proof_c(
             p_setup,
             p_steps_params,
@@ -1111,6 +1132,8 @@ where
             air_instance_id as u64,
             d_buffers.get_ptr(),
             gen_const_tree,
+            &const_pols_path,
+            &const_pols_tree_path,
             pctx.dctx_get_node_rank() as u32,
         );
 

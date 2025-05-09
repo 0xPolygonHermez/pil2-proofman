@@ -802,7 +802,171 @@ void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, Ste
 
 }
 
-void writeProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, uint64_t *proof_buffer, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, std::string proofFile) {
+void setProof(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, Goldilocks::Element *proof_buffer_pinned, cudaStream_t stream) {
+    uint64_t initialOffset = 0;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    uint64_t numNodes = setupCtx.starkInfo.getNumNodesMT(NExtended);
+    for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
+        uint64_t stage = i + 1;
+        Goldilocks::Element *nodes = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt" + to_string(stage), true)];
+        CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], nodes + numNodes - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+        initialOffset += HASH_SIZE;
+    }
+
+    for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
+        if(setupCtx.starkInfo.customCommits[i].stageWidths[0] != 0) {
+            Goldilocks::Element *nodes = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair(setupCtx.starkInfo.customCommits[i].name + "0", true)];
+            CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], nodes + numNodes - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+            initialOffset += HASH_SIZE;
+        }
+    }
+
+    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; step++)
+    {
+        uint64_t height = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
+        uint64_t numNodes = setupCtx.starkInfo.getNumNodesMT(height);
+        Goldilocks::Element *nodes = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("mt_fri_" + to_string(step + 1), true)];
+        CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], nodes + numNodes - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
+        initialOffset += HASH_SIZE;
+    }
+
+    uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
+    uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
+    uint64_t queriesProofSize = (nTrees + nTreesFRI) * setupCtx.starkInfo.maxProofBuffSize * setupCtx.starkInfo.starkStruct.nQueries;
+    uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
+    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits;
+
+    Goldilocks::Element *d_queries_buff = h_aux_trace + offsetProofQueries;
+    Goldilocks::Element *d_evals = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("evals", false)];
+    Goldilocks::Element *d_airgroupValues = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("airgroupvalues", false)];
+    Goldilocks::Element *d_airValues = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("airvalues", false)];
+    Goldilocks::Element *d_fri_pol = h_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
+
+
+    CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], d_queries_buff, queriesProofSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
+    initialOffset += queriesProofSize;
+    CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], d_evals, setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
+    initialOffset += setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION;
+    CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], d_airgroupValues, setupCtx.starkInfo.airgroupValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
+    initialOffset += setupCtx.starkInfo.airgroupValuesSize;
+    CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], d_airValues, setupCtx.starkInfo.airValuesSize * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
+    initialOffset += setupCtx.starkInfo.airValuesSize;
+    CHECKCUDAERR(cudaMemcpyAsync(&proof_buffer_pinned[initialOffset], d_fri_pol, finalPolDegree * FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost, stream));
+    initialOffset += finalPolDegree * FIELD_EXTENSION;
+}
+
+void writeProof(SetupCtx &setupCtx, Goldilocks::Element *proof_buffer_pinned, uint64_t *proof_buffer, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, std::string proofFile) {
+    uint64_t initialOffset = 0;
+
+    FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
+
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+    uint64_t numNodes = setupCtx.starkInfo.getNumNodesMT(NExtended);
+    for(uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; ++i) {
+        memcpy(&proof.proof.roots[i][0], &proof_buffer_pinned[initialOffset], HASH_SIZE * sizeof(uint64_t));
+        initialOffset += HASH_SIZE;
+    }
+
+    for (uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
+        if(setupCtx.starkInfo.customCommits[i].stageWidths[0] != 0) {
+            uint64_t pos = setupCtx.starkInfo.nStages + 2 + i;
+            memcpy(&proof.proof.roots[pos - 1][0], &proof_buffer_pinned[initialOffset], HASH_SIZE * sizeof(uint64_t));
+            initialOffset += HASH_SIZE;
+        }
+    }
+
+    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; step++)
+    {
+        uint64_t height = 1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits;
+        uint64_t numNodes = setupCtx.starkInfo.getNumNodesMT(height);
+        memcpy(&proof.proof.fri.treesFRI[step].root[0], &proof_buffer_pinned[initialOffset], HASH_SIZE * sizeof(uint64_t));
+        initialOffset += HASH_SIZE;
+    }
+
+    uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
+    uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
+    uint64_t queriesProofSize = (nTrees + nTreesFRI) * setupCtx.starkInfo.maxProofBuffSize * setupCtx.starkInfo.starkStruct.nQueries;
+    uint64_t offsetProofQueries = setupCtx.starkInfo.mapOffsets[std::make_pair("proof_queries", false)];
+
+    uint64_t finalPolDegree = 1 << setupCtx.starkInfo.starkStruct.steps[setupCtx.starkInfo.starkStruct.steps.size() - 1].nBits;
+
+    Goldilocks::Element *queries = &proof_buffer_pinned[initialOffset];
+    initialOffset += queriesProofSize;
+    Goldilocks::Element *evals = &proof_buffer_pinned[initialOffset];
+    initialOffset += setupCtx.starkInfo.evMap.size() * FIELD_EXTENSION;
+    Goldilocks::Element *airgroupValues = &proof_buffer_pinned[initialOffset];
+    initialOffset += setupCtx.starkInfo.airgroupValuesSize;
+    Goldilocks::Element *airValues = &proof_buffer_pinned[initialOffset];
+    initialOffset += setupCtx.starkInfo.airValuesSize;
+    Goldilocks::Element *finalPol = &proof_buffer_pinned[initialOffset];
+    initialOffset += finalPolDegree * FIELD_EXTENSION;
+
+    int count = 0;
+    for (uint k = 0; k < setupCtx.starkInfo.nStages + 1; k++)
+    {
+        for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
+        {
+            uint64_t width = setupCtx.starkInfo.mapSectionsN["cm" + to_string(k + 1)];
+            uint64_t proofLength = (uint64_t)ceil(log10(NExtended) / log10(setupCtx.starkInfo.starkStruct.merkleTreeArity));
+            uint64_t numSiblings = (setupCtx.starkInfo.starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+            MerkleProof<Goldilocks::Element> mkProof(width, proofLength, numSiblings, (void *) &queries[count * setupCtx.starkInfo.maxProofBuffSize], setupCtx.starkInfo.maxTreeWidth);
+            proof.proof.fri.trees.polQueries[i].push_back(mkProof);
+            ++count;
+        }
+    }
+
+    for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
+    {
+        uint64_t width = setupCtx.starkInfo.nConstants;
+        uint64_t proofLength = (uint64_t)ceil(log10(NExtended) / log10(setupCtx.starkInfo.starkStruct.merkleTreeArity));
+        uint64_t numSiblings = (setupCtx.starkInfo.starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+        MerkleProof<Goldilocks::Element> mkProof(width, proofLength, numSiblings, (void *) &queries[count * setupCtx.starkInfo.maxProofBuffSize], setupCtx.starkInfo.maxTreeWidth);
+        proof.proof.fri.trees.polQueries[i].push_back(mkProof);
+        ++count;
+    }
+
+    if(nTrees > setupCtx.starkInfo.nStages + 2){
+        for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
+        {
+            uint64_t width = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[0].name + "0"];
+            uint64_t proofLength = (uint64_t)ceil(log10(NExtended) / log10(setupCtx.starkInfo.starkStruct.merkleTreeArity));
+            uint64_t numSiblings = (setupCtx.starkInfo.starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+            MerkleProof<Goldilocks::Element> mkProof(width, proofLength, numSiblings, (void *) &queries[count * setupCtx.starkInfo.maxProofBuffSize], setupCtx.starkInfo.maxTreeWidth);
+            proof.proof.fri.trees.polQueries[i].push_back(mkProof);
+            ++count;
+        }
+    }
+
+#pragma omp parallel for collapse(2)
+    for (uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; step++)
+    {   
+        for (uint64_t i = 0; i < setupCtx.starkInfo.starkStruct.nQueries; i++)
+        {
+            Goldilocks::Element *queriesFRI = &queries[(nTrees + step) * setupCtx.starkInfo.starkStruct.nQueries * setupCtx.starkInfo.maxProofBuffSize];
+            uint64_t width = FIELD_EXTENSION * (1 << setupCtx.starkInfo.starkStruct.steps[step].nBits) / (1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits);
+            uint64_t proofLength = (uint64_t)ceil(log10(1 << setupCtx.starkInfo.starkStruct.steps[step + 1].nBits) / log10(setupCtx.starkInfo.starkStruct.merkleTreeArity));
+            uint64_t numSiblings = (setupCtx.starkInfo.starkStruct.merkleTreeArity - 1) * HASH_SIZE;
+            uint64_t proofSize = proofLength * numSiblings;
+            uint64_t buffSize = width + proofSize;
+            MerkleProof<Goldilocks::Element> mkProof(width, proofLength, numSiblings, (void *)&queriesFRI[i * buffSize], width);
+            proof.proof.fri.treesFRI[step].polQueries[i].push_back(mkProof);
+        }
+    }
+
+    proof.proof.setEvals(evals);
+    proof.proof.setAirgroupValues(airgroupValues); 
+    proof.proof.setAirValues(airValues);
+    proof.proof.fri.setPol(finalPol, finalPolDegree);
+
+    proof.proof.proof2pointer(proof_buffer);
+
+    if(!proofFile.empty()) {
+        json2file(pointer2json(proof_buffer, setupCtx.starkInfo), proofFile);
+    }
+}
+
+
+void writeProofRecursive(SetupCtx &setupCtx, Goldilocks::Element *h_aux_trace, uint64_t *proof_buffer, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, std::string proofFile) {
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
 
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;

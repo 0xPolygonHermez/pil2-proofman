@@ -420,7 +420,7 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9gen_proofPvmmmmS_S_PmPcS_bj"]
+    #[link_name = "\u{1}_Z9gen_proofPvmmmmS_S_PmPcS_bS1_S1_j"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         threadId: u64,
@@ -433,6 +433,8 @@ extern "C" {
         proofFile: *mut ::std::os::raw::c_char,
         d_buffers: *mut ::std::os::raw::c_void,
         loadConstants: bool,
+        constPolsPath: *mut ::std::os::raw::c_char,
+        constTreePath: *mut ::std::os::raw::c_char,
         mpi_node_rank: u32,
     );
 }
@@ -595,12 +597,15 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19set_max_size_threadPvmmmm"]
+    #[link_name = "\u{1}_Z19set_max_size_threadPvmmmmmmm"]
     pub fn set_max_size_thread(
         d_buffers: *mut ::std::os::raw::c_void,
         maxSizeTrace: u64,
         maxSizeContribution: u64,
         maxSizeThread: u64,
+        maxSizeConst: u64,
+        maxSizeConstTree: u64,
+        maxProofSizeThread: u64,
         nThreads: u64,
     );
 }

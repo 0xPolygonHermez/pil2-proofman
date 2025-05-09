@@ -288,7 +288,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
 #endif
 
     TimerStart(STARK_POSTPROCESS);
-    writeProof(setupCtx, h_params.aux_trace, proofBuffer, airgroupId, airId, instanceId, proofFile);
+    writeProofRecursive(setupCtx, h_params.aux_trace, proofBuffer, airgroupId, airId, instanceId, proofFile);
     TimerStopAndLog(STARK_POSTPROCESS);
 
 }
