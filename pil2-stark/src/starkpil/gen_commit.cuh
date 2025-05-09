@@ -7,7 +7,7 @@
 #include "starks_gpu.cuh"
 
 
-void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, TimerGPU &timer, cudaStream_t stream) {
+void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, Goldilocks::Element *root_pinned, TimerGPU &timer, cudaStream_t stream) {
 
     TimerStartGPU(timer, GEN_COMMIT_GPU);
 
@@ -27,6 +27,7 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
 
         Goldilocks::Element *pNodes = (Goldilocks::Element*) d_aux_trace + nCols * NExtended;
         ntt.LDE_MerkleTree_GPU_inplace(pNodes, dst, offset_dst, src, offset_src, nBits, nBitsExtended, nCols, d_aux_trace, offset_aux, timer, stream);
+        CHECKCUDAERR(cudaMemcpyAsync(root_pinned, pNodes + tree_size - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     } else {
         std::cout << "nCols must be greater than 0" << std::endl;
         assert(0);

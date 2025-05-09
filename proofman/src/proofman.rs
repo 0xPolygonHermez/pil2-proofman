@@ -526,16 +526,15 @@ where
         
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all && pctx.dctx_is_my_instance(instance_id) {
-                let thread_id = witness_manager.claim_thread(); 
                 witness_manager.set_pending_witness();
                 witness_tx.send(instance_id).unwrap();
             }
         }
 
+        witness_manager.wait_until_tables_ready();
+
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
-            if *all {
-                witness_manager.wait_until_tables_ready();
-                let thread_id = witness_manager.claim_thread();
+            if *all && pctx.dctx_is_my_instance(instance_id) {
                 witness_tx.send(instance_id).unwrap();
             }
         }
@@ -611,7 +610,6 @@ where
                 std::thread::spawn(move || {
                     while let Ok(instance_id) = witness_rx.recv() {
                         wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
-                        let proof_thread_id = proof_manager.claim_thread();
                         proof_tx.send((instance_id, thread_id)).unwrap();
                     }
                 })
@@ -619,7 +617,7 @@ where
             .collect();
 
         let workers: Vec<_> = (0..max_number_proofs)
-            .map(|thread_id| {
+            .map(|_thread_id| {
                 let instances_clone = instances.clone();
                 let proof_rx = proof_rx.clone();
                 let witness_recursive_tx = witness_recursive_tx.clone();
@@ -635,18 +633,19 @@ where
 
                 std::thread::spawn(move || {
                     while let Ok((instance_id, witness_thread_id)) = proof_rx.recv() {
+                        let proof_thread_id = proof_manager.claim_thread();
                         let (airgroup_id, air_id, all) = instances_clone[instance_id];
-                        let (last_airgroup_id, last_air_id) = proof_manager.get_instance_info(thread_id);
+                        let (last_airgroup_id, last_air_id) = proof_manager.get_instance_info(proof_thread_id);
                         let gen_const_tree = !pctx_clone.options.preallocate
                             && (airgroup_id != last_airgroup_id || air_id != last_air_id);
                         if gen_const_tree {
-                            proof_manager.set_instance_info(thread_id, airgroup_id, air_id)
-                        };
+                            proof_manager.set_instance_info(proof_thread_id, airgroup_id, air_id);
+                        }
                         Self::generate_proof_thread(
                             proofs_clone.clone(),
                             pctx_clone.clone(),
                             sctx_clone.clone(),
-                            thread_id,
+                            proof_thread_id,
                             instance_id,
                             airgroup_id,
                             air_id,
@@ -658,9 +657,8 @@ where
                             d_buffers_clone.clone(),
                             witness_manager.clone(),
                             witness_thread_id,
-                        );
-
-                        proof_manager.release_thread(thread_id);
+                        );        
+                        proof_manager.release_thread(proof_thread_id);
 
                         if pctx_clone.options.aggregation {
                             witness_recursive_tx.send(instance_id).unwrap();
@@ -672,8 +670,7 @@ where
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if *all && pctx.dctx_is_my_instance(instance_id) {
-                let thread_id = proofs_manager.claim_thread();
-                proof_tx.send((instance_id, thread_id)).unwrap();
+                proof_tx.send((instance_id, 0)).unwrap();
             }
         }
 
@@ -1473,7 +1470,6 @@ where
             pctx.dctx_get_node_rank() as u32,
         );
 
-        println!("WINTESS THREAD ID {}", witness_thread_id);
         witness_manager.release_thread(witness_thread_id);
 
         if !all {

@@ -266,8 +266,6 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
 void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {
 
     double time = omp_get_wtime();
-    cudaEvent_t commitWitness;
-    cudaEventCreate(&commitWitness);
     set_device(mpi_node_rank);
 
     uint64_t N = 1 << nBits;
@@ -282,9 +280,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 
     Goldilocks::parcpy(d_buffers->pinned_buffers[thread_id], (Goldilocks::Element *)trace, N * nCols, 4);
     CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetStage1, d_buffers->pinned_buffers[thread_id], sizeTrace, cudaMemcpyHostToDevice, stream));
-    cudaEventRecord(commitWitness, stream);
-    genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, timer, stream);
-    cudaEventSynchronize(commitWitness);
+    genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->pinned_buffers_proof[thread_id], timer, stream);
     time = omp_get_wtime() - time;
 
     std::ostringstream oss;
@@ -297,18 +293,12 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 void get_commit_root(uint64_t arity, uint64_t nBitsExt, uint64_t nCols, void *root, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {\
     double time = omp_get_wtime();
 
-    uint64_t NExtended = 1 << nBitsExt;
-
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     cudaStream_t stream = d_buffers->streams[thread_id];
     TimerGPU &timer = d_buffers->timers[thread_id];
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + thread_id*d_buffers->max_size_contribution;
 
-    Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
-    Goldilocks::Element *pNodes = (Goldilocks::Element*) d_aux_trace + nCols * NExtended;
-    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements(NExtended, arity);
-    CHECKCUDAERR(cudaMemcpyAsync(rootGL, pNodes + tree_size - HASH_SIZE, HASH_SIZE * sizeof(uint64_t), cudaMemcpyDeviceToHost, stream));
     CHECKCUDAERR(cudaStreamSynchronize(stream));
+    memcpy((Goldilocks::Element *)root, d_buffers->pinned_buffers_proof[thread_id], HASH_SIZE * sizeof(uint64_t));
 
     TimerSyncAndLogAllGPU(timer);
 
