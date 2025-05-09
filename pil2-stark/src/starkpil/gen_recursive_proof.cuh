@@ -15,11 +15,8 @@
 // fer que lo dels arbres vagi igual (primer arreglar els de gen_proof)
 
 template <typename ElementType>
-void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, DeviceCommitBuffers *d_buffers, bool vadcop, TimerGPU &timer, cudaStream_t stream)
+void genRecursiveProof_gpu(SetupCtx &setupCtx, DeviceCommitBuffers *d_buffers, Goldilocks::Element *proof_buffer_pinned, TimerGPU &timer, cudaStream_t stream)
 {
-
-    TimerStart(GEN_RECURSIVE_PROOF_GPU);
-
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
     
@@ -269,23 +266,12 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, json &globalInfo, uint64_t airgro
     }
     TimerStopCategoryGPU(timer, FRI);
     TimerStopGPU(timer, STARK_STEP_FRI);
+
+    setProof(setupCtx, (Goldilocks::Element *)d_buffers->d_aux_trace, proof_buffer_pinned, stream);
+
     TimerStopGPU(timer, STARK_GPU_PROOF);
 
-    cudaFree(d_params);
-    cudaFree(d_openingPoints);
-
-    cudaStreamSynchronize(stream);
-
-    TimerSyncAndLogAllGPU(timer); 
-    TimerSyncCategoriesGPU(timer);
-
-    TimerStopAndLog(GEN_RECURSIVE_PROOF_GPU);
-
-    TimerLogCategoryContributionsGPU(timer, STARK_GPU_PROOF);
-
-    TimerStart(STARK_POSTPROCESS);
-    writeProofRecursive(setupCtx, h_params.aux_trace, proofBuffer, airgroupId, airId, instanceId, proofFile);
-    TimerStopAndLog(STARK_POSTPROCESS);
-
+    CHECKCUDAERR(cudaFree(d_params));
+    CHECKCUDAERR(cudaFree(d_openingPoints));
 }
 #endif

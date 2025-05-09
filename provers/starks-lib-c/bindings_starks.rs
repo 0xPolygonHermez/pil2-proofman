@@ -453,7 +453,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_bj"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_bS0_S0_S0_j"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
@@ -470,6 +470,9 @@ extern "C" {
         vadcop: bool,
         d_buffers: *mut ::std::os::raw::c_void,
         loadConstants: bool,
+        constPolsPath: *mut ::std::os::raw::c_char,
+        constTreePath: *mut ::std::os::raw::c_char,
+        proofType: *mut ::std::os::raw::c_char,
         mpi_node_rank: u32,
     );
 }

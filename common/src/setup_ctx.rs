@@ -16,6 +16,11 @@ pub struct SetupsVadcop<F: Field> {
     pub sctx_recursive2: Option<SetupCtx<F>>,
     pub setup_vadcop_final: Option<Setup<F>>,
     pub setup_recursivef: Option<Setup<F>>,
+    pub max_const_size: usize,
+    pub max_const_tree_size: usize,
+    pub max_prover_trace_size: usize,
+    pub max_prover_buffer_size: usize,
+    pub max_proof_size: usize,
     pub total_const_size: usize,
 }
 
@@ -42,12 +47,46 @@ impl<F: Field> SetupsVadcop<F> {
             let total_const_size =
                 sctx_compressor.total_const_size + sctx_recursive1.total_const_size + sctx_recursive2.total_const_size;
 
+            let vadcop_final_trace_size = setup_vadcop_final.stark_info.map_sections_n["cm1"]
+                * (1 << setup_vadcop_final.stark_info.stark_struct.n_bits)
+                + setup_vadcop_final.stark_info.n_publics;
+
+            let max_const_size = sctx_compressor
+                .max_const_size
+                .max(sctx_recursive1.max_const_size)
+                .max(sctx_recursive2.max_const_size)
+                .max(setup_vadcop_final.const_pols_size);
+            let max_const_tree_size = sctx_compressor
+                .max_const_tree_size
+                .max(sctx_recursive1.max_const_tree_size)
+                .max(sctx_recursive2.max_const_tree_size)
+                .max(setup_vadcop_final.const_tree_size);
+            let max_prover_trace_size = sctx_compressor
+                .max_prover_trace_size
+                .max(sctx_recursive1.max_prover_trace_size)
+                .max(sctx_recursive2.max_prover_trace_size)
+                .max(vadcop_final_trace_size as usize);
+            let max_prover_buffer_size = sctx_compressor
+                .max_prover_buffer_size
+                .max(sctx_recursive1.max_prover_buffer_size)
+                .max(sctx_recursive2.max_prover_buffer_size)
+                .max(setup_vadcop_final.prover_buffer_size as usize);
+            let max_proof_size = sctx_compressor
+                .max_proof_size
+                .max(sctx_recursive1.max_proof_size)
+                .max(sctx_recursive2.max_proof_size)
+                .max(setup_vadcop_final.proof_size as usize);
             SetupsVadcop {
                 sctx_compressor: Some(sctx_compressor),
                 sctx_recursive1: Some(sctx_recursive1),
                 sctx_recursive2: Some(sctx_recursive2),
                 setup_vadcop_final: Some(setup_vadcop_final),
                 setup_recursivef,
+                max_const_tree_size,
+                max_const_size,
+                max_prover_trace_size,
+                max_prover_buffer_size,
+                max_proof_size,
                 total_const_size,
             }
         } else {
@@ -58,6 +97,11 @@ impl<F: Field> SetupsVadcop<F> {
                 setup_vadcop_final: None,
                 setup_recursivef: None,
                 total_const_size: 0,
+                max_const_tree_size: 0,
+                max_const_size: 0,
+                max_prover_trace_size: 0,
+                max_prover_buffer_size: 0,
+                max_proof_size: 0,
             }
         }
     }
@@ -157,7 +201,8 @@ impl<F: Field> SetupRepository<F> {
                         let mut total_prover_trace_size = trace_size as usize;
                         total_prover_trace_size += setup.stark_info.n_publics as usize;
                         total_prover_trace_size += setup.stark_info.airvalues_map.as_ref().map_or(0, |v| 3 * v.len());
-                        total_prover_trace_size += setup.stark_info.airgroupvalues_map.as_ref().map_or(0, |v| 3 * v.len());
+                        total_prover_trace_size +=
+                            setup.stark_info.airgroupvalues_map.as_ref().map_or(0, |v| 3 * v.len());
                         total_prover_trace_size += global_info.proof_values_map.as_ref().map_or(0, |v| 3 * v.len());
                         total_prover_trace_size += 3;
                         // if !preallocate {
@@ -168,7 +213,7 @@ impl<F: Field> SetupRepository<F> {
                         max_prover_contribution_area =
                             max_prover_contribution_area.max(trace_size + trace_ext_size + tree_size + 3 * n_extended);
                         total_const_size += setup.const_pols_size + setup.const_tree_size;
-                        max_proof_size = max_proof_size.max(2*setup.proof_size);
+                        max_proof_size = max_proof_size.max(2 * setup.proof_size);
                     }
                     setups.insert((airgroup_id, air_id), setup);
                 }
@@ -184,10 +229,10 @@ impl<F: Field> SetupRepository<F> {
             max_const_tree_size,
             max_const_size,
             max_prover_buffer_size: max_prover_buffer_size as usize,
-            max_prover_trace_size: max_prover_trace_size as usize,
+            max_prover_trace_size: max_prover_trace_size,
             max_prover_contribution_area: max_prover_contribution_area as usize,
             max_proof_size: max_proof_size as usize,
-            total_const_size: total_const_size as usize,
+            total_const_size: total_const_size,
         }
     }
 

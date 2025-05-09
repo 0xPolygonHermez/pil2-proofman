@@ -276,6 +276,10 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let initial_idx = if witness.proof_type == ProofType::VadcopFinal { 0 } else { publics_aggregation };
 
+    let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
+    let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
+    let proof_type: &str = setup.setup_type.clone().into();
+
     gen_recursive_proof_c(
         p_setup,
         trace.as_ptr() as *mut u8,
@@ -292,6 +296,21 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         vadcop,
         d_buffers,
         load_constants,
+        &const_pols_path,
+        &const_pols_tree_path,
+        proof_type,
+        mpi_node_rank,
+    );
+
+    get_proof_c(
+        p_setup,
+        new_proof[initial_idx..].as_mut_ptr(),
+        &proof_file,
+        0 as u64,
+        airgroup_id as u64,
+        air_id as u64,
+        air_instance_id as u64,
+        d_buffers,
         mpi_node_rank,
     );
 

@@ -98,7 +98,14 @@ impl<F: Field> Setup<F> {
             let stark_info = StarkInfo::from_json(&stark_info_json);
             let recursive = setup_type != &ProofType::Basic;
             let preallocate_const = preallocate && gpu;
-            let p_stark_info = stark_info_new_c(stark_info_path.as_str(), recursive, verify_constraints, false, gpu, preallocate_const);
+            let p_stark_info = stark_info_new_c(
+                stark_info_path.as_str(),
+                recursive,
+                verify_constraints,
+                false,
+                gpu,
+                preallocate_const,
+            );
             let expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, false);
             let n_max_tmp1 = get_max_n_tmp1_c(expressions_bin);
             let n_max_tmp3 = get_max_n_tmp3_c(expressions_bin);

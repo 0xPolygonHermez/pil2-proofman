@@ -2,17 +2,13 @@ use std::sync::{Arc, Mutex, Condvar};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub struct ProofExecutionManager {
-    max_concurrent_proofs: usize,
     thread_state: Arc<(Mutex<Vec<bool>>, Condvar)>,
     instance_info: Arc<Box<[(AtomicUsize, AtomicUsize)]>>,
 }
 
 impl ProofExecutionManager {
     pub fn new(max_concurrent_proofs: usize) -> Self {
-        let thread_state = Arc::new((
-            Mutex::new(vec![true; max_concurrent_proofs]),
-            Condvar::new(),
-        ));
+        let thread_state = Arc::new((Mutex::new(vec![true; max_concurrent_proofs]), Condvar::new()));
 
         let instance_info = Arc::new(
             (0..max_concurrent_proofs)
@@ -21,7 +17,7 @@ impl ProofExecutionManager {
                 .into_boxed_slice(),
         );
 
-        Self { max_concurrent_proofs, thread_state, instance_info }
+        Self { thread_state, instance_info }
     }
 
     pub fn claim_thread(&self) -> usize {
@@ -59,19 +55,15 @@ impl ProofExecutionManager {
 
 #[derive(Debug)]
 pub struct WitnessComputationManager {
-    pub max_concurrent_pools: usize,
     pool_state: Arc<(Mutex<Vec<bool>>, Condvar)>,
     pending_witness: Arc<(Mutex<usize>, Condvar)>,
 }
 
 impl WitnessComputationManager {
     pub fn new(max_concurrent_pools: usize) -> Self {
-        let pool_state = Arc::new((
-            Mutex::new(vec![true; max_concurrent_pools]),
-            Condvar::new(),
-        ));
+        let pool_state = Arc::new((Mutex::new(vec![true; max_concurrent_pools]), Condvar::new()));
         let pending_witness = Arc::new((Mutex::new(0), Condvar::new()));
-        Self { max_concurrent_pools, pool_state, pending_witness }
+        Self { pool_state, pending_witness }
     }
 
     pub fn claim_thread(&self) -> usize {

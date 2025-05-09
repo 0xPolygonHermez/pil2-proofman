@@ -227,40 +227,59 @@ void get_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
 }
 
 
-void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants, uint32_t mpi_node_rank)
+void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *trace, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers_, bool loadConstants, char *constPolsPath, char *constTreePath, char *proofType, uint32_t mpi_node_rank)
 {
+    uint64_t threadId = 0;
+
     set_device(mpi_node_rank);
-
-    json globalInfo;
-    file2json(globalInfoFile, globalInfo);
-
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
+    cudaStream_t stream = d_buffers->streams[threadId];
+    TimerGPU &timer = d_buffers->timers[threadId];
     double time = omp_get_wtime();
 
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + threadId*d_buffers->max_size_prover_buffer;
+
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
+    uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
     uint64_t sizeTrace = N * (setupCtx->starkInfo.mapSectionsN["cm1"]) * sizeof(Goldilocks::Element);
     uint64_t sizeConstPols = N * (setupCtx->starkInfo.nConstants) * sizeof(Goldilocks::Element);
     uint64_t sizeConstTree = get_const_tree_size((void *)&setupCtx->starkInfo) * sizeof(Goldilocks::Element);
 
-    CHECKCUDAERR(cudaMemcpy(d_buffers->d_trace, trace, sizeTrace, cudaMemcpyHostToDevice));
-    if(loadConstants) {
-        CHECKCUDAERR(cudaMemcpy(d_buffers->d_constPols, pConstPols, sizeConstPols, cudaMemcpyHostToDevice));
-        CHECKCUDAERR(cudaMemcpy(d_buffers->d_constTree, pConstTree, sizeConstTree, cudaMemcpyHostToDevice));
+    auto key = std::make_pair(airgroupId, airId);
+    auto it = d_buffers->air_instances.find(key);
+
+    Goldilocks::parcpy(d_buffers->pinned_buffers[threadId], (Goldilocks::Element *)trace, N * nCols, 4);
+
+    if (it == d_buffers->air_instances.end() && loadConstants) {
+        loadFileParallel(d_buffers->pinned_buffers_const[threadId], constPolsPath, sizeConstPols);
+        loadFileParallel(d_buffers->pinned_buffers_const_tree[threadId], constTreePath, sizeConstTree);
     }
 
+    memcpy(&d_buffers->pinned_buffers[threadId][N * nCols], (Goldilocks::Element *)pPublicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
+
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
-    CHECKCUDAERR(cudaMemcpy(d_buffers->d_aux_trace + offsetPublicInputs, (Goldilocks::Element *)pPublicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
-
+    CHECKCUDAERR(cudaMemcpyAsync(d_buffers->d_trace, d_buffers->pinned_buffers[threadId], sizeTrace, cudaMemcpyHostToDevice, stream));
+    CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetPublicInputs, &d_buffers->pinned_buffers[threadId][N * nCols], setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
     
-    time = omp_get_wtime() - time;
+    gl64_t *d_const_pols;
+    gl64_t *d_const_tree;
+    if (it != d_buffers->air_instances.end() && it->second.find(proofType) != it->second.end()) {
+        AirInstanceInfo& instance = it->second[proofType];
+        d_const_pols = d_buffers->d_constPols + instance.const_pols_offset;
+        d_const_tree = d_buffers->d_constPols + instance.const_tree_offset;
+    } else {
+        // uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
+        // uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
+        // CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetConstPols, d_buffers->pinned_buffers_const[threadId], sizeConstPols, cudaMemcpyHostToDevice));
+        // CHECKCUDAERR(cudaMemcpy(d_aux_trace + offsetConstTree, d_buffers->pinned_buffers_const_tree[threadId], sizeConstTree, cudaMemcpyHostToDevice));
+        // d_const_pols = d_aux_trace + offsetConstPols;
+        // d_const_tree = d_aux_trace + offsetConstTree;
+        CHECKCUDAERR(cudaMemcpyAsync(d_buffers->d_constPols, d_buffers->pinned_buffers_const[threadId], sizeConstPols, cudaMemcpyHostToDevice, stream));
+        CHECKCUDAERR(cudaMemcpyAsync(d_buffers->d_constTree, d_buffers->pinned_buffers_const_tree[threadId], sizeConstTree, cudaMemcpyHostToDevice, stream));
+    }
 
-    time = omp_get_wtime();
-    cudaStream_t stream;
-    CHECKCUDAERR(cudaStreamCreate(&stream));
-    TimerGPU timer(stream);
-    genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), d_buffers, vadcop, timer, stream);
-    time = omp_get_wtime() - time;
+    genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, d_buffers, d_buffers->pinned_buffers_proof[threadId], timer, stream);
 }
 
 void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {

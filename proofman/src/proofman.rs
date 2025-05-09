@@ -23,10 +23,6 @@ use std::sync::atomic::{AtomicU64, AtomicBool};
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 
-use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
-use rand::SeedableRng;
-
 use p3_goldilocks::Goldilocks;
 
 use p3_field::PrimeField64;
@@ -457,7 +453,7 @@ where
         let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
 
         let workers: Vec<_> = (0..max_number_proofs)
-            .map(|thread_id| {
+            .map(|_thread_id| {
                 let contributions_rx = contributions_rx.clone();
                 let contributions_manager = contributions_manager.clone();
                 let witness_manager = witness_manager.clone();
@@ -470,12 +466,13 @@ where
 
                 std::thread::spawn(move || {
                     while let Ok((instance_id, witness_thread_id)) = contributions_rx.recv() {
+                        let contribution_thread_id = contributions_manager.claim_thread();
                         let value = Self::get_contribution_air(
                             pctx_clone.clone(),
                             &sctx_clone,
                             instance_id,
                             aux_trace_clone.clone().as_ptr() as *mut u8,
-                            thread_id,
+                            contribution_thread_id,
                             d_buffers_clone.clone(),
                             witness_manager.clone(),
                             witness_thread_id,
@@ -491,7 +488,7 @@ where
                             pctx_clone.free_instance(instance_id);
                         }
 
-                        contributions_manager.release_thread(thread_id);
+                        contributions_manager.release_thread(contribution_thread_id);
                     }
                 })
             })
@@ -504,7 +501,6 @@ where
                 let witness_manager = witness_manager.clone();
                 let pctx_clone = pctx.clone();
                 let instances = instances.clone();
-                let contributions_manager = contributions_manager.clone();
                 let wcm_clone = wcm.clone();
 
                 std::thread::spawn(move || {
@@ -516,14 +512,13 @@ where
                         }
 
                         if pctx_clone.dctx_is_my_instance(instance_id) {
-                            let contrib_thread_id = contributions_manager.claim_thread();
                             contributions_tx.send((instance_id, thread_id)).unwrap();
                         }
                     }
                 })
             })
             .collect();
-        
+
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all && pctx.dctx_is_my_instance(instance_id) {
                 witness_manager.set_pending_witness();
@@ -602,10 +597,7 @@ where
         let witness_pools: Vec<_> = (0..max_concurrent_pools)
             .map(|thread_id| {
                 let witness_rx = witness_rx.clone();
-                let witness_manager = witness_manager.clone();
                 let proof_tx = proof_tx.clone();
-                let pctx_clone = pctx.clone();
-                let proof_manager = proofs_manager.clone();
                 let wcm_clone = wcm.clone();
                 std::thread::spawn(move || {
                     while let Ok(instance_id) = witness_rx.recv() {
@@ -657,7 +649,7 @@ where
                             d_buffers_clone.clone(),
                             witness_manager.clone(),
                             witness_thread_id,
-                        );        
+                        );
                         proof_manager.release_thread(proof_thread_id);
 
                         if pctx_clone.options.aggregation {
@@ -676,7 +668,6 @@ where
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all && pctx.dctx_is_my_instance(instance_id) {
-                let thread_id = witness_manager.claim_thread();
                 witness_tx.send(instance_id).unwrap();
             }
         }
@@ -772,6 +763,27 @@ where
         let max_sizes_aggregation_ptr = &max_sizes_aggregation as *const MaxSizes as *mut c_void;
         let d_buffers_aggregation =
             Arc::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_aggregation_ptr, mpi_node_rank)));
+
+        let max_size_const = match cfg!(feature = "gpu") {
+            true => setups.max_const_size as u64,
+            false => 0,
+        };
+
+        let max_size_const_tree = match cfg!(feature = "gpu") {
+            true => setups.max_const_tree_size as u64,
+            false => 0,
+        };
+
+        set_max_size_thread_c(
+            d_buffers_aggregation.get_ptr(),
+            setups.max_prover_trace_size as u64,
+            0,
+            setups.max_prover_buffer_size as u64,
+            max_size_const,
+            max_size_const_tree,
+            setups.max_proof_size as u64,
+            1,
+        );
 
         let (trace, prover_buffer) = if pctx.options.aggregation {
             let (trace_size, prover_buffer_size) = get_recursive_buffer_sizes(&pctx, &setups)?;
@@ -1137,12 +1149,12 @@ where
         if !all {
             witness_manager.release_thread(witness_thread_id);
         }
-        
+
         let pctx_clone = pctx.clone();
         std::thread::spawn(move || {
             pctx_clone.free_instance(instance_id);
         });
-        
+
         get_proof_c(
             p_setup,
             proof.as_mut_ptr(),

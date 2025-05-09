@@ -66,7 +66,14 @@ pub fn stark_info_new_c(
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, recursive, verify_constraints, verify, gpu, preallocate)
+        stark_info_new(
+            filename.as_ptr() as *mut std::os::raw::c_char,
+            recursive,
+            verify_constraints,
+            verify,
+            gpu,
+            preallocate,
+        )
     }
 }
 
@@ -844,6 +851,9 @@ pub fn gen_recursive_proof_c(
     vadcop: bool,
     d_buffers: *mut c_void,
     load_constants: bool,
+    const_pols_path: &str,
+    const_tree_path: &str,
+    proof_type: &str,
     mpi_node_rank: u32,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
@@ -851,6 +861,15 @@ pub fn gen_recursive_proof_c(
 
     let global_info_file_name = CString::new(global_info_file).unwrap();
     let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_filename_name = CString::new(const_pols_path).unwrap();
+    let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_tree_filename_name = CString::new(const_tree_path).unwrap();
+    let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
         gen_recursive_proof(
@@ -869,6 +888,9 @@ pub fn gen_recursive_proof_c(
             vadcop,
             d_buffers,
             load_constants,
+            const_filename_ptr,
+            const_tree_filename_ptr,
+            proof_type_ptr,
             mpi_node_rank,
         );
     }
@@ -1081,7 +1103,16 @@ pub fn set_max_size_thread_c(
     n_threads: u64,
 ) {
     unsafe {
-        set_max_size_thread(d_buffers, max_size_trace, max_size_contribution, max_size_buffer, max_size_const, max_size_const_tree, max_proof_size, n_threads);
+        set_max_size_thread(
+            d_buffers,
+            max_size_trace,
+            max_size_contribution,
+            max_size_buffer,
+            max_size_const,
+            max_size_const_tree,
+            max_proof_size,
+            n_threads,
+        );
     }
 }
 
@@ -1685,6 +1716,9 @@ pub fn gen_recursive_proof_c(
     _vadcop: bool,
     _d_buffers: *mut c_void,
     _load_constants: bool,
+    _const_pols_path: &str,
+    _const_tree_path: &str,
+    _proof_type: &str,
     _mpi_node_rank: u32,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
