@@ -3,6 +3,7 @@
 #include "starks.hpp"
 #include "omp.h"
 #include "starks_api.hpp"
+#include <cstring>
 #ifdef __USE_CUDA__
 #include "gen_recursive_proof.cuh"
 #include "gen_proof.cuh"
@@ -13,9 +14,9 @@
 struct MaxSizes
 {
     uint64_t maxTraceArea;
-    uint64_t maxConstArea;
+    uint64_t totalConstPols;
     uint64_t maxAuxTraceArea;
-    uint64_t maxConstTreeSize;
+    uint64_t totalConstPolsAggregation;
 };
 
 
@@ -26,7 +27,8 @@ void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
     DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
     CHECKCUDAERR(cudaMalloc(&buffers->d_aux_trace, maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_trace, maxSizes->maxTraceArea * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->maxConstArea * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
+    CHECKCUDAERR(cudaMalloc(&buffers->d_constPolsAggregation, maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
     init_gpu_const_2();
     return (void *)buffers;
 }
@@ -81,6 +83,7 @@ void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank)
     CHECKCUDAERR(cudaFree(buffers->d_aux_trace));
     CHECKCUDAERR(cudaFree(buffers->d_trace));
     CHECKCUDAERR(cudaFree(buffers->d_constPols));
+    CHECKCUDAERR(cudaFree(buffers->d_constPolsAggregation));
     if (buffers->streams != nullptr) {
         delete[] buffers->timers;
         for (uint64_t i = 0; i < buffers->n_threads; i++) {
@@ -109,9 +112,11 @@ void load_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_o
     loadFileParallel(constPols, constFilename, sizeConstPols);
     loadFileParallel(constTree, constTreeFilename, sizeConstTree);
     
-    CHECKCUDAERR(cudaMemcpy(buffers->d_constPols + instance.const_pols_offset, constPols, sizeConstPols, cudaMemcpyHostToDevice));
-    CHECKCUDAERR(cudaMemcpy(buffers->d_constPols + instance.const_tree_offset, constTree, sizeConstTree, cudaMemcpyHostToDevice));
+    gl64_t *d_constPols = (strcmp(proofType, "basic") == 0) ? buffers->d_constPols : buffers->d_constPolsAggregation;
+    gl64_t *d_constTree = (strcmp(proofType, "basic") == 0) ? buffers->d_constPols : buffers->d_constPolsAggregation;
 
+    CHECKCUDAERR(cudaMemcpy(d_constPols + instance.const_pols_offset, constPols, sizeConstPols, cudaMemcpyHostToDevice));
+    CHECKCUDAERR(cudaMemcpy(d_constTree + instance.const_tree_offset, constTree, sizeConstTree, cudaMemcpyHostToDevice));
     delete[] constPols;
     delete[] constTree;
 }
@@ -263,8 +268,8 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
     gl64_t *d_const_tree;
     if (it != d_buffers->air_instances.end() && it->second.find(proofType) != it->second.end()) {
         AirInstanceInfo& instance = it->second[proofType];
-        d_const_pols = d_buffers->d_constPols + instance.const_pols_offset;
-        d_const_tree = d_buffers->d_constPols + instance.const_tree_offset;
+        d_const_pols = d_buffers->d_constPolsAggregation + instance.const_pols_offset;
+        d_const_tree = d_buffers->d_constPolsAggregation + instance.const_tree_offset;
     } else {
         uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
         uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];

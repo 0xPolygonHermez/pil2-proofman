@@ -1015,18 +1015,7 @@ where
             false => 0.0,
         };
 
-        let max_size_buffer = match cfg!(feature = "gpu") {
-            true => {
-                let mut max_size = (free_memory_gpu / 8.0).floor() as u64;
-                if pctx.options.preallocate {
-                    max_size -= sctx.total_const_size as u64;
-                }
-                max_size
-            }
-            false => 0,
-        };
-
-        let max_const_area = match pctx.options.preallocate {
+        let total_const_area = match pctx.options.preallocate {
             true => sctx.total_const_size as u64,
             false => 0,
         };
@@ -1036,11 +1025,30 @@ where
             false => 0,
         };
 
+        let total_const_area_aggregation = match pctx.options.aggregation && pctx.options.preallocate {
+            true => setups_vadcop.total_const_size as u64,
+            false => 0,
+        };
+
+        let max_size_buffer = match cfg!(feature = "gpu") {
+            true => {
+                let mut max_size = (free_memory_gpu / 8.0).floor() as u64;
+                if pctx.options.preallocate {
+                    max_size -= sctx.total_const_size as u64;
+                    if pctx.options.aggregation {
+                        max_size -= setups_vadcop.total_const_size as u64;
+                    }
+                }
+                max_size
+            }
+            false => 0,
+        };
+
         let max_sizes = MaxSizes {
             max_trace_area: max_size_aggregation,
-            max_const_area,
+            total_const_area,
             max_aux_trace_area: max_size_buffer,
-            max_const_tree_size: 0,
+            total_const_area_aggregation,
         };
 
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;

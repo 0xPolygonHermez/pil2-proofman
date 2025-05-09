@@ -831,6 +831,7 @@ struct DeviceCommitBuffers
 {
     gl64_t *d_trace;
     gl64_t *d_constPols;
+    gl64_t *d_constPolsAggregation;
     gl64_t *d_aux_trace;
     bool recursive;
     uint64_t max_size_prover_buffer;

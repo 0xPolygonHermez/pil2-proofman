@@ -208,10 +208,6 @@ impl<F: Field> SetupRepository<F> {
                             setup.stark_info.airgroupvalues_map.as_ref().map_or(0, |v| 3 * v.len());
                         total_prover_trace_size += global_info.proof_values_map.as_ref().map_or(0, |v| 3 * v.len());
                         total_prover_trace_size += 3;
-                        // if !preallocate {
-                        //     total_prover_trace_size += setup.const_pols_size as usize;
-                        //     total_prover_trace_size += setup.const_tree_size as usize;
-                        // }
                         max_prover_trace_size = max_prover_trace_size.max(total_prover_trace_size);
                         max_prover_contribution_area =
                             max_prover_contribution_area.max(trace_size + trace_ext_size + tree_size + 3 * n_extended);
@@ -219,6 +215,7 @@ impl<F: Field> SetupRepository<F> {
                         max_proof_size = max_proof_size.max(2 * setup.proof_size);
                     }
                     setups.insert((airgroup_id, air_id), setup);
+                    if setup_type == &ProofType::Recursive2 { break; }
                 }
             }
         } else {

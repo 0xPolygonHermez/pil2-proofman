@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::io::Read;
 use num_traits::ToPrimitive;
 
-use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
+use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
 
 use std::os::raw::{c_void, c_char};
 
@@ -29,33 +29,9 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 #[derive(Debug)]
 pub struct MaxSizes {
     pub max_trace_area: u64,
-    pub max_const_area: u64,
+    pub total_const_area: u64,
     pub max_aux_trace_area: u64,
-    pub max_const_tree_size: u64,
-}
-
-pub fn discover_max_sizes<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> MaxSizes {
-    let max_trace_area = 0;
-    let max_const_tree_size = 0;
-    let max_const_area = 0;
-
-    let mut max_aux_trace_area = 0;
-
-    let mut update_max_values = |setup: &Setup<F>| {
-        max_aux_trace_area = max_aux_trace_area.max(setup.prover_buffer_size);
-    };
-
-    let instances = pctx.dctx_get_instances();
-    let my_instances = pctx.dctx_get_my_instances();
-
-    for instance_id in my_instances {
-        let (airgroup_id, air_id, _) = instances[instance_id];
-
-        let setup = sctx.get_setup(airgroup_id, air_id);
-        update_max_values(setup);
-    }
-
-    MaxSizes { max_trace_area, max_const_area, max_aux_trace_area, max_const_tree_size }
+    pub total_const_area_aggregation: u64,
 }
 
 pub fn gen_witness_recursive<F: PrimeField64>(
@@ -622,9 +598,11 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
 
     let witness = vec![F::ZERO; witness_size];
 
+    let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as u64;
+
     unsafe {
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-        get_witness(zkin.as_ptr() as *mut u64, dat_filename_ptr, witness.as_ptr() as *mut c_void, 128);
+        get_witness(zkin.as_ptr() as *mut u64, dat_filename_ptr, witness.as_ptr() as *mut c_void, max_num_threads);
     }
 
     Ok(witness)
