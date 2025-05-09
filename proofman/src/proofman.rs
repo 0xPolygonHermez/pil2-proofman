@@ -438,7 +438,7 @@ where
         let contributions_manager = Arc::new(contributions_manager);
 
         let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-        let (threads_per_pool, max_concurrent_pools) = match cfg!(feature = "gpu") {
+        let (threads_per_pool_contributions, max_concurrent_pools_contributions) = match cfg!(feature = "gpu") {
             true => {
                 let threads_per_pool = 4;
                 let max_concurrent_pools = max_num_threads / threads_per_pool;
@@ -447,11 +447,11 @@ where
             false => (max_num_threads, 1),
         };
 
-        let witness_manager = WitnessComputationManager::new(max_concurrent_pools);
+        let witness_manager = WitnessComputationManager::new(max_concurrent_pools_contributions);
         let witness_manager = Arc::new(witness_manager);
 
         let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
-        let precomputed_witnesses = Arc::new(WitnessBuffer::new(2 * max_concurrent_pools));
+        let precomputed_witnesses = Arc::new(WitnessBuffer::new(32)); // TODO: NOT HARDCODED
 
         let contribution_pools: Vec<_> = (0..max_number_proofs)
             .map(|_thread_id| {
@@ -487,7 +487,7 @@ where
             })
             .collect();
 
-        let witness_pools: Vec<_> = (0..max_concurrent_pools)
+        let witness_pools: Vec<_> = (0..max_concurrent_pools_contributions)
             .map(|thread_id| {
                 let witness_rx = witness_rx.clone();
                 let witness_manager = witness_manager.clone();
@@ -506,7 +506,12 @@ where
                         Err(_) => break,
                     };
 
-                    wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
+                    wcm_clone.calculate_witness(
+                        1,
+                        &[instance_id],
+                        threads_per_pool_contributions * thread_id,
+                        threads_per_pool_contributions,
+                    );
                     let (_, _, all) = instances[instance_id];
                     if !all {
                         witness_manager.set_witness_completed();
@@ -569,11 +574,20 @@ where
 
         let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
 
+        let (threads_per_pool_basic_proofs, max_concurrent_pools_basic_proofs) = match cfg!(feature = "gpu") {
+            true => {
+                let threads_per_pool = 4;
+                let max_concurrent_pools = max_num_threads / threads_per_pool;
+                (threads_per_pool, max_concurrent_pools)
+            }
+            false => (max_num_threads, 1),
+        };
+
         let proofs_manager = Arc::new(ProofExecutionManager::new(max_number_proofs));
-        let witness_manager = Arc::new(WitnessComputationManager::new(max_concurrent_pools));
+        let witness_manager = Arc::new(WitnessComputationManager::new(max_concurrent_pools_basic_proofs));
 
         let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
-        let precomputed_witnesses = Arc::new(WitnessBuffer::new(2 * max_concurrent_pools));
+        let precomputed_witnesses = Arc::new(WitnessBuffer::new(32)); // TODO: NOT HARDCODED
 
         let (witness_recursive_tx, witness_recursive_rx) = crossbeam_channel::unbounded::<usize>();
 
@@ -591,7 +605,7 @@ where
             }
         });
 
-        let witness_pools: Vec<_> = (0..max_concurrent_pools)
+        let witness_pools: Vec<_> = (0..max_concurrent_pools_basic_proofs)
             .map(|thread_id| {
                 let witness_rx = witness_rx.clone();
                 let wcm_clone = wcm.clone();
@@ -609,7 +623,12 @@ where
 
                     let (_, _, all) = instances_clone[instance_id];
                     if !all {
-                        wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
+                        wcm_clone.calculate_witness(
+                            1,
+                            &[instance_id],
+                            threads_per_pool_basic_proofs * thread_id,
+                            threads_per_pool_basic_proofs,
+                        );
                     }
                     precomputed_witnesses.push(instance_id);
                 })
@@ -635,11 +654,16 @@ where
                         let proof_thread_id = proof_manager.claim_thread();
 
                         let (airgroup_id, air_id, _) = instances_clone[instance_id];
-                        let (last_airgroup_id, last_air_id) = proof_manager.get_instance_info(proof_thread_id);
+                        let (last_airgroup_id, last_air_id, _) = proof_manager.get_instance_info(proof_thread_id);
                         let gen_const_tree = !pctx_clone.options.preallocate
                             && (airgroup_id != last_airgroup_id || air_id != last_air_id);
                         if gen_const_tree {
-                            proof_manager.set_instance_info(proof_thread_id, airgroup_id, air_id);
+                            proof_manager.set_instance_info(
+                                proof_thread_id,
+                                airgroup_id,
+                                air_id,
+                                ProofType::Basic as usize,
+                            );
                         }
                         Self::generate_proof_thread(
                             proofs_clone.clone(),
@@ -774,6 +798,8 @@ where
             false => 0,
         };
 
+        let max_number_recursive_proofs = 1;
+
         set_max_size_thread_c(
             d_buffers.get_ptr(),
             setups.max_prover_trace_size as u64,
@@ -782,22 +808,28 @@ where
             max_size_const,
             max_size_const_tree,
             setups.max_proof_size as u64,
-            1,
+            max_number_recursive_proofs,
         );
 
-        let (trace, prover_buffer) = if pctx.options.aggregation {
+        let (traces, prover_buffers): (Vec<_>, Vec<_>) = if pctx.options.aggregation {
             let (trace_size, prover_buffer_size) = get_recursive_buffer_sizes(&pctx, &setups)?;
-            let trace = Arc::new(create_buffer_fast::<F>(trace_size));
-            let prover_buffer = Arc::new(create_buffer_fast::<F>(prover_buffer_size));
-            (trace, prover_buffer)
-        } else {
-            (Arc::new(Vec::new()), Arc::new(Vec::new()))
-        };
 
-        let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
+            (0..max_number_proofs)
+                .map(|_| {
+                    let trace = Arc::new(create_buffer_fast::<F>(trace_size));
+                    let prover_buffer = Arc::new(create_buffer_fast::<F>(prover_buffer_size));
+                    (trace, prover_buffer)
+                })
+                .unzip()
+        } else {
+            let empty_buffer = Arc::new(Vec::new());
+            (vec![empty_buffer.clone(); max_number_proofs], vec![empty_buffer.clone(); max_number_proofs])
+        };
 
         timer_start_info!(GENERATING_COMPRESSED_PROOFS);
         timer_start_info!(GENERATING_INNER_COMPRESSED_PROOFS);
+        let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
+
         let mut recursive_witness = Arc::try_unwrap(recursive_witness).unwrap().into_inner().unwrap();
         let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
         #[allow(unused_assignments)]
@@ -820,10 +852,11 @@ where
                         &pctx,
                         &setups,
                         witness,
-                        &trace,
-                        &prover_buffer,
+                        &traces[0],
+                        &prover_buffers[0],
                         &output_dir_path,
                         d_buffers.get_ptr(),
+                        0,
                         load_const_tree,
                         mpi_node_rank,
                     );
@@ -840,10 +873,11 @@ where
                     &pctx,
                     &setups,
                     witness,
-                    &trace,
-                    &prover_buffer,
+                    &traces[0],
+                    &prover_buffers[0],
                     &output_dir_path,
                     d_buffers.get_ptr(),
+                    0,
                     load_const_tree,
                     mpi_node_rank,
                 );
@@ -889,10 +923,11 @@ where
                     setups.clone(),
                     witness_recursive2,
                     airgroup,
-                    trace.clone(),
-                    prover_buffer.clone(),
+                    traces[0].clone(),
+                    prover_buffers[0].clone(),
                     output_dir_path.clone(),
                     d_buffers.clone(),
+                    0,
                     load_const_tree,
                     mpi_node_rank,
                 ));
@@ -916,8 +951,8 @@ where
             &pctx,
             &setups,
             &recursive2_proofs,
-            &trace,
-            &prover_buffer,
+            &traces[0],
+            &prover_buffers[0],
             output_dir_path.clone(),
             d_buffers.get_ptr(),
             mpi_node_rank,
@@ -931,8 +966,8 @@ where
                 &pctx,
                 &setups,
                 &agg_recursive2_proof,
-                &trace,
-                &prover_buffer,
+                &traces[0],
+                &prover_buffers[0],
                 output_dir_path.clone(),
                 d_buffers.get_ptr(),
             )?;
@@ -954,8 +989,8 @@ where
                     &pctx,
                     &setups,
                     &vadcop_final_proof.proof,
-                    &trace,
-                    &prover_buffer,
+                    &traces[0],
+                    &prover_buffers[0],
                     output_dir_path.clone(),
                 )?;
                 timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
@@ -1205,6 +1240,7 @@ where
         prover_buffer: Arc<Vec<F>>,
         output_dir_path: PathBuf,
         d_buffers: Arc<DeviceBuffer>,
+        proof_thread_id: usize,
         load_constants: bool,
         mpi_node_rank: u32,
     ) -> std::thread::JoinHandle<()> {
@@ -1217,6 +1253,7 @@ where
                 &prover_buffer,
                 &output_dir_path,
                 d_buffers.clone().get_ptr(),
+                proof_thread_id,
                 load_constants,
                 mpi_node_rank,
             );

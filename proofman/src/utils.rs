@@ -361,7 +361,10 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                 let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
                 let proof_type: &str = setup.setup_type.clone().into();
-                println!("Loading const pols in GPU for airgroup {} and air {} and proof_type {}", airgroup_id, air_id, proof_type);
+                println!(
+                    "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
+                    airgroup_id, air_id, proof_type
+                );
                 load_const_pols_gpu_c(
                     airgroup_id as u64,
                     air_id as u64,
@@ -378,7 +381,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
             }
         }
     }
-    
+
     let mut _offset_aggregation = 0;
     if pctx.options.aggregation {
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
@@ -392,7 +395,10 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                         let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                         let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
                         let proof_type: &str = setup.setup_type.clone().into();
-                        println!("Loading const pols in GPU for airgroup {} and air {} and proof_type {}", airgroup_id, air_id, proof_type);
+                        println!(
+                            "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
+                            airgroup_id, air_id, proof_type
+                        );
                         load_const_pols_gpu_c(
                             airgroup_id as u64,
                             air_id as u64,
@@ -421,7 +427,10 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
                     let proof_type: &str = setup.setup_type.clone().into();
-                    println!("Loading const pols in GPU for airgroup {} and air {} and proof_type {}", airgroup_id, air_id, proof_type);
+                    println!(
+                        "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
+                        airgroup_id, air_id, proof_type
+                    );
                     load_const_pols_gpu_c(
                         airgroup_id as u64,
                         air_id as u64,
@@ -449,7 +458,10 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                 let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
                 let proof_type: &str = setup.setup_type.clone().into();
-                println!("Loading const pols in GPU for airgroup {} and air {} and proof_type {}", airgroup_id, 0, proof_type);
+                println!(
+                    "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
+                    airgroup_id, 0, proof_type
+                );
                 load_const_pols_gpu_c(
                     airgroup_id as u64,
                     0_u64,

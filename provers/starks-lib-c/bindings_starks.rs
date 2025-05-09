@@ -453,10 +453,11 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_bS0_S0_S0_j"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmmS_S_S_S_S_PmS0_bS_bS0_S0_S0_j"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
+        threadId: u64,
         airgroupId: u64,
         airId: u64,
         instanceId: u64,

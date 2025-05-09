@@ -215,7 +215,9 @@ impl<F: Field> SetupRepository<F> {
                         max_proof_size = max_proof_size.max(2 * setup.proof_size);
                     }
                     setups.insert((airgroup_id, air_id), setup);
-                    if setup_type == &ProofType::Recursive2 { break; }
+                    if setup_type == &ProofType::Recursive2 {
+                        break;
+                    }
                 }
             }
         } else {

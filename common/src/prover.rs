@@ -24,6 +24,19 @@ pub enum ProofType {
     RecursiveF,
 }
 
+impl ProofType {
+    pub fn as_usize(&self) -> usize {
+        match self {
+            ProofType::Basic => 0,
+            ProofType::Compressor => 1,
+            ProofType::Recursive1 => 2,
+            ProofType::Recursive2 => 3,
+            ProofType::VadcopFinal => 4,
+            ProofType::RecursiveF => 5,
+        }
+    }
+}
+
 impl From<ProofType> for &'static str {
     fn from(p: ProofType) -> Self {
         match p {

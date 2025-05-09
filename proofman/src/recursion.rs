@@ -137,6 +137,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: &Path,
     d_buffers: *mut c_void,
+    thread_id: usize,
     load_constants: bool,
     mpi_node_rank: u32,
 ) -> Proof<F> {
@@ -222,6 +223,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         new_proof[initial_idx..].as_mut_ptr(),
         &proof_file,
         global_info_file,
+        thread_id as u64,
         airgroup_id as u64,
         air_id as u64,
         air_instance_id as u64,
@@ -238,7 +240,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         p_setup,
         new_proof[initial_idx..].as_mut_ptr(),
         &proof_file,
-        0_u64,
+        thread_id as u64,
         airgroup_id as u64,
         air_id as u64,
         air_instance_id as u64,
@@ -359,6 +361,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             prover_buffer,
                             &output_dir_path,
                             d_buffers,
+                            0,
                             true,
                             mpi_node_rank,
                         );
@@ -441,6 +444,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         prover_buffer,
         &output_dir_path,
         d_buffers,
+        0,
         true,
         mpi_node_rank,
     );

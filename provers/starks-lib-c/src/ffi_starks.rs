@@ -845,6 +845,7 @@ pub fn gen_recursive_proof_c(
     proof_buffer: *mut u64,
     proof_file: &str,
     global_info_file: &str,
+    thread_id: u64,
     airgroup_id: u64,
     air_id: u64,
     instance_id: u64,
@@ -871,10 +872,12 @@ pub fn gen_recursive_proof_c(
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
 
+    println!("THREAAAAD {}", thread_id);
     unsafe {
         gen_recursive_proof(
             p_setup_ctx,
             global_info_file_ptr,
+            thread_id,
             airgroup_id,
             air_id,
             instance_id,
@@ -1710,6 +1713,7 @@ pub fn gen_recursive_proof_c(
     _proof_buffer: *mut u64,
     _proof_file: &str,
     _global_info_file: &str,
+    _thread_id: u64,
     _airgroup_id: u64,
     _air_id: u64,
     _instance_id: u64,

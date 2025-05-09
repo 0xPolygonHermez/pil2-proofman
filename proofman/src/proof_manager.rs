@@ -4,7 +4,7 @@ use crossbeam_queue::ArrayQueue;
 
 pub struct ProofExecutionManager {
     thread_state: Arc<(Mutex<Vec<bool>>, Condvar)>,
-    instance_info: Arc<Box<[(AtomicUsize, AtomicUsize)]>>,
+    instance_info: Arc<Box<[(AtomicUsize, AtomicUsize, AtomicUsize)]>>,
 }
 
 impl ProofExecutionManager {
@@ -13,7 +13,7 @@ impl ProofExecutionManager {
 
         let instance_info = Arc::new(
             (0..max_concurrent_proofs)
-                .map(|_| (AtomicUsize::new(0), AtomicUsize::new(0)))
+                .map(|_| (AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0)))
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
         );
@@ -41,15 +41,17 @@ impl ProofExecutionManager {
         cvar.notify_one();
     }
 
-    pub fn set_instance_info(&self, thread_id: usize, instance_id: usize, instance_size: usize) {
-        self.instance_info[thread_id].0.store(instance_id, Ordering::Release);
-        self.instance_info[thread_id].1.store(instance_size, Ordering::Release);
+    pub fn set_instance_info(&self, thread_id: usize, airgroup_id: usize, air_id: usize, proof_type: usize) {
+        self.instance_info[thread_id].0.store(airgroup_id, Ordering::Release);
+        self.instance_info[thread_id].1.store(air_id, Ordering::Release);
+        self.instance_info[thread_id].2.store(proof_type, Ordering::Release);
     }
 
-    pub fn get_instance_info(&self, thread_id: usize) -> (usize, usize) {
+    pub fn get_instance_info(&self, thread_id: usize) -> (usize, usize, usize) {
         (
             self.instance_info[thread_id].0.load(Ordering::Acquire),
             self.instance_info[thread_id].1.load(Ordering::Acquire),
+            self.instance_info[thread_id].2.load(Ordering::Acquire),
         )
     }
 }
