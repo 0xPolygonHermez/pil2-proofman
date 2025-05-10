@@ -404,6 +404,7 @@ where
             false => 1,
         };
 
+
         let proof_count = Arc::new(AtomicU64::new(0)); // shared between threads
 
         let proof_count_clone = Arc::clone(&proof_count);
@@ -413,9 +414,11 @@ where
         let values_clone = values.clone();
         let d_buffers_clone = d_buffers.clone();
 
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_REAL);
+
         let proof_thread = std::thread::spawn(move || {
             while let Ok(instance_id) = rx.recv() {
-                let handle = Self::get_contribution(
+                Self::get_contribution(
                     instance_id,
                     pctx_clone.clone(),
                     sctx_clone.clone(),
@@ -423,8 +426,6 @@ where
                     values_clone.clone(),
                     d_buffers_clone.clone(),
                 );
-
-                handle.join().unwrap();
                 proof_count_clone.fetch_sub(1, Ordering::SeqCst); // mark one as done
             }
         });
@@ -447,6 +448,8 @@ where
             tx.send(instance_id).unwrap();
             proof_count.fetch_add(1, Ordering::SeqCst);
         }
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_REAL);
+        panic!("crash via panic");
 
         drop(tx);
         proof_thread.join().unwrap();
@@ -839,15 +842,15 @@ where
         aux_trace_contribution_ptr: Arc<Vec<F>>,
         values: Arc<Mutex<Vec<u64>>>,
         d_buffers: Arc<Mutex<DeviceBuffer>>,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
+    )  {
+        //std::thread::spawn(move || {
             let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
             let value = Self::get_contribution_air(pctx.clone(), &sctx, instance_id, ptr, d_buffers.clone());
 
             for (id, value) in value.iter().enumerate().take(10) {
                 values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 10 + id] = *value;
             }
-        })
+        //})
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1235,7 +1238,7 @@ where
 
         let mut value = vec![F::ZERO; 10];
 
-        let n_airvalues = setup
+        /*let n_airvalues = setup
             .stark_info
             .airvalues_map
             .as_ref()
@@ -1280,9 +1283,10 @@ where
             });
         }
 
-        timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
+        timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);*/
 
         value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
+        
     }
 
     fn add_contributions(curve_type: &CurveType, values: &[Vec<F>]) -> Vec<F> {
