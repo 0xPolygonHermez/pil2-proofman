@@ -450,11 +450,11 @@ where
             tx.send(instance_id).unwrap();
             proof_count.fetch_add(1, Ordering::SeqCst);
         }
+        drop(tx);
         proof_thread.join().unwrap();
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_REAL);
         timer_start_info!(CALCULATING_CONTRIBUTIONS_DESPRES);
 
-        drop(tx);
 
         let values_challenge = Arc::try_unwrap(values).unwrap().into_inner().unwrap();
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_DESPRES);
