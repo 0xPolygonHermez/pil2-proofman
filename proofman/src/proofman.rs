@@ -1244,7 +1244,7 @@ where
 
         let mut value = vec![F::ZERO; 10];
 
-        /*let n_airvalues = setup
+        let n_airvalues = setup
             .stark_info
             .airvalues_map
             .as_ref()
@@ -1289,7 +1289,7 @@ where
             });
         }
 
-        timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);*/
+        timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
 
         value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
         
