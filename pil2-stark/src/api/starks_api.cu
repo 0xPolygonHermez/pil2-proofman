@@ -33,7 +33,7 @@ void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
         CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->maxConstArea * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&buffers->d_constTree, maxSizes->maxConstTreeSize * sizeof(Goldilocks::Element)));
     }
-    init_gpu_const_2();
+    //init_gpu_const_2();
     return (void *)buffers;
 }
 
