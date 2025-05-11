@@ -77,7 +77,7 @@ class ExpressionsCtx {
 public:
 
     SetupCtx &setupCtx;
-    ProverHelpers &proverHelpers;
+    ProverHelpers *proverHelpers;
 
     Goldilocks::Element *xis;
     int64_t *nextStrides;
@@ -100,7 +100,7 @@ public:
     uint64_t nChallenges;
     uint64_t nEvals;
 
-    ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers& proverHelpers_) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {
+    ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers* proverHelpers_ = nullptr) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {
         nextStrides = new int64_t[setupCtx.starkInfo.openingPoints.size()];
         nextStridesExtended = new int64_t[setupCtx.starkInfo.openingPoints.size()];
         mapOffsets = new uint64_t[1 + setupCtx.starkInfo.nStages + 1];

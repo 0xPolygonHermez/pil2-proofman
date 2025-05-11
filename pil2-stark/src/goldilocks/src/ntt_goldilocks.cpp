@@ -361,19 +361,6 @@ void NTT_Goldilocks::extendPol(Goldilocks::Element *output, Goldilocks::Element 
         return;
     }
 
-/*#ifdef __USE_CUDA__
-    uint64_t nPack;
-    if (ncols < 16) {
-        return extendPol_GPU(output, input, N_Extended, N, ncols);
-    } else if (ncols < 32) {
-        nPack = 4;
-    } else if (ncols < 80) {
-        nPack = 8;
-    } else {
-        nPack = 16;
-    }
-    return extendPol_MultiGPU(output, input, N_Extended, N, ncols, NULL, nPack);
-#else*/
     NTT_Goldilocks ntt_extension(N_Extended, nThreads, N_Extended / N);
 
     Goldilocks::Element *tmp = NULL;

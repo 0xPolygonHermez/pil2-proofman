@@ -16,6 +16,7 @@
 #include "exit_process.hpp"
 #include "expressions_bin.hpp"
 #include "expressions_pack.hpp"
+#include "hints.hpp"
 
 class gl64_t;
 struct DeviceCommitBuffers;
@@ -25,7 +26,6 @@ class Starks
 {
 public:
     SetupCtx& setupCtx;
-    ProverHelpers& proverHelpers;
     using TranscriptType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, TranscriptGL, TranscriptBN128>;
     using MerkleTreeType = std::conditional_t<std::is_same<ElementType, Goldilocks::Element>::value, MerkleTreeGL, MerkleTreeBN128>;
 
@@ -36,7 +36,7 @@ public:
     NTT_Goldilocks nttExtended;
 
 public:
-    Starks(SetupCtx& setupCtx_, ProverHelpers& proverHelpers_, Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr, bool initializeTrees = false) : setupCtx(setupCtx_), proverHelpers(proverHelpers_), ntt(1 << setupCtx.starkInfo.starkStruct.nBits), nttExtended(1 << setupCtx.starkInfo.starkStruct.nBitsExt)                     
+    Starks(SetupCtx& setupCtx_,Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr, bool initializeTrees = false) : setupCtx(setupCtx_), ntt(1 << setupCtx.starkInfo.starkStruct.nBits), nttExtended(1 << setupCtx.starkInfo.starkStruct.nBitsExt)                     
     {
 
         uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -44,7 +44,11 @@ public:
 
         bool allocateNodes = setupCtx.starkInfo.starkStruct.verificationHashType == "GL" ? false : true;
         treesGL = new MerkleTreeType*[setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2];
-        if (pConstPolsExtendedTreeAddress != nullptr) treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
+        if (pConstPolsExtendedTreeAddress != nullptr) {
+            treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, pConstPolsExtendedTreeAddress);
+        } else {
+            treesGL[setupCtx.starkInfo.nStages + 1] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, setupCtx.starkInfo.nConstants, initializeTrees, allocateNodes || initializeTrees);
+        }
         for (uint64_t i = 0; i < setupCtx.starkInfo.nStages + 1; i++)
         {
             std::string section = "cm" + to_string(i + 1);
@@ -52,14 +56,14 @@ public:
             treesGL[i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols, initializeTrees, allocateNodes || initializeTrees);
         }
 
-        
-
         for(uint64_t i = 0; i < setupCtx.starkInfo.customCommits.size(); i++) {
             uint64_t nCols = setupCtx.starkInfo.mapSectionsN[setupCtx.starkInfo.customCommits[i].name + "0"];
             treesGL[setupCtx.starkInfo.nStages + 2 + i] = new MerkleTreeType(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom, NExtended, nCols);
-            treesGL[setupCtx.starkInfo.nStages + 2 + i]->setSource(&pConstPolsCustomCommitsTree[N * nCols]);
-            ElementType *nodes = (ElementType *)&pConstPolsCustomCommitsTree[(N + NExtended) * nCols];
-            treesGL[setupCtx.starkInfo.nStages + 2 + i]->setNodes(nodes);
+            if (pConstPolsCustomCommitsTree != nullptr) {        
+                treesGL[setupCtx.starkInfo.nStages + 2 + i]->setSource(&pConstPolsCustomCommitsTree[N * nCols]);
+                ElementType *nodes = (ElementType *)&pConstPolsCustomCommitsTree[(N + NExtended) * nCols];
+                treesGL[setupCtx.starkInfo.nStages + 2 + i]->setNodes(nodes);
+            }
         }
 
         treesFRI = new MerkleTreeType*[setupCtx.starkInfo.starkStruct.steps.size() - 1];
@@ -87,12 +91,9 @@ public:
     
     void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper);
     void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
-    void extendAndMerkelize_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, double *nttTime = nullptr, double *merkleTime=nullptr);
 
     void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
-    void commitStage_inplace(uint64_t step, gl64_t *d_witness, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, double *nttTime=nullptr, double *merkleTime=nullptr);
     void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
-    void computeQ_inplace(uint64_t step, gl64_t *d_trace, DeviceCommitBuffers *d_buffers, double *nttTime=nullptr, double *merkleTime=nullptr);
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);

@@ -8,7 +8,7 @@
 #define NROWS_PACK 128
 class ExpressionsPack : public ExpressionsCtx {
 public:
-    ExpressionsPack(SetupCtx& setupCtx, ProverHelpers& proverHelpers, uint64_t nrowsPack = NROWS_PACK) : ExpressionsCtx(setupCtx, proverHelpers) {
+    ExpressionsPack(SetupCtx& setupCtx, ProverHelpers* proverHelpers, uint64_t nrowsPack = NROWS_PACK) : ExpressionsCtx(setupCtx, proverHelpers) {
         nrowsPack_ = std::min(nrowsPack, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits));
     };
 
@@ -100,13 +100,13 @@ public:
                 if(boundary == 0) {
                     for(uint64_t j = 0; j < nrowsPack; ++j) {
                         for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                            value[j + e*nrowsPack] = proverHelpers.x_n[e];
+                            value[j + e*nrowsPack] = proverHelpers->x_n[e];
                         }
                     }
                 } else {
                     for(uint64_t j = 0; j < nrowsPack; ++j) {
                         for(uint64_t e = 0; e < FIELD_EXTENSION; ++e) {
-                            value[j + e*nrowsPack] = proverHelpers.zi[(boundary - 1)*FIELD_EXTENSION + e];
+                            value[j + e*nrowsPack] = proverHelpers->zi[(boundary - 1)*FIELD_EXTENSION + e];
                         }
                     }
                 }
@@ -116,13 +116,13 @@ public:
 #if DEBUG
                 if(print) printf("Expression debug x or x_n\n");
 #endif
-                    Goldilocks::Element *x = domainExtended ? &proverHelpers.x[row] : &proverHelpers.x_n[row];
+                    Goldilocks::Element *x = domainExtended ? &proverHelpers->x[row] : &proverHelpers->x_n[row];
                     return x;
                 } else {
 #if DEBUG
                     if(print) printf("Expression debug zi\n");
 #endif
-                    return &proverHelpers.zi[(boundary - 1)*domainSize  + row];
+                    return &proverHelpers->zi[(boundary - 1)*domainSize  + row];
                 }
             }
         } else if (type == setupCtx.starkInfo.nStages + 3) {
@@ -140,9 +140,9 @@ public:
                 return value;
             } else {
                 Goldilocks::Element *xdivxsub = &params.aux_trace[mapOffsetFriPol + row*FIELD_EXTENSION];
-                Goldilocks3::op_31_pack(nrowsPack, 3, xdivxsub, &xis[o * FIELD_EXTENSION], true, &proverHelpers.x[row], false);
+                Goldilocks3::op_31_pack(nrowsPack, 3, xdivxsub, &xis[o * FIELD_EXTENSION], true, &proverHelpers->x[row], false);
                 getInversePolinomial(nrowsPack, xdivxsub, value, true, 3);
-                Goldilocks3::op_31_pack(nrowsPack, 2, xdivxsub, xdivxsub, false, &proverHelpers.x[row], false);
+                Goldilocks3::op_31_pack(nrowsPack, 2, xdivxsub, xdivxsub, false, &proverHelpers->x[row], false);
                 return xdivxsub;
             }
         } else if (type >= setupCtx.starkInfo.nStages + 4 && type < setupCtx.starkInfo.customCommits.size() + setupCtx.starkInfo.nStages + 4) {

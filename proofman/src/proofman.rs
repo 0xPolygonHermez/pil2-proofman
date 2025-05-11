@@ -370,6 +370,7 @@ where
         print_summary_info(Self::MY_NAME, &pctx, &sctx);
 
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_1);
 
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -392,17 +393,29 @@ where
             true => sctx.max_const_tree_size + sctx.max_const_size,
             false => prover_buffer_size as usize,
         };
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_1);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_2);
+
         let aux_trace = Arc::new(create_buffer_fast(aux_trace_size));
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_2);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_3);
 
         let max_sizes = discover_max_sizes(&pctx, &sctx);
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_3);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_4);
+
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
         let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr, mpi_node_rank))));
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_4);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_5);
+
 
         let (tx, rx) = channel::<usize>();
         let max_pending_proofs = match cfg!(feature = "gpu") {
             true => 3,
             false => 1,
         };
+
 
         let proof_count = Arc::new(AtomicU64::new(0)); // shared between threads
 
@@ -412,10 +425,12 @@ where
         let aux_trace_clone = aux_trace.clone();
         let values_clone = values.clone();
         let d_buffers_clone = d_buffers.clone();
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_5);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_REAL);
 
         let proof_thread = std::thread::spawn(move || {
             while let Ok(instance_id) = rx.recv() {
-                let handle = Self::get_contribution(
+                Self::get_contribution(
                     instance_id,
                     pctx_clone.clone(),
                     sctx_clone.clone(),
@@ -423,8 +438,6 @@ where
                     values_clone.clone(),
                     d_buffers_clone.clone(),
                 );
-
-                handle.join().unwrap();
                 proof_count_clone.fetch_sub(1, Ordering::SeqCst); // mark one as done
             }
         });
@@ -447,11 +460,14 @@ where
             tx.send(instance_id).unwrap();
             proof_count.fetch_add(1, Ordering::SeqCst);
         }
-
         drop(tx);
         proof_thread.join().unwrap();
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_REAL);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_DESPRES);
+
 
         let values_challenge = Arc::try_unwrap(values).unwrap().into_inner().unwrap();
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_DESPRES);
 
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
@@ -476,6 +492,9 @@ where
         }
 
         timer_start_info!(GENERATING_BASIC_PROOFS);
+        pctx.dctx.read().unwrap().barrier();
+        panic!("crash via panic");
+
 
         let proofs = Arc::new(RwLock::new(vec![Proof::default(); my_instances.len()]));
         let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
@@ -839,15 +858,15 @@ where
         aux_trace_contribution_ptr: Arc<Vec<F>>,
         values: Arc<Mutex<Vec<u64>>>,
         d_buffers: Arc<Mutex<DeviceBuffer>>,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
+    )  {
+        //std::thread::spawn(move || {
             let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
             let value = Self::get_contribution_air(pctx.clone(), &sctx, instance_id, ptr, d_buffers.clone());
 
             for (id, value) in value.iter().enumerate().take(10) {
                 values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 10 + id] = *value;
             }
-        })
+        //})
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -871,18 +890,21 @@ where
             let p_setup: *mut c_void = (&setup.p_setup).into();
             let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
             let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-            timer_start_info!(GEN_PROOF);
-
-            let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
 
             if gen_const_tree {
+                timer_start_info!(LOAD_CONSTANTS);
+                let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
+
                 load_const_pols(
                     &setup.setup_path,
                     setup.const_pols_size,
                     &aux_trace[offset_const..offset_const + setup.const_pols_size],
                 );
                 load_const_pols_tree(setup, &aux_trace[0..setup.const_tree_size]);
+                timer_stop_and_log_info!(LOAD_CONSTANTS);
             }
+
+            timer_start_info!(GEN_PROOF);
 
             let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
@@ -912,8 +934,17 @@ where
                 pctx.dctx_get_node_rank() as u32,
             );
 
-            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
-                pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
+            let n_airgroup_values = setup
+                .stark_info
+                .airgroupvalues_map
+                .as_ref()
+                .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
+                .unwrap_or(0);
+
+            let airgroup_values: Vec<F> =
+                proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
+
+            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
 
             timer_stop_and_log_info!(GEN_PROOF);
             proofs.write().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
@@ -1036,6 +1067,13 @@ where
         let global_challenge = [F::ZERO; 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
+        println!(
+            "{}: Global challenge: [{}, {}, {}]",
+            Self::MY_NAME,
+            global_challenge[0],
+            global_challenge[1],
+            global_challenge[2]
+        );
         pctx.set_global_challenge(2, &global_challenge);
 
         timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
@@ -1264,6 +1302,7 @@ where
         timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
 
         value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
+        
     }
 
     fn add_contributions(curve_type: &CurveType, values: &[Vec<F>]) -> Vec<F> {

@@ -5,20 +5,15 @@
 #include <cassert>
 #include <gmp.h>
 #include <omp.h>
-
 #define NUM_PHASES 3
 #define NUM_BLOCKS 1
 
 struct DeviceCommitBuffers;
 
-#ifdef __USE_CUDA__
-    class gl64_t;
-#endif
-
-
 class NTT_Goldilocks
 {
 private:
+    bool init = false;
     u_int32_t s = 0;
     u_int32_t nThreads;
     uint64_t nqr;
@@ -66,10 +61,11 @@ private:
     void reversePermutation(Goldilocks::Element *dst, uint64_t strideDst, uint64_t offsetDst,  Goldilocks::Element *src, uint64_t strideSrc, uint64_t offsetSrc, u_int64_t size, uint64_t ncols);
 
 public:
+    NTT_Goldilocks() {};
 
     NTT_Goldilocks(u_int64_t maxDomainSize, u_int32_t _nThreads = 0, int extension_ = 1)
     {
-
+        init = true;
         r = NULL;
         r_ = NULL;
         if (maxDomainSize == 0)
@@ -166,31 +162,26 @@ public:
     };
     ~NTT_Goldilocks()
     {
-        if (s != 0)
-        {
-            free(roots);
-            free(powTwoInv);
-        }
-        if (r != NULL)
-        {
-            delete[] r;
-        }
-        if (r_ != NULL)
-        {
-            delete[] r_;
+        if(init) {
+            if (s != 0)
+            {
+                free(roots);
+                free(powTwoInv);
+            }
+            if (r != NULL)
+            {
+                delete[] r;
+            }
+            if (r_ != NULL)
+            {
+                delete[] r_;
+            }
         }
     }
     
     void NTT(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ncols = 1, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, u_int64_t nblock = NUM_BLOCKS, bool inverse = false, bool extend = false);
     inline void INTT(Goldilocks::Element *dst, Goldilocks::Element *src, u_int64_t size, u_int64_t ncols = 1, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, u_int64_t nblock = NUM_BLOCKS, bool extend = false);    
     void extendPol(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t N_Extended, uint64_t N, uint64_t ncols, Goldilocks::Element *buffer = NULL, u_int64_t nphase = NUM_PHASES, u_int64_t nblock = NUM_BLOCKS);
-
-    #ifdef __USE_CUDA__
-    // Calculating on a single GPU
-    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt, gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t size, u_int64_t ext_size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_helper, double *nttTime = nullptr, double *merkleTime = nullptr);
-    void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q, uint64_t qDeg, uint64_t qDim, Goldilocks::Element *S, uint64_t N, uint64_t NExtended, uint64_t nCols, DeviceCommitBuffers *d_buffers, uint64_t offset_helper, double *nttTime=nullptr, double *merkleTime=nullptr);
-    void INTT_inplace(uint64_t data_offset, u_int64_t size, u_int64_t ncols, DeviceCommitBuffers* d_buffers, uint64_t offset_helper, gl64_t* d_data = nullptr);
-    #endif  
 };
 
 // extend parameter is used to indicate tha the polinomial will be extended after the INTT
