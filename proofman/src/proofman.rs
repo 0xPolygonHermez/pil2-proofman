@@ -370,7 +370,7 @@ where
         print_summary_info(Self::MY_NAME, &pctx, &sctx);
 
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
-        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_1);
 
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -393,11 +393,22 @@ where
             true => sctx.max_const_tree_size + sctx.max_const_size,
             false => prover_buffer_size as usize,
         };
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_1);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_2);
+
         let aux_trace = Arc::new(create_buffer_fast(aux_trace_size));
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_2);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_3);
 
         let max_sizes = discover_max_sizes(&pctx, &sctx);
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_3);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_4);
+
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
         let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr, mpi_node_rank))));
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_4);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS_5);
+
 
         let (tx, rx) = channel::<usize>();
         let max_pending_proofs = match cfg!(feature = "gpu") {
@@ -414,8 +425,7 @@ where
         let aux_trace_clone = aux_trace.clone();
         let values_clone = values.clone();
         let d_buffers_clone = d_buffers.clone();
-
-        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS);
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS_5);
         timer_start_info!(CALCULATING_CONTRIBUTIONS_REAL);
 
         let proof_thread = std::thread::spawn(move || {
