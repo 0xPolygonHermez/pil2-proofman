@@ -370,6 +370,7 @@ where
         print_summary_info(Self::MY_NAME, &pctx, &sctx);
 
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_ABANS);
 
         let instances = pctx.dctx_get_instances();
         let my_instances = pctx.dctx_get_my_instances();
@@ -414,6 +415,7 @@ where
         let values_clone = values.clone();
         let d_buffers_clone = d_buffers.clone();
 
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_ABANS);
         timer_start_info!(CALCULATING_CONTRIBUTIONS_REAL);
 
         let proof_thread = std::thread::spawn(move || {
@@ -448,12 +450,14 @@ where
             tx.send(instance_id).unwrap();
             proof_count.fetch_add(1, Ordering::SeqCst);
         }
+        proof_thread.join().unwrap();
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_REAL);
+        timer_start_info!(CALCULATING_CONTRIBUTIONS_DESPRES);
 
         drop(tx);
-        proof_thread.join().unwrap();
 
         let values_challenge = Arc::try_unwrap(values).unwrap().into_inner().unwrap();
+        timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_DESPRES);
 
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
