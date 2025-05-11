@@ -449,7 +449,6 @@ where
             proof_count.fetch_add(1, Ordering::SeqCst);
         }
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS_REAL);
-        panic!("crash via panic");
 
         drop(tx);
         proof_thread.join().unwrap();
@@ -479,6 +478,9 @@ where
         }
 
         timer_start_info!(GENERATING_BASIC_PROOFS);
+        pctx.dctx.read().unwrap().barrier();
+        panic!("crash via panic");
+
 
         let proofs = Arc::new(RwLock::new(vec![Proof::default(); my_instances.len()]));
         let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
