@@ -19,8 +19,6 @@ log.workspace = true
 num-traits = "0.2"
 rand.workspace = true
 num-bigint.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
 rayon.workspace = true
 
 [build-dependencies]

@@ -23,7 +23,7 @@ members = [
     # the box with `cargo check --workspace` or CI will
     # break and dev experience will be bad since repo
     # won't build with a fresh clone
-    "examples/fibonacci-square",
+    "examples/fibonacci-square", "fields",
 ]
 
 resolver = "2"
@@ -40,8 +40,6 @@ witness = { path = "witness", version = "0.7.1" }
 pilout = { path = "pilout", version = "0.7.1" }
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
-p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
-p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
 bytes = "1.7"
 prost = "0.13"
 rand = "0.9"

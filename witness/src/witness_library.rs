@@ -1,7 +1,7 @@
 use std::{any::Any, error::Error, sync::Arc};
 
 use crate::WitnessManager;
-use p3_field::Field;
+use fields::Field;
 use proofman_common::VerboseMode;
 
 /// This is the type of the function that is used to load a witness library.

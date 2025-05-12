@@ -7,7 +7,7 @@ use proofman_starks_lib_c::{
 use std::collections::HashMap;
 use std::ffi::c_void;
 
-use p3_field::Field;
+use fields::Field;
 use proofman_common::{ExtensionField, ProofCtx, SetupCtx, StepsParams};
 use proofman_util::create_buffer_fast;
 

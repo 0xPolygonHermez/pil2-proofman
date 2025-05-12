@@ -18,8 +18,6 @@ env_logger.workspace = true
 log.workspace = true
 rand.workspace = true
 num-bigint.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
 rayon.workspace = true
 
 [build-dependencies]

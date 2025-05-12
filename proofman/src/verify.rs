@@ -1,4 +1,4 @@
-use p3_field::Field;
+use fields::Field;
 
 use proofman_starks_lib_c::{
     stark_info_new_c, expressions_bin_new_c, stark_verify_c, stark_verify_bn128_c, stark_verify_from_file_c,

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use p3_field::Field;
+use fields::Field;
 use proofman_common::{ProofCtx, SetupCtx};
 
 pub trait WitnessComponent<F: Field>: Send + Sync {

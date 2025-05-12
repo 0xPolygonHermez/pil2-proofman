@@ -1,6 +1,6 @@
 use std::os::raw::c_void;
 
-use p3_field::Field;
+use fields::Field;
 use transcript::FFITranscript;
 
 use crate::ConstraintInfo;

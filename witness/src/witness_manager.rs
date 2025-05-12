@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 
-use p3_field::Field;
+use fields::Field;
 use proofman_common::{ModeName, ProofCtx, SetupCtx};
 use crate::WitnessComponent;
 

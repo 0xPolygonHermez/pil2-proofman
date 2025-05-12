@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
 
-use p3_field::Field;
+use fields::Field;
 use proofman_starks_lib_c::expressions_bin_new_c;
 use proofman_util::create_buffer_fast;
 

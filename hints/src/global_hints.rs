@@ -1,4 +1,4 @@
-use p3_field::Field;
+use fields::Field;
 use crate::{HintCol, HintFieldInfoC, HintFieldInfo, HintFieldOutput, HintFieldValue, HintFieldValues, HintFieldValuesVec};
 use proofman_starks_lib_c::{
     get_hint_field_global_constraints_values_c, get_hint_field_global_constraints_sizes_c,

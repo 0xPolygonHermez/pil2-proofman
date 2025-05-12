@@ -1,8 +1,8 @@
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve, goldilocks_quintic_extension::GoldilocksQuinticExtension};
 use libloading::{Library, Symbol};
 use log::info;
-use p3_field::extension::BinomialExtensionField;
-use p3_field::BasedVectorSpace;
+// use p3_field::extension::BinomialExtensionField;
+// use p3_field::BasedVectorSpace;
 use std::ops::Add;
 use proofman_common::{load_const_pols, load_const_pols_tree, CurveType};
 use proofman_common::{
@@ -22,9 +22,8 @@ use std::sync::{Mutex, RwLock};
 use std::sync::mpsc::channel;
 use std::sync::atomic::AtomicU64;
 
-use p3_goldilocks::Goldilocks;
+use fields::{Goldilocks, PrimeField64};
 
-use p3_field::PrimeField64;
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c, calculate_impols_expressions_c,
 };
@@ -54,8 +53,8 @@ pub struct ProofMan<F> {
 }
 
 impl<F: PrimeField64> ProofMan<F>
-where
-    BinomialExtensionField<Goldilocks, 5>: BasedVectorSpace<F>,
+// where
+//     BinomialExtensionField<Goldilocks, 5>: BasedVectorSpace<F>,
 {
     const MY_NAME: &'static str = "ProofMan";
 
@@ -1258,43 +1257,44 @@ where
     }
 
     fn add_contributions(curve_type: &CurveType, values: &[Vec<F>]) -> Vec<F> {
-        if *curve_type == CurveType::EcGFp5 {
-            let mut result = EcGFp5::hash_to_curve(
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
-            );
+        // if *curve_type == CurveType::EcGFp5 {
+        //     let mut result = EcGFp5::hash_to_curve(
+        //         GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
+        //         GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
+        //     );
 
-            for value in values.iter().skip(1) {
-                let curve_point = EcGFp5::hash_to_curve(
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
-                );
+        //     for value in values.iter().skip(1) {
+        //         let curve_point = EcGFp5::hash_to_curve(
+        //             GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
+        //             GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
+        //         );
 
-                result = result.add(&curve_point);
-            }
+        //         result = result.add(&curve_point);
+        //     }
 
-            let mut curve_point_values = vec![F::ZERO; 10];
-            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
-            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
-            curve_point_values
-        } else {
-            let mut result = EcMasFp5::hash_to_curve(
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
-                GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
-            );
+        //     let mut curve_point_values = vec![F::ZERO; 10];
+        //     curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
+        //     curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
+        //     curve_point_values
+        // } else {
+        //     let mut result = EcMasFp5::hash_to_curve(
+        //         GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][0..5]),
+        //         GoldilocksQuinticExtension::from_basis_coefficients_slice(&values[0][5..10]),
+        //     );
 
-            for value in values.iter().skip(1) {
-                let curve_point = EcMasFp5::hash_to_curve(
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
-                    GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
-                );
-                result = result.add(&curve_point);
-            }
+        //     for value in values.iter().skip(1) {
+        //         let curve_point = EcMasFp5::hash_to_curve(
+        //             GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[0..5]),
+        //             GoldilocksQuinticExtension::from_basis_coefficients_slice(&value[5..10]),
+        //         );
+        //         result = result.add(&curve_point);
+        //     }
 
-            let mut curve_point_values = vec![F::ZERO; 10];
-            curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
-            curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
-            curve_point_values
-        }
+        //     let mut curve_point_values = vec![F::ZERO; 10];
+        //     curve_point_values[0..5].copy_from_slice(result.x().as_basis_coefficients_slice());
+        //     curve_point_values[5..10].copy_from_slice(result.y().as_basis_coefficients_slice());
+        //     curve_point_values
+        // }
+        vec![]
     }
 }

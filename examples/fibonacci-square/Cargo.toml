@@ -8,13 +8,13 @@ crate-type = ["dylib"]
 
 [dependencies]
 proofman-common = { path = "../../common" }
+fields = { path = "../../fields" }
+
 proofman-macros.workspace = true
 witness.workspace = true
 pil-std-lib.workspace = true
 env_logger.workspace = true
 log.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
 rayon = "1"
 
 serde.workspace = true

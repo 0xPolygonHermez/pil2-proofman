@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use p3_field::{Field, PrimeField64};
+use fields::{Field, PrimeField64};
 
 use proofman_common::{ProofCtx, SetupCtx};
 use proofman_hints::{

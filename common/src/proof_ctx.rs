@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
-use p3_field::Field;
+use fields::Field;
 use transcript::FFITranscript;
 
 use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams, VerboseMode};

@@ -6,11 +6,10 @@ edition = "2021"
 [dependencies]
 proofman-common = { path = "../common" }
 proofman-util = { path = "../util" }
+fields = { path = "../fields" }
 
 log.workspace = true
 env_logger.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
 
 colored.workspace = true
 serde_json.workspace = true

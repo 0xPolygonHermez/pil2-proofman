@@ -1,7 +1,7 @@
 use core::panic;
 use std::{fmt::Debug, sync::Arc};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
 use witness::WitnessComponent;
 use proofman_common::{ProofCtx, SetupCtx, ModeName};

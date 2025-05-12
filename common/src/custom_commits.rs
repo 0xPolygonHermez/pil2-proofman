@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use p3_field::Field;
+use fields::Field;
 use proofman_starks_lib_c::write_custom_commit_c;
 
 use crate::trace::Trace;

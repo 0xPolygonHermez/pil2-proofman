@@ -5,8 +5,7 @@ use std::{fs::File, path::PathBuf};
 use std::io::Read;
 use colored::Colorize;
 
-use p3_goldilocks::Goldilocks;
-use p3_field::PrimeCharacteristicRing;
+use fields::{Goldilocks, Field};
 
 use proofman::verify_proof_from_file;
 
