@@ -829,7 +829,6 @@ struct AirInstanceInfo {
 
 struct DeviceCommitBuffers
 {
-    gl64_t *d_trace;
     gl64_t *d_constPols;
     gl64_t *d_constPolsAggregation;
     gl64_t *d_aux_trace;
@@ -840,6 +839,10 @@ struct DeviceCommitBuffers
     uint64_t max_size_proof;
     uint64_t max_size_const;
     uint64_t max_size_const_tree;
+    uint64_t max_size_trace_aggregation;
+    uint64_t max_size_prover_buffer_aggregation;
+    uint64_t max_size_const_aggregation;
+    uint64_t max_size_const_tree_aggregation;
     uint64_t n_threads;
     cudaStream_t *streams;
     TimerGPU *timers;

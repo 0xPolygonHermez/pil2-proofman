@@ -872,7 +872,6 @@ pub fn gen_recursive_proof_c(
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
 
-    println!("THREAAAAD {}", thread_id);
     unsafe {
         gen_recursive_proof(
             p_setup_ctx,
@@ -1102,6 +1101,10 @@ pub fn set_max_size_thread_c(
     max_size_buffer: u64,
     max_size_const: u64,
     max_size_const_tree: u64,
+    max_size_trace_aggregation: u64,
+    max_size_buffer_aggregation: u64,
+    max_size_const_aggregation: u64,
+    max_size_const_tree_aggregation: u64,
     max_proof_size: u64,
     n_threads: u64,
 ) {
@@ -1113,6 +1116,10 @@ pub fn set_max_size_thread_c(
             max_size_buffer,
             max_size_const,
             max_size_const_tree,
+            max_size_trace_aggregation,
+            max_size_buffer_aggregation,
+            max_size_const_aggregation,
+            max_size_const_tree_aggregation,
             max_proof_size,
             n_threads,
         );
@@ -1865,6 +1872,10 @@ pub fn set_max_size_thread_c(
     _max_size_buffer: u64,
     _max_size_const: u64,
     _max_size_const_tree: u64,
+    _max_size_trace_aggregation: u64,
+    _max_size_buffer_aggregation: u64,
+    _max_size_const_aggregation: u64,
+    _max_size_const_tree_aggregation: u64,
     _max_proof_size: u64,
     _n_threads: u64,
 ) {

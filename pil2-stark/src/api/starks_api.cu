@@ -13,7 +13,6 @@
 
 struct MaxSizes
 {
-    uint64_t maxTraceArea;
     uint64_t totalConstPols;
     uint64_t maxAuxTraceArea;
     uint64_t totalConstPolsAggregation;
@@ -26,20 +25,23 @@ void *gen_device_commit_buffers(void *maxSizes_, uint32_t mpi_node_rank)
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
     DeviceCommitBuffers *buffers = new DeviceCommitBuffers();
     CHECKCUDAERR(cudaMalloc(&buffers->d_aux_trace, maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
-    CHECKCUDAERR(cudaMalloc(&buffers->d_trace, maxSizes->maxTraceArea * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_constPols, maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
     CHECKCUDAERR(cudaMalloc(&buffers->d_constPolsAggregation, maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
     init_gpu_const_2();
     return (void *)buffers;
 }
 
-void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeProverBuffer, uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxProofSizeThread, uint64_t nThreads) {
+void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeProverBuffer, uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSizeThread, uint64_t nThreads) {
     DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
     buffers->max_size_prover_buffer = maxSizeProverBuffer;
     buffers->max_size_trace = maxSizeTrace;
     buffers->max_size_contribution = maxSizeContribution;
     buffers->max_size_const = maxSizeConst;
     buffers->max_size_const_tree = maxSizeConstTree;
+    buffers->max_size_trace_aggregation = maxSizeTraceAggregation;
+    buffers->max_size_prover_buffer_aggregation = maxSizeProverBufferAggregation;
+    buffers->max_size_const_aggregation = maxSizeConstAggregation;
+    buffers->max_size_const_tree_aggregation = maxSizeConstTreeAggregation;
     buffers->max_size_proof = maxProofSizeThread;
     buffers->n_threads = nThreads;
 
@@ -66,12 +68,14 @@ void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSiz
         CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers_proof[i]), maxProofSizeThread * sizeof(Goldilocks::Element)));
     }
 
+    uint64_t constMaxSize = std::max(maxSizeConst, maxSizeConstAggregation);
+    uint64_t constMaxSizeTree = std::max(maxSizeConstTree, maxSizeConstTreeAggregation);
     if (maxSizeConst > 0) {
         buffers->pinned_buffers_const = new Goldilocks::Element*[nThreads];
         buffers->pinned_buffers_const_tree = new Goldilocks::Element*[nThreads];
         for (uint64_t i = 0; i < nThreads; i++) {
-            CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers_const[i]), maxSizeConst * sizeof(Goldilocks::Element)));
-            CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers_const_tree[i]), maxSizeConstTree * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers_const[i]), constMaxSize * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMallocHost((void **)&(buffers->pinned_buffers_const_tree[i]), constMaxSizeTree * sizeof(Goldilocks::Element)));
         }
     }
 }
@@ -81,7 +85,6 @@ void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank)
     set_device(mpi_node_rank);
     DeviceCommitBuffers *buffers = (DeviceCommitBuffers *)d_buffers;
     CHECKCUDAERR(cudaFree(buffers->d_aux_trace));
-    CHECKCUDAERR(cudaFree(buffers->d_trace));
     CHECKCUDAERR(cudaFree(buffers->d_constPols));
     CHECKCUDAERR(cudaFree(buffers->d_constPolsAggregation));
     if (buffers->streams != nullptr) {
@@ -237,8 +240,9 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t thread
     cudaStream_t stream = d_buffers->streams[threadId];
     TimerGPU &timer = d_buffers->timers[threadId];
     double time = omp_get_wtime();
-
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + threadId*d_buffers->max_size_prover_buffer;
+    
+    gl64_t *d_trace = (gl64_t *)d_buffers->d_aux_trace + threadId*(d_buffers->max_size_prover_buffer_aggregation + d_buffers->max_size_trace_aggregation);
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + threadId*(d_buffers->max_size_prover_buffer_aggregation + d_buffers->max_size_trace_aggregation) + d_buffers->max_size_trace_aggregation;
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
@@ -259,7 +263,7 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t thread
     memcpy(&d_buffers->pinned_buffers[threadId][N * nCols], (Goldilocks::Element *)pPublicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
 
     uint64_t offsetPublicInputs = setupCtx->starkInfo.mapOffsets[std::make_pair("publics", false)];
-    CHECKCUDAERR(cudaMemcpyAsync(d_buffers->d_trace, d_buffers->pinned_buffers[threadId], sizeTrace, cudaMemcpyHostToDevice, stream));
+    CHECKCUDAERR(cudaMemcpyAsync(d_trace, d_buffers->pinned_buffers[threadId], sizeTrace, cudaMemcpyHostToDevice, stream));
     CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetPublicInputs, &d_buffers->pinned_buffers[threadId][N * nCols], setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
     
     gl64_t *d_const_pols;
@@ -277,7 +281,7 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t thread
         CHECKCUDAERR(cudaMemcpyAsync(d_const_tree, d_buffers->pinned_buffers_const_tree[threadId], sizeConstTree, cudaMemcpyHostToDevice, stream));
     }
 
-    genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, d_buffers->d_trace, d_buffers->d_aux_trace, d_const_pols, d_const_tree, d_buffers->pinned_buffers_proof[threadId], timer, stream);
+    genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, d_trace, d_aux_trace, d_const_pols, d_const_tree, d_buffers->pinned_buffers_proof[threadId], timer, stream);
 }
 
 void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {

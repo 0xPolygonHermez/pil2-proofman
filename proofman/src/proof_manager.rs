@@ -14,12 +14,15 @@ pub struct WitnessPendingCounter {
     cvar: Condvar,
 }
 
+impl Default for WitnessPendingCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WitnessPendingCounter {
     pub fn new() -> Self {
-        Self {
-            counter: Mutex::new(0),
-            cvar: Condvar::new(),
-        }
+        Self { counter: Mutex::new(0), cvar: Condvar::new() }
     }
 
     pub fn increment(&self) {

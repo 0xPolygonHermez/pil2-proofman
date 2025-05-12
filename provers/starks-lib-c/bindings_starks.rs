@@ -601,7 +601,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19set_max_size_threadPvmmmmmmm"]
+    #[link_name = "\u{1}_Z19set_max_size_threadPvmmmmmmmmmmm"]
     pub fn set_max_size_thread(
         d_buffers: *mut ::std::os::raw::c_void,
         maxSizeTrace: u64,
@@ -609,6 +609,10 @@ extern "C" {
         maxSizeThread: u64,
         maxSizeConst: u64,
         maxSizeConstTree: u64,
+        maxSizeTraceAggregation: u64,
+        maxSizeProverBufferAggregation: u64,
+        maxSizeConstAggregation: u64,
+        maxSizeConstTreeAggregation: u64,
         maxProofSizeThread: u64,
         nThreads: u64,
     );

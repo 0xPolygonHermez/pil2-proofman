@@ -128,7 +128,7 @@
     void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank);
     void set_device(uint32_t mpi_node_rank);
     void load_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType);
-    void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread,  uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxProofSizeThread, uint64_t nThreads);
+    void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread,  uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSizeThread, uint64_t nThreads);
     uint64_t check_gpu_memory(uint32_t mpi_node_rank);
 
 #endif

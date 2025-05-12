@@ -367,10 +367,7 @@ impl DistributionCtx {
         self.airgroup_instances_alives = vec![vec![0; self.n_processes as usize]; n_airgroups];
         for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
             let owner = self.instances_owner[idx].0;
-            self.airgroup_instances_alives[group_id][owner as usize] += 1;
-            if self.airgroup_instances_alives[group_id][owner as usize] == 3 {
-                self.airgroup_instances_alives[group_id][owner as usize] = 1;
-            }
+            self.airgroup_instances_alives[group_id][owner as usize] = 1;
         }
 
         //Evaluate glob2loc
