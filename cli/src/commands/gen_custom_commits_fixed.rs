@@ -65,7 +65,7 @@ impl GenCustomCommitsFixedCmd {
 
         let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, false));
 
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
 
         // Load the witness computation dynamic library
         let library = unsafe { Library::new(&self.witness_lib)? };

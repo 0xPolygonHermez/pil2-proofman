@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use p3_field::PrimeField64;
-
+use std::path::PathBuf;
 use proofman_util::create_buffer_fast;
 use rayon::{
     iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
@@ -90,13 +90,14 @@ impl U16Air {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for U16Air {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
         let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
         if !instance_found {
             instance_id = pctx.add_instance_all(self.airgroup_id, self.air_id);
         }
 
+        self.calculated.store(false, Ordering::Relaxed);
         self.instance_id.store(instance_id as u64, Ordering::SeqCst);
         Vec::new()
     }
@@ -126,7 +127,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                 let mut buffer = create_buffer_fast::<F>(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
-                        chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));
+                        chunk[col] = F::from_u64(vec[row].swap(0, Ordering::Relaxed));
                     }
                 });
 

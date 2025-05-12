@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use p3_field::Field;
 use proofman_common::{ProofCtx, SetupCtx};
+use std::path::PathBuf;
 
 pub trait WitnessComponent<F: Field>: Send + Sync {
-    fn execute(&self, _pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+    fn execute(&self, _pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
         Vec::new()
     }
 
@@ -36,7 +37,7 @@ pub trait WitnessComponent<F: Field>: Send + Sync {
 #[macro_export]
 macro_rules! execute {
     ($Trace:ident, $num_instances: expr) => {
-        fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+        fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<std::path::PathBuf>) -> Vec<usize> {
             let mut instance_ids = Vec::new();
             for _ in 0..$num_instances {
                 instance_ids.push(pctx.add_instance($Trace::<usize>::AIRGROUP_ID, $Trace::<usize>::AIR_ID));

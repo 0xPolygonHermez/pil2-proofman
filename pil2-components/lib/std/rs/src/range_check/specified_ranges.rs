@@ -6,6 +6,7 @@ use std::sync::{
 use rayon::prelude::*;
 
 use p3_field::PrimeField64;
+use std::path::PathBuf;
 
 use witness::WitnessComponent;
 use proofman_common::{AirInstance, ProofCtx, SetupCtx, TraceInfo};
@@ -189,13 +190,14 @@ impl SpecifiedRanges {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
         let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
         if !instance_found {
             instance_id = pctx.add_instance_all(self.airgroup_id, self.air_id);
         }
 
+        self.calculated.store(false, Ordering::Relaxed);
         self.instance_id.store(instance_id as u64, Ordering::SeqCst);
         Vec::new()
     }
@@ -225,7 +227,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
                 let mut buffer = create_buffer_fast(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
-                        chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));
+                        chunk[col] = F::from_u64(vec[row].swap(0, Ordering::Relaxed));
                     }
                 });
 

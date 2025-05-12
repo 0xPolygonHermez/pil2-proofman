@@ -62,8 +62,15 @@ pub struct ProofMan<F: PrimeField64> {
     max_number_proofs: usize,
     traces: Vec<Arc<Vec<F>>>,
     prover_buffers: Vec<Arc<Vec<F>>>,
+    wcm: Arc<WitnessManager<F>>,
 }
 
+impl<F: PrimeField64> Drop for ProofMan<F> {
+    fn drop(&mut self) {
+        let mpi_node_rank = self.pctx.dctx_get_node_rank() as u32;
+        gen_device_commit_buffers_free_c(self.d_buffers.get_ptr(), mpi_node_rank);
+    }
+}
 impl<F: PrimeField64> ProofMan<F>
 where
     BinomialExtensionField<Goldilocks, 5>: BasedVectorSpace<F>,
@@ -166,40 +173,34 @@ where
         let mut witness_lib = witness_lib(self.pctx.options.verbose_mode)?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
-        let wcm =
-            Arc::new(WitnessManager::new(self.pctx.clone(), self.sctx.clone(), public_inputs_path, input_data_path));
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.wcm.set_input_data_path(input_data_path);
 
-        self._verify_proof_constraints(wcm, &mut *witness_lib)
+        self.register_witness(&mut *witness_lib);
+
+        self._verify_proof_constraints()
     }
 
     pub fn verify_proof_constraints_from_lib(
         &self,
-        witness_lib: &mut dyn WitnessLibrary<F>,
-        output_dir_path: PathBuf,
+        input_data_path: Option<PathBuf>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if !output_dir_path.exists() {
-            fs::create_dir_all(&output_dir_path)
-                .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
-        }
+        self.wcm.set_input_data_path(input_data_path);
 
-        let wcm = Arc::new(WitnessManager::new(self.pctx.clone(), self.sctx.clone(), None, None));
-
-        self._verify_proof_constraints(wcm, &mut *witness_lib)
+        self._verify_proof_constraints()
     }
 
     fn _verify_proof_constraints(
         &self,
-        wcm: Arc<WitnessManager<F>>,
-        witness_lib: &mut dyn WitnessLibrary<F>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.pctx.dctx_reset();
 
-        timer_start_info!(REGISTERING_WITNESS);
-        witness_lib.register_witness(wcm.clone());
-        timer_stop_and_log_info!(REGISTERING_WITNESS);
+        if !self.wcm.is_init_witness() {
+            return Err("Witness computation dynamic library not initialized".into());
+        }
 
         timer_start_info!(EXECUTE);
-        wcm.execute();
+        self.wcm.execute();
         timer_stop_and_log_info!(EXECUTE);
 
         self.pctx.dctx_assign_instances();
@@ -231,7 +232,7 @@ where
 
             let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
 
-            wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
+            self.wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
 
             // Join the previous thread (if any) before starting a new one
             if let Some(handle) = thread_handle.take() {
@@ -242,7 +243,7 @@ where
                 Self::verify_proof_constraints_stage(
                     self.pctx.clone(),
                     self.sctx.clone(),
-                    wcm.clone(),
+                    self.wcm.clone(),
                     valid_constraints.clone(),
                     airgroup_values_air_instances.clone(),
                     instance_id,
@@ -257,7 +258,7 @@ where
             handle.join().unwrap()
         }
 
-        wcm.end();
+        self.wcm.end();
 
         let check_global_constraints = self.pctx.options.debug_info.debug_instances.is_empty()
             || !self.pctx.options.debug_info.debug_global_instances.is_empty();
@@ -365,15 +366,17 @@ where
         let mut witness_lib = witness_lib(self.pctx.options.verbose_mode)?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
-        let wcm =
-            Arc::new(WitnessManager::new(self.pctx.clone(), self.sctx.clone(), public_inputs_path, input_data_path));
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.wcm.set_input_data_path(input_data_path);
 
-        self._generate_proof(output_dir_path, wcm, &mut *witness_lib)
+        self.register_witness(&mut *witness_lib);
+
+        self._generate_proof(output_dir_path)
     }
 
     pub fn generate_proof_from_lib(
         &self,
-        witness_lib: &mut dyn WitnessLibrary<F>,
+        input_data_path: Option<PathBuf>,
         output_dir_path: PathBuf,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         if !output_dir_path.exists() {
@@ -381,9 +384,8 @@ where
                 .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
         }
 
-        let wcm = Arc::new(WitnessManager::new(self.pctx.clone(), self.sctx.clone(), None, None));
-
-        self._generate_proof(output_dir_path, wcm, &mut *witness_lib)
+        self.wcm.set_input_data_path(input_data_path);
+        self._generate_proof(output_dir_path)
     }
 
     pub fn new(
@@ -425,41 +427,50 @@ where
 
         initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, d_buffers.clone());
 
+        let wcm = Arc::new(WitnessManager::new(
+            pctx.clone(),
+            sctx.clone(),
+        ));
+
         timer_stop_and_log_info!(INIT_PROOFMAN);
 
-        Ok(Self { pctx, sctx, setups: setups_vadcop, d_buffers, max_number_proofs, traces, prover_buffers })
+        Ok(Self { pctx, sctx, wcm, setups: setups_vadcop, d_buffers, max_number_proofs, traces, prover_buffers })
     }
-
-    pub fn free_d_buffers(&self) {
-        let mpi_node_rank = self.pctx.dctx_get_node_rank() as u32;
-        gen_device_commit_buffers_free_c(self.d_buffers.get_ptr(), mpi_node_rank);
+    
+    pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>,
+    ) {
+        timer_start_info!(REGISTERING_WITNESS);
+        witness_lib.register_witness(self.wcm.clone());
+        self.wcm.set_init_witness(true);
+        timer_stop_and_log_info!(REGISTERING_WITNESS);
     }
 
     #[allow(clippy::too_many_arguments)]
     fn _generate_proof(
         &self,
         output_dir_path: PathBuf,
-        wcm: Arc<WitnessManager<F>>,
-        witness_lib: &mut dyn WitnessLibrary<F>,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOFS);
 
+        timer_start_info!(EXECUTE);
+
+        if !self.wcm.is_init_witness() {
+            println!("Witness computation dynamic library not initialized");
+            return Err("Witness computation dynamic library not initialized".into());
+        }
+
         self.pctx.dctx_reset();
 
-        timer_start_info!(REGISTERING_WITNESS);
-        witness_lib.register_witness(wcm.clone());
-        timer_stop_and_log_info!(REGISTERING_WITNESS);
-
-        timer_start_info!(EXECUTE);
-        wcm.execute();
-        timer_stop_and_log_info!(EXECUTE);
+        self.wcm.execute();
 
         self.pctx.dctx_assign_instances();
         self.pctx.dctx_close();
 
         print_summary_info(Self::MY_NAME, &self.pctx, &self.sctx);
+
+        timer_stop_and_log_info!(EXECUTE);
 
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
 
@@ -533,7 +544,7 @@ where
                 let witness_rx = witness_rx.clone();
                 let pctx_clone = self.pctx.clone();
                 let instances = instances.clone();
-                let wcm_clone = wcm.clone();
+                let wcm_clone = self.wcm.clone();
                 let precomputed_witnesses = precomputed_witnesses.clone();
                 let witness_pending_clone = witness_pending.clone();
 
@@ -642,7 +653,7 @@ where
         let witness_pools: Vec<_> = (0..max_concurrent_pools_basic_proofs)
             .map(|thread_id| {
                 let witness_rx = witness_rx.clone();
-                let wcm_clone = wcm.clone();
+                let wcm_clone = self.wcm.clone();
                 let precomputed_witnesses = precomputed_witnesses.clone();
                 let instances_clone = instances.clone();
                 std::thread::spawn(move || loop {
@@ -824,12 +835,6 @@ where
                 return Err("Basic proofs were not verified".into());
             }
         }
-
-        std::thread::spawn({
-            move || {
-                drop(wcm);
-            }
-        });
 
         timer_start_info!(GENERATING_COMPRESSED_PROOFS);
         timer_start_info!(GENERATING_INNER_COMPRESSED_PROOFS);
