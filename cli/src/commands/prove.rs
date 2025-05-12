@@ -107,44 +107,36 @@ impl ProveCmd {
             }
         }
 
+        let proofman = ProofMan::<Goldilocks>::new(
+            self.proving_key.clone(),
+            custom_commits_map,
+            ProofOptions::new(
+                false,
+                self.verbose.into(),
+                self.aggregation,
+                self.final_snark,
+                self.verify_proofs,
+                self.preallocate,
+                debug_info.clone(),
+            ),
+        )?;
+
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
-                Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
+                Field::Goldilocks => proofman.verify_proof_constraints(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
                     self.input_data.clone(),
-                    self.proving_key.clone(),
                     self.output_dir.clone(),
-                    custom_commits_map,
-                    ProofOptions::new(
-                        false,
-                        self.verbose.into(),
-                        self.aggregation,
-                        self.final_snark,
-                        self.verify_proofs,
-                        false,
-                        debug_info,
-                    ),
                 )?,
             };
         } else {
             match self.field {
-                Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
+                Field::Goldilocks => proofman.generate_proof(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
                     self.input_data.clone(),
-                    self.proving_key.clone(),
                     self.output_dir.clone(),
-                    custom_commits_map,
-                    ProofOptions::new(
-                        false,
-                        self.verbose.into(),
-                        self.aggregation,
-                        self.final_snark,
-                        self.verify_proofs,
-                        self.preallocate,
-                        debug_info,
-                    ),
                 )?,
             };
         }

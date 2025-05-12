@@ -121,6 +121,11 @@ impl<F: Field> ProofCtx<F> {
         }
     }
 
+    pub fn dctx_reset(&self) {
+        let mut dctx = self.dctx.write().unwrap();
+        dctx.reset();
+    }
+
     pub fn set_weights(&mut self, sctx: &SetupCtx<F>) {
         for (airgroup_id, air_group) in self.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {

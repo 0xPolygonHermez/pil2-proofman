@@ -138,6 +138,28 @@ impl DistributionCtx {
         }
     }
 
+    pub fn reset(&mut self) {
+        self.n_instances = 0;
+        self.my_instances.clear();
+        self.instances.clear();
+        self.instances_owner.clear();
+
+        self.owners_count = vec![0; self.n_processes as usize];
+        self.owners_weight = vec![0; self.n_processes as usize];
+
+        #[cfg(feature = "distributed")]
+        {
+            self.roots_gatherv_count = vec![0; self.n_processes as usize];
+            self.roots_gatherv_displ = vec![0; self.n_processes as usize];
+        }
+
+        self.my_groups.clear();
+        self.my_air_groups.clear();
+        self.airgroup_instances_alives.clear();
+        self.glob2loc.clear();
+        self.balance_distribution = true;
+    }
+
     #[inline]
     pub fn barrier(&self) {
         #[cfg(feature = "distributed")]

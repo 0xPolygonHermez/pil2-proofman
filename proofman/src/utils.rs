@@ -171,58 +171,6 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
     info!("{}: ----------------------------------------------------------", name);
 }
 
-pub fn check_paths(
-    witness_lib_path: &PathBuf,
-    input_data_path: &Option<PathBuf>,
-    public_inputs_path: &Option<PathBuf>,
-    proving_key_path: &PathBuf,
-    output_dir_path: &PathBuf,
-    verify_constraints: bool,
-) -> Result<(), Box<dyn Error>> {
-    // Check witness_lib path exists
-    if !witness_lib_path.exists() {
-        return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
-    }
-
-    // Check input data path
-    if let Some(input_data_path) = input_data_path {
-        if !input_data_path.exists() {
-            return Err(format!("Input data file not found at path: {:?}", input_data_path).into());
-        }
-    }
-
-    // Check public_inputs_path is a folder
-    if let Some(publics_path) = public_inputs_path {
-        if !publics_path.exists() {
-            return Err(format!("Public inputs file not found at path: {:?}", publics_path).into());
-        }
-    }
-
-    check_paths2(proving_key_path, output_dir_path, verify_constraints)
-}
-
-pub fn check_paths2(
-    proving_key_path: &PathBuf,
-    output_dir_path: &PathBuf,
-    verify_constraints: bool,
-) -> Result<(), Box<dyn Error>> {
-    // Check proving_key_path exists
-    if !proving_key_path.exists() {
-        return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
-    }
-
-    // Check proving_key_path is a folder
-    if !proving_key_path.is_dir() {
-        return Err(format!("Proving key parameter must be a folder: {:?}", proving_key_path).into());
-    }
-
-    if !verify_constraints && !output_dir_path.exists() {
-        fs::create_dir_all(output_dir_path).map_err(|err| format!("Failed to create output directory: {:?}", err))?;
-    }
-
-    Ok(())
-}
-
 fn check_const_tree<F: PrimeField64>(
     setup: &Setup<F>,
     aggregation: bool,

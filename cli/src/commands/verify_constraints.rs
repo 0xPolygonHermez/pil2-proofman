@@ -72,15 +72,18 @@ impl VerifyConstraintsCmd {
             }
         }
 
+        let proofman = ProofMan::<Goldilocks>::new(
+            self.proving_key.clone(),
+            custom_commits_map,
+            ProofOptions::new(true, self.verbose.into(), false, false, false, false, debug_info),
+        )?;
+
         match self.field {
-            Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
+            Field::Goldilocks => proofman.verify_proof_constraints(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
                 self.input_data.clone(),
-                self.proving_key.clone(),
                 PathBuf::new(),
-                custom_commits_map,
-                ProofOptions::new(true, self.verbose.into(), false, false, false, false, debug_info),
             )?,
         };
 
