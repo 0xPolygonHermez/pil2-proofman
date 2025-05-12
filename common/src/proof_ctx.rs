@@ -1,6 +1,7 @@
 use std::os::raw::c_void;
 use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, sync::RwLock};
+use dashmap::DashMap;
 use std::path::PathBuf;
 
 use p3_field::Field;
@@ -78,7 +79,7 @@ pub struct ProofCtx<F: Field> {
     pub global_challenge: Values<F>,
     pub challenges: Values<F>,
     pub global_info: GlobalInfo,
-    pub air_instances: RwLock<HashMap<usize, AirInstance<F>>>,
+    pub air_instances: DashMap<usize, AirInstance<F>>,
     pub options: ProofOptions,
     pub weights: HashMap<(usize, usize), u64>,
     pub custom_commits_fixed: HashMap<String, PathBuf>,
@@ -112,7 +113,7 @@ impl<F: Field> ProofCtx<F> {
             proof_values: Values::new(n_proof_values),
             challenges: Values::new(n_challenges * 3),
             global_challenge: Values::new(3),
-            air_instances: RwLock::new(HashMap::new()),
+            air_instances: DashMap::new(),
             dctx: RwLock::new(DistributionCtx::new()),
             custom_commits_fixed,
             weights,
@@ -158,8 +159,7 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
-        let mut air_instances = self.air_instances.write().unwrap();
-        air_instances.insert(global_idx, air_instance);
+        self.air_instances.insert(global_idx, air_instance);
     }
 
     pub fn dctx_barrier(&self) {
@@ -397,8 +397,7 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn get_air_instance_params(&self, sctx: &SetupCtx<F>, instance_id: usize, gen_proof: bool) -> StepsParams {
-        let air_instances = self.air_instances.read().unwrap();
-        let air_instance = air_instances.get(&instance_id).unwrap();
+        let air_instance = self.air_instances.get(&instance_id).unwrap();
 
         let instances = self.dctx_get_instances();
         let (airgroup_id, air_id, _) = instances[instance_id];
@@ -425,14 +424,14 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn get_air_instance_trace_ptr(&self, instance_id: usize) -> *mut u8 {
-        self.air_instances.read().unwrap().get(&instance_id).unwrap().get_trace_ptr()
+        self.air_instances.get(&instance_id).unwrap().get_trace_ptr()
     }
 
     pub fn get_air_instance_trace(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Vec<F> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instances.read().unwrap().get(&index).unwrap().get_trace();
+            return self.air_instances.get(&index).unwrap().get_trace();
         } else {
             panic!(
                 "Air Instance with id {} for airgroup {} and air {} not found",
@@ -445,7 +444,7 @@ impl<F: Field> ProofCtx<F> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instances.read().unwrap().get(&index).unwrap().get_air_values();
+            return self.air_instances.get(&index).unwrap().get_air_values();
         } else {
             panic!(
                 "Air Instance with id {} for airgroup {} and air {} not found",
@@ -463,7 +462,7 @@ impl<F: Field> ProofCtx<F> {
         let dctx = self.dctx.read().unwrap();
         let index = dctx.find_instance_id(airgroup_id, air_id, air_instance_id);
         if let Some(index) = index {
-            return self.air_instances.read().unwrap().get(&index).unwrap().get_airgroup_values();
+            return self.air_instances.get(&index).unwrap().get_airgroup_values();
         } else {
             panic!(
                 "Air Instance with id {} for airgroup {} and air {} not found",
@@ -473,7 +472,6 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn free_instance(&self, instance_id: usize) {
-        let mut air_instances = self.air_instances.write().unwrap();
-        air_instances.remove(&instance_id);
+        self.air_instances.remove(&instance_id);
     }
 }
