@@ -59,6 +59,7 @@
     // ========================================================================================
     void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams);
     
+    uint64_t custom_commit_size(void *pSetup, uint64_t commitId);
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
     void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check);
 

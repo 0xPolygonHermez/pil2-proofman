@@ -16,6 +16,7 @@ use std::error::Error;
 use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_const_pols_gpu_c;
+use proofman_starks_lib_c::custom_commit_size_c;
 
 pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
     let mpi_rank = pctx.dctx_get_rank();
@@ -245,6 +246,53 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id);
                 check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
+
+                let n_custom_commits = setup.stark_info.custom_commits.len();
+
+                for commit_id in 0..n_custom_commits {
+                    if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
+                        let custom_commit_file_path = pctx
+                            .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name)
+                            .unwrap();
+
+                        if !PathBuf::from(&custom_commit_file_path).exists() {
+                            let error_message = format!(
+                                "Error: Unable to find {} custom commit at '{}'.\n\
+                                Please run the following command:\n\
+                                \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                                setup.stark_info.custom_commits[commit_id].name,
+                                custom_commit_file_path.display(),
+                            );
+                            return Err(error_message.into());
+                        }
+
+                        let error_message = format!(
+                            "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
+                            Please regenerate it by running:\n\
+                            \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                            setup.stark_info.custom_commits[commit_id].name,
+                            custom_commit_file_path.display(),
+                        );
+
+                        let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
+
+                        match fs::metadata(&custom_commit_file_path) {
+                            Ok(metadata) => {
+                                let actual_size = metadata.len() as usize;
+                                if actual_size != (size + 4) * 8 {
+                                    return Err(error_message.into());
+                                }
+                            }
+                            Err(err) => {
+                                return Err(format!(
+                                    "Failed to get metadata for {} for custom_commit {}: {}",
+                                    setup.air_name, setup.stark_info.custom_commits[commit_id].name, err
+                                )
+                                .into());
+                            }
+                        }
+                    }
+                }
             }
         }
     }

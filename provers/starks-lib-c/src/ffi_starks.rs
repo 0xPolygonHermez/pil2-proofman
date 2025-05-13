@@ -460,6 +460,11 @@ pub fn calculate_impols_expressions_c(p_setup: *mut c_void, step: u64, p_steps_p
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn custom_commit_size_c(p_setup: *mut c_void, commit_id: u64) -> u64 {
+    unsafe { custom_commit_size(p_setup, commit_id) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8, buffer_file: &str) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
@@ -1454,6 +1459,12 @@ pub fn calculate_impols_expressions_c(_p_setup: *mut c_void, _step: u64, _p_step
         "mckzkevm",
         "calculate_impols_expression: This is a mock call because there is no linked library"
     );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn custom_commit_size_c(_p_setup: *mut c_void, _commit_id: u64) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "custom_commit_size: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]

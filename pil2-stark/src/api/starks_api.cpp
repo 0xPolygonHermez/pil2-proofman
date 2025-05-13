@@ -323,6 +323,18 @@ void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsPar
     }
 }
 
+uint64_t custom_commit_size(void *pSetup, uint64_t commitId) {
+    auto setupCtx = *(SetupCtx *)pSetup;
+
+    uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
+    uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
+
+    std::string section = setupCtx.starkInfo.customCommits[commitId].name + "0";
+    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[section];
+
+    return (N + NExtended) * nCols + setupCtx.starkInfo.getNumNodesMT(NExtended);
+}
+
 void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *bufferFile)
 {
     auto setupCtx = *(SetupCtx *)pSetup;

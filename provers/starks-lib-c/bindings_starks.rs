@@ -255,6 +255,10 @@ extern "C" {
     );
 }
 extern "C" {
+    #[link_name = "\u{1}_Z18custom_commit_sizePvm"]
+    pub fn custom_commit_size(pSetup: *mut ::std::os::raw::c_void, commitId: u64) -> u64;
+}
+extern "C" {
     #[link_name = "\u{1}_Z18load_custom_commitPvmS_Pc"]
     pub fn load_custom_commit(
         pSetup: *mut ::std::os::raw::c_void,

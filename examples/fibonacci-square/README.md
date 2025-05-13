@@ -157,7 +157,7 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/release/libfibonacci_square.so \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs \
