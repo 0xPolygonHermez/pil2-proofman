@@ -216,7 +216,7 @@ void get_proof(void *pSetupCtx_, uint64_t threadId, uint64_t airgroupId, uint64_
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     cudaStream_t stream = d_buffers->streams[threadId];
-    TimerGPU timer = d_buffers->timers[threadId];
+    TimerGPU &timer = d_buffers->timers[threadId];
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     
@@ -239,7 +239,6 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t thread
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     cudaStream_t stream = d_buffers->streams[threadId];
     TimerGPU &timer = d_buffers->timers[threadId];
-    double time = omp_get_wtime();
     
     gl64_t *d_trace = (gl64_t *)d_buffers->d_aux_trace + threadId*(d_buffers->max_size_prover_buffer_aggregation + d_buffers->max_size_trace_aggregation);
     gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace + threadId*(d_buffers->max_size_prover_buffer_aggregation + d_buffers->max_size_trace_aggregation) + d_buffers->max_size_trace_aggregation;
@@ -286,7 +285,6 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t thread
 
 void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {
 
-    double time = omp_get_wtime();
     set_device(mpi_node_rank);
 
     uint64_t N = 1 << nBits;
@@ -302,21 +300,12 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     Goldilocks::parcpy(d_buffers->pinned_buffers[thread_id], (Goldilocks::Element *)trace, N * nCols, 4);
     CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetStage1, d_buffers->pinned_buffers[thread_id], sizeTrace, cudaMemcpyHostToDevice, stream));
     genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->pinned_buffers_proof[thread_id], timer, stream);
-    time = omp_get_wtime() - time;
-
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(2) << time << "s";
-    zklog.trace("        TIME COPY:   " + oss.str());
-    oss.str("");
-    oss.clear();    
 }
 
-void get_commit_root(uint64_t arity, uint64_t nBitsExt, uint64_t nCols, void *root, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {\
-    double time = omp_get_wtime();
-
+void get_commit_root(uint64_t arity, uint64_t nBitsExt, uint64_t nCols, void *root, uint64_t thread_id, void *d_buffers_, uint32_t mpi_node_rank) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     cudaStream_t stream = d_buffers->streams[thread_id];
-    TimerGPU timer = d_buffers->timers[thread_id];
+    TimerGPU &timer = d_buffers->timers[thread_id];
 
     CHECKCUDAERR(cudaStreamSynchronize(stream));
     memcpy((Goldilocks::Element *)root, d_buffers->pinned_buffers_proof[thread_id], HASH_SIZE * sizeof(uint64_t));
@@ -326,14 +315,6 @@ void get_commit_root(uint64_t arity, uint64_t nBitsExt, uint64_t nCols, void *ro
     TimerSyncCategoriesGPU(timer);
     TimerLogCategoryContributionsGPU(timer, GEN_COMMIT_GPU);
     TimerResetGPU(timer);
-
-    time = omp_get_wtime() - time;
-
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(2) << time << "s";
-    zklog.trace("        TIME COMMIT:   " + oss.str());
-    oss.str("");
-    oss.clear();    
 }
 
 uint64_t check_gpu_memory(uint32_t mpi_node_rank) {
