@@ -39,7 +39,7 @@ pub fn calculate_im_pols(expressions: &mut Vec<Value>, exp: &mut Value, max_deg:
     );
 
     #[cfg(feature = "debug-fibonacci")]
-    assert_eq!((re.clone(), rd.clone()), (Some(vec![39.into()]), 2));
+    assert_eq!((re.clone(), rd.clone()), (Some(vec![2.into()]), 2));
 
     (
         re.unwrap_or_else(Vec::new).into_iter().map(|v| v.as_number().unwrap().as_u64().unwrap() as usize).collect(),
@@ -56,7 +56,6 @@ fn __calculate_im_pols(
     absolute_max: usize,
     abs_max_d: &mut isize,
 ) -> (Option<Vec<Value>>, isize) {
-    println!("{}", exp.to_string());
     if im_pols.is_none() {
         return (None, -1);
     }
@@ -321,6 +320,7 @@ pub fn calculate_intermediate_polynomials(
     let (mut im_exps, mut q_deg) = calculate_im_pols(expressions, &mut c_exp, d);
     #[cfg(feature = "debug-fibonacci")]
     assert_eq!(q_deg, 1);
+    panic!("hey!");
     let mut added_basefield_cols = calculate_added_cols(d, expressions, &im_exps, q_deg as usize, q_dim);
     d += 1;
 
