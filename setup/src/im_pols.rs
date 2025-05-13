@@ -16,8 +16,10 @@ pub trait HashCode: Hash {
 
 impl<T: Hash> HashCode for T {}
 
-/// Top‐level entry: prints the same pre/post `im_pols.len()` lines as JS,
-/// then returns `(intermediate_polys, q_degree)`.
+use std::mem;
+
+/// Top‐level: prints the same “N 0 D” lines, then returns
+/// `(Vec<usize> of intermediate IDs, q_degree)`.
 pub fn calculate_im_pols(expressions: &mut [Value], exp: &mut Value, max_deg: usize) -> (Vec<usize>, usize) {
     let absolute_max = max_deg;
     let mut abs_max_d = 0isize;
@@ -33,7 +35,7 @@ pub fn calculate_im_pols(expressions: &mut [Value], exp: &mut Value, max_deg: us
     // JS: console.log(expressions.length, imPols.length, maxDeg);
     println!("{} {} {}", expressions.len(), pols_vec.len(), max_deg);
 
-    // JS: return Math.max(rd, absMaxD) - 1
+    // JS: return Math.max(rd, absMaxD) - 1, clamped ≥ 0
     let raw_q = rd.max(abs_max_d) - 1;
     let q_deg = if raw_q < 0 { 0 } else { raw_q as usize };
 
@@ -48,14 +50,14 @@ fn __calculate_im_pols(
     absolute_max: usize,
     abs_max_d: &mut isize,
 ) -> (Option<Vec<Value>>, isize) {
-    // JS: if (imPols === false) return [false, -1]
+    // JS: if imPols === false  ⇒  [false, -1]
     let mut im_pols = match im_pols_opt {
         None => return (None, -1),
         Some(v) => v,
     };
 
     match exp["op"].as_str().unwrap() {
-        // == add / sub: take the max depth ==
+        // ==== add / sub ====
         "add" | "sub" => {
             let mut md = 0isize;
             for child in exp["values"].as_array_mut().unwrap() {
@@ -70,14 +72,13 @@ fn __calculate_im_pols(
             (Some(im_pols), md)
         }
 
-        // == mul: constant fold, then degree check, then splits ==
+        // ==== mul ====
         "mul" => {
-            // 1) Read expDeg before mutably borrowing `values`
+            // read expDeg first
             let deg_here = exp["expDeg"].as_i64().unwrap_or(0) as usize;
-            // 2) Now borrow the array
             let vals = exp["values"].as_array_mut().unwrap();
 
-            // constant‐fold: if one side is a pure constant, recurse on the other
+            // constant‐fold a pure‐constant side
             for i in 0..2 {
                 let side = &vals[i];
                 let sop = side["op"].as_str().unwrap();
@@ -94,19 +95,19 @@ fn __calculate_im_pols(
                 }
             }
 
-            // if this whole mul’s degree is already ≤ max_deg, return it
+            // if the degree is already small enough, stop
             if deg_here <= max_deg {
                 return (Some(im_pols), deg_here as isize);
             }
 
-            // else try every split l + r = max_deg
+            // otherwise try all splits
             let mut best: Option<(Vec<Value>, isize)> = None;
             for l in 0..=max_deg {
                 let r = max_deg - l;
 
                 let (p1, d1) =
                     __calculate_im_pols(expressions, &mut vals[0], Some(im_pols.clone()), l, absolute_max, abs_max_d);
-                let mut p1 = match p1 {
+                let p1 = match p1 {
                     Some(v) => v,
                     None => continue,
                 };
@@ -125,7 +126,6 @@ fn __calculate_im_pols(
                     _ => {}
                 }
 
-                // early exit if we’ve matched the parent im_pols length
                 if let Some((ref bp, _)) = best {
                     if bp.len() == im_pols.len() {
                         return (Some(bp.clone()), combined_d);
@@ -133,46 +133,25 @@ fn __calculate_im_pols(
                 }
             }
 
-            // map Option<(Vec, isize)> → (Option<Vec>, isize)
             best.map(|(pols, d)| (Some(pols), d)).unwrap_or((None, -1))
         }
 
-        // == exp: cache or introduce an intermediate ==
+        // ==== exp (no caching) ====
         "exp" => {
             if max_deg < 1 {
                 return (None, -1);
             }
             let exp_id = exp["id"].as_u64().unwrap() as usize;
 
-            // if we’ve already added this id → deg=1
+            // if we've already included this ID
             if im_pols.iter().any(|v| v.as_u64().unwrap() as usize == exp_id) {
                 return (Some(im_pols), 1);
             }
 
-            // prepare cache keys
-            let level_key = absolute_max.to_string();
-            let pols_key = serde_json::to_string(&im_pols).unwrap();
-
-            // ensure `exp.res` is a map
-            let res_val = exp.as_object_mut().unwrap().entry("res").or_insert_with(|| Value::Object(Map::new()));
-            let res_map = res_val.as_object_mut().unwrap();
-
-            // ensure `res[level_key]` is a map
-            let lvl_val = res_map.entry(level_key.clone()).or_insert_with(|| Value::Object(Map::new()));
-            let lvl_map = lvl_val.as_object_mut().unwrap();
-
-            // try load from cache
-            if let Some(Value::Array(arr)) = lvl_map.get(&pols_key) {
-                if let (Some(e_arr), Some(d_val)) =
-                    (arr.get(0).and_then(Value::as_array), arr.get(1).and_then(Value::as_i64))
-                {
-                    return (Some(e_arr.clone()), d_val as isize);
-                }
-            }
-
-            // not cached → swap out the child so we can recurse
+            // recurse on the stored sub-expression
+            // swap it out to satisfy the borrow checker, then put it back
             let mut sub_expr = Value::Null;
-            std::mem::swap(&mut expressions[exp_id], &mut sub_expr);
+            mem::swap(&mut expressions[exp_id], &mut sub_expr);
 
             let (maybe_e, d) = __calculate_im_pols(
                 expressions,
@@ -182,28 +161,25 @@ fn __calculate_im_pols(
                 absolute_max,
                 abs_max_d,
             );
-
-            // write back any `res` changes into the real tree
-            std::mem::swap(&mut expressions[exp_id], &mut sub_expr);
+            mem::swap(&mut expressions[exp_id], &mut sub_expr);
 
             let mut e = match maybe_e {
                 Some(v) => v,
                 None => return (None, -1),
             };
 
-            // if the returned degree exceeds max_deg, we must add this id
+            // if we exceed max_deg, record this ID and reset degree to 1
             if (d as usize) > max_deg {
                 *abs_max_d = (*abs_max_d).max(d);
                 e.push(Value::from(exp_id as u64));
                 return (Some(e), 1);
             }
 
-            // otherwise cache & return
-            lvl_map.insert(pols_key.clone(), Value::Array(vec![Value::Array(e.clone()), Value::from(d as i64)]));
+            // otherwise just return the result
             (Some(e), d)
         }
 
-        // == leaf/default ==
+        // ==== default leaf ====
         _ => {
             let exp_deg = exp["expDeg"].as_i64().unwrap_or(0);
             if exp_deg == 0 {
