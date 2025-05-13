@@ -1,0 +1,24 @@
+[package]
+name = "proofman-setup"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+serde.workspace = true
+num-bigint.workspace = true
+num-traits.workspace = true
+rand.workspace = true
+tempfile = "3"
+itertools = "0"
+
+pilout = { path = "../pilout" }
+tracing-subscriber = "0"
+async-fs = "2"
+z3 = { version="0", features = ["static-link-z3"] }
+
+[features]
+debug-fibonacci = []

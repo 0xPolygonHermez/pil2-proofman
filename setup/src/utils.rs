@@ -1,0 +1,959 @@
+use pilout::pilout::{AirGroupValue, GlobalConstraint, PilOut, SymbolType};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value, Map};
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
+use crate::airout::AirOut;
+use crate::{
+    gen_code::{build_code, pil_code_gen, CodeGenContext},
+    gen_pil_code::add_hints_info,
+    helpers::add_info_expressions,
+    setup::StarkStruct,
+};
+use itertools::Itertools; // Needed for sorting
+
+/// Enum representing Pilout types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PiloutType {
+    FixedCol = 1,
+    WitnessCol = 3,
+    ProofValue = 4,
+    AirgroupValue = 5,
+    PublicValue = 6,
+    Challenge = 8,
+    AirValue = 9,
+    CustomCol = 10,
+}
+
+impl PiloutType {
+    /// Converts an integer to a `PiloutType`
+    pub fn from_u64(value: u64) -> Option<Self> {
+        match value {
+            1 => Some(Self::FixedCol),
+            3 => Some(Self::WitnessCol),
+            4 => Some(Self::ProofValue),
+            5 => Some(Self::AirgroupValue),
+            6 => Some(Self::PublicValue),
+            8 => Some(Self::Challenge),
+            9 => Some(Self::AirValue),
+            10 => Some(Self::CustomCol),
+            _ => None,
+        }
+    }
+}
+
+/// Formats expressions from Pilout, returning formatted expressions and optionally symbols.
+pub fn format_expressions(pilout: &HashMap<String, Value>, save_symbols: bool, global: bool) -> HashMap<String, Value> {
+    let mut symbols = Vec::new();
+    let expressions: Vec<Value> = pilout["expressions"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .map(|e| format_expression(e, pilout, &mut symbols, save_symbols, global))
+        .collect();
+
+    let mut result = Map::new();
+    result.insert("expressions".to_string(), json!(expressions));
+    if save_symbols {
+        result.insert("symbols".to_string(), json!(symbols));
+    }
+
+    result.into_iter().collect()
+}
+
+/// Formats the symbols in `pilout`, filtering and transforming them accordingly.
+pub fn format_symbols(pilout: &HashMap<String, Value>, global: bool) -> Vec<Value> {
+    let empty_vec = Vec::new();
+    let pil_symbols = pilout.get("symbols").and_then(|s| s.as_array()).unwrap_or(&empty_vec);
+    let mut symbols = Vec::new();
+
+    for s in pil_symbols {
+        let s_type = s["type"].as_u64().expect("Missing type field");
+
+        if s_type == 10 {
+            let stage = s["stage"].as_u64().unwrap_or(0);
+            if stage != 0 {
+                panic!("Invalid stage {} for a custom commit", stage);
+            }
+        }
+
+        if matches!(s_type, 1 | 3 | 10) {
+            let dim = match s["stage"].as_u64().unwrap_or(0) {
+                0 | 1 => 1,
+                _ => 3,
+            };
+
+            let type_str = match s_type {
+                1 => "fixed",
+                10 => "custom",
+                _ => "witness",
+            };
+
+            let previous_pols = pil_symbols
+                .iter()
+                .filter(|si| {
+                    si["type"] == s["type"]
+                        && si["airId"] == s["airId"]
+                        && si["airGroupId"] == s["airGroupId"]
+                        && (si["stage"].as_u64().unwrap_or(0) < s["stage"].as_u64().unwrap_or(0)
+                            || (si["stage"] == s["stage"]
+                                && si["id"].as_u64().unwrap_or(0) < s["id"].as_u64().unwrap_or(0)))
+                        && (s_type != 10 || s["commitId"] == si["commitId"])
+                })
+                .collect::<Vec<_>>();
+
+            let mut pol_id = 0;
+            for pol in &previous_pols {
+                if pol.get("dim").is_none() {
+                    pol_id += 1;
+                } else {
+                    let lengths = pol["lengths"].as_array().unwrap_or(&empty_vec);
+                    pol_id += lengths.iter().map(|l| l.as_u64().unwrap_or(1)).product::<u64>() as usize;
+                }
+            }
+
+            if s.get("dim").is_none() {
+                let stage_id = s["id"].as_u64().unwrap_or(0) as usize;
+                let mut symbol = json!({
+                    "name": s["name"],
+                    "stage": s["stage"],
+                    "type": type_str,
+                    "polId": pol_id,
+                    "stageId": stage_id,
+                    "dim": dim,
+                    "airId": s["airId"],
+                    "airGroupId": s["airGroupId"],
+                });
+
+                if s_type == 10 {
+                    symbol["commitId"] = s["commitId"].clone();
+                }
+                symbols.push(symbol);
+            } else {
+                let mut multi_array_symbols = Vec::new();
+                generate_multi_array_symbols(&mut multi_array_symbols, &[], s, type_str, dim, pol_id, 0);
+                symbols.extend(multi_array_symbols);
+            }
+        } else if s_type == 4 {
+            symbols.push(json!({
+                "name": s["name"],
+                "type": "proofValue",
+                "id": s["id"]
+            }));
+        } else if s_type == 8 {
+            let id = pil_symbols.iter().filter(|si| si["type"].as_u64() == Some(8)).count();
+
+            symbols.push(json!({
+                "name": s["name"],
+                "type": "challenge",
+                "stageId": s["id"],
+                "id": id,
+                "stage": s["stage"],
+                "dim": 3
+            }));
+        } else if s_type == 6 {
+            if s.get("dim").is_none() {
+                symbols.push(json!({
+                    "name": s["name"],
+                    "stage": 1,
+                    "type": "public",
+                    "dim": 1,
+                    "id": s["id"]
+                }));
+            } else {
+                let mut multi_array_symbols = Vec::new();
+                generate_multi_array_symbols(
+                    &mut multi_array_symbols,
+                    &[],
+                    s,
+                    "public",
+                    1,
+                    s["id"].as_u64().unwrap_or(0) as usize,
+                    0,
+                );
+                symbols.extend(multi_array_symbols);
+            }
+        } else if s_type == 5 {
+            let mut airgroup_value = json!({
+                "name": s["name"],
+                "type": "airgroupvalue",
+                "id": s["id"],
+                "airGroupId": s["airGroupId"],
+                "dim": 3
+            });
+
+            if !global {
+                let id = s["id"].as_u64().unwrap_or(0) as usize;
+                if let Some(airgroup_values) = pilout["airGroupValues"].as_array() {
+                    if id < airgroup_values.len() {
+                        airgroup_value["stage"] = airgroup_values[id]["stage"].clone();
+                    }
+                }
+            }
+            symbols.push(airgroup_value);
+        } else if s_type == 9 {
+            let mut air_value = json!({
+                "name": s["name"],
+                "type": "airvalue",
+                "id": s["id"],
+                "airGroupId": s["airGroupId"]
+            });
+
+            if !global {
+                let id = s["id"].as_u64().unwrap_or(0) as usize;
+                if let Some(air_values) = pilout["airValues"].as_array() {
+                    if id < air_values.len() {
+                        let stage = air_values[id]["stage"].as_u64().unwrap_or(1);
+                        air_value["stage"] = json!(stage);
+                        air_value["dim"] = json!(if stage != 1 { 3 } else { 1 });
+                    }
+                }
+            }
+            symbols.push(air_value);
+        } else {
+            panic!("Invalid type {}", s_type);
+        }
+    }
+
+    symbols
+}
+
+/// Generates multi-dimensional array symbols for pilout processing.
+fn generate_multi_array_symbols(
+    output: &mut Vec<Value>,
+    current_indices: &[usize],
+    s: &Value,
+    type_str: &str,
+    dim: usize,
+    pol_id: usize,
+    depth: usize,
+) {
+    let v = vec![];
+    let lengths = s["lengths"].as_array().unwrap_or(&v);
+    if depth == lengths.len() {
+        output.push(json!({
+            "name": s["name"],
+            "stage": s["stage"],
+            "type": type_str,
+            "polId": pol_id,
+            "stageId": s["id"],
+            "dim": dim,
+            "airId": s["airId"],
+            "airGroupId": s["airGroupId"]
+        }));
+        return;
+    }
+
+    for i in 0..lengths[depth].as_u64().unwrap_or(1) {
+        let mut new_indices = current_indices.to_vec();
+        new_indices.push(i as usize);
+        generate_multi_array_symbols(output, &new_indices, s, type_str, dim, pol_id, depth + 1);
+    }
+}
+
+/// Formats raw hints by processing fields recursively.
+pub fn format_hints(
+    pilout: &HashMap<String, Value>,
+    raw_hints: &[Value],
+    symbols: &mut Vec<Value>,
+    expressions: &mut Vec<Value>,
+    save_symbols: bool,
+    global: bool,
+) -> Vec<Value> {
+    let mut hints = Vec::new();
+
+    for raw_hint in raw_hints {
+        let mut hint = json!({ "name": raw_hint["name"] });
+
+        // Ensure the first element exists and contains `hintFieldArray`
+        if let Some(hint_fields) = raw_hint
+            .get("hintFields")
+            .and_then(|hf| hf.get(0))
+            .and_then(|first_field| first_field.get("hintFieldArray"))
+            .and_then(|hf_array| hf_array.get("hintFields"))
+            .and_then(|hf| hf.as_array())
+        {
+            let mut formatted_fields = Vec::new();
+
+            for field in hint_fields {
+                let name = field["name"].clone();
+                let (values, lengths) = process_hint_field(field, pilout, symbols, expressions, save_symbols, global);
+
+                let field_entry = if lengths.is_none() {
+                    json!({ "name": name, "values": [values], "lengths": lengths })
+                } else {
+                    json!({ "name": name, "values": values, "lengths": lengths })
+                };
+
+                formatted_fields.push(field_entry);
+            }
+
+            hint["fields"] = json!(formatted_fields);
+        }
+
+        hints.push(hint);
+    }
+
+    hints
+}
+
+/// Rust port of JS `formatConstraints` **with strict validation**.
+///
+/// *Panics* if any element follows the deprecated wrapper-object layout
+/// `{ "constraint": { everyRow: { … } } }`.
+pub fn format_constraints(pilout: &serde_json::Value) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+
+    if let Some(arr) = pilout.get("constraints").and_then(|v| v.as_array()) {
+        for (idx, raw) in arr.iter().enumerate() {
+            // ---- reject the obsolete format -----------------------------------
+            if raw.get("constraint").is_some() {
+                panic!(
+                    "format_constraints: element #{idx} uses the deprecated \
+                     {{ \"constraint\": {{ ... }} }} layout; \
+                     please feed the canonical PIL-out JSON."
+                );
+            }
+
+            // ---- canonical path ------------------------------------------------
+            let (boundary, body) = raw.as_object().and_then(|m| m.iter().next()).expect("constraint object is empty");
+
+            let mut c = serde_json::json!({
+                "boundary": boundary,
+                "e":        body["expressionIdx"]["idx"],
+                "line":     body["debugLine"],
+            });
+
+            if boundary == "everyFrame" {
+                c["offsetMin"] = body["offsetMin"].clone();
+                c["offsetMax"] = body["offsetMax"].clone();
+            }
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Prints a formatted expression from the given data.
+pub fn print_expressions(
+    res: &HashMap<String, Value>,
+    exp: &Value,
+    expressions: &[Value],
+    is_constraint: bool,
+) -> String {
+    match exp["op"].as_str() {
+        Some("exp") => {
+            if exp.get("line").is_none() {
+                let id = exp["id"].as_u64().unwrap() as usize;
+                let line = print_expressions(res, &expressions[id], expressions, is_constraint);
+                return line;
+            }
+            exp["line"].as_str().unwrap_or("").to_string()
+        }
+        Some("add") | Some("mul") | Some("sub") => {
+            let lhs = print_expressions(res, &exp["values"][0], expressions, is_constraint);
+            let rhs = print_expressions(res, &exp["values"][1], expressions, is_constraint);
+            let op = match exp["op"].as_str().unwrap() {
+                "add" => " + ",
+                "sub" => " - ",
+                "mul" => " * ",
+                _ => unreachable!(),
+            };
+            format!("({lhs}{op}{rhs})")
+        }
+        Some("neg") => {
+            let value = print_expressions(res, &exp["values"][0], expressions, is_constraint);
+            format!("-{}", value)
+        }
+        Some("number") => exp["value"].as_str().unwrap_or("").to_string(),
+        Some("const") | Some("cm") | Some("custom") => {
+            let id = exp["id"].as_u64().unwrap() as usize;
+            let col = if exp["op"] == "const" {
+                &res["constPolsMap"][id]
+            } else if exp["op"] == "cm" {
+                &res["cmPolsMap"][id]
+            } else {
+                let commit_id = exp["commitId"].as_u64().unwrap() as usize;
+                &res["customCommitsMap"][commit_id][id]
+            };
+
+            let mut name = col["name"].as_str().unwrap_or("").to_string();
+
+            if let Some(lengths) = col.get("lengths").and_then(Value::as_array) {
+                lengths.iter().for_each(|len| {
+                    write!(name, "[{}]", len).unwrap();
+                });
+            }
+
+            if col["imPol"].as_bool().unwrap_or(false) && !is_constraint {
+                let exp_id = col["expId"].as_u64().unwrap() as usize;
+                return print_expressions(res, &expressions[exp_id], expressions, false);
+            }
+
+            if let Some(row_offset) = exp.get("rowOffset").and_then(|v| v.as_i64()) {
+                match row_offset.cmp(&0) {
+                    Ordering::Greater => {
+                        name.push('\'');
+                        if row_offset > 1 {
+                            name.push_str(&row_offset.to_string());
+                        }
+                    }
+                    Ordering::Less => {
+                        name = format!("'{}{}", row_offset.abs(), name);
+                    }
+                    Ordering::Equal => {} // Do nothing for zero
+                }
+            }
+            name
+        }
+        Some("public") => {
+            res["publicsMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("airvalue") => {
+            res["airValuesMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("airgroupvalue") => {
+            res["airgroupValuesMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("challenge") => {
+            res["challengesMap"][exp["id"].as_u64().unwrap() as usize]["name"].as_str().unwrap_or("").to_string()
+        }
+        Some("x") => "x".to_string(),
+        Some("Zi") => "zh".to_string(),
+        _ => panic!("Unknown op: {:?}", exp["op"]),
+    }
+}
+
+pub fn process_hint_field(
+    hint_field: &Value,
+    pilout: &HashMap<String, Value>,
+    symbols: &mut Vec<Value>,
+    expressions: &mut Vec<Value>,
+    save_symbols: bool,
+    global: bool,
+) -> (Value, Option<Vec<usize>>) {
+    let mut result_fields = Vec::new();
+    let mut lengths = Vec::new();
+
+    if let Some(hint_field_array) = hint_field.get("hintFieldArray") {
+        if let Some(fields) = hint_field_array["hintFields"].as_array() {
+            for field in fields {
+                let (values, sub_lengths) =
+                    process_hint_field(field, pilout, symbols, expressions, save_symbols, global);
+
+                result_fields.push(values);
+
+                if lengths.is_empty() {
+                    lengths.push(fields.len()); // Initialize the first length
+                }
+
+                if let Some(sub_lengths) = sub_lengths {
+                    for (i, &sub_length) in sub_lengths.iter().enumerate() {
+                        if lengths.get(i + 1).is_none() {
+                            lengths.push(sub_length);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        let value = if let Some(operand) = hint_field.get("operand") {
+            let formatted_expr = format_expression(operand, pilout, symbols, save_symbols, global);
+            if formatted_expr["op"] == json!("exp") {
+                let id = formatted_expr["id"].as_u64().unwrap_or(0) as usize;
+                if let Some(expr) = expressions.get_mut(id) {
+                    expr["keep"] = json!(true);
+                }
+            }
+            formatted_expr
+        } else if let Some(string_value) = hint_field.get("stringValue") {
+            json!({ "op": "string", "string": string_value })
+        } else {
+            panic!("Unknown hint field");
+        };
+
+        return (value, None);
+    }
+
+    (json!(result_fields), Some(lengths))
+}
+
+/// Formats an individual expression from `pilout`, mirroring the JavaScript implementation.
+pub fn format_expression(
+    exp: &Value,
+    pilout: &HashMap<String, Value>,
+    symbols: &mut Vec<Value>,
+    save_symbols: bool,
+    global: bool,
+) -> Value {
+    if exp.get("op").is_some() {
+        return exp.clone();
+    }
+
+    // Store owned value to prevent temporary being dropped
+    let unknown_op = String::from("unknown");
+    let op_key = exp.as_object().and_then(|obj| obj.keys().next()).unwrap_or(&unknown_op);
+    let op = op_key.as_str();
+
+    let mut store = false;
+
+    let formatted_exp = match op {
+        "expression" => {
+            let id = exp[op].get("idx").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            if let Some(expr_obj) = pilout.get("expressions").and_then(|e| e.as_array()).and_then(|arr| arr.get(id)) {
+                let unknown_exp_op = String::from("unknown_exp");
+                let exp_op_key = expr_obj.as_object().and_then(|obj| obj.keys().next()).unwrap_or(&unknown_exp_op);
+                let exp_op = exp_op_key.as_str();
+                let exp_op_obj = &expr_obj[exp_op];
+
+                if exp_op != "mul"
+                    && exp_op_obj.get("lhs").and_then(|lhs| lhs.as_object()).and_then(|lhs| lhs.keys().next())
+                        != Some(&"expression".to_string())
+                    && exp_op_obj.get("rhs").and_then(|rhs| rhs.as_object()).and_then(|rhs| rhs.keys().next())
+                        == Some(&"constant".to_string())
+                    && buf2bint(&exp_op_obj["rhs"]["constant"]["value"]) == 0
+                {
+                    return format_expression(&exp_op_obj["lhs"], pilout, symbols, save_symbols, global);
+                }
+            }
+
+            json!({ "op": "exp", "id": id })
+        }
+        "add" | "mul" | "sub" => json!({
+            "op": op,
+            "values": [
+                format_expression(&exp[op]["lhs"], pilout, symbols, save_symbols, global),
+                format_expression(&exp[op]["rhs"], pilout, symbols, save_symbols, global)
+            ]
+        }),
+        "neg" => json!({
+            "op": op,
+            "values": [format_expression(&exp[op]["value"], pilout, symbols, save_symbols, global)]
+        }),
+        "constant" => json!({
+            "op": "number",
+            "value": buf2bint(&exp[op]["value"]).to_string()
+        }),
+        "witnessCol" | "customCol" => {
+            let col_type = if op == "witnessCol" { "cm" } else { "custom" };
+            let commit_id = if op == "customCol" { exp[op].get("commitId").and_then(|v| v.as_u64()) } else { None };
+
+            // Prevent dropping temporary value by storing vec![] in a variable
+            let empty_vec = vec![];
+            let stage_widths = if op == "witnessCol" {
+                pilout.get("stageWidths").and_then(|v| v.as_array()).unwrap_or(&empty_vec)
+            } else {
+                let id = commit_id.unwrap_or(0) as usize;
+                pilout
+                    .get("customCommits")
+                    .and_then(|commits| commits.as_array())
+                    .and_then(|arr| arr.get(id))
+                    .and_then(|commit| commit.get("stageWidths"))
+                    .and_then(|widths| widths.as_array())
+                    .unwrap_or(&empty_vec)
+            };
+
+            let stage_id = exp[op].get("colIdx").and_then(|v| v.as_u64()).unwrap_or(0);
+            let row_offset = exp[op].get("rowOffset").and_then(|v| v.as_i64()).unwrap_or(0);
+            let stage = exp[op].get("stage").and_then(|v| v.as_u64()).unwrap_or(1);
+
+            let id = stage_id
+                + stage_widths
+                    .iter()
+                    .take((stage as usize).saturating_sub(1))
+                    .map(|v| v.as_u64().unwrap_or(0))
+                    .sum::<u64>();
+
+            let dim = if stage <= 1 { 1 } else { 3 };
+            let airgroup_id = exp[op].get("airGroupId").and_then(|v| v.as_u64()).unwrap_or(0);
+            let air_id = exp[op].get("airId").and_then(|v| v.as_u64()).unwrap_or(0);
+
+            let mut res = json!({ "op": col_type, "id": id, "stageId": stage_id, "rowOffset": row_offset, "stage": stage, "dim": dim, "airGroupId": airgroup_id, "airId": air_id });
+            if op == "customCol" {
+                res["commitId"] = json!(commit_id);
+            }
+
+            store = true;
+            res
+        }
+        "fixedCol" => {
+            let id = exp[op].get("idx").and_then(|v| v.as_u64()).unwrap_or(0);
+            let row_offset = exp[op].get("rowOffset").and_then(|v| v.as_i64()).unwrap_or(0);
+            let airgroup_id = exp[op].get("airGroupId").and_then(|v| v.as_u64()).unwrap_or(0);
+            let air_id = exp[op].get("airId").and_then(|v| v.as_u64()).unwrap_or(0);
+
+            store = true;
+            json!({ "op": "const", "id": id, "rowOffset": row_offset, "stage": 0, "dim": 1, "airGroupId": airgroup_id, "airId": air_id })
+        }
+        "publicValue" => {
+            store = true;
+            json!({ "op": "public", "id": exp[op]["idx"], "stage": 1 })
+        }
+        "proofValue" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            store = true;
+            json!({ "op": "proofvalue", "id": id })
+        }
+        "airValue" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            let stage = pilout
+                .get("airValues")
+                .and_then(|arr| arr.as_array())
+                .and_then(|arr| arr.get(id as usize))
+                .and_then(|v| v.get("stage"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            let dim = if stage != 1 { 3 } else { 1 };
+
+            store = true;
+            json!({ "op": "airvalue", "id": id, "stage": stage, "dim": dim })
+        }
+        "challenge" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            let stage = exp[op]["stage"].as_u64().unwrap_or(1);
+
+            let challenge_id = id
+                + pilout
+                    .get("numChallenges")
+                    .and_then(|arr| arr.as_array())
+                    .map(|arr| arr.iter().take((stage - 1) as usize).filter_map(|v| v.as_u64()).sum::<u64>())
+                    .unwrap_or(0);
+
+            store = true;
+            json!({ "op": "challenge", "stage": stage, "stageId": id, "id": challenge_id })
+        }
+        "airGroupValue" => {
+            let id = exp[op]["idx"].as_u64().unwrap_or(0);
+            let stage = if !global {
+                pilout
+                    .get("airGroupValues")
+                    .and_then(|arr| arr.as_array())
+                    .and_then(|arr| arr.get(id as usize))
+                    .and_then(|v| v.get("stage"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+            } else {
+                let airgroup_id = exp[op]["airGroupId"].as_u64().unwrap_or(0);
+                pilout
+                    .get("airGroups")
+                    .and_then(|groups| groups.as_array())
+                    .and_then(|arr| arr.get(airgroup_id as usize))
+                    .and_then(|group| group.get("airGroupValues"))
+                    .and_then(|values| values.as_array())
+                    .and_then(|arr| arr.get(id as usize))
+                    .and_then(|v| v.get("stage"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+            };
+            store = true;
+            json!({ "op": "airgroupvalue", "id": id, "airGroupId": exp[op]["airGroupId"], "dim": 3, "stage": stage })
+        }
+        "operation" => format_expression(&exp["operation"], pilout, symbols, save_symbols, global),
+        "operand" => format_expression(&exp["operand"], pilout, symbols, save_symbols, global),
+        _ => panic!("Unknown op: {}", op),
+    };
+
+    if save_symbols && store {
+        add_symbol(pilout, symbols, &formatted_exp);
+    }
+
+    formatted_exp
+}
+
+/// Converts a buffer to a big integer.
+pub fn buf2bint(buf: &Value) -> u128 {
+    let empty_vec = Vec::new(); // Store the empty vector to extend its lifetime
+    let buf_bytes = buf.as_array().unwrap_or(&empty_vec);
+
+    let mut value = 0u128;
+    for byte in buf_bytes {
+        value = (value << 8) | byte.as_u64().unwrap_or(0) as u128;
+    }
+
+    value
+}
+
+/// Adds a symbol to the list of symbols.
+pub fn add_symbol(pilout: &HashMap<String, Value>, symbols: &mut Vec<Value>, exp: &Value) {
+    let name = format!("{}.{}", pilout["name"].as_str().unwrap_or("unknown"), exp["op"].as_str().unwrap_or("unknown"));
+    symbols.push(json!({
+        "name": name,
+        "type": exp["op"],
+        "id": exp["id"]
+    }));
+}
+
+/// Computes log2 of a given value using bitwise operations, similar to the JS implementation.
+pub fn log2(mut v: u32) -> u32 {
+    let mut r = 0;
+    if (v & 0xFFFF0000) != 0 {
+        v &= 0xFFFF0000;
+        r |= 16;
+    }
+    if (v & 0xFF00FF00) != 0 {
+        v &= 0xFF00FF00;
+        r |= 8;
+    }
+    if (v & 0xF0F0F0F0) != 0 {
+        v &= 0xF0F0F0F0;
+        r |= 4;
+    }
+    if (v & 0xCCCCCCCC) != 0 {
+        v &= 0xCCCCCCCC;
+        r |= 2;
+    }
+    if (v & 0xAAAAAAAA) != 0 {
+        r |= 1;
+    }
+    r
+}
+
+/// Computes a sequence of `ks` values based on field multiplication.
+/// `Fr` is a struct that implements field arithmetic with a multiplication method `mul()`.
+pub fn get_ks<F: Fn(f64, f64) -> f64>(fr_mul: F, n: usize, k: f64) -> Vec<f64> {
+    let mut ks = vec![k];
+    for i in 1..n {
+        ks.push(fr_mul(ks[i - 1], ks[0]));
+    }
+    ks
+}
+
+/// Metadata structure for an AIR system.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AIRMetadata {
+    pub name: String,
+    pub num_rows: usize,
+}
+
+/// FRI step information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FRIStep {
+    pub n_bits: usize,
+}
+
+/// Proof value mapping.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofValueMetadata {
+    pub name: String,
+    pub id: usize,
+}
+
+/// VADCOP information structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VadcopInfo {
+    pub name: String,
+    pub airs: Vec<Vec<AIRMetadata>>,
+    pub air_groups: Vec<String>,
+    pub agg_types: Vec<Vec<Value>>, // Using `Value` to match JSON expectations
+    pub steps_fri: Vec<FRIStep>,
+    pub n_publics: usize,
+    pub num_challenges: Vec<usize>,
+    pub num_proof_values: usize,
+    pub proof_values_map: Vec<ProofValueMetadata>,
+}
+
+/// Convert `AirGroupValue` to JSON manually
+fn air_group_value_to_json(value: &AirGroupValue) -> Value {
+    json!({
+        "agg_type": value.agg_type,
+        "stage": value.stage
+    })
+}
+
+/// Convert `GlobalConstraint` to JSON manually
+fn global_constraint_to_json(constraint: &GlobalConstraint) -> Value {
+    json!({
+        "expression_idx": constraint.expression_idx.as_ref().map(|e| json!({ "idx": e.idx })),
+        "debug_line": constraint.debug_line.clone().unwrap_or_default()
+    })
+}
+
+/// Convert `PilOut` to a `HashMap<String, Value>` for JSON serialization.
+fn pilout_to_json(pilout: &PilOut) -> HashMap<String, Value> {
+    let mut json_map = HashMap::new();
+
+    json_map.insert("name".to_string(), json!(pilout.name.clone().unwrap_or_default()));
+    json_map.insert("base_field".to_string(), json!(pilout.base_field));
+
+    // Convert `AirGroup`
+    let air_groups_json: Vec<Value> = pilout
+        .air_groups
+        .iter()
+        .map(|group| {
+            json!({
+                "name": group.name.clone().unwrap_or_default(),
+                "air_group_values": group.air_group_values.iter().map(air_group_value_to_json).collect::<Vec<_>>(),
+                "airs": group.airs.len() // Storing just the count to reduce size
+            })
+        })
+        .collect();
+    json_map.insert("air_groups".to_string(), json!(air_groups_json));
+
+    json_map.insert("num_challenges".to_string(), json!(pilout.num_challenges));
+    json_map.insert("num_proof_values".to_string(), json!(pilout.num_proof_values));
+    json_map.insert("num_public_values".to_string(), json!(pilout.num_public_values));
+
+    // Convert `GlobalConstraint`
+    let constraints_json: Vec<Value> = pilout.constraints.iter().map(global_constraint_to_json).collect();
+    json_map.insert("constraints".to_string(), json!(constraints_json));
+
+    json_map
+}
+
+/// Extracts metadata from `AirOut` and STARK structures.
+pub fn set_airout_info(airout: &AirOut, stark_structs: &[StarkStruct]) -> (VadcopInfo, HashMap<String, Value>) {
+    let pilout = airout.pilout(); // Access `PilOut`
+
+    let mut vadcop_info = VadcopInfo {
+        name: pilout.name.clone().unwrap_or_else(|| "default".to_string()),
+        airs: vec![vec![]; pilout.air_groups.len()],
+        air_groups: vec![],
+        agg_types: vec![vec![]; pilout.air_groups.len()],
+        steps_fri: vec![],
+        n_publics: pilout.num_public_values as usize,
+        num_challenges: pilout.num_challenges.iter().map(|&x| x as usize).collect(),
+        num_proof_values: pilout.num_proof_values.len(),
+        proof_values_map: vec![],
+    };
+
+    for (airgroup_id, airgroup) in pilout.air_groups.iter().enumerate() {
+        vadcop_info.air_groups.push(airgroup.name.clone().unwrap_or_else(|| format!("AirGroup {}", airgroup_id)));
+
+        // Manually serialize `AirGroupValue` to JSON
+        vadcop_info.agg_types[airgroup_id] = airgroup.air_group_values.iter().map(air_group_value_to_json).collect();
+
+        vadcop_info.airs[airgroup_id] = airgroup
+            .airs
+            .iter()
+            .map(|air| AIRMetadata {
+                name: air.name.clone().unwrap_or_else(|| "Unnamed Air".to_string()),
+                num_rows: air.num_rows.unwrap_or(0) as usize,
+            })
+            .collect();
+    }
+
+    // Extract final step FRI
+    let final_step = stark_structs
+        .first()
+        .and_then(|s| s.steps.last())
+        .map(|s| s.n_bits)
+        .expect("StarkStruct must contain at least one step");
+
+    let mut steps_fri: HashSet<usize> = HashSet::new();
+
+    for stark_struct in stark_structs {
+        for step in &stark_struct.steps {
+            steps_fri.insert(step.n_bits);
+        }
+        if stark_struct.steps.last().map(|s| s.n_bits) != Some(final_step) {
+            panic!("All FRI steps for different air groups must end at the same nBits");
+        }
+    }
+
+    vadcop_info.steps_fri = steps_fri.into_iter().sorted_by(|a, b| b.cmp(a)).map(|n_bits| FRIStep { n_bits }).collect();
+
+    // Extract proof values map
+    vadcop_info.proof_values_map = pilout
+        .symbols
+        .iter()
+        .filter(|s| s.r#type == SymbolType::ProofValue as i32)
+        .map(|p| ProofValueMetadata { name: p.name.clone(), id: p.id as usize })
+        .collect();
+
+    // Convert `PilOut` to JSON for constraints
+    let pilout_json = pilout_to_json(pilout);
+    let global_constraints = get_global_constraints_info(&pilout_json, true);
+
+    (vadcop_info, global_constraints)
+}
+
+/// Extracts global constraints information from a given `pilout` JSON structure.
+/// This function replicates the `getGlobalConstraintsInfo` logic from JavaScript.
+///
+/// # Arguments
+/// * `pilout` - A reference to the `pilout` JSON structure.
+/// * `save_symbols` - A boolean indicating whether to save symbols.
+///
+/// # Returns
+/// A `HashMap` containing `constraints` and `hints` extracted from pilout.
+pub fn get_global_constraints_info(pilout: &HashMap<String, Value>, save_symbols: bool) -> HashMap<String, Value> {
+    let mut constraints_code = Vec::new();
+    let mut hints_code = Vec::new();
+    let mut expressions = Vec::new();
+    let mut symbols = Vec::new();
+
+    // Check for constraints
+    if let Some(constraints) = pilout.get("constraints").and_then(|c| c.as_array()) {
+        let formatted_constraints: Vec<HashMap<String, Value>> = constraints
+            .iter()
+            .filter_map(|c| {
+                Some(HashMap::from([
+                    ("e".to_string(), json!(c["expressionIdx"]["idx"].as_u64()?)),
+                    ("boundary".to_string(), json!("finalProof")),
+                    ("line".to_string(), c["debugLine"].clone()),
+                ]))
+            })
+            .collect();
+
+        // Fetch formatted expressions and symbols
+        let expr_result = format_expressions(pilout, save_symbols, true);
+        expressions = expr_result["expressions"].as_array().unwrap_or(&vec![]).to_vec();
+
+        if save_symbols {
+            symbols = expr_result["symbols"].as_array().unwrap_or(&vec![]).to_vec();
+        } else {
+            symbols = format_symbols(pilout, true);
+        }
+
+        // Add expression info
+        for constraint in &formatted_constraints {
+            if let Some(e_idx) = constraint.get("e").and_then(|e| e.as_u64()) {
+                add_info_expressions(&mut expressions, e_idx as usize);
+            }
+        }
+
+        let mut ctx = CodeGenContext {
+            stage: 0,
+            calculated: HashMap::new(),
+            symbols_used: Vec::new(),
+            tmp_used: 0,
+            code: Vec::new(),
+            dom: "n".to_string(),
+            air_id: json!(null),
+            airgroup_id: json!(null),
+            opening_points: Vec::new(),
+            verifier_evaluations: false,
+            ev_map: Vec::new(),
+            exp_map: HashMap::new(),
+        };
+
+        // Generate constraint code
+        for constraint in &formatted_constraints {
+            if let Some(e_idx) = constraint.get("e").and_then(|e| e.as_u64()) {
+                pil_code_gen(&mut ctx, &symbols, &expressions, e_idx as usize, 0);
+                let mut code = build_code(&mut ctx);
+                ctx.tmp_used = code["tmpUsed"].as_u64().unwrap_or(0) as usize;
+                code["boundary"] = constraint["boundary"].clone();
+                code["line"] = constraint["line"].clone();
+                constraints_code.push(code);
+            }
+        }
+    }
+
+    // Handle global hints
+    if let Some(global_hints) = pilout.get("hints").and_then(|h| h.as_array()).map(|hints| {
+        hints
+            .iter()
+            .filter(|h| h.get("airId").is_none() && h.get("airGroupId").is_none())
+            .cloned()
+            .collect::<Vec<Value>>()
+    }) {
+        let hints = format_hints(pilout, &global_hints, &mut symbols, &mut expressions, save_symbols, true);
+        let mut res = HashMap::new();
+        hints_code = add_hints_info(&mut res, &mut expressions, &hints);
+    }
+
+    HashMap::from([("constraints".to_string(), json!(constraints_code)), ("hints".to_string(), json!(hints_code))])
+}
