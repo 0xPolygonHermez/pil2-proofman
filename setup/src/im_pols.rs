@@ -16,73 +16,82 @@ pub trait HashCode: Hash {
 
 impl<T: Hash> HashCode for T {}
 
-/// Top-level: mirrors your JS `calculateImPols`
-pub fn calculate_im_pols(expressions: &mut Vec<Value>, exp: &mut Value, max_deg: usize) -> (Vec<usize>, isize) {
+/// Top‐level port of JS `calculateImPols`.
+/// Prints the same four debug lines and returns `(imExps, qDeg)`.
+pub fn calculate_im_pols(expressions: &mut Vec<Value>, exp: &mut Value, max_deg: usize) -> (Vec<usize>, usize) {
     let absolute_max = max_deg;
     let mut abs_max_d: isize = 0;
 
     // JS: console.log(expressions.length, imPols.length, maxDeg);
     println!("{} {} {}", expressions.len(), 0, max_deg);
 
-    // recurse
-    let (im_pols, rd) = __calculate_im_pols(
+    let (maybe_pols, rd) = __calculate_im_pols(
         expressions,
         exp,
-        Vec::new(), // start with empty Vec<usize>
+        Some(Vec::new()), // start with an empty Vec<Value>
         max_deg,
         absolute_max,
         &mut abs_max_d,
     );
 
+    let pols = maybe_pols.unwrap_or_default();
+
     // JS: console.log(expressions.length, imPols.length, maxDeg);
-    println!("{} {} {}", expressions.len(), im_pols.len(), max_deg);
+    println!("{} {} {}", expressions.len(), pols.len(), max_deg);
     // JS: console.log("!!!!!!!!! re: ", re);
-    println!("!!!!!!!!! re: {:?}", im_pols);
+    println!("!!!!!!!!! re: {:?}", pols.iter().map(|v| v.as_u64().unwrap() as usize).collect::<Vec<_>>());
     // JS: console.log("!!!!!!!!! rd: ", rd);
     println!("!!!!!!!!! rd: {}", rd);
 
-    // return as JS: [ re, Math.max(rd, absMaxD) - 1 ]
+    // Compute q_degree = Math.max(rd, absMaxD) - 1, clamped ≥ 0
     let raw_q = rd.max(abs_max_d) - 1;
-    let q_deg = if raw_q < 0 { -1 } else { raw_q };
-    (im_pols, q_deg)
+    let q_deg = if raw_q < 0 { 0 } else { raw_q as usize };
+
+    // Convert Vec<Value> of ids into Vec<usize>
+    let im_exps = pols.into_iter().map(|v| v.as_u64().unwrap() as usize).collect();
+
+    (im_exps, q_deg)
 }
 
 fn __calculate_im_pols(
     expressions: &mut Vec<Value>,
     exp: &mut Value,
-    mut im_pols: Vec<usize>,
+    im_pols_opt: Option<Vec<Value>>,
     max_deg: usize,
     absolute_max: usize,
     abs_max_d: &mut isize,
-) -> (Vec<usize>, isize) {
-    let op = exp["op"].as_str().unwrap();
+) -> (Option<Vec<Value>>, isize) {
+    // JS: if (imPols === false) return [false, -1]
+    let mut im_pols = match im_pols_opt {
+        None => return (None, -1),
+        Some(v) => v,
+    };
 
-    // ---- false pathway ----
-    // if JS had imPols===false it returns [false, -1]
-    // we never actually pass a `false` Vec; instead we signal by returning d<0
+    let op = exp["op"].as_str().unwrap();
     match op {
-        // ---- add / sub ----
+        // ==== add / sub ====
         "add" | "sub" => {
             let mut md = 0isize;
             for child in exp["values"].as_array_mut().unwrap() {
-                let (next_pol, d) =
-                    __calculate_im_pols(expressions, child, im_pols.clone(), max_deg, absolute_max, abs_max_d);
-                if d < 0 {
-                    return (Vec::new(), -1);
-                }
-                im_pols = next_pol;
+                let (next_opt, d) =
+                    __calculate_im_pols(expressions, child, Some(im_pols.clone()), max_deg, absolute_max, abs_max_d);
+                let next = match next_opt {
+                    Some(v) => v,
+                    None => return (None, -1),
+                };
+                im_pols = next;
                 md = md.max(d);
             }
-            (im_pols, md)
+            (Some(im_pols), md)
         }
 
-        // ---- mul ----
+        // ==== mul ====
         "mul" => {
             // 1) read expDeg before borrowing .values
             let deg_here = exp["expDeg"].as_i64().unwrap_or(0) as usize;
             let vals = exp["values"].as_array_mut().unwrap();
 
-            // 2) constant-fold a deg-0 leaf
+            // 2) constant-fold: if one side is degree-0 leaf
             for i in 0..2 {
                 let sop = vals[i]["op"].as_str().unwrap();
                 let sdeg = vals[i]["expDeg"].as_i64().unwrap_or(0);
@@ -90,7 +99,7 @@ fn __calculate_im_pols(
                     return __calculate_im_pols(
                         expressions,
                         &mut vals[1 - i],
-                        im_pols,
+                        Some(im_pols),
                         max_deg,
                         absolute_max,
                         abs_max_d,
@@ -98,86 +107,97 @@ fn __calculate_im_pols(
                 }
             }
 
-            // 3) if within max_deg, shortcut
+            // 3) if this mul’s degree ≤ max_deg, shortcut
             if deg_here <= max_deg {
-                return (im_pols, deg_here as isize);
+                return (Some(im_pols), deg_here as isize);
             }
 
-            // 4) try all splits l+r=max_deg
-            let mut best: Option<(Vec<usize>, isize)> = None;
+            // 4) otherwise try all splits l + r = max_deg
+            let mut best: Option<(Vec<Value>, isize)> = None;
             for l in 0..=max_deg {
                 let r = max_deg - l;
-                // left
-                let (left_pol, d1) =
-                    __calculate_im_pols(expressions, &mut vals[0], im_pols.clone(), l, absolute_max, abs_max_d);
-                if d1 < 0 {
-                    continue;
-                }
-                // right
-                let (right_pol, d2) =
-                    __calculate_im_pols(expressions, &mut vals[1], left_pol.clone(), r, absolute_max, abs_max_d);
-                if d2 < 0 {
-                    continue;
-                }
+                // left branch
+                let (p1_opt, d1) =
+                    __calculate_im_pols(expressions, &mut vals[0], Some(im_pols.clone()), l, absolute_max, abs_max_d);
+                let p1 = match p1_opt {
+                    Some(v) => v,
+                    None => continue,
+                };
+                // right branch
+                let (p2_opt, d2) =
+                    __calculate_im_pols(expressions, &mut vals[1], Some(p1.clone()), r, absolute_max, abs_max_d);
+                let p2 = match p2_opt {
+                    Some(v) => v,
+                    None => continue,
+                };
 
                 let combined = d1 + d2;
-                let candidate = right_pol.clone();
-                let pick = best.as_ref().map_or(true, |(bp, _)| candidate.len() < bp.len());
+                let pick = best.as_ref().map_or(true, |(bp, _)| p2.len() < bp.len());
                 if pick {
-                    best = Some((candidate.clone(), combined));
+                    best = Some((p2.clone(), combined));
                 }
                 if let Some((bp, _)) = &best {
                     if bp.len() == im_pols.len() {
-                        return (bp.clone(), combined);
+                        return (Some(bp.clone()), combined);
                     }
                 }
             }
+
             if let Some((bp, d)) = best {
-                (bp, d)
+                (Some(bp), d)
             } else {
-                (Vec::new(), -1)
+                (None, -1)
             }
         }
 
-        // ---- exp ----
+        // ==== exp ====
         "exp" => {
             if max_deg < 1 {
-                return (Vec::new(), -1);
+                return (None, -1);
             }
-            let exp_id = exp["id"].as_u64().unwrap() as usize;
+            let id_val = exp["id"].clone();
 
-            // already in im_pols?
-            if im_pols.contains(&exp_id) {
-                return (im_pols, 1);
+            // if already in im_pols ⇒ degree 1
+            if im_pols.contains(&id_val) {
+                return (Some(im_pols), 1);
             }
 
-            // recurse at absolute_max on the referenced sub-expr
-            let mut sub = expressions[exp_id].clone();
-            let (mut e, d) =
-                __calculate_im_pols(expressions, &mut sub, im_pols.clone(), absolute_max, absolute_max, abs_max_d);
-            // write back any nested mutations
-            expressions[exp_id] = sub;
+            // recurse using absolute_max on the referenced sub‐expr
+            let child_idx = id_val.as_u64().unwrap() as usize;
+            let mut sub = expressions[child_idx].clone();
+            let (maybe_e, d) = __calculate_im_pols(
+                expressions,
+                &mut sub,
+                Some(im_pols.clone()),
+                absolute_max,
+                absolute_max,
+                abs_max_d,
+            );
+            // write back any nested changes (e.g. caching) if needed
+            expressions[child_idx] = sub;
 
-            if d < 0 {
-                return (Vec::new(), -1);
-            }
+            let mut e = match maybe_e {
+                Some(v) => v,
+                None => return (None, -1),
+            };
+            // if returned degree > max_deg, record this ID
             if (d as usize) > max_deg {
                 *abs_max_d = (*abs_max_d).max(d);
-                e.push(exp_id);
-                return (e, 1);
+                e.push(id_val);
+                return (Some(e), 1);
             }
-            (e, d)
+            (Some(e), d)
         }
 
-        // ---- leaf/default ----
+        // ==== leaf/default ====
         _ => {
             let ed = exp["expDeg"].as_i64().unwrap_or(0);
             if ed == 0 {
-                (im_pols, 0)
+                (Some(im_pols), 0)
             } else if max_deg < 1 {
-                (Vec::new(), -1)
+                (None, -1)
             } else {
-                (im_pols, 1)
+                (Some(im_pols), 1)
             }
         }
     }
