@@ -22,10 +22,7 @@ pub struct WitnessManager<F: Field> {
 impl<F: Field> WitnessManager<F> {
     const _MY_NAME: &'static str = "WCMnager";
 
-    pub fn new(
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-    ) -> Self {
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Self {
         WitnessManager {
             components: RwLock::new(Vec::new()),
             components_instance_ids: RwLock::new(Vec::new()),

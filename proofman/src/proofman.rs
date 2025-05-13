@@ -190,9 +190,7 @@ where
         self._verify_proof_constraints()
     }
 
-    fn _verify_proof_constraints(
-        &self,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn _verify_proof_constraints(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.pctx.dctx_reset();
 
         if !self.wcm.is_init_witness() {
@@ -427,18 +425,14 @@ where
 
         initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, d_buffers.clone());
 
-        let wcm = Arc::new(WitnessManager::new(
-            pctx.clone(),
-            sctx.clone(),
-        ));
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
 
         timer_stop_and_log_info!(INIT_PROOFMAN);
 
         Ok(Self { pctx, sctx, wcm, setups: setups_vadcop, d_buffers, max_number_proofs, traces, prover_buffers })
     }
-    
-    pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>,
-    ) {
+
+    pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>) {
         timer_start_info!(REGISTERING_WITNESS);
         witness_lib.register_witness(self.wcm.clone());
         self.wcm.set_init_witness(true);
@@ -446,10 +440,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn _generate_proof(
-        &self,
-        output_dir_path: PathBuf,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    fn _generate_proof(&self, output_dir_path: PathBuf) -> Result<Option<String>, Box<dyn std::error::Error>> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOFS);
@@ -683,9 +674,9 @@ where
         let thread_info = Arc::new(
             (0..self.max_number_proofs)
                 .map(|_| ThreadInstanceInfo {
-                    airgroup_id: AtomicUsize::new(0),
-                    air_id: AtomicUsize::new(0),
-                    proof_type: AtomicUsize::new(0),
+                    airgroup_id: AtomicUsize::new(usize::MAX),
+                    air_id: AtomicUsize::new(usize::MAX),
+                    proof_type: AtomicUsize::new(usize::MAX),
                 })
                 .collect::<Vec<_>>(),
         );
@@ -848,7 +839,10 @@ where
         let (witness_recursive2_tx, witness_recursive2_rx) = crossbeam_channel::unbounded::<usize>();
         let (recursive_proofs_tx, recursive_proofs_rx) = crossbeam_channel::unbounded::<(usize, usize)>();
 
-        let num_witness_workers = 4;
+        let num_witness_workers = match cfg!(feature = "gpu") {
+            true => 4,
+            false => 1,
+        };
 
         let recursive_proofs_counter = Arc::new(AtomicUsize::new(0));
 
@@ -1256,6 +1250,7 @@ where
             }
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
+            steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
         }
 
         let p_steps_params: *mut u8 = (&steps_params).into();
