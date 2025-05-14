@@ -29,15 +29,15 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-proofman-macros = { path = "macros", version = "0.7.1" }
-proofman = { path = "proofman", version = "0.7.1" }
-proofman-common = { path = "common", version = "0.7.1" }
-proofman-hints = { path = "hints", version = "0.7.1" }
-proofman-util = { path = "util", version = "0.7.1" }
-proofman-cli = { path = "cli", version = "0.7.1" }
-pil-std-lib = { path = "pil2-components/lib/std/rs", version = "0.7.1" }
-witness = { path = "witness", version = "0.7.1" }
-pilout = { path = "pilout", version = "0.7.1" }
+proofman-macros = { path = "macros", version = "0.8.0" }
+proofman = { path = "proofman", version = "0.8.0" }
+proofman-common = { path = "common", version = "0.8.0" }
+proofman-hints = { path = "hints", version = "0.8.0" }
+proofman-util = { path = "util", version = "0.8.0" }
+proofman-cli = { path = "cli", version = "0.8.0" }
+pil-std-lib = { path = "pil2-components/lib/std/rs", version = "0.8.0" }
+witness = { path = "witness", version = "0.8.0" }
+pilout = { path = "pilout", version = "0.8.0" }
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
 p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
