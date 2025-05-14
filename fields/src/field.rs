@@ -1,6 +1,7 @@
 use core::fmt::{Debug, Display};
 use core::hash::Hash;
 use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::ops::DivAssign;
 
 use num_bigint::BigUint;
 use serde::Serialize;
@@ -9,6 +10,7 @@ use serde::de::DeserializeOwned;
 pub trait Field:
     From<Self>
     + Default
+    + Copy
     + Clone
     + Neg<Output = Self>
     + Add<Self, Output = Self>
@@ -17,9 +19,9 @@ pub trait Field:
     + SubAssign<Self>
     + Mul<Self, Output = Self>
     + MulAssign<Self>
-    + 'static
-    + Copy
     + Div<Self, Output = Self>
+    + DivAssign<Self>
+    + 'static
     + Eq
     + Hash
     + Send
@@ -37,15 +39,19 @@ pub trait Field:
 
     const NEG_ONE: Self;
 
-    fn from_bool(b: bool) -> Self;
+    const GENERATOR: Self;
+
+    #[must_use]
+    #[inline(always)]
+    fn from_bool(b: bool) -> Self {
+        if b {
+            Self::ONE
+        } else {
+            Self::ZERO
+        }
+    }
 
     fn from_u64(int: u64) -> Self;
-
-    fn double(&self) -> Self;
-
-    fn square(&self) -> Self;
-
-    fn inverse(&self) -> Self;
 
     #[must_use]
     #[inline]
@@ -57,6 +63,81 @@ pub trait Field:
     #[inline]
     fn is_one(&self) -> bool {
         *self == Self::ONE
+    }
+
+    #[must_use]
+    #[inline(always)]
+    fn double(&self) -> Self {
+        *self + *self
+    }
+
+    #[must_use]
+    #[inline(always)]
+    fn square(&self) -> Self {
+        *self * *self
+    }
+
+    #[must_use]
+    #[inline(always)]
+    fn cube(&self) -> Self {
+        self.square() * *self
+    }
+
+    fn exp_u64(&self, exp: u64) -> Self {
+        let mut result = Self::ONE;
+        let mut base = *self;
+
+        for j in 0..bits_u64(exp) {
+            if (exp >> j) & 1 == 1 {
+                result *= base;
+            }
+            base = base.square();
+        }
+
+        return result;
+
+        pub fn bits_u64(n: u64) -> usize {
+            (64 - n.leading_zeros()) as usize
+        }
+    }
+
+    #[must_use]
+    #[inline(always)]
+    fn exp_const<const EXP: u64>(&self) -> Self {
+        match EXP {
+            0 => Self::ONE,
+            1 => *self,
+            2 => self.square(),
+            3 => self.cube(),
+            4 => self.square().square(),
+            5 => *self * self.square().square(),
+            6 => self.square().cube(),
+            7 => {
+                let sq = self.square();
+                let cb = sq * *self;
+                let qrt = sq.square();
+                cb * qrt
+            }
+            _ => self.exp_u64(EXP),
+        }
+    }
+
+    #[must_use]
+    #[inline(always)]
+    fn exp_power_of_2(&self, power_log: usize) -> Self {
+        let mut res = *self;
+        for _ in 0..power_log {
+            res = res.square();
+        }
+        res
+    }
+
+    #[must_use]
+    fn try_inverse(&self) -> Option<Self>;
+
+    #[must_use]
+    fn inverse(&self) -> Self {
+        self.try_inverse().expect("Tried to invert zero")
     }
 }
 
@@ -76,4 +157,26 @@ pub trait PrimeField64: PrimeField {
     fn to_unique_u64(&self) -> u64 {
         self.as_canonical_u64()
     }
+}
+
+pub trait ExtensionField<Base: Field>:
+    Field
+    + Add<Base, Output = Self>
+    + AddAssign<Base>
+    + Sub<Base, Output = Self>
+    + SubAssign<Base>
+    + Mul<Base, Output = Self>
+    + MulAssign<Base>
+    + Div<Base, Output = Self>
+    + DivAssign<Base>
+{
+    const NON_RESIDUE: u64;
+
+    fn as_basis_coefficients_slice(&self) -> &[Base];
+
+    fn from_basis_singleton(value: Base) -> Self;
+
+    fn from_basis_coefficients_slice(value: &[Base]) -> Self;
+
+    fn from_basis_coefficients_fn(f: impl Fn(usize) -> Base) -> Self;
 }

@@ -1,9 +1,7 @@
-use p3_field::{Field, ExtensionField};
-
-use crate::goldilocks_quintic_extension::SquaringFp5;
+use fields::{ExtensionField, PrimeField64, SquaringFp5};
 
 /// Trait for elliptic curves
-pub trait EllipticCurve<F: Field, K: ExtensionField<F> + SquaringFp5>: Clone {
+pub trait EllipticCurve<F: PrimeField64, K: ExtensionField<F> + SquaringFp5<F>>: Clone {
     /// Parameter `A` of the curve
     const A: [u64; 5];
     /// Parameter `B` of the curve
@@ -73,7 +71,7 @@ pub trait EllipticCurve<F: Field, K: ExtensionField<F> + SquaringFp5>: Clone {
         let y = self.y();
 
         let a = K::from_basis_coefficients_fn(|i| F::from_u64(Self::A[i]));
-        let slope = (x.square() * F::from_u8(3) + a) / (y * F::from_u8(2));
+        let slope = (x.square() * F::from_u64(3) + a) / (y * F::from_u64(2));
         let x3 = slope.square() - x.double();
         let y3 = slope * (x - x3) - y;
         Self::new(x3, y3)

@@ -8,4 +8,5 @@ p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a
 p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
 
 serde = { workspace = true, features = ["derive"] }
-num-bigint = { version = "0.4.3", default-features = false }
+num-bigint = { workspace = true }
+rand = { workspace = true }

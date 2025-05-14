@@ -2,6 +2,7 @@ use core::fmt;
 use core::fmt::{Debug, Display, Formatter};
 use core::hash::{Hash, Hasher};
 use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::ops::DivAssign;
 
 use num_bigint::BigUint;
 use p3_goldilocks::Goldilocks as P3Goldilocks;
@@ -9,6 +10,8 @@ use p3_field::Field as P3Field;
 use p3_field::PrimeField64 as P3PrimeField64;
 use p3_field::PrimeCharacteristicRing as P3PrimeCharacteristicRing;
 
+use rand::distr::{Distribution, StandardUniform};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::{Field, PrimeField, PrimeField64};
@@ -69,16 +72,7 @@ impl Field for Goldilocks {
     const ONE: Self = Self::new(P3Goldilocks::ONE);
     const TWO: Self = Self::new(P3Goldilocks::TWO);
     const NEG_ONE: Self = Self::new(P3Goldilocks::NEG_ONE);
-
-    #[must_use]
-    #[inline(always)]
-    fn from_bool(b: bool) -> Self {
-        if b {
-            Self::ONE
-        } else {
-            Self::ZERO
-        }
-    }
+    const GENERATOR: Self = Self::new(P3Goldilocks::GENERATOR);
 
     #[must_use]
     #[inline(always)]
@@ -87,24 +81,11 @@ impl Field for Goldilocks {
     }
 
     #[must_use]
-    #[inline(always)]
-    fn double(&self) -> Self {
-        self.clone() + self.clone()
-    }
-
-    #[must_use]
-    #[inline(always)]
-    fn square(&self) -> Self {
-        self.clone() * self.clone()
-    }
-
-    #[must_use]
-    fn inverse(&self) -> Self {
-        Self::new(self.value.inverse())
-    }
-
-    fn is_zero(&self) -> bool {
-        self.value.is_zero()
+    fn try_inverse(&self) -> Option<Self> {
+        if self.is_zero() {
+            return None;
+        }
+        Some(Self::new(self.value.inverse()))
     }
 }
 
@@ -186,5 +167,24 @@ impl Div for Goldilocks {
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn div(self, rhs: Self) -> Self {
         Self::new(P3Goldilocks::div(self.value, rhs.value))
+    }
+}
+
+impl DivAssign for Goldilocks {
+    #[allow(clippy::suspicious_arithmetic_impl)]
+    fn div_assign(&mut self, rhs: Self) {
+        *self = *self / rhs;
+    }
+}
+
+impl Distribution<Goldilocks> for StandardUniform {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Goldilocks {
+        loop {
+            let next_u64 = rng.next_u64();
+            let is_canonical = next_u64 < Goldilocks::ORDER_U64;
+            if is_canonical {
+                return Goldilocks::from_u64(next_u64);
+            }
+        }
     }
 }
