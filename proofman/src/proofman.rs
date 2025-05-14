@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::fmt::Write;
 use std::io::Read;
-use std::sync::atomic::{AtomicU64, AtomicUsize, AtomicBool};
+use std::sync::atomic::{AtomicUsize, AtomicBool};
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 use p3_goldilocks::Goldilocks;
@@ -532,7 +532,8 @@ where
         let mpi_node_rank = self.pctx.dctx_get_node_rank() as u32;
         let instances_mine = my_instances.len();
 
-        let values = Arc::new((0..my_instances.len() * 10).map(|_| AtomicU64::new(0)).collect::<Vec<_>>());
+        let values_contributions = Arc::new(RwLock::new(vec![Vec::new(); my_instances.len()]));
+        let roots_contributions = Arc::new(RwLock::new(vec![vec![F::ZERO; 4]; my_instances.len()]));
 
         let aux_trace_size = match cfg!(feature = "gpu") {
             true => {
@@ -571,7 +572,8 @@ where
                 let pctx_clone = self.pctx.clone();
                 let sctx_clone = self.sctx.clone();
                 let aux_trace_clone = aux_trace.clone();
-                let values_clone = values.clone();
+                let values_clone = values_contributions.clone();
+                let roots_clone = roots_contributions.clone();
                 let d_buffers_clone = self.d_buffers.clone();
                 let precomputed_witnesses = precomputed_witnesses.clone();
                 let instances_clone = instances.clone();
@@ -579,19 +581,16 @@ where
 
                 std::thread::spawn(move || {
                     while let Some(instance_id) = precomputed_witnesses.pop() {
-                        let value = Self::get_contribution_air(
+                        Self::get_contribution_air(
                             pctx_clone.clone(),
                             &sctx_clone,
+                            roots_clone.clone(),
+                            values_clone.clone(),
                             instance_id,
                             aux_trace_clone.clone().as_ptr() as *mut u8,
                             contribution_thread_id,
                             d_buffers_clone.clone(),
                         );
-
-                        let base_idx = pctx_clone.dctx_get_instance_idx(instance_id) * 10;
-                        for (id, v) in value.iter().enumerate().take(10) {
-                            values_clone[base_idx + id].store(*v, Ordering::Relaxed);
-                        }
 
                         let count = contributions_calculated.increment();
                         let (_, _, all) = instances_clone[instance_id];
@@ -660,14 +659,7 @@ where
             worker.join().unwrap();
         }
 
-        timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
-        let values_challenge = Arc::try_unwrap(values)
-            .expect("Arc still has other references")
-            .into_iter()
-            .map(|atomic| atomic.load(std::sync::atomic::Ordering::Relaxed))
-            .collect::<Vec<u64>>();
-        Self::calculate_global_challenge(&self.pctx, values_challenge);
-        timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
+        Self::calculate_global_challenge(&self.pctx, roots_contributions, values_contributions);
 
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
@@ -1415,8 +1407,38 @@ where
         Ok((pctx, sctx, setups_vadcop))
     }
 
-    fn calculate_global_challenge(pctx: &ProofCtx<F>, values: Vec<u64>) {
+    fn calculate_global_challenge(
+        pctx: &ProofCtx<F>,
+        roots_contributions: Arc<RwLock<Vec<Vec<F>>>>,
+        values_contributions: Arc<RwLock<Vec<Vec<F>>>>,
+    ) {
         timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
+        let my_instances = pctx.dctx_get_my_instances();
+
+        let mut values = vec![0u64; my_instances.len() * 10];
+
+        for instance_id in my_instances.iter() {
+            let mut contribution = vec![F::ZERO; 10];
+
+            let mut values_to_hash = values_contributions.read().unwrap()[*instance_id].clone();
+            let root_contribution = roots_contributions.read().unwrap()[*instance_id].clone();
+            for j in 0..4 {
+                values_to_hash[j + 4] = root_contribution[j];
+            }
+
+            calculate_hash_c(
+                contribution.as_mut_ptr() as *mut u8,
+                values_to_hash.as_mut_ptr() as *mut u8,
+                values_to_hash.len() as u64,
+                10,
+            );
+
+            let base_idx = pctx.dctx_get_instance_idx(*instance_id) * 10;
+            for (id, v) in contribution.iter().enumerate().take(10) {
+                values[base_idx + id] = v.as_canonical_u64();
+            }
+        }
+
         let transcript = FFITranscript::new(2, true);
 
         transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
@@ -1613,11 +1635,13 @@ where
     pub fn get_contribution_air(
         pctx: Arc<ProofCtx<F>>,
         sctx: &SetupCtx<F>,
+        roots: Arc<RwLock<Vec<Vec<F>>>>,
+        values: Arc<RwLock<Vec<Vec<F>>>>,
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
         thread_id: usize,
         d_buffers: Arc<DeviceBuffer>,
-    ) -> Vec<u64> {
+    ) {
         let n_field_elements = 4;
 
         timer_start_info!(GET_CONTRIBUTION_AIR);
@@ -1629,13 +1653,13 @@ where
 
         let air_values = pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id).clone();
 
-        let root = vec![F::ZERO; n_field_elements];
+        let root_ptr = roots.read().unwrap()[instance_id].as_ptr() as *mut u8;
         commit_witness_c(
             3,
             setup.stark_info.stark_struct.n_bits,
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),
-            root.as_ptr() as *mut u8,
+            root_ptr,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
             thread_id as u64,
@@ -1647,13 +1671,11 @@ where
             3,
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),
-            root.as_ptr() as *mut u8,
+            root_ptr,
             thread_id as u64,
             d_buffers.get_ptr(),
             pctx.dctx_get_node_rank() as u32,
         );
-
-        let mut value = vec![F::ZERO; 10];
 
         let n_airvalues = setup
             .stark_info
@@ -1666,16 +1688,8 @@ where
 
         let mut values_hash = vec![F::ZERO; size];
 
-        let verkey = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic).display().to_string()
-            + ".verkey.json";
-
-        let mut file = File::open(&verkey).expect("Unable to open file");
-        let mut json_str = String::new();
-        file.read_to_string(&mut json_str).expect("Unable to read file");
-        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
         for j in 0..n_field_elements {
-            values_hash[j] = F::from_u64(vk[j]);
-            values_hash[j + n_field_elements] = root[j];
+            values_hash[j] = setup.verkey[j];
         }
 
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
@@ -1689,11 +1703,9 @@ where
             }
         }
 
-        calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64, 10);
+        values.write().unwrap()[instance_id] = values_hash.clone();
 
         timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
-
-        value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
     }
 
     fn add_contributions(curve_type: &CurveType, values: &[Vec<F>]) -> Vec<F> {

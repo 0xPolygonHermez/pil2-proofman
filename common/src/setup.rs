@@ -2,7 +2,8 @@ use std::os::raw::c_void;
 use p3_field::Field;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
-
+use std::fs::File;
+use std::io::Read;
 use libloading::{Library, Symbol};
 
 use proofman_starks_lib_c::set_memory_expressions_c;
@@ -55,6 +56,7 @@ pub struct Setup<F: Field> {
     pub setup_type: ProofType,
     pub size_witness: RwLock<Option<u64>>,
     pub air_name: String,
+    pub verkey: Vec<F>,
 }
 
 impl<F: Field> Setup<F> {
@@ -83,6 +85,7 @@ impl<F: Field> Setup<F> {
             p_expressions_bin,
             const_pols,
             const_pols_tree,
+            verkey,
             const_pols_size,
             const_tree_size,
             prover_buffer_size,
@@ -90,7 +93,19 @@ impl<F: Field> Setup<F> {
             proof_size,
         ) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
             // If the condition is met, use None for each pointer
-            (StarkInfo::default(), std::ptr::null_mut(), std::ptr::null_mut(), Vec::new(), Vec::new(), 0, 0, 0, 0, 0)
+            (
+                StarkInfo::default(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
         } else {
             // Otherwise, initialize the pointers with their respective values
             let stark_info_json = std::fs::read_to_string(&stark_info_path)
@@ -118,6 +133,15 @@ impl<F: Field> Setup<F> {
 
             let const_tree_size = get_const_tree_size_c(p_stark_info) as usize;
 
+            let verkey_file = setup_path.with_extension("verkey.json");
+
+            let mut file = File::open(&verkey_file).expect("Unable to open file");
+            let mut json_str = String::new();
+            file.read_to_string(&mut json_str).expect("Unable to read file");
+            let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
+
+            let verkey = vk.iter().map(|&x| F::from_u64(x)).collect::<Vec<F>>();
+
             if verify_constraints {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 load_const_pols(&setup_path, const_pols_size, &const_pols);
@@ -127,6 +151,7 @@ impl<F: Field> Setup<F> {
                     expressions_bin,
                     const_pols,
                     Vec::new(),
+                    verkey,
                     const_pols_size,
                     const_tree_size,
                     prover_buffer_size,
@@ -142,6 +167,7 @@ impl<F: Field> Setup<F> {
                     expressions_bin,
                     const_pols,
                     const_pols_tree,
+                    verkey,
                     const_pols_size,
                     const_tree_size,
                     prover_buffer_size,
@@ -160,6 +186,7 @@ impl<F: Field> Setup<F> {
             const_tree_size,
             const_pols,
             const_pols_tree,
+            verkey,
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
