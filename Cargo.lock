@@ -357,7 +357,7 @@ checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
 name = "fibonacci-square"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "env_logger",
  "fields",
@@ -838,7 +838,7 @@ dependencies = [
 
 [[package]]
 name = "pil-std-lib"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "colored",
  "fields",
@@ -854,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "pilout"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "bytes",
  "log",
@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "proofman"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "blake3",
  "colored",
@@ -943,7 +943,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-cli"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "blake3",
  "clap",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-common"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "env_logger",
  "fields",
@@ -985,7 +985,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-hints"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "fields",
  "log",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "proofman-macros"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1006,14 +1006,14 @@ dependencies = [
 
 [[package]]
 name = "proofman-starks-lib-c"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "log",
 ]
 
 [[package]]
 name = "proofman-util"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "colored",
  "sysinfo 0.33.1",
@@ -1419,7 +1419,7 @@ dependencies = [
 
 [[package]]
 name = "transcript"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "proofman-starks-lib-c",
 ]
@@ -1702,7 +1702,7 @@ dependencies = [
 
 [[package]]
 name = "witness"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "colored",
  "env_logger",
