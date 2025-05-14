@@ -5,7 +5,7 @@ use proofman_starks_lib_c::{
 use std::cmp;
 use proofman_common::{
     get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, ConstraintInfo,
-    GlobalConstraintInfo, ProofCtx, SetupCtx,
+    GlobalConstraintInfo, ProofCtx, SetupCtx, DebugInfo,
 };
 
 use std::os::raw::c_void;
@@ -44,6 +44,7 @@ pub fn verify_constraints<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, glob
 pub fn verify_global_constraints_proof<F: Field>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
+    debug_info: &DebugInfo,
     airgroupvalues: Vec<Vec<F>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     const MY_NAME: &str = "GlCstVfy";
@@ -57,9 +58,9 @@ pub fn verify_global_constraints_proof<F: Field>(
     let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
     let mut global_constraints = vec![GlobalConstraintInfo::default(); n_global_constraints as usize];
 
-    if !pctx.options.debug_info.debug_global_instances.is_empty() {
+    if !debug_info.debug_global_instances.is_empty() {
         global_constraints.iter_mut().for_each(|constraint| constraint.skip = true);
-        for constraint_id in &pctx.options.debug_info.debug_global_instances {
+        for constraint_id in &debug_info.debug_global_instances {
             global_constraints[*constraint_id].skip = false;
         }
     }

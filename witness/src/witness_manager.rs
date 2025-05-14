@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 
 use p3_field::Field;
-use proofman_common::{ModeName, ProofCtx, SetupCtx};
+use proofman_common::{ModeName, ProofCtx, SetupCtx, DebugInfo};
 use crate::WitnessComponent;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -78,10 +78,8 @@ impl<F: Field> WitnessManager<F> {
         }
     }
 
-    pub fn debug(&self, instance_ids: &[usize]) {
-        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug
-            || !self.pctx.options.debug_info.debug_instances.is_empty()
-        {
+    pub fn debug(&self, instance_ids: &[usize], debug_info: &DebugInfo) {
+        if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
             for (idx, component) in self.components.read().unwrap().iter().enumerate() {
                 let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 
@@ -96,7 +94,7 @@ impl<F: Field> WitnessManager<F> {
                 }
             }
         }
-        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug {
+        if debug_info.std_mode.name == ModeName::Debug {
             for component in self.components_std.read().unwrap().iter() {
                 component.debug(self.pctx.clone(), self.sctx.clone(), instance_ids);
             }
@@ -133,12 +131,12 @@ impl<F: Field> WitnessManager<F> {
         }
     }
 
-    pub fn end(&self) {
+    pub fn end(&self, debug_info: &DebugInfo) {
         for component in self.components.read().unwrap().iter() {
-            component.end(self.pctx.clone());
+            component.end(self.pctx.clone(), debug_info);
         }
         for component in self.components_std.read().unwrap().iter() {
-            component.end(self.pctx.clone());
+            component.end(self.pctx.clone(), debug_info);
         }
     }
 

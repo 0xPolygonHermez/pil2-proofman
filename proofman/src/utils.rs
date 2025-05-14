@@ -13,7 +13,7 @@ use colored::*;
 
 use std::error::Error;
 
-use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
+use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
 use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_const_pols_gpu_c;
 use proofman_starks_lib_c::custom_commit_size_c;
@@ -116,19 +116,7 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
         }
     }
     info!("{}: ----------------------------------------------------------", name);
-    if pctx.options.verify_constraints {
-        info!(
-            "{}",
-            format!("{}: --- TOTAL CONSTRAINT CHECKER MEMORY USAGE ----------------------------", name)
-                .bright_white()
-                .bold()
-        );
-    } else {
-        info!(
-            "{}",
-            format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", name).bright_white().bold()
-        );
-    }
+    info!("{}", format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", name).bright_white().bold());
     let mut max_prover_memory = 0f64;
     for air_group in air_groups {
         let air_group_instances = air_instances.get(air_group).unwrap();
@@ -241,55 +229,52 @@ fn check_const_tree<F: PrimeField64>(
 }
 
 pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) -> Result<(), Box<dyn Error>> {
-    if !pctx.options.verify_constraints {
-        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                let setup = sctx.get_setup(airgroup_id, air_id);
-                check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            let setup = sctx.get_setup(airgroup_id, air_id);
+            check_const_tree(setup, false, false)?;
 
-                let n_custom_commits = setup.stark_info.custom_commits.len();
+            let n_custom_commits = setup.stark_info.custom_commits.len();
 
-                for commit_id in 0..n_custom_commits {
-                    if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                        let custom_commit_file_path = pctx
-                            .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name)
-                            .unwrap();
+            for commit_id in 0..n_custom_commits {
+                if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
+                    let custom_commit_file_path =
+                        pctx.get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name).unwrap();
 
-                        if !PathBuf::from(&custom_commit_file_path).exists() {
-                            let error_message = format!(
-                                "Error: Unable to find {} custom commit at '{}'.\n\
-                                Please run the following command:\n\
-                                \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
-                                setup.stark_info.custom_commits[commit_id].name,
-                                custom_commit_file_path.display(),
-                            );
-                            return Err(error_message.into());
-                        }
-
+                    if !PathBuf::from(&custom_commit_file_path).exists() {
                         let error_message = format!(
-                            "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
-                            Please regenerate it by running:\n\
+                            "Error: Unable to find {} custom commit at '{}'.\n\
+                            Please run the following command:\n\
                             \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
                             setup.stark_info.custom_commits[commit_id].name,
                             custom_commit_file_path.display(),
                         );
+                        return Err(error_message.into());
+                    }
 
-                        let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
+                    let error_message = format!(
+                        "Error: The custom commit file for {} at '{}' exists but is invalid or corrupted.\n\
+                        Please regenerate it by running:\n\
+                        \x1b[1mcargo run --bin proofman-cli gen-custom-commits-fixed --witness-lib <WITNESS_LIB> --proving-key <PROVING_KEY> --custom-commits <CUSTOM_COMMITS_DIR> \x1b[0m",
+                        setup.stark_info.custom_commits[commit_id].name,
+                        custom_commit_file_path.display(),
+                    );
 
-                        match fs::metadata(&custom_commit_file_path) {
-                            Ok(metadata) => {
-                                let actual_size = metadata.len() as usize;
-                                if actual_size != (size + 4) * 8 {
-                                    return Err(error_message.into());
-                                }
+                    let size = custom_commit_size_c((&setup.p_setup).into(), commit_id as u64) as usize;
+
+                    match fs::metadata(custom_commit_file_path) {
+                        Ok(metadata) => {
+                            let actual_size = metadata.len() as usize;
+                            if actual_size != (size + 4) * 8 {
+                                return Err(error_message.into());
                             }
-                            Err(err) => {
-                                return Err(format!(
-                                    "Failed to get metadata for {} for custom_commit {}: {}",
-                                    setup.air_name, setup.stark_info.custom_commits[commit_id].name, err
-                                )
-                                .into());
-                            }
+                        }
+                        Err(err) => {
+                            return Err(format!(
+                                "Failed to get metadata for {} for custom_commit {}: {}",
+                                setup.air_name, setup.stark_info.custom_commits[commit_id].name, err
+                            )
+                            .into());
                         }
                     }
                 }
@@ -302,16 +287,14 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
 pub fn check_tree_paths_vadcop<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
+    final_snark: bool,
 ) -> Result<(), Box<dyn Error>> {
-    if !pctx.options.aggregation {
-        return Ok(());
-    }
     let sctx_compressor = setups.sctx_compressor.as_ref().unwrap();
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup = sctx_compressor.get_setup(airgroup_id, air_id);
-                check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
+                check_const_tree(setup, true, false)?;
             }
         }
     }
@@ -320,7 +303,7 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
         for (air_id, _) in air_group.iter().enumerate() {
             let setup = sctx_recursive1.get_setup(airgroup_id, air_id);
-            check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
+            check_const_tree(setup, true, false)?;
         }
     }
 
@@ -328,15 +311,15 @@ pub fn check_tree_paths_vadcop<F: PrimeField64>(
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = sctx_recursive2.get_setup(airgroup, 0);
-        check_const_tree(setup, pctx.options.aggregation, pctx.options.final_snark)?;
+        check_const_tree(setup, true, false)?;
     }
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    check_const_tree(setup_vadcop_final, pctx.options.aggregation, pctx.options.final_snark)?;
+    check_const_tree(setup_vadcop_final, true, false)?;
 
-    if pctx.options.final_snark {
+    if final_snark {
         let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-        check_const_tree(setup_recursivef, pctx.options.aggregation, pctx.options.final_snark)?;
+        check_const_tree(setup_recursivef, true, true)?;
     }
 
     Ok(())
@@ -347,9 +330,12 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
     d_buffers: Arc<DeviceBuffer>,
+    aggregation: bool,
+    final_snark: bool,
+    gpu_params: &ParamsGPU,
 ) {
     let gpu = cfg!(feature = "gpu");
-    if gpu && pctx.options.preallocate {
+    if gpu && gpu_params.preallocate {
         let mut offset = 0;
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -379,7 +365,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     }
 
     let mut _offset_aggregation = 0;
-    if pctx.options.aggregation {
+    if aggregation {
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
@@ -387,7 +373,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     if !gpu {
                         setup.load_const_pols();
                         setup.load_const_pols_tree();
-                    } else if pctx.options.preallocate {
+                    } else if gpu_params.preallocate {
                         let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                         let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
                         let proof_type: &str = setup.setup_type.clone().into();
@@ -419,7 +405,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 if !gpu {
                     setup.load_const_pols();
                     setup.load_const_pols_tree();
-                } else if pctx.options.preallocate {
+                } else if gpu_params.preallocate {
                     let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
                     let proof_type: &str = setup.setup_type.clone().into();
@@ -450,7 +436,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
             if !gpu {
                 setup.load_const_pols();
                 setup.load_const_pols_tree();
-            } else if pctx.options.preallocate {
+            } else if gpu_params.preallocate {
                 let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                 let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
                 let proof_type: &str = setup.setup_type.clone().into();
@@ -478,7 +464,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
         if !gpu {
             setup_vadcop_final.load_const_pols();
             setup_vadcop_final.load_const_pols_tree();
-        } else if pctx.options.preallocate {
+        } else if gpu_params.preallocate {
             let const_pols_path = setup_vadcop_final.setup_path.to_string_lossy().to_string() + ".const";
             let const_pols_tree_path = setup_vadcop_final.setup_path.display().to_string() + ".consttree";
             let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
@@ -498,7 +484,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
             _offset_aggregation += setup_vadcop_final.const_tree_size as u64;
         }
 
-        if pctx.options.final_snark {
+        if final_snark {
             let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
             setup_recursivef.load_const_pols();
             setup_recursivef.load_const_pols_tree();
@@ -509,6 +495,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
 pub fn initialize_size_witness<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
+    final_snark: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let instances = pctx.dctx_get_instances();
     let my_instances = pctx.dctx_get_my_instances();
@@ -541,7 +528,7 @@ pub fn initialize_size_witness<F: PrimeField64>(
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
     setup_vadcop_final.set_size_witness()?;
 
-    if pctx.options.final_snark {
+    if final_snark {
         let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
         setup_recursivef.set_size_witness()?;
     }

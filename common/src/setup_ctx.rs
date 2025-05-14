@@ -29,8 +29,8 @@ impl<F: Field> SetupsVadcop<F> {
         global_info: &GlobalInfo,
         verify_constraints: bool,
         aggregation: bool,
-        preallocate: bool,
         final_snark: bool,
+        preallocate: bool,
     ) -> Self {
         if aggregation {
             let sctx_compressor = SetupCtx::new(global_info, &ProofType::Compressor, verify_constraints, preallocate);

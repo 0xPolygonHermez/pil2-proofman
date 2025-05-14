@@ -1,33 +1,33 @@
 use std::sync::{Mutex, Condvar};
-use std::sync::atomic::AtomicUsize;
 use crossbeam_queue::ArrayQueue;
 
 #[derive(Debug)]
 pub struct ThreadInstanceInfo {
-    pub airgroup_id: AtomicUsize,
-    pub air_id: AtomicUsize,
-    pub proof_type: AtomicUsize,
+    pub airgroup_id: usize,
+    pub air_id: usize,
+    pub proof_type: usize,
 }
 
-pub struct WitnessPendingCounter {
+pub struct Counter {
     counter: Mutex<usize>,
     cvar: Condvar,
 }
 
-impl Default for WitnessPendingCounter {
+impl Default for Counter {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl WitnessPendingCounter {
+impl Counter {
     pub fn new() -> Self {
         Self { counter: Mutex::new(0), cvar: Condvar::new() }
     }
 
-    pub fn increment(&self) {
+    pub fn increment(&self) -> usize {
         let mut count = self.counter.lock().unwrap();
         *count += 1;
+        *count
     }
 
     pub fn decrement(&self) {

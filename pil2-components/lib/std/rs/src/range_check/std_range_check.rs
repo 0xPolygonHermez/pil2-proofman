@@ -235,7 +235,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         let range_data = &range_item.data;
         let min = range_data.min;
         let max = range_data.max;
-        if self.pctx.options.debug_info.std_mode.name == ModeName::Debug && (value < min || value > max) {
+        if self.pctx.debug_info.read().unwrap().std_mode.name == ModeName::Debug && (value < min || value > max) {
             log::error!("Value {} is not in the range [min,max] = [{},{}]", value, min, max);
             panic!();
         }

@@ -139,6 +139,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     thread_id: usize,
     load_constants: bool,
     mpi_node_rank: u32,
+    save_proofs: bool,
 ) -> Proof<F> {
     timer_start_info!(GEN_RECURSIVE_PROOF);
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
@@ -169,7 +170,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
             (airgroup_id_, air_id_, air_instance_id, output_file_path_, true)
         };
 
-    let proof_file = match pctx.options.debug_info.save_proofs_to_file || witness.proof_type == ProofType::VadcopFinal {
+    let proof_file = match save_proofs || witness.proof_type == ProofType::VadcopFinal {
         true => output_file_path.to_string_lossy().into_owned(),
         false => String::from(""),
     };
@@ -269,6 +270,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
     mpi_node_rank: u32,
+    save_proofs: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -363,6 +365,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             0,
                             true,
                             mpi_node_rank,
+                            save_proofs,
                         );
 
                         airgroup_proofs[airgroup][j] = Some(recursive2_proof.proof);
@@ -426,6 +429,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
+    save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
 
@@ -446,6 +450,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         0,
         true,
         mpi_node_rank,
+        save_proof,
     );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);
@@ -461,6 +466,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     trace: &[F],
     prover_buffer: &[F],
     output_dir_path: PathBuf,
+    save_proofs: bool,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "RecProof";
 
@@ -506,7 +512,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         13,
     );
 
-    let proof_file = match pctx.options.debug_info.save_proofs_to_file {
+    let proof_file = match save_proofs {
         true => output_dir_path.join("proofs/recursivef.json").to_string_lossy().into_owned(),
         false => String::from(""),
     };

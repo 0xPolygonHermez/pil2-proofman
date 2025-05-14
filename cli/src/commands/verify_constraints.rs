@@ -8,7 +8,7 @@ use crate::commands::field::Field;
 use p3_goldilocks::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::ProofOptions;
+use proofman_common::ParamsGPU;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -75,7 +75,10 @@ impl VerifyConstraintsCmd {
         let proofman = ProofMan::<Goldilocks>::new(
             self.proving_key.clone(),
             custom_commits_map,
-            ProofOptions::new(true, self.verbose.into(), false, false, false, false, debug_info),
+            false,
+            false,
+            false,
+            ParamsGPU::default(),
         )?;
 
         match self.field {
@@ -84,6 +87,8 @@ impl VerifyConstraintsCmd {
                 self.public_inputs.clone(),
                 self.input_data.clone(),
                 PathBuf::new(),
+                &debug_info,
+                self.verbose.into(),
             )?,
         };
 

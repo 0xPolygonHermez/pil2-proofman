@@ -1,8 +1,9 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use p3_field::PrimeField64;
 
 use witness::WitnessManager;
+use proofman_common::StdMode;
 
 use crate::{StdProd, StdRangeCheck, StdSum};
 
@@ -10,17 +11,13 @@ pub struct Std<F: PrimeField64> {
     pub range_check: Arc<StdRangeCheck<F>>,
     pub std_prod: Arc<StdProd<F>>,
     pub std_sum: Arc<StdSum<F>>,
+    pub std_mode: RwLock<StdMode>,
 }
 
 impl<F: PrimeField64> Std<F> {
-    const MY_NAME: &'static str = "STD     ";
-
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let pctx = wcm.get_pctx();
         let sctx = wcm.get_sctx();
-
-        let std_mode = pctx.options.debug_info.std_mode.clone();
-        log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
         let std_prod = StdProd::new();
@@ -43,7 +40,7 @@ impl<F: PrimeField64> Std<F> {
             wcm.register_component_std(range_check.specified_ranges.clone().unwrap());
         }
 
-        Arc::new(Self { range_check, std_prod, std_sum })
+        Arc::new(Self { range_check, std_prod, std_sum, std_mode: RwLock::new(StdMode::default()) })
     }
 
     pub fn new_dev(
@@ -54,9 +51,6 @@ impl<F: PrimeField64> Std<F> {
     ) -> Arc<Self> {
         let pctx = wcm.get_pctx();
         let sctx = wcm.get_sctx();
-
-        let std_mode = pctx.options.debug_info.std_mode.clone();
-        log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
         let std_prod = StdProd::new();
@@ -79,7 +73,7 @@ impl<F: PrimeField64> Std<F> {
             wcm.register_component_std(range_check.specified_ranges.clone().unwrap());
         }
 
-        Arc::new(Self { range_check, std_prod, std_sum })
+        Arc::new(Self { range_check, std_prod, std_sum, std_mode: RwLock::new(StdMode::default()) })
     }
 
     // Gets the range for the range check.

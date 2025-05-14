@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use p3_field::Field;
-use proofman_common::{ProofCtx, SetupCtx};
+use proofman_common::{ProofCtx, SetupCtx, DebugInfo};
 use std::path::PathBuf;
 
 pub trait WitnessComponent<F: Field>: Send + Sync {
@@ -22,7 +22,7 @@ pub trait WitnessComponent<F: Field>: Send + Sync {
     ) {
     }
 
-    fn end(&self, _pctx: Arc<ProofCtx<F>>) {}
+    fn end(&self, _pctx: Arc<ProofCtx<F>>, _debug_info: &DebugInfo) {}
 
     fn gen_custom_commits_fixed(
         &self,

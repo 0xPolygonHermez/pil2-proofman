@@ -9,7 +9,7 @@ use p3_field::PrimeField64;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
-use proofman_common::{skip_prover_instance, ModeName, ProofCtx, SetupCtx};
+use proofman_common::{skip_prover_instance, ModeName, ProofCtx, SetupCtx, DebugInfo};
 use proofman_hints::{
     get_hint_field_gc_constant_a, get_hint_field, get_hint_field_a, acc_mul_hint_fields, update_airgroupvalue,
     get_hint_ids_by_name, HintFieldOptions, HintFieldValue, HintFieldValuesVec,
@@ -95,8 +95,8 @@ impl<F: PrimeField64> StdProd<F> {
             );
 
             // If opids are specified, then only update the bus if the opid is in the list
-            if !pctx.options.debug_info.std_mode.opids.is_empty()
-                && !pctx.options.debug_info.std_mode.opids.contains(&opid.as_canonical_u64())
+            if !pctx.debug_info.read().unwrap().std_mode.opids.is_empty()
+                && !pctx.debug_info.read().unwrap().std_mode.opids.contains(&opid.as_canonical_u64())
             {
                 continue;
             }
@@ -341,7 +341,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
             let instances = pctx.dctx_get_instances();
             let my_instances = pctx.dctx_get_my_instances();
 
-            let fast_mode = pctx.options.debug_info.std_mode.fast_mode;
+            let fast_mode = pctx.debug_info.read().unwrap().std_mode.fast_mode;
 
             let mut debug_data = self.debug_data.write().unwrap();
 
@@ -400,18 +400,16 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
         timer_stop_and_log_info!(DEBUG_MODE_PROD);
     }
 
-    fn end(&self, pctx: Arc<ProofCtx<F>>) {
-        if pctx.options.debug_info.std_mode.name == ModeName::Debug
-            || !pctx.options.debug_info.debug_instances.is_empty()
-        {
-            if pctx.options.debug_info.std_mode.fast_mode {
+    fn end(&self, pctx: Arc<ProofCtx<F>>, debug_info: &DebugInfo) {
+        if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
+            if debug_info.std_mode.fast_mode {
                 let mut debug_data_fast = self.debug_data_fast.write().unwrap();
                 check_invalid_opids(&pctx, Self::MY_NAME, &mut debug_data_fast);
             } else {
                 let mut debug_data = self.debug_data.write().unwrap();
 
-                let max_values_to_print = pctx.options.debug_info.std_mode.n_vals;
-                let print_to_file = pctx.options.debug_info.std_mode.print_to_file;
+                let max_values_to_print = debug_info.std_mode.n_vals;
+                let print_to_file = debug_info.std_mode.print_to_file;
                 print_debug_info(&pctx, Self::MY_NAME, max_values_to_print, print_to_file, &mut debug_data);
             }
         }

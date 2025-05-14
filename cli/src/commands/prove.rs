@@ -9,7 +9,7 @@ use crate::commands::field::Field;
 use p3_goldilocks::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::{ModeName, ProofOptions};
+use proofman_common::{ModeName, ProofOptions, ParamsGPU};
 use std::fs;
 use std::path::Path;
 
@@ -18,7 +18,7 @@ use std::path::Path;
 #[command(propagate_version = true)]
 pub struct ProveCmd {
     /// Witness computation dynamic library path
-    #[clap(short, long)]
+    #[clap(short = 'w', long)]
     pub witness_lib: PathBuf,
 
     /// ROM file path
@@ -55,9 +55,6 @@ pub struct ProveCmd {
     #[clap(short = 'y', long, default_value_t = false)]
     pub verify_proofs: bool,
 
-    #[clap(short = 'c', long, default_value_t = false)]
-    pub preallocate: bool,
-
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
@@ -65,8 +62,26 @@ pub struct ProveCmd {
     #[clap(short = 'd', long)]
     pub debug: Option<Option<String>>,
 
-    #[clap(short = 's', long, value_name="KEY=VALUE", num_args(1..))]
+    #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
+
+    #[clap(short = 'r', long, default_value_t = false)]
+    pub preallocate: bool,
+
+    #[clap(short = 't', long)]
+    pub max_streams: Option<usize>,
+
+    #[clap(short = 'n', long)]
+    pub number_threads_witness: Option<usize>,
+
+    #[clap(short = 'm', long)]
+    pub max_number_witness_pools: Option<usize>,
+
+    #[clap(short = 'x', long)]
+    pub max_witness_stored: Option<usize>,
+
+    #[clap(short = 'b', long, default_value_t = false)]
+    pub save_proofs: bool,
 }
 
 impl ProveCmd {
@@ -107,18 +122,30 @@ impl ProveCmd {
             }
         }
 
+        let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
+
+        let mut gpu_params = ParamsGPU::new(self.preallocate);
+
+        if self.max_streams.is_some() {
+            gpu_params.with_max_number_streams(self.max_streams.unwrap());
+        }
+        if self.number_threads_witness.is_some() {
+            gpu_params.with_number_threads_pools_witness(self.number_threads_witness.unwrap());
+        }
+        if self.max_number_witness_pools.is_some() {
+            gpu_params.with_max_number_witness_pools(self.max_number_witness_pools.unwrap());
+        }
+        if self.max_witness_stored.is_some() {
+            gpu_params.with_max_witness_stored(self.max_witness_stored.unwrap());
+        }
+
         let proofman = ProofMan::<Goldilocks>::new(
             self.proving_key.clone(),
             custom_commits_map,
-            ProofOptions::new(
-                false,
-                self.verbose.into(),
-                self.aggregation,
-                self.final_snark,
-                self.verify_proofs,
-                self.preallocate,
-                debug_info.clone(),
-            ),
+            verify_constraints,
+            self.aggregation,
+            self.final_snark,
+            gpu_params,
         )?;
 
         if debug_info.std_mode.name == ModeName::Debug {
@@ -128,6 +155,8 @@ impl ProveCmd {
                     self.public_inputs.clone(),
                     self.input_data.clone(),
                     self.output_dir.clone(),
+                    &debug_info.clone(),
+                    self.verbose.into(),
                 )?,
             };
         } else {
@@ -136,7 +165,15 @@ impl ProveCmd {
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
                     self.input_data.clone(),
-                    self.output_dir.clone(),
+                    self.verbose.into(),
+                    ProofOptions::new(
+                        false,
+                        self.aggregation,
+                        self.final_snark,
+                        self.verify_proofs,
+                        self.save_proofs,
+                        self.output_dir.clone(),
+                    ),
                 )?,
             };
         }

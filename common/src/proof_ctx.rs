@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use p3_field::Field;
 use transcript::FFITranscript;
 
-use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams, VerboseMode};
+use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -32,12 +32,11 @@ pub type InstanceMap = HashMap<usize, Vec<usize>>;
 #[derive(Clone)]
 pub struct ProofOptions {
     pub verify_constraints: bool,
-    pub verbose_mode: VerboseMode,
     pub aggregation: bool,
     pub final_snark: bool,
-    pub debug_info: DebugInfo,
     pub verify_proofs: bool,
-    pub preallocate: bool,
+    pub save_proofs: bool,
+    pub output_dir_path: PathBuf,
 }
 
 #[derive(Default, Clone)]
@@ -45,30 +44,65 @@ pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,
     pub std_mode: StdMode,
-    pub save_proofs_to_file: bool,
 }
 
 impl DebugInfo {
     pub fn new_debug() -> Self {
-        Self {
-            debug_instances: HashMap::new(),
-            debug_global_instances: Vec::new(),
-            std_mode: StdMode::new_debug(),
-            save_proofs_to_file: true,
-        }
+        Self { debug_instances: HashMap::new(), debug_global_instances: Vec::new(), std_mode: StdMode::new_debug() }
     }
 }
 impl ProofOptions {
     pub fn new(
         verify_constraints: bool,
-        verbose_mode: VerboseMode,
         aggregation: bool,
         final_snark: bool,
         verify_proofs: bool,
-        preallocate: bool,
-        debug_info: DebugInfo,
+        save_proofs: bool,
+        output_dir_path: PathBuf,
     ) -> Self {
-        Self { verify_constraints, verbose_mode, aggregation, final_snark, debug_info, verify_proofs, preallocate }
+        Self { verify_constraints, aggregation, final_snark, verify_proofs, save_proofs, output_dir_path }
+    }
+}
+
+#[derive(Clone)]
+pub struct ParamsGPU {
+    pub preallocate: bool,
+    pub max_number_streams: usize,
+    pub max_number_witness_pools: usize,
+    pub number_threads_pools_witness: usize,
+    pub max_witness_stored: usize,
+}
+
+impl Default for ParamsGPU {
+    fn default() -> Self {
+        Self {
+            preallocate: false,
+            max_number_streams: usize::MAX,
+            max_number_witness_pools: usize::MAX,
+            number_threads_pools_witness: 4,
+            max_witness_stored: 16,
+        }
+    }
+}
+
+impl ParamsGPU {
+    pub fn new(preallocate: bool) -> Self {
+        Self { preallocate, ..Self::default() }
+    }
+
+    pub fn with_max_number_streams(&mut self, max_number_streams: usize) {
+        self.max_number_streams = max_number_streams;
+    }
+
+    pub fn with_max_number_witness_pools(&mut self, max_number_witness_pools: usize) {
+        self.max_number_witness_pools = max_number_witness_pools;
+    }
+
+    pub fn with_number_threads_pools_witness(&mut self, number_threads_pools_witness: usize) {
+        self.number_threads_pools_witness = number_threads_pools_witness;
+    }
+    pub fn with_max_witness_stored(&mut self, max_witness_stored: usize) {
+        self.max_witness_stored = max_witness_stored;
     }
 }
 
@@ -80,10 +114,12 @@ pub struct ProofCtx<F: Field> {
     pub challenges: Values<F>,
     pub global_info: GlobalInfo,
     pub air_instances: DashMap<usize, AirInstance<F>>,
-    pub options: ProofOptions,
     pub weights: HashMap<(usize, usize), u64>,
     pub custom_commits_fixed: HashMap<String, PathBuf>,
     pub dctx: RwLock<DistributionCtx>,
+    pub debug_info: RwLock<DebugInfo>,
+    pub aggregation: bool,
+    pub final_snark: bool,
 }
 
 impl<F: Field> ProofCtx<F> {
@@ -92,7 +128,8 @@ impl<F: Field> ProofCtx<F> {
     pub fn create_ctx(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
-        options: ProofOptions,
+        aggregation: bool,
+        final_snark: bool,
     ) -> Self {
         log::info!("{}: Creating proof context", Self::MY_NAME);
 
@@ -115,10 +152,17 @@ impl<F: Field> ProofCtx<F> {
             global_challenge: Values::new(3),
             air_instances: DashMap::new(),
             dctx: RwLock::new(DistributionCtx::new()),
+            debug_info: RwLock::new(DebugInfo::default()),
             custom_commits_fixed,
             weights,
-            options,
+            aggregation,
+            final_snark,
         }
+    }
+
+    pub fn set_debug_info(&self, debug_info: DebugInfo) {
+        let mut debug_info_guard = self.debug_info.write().unwrap();
+        *debug_info_guard = debug_info;
     }
 
     pub fn dctx_reset(&self) {
@@ -165,6 +209,10 @@ impl<F: Field> ProofCtx<F> {
 
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
         self.air_instances.insert(global_idx, air_instance);
+    }
+
+    pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
+        self.air_instances.contains_key(&global_idx)
     }
 
     pub fn dctx_barrier(&self) {
