@@ -1,4 +1,4 @@
-use fields::Field;
+use fields::PrimeField64;
 
 use proofman_starks_lib_c::{
     stark_info_new_c, expressions_bin_new_c, stark_verify_c, stark_verify_bn128_c, stark_verify_from_file_c,
@@ -11,7 +11,7 @@ use proofman_common::{ProofCtx, ProofType};
 
 use std::os::raw::c_void;
 
-pub fn verify_proof_from_file<F: Field>(
+pub fn verify_proof_from_file<F: PrimeField64>(
     proof_file: String,
     stark_info_path: String,
     expressions_bin_path: String,
@@ -53,7 +53,7 @@ pub fn verify_proof_from_file<F: Field>(
     )
 }
 
-pub fn verify_proof<F: Field>(
+pub fn verify_proof<F: PrimeField64>(
     p_proof: *mut u64,
     stark_info_path: String,
     expressions_bin_path: String,
@@ -95,7 +95,7 @@ pub fn verify_proof<F: Field>(
     )
 }
 
-pub fn verify_proof_bn128<F: Field>(
+pub fn verify_proof_bn128<F: PrimeField64>(
     p_proof: *mut c_void,
     stark_info_path: String,
     expressions_bin_path: String,
@@ -117,7 +117,7 @@ pub fn verify_proof_bn128<F: Field>(
     stark_verify_bn128_c(&verkey_path, p_proof, p_stark_info, p_expressions_bin, publics_ptr)
 }
 
-pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proof: &[u64]) -> bool {
+pub fn verify_basic_proof<F: PrimeField64>(pctx: &ProofCtx<F>, instance_id: usize, proof: &[u64]) -> bool {
     const MY_NAME: &str = "Verify  ";
     let mut is_valid = true;
 

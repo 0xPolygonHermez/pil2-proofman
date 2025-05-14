@@ -14,7 +14,7 @@ use rand::distr::{Distribution, StandardUniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::{Field, PrimeField, PrimeField64};
+use crate::{quotient_map_small_int, Field, PrimeField, PrimeField64, QuotientMap};
 
 const P: u64 = 0xFFFF_FFFF_0000_0001;
 
@@ -26,6 +26,10 @@ pub struct Goldilocks {
 impl Goldilocks {
     pub(crate) const fn new(value: P3Goldilocks) -> Self {
         Self { value }
+    }
+
+    pub(crate) fn new_from_u64(value: u64) -> Self {
+        Self::new(P3Goldilocks::from_u64(value))
     }
 }
 
@@ -67,18 +71,59 @@ impl Debug for Goldilocks {
     }
 }
 
+quotient_map_small_int!(Goldilocks, u64, [u8, u16, u32]);
+quotient_map_small_int!(Goldilocks, i64, [i8, i16, i32]);
+
+impl QuotientMap<u64> for Goldilocks {
+    #[inline]
+    fn from_int(int: u64) -> Self {
+        Self::new_from_u64(int)
+    }
+
+    #[inline]
+    fn from_canonical_checked(int: u64) -> Option<Self> {
+        (int < Self::ORDER_U64).then(|| Self::new_from_u64(int))
+    }
+
+    #[inline(always)]
+    unsafe fn from_canonical_unchecked(int: u64) -> Self {
+        Self::new_from_u64(int)
+    }
+}
+
+impl QuotientMap<i64> for Goldilocks {
+    #[inline]
+    fn from_int(int: i64) -> Self {
+        if int >= 0 {
+            Self::new_from_u64(int as u64)
+        } else {
+            Self::new_from_u64(Self::ORDER_U64.wrapping_add_signed(int))
+        }
+    }
+
+    #[inline]
+    fn from_canonical_checked(int: i64) -> Option<Self> {
+        const POS_BOUND: i64 = (P >> 1) as i64;
+        const NEG_BOUND: i64 = -POS_BOUND;
+        match int {
+            0..=POS_BOUND => Some(Self::new_from_u64(int as u64)),
+            NEG_BOUND..0 => Some(Self::new_from_u64(Self::ORDER_U64.wrapping_add_signed(int))),
+            _ => None,
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn from_canonical_unchecked(int: i64) -> Self {
+        Self::from_int(int)
+    }
+}
+
 impl Field for Goldilocks {
     const ZERO: Self = Self::new(P3Goldilocks::ZERO);
     const ONE: Self = Self::new(P3Goldilocks::ONE);
     const TWO: Self = Self::new(P3Goldilocks::TWO);
     const NEG_ONE: Self = Self::new(P3Goldilocks::NEG_ONE);
     const GENERATOR: Self = Self::new(P3Goldilocks::GENERATOR);
-
-    #[must_use]
-    #[inline(always)]
-    fn from_u64(int: u64) -> Self {
-        Self::new(P3PrimeCharacteristicRing::from_u64(int))
-    }
 
     #[must_use]
     fn try_inverse(&self) -> Option<Self> {

@@ -5,7 +5,7 @@ use std::{fs::File, path::PathBuf};
 use std::io::Read;
 use colored::Colorize;
 
-use fields::{Goldilocks, Field};
+use fields::{Goldilocks, PrimeField64};
 
 use proofman::verify_proof_from_file;
 

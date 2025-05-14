@@ -92,12 +92,6 @@ impl<F: PrimeField64> Field for QuinticExtension<F> {
     const NEG_ONE: Self = Self::new([F::NEG_ONE, F::ZERO, F::ZERO, F::ZERO, F::ZERO]);
     const GENERATOR: Self = Self::new([F::TWO, F::ONE, F::ZERO, F::ZERO, F::ZERO]);
 
-    #[must_use]
-    #[inline(always)]
-    fn from_u64(int: u64) -> Self {
-        Self::from_basis_singleton(F::from_u64(int))
-    }
-
     #[inline(always)]
     fn square(&self) -> Self {
         let a = self.value;

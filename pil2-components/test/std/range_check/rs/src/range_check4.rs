@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use fields::PrimeField64;
 use witness::{WitnessComponent, execute, define_wc_with_std};
 
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField64;
 use rand::{
     distr::{StandardUniform, Distribution},
     Rng, SeedableRng,

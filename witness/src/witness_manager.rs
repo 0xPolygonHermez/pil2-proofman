@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 
-use fields::Field;
+use fields::PrimeField64;
 use proofman_common::{ModeName, ProofCtx, SetupCtx};
 use crate::WitnessComponent;
 
-pub struct WitnessManager<F: Field> {
+pub struct WitnessManager<F: PrimeField64> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     components_instance_ids: RwLock<Vec<Vec<usize>>>,
     components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
@@ -16,7 +16,7 @@ pub struct WitnessManager<F: Field> {
     input_data_path: Option<PathBuf>,
 }
 
-impl<F: Field> WitnessManager<F> {
+impl<F: PrimeField64> WitnessManager<F> {
     const _MY_NAME: &'static str = "WCMnager";
 
     pub fn new(

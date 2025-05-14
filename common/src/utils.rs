@@ -5,7 +5,7 @@ use crate::{
 use proofman_starks_lib_c::set_log_level_c;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use fields::Field;
+use fields::PrimeField64;
 use serde::Deserialize;
 use std::fs;
 use sysinfo::{System, SystemExt, ProcessExt};
@@ -35,7 +35,7 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
     format!("{:.2} {}", num_bytes, units[unit_index])
 }
 
-pub fn skip_prover_instance<F: Field>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
+pub fn skip_prover_instance<F: PrimeField64>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
     if pctx.options.debug_info.debug_instances.is_empty() {
         return (false, Vec::new());
     }

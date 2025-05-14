@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use fields::{Field, PrimeField64};
+use fields::PrimeField64;
 
 use proofman_common::{ProofCtx, SetupCtx};
 use proofman_hints::{
@@ -8,7 +8,7 @@ use proofman_hints::{
     HintFieldValue,
 };
 
-pub trait AirComponent<F: Field> {
+pub trait AirComponent<F: PrimeField64> {
     const MY_NAME: &'static str;
 
     fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self>;

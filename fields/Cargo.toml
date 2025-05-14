@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
 p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
+paste = "1.0.15"
 
 serde = { workspace = true, features = ["derive"] }
 num-bigint = { workspace = true }

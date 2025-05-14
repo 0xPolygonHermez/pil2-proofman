@@ -7,6 +7,8 @@ use num_bigint::BigUint;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::{from_integer_types, QuotientMap};
+
 pub trait Field:
     From<Self>
     + Default
@@ -50,8 +52,6 @@ pub trait Field:
             Self::ZERO
         }
     }
-
-    fn from_u64(int: u64) -> Self;
 
     #[must_use]
     #[inline]
@@ -146,7 +146,19 @@ pub trait PrimeField: Field + Ord {
     fn as_canonical_biguint(&self) -> BigUint;
 }
 
-pub trait PrimeField64: PrimeField {
+pub trait PrimeField64:
+    PrimeField
+    + QuotientMap<u8>
+    + QuotientMap<u16>
+    + QuotientMap<u32>
+    + QuotientMap<u64>
+    + QuotientMap<usize>
+    + QuotientMap<i8>
+    + QuotientMap<i16>
+    + QuotientMap<i32>
+    + QuotientMap<i64>
+    + QuotientMap<isize>
+{
     const ORDER_U64: u64;
 
     #[must_use]
@@ -157,6 +169,8 @@ pub trait PrimeField64: PrimeField {
     fn to_unique_u64(&self) -> u64 {
         self.as_canonical_u64()
     }
+
+    from_integer_types!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
 }
 
 pub trait ExtensionField<Base: Field>:

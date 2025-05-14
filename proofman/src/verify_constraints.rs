@@ -1,4 +1,4 @@
-use fields::Field;
+use fields::PrimeField64;
 use proofman_starks_lib_c::{
     get_n_constraints_c, get_n_global_constraints_c, verify_global_constraints_c, verify_constraints_c,
 };
@@ -12,7 +12,11 @@ use std::os::raw::c_void;
 
 use colored::*;
 
-pub fn verify_constraints<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global_id: usize) -> Vec<ConstraintInfo> {
+pub fn verify_constraints<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+    global_id: usize,
+) -> Vec<ConstraintInfo> {
     let instances = pctx.dctx_get_instances();
     let (airgroup_id, air_id, _) = instances[global_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
@@ -41,7 +45,7 @@ pub fn verify_constraints<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, glob
     constraints_info
 }
 
-pub fn verify_global_constraints_proof<F: Field>(
+pub fn verify_global_constraints_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     airgroupvalues: Vec<Vec<F>>,
@@ -131,7 +135,7 @@ pub fn verify_global_constraints_proof<F: Field>(
     }
 }
 
-pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize) -> bool {
+pub fn verify_constraints_proof<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize) -> bool {
     const MY_NAME: &str = "CstrVrfy";
 
     let instances = pctx.dctx_get_instances();

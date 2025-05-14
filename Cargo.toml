@@ -38,6 +38,7 @@ proofman-cli = { path = "cli", version = "0.7.1" }
 pil-std-lib = { path = "pil2-components/lib/std/rs", version = "0.7.1" }
 witness = { path = "witness", version = "0.7.1" }
 pilout = { path = "pilout", version = "0.7.1" }
+fields = { path = "fields", version = "0.7.1" }
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
 bytes = "1.7"

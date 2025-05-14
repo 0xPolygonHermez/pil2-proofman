@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
-use fields::Field;
+use fields::PrimeField64;
 use transcript::FFITranscript;
 
 use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams, VerboseMode};
@@ -12,7 +12,7 @@ pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
 }
 
-impl<F: Field> Values<F> {
+impl<F: PrimeField64> Values<F> {
     pub fn new(n_values: usize) -> Self {
         Self { values: RwLock::new(vec![F::ZERO; n_values]) }
     }
@@ -70,7 +70,7 @@ impl ProofOptions {
 }
 
 #[allow(dead_code)]
-pub struct ProofCtx<F: Field> {
+pub struct ProofCtx<F: PrimeField64> {
     pub public_inputs: Values<F>,
     pub proof_values: Values<F>,
     pub global_challenge: Values<F>,
@@ -83,7 +83,7 @@ pub struct ProofCtx<F: Field> {
     pub dctx: RwLock<DistributionCtx>,
 }
 
-impl<F: Field> ProofCtx<F> {
+impl<F: PrimeField64> ProofCtx<F> {
     const MY_NAME: &'static str = "ProofCtx";
 
     pub fn create_ctx(
