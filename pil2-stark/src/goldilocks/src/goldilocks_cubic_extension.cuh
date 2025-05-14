@@ -31,37 +31,6 @@ __device__ __forceinline__ gl64_t neg_element(gl64_t x)
     return z - x;
 }
 
-// TODO: Review and optimize inv imlementation
-__device__ __forceinline__ gl64_t inv_element(const gl64_t &in1)
-{
-    if (in1.is_zero())
-    {
-        assert(0);
-    }
-    u_int64_t t = 0;
-    u_int64_t r = GOLDILOCKS_PRIME;
-    u_int64_t newt = 1;
-
-    u_int64_t newr = (in1 >= GOLDILOCKS_PRIME) ? in1.get_val() - GOLDILOCKS_PRIME : in1.get_val();
-    gl64_t q;
-    gl64_t aux1;
-    gl64_t aux2;
-    while (newr != 0)
-    {
-        q = r / newr;
-        aux1 = t;
-        aux2 = newt;
-        t = aux2;
-        newt = aux1 - q * aux2;
-        aux1 = r;
-        aux2 = newr;
-        r = aux2;
-        newr = aux1 - q * aux2;
-    }
-
-    return t;
-}
-
 class Goldilocks3GPU
 {
 public:
@@ -237,7 +206,7 @@ public:
     // ======== DIV ========
     static __device__ __forceinline__ void div(Element &result, Element &a, gl64_t b)
     {
-        gl64_t b_inv = inv_element(b);
+        gl64_t b_inv = b.reciprocal();
         mul(result, a, b_inv);
     }
 
@@ -275,7 +244,7 @@ public:
 
         gl64_t t = abc + abc + abc + abb - aaa - aac - aac - acc - bbb + bcc - ccc;
 
-        gl64_t tinv = inv_element(t);
+        gl64_t tinv = t.reciprocal();
         gl64_t i1 = (bc + bb - aa - ac - ac - cc) * tinv;
 
         gl64_t i2 = (ba - cc) * tinv;

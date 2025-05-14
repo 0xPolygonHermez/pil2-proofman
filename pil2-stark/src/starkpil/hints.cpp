@@ -4,14 +4,12 @@
 
 
 void getPolynomial(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *dest, PolMap& polInfo, uint64_t rowOffsetIndex, string type) {
-    uint64_t deg = 1 << setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t dim = polInfo.dim;
     std::string stage = type == "cm" ? "cm" + to_string(polInfo.stage) : type == "custom" ? setupCtx.starkInfo.customCommits[polInfo.commitId].name + "0" : "const";
-    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
-    uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
-    offset += polInfo.stagePos;
-    Goldilocks::Element *buff = &buffer[offset];
+    Goldilocks::Element *buff = &buffer[polInfo.stagePos];
+    uint64_t deg = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t rowOffset = setupCtx.starkInfo.openingPoints[rowOffsetIndex];
+    uint64_t nCols = setupCtx.starkInfo.mapSectionsN[stage];
+    uint64_t dim = polInfo.dim;
 #pragma omp parallel for
     for(uint64_t j = 0; j < deg; ++j) {
         uint64_t l = (j + rowOffset)%deg;
@@ -293,7 +291,9 @@ void getHintField(
         }
         if(hintFieldVal.operand == opType::cm) {
             if(!hintOptions.dest) {
-                Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage == 1 ? params.trace : params.aux_trace;
+                std::string stage = "cm" + to_string(setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage);
+                uint64_t offset = setupCtx.starkInfo.mapOffsets[std::make_pair(stage, false)];
+                Goldilocks::Element *pAddress = setupCtx.starkInfo.cmPolsMap[hintFieldVal.id].stage == 1 ? params.trace : &params.aux_trace[offset];
                 getPolynomial(setupCtx, pAddress, hintFieldInfo.values, setupCtx.starkInfo.cmPolsMap[hintFieldVal.id], hintFieldVal.rowOffsetIndex, "cm");
                 if(hintOptions.inverse) {
                     zklog.error("Inverse not supported still for polynomials");
