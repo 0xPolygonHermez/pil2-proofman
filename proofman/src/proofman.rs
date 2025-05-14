@@ -669,10 +669,19 @@ where
             initialize_size_witness(&self.pctx, &self.setups, options.final_snark)?;
         }
 
-        let proofs = Arc::new(RwLock::new(vec![Proof::default(); my_instances.len()]));
-        let recursive_witness = Arc::new(RwLock::new(vec![None; my_instances.len()]));
+        let mut proofs = vec![Proof::default(); my_instances.len()];
+        for instance_id in my_instances.iter() {
+            let (airgroup_id, air_id, _) = instances[*instance_id];
+            let setup = self.sctx.get_setup(airgroup_id, air_id);
+            let proof = create_buffer_fast(setup.proof_size as usize);
 
-        let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
+            proofs[self.pctx.dctx_get_instance_idx(*instance_id)] =
+                Proof::new(ProofType::Basic, airgroup_id, air_id, Some(*instance_id), proof);
+        }
+
+        let proofs = Arc::new(RwLock::new(proofs));
+
+        let recursive_witness = Arc::new(RwLock::new(vec![None; my_instances.len()]));
 
         let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
@@ -734,7 +743,6 @@ where
                 let sctx_clone = self.sctx.clone();
                 let proofs_clone = proofs.clone();
                 let output_dir_path_clone = options.output_dir_path.clone();
-                let airgroup_values_air_instances_clone = airgroup_values_air_instances.clone();
                 let d_buffers_clone = self.d_buffers.clone();
                 let precomputed_witnesses = precomputed_witnesses.clone();
                 let thread_info_clone = thread_info.clone();
@@ -762,7 +770,6 @@ where
                             air_id,
                             output_dir_path_clone.clone(),
                             aux_trace_clone.clone(),
-                            airgroup_values_air_instances_clone.clone(),
                             gen_const_tree,
                             d_buffers_clone.clone(),
                             options.save_proofs,
@@ -828,48 +835,73 @@ where
             options.output_dir_path.to_string_lossy().as_ref(),
         );
 
-        let airgroup_values_air_instances =
-            Arc::try_unwrap(airgroup_values_air_instances).unwrap().into_inner().unwrap();
-
         if !options.aggregation {
             let mut valid_proofs = true;
 
             if options.verify_proofs {
                 timer_start_info!(VERIFYING_PROOFS);
-                let proofs_ = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
                 for instance_id in my_instances.iter() {
                     let valid_proof = verify_basic_proof(
                         &self.pctx,
                         *instance_id,
-                        &proofs_[self.pctx.dctx_get_instance_idx(*instance_id)].proof,
+                        &proofs.read().unwrap()[self.pctx.dctx_get_instance_idx(*instance_id)].proof,
                     );
                     if !valid_proof {
                         valid_proofs = false;
                     }
                 }
                 timer_stop_and_log_info!(VERIFYING_PROOFS);
-            }
 
-            let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
-            let airgroupvalues = self.pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+                let mut airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
 
-            if self.pctx.dctx_get_rank() == 0 {
-                let valid_global_constraints =
-                    verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues);
-                if valid_global_constraints.is_err() {
-                    valid_proofs = false;
+                for instance_id in my_instances.iter() {
+                    let (airgroup_id, air_id, _) = instances[*instance_id];
+                    let setup = self.sctx.get_setup(airgroup_id, air_id);
+                    let n_airgroup_values = setup
+                        .stark_info
+                        .airgroupvalues_map
+                        .as_ref()
+                        .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
+                        .unwrap_or(0);
+
+                    let airgroup_values: Vec<F> = proofs.read().unwrap()[self.pctx.dctx_get_instance_idx(*instance_id)]
+                        .proof[0..n_airgroup_values]
+                        .to_vec()
+                        .iter()
+                        .map(|&x| F::from_u64(x))
+                        .collect();
+
+                    airgroup_values_air_instances[self.pctx.dctx_get_instance_idx(*instance_id)] = airgroup_values;
                 }
-            }
 
-            if valid_proofs {
+                let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
+                let airgroupvalues = self.pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+
+                if self.pctx.dctx_get_rank() == 0 {
+                    let valid_global_constraints =
+                        verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues);
+                    if valid_global_constraints.is_err() {
+                        valid_proofs = false;
+                    }
+                }
+
+                if valid_proofs {
+                    log::info!(
+                        "{}: ··· {}",
+                        Self::MY_NAME,
+                        "\u{2713} All proofs were successfully verified".bright_green().bold()
+                    );
+                    return Ok(None);
+                } else {
+                    return Err("Basic proofs were not verified".into());
+                }
+            } else {
                 log::info!(
                     "{}: ··· {}",
                     Self::MY_NAME,
-                    "\u{2713} All proofs were successfully verified".bright_green().bold()
+                    "\u{2713} All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
                 );
                 return Ok(None);
-            } else {
-                return Err("Basic proofs were not verified".into());
             }
         }
 
@@ -1278,7 +1310,6 @@ where
         air_id: usize,
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
-        airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
         gen_const_tree: bool,
         d_buffers: Arc<DeviceBuffer>,
         save_proof: bool,
@@ -1319,8 +1350,6 @@ where
             false => String::from(""),
         };
 
-        let mut proof: Vec<u64> = create_buffer_fast(setup.proof_size as usize);
-
         let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
         let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
 
@@ -1328,7 +1357,7 @@ where
             p_setup,
             p_steps_params,
             pctx.get_global_challenge_ptr(),
-            proof.as_mut_ptr(),
+            proofs.read().unwrap()[pctx.dctx_get_instance_idx(instance_id)].proof.as_ptr() as *mut u64,
             &proof_file,
             thread_id as u64,
             airgroup_id as u64,
@@ -1343,7 +1372,7 @@ where
 
         get_proof_c(
             p_setup,
-            proof.as_mut_ptr(),
+            proofs.read().unwrap()[pctx.dctx_get_instance_idx(instance_id)].proof.as_ptr() as *mut u64,
             &proof_file,
             thread_id as u64,
             airgroup_id as u64,
@@ -1353,19 +1382,6 @@ where
             pctx.dctx_get_node_rank() as u32,
         );
 
-        let n_airgroup_values = setup
-            .stark_info
-            .airgroupvalues_map
-            .as_ref()
-            .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
-            .unwrap_or(0);
-
-        let airgroup_values: Vec<F> = proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
-
-        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
-
-        proofs.write().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
-            Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof);
         timer_stop_and_log_info!(GEN_PROOF);
     }
 
