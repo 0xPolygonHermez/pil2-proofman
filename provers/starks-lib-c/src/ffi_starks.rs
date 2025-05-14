@@ -510,9 +510,7 @@ pub fn commit_witness_c(
     root: *mut u8,
     witness: *mut u8,
     aux_trace: *mut u8,
-    thread_id: u64,
     d_buffers: *mut c_void,
-    mpi_node_rank: u32,
 ) {
     unsafe {
         commit_witness(
@@ -523,35 +521,18 @@ pub fn commit_witness_c(
             root as *mut std::os::raw::c_void,
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
-            thread_id,
             d_buffers,
-            mpi_node_rank,
         );
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_commit_root_c(
-    arity: u64,
-    n_bits_ext: u64,
-    n_cols: u64,
-    root: *mut u8,
-    thread_id: u64,
-    d_buffers: *mut c_void,
-    mpi_node_rank: u32,
-) {
+pub fn get_stream_roots_c( d_buffers: *mut c_void)  {
     unsafe {
-        get_commit_root(
-            arity,
-            n_bits_ext,
-            n_cols,
-            root as *mut std::os::raw::c_void,
-            thread_id,
-            d_buffers,
-            mpi_node_rank,
-        );
+        get_stream_roots(d_buffers);
     }
 }
+
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn calculate_hash_c(pValue: *mut u8, pBuffer: *mut u8, nElements: u64, nOutputs: u64) {
@@ -768,7 +749,6 @@ pub fn gen_proof_c(
     p_global_challenge: *mut u8,
     proof_buffer: *mut u64,
     proof_file: &str,
-    thread_id: u64,
     airgroup_id: u64,
     air_id: u64,
     instance_id: u64,
@@ -776,7 +756,6 @@ pub fn gen_proof_c(
     load_constants: bool,
     const_pols_path: &str,
     const_tree_path: &str,
-    mpi_node_rank: u32,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -790,7 +769,6 @@ pub fn gen_proof_c(
     unsafe {
         gen_proof(
             p_setup,
-            thread_id,
             airgroup_id,
             air_id,
             instance_id,
@@ -802,41 +780,19 @@ pub fn gen_proof_c(
             load_constants,
             const_filename_ptr,
             const_tree_filename_ptr,
-            mpi_node_rank,
         );
     }
 }
+
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
-pub fn get_proof_c(
-    p_setup: *mut c_void,
-    proof_buffer: *mut u64,
-    proof_file: &str,
-    thread_id: u64,
-    airgroup_id: u64,
-    air_id: u64,
-    instance_id: u64,
-    d_buffers: *mut c_void,
-    mpi_node_rank: u32,
-) {
-    let proof_file_name = CString::new(proof_file).unwrap();
-    let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
-
+pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
     unsafe {
-        get_proof(
-            p_setup,
-            thread_id,
-            airgroup_id,
-            air_id,
-            instance_id,
-            proof_buffer,
-            proof_file_ptr,
-            d_buffers,
-            mpi_node_rank,
-        );
+        get_stream_proofs(d_buffers);
     }
 }
+
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
@@ -850,7 +806,6 @@ pub fn gen_recursive_proof_c(
     proof_buffer: *mut u64,
     proof_file: &str,
     global_info_file: &str,
-    thread_id: u64,
     airgroup_id: u64,
     air_id: u64,
     instance_id: u64,
@@ -860,7 +815,6 @@ pub fn gen_recursive_proof_c(
     const_pols_path: &str,
     const_tree_path: &str,
     proof_type: &str,
-    mpi_node_rank: u32,
 ) {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -881,7 +835,6 @@ pub fn gen_recursive_proof_c(
         gen_recursive_proof(
             p_setup_ctx,
             global_info_file_ptr,
-            thread_id,
             airgroup_id,
             air_id,
             instance_id,
@@ -898,7 +851,6 @@ pub fn gen_recursive_proof_c(
             const_filename_ptr,
             const_tree_filename_ptr,
             proof_type_ptr,
-            mpi_node_rank,
         );
     }
 }
@@ -1143,12 +1095,7 @@ pub fn gen_device_commit_buffers_free_c(d_buffers: *mut ::std::os::raw::c_void, 
     }
 }
 
-#[cfg(not(feature = "no_lib_link"))]
-pub fn set_device_c(mpi_node_rank: u32) {
-    unsafe {
-        set_device(mpi_node_rank);
-    }
-}
+
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn load_const_pols_gpu_c(
@@ -1495,15 +1442,18 @@ pub fn commit_witness_c(
     _root: *mut u8,
     _witness: *mut u8,
     _aux_trace: *mut u8,
-    _thread_id: u64,
     _d_buffers: *mut c_void,
-    _mpi_node_rank: u32,
 ) {
     trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_commit_root_c(
+pub fn get_stream_roots_c( d_buffers: *mut c_void)  {
+    trace!("{}: ··· {}", "ffi     ", "get_commit_root: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_stream_roots_c(
     _arity: u64,
     _n_bits_ext: u64,
     _n_cols: u64,
@@ -1690,7 +1640,6 @@ pub fn gen_proof_c(
     _p_global_challenge: *mut u8,
     _proof_buffer: *mut u64,
     _proof_file: &str,
-    _thread_id: u64,
     _airgroup_id: u64,
     _air_id: u64,
     _instance_id: u64,
@@ -1698,7 +1647,6 @@ pub fn gen_proof_c(
     _load_constants: bool,
     _const_pols_path: &str,
     _const_tree_path: &str,
-    _mpi_node_rank: u32,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
 }
@@ -1721,6 +1669,12 @@ pub fn get_proof_c(
 
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
+pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
+    trace!("{}: ··· {}", "ffi     ", "get_stream_proofs: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_c(
     _p_setup_ctx: *mut c_void,
     _p_address: *mut u8,
@@ -1731,7 +1685,6 @@ pub fn gen_recursive_proof_c(
     _proof_buffer: *mut u64,
     _proof_file: &str,
     _global_info_file: &str,
-    _thread_id: u64,
     _airgroup_id: u64,
     _air_id: u64,
     _instance_id: u64,
@@ -1741,7 +1694,6 @@ pub fn gen_recursive_proof_c(
     _const_pols_path: &str,
     _const_tree_path: &str,
     _proof_type: &str,
-    _mpi_node_rank: u32,
 ) {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
 }
@@ -1906,11 +1858,6 @@ pub fn gen_device_commit_buffers_free_c(_d_buffers: *mut ::std::os::raw::c_void,
         "ffi     ",
         "gen_device_commit_buffers_free: This is a mock call because there is no linked library"
     );
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn set_device_c(_mpi_node_rank: u32) {
-    trace!("{}: ··· {}", "ffi     ", "set_device: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

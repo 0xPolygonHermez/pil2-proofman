@@ -136,7 +136,6 @@ public:
     using Poseidon2Goldilocks::Poseidon2Goldilocks;
 
     void static merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
-    void static merkletree_cuda_streams(uint32_t arity, uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
     void static merkletree_cuda_coalesced(uint32_t arity, uint64_t *d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, cudaStream_t stream, int nThreads = 0, uint64_t dim = 1);
 };
 

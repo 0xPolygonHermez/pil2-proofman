@@ -14,7 +14,7 @@ use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{gen_device_commit_buffers_c, gen_device_commit_buffers_free_c};
 use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, get_const_offset_c, check_gpu_memory_c,
-    set_max_size_thread_c,
+    set_max_size_thread_c, get_stream_proofs_c, get_stream_roots_c,
 };
 use std::fs;
 use std::collections::HashMap;
@@ -28,7 +28,7 @@ use p3_goldilocks::Goldilocks;
 
 use p3_field::PrimeField64;
 use proofman_starks_lib_c::{
-    gen_proof_c, get_proof_c, commit_witness_c, get_commit_root_c, calculate_hash_c, load_custom_commit_c,
+    gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c,
     calculate_impols_expressions_c,
 };
 
@@ -529,7 +529,6 @@ where
 
         let instances = self.pctx.dctx_get_instances();
         let my_instances = self.pctx.dctx_get_my_instances();
-        let mpi_node_rank = self.pctx.dctx_get_node_rank() as u32;
         let instances_mine = my_instances.len();
 
         let values_contributions = Arc::new(RwLock::new(vec![Vec::new(); my_instances.len()]));
@@ -568,7 +567,7 @@ where
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
 
         let contribution_pools: Vec<_> = (0..self.max_number_proofs)
-            .map(|contribution_thread_id| {
+            .map(|_| {
                 let pctx_clone = self.pctx.clone();
                 let sctx_clone = self.sctx.clone();
                 let aux_trace_clone = aux_trace.clone();
@@ -588,7 +587,6 @@ where
                             values_clone.clone(),
                             instance_id,
                             aux_trace_clone.clone().as_ptr() as *mut u8,
-                            contribution_thread_id,
                             d_buffers_clone.clone(),
                         );
 
@@ -658,6 +656,9 @@ where
         for worker in contribution_pools {
             worker.join().unwrap();
         }
+        get_stream_roots_c(
+            self.d_buffers.get_ptr(),
+        );
 
         Self::calculate_global_challenge(&self.pctx, roots_contributions, values_contributions);
 
@@ -811,6 +812,10 @@ where
 
         drop(witness_recursive_tx);
         witness_recursive_worker.join().unwrap();
+
+        get_stream_proofs_c(
+            self.d_buffers.get_ptr(),
+        );
 
         timer_stop_and_log_info!(GENERATING_BASIC_PROOFS);
 
@@ -1020,9 +1025,7 @@ where
                             &prover_buffers_clone[proof_thread_id],
                             &output_dir_path_clone,
                             d_buffers_clone.get_ptr(),
-                            proof_thread_id,
                             gen_const_tree,
-                            mpi_node_rank,
                             options.save_proofs,
                         );
 
@@ -1073,6 +1076,9 @@ where
         for pool in recursive_proof_pools {
             pool.join().unwrap();
         }
+        get_stream_proofs_c(
+            self.d_buffers.get_ptr(),
+        );
 
         let mut recursive2_proofs_data = recursive2_proofs.read().unwrap().clone();
         for (airgroup, data) in recursive2_proofs_data.iter_mut().enumerate().take(n_airgroups) {
@@ -1097,9 +1103,7 @@ where
                     &self.prover_buffers[0],
                     &options.output_dir_path,
                     self.d_buffers.get_ptr(),
-                    0,
                     gen_const_tree,
-                    mpi_node_rank,
                     options.save_proofs,
                 );
                 *data = vec![recursive2_proof];
@@ -1118,7 +1122,6 @@ where
             &self.prover_buffers[0],
             options.output_dir_path.clone(),
             self.d_buffers.get_ptr(),
-            mpi_node_rank,
             options.save_proofs,
         )?;
         self.pctx.dctx.read().unwrap().barrier();
@@ -1359,7 +1362,6 @@ where
             pctx.get_global_challenge_ptr(),
             proofs.read().unwrap()[pctx.dctx_get_instance_idx(instance_id)].proof.as_ptr() as *mut u64,
             &proof_file,
-            thread_id as u64,
             airgroup_id as u64,
             air_id as u64,
             air_instance_id as u64,
@@ -1367,19 +1369,6 @@ where
             gen_const_tree,
             &const_pols_path,
             &const_pols_tree_path,
-            pctx.dctx_get_node_rank() as u32,
-        );
-
-        get_proof_c(
-            p_setup,
-            proofs.read().unwrap()[pctx.dctx_get_instance_idx(instance_id)].proof.as_ptr() as *mut u64,
-            &proof_file,
-            thread_id as u64,
-            airgroup_id as u64,
-            air_id as u64,
-            air_instance_id as u64,
-            d_buffers.get_ptr(),
-            pctx.dctx_get_node_rank() as u32,
         );
 
         timer_stop_and_log_info!(GEN_PROOF);
@@ -1655,7 +1644,6 @@ where
         values: Arc<RwLock<Vec<Vec<F>>>>,
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
-        thread_id: usize,
         d_buffers: Arc<DeviceBuffer>,
     ) {
         let n_field_elements = 4;
@@ -1678,19 +1666,7 @@ where
             root_ptr,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
-            thread_id as u64,
             d_buffers.get_ptr(),
-            pctx.dctx_get_node_rank() as u32,
-        );
-
-        get_commit_root_c(
-            3,
-            setup.stark_info.stark_struct.n_bits_ext,
-            *setup.stark_info.map_sections_n.get("cm1").unwrap(),
-            root_ptr,
-            thread_id as u64,
-            d_buffers.get_ptr(),
-            pctx.dctx_get_node_rank() as u32,
         );
 
         let n_airvalues = setup

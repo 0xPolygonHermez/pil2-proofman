@@ -136,9 +136,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: &Path,
     d_buffers: *mut c_void,
-    thread_id: usize,
     load_constants: bool,
-    mpi_node_rank: u32,
     save_proofs: bool,
 ) -> Proof<F> {
     timer_start_info!(GEN_RECURSIVE_PROOF);
@@ -223,7 +221,6 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         new_proof[initial_idx..].as_mut_ptr(),
         &proof_file,
         global_info_file,
-        thread_id as u64,
         airgroup_id as u64,
         air_id as u64,
         air_instance_id as u64,
@@ -233,19 +230,6 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         &const_pols_path,
         &const_pols_tree_path,
         proof_type,
-        mpi_node_rank,
-    );
-
-    get_proof_c(
-        p_setup,
-        new_proof[initial_idx..].as_mut_ptr(),
-        &proof_file,
-        thread_id as u64,
-        airgroup_id as u64,
-        air_id as u64,
-        air_instance_id as u64,
-        d_buffers,
-        mpi_node_rank,
     );
 
     if add_aggregation_publics {
@@ -269,7 +253,6 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
-    mpi_node_rank: u32,
     save_proofs: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     const MY_NAME: &str = "AggProof";
@@ -362,9 +345,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             prover_buffer,
                             &output_dir_path,
                             d_buffers,
-                            0,
                             true,
-                            mpi_node_rank,
                             save_proofs,
                         );
 
@@ -436,7 +417,6 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
     let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof)?;
     let new_proof = Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, 24);
-    let mpi_node_rank = pctx.dctx.read().unwrap().node_rank as u32;
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
     let final_vadcop_proof = generate_recursive_proof::<F>(
@@ -447,9 +427,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         prover_buffer,
         &output_dir_path,
         d_buffers,
-        0,
         true,
-        mpi_node_rank,
         save_proof,
     );
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);

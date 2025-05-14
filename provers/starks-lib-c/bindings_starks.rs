@@ -280,7 +280,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_mS_j"]
+    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_S_"]
     pub fn commit_witness(
         arity: u64,
         nBits: u64,
@@ -289,22 +289,12 @@ extern "C" {
         root: *mut ::std::os::raw::c_void,
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,
-        thread_id: u64,
         d_buffers: *mut ::std::os::raw::c_void,
-        mpi_node_rank: u32,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z15get_commit_rootmmmPvmS_j"]
-    pub fn get_commit_root(
-        arity: u64,
-        nBitsExt: u64,
-        nCols: u64,
-        root: *mut ::std::os::raw::c_void,
-        thread_id: u64,
-        d_buffers: *mut ::std::os::raw::c_void,
-        mpi_node_rank: u32,
-    );
+    #[link_name = "\u{1}_Z16get_stream_rootsPv"]
+    pub fn get_stream_roots(d_buffers: *mut ::std::os::raw::c_void);
 }
 extern "C" {
     #[link_name = "\u{1}_Z14calculate_hashPvS_mm"]
@@ -424,10 +414,9 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9gen_proofPvmmmmS_S_PmPcS_bS1_S1_j"]
+    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_bS1_S1_"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
-        threadId: u64,
         airgroupId: u64,
         airId: u64,
         instanceId: u64,
@@ -439,29 +428,13 @@ extern "C" {
         loadConstants: bool,
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
-        mpi_node_rank: u32,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9get_proofPvmmmmPmPcS_j"]
-    pub fn get_proof(
-        pSetupCtx_: *mut ::std::os::raw::c_void,
-        threadId: u64,
-        airgroupId: u64,
-        airId: u64,
-        instanceId: u64,
-        proofBuffer: *mut u64,
-        proofFile: *mut ::std::os::raw::c_char,
-        d_buffers_: *mut ::std::os::raw::c_void,
-        mpi_node_rank: u32,
-    );
-}
-extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmmS_S_S_S_S_PmS0_bS_bS0_S0_S0_j"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_bS0_S0_S0_"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
-        threadId: u64,
         airgroupId: u64,
         airId: u64,
         instanceId: u64,
@@ -478,7 +451,6 @@ extern "C" {
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
         proofType: *mut ::std::os::raw::c_char,
-        mpi_node_rank: u32,
     );
 }
 extern "C" {
@@ -509,6 +481,10 @@ extern "C" {
         pPublicInputs: *mut ::std::os::raw::c_void,
         proof_file: *mut ::std::os::raw::c_char,
     ) -> *mut ::std::os::raw::c_void;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z17get_stream_proofsPv"]
+    pub fn get_stream_proofs(d_buffers_: *mut ::std::os::raw::c_void);
 }
 extern "C" {
     #[link_name = "\u{1}_Z21gen_final_snark_proofPvPcS0_"]
@@ -587,8 +563,12 @@ extern "C" {
     pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void, mpi_node_rank: u32);
 }
 extern "C" {
+    #[link_name = "\u{1}_Z14set_device_mpij"]
+    pub fn set_device_mpi(mpi_node_rank: u32);
+}
+extern "C" {
     #[link_name = "\u{1}_Z10set_devicej"]
-    pub fn set_device(mpi_node_rank: u32);
+    pub fn set_device(gpu_id: u32);
 }
 extern "C" {
     #[link_name = "\u{1}_Z19load_const_pols_gpummmPvPcmS0_mS0_"]
@@ -618,7 +598,7 @@ extern "C" {
         maxSizeConstAggregation: u64,
         maxSizeConstTreeAggregation: u64,
         maxProofSizeThread: u64,
-        nThreads: u64,
+        nStreams: u64,
     );
 }
 extern "C" {
