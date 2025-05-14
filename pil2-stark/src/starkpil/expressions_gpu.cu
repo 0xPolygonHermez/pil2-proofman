@@ -350,26 +350,34 @@ __device__ __noinline__ void multiplyPolynomials__(DeviceArguments *d_deviceArgs
     if (d_deviceArgs->dest_dim == 1)
     {
         gl64_t::op_gpu(2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
+        uint64_t offset = d_deviceArgs->dest_offset != 0 ? d_deviceArgs->dest_offset : 1;
+        gl64_t::copy_gpu((gl64_t*) &d_deviceArgs->dest_gpu[row  * offset], uint64_t(offset), (gl64_t*)&destVals[0], false);
     }
     else
     {
-        Goldilocks::Element **expressions_params = (Goldilocks::Element **)scratchpad;
-        gl64_t*  vals = (gl64_t*) ( expressions_params + d_deviceArgs->bufferCommitSize + 9); //rick
+        uint64_t offset = d_deviceArgs->dest_offset != 0 ? d_deviceArgs->dest_offset : FIELD_EXTENSION;
         if (d_deviceArgs->dest_params[0].dim == FIELD_EXTENSION && d_deviceArgs->dest_params[1].dim == FIELD_EXTENSION)
         {
-            Goldilocks3GPU::op_gpu(2, &vals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
+            Goldilocks3GPU::op_gpu(2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
+            gl64_t::copy_gpu((gl64_t*)&d_deviceArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_t*)&destVals[0], false);
+            gl64_t::copy_gpu((gl64_t*)&d_deviceArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_t*)&destVals[blockDim.x], false);
+            gl64_t::copy_gpu((gl64_t*)&d_deviceArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_t*)&destVals[2*blockDim.x], false);
         }
         else if (d_deviceArgs->dest_params[0].dim == FIELD_EXTENSION && d_deviceArgs->dest_params[1].dim == 1)
         {
-            Goldilocks3GPU::op_31_gpu(2, &vals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
+            Goldilocks3GPU::op_31_gpu(2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
+            gl64_t::copy_gpu((gl64_t*)&d_deviceArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_t*)&destVals[0], false);
+            gl64_t::copy_gpu((gl64_t*)&d_deviceArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_t*)&destVals[blockDim.x], false);
+            gl64_t::copy_gpu((gl64_t*)&d_deviceArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_t*)&destVals[2*blockDim.x], false);
         }
         else
         {
-            Goldilocks3GPU::op_31_gpu(2, &vals[0], &destVals[FIELD_EXTENSION * blockDim.x], false, &destVals[0], false);
+            Goldilocks3GPU::op_31_gpu(2, &destVals[FIELD_EXTENSION * blockDim.x], &destVals[FIELD_EXTENSION * blockDim.x], false, &destVals[0], false);
+            gl64_t::copy_gpu((gl64_t*)&d_deviceArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_t*)&destVals[FIELD_EXTENSION * blockDim.x], false);
+            gl64_t::copy_gpu((gl64_t*)&d_deviceArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_t*)&destVals[(FIELD_EXTENSION + 1) * blockDim.x], false);
+            gl64_t::copy_gpu((gl64_t*)&d_deviceArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_t*)&destVals[(FIELD_EXTENSION + 2)*blockDim.x], false);
         }
-        gl64_t::copy_gpu(&destVals[0], &vals[0], false);
-        gl64_t::copy_gpu(&destVals[blockDim.x], &vals[blockDim.x], false);
-        gl64_t::copy_gpu(&destVals[2 * blockDim.x], &vals[2 * blockDim.x], false);
+        
     }
 }
 
@@ -640,8 +648,9 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
         {
 
             multiplyPolynomials__(d_deviceArgs, (gl64_t*) destVals, i);
+        } else {
+            storePolynomial__(d_deviceArgs, destVals, i);
         }
-        storePolynomial__(d_deviceArgs, destVals, i);
 
         chunk_idx += gridDim.x;
     }

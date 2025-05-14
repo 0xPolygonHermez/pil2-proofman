@@ -362,24 +362,36 @@ void StarkInfo::setMapOffsets() {
     if(!gpu) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
         mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
-    } else {
-        uint64_t maxSizeHelper = boundaries.size() * NExtended;
-        if (recursive) {
-            maxSizeHelper += NExtended;
-        }
-        mapOffsets[std::make_pair("zi", true)] = mapTotalN;
-        if(recursive) {
-            mapOffsets[std::make_pair("x_n", false)] = mapTotalN;
-            mapOffsets[std::make_pair("x", true)] = mapTotalN + boundaries.size() * NExtended;
-        } else {
-            mapOffsets[std::make_pair("x", true)] = mapTotalN;
-        }
-        mapTotalN += maxSizeHelper;
     }
 
-    mapOffsets[std::make_pair("f", true)] = mapTotalN;
-    mapOffsets[std::make_pair("q", true)] = mapTotalN;
-    mapTotalN += NExtended * FIELD_EXTENSION;
+    if(recursive) {
+        uint64_t maxSizeHelper = 0;
+        if(gpu) {
+            maxSizeHelper = (boundaries.size() + 1) * NExtended;
+            mapOffsets[std::make_pair("zi", true)] = mapTotalN;
+            mapOffsets[std::make_pair("x_n", false)] = mapTotalN;
+            mapOffsets[std::make_pair("x", true)] = mapTotalN + boundaries.size() * NExtended;
+            mapTotalN += maxSizeHelper;
+        }
+        mapOffsets[std::make_pair("f", true)] = mapTotalN;
+        mapOffsets[std::make_pair("q", true)] = mapTotalN;
+        mapTotalN += NExtended * FIELD_EXTENSION;
+        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
+    } else {
+        mapOffsets[std::make_pair("f", true)] = mapTotalN;
+        mapOffsets[std::make_pair("q", true)] = mapTotalN;
+        mapTotalN += NExtended * FIELD_EXTENSION;
+
+        uint64_t maxSizeHelper = 0;
+        if(gpu) {
+            maxSizeHelper += boundaries.size() * NExtended;
+            mapOffsets[std::make_pair("zi", true)] = mapTotalN;
+            mapOffsets[std::make_pair("x", true)] = mapTotalN;
+        }
+        
+        maxTotalN = std::max(maxTotalN, mapTotalN + maxSizeHelper);
+        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN + maxSizeHelper;
+    }
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("lev", false)] = LEvSize;
@@ -394,6 +406,9 @@ void StarkInfo::setMapOffsets() {
     }
 
     maxTotalN = std::max(maxTotalN, LEvSize);
+
+    mapOffsets[std::make_pair("buff_helper", false)] = mapTotalN;
+    mapTotalN += NExtended * FIELD_EXTENSION;
 
     for(uint64_t stage = 1; stage <= nStages; stage++) {
         uint64_t maxTotalNStage = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
@@ -435,11 +450,6 @@ void StarkInfo::setMapOffsets() {
     mapTotalN = std::max(mapTotalN, maxTotalN);
 
     if(gpu) {
-        mapOffsets[std::make_pair("buff_helper", false)] = mapOffsets[std::make_pair("f", true)] + NExtended * FIELD_EXTENSION;
-        if(mapOffsets[std::make_pair("buff_helper", false)] + NExtended * FIELD_EXTENSION > mapTotalN) {
-            mapTotalN = mapOffsets[std::make_pair("buff_helper", false)] + NExtended * FIELD_EXTENSION;
-        }
-
         mapOffsets[std::make_pair("custom_fixed", false)] = mapTotalN;
         mapTotalN += mapTotalNCustomCommitsFixed;
     }
@@ -447,19 +457,20 @@ void StarkInfo::setMapOffsets() {
 
 void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
     uint64_t NExtended = (1 << starkStruct.nBitsExt);
-    uint64_t maxNBlocks, nrowsPack, mapBuffHelper;
+    uint64_t N = (1 << starkStruct.nBits);
+    uint64_t mapBuffHelper;
     if(verify) {
         maxNBlocks = 1;
         nrowsPack = starkStruct.nQueries;
         mapBuffHelper = mapTotalN;
     } else {
-        mapBuffHelper = mapOffsets[std::make_pair("f", true)] + NExtended * FIELD_EXTENSION;
+        mapBuffHelper =  mapOffsets[std::make_pair("mem_exps", false)];
         if(!gpu) {
             nrowsPack = NROWS_PACK;
             maxNBlocks = omp_get_max_threads();
         } else {
-            nrowsPack = 128; // TODO: SHOULD NOT BE HARDCODED
-            maxNBlocks = 2048; // TODO: SHOULD NOT BE HARDCODED
+            nrowsPack = 64; // TODO: SHOULD NOT BE HARDCODED
+            maxNBlocks = 4096; // TODO: SHOULD NOT BE HARDCODED
         }
     }
     
