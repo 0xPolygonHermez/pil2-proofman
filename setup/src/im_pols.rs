@@ -1,6 +1,6 @@
 use std::hash::{Hash, DefaultHasher, Hasher};
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 pub trait HashCode: Hash {
     fn hash_code(&self) -> u64 {
