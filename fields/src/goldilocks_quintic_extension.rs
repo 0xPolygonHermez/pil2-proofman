@@ -18,9 +18,7 @@ pub struct QuinticExtension<F> {
 
 impl<F: Field> Default for QuinticExtension<F> {
     fn default() -> Self {
-        Self { 
-            value: array::from_fn(|_| F::ZERO) 
-        }
+        Self { value: array::from_fn(|_| F::ZERO) }
     }
 }
 
@@ -129,9 +127,7 @@ impl<F: Field> Add for QuinticExtension<F> {
 
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        Self {
-            value: array::from_fn(|i| self.value[i] + rhs.value[i])
-        }
+        Self { value: array::from_fn(|i| self.value[i] + rhs.value[i]) }
     }
 }
 
@@ -165,9 +161,7 @@ impl<F: Field> Sub for QuinticExtension<F> {
 
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        Self {
-            value: array::from_fn(|i| self.value[i] - rhs.value[i])
-        }
+        Self { value: array::from_fn(|i| self.value[i] - rhs.value[i]) }
     }
 }
 
@@ -201,9 +195,7 @@ impl<F: Field> Neg for QuinticExtension<F> {
 
     #[inline]
     fn neg(self) -> Self::Output {
-        Self {
-            value: array::from_fn(|i| -self.value[i])
-        }
+        Self { value: array::from_fn(|i| -self.value[i]) }
     }
 }
 
