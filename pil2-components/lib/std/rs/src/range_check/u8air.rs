@@ -18,15 +18,13 @@ use crate::AirComponent;
 
 const P2_8: usize = 256;
 
-type Min = u8;
-
 pub struct U8Air {
     airgroup_id: usize,
     air_id: usize,
-
+    shift: usize,
+    mask: usize,
     num_rows: usize,
     num_cols: usize,
-    mins: Vec<Min>,
     multiplicities: Vec<Vec<AtomicU64>>,
     instance_id: AtomicU64,
     calculated: AtomicBool,
@@ -42,8 +40,6 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
 
         // Get and store the ranges
         let num_cols = P2_8.div_ceil(num_rows);
-        let mins = (0..num_cols).into_par_iter().map(|i| (i * num_rows) as Min).collect();
-
         let multiplicities = (0..num_cols)
             .into_par_iter()
             .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
@@ -52,9 +48,10 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
         Arc::new(Self {
             airgroup_id,
             air_id,
+            shift: num_rows.trailing_zeros() as usize,
+            mask: num_rows - 1,
             num_rows,
             num_cols,
-            mins,
             multiplicities,
             instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
@@ -68,14 +65,12 @@ impl U8Air {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
-        let mins = &self.mins;
 
         // Identify to which sub-range the value belongs
-        let range_idx = value as usize / self.num_rows;
+        let range_idx = (value as usize) >> self.shift;
 
         // Get the row index
-        let min_local = mins[range_idx];
-        let row_idx = (value - min_local) as usize;
+        let row_idx = (value as usize) & self.mask;
 
         // Update the multiplicity
         self.multiplicities[range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);

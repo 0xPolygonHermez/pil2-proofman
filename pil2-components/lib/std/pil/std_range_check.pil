@@ -181,16 +181,19 @@ airtemplate U16Air(const int N = 2**16) {
 }
 
 airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_count, const int init_mins[], const int init_maxs[]) {
-    // save the airgroup id and air id of the table for latter use
+    // save relevant information for global hints
     proof.std.specified.airgroup_id = AIRGROUP_ID;
     proof.std.specified.air_id = AIR_ID;
+    proof.std.specified.opids_count = opids_count;
 
     int col_num = 0;
     int opids_len[opids_count];
     int mins[ARRAY_SIZE];
     int maxs[ARRAY_SIZE];
+    int init_mins_neg[opids_count];
     for (int i = 0; i < opids_count; i++) {
         const int min = init_mins[i];
+        init_mins_neg[i] = (min < 0) ? 1 : 0;
         const int max = init_maxs[i];
 
         const int range_size = max - min + 1;
@@ -204,7 +207,7 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
         col_num += divisions;
     }
 
-    @specified_ranges_data{col_num: col_num, opids_count: opids_count, opids: opids, opids_len: opids_len};
+    @specified_ranges_data{col_num: col_num, mins: init_mins, mins_neg: init_mins_neg, opids_count: opids_count, opids_len: opids_len};
 
     col fixed RANGE[col_num];
 
@@ -218,8 +221,6 @@ airtemplate SpecifiedRanges(const int N, const int opids[], const int opids_coun
             const int idx = offset + j;
             const int min = mins[idx];
             const int max = maxs[idx];
-
-            @specified_range{min: min, min_neg: (min < 0)};
 
             // Sanity check
             if (N < max - min + 1) {
@@ -692,6 +693,7 @@ private function declare_specified_air() {
     container proof.std.specified {
         int airgroup_id = 0;
         int air_id = 0;
+        int opids_count = 0;
     }
 
     use proof.std.rc;
@@ -739,7 +741,7 @@ private function create_predefined_metadata() {
 }
 
 private function create_specified_metadata() {
-    @specified_ranges{airgroup_id: proof.std.specified.airgroup_id, air_id: proof.std.specified.air_id};
+    @specified_ranges{airgroup_id: proof.std.specified.airgroup_id, air_id: proof.std.specified.air_id, opids_count: proof.std.specified.opids_count};
 }
 
 private function rc_issue_global_hints() {

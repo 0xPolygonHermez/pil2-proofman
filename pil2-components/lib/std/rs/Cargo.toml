@@ -15,3 +15,7 @@ p3-field.workspace = true
 rayon.workspace = true
 witness.workspace = true
 colored.workspace = true
+
+[features]
+default = []
+verify-rc-values = []
