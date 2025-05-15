@@ -264,6 +264,7 @@ impl Distribution<Goldilocks> for StandardUniform {
     }
 }
 
+#[cfg(test)]
 mod tests {
     #[allow(unused_imports)]
     use super::*;
@@ -432,7 +433,7 @@ mod tests {
         let field_half = (Goldilocks::ONE + Goldilocks::ONE).inverse();
         let field_neg_half = field_half - Goldilocks::ONE;
 
-        assert_eq!(half_as_neg_rep, field_half.0 as i64);
+        assert_eq!(Goldilocks::from_int(half_as_neg_rep), field_half);
         assert_eq!(neg_half, field_neg_half.0 as i64);
 
         // We check that from_canonical_checked returns None for large enough values but
