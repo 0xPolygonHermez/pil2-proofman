@@ -823,6 +823,15 @@ pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
+pub fn get_stream_proofs_non_blocking_c(d_buffers: *mut c_void) {
+    unsafe {
+        get_stream_proofs_non_blocking(d_buffers);
+    }
+}
+
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn gen_recursive_proof_c(
     p_setup_ctx: *mut c_void,
     p_witness: *mut u8,
@@ -1716,6 +1725,12 @@ pub fn get_proof_c(
 #[allow(clippy::too_many_arguments)]
 pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "get_stream_proofs: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn get_stream_proofs_non_blocking_c(d_buffers: *mut c_void) {
+    trace!("{}: ··· {}", "ffi     ", "get_stream_proofs_non_blocking: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
