@@ -406,11 +406,11 @@ mod tests {
         let field_order = Goldilocks::ORDER_U64 as u64;
 
         // On the other hand, everything should work fine for field_order - 1 and (field_order + 1)/2.
-        assert_eq!(field_order - 1, (-Goldilocks::ONE).0);
+        assert_eq!(Goldilocks::from_int(field_order - 1), -Goldilocks::ONE);
 
         let half = (field_order + 1) >> 1;
         let field_half = (Goldilocks::ONE + Goldilocks::ONE).inverse();
-        assert_eq!(half, field_half.0);
+        assert_eq!(Goldilocks::from_int(half), field_half);
 
         // We check that from_canonical_checked returns None for large enough values
         // but from_int is still correct.
@@ -434,7 +434,7 @@ mod tests {
         let field_neg_half = field_half - Goldilocks::ONE;
 
         assert_eq!(Goldilocks::from_int(half_as_neg_rep), field_half);
-        assert_eq!(neg_half, field_neg_half.0 as i64);
+        assert_eq!(Goldilocks::from_int(neg_half), field_neg_half);
 
         // We check that from_canonical_checked returns None for large enough values but
         // from_int is still correct.
