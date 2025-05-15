@@ -511,6 +511,15 @@ extern "C" {
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z23add_publics_aggregationPvmS_m"]
+    pub fn add_publics_aggregation(
+        pProof: *mut ::std::os::raw::c_void,
+        offset: u64,
+        pPublics: *mut ::std::os::raw::c_void,
+        nPublicsAggregation: u64,
+    );
+}
+extern "C" {
     #[link_name = "\u{1}_Z21gen_final_snark_proofPvPcS0_"]
     pub fn gen_final_snark_proof(
         circomWitnessFinal: *mut ::std::os::raw::c_void,

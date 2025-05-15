@@ -213,6 +213,10 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
     let proof_type: &str = setup.setup_type.clone().into();
 
+    if add_aggregation_publics {
+        add_publics_aggregation_c(new_proof.as_ptr() as *mut u8, 0, publics.as_ptr() as *mut u8, publics_aggregation as u64);
+    }
+    
     gen_recursive_proof_c(
         p_setup,
         trace.as_ptr() as *mut u8,
@@ -247,10 +251,6 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         d_buffers,
         mpi_node_rank,
     );
-
-    if add_aggregation_publics {
-        add_publics_aggregation(&mut new_proof, 0, &publics, publics_aggregation);
-    }
 
     timer_stop_and_log_info!(GEN_RECURSIVE_PROOF);
     if witness.proof_type == ProofType::Compressor || witness.proof_type == ProofType::Recursive1 {

@@ -546,6 +546,16 @@ void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t threadI
 
 #endif
 
+void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint64_t nPublicsAggregation) {
+    uint64_t *proof = (uint64_t *)pProof;
+    Goldilocks::Element *publics = (Goldilocks::Element *)pPublics;
+
+    for(uint64_t i = 0; i < nPublicsAggregation; i++) {
+        proof[offset + i] = Goldilocks::toU64(publics[i]);
+    }
+}
+
+
 void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file) {
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
