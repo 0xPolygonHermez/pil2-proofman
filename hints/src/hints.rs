@@ -7,7 +7,7 @@ use proofman_starks_lib_c::{
 use std::collections::HashMap;
 use std::ffi::c_void;
 
-use p3_field::Field;
+use fields::PrimeField64;
 use proofman_common::{ExtensionField, ProofCtx, SetupCtx, StepsParams};
 use proofman_util::create_buffer_fast;
 
@@ -27,7 +27,7 @@ pub enum HintFieldType {
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct HintFieldInfoC<F: Field> {
+pub struct HintFieldInfoC<F: PrimeField64> {
     size: u64,
     string_size: u64,
     offset: u8, // 1 or 3cd
@@ -40,7 +40,7 @@ pub struct HintFieldInfoC<F: Field> {
     expression_line_size: u64,
 }
 
-impl<F: Field> HintFieldInfoC<F> {
+impl<F: PrimeField64> HintFieldInfoC<F> {
     pub fn from_hint_field_info_vec(hint_field_values: &mut [HintFieldInfo<F>]) -> Vec<HintFieldInfoC<F>> {
         hint_field_values
             .iter_mut()
@@ -76,7 +76,7 @@ impl<F: Field> HintFieldInfoC<F> {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub struct HintFieldInfo<F: Field> {
+pub struct HintFieldInfo<F: PrimeField64> {
     size: u64,
     string_size: u64,
     offset: u8, // 1 or 3cd
@@ -89,7 +89,7 @@ pub struct HintFieldInfo<F: Field> {
     expression_line_size: u64,
 }
 
-impl<F: Field> Default for HintFieldInfo<F> {
+impl<F: PrimeField64> Default for HintFieldInfo<F> {
     fn default() -> Self {
         HintFieldInfo {
             size: 0,
@@ -106,7 +106,7 @@ impl<F: Field> Default for HintFieldInfo<F> {
     }
 }
 
-impl<F: Field> HintFieldInfo<F> {
+impl<F: PrimeField64> HintFieldInfo<F> {
     pub fn init_buffers(&mut self, initialize_zeros: bool) {
         if self.size > 0 {
             if initialize_zeros {
@@ -131,7 +131,7 @@ impl<F: Field> HintFieldInfo<F> {
 }
 
 #[repr(C)]
-pub struct HintFieldInfoValues<F: Field> {
+pub struct HintFieldInfoValues<F: PrimeField64> {
     pub n_values: u64,
     pub hint_field_values: *mut HintFieldInfo<F>,
 }
@@ -179,7 +179,7 @@ impl HintFieldOptions {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HintFieldValue<F: Field> {
+pub enum HintFieldValue<F: PrimeField64> {
     Field(F),
     FieldExtended(ExtensionField<F>),
     Column(Vec<F>),
@@ -187,7 +187,7 @@ pub enum HintFieldValue<F: Field> {
     String(String),
 }
 
-impl<F: Field> Display for HintFieldValue<F> {
+impl<F: PrimeField64> Display for HintFieldValue<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
             HintFieldValue::Field(value) => write!(f, "{}", value),
@@ -205,28 +205,28 @@ impl<F: Field> Display for HintFieldValue<F> {
     }
 }
 
-pub struct HintFieldValues<F: Field> {
+pub struct HintFieldValues<F: PrimeField64> {
     pub values: HashMap<Vec<u64>, HintFieldValue<F>>,
 }
 
-impl<F: Field> HintFieldValues<F> {
+impl<F: PrimeField64> HintFieldValues<F> {
     pub fn get(&self, index: usize) -> HashMap<Vec<u64>, HintFieldOutput<F>> {
         self.values.iter().map(|(key, value)| (key.clone(), value.get(index))).collect()
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct HintFieldValuesVec<F: Field> {
+pub struct HintFieldValuesVec<F: PrimeField64> {
     pub values: Vec<HintFieldValue<F>>,
 }
 
-impl<F: Field> HintFieldValuesVec<F> {
+impl<F: PrimeField64> HintFieldValuesVec<F> {
     pub fn get(&self, index: usize) -> Vec<HintFieldOutput<F>> {
         self.values.iter().map(|value| value.get(index)).collect()
     }
 }
 
-impl<F: Field> Display for HintFieldValuesVec<F> {
+impl<F: PrimeField64> Display for HintFieldValuesVec<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "[")?;
         for (i, value) in self.values.iter().enumerate() {
@@ -259,7 +259,7 @@ pub fn format_vec<T: Copy + Clone + Debug + Display>(vec: &[T]) -> String {
     format!("[{}]", vec.iter().map(|item| item.to_string()).collect::<Vec<String>>().join(", "))
 }
 
-impl<F: Field> HintFieldValue<F> {
+impl<F: PrimeField64> HintFieldValue<F> {
     pub fn get(&self, index: usize) -> HintFieldOutput<F> {
         match self {
             HintFieldValue::Field(value) => HintFieldOutput::Field(*value),
@@ -289,7 +289,7 @@ impl<F: Field> HintFieldValue<F> {
     }
 }
 
-impl<F: Field> Add<F> for HintFieldOutput<F> {
+impl<F: PrimeField64> Add<F> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -301,7 +301,7 @@ impl<F: Field> Add<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Add<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> Add<ExtensionField<F>> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -313,7 +313,7 @@ impl<F: Field> Add<ExtensionField<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Add for HintFieldOutput<F> {
+impl<F: PrimeField64> Add for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -336,7 +336,7 @@ impl<F: Field> Add for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> AddAssign<F> for HintFieldOutput<F> {
+impl<F: PrimeField64> AddAssign<F> for HintFieldOutput<F> {
     #[inline]
     fn add_assign(&mut self, rhs: F) {
         *self = match *self {
@@ -346,7 +346,7 @@ impl<F: Field> AddAssign<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> AddAssign<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> AddAssign<ExtensionField<F>> for HintFieldOutput<F> {
     #[inline]
     fn add_assign(&mut self, rhs: ExtensionField<F>) {
         *self = match *self {
@@ -356,7 +356,7 @@ impl<F: Field> AddAssign<ExtensionField<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> AddAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> AddAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
     #[inline]
     fn add_assign(&mut self, rhs: HintFieldOutput<F>) {
         match rhs {
@@ -372,7 +372,7 @@ impl<F: Field> AddAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Sub<F> for HintFieldOutput<F> {
+impl<F: PrimeField64> Sub<F> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -384,7 +384,7 @@ impl<F: Field> Sub<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Sub<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> Sub<ExtensionField<F>> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -398,7 +398,7 @@ impl<F: Field> Sub<ExtensionField<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Sub for HintFieldOutput<F> {
+impl<F: PrimeField64> Sub for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -423,7 +423,7 @@ impl<F: Field> Sub for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> SubAssign<F> for HintFieldOutput<F> {
+impl<F: PrimeField64> SubAssign<F> for HintFieldOutput<F> {
     #[inline]
     fn sub_assign(&mut self, rhs: F) {
         *self = match *self {
@@ -433,7 +433,7 @@ impl<F: Field> SubAssign<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> SubAssign<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> SubAssign<ExtensionField<F>> for HintFieldOutput<F> {
     #[inline]
     fn sub_assign(&mut self, rhs: ExtensionField<F>) {
         *self = match *self {
@@ -445,7 +445,7 @@ impl<F: Field> SubAssign<ExtensionField<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> SubAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> SubAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
     #[inline]
     fn sub_assign(&mut self, rhs: HintFieldOutput<F>) {
         match rhs {
@@ -463,7 +463,7 @@ impl<F: Field> SubAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Mul<F> for HintFieldOutput<F> {
+impl<F: PrimeField64> Mul<F> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -475,7 +475,7 @@ impl<F: Field> Mul<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Mul<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> Mul<ExtensionField<F>> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -487,7 +487,7 @@ impl<F: Field> Mul<ExtensionField<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Mul for HintFieldOutput<F> {
+impl<F: PrimeField64> Mul for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -510,7 +510,7 @@ impl<F: Field> Mul for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> MulAssign<F> for HintFieldOutput<F> {
+impl<F: PrimeField64> MulAssign<F> for HintFieldOutput<F> {
     #[inline]
     fn mul_assign(&mut self, rhs: F) {
         *self = match *self {
@@ -520,7 +520,7 @@ impl<F: Field> MulAssign<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> MulAssign<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> MulAssign<ExtensionField<F>> for HintFieldOutput<F> {
     #[inline]
     fn mul_assign(&mut self, rhs: ExtensionField<F>) {
         *self = match *self {
@@ -530,7 +530,7 @@ impl<F: Field> MulAssign<ExtensionField<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> MulAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> MulAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
     #[inline]
     fn mul_assign(&mut self, rhs: HintFieldOutput<F>) {
         match rhs {
@@ -546,7 +546,7 @@ impl<F: Field> MulAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Div<F> for HintFieldOutput<F> {
+impl<F: PrimeField64> Div<F> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -558,7 +558,7 @@ impl<F: Field> Div<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Div<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> Div<ExtensionField<F>> for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -570,7 +570,7 @@ impl<F: Field> Div<ExtensionField<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> Div for HintFieldOutput<F> {
+impl<F: PrimeField64> Div for HintFieldOutput<F> {
     type Output = Self;
 
     #[inline]
@@ -597,7 +597,7 @@ impl<F: Field> Div for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> DivAssign<F> for HintFieldOutput<F> {
+impl<F: PrimeField64> DivAssign<F> for HintFieldOutput<F> {
     #[inline]
     fn div_assign(&mut self, rhs: F) {
         *self = match *self {
@@ -607,7 +607,7 @@ impl<F: Field> DivAssign<F> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> DivAssign<ExtensionField<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> DivAssign<ExtensionField<F>> for HintFieldOutput<F> {
     #[inline]
     fn div_assign(&mut self, rhs: ExtensionField<F>) {
         *self = match *self {
@@ -617,7 +617,7 @@ impl<F: Field> DivAssign<ExtensionField<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> DivAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
+impl<F: PrimeField64> DivAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
     #[inline]
     fn div_assign(&mut self, rhs: HintFieldOutput<F>) {
         match rhs {
@@ -633,7 +633,7 @@ impl<F: Field> DivAssign<HintFieldOutput<F>> for HintFieldOutput<F> {
     }
 }
 
-impl<F: Field> HintFieldValue<F> {
+impl<F: PrimeField64> HintFieldValue<F> {
     pub fn add(&mut self, index: usize, value: F) {
         match self {
             HintFieldValue::Field(v) => *v += value,
@@ -653,7 +653,7 @@ impl<F: Field> HintFieldValue<F> {
     }
 }
 
-impl<F: Field> HintFieldValue<F> {
+impl<F: PrimeField64> HintFieldValue<F> {
     pub fn sub(&mut self, index: usize, value: F) {
         match self {
             HintFieldValue::Field(v) => *v -= value,
@@ -673,7 +673,7 @@ impl<F: Field> HintFieldValue<F> {
     }
 }
 
-impl<F: Field> HintFieldValue<F> {
+impl<F: PrimeField64> HintFieldValue<F> {
     pub fn mul(&mut self, index: usize, value: F) {
         match self {
             HintFieldValue::Field(v) => *v *= value,
@@ -693,7 +693,7 @@ impl<F: Field> HintFieldValue<F> {
     }
 }
 
-impl<F: Field> HintFieldValue<F> {
+impl<F: PrimeField64> HintFieldValue<F> {
     pub fn div(&mut self, index: usize, value: F) {
         match self {
             HintFieldValue::Field(v) => *v *= value.inverse(),
@@ -715,7 +715,7 @@ impl<F: Field> HintFieldValue<F> {
 pub struct HintCol;
 
 impl HintCol {
-    pub fn from_hint_field<F: Field>(hint_field: &HintFieldInfo<F>) -> HintFieldValue<F> {
+    pub fn from_hint_field<F: PrimeField64>(hint_field: &HintFieldInfo<F>) -> HintFieldValue<F> {
         match hint_field.field_type {
             HintFieldType::Field => HintFieldValue::Field(hint_field.values[0]),
             HintFieldType::FieldExtended => {
@@ -749,7 +749,7 @@ pub fn get_hint_ids_by_name(p_expressions_bin: *mut std::os::raw::c_void, name: 
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn mul_hint_fields<F: Field>(
+pub fn mul_hint_fields<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
     instance_id: usize,
@@ -786,7 +786,7 @@ pub fn mul_hint_fields<F: Field>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn acc_hint_field<F: Field>(
+pub fn acc_hint_field<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
     instance_id: usize,
@@ -819,7 +819,7 @@ pub fn acc_hint_field<F: Field>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn acc_mul_hint_fields<F: Field>(
+pub fn acc_mul_hint_fields<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
     instance_id: usize,
@@ -858,7 +858,7 @@ pub fn acc_mul_hint_fields<F: Field>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn update_airgroupvalue<F: Field>(
+pub fn update_airgroupvalue<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
     instance_id: usize,
@@ -890,7 +890,7 @@ pub fn update_airgroupvalue<F: Field>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn get_hint_f<F: Field>(
+fn get_hint_f<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     pctx: Option<&ProofCtx<F>>,
     airgroup_id: usize,
@@ -943,7 +943,7 @@ fn get_hint_f<F: Field>(
 
     hint_field_values
 }
-pub fn get_hint_field<F: Field>(
+pub fn get_hint_field<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
     instance_id: usize,
@@ -968,7 +968,7 @@ pub fn get_hint_field<F: Field>(
     HintCol::from_hint_field(&hint_info[0])
 }
 
-pub fn get_hint_field_a<F: Field>(
+pub fn get_hint_field_a<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
     instance_id: usize,
@@ -997,7 +997,7 @@ pub fn get_hint_field_a<F: Field>(
     HintFieldValuesVec { values: hint_field_values }
 }
 
-pub fn get_hint_field_m<F: Field>(
+pub fn get_hint_field_m<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
     instance_id: usize,
@@ -1031,7 +1031,7 @@ pub fn get_hint_field_m<F: Field>(
     HintFieldValues { values: hint_field_values }
 }
 
-pub fn get_hint_field_constant<F: Field>(
+pub fn get_hint_field_constant<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
@@ -1054,7 +1054,7 @@ pub fn get_hint_field_constant<F: Field>(
     HintCol::from_hint_field(&hint_info[0])
 }
 
-pub fn get_hint_field_constant_a<F: Field>(
+pub fn get_hint_field_constant_a<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
@@ -1081,7 +1081,7 @@ pub fn get_hint_field_constant_a<F: Field>(
     HintFieldValuesVec { values: hint_field_values }
 }
 
-pub fn get_hint_field_constant_m<F: Field>(
+pub fn get_hint_field_constant_m<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     airgroup_id: usize,
     air_id: usize,
@@ -1113,7 +1113,7 @@ pub fn get_hint_field_constant_m<F: Field>(
     HintFieldValues { values: hint_field_values }
 }
 
-pub fn set_hint_field<F: Field>(
+pub fn set_hint_field<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     instance_id: usize,
@@ -1136,7 +1136,7 @@ pub fn set_hint_field<F: Field>(
     set_hint_field_c((&setup.p_setup).into(), (&steps_params).into(), values_ptr, hint_id, hint_field_name);
 }
 
-pub fn set_hint_field_val<F: Field>(
+pub fn set_hint_field_val<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     instance_id: usize,

@@ -12,6 +12,7 @@ proofman-common.workspace = true
 proofman-macros.workspace = true
 proofman-cli.workspace = true
 witness.workspace = true
+fields.workspace = true
 pil-std-lib = { path = "../../../../lib/std/rs" }
 
 env_logger.workspace = true
@@ -19,8 +20,6 @@ log.workspace = true
 num-traits = "0.2"
 rand.workspace = true
 num-bigint.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
 rayon.workspace = true
 
 [build-dependencies]
@@ -28,6 +27,7 @@ proofman-cli.workspace = true
 
 [features]
 default = []
+dev = []
 no_lib_link = ["proofman-common/no_lib_link"]
 diagnostic = ["proofman-macros/diagnostic"]
 debug = []

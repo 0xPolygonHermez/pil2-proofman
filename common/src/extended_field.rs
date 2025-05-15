@@ -1,4 +1,4 @@
-use p3_field::Field;
+use fields::Field;
 use core::array;
 use std::fmt::{Display, Formatter, Result};
 use core::iter::{Product, Sum};

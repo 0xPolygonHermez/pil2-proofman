@@ -1,4 +1,4 @@
-use p3_field::Field;
+use fields::Field;
 use proofman_starks_lib_c::{
     get_n_constraints_c, get_constraints_lines_sizes_c, get_constraints_lines_c, get_n_global_constraints_c,
     get_global_constraints_lines_sizes_c, get_global_constraints_lines_c,

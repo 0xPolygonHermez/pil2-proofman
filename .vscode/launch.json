@@ -1,0 +1,302 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug XXXX",
+            "program": "target/debug/proofman-cli",
+            //"cargo": {
+            "args": [
+                //"run",
+                //"--bin",
+                //"proofman-cli",
+                "verify-constraints",
+                "--witness-lib",
+                "../zisk/target/debug/libzisk_witness.so",
+                "--elf",
+                "../zisk-testvectors/pessimistic-proof/program/pessimistic-proof-program-keccak.elf",
+                "-i",
+                "../zisk-testvectors/pessimistic-proof/inputs/pessimistic-proof.bin",
+                "--proving-key",
+                "../zisk/build/build_pre_050/provingKey"
+            ],
+            //"filter": {
+            //    "name": "proofman_cli",
+            //    "kind": "lib"
+            //}
+            //},
+            //"args": [],
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": ["rust"]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'proofman_cli'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=proofman-cli"
+                ],
+                "filter": {
+                    "name": "proofman_cli",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'proofman-cli'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=proofman-cli",
+                    "--package=proofman-cli"
+                ],
+                "filter": {
+                    "name": "proofman-cli",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'proofman-cli'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=proofman-cli",
+                    "--package=proofman-cli"
+                ],
+                "filter": {
+                    "name": "proofman-cli",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'pilout'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=pilout"
+                ],
+                "filter": {
+                    "name": "pilout",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'proofman_util'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=proofman-util"
+                ],
+                "filter": {
+                    "name": "proofman_util",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'proofman'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=proofman"
+                ],
+                "filter": {
+                    "name": "proofman",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'proofman_common'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=proofman-common"
+                ],
+                "filter": {
+                    "name": "proofman_common",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'proofman_starks_lib_c'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=proofman-starks-lib-c"
+                ],
+                "filter": {
+                    "name": "proofman_starks_lib_c",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'transcript'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=transcript"
+                ],
+                "filter": {
+                    "name": "transcript",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'proofman_hints'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=proofman-hints"
+                ],
+                "filter": {
+                    "name": "proofman_hints",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'stark'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=stark"
+                ],
+                "filter": {
+                    "name": "stark",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'witness'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=witness"
+                ],
+                "filter": {
+                    "name": "witness",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'pil_std_lib'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=pil-std-lib"
+                ],
+                "filter": {
+                    "name": "pil_std_lib",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'fibonacci_square'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=fibonacci-square"
+                ],
+                "filter": {
+                    "name": "fibonacci_square",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

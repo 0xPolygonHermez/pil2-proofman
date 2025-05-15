@@ -1,0 +1,12 @@
+[package]
+name = "fields"
+version = "0.8.0"
+edition = "2021"
+
+[dependencies]
+paste = "1.0.15"
+proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
+
+serde = { workspace = true, features = ["derive"] }
+num-bigint = { workspace = true }
+rand = { workspace = true }

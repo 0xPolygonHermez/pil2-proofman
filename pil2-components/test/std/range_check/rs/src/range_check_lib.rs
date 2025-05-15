@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
+use fields::{Goldilocks, PrimeField64};
 use pil_std_lib::Std;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 
-use p3_field::PrimeField64;
-use p3_goldilocks::Goldilocks;
 use rand::{
     distr::{StandardUniform, Distribution},
     Rng,

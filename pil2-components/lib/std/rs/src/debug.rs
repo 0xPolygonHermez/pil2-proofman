@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use proofman_common::ProofCtx;
 use proofman_hints::{format_vec, HintFieldOutput};
 

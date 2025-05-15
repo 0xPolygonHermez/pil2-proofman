@@ -1,10 +1,8 @@
 use std::ops::Add;
 
-use p3_field::{BasedVectorSpace, PrimeCharacteristicRing};
-use p3_goldilocks::Goldilocks;
+use fields::{Field, ExtensionField, PrimeField64, Goldilocks, GoldilocksQuinticExtension};
 
-use crate::curve::EllipticCurve;
-use crate::goldilocks_quintic_extension::GoldilocksQuinticExtension;
+use crate::{curve::EllipticCurve};
 
 /// The [EcGFp5](https://eprint.iacr.org/2022/274.pdf) curve is defined by the equation:
 ///         y² = x³ + Ax + B
@@ -100,7 +98,6 @@ impl Add<&EcGFp5> for &EcGFp5 {
 
 #[cfg(test)]
 mod tests {
-    use p3_field::Field;
     use rand::{
         distr::{Distribution, StandardUniform},
         rng,

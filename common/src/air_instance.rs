@@ -1,5 +1,5 @@
 use std::ptr;
-use p3_field::Field;
+use fields::Field;
 use proofman_util::create_buffer_fast;
 
 use crate::{trace::Trace, trace::Values};

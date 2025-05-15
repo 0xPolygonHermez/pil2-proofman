@@ -3,7 +3,7 @@ use std::{
     path::{PathBuf, Path},
 };
 
-use p3_field::Field;
+use fields::Field;
 use proofman_starks_lib_c::{
     calculate_const_tree_c, load_const_pols_c, load_const_tree_c, write_const_tree_c, write_fixed_cols_bin_c,
 };

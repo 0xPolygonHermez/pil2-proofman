@@ -1,6 +1,6 @@
 use std::os::raw::c_void;
 
-use p3_field::Field;
+use fields::PrimeField64;
 use transcript::FFITranscript;
 
 use crate::ConstraintInfo;
@@ -25,7 +25,7 @@ pub enum ProofType {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Proof<F: Field> {
+pub struct Proof<F: PrimeField64> {
     pub proof_type: ProofType,
     pub airgroup_id: usize,
     pub air_id: usize,
@@ -35,7 +35,7 @@ pub struct Proof<F: Field> {
     pub n_cols: usize,
 }
 
-impl<F: Field> Proof<F> {
+impl<F: PrimeField64> Proof<F> {
     pub fn new(
         proof_type: ProofType,
         airgroup_id: usize,
@@ -65,7 +65,7 @@ pub struct ProverInfo {
     pub air_instance_id: usize,
 }
 
-pub trait Prover<F: Field> {
+pub trait Prover<F: PrimeField64> {
     fn build(&mut self, pctx: &ProofCtx<F>);
     fn free(&mut self);
     fn new_transcript(&self) -> FFITranscript;

@@ -1,5 +1,5 @@
 use libloading::{Library, Symbol};
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use std::ffi::CString;
 use std::fs::File;
 use proofman_starks_lib_c::*;

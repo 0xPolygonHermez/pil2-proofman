@@ -1,18 +1,6 @@
 {
     "rust-analyzer.linkedProjects": [
-        "./Cargo.toml",
-        "./cli/Cargo.toml",
-        "./common/Cargo.toml",
-        "./hints/Cargo.toml",
-        "./macros/Cargo.toml",
-        "./pil2-components/lib/std/rs/Cargo.toml",
-        "./pilout/Cargo.toml",
-        "./proofman/Cargo.toml",
-        "./provers/starks-lib-c/Cargo.toml",
-        "./transcript/Cargo.toml",
-        "./util/Cargo.toml",
-        "./witness/Cargo.toml",
-        // "examples/fibonacci-square/Cargo.toml",
+        "Cargo.toml",
     ],
     "files.associations": {
         "*.ejs": "html",
