@@ -16,14 +16,6 @@
 #include <mutex>
 
 
-/* TODO:
-    /*4) Generacio dels streams amb multigpu (hi ha mes slots)
-    5) Treure tot el que tingui a veure amb thread
-    6) We will assume all devices are equal
-    6) Check memory crashes
-    7) Oju amb init_gpu_const_2 pel tema setDevice*/
-
-
 struct MaxSizes
 {
     uint64_t totalConstPols;
@@ -271,6 +263,7 @@ void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
 void get_stream_proofs(void *d_buffers_){
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     for (uint64_t i = 0; i < d_buffers->n_streams; i++) {
         if (d_buffers->streamsData[i].status == 0) continue;
         set_device(d_buffers->streamsData[i].gpuId);
@@ -278,6 +271,18 @@ void get_stream_proofs(void *d_buffers_){
         assert (d_buffers->streamsData[i].status == 2); 
         get_proof(d_buffers, i);
         d_buffers->streamsData[i].reset();        
+    }
+}
+
+void get_stream_proofs_non_blocking(void *d_buffers_){
+    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
+    for (uint64_t i = 0; i < d_buffers->n_streams; i++) {
+        if(d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess){
+            set_device(d_buffers->streamsData[i].gpuId);
+            get_proof(d_buffers, i);
+            d_buffers->streamsData[i].reset();        
+        }
     }
 }
 
@@ -376,6 +381,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
 }
 
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
+
     set_device(d_buffers->streamsData[streamId].gpuId);
     Goldilocks::Element *root = (Goldilocks::Element *)d_buffers->streamsData[streamId].root;
     memcpy((Goldilocks::Element *)root, d_buffers->streamsData[streamId].pinned_buffer_proof, HASH_SIZE * sizeof(uint64_t));
@@ -385,6 +391,7 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
 
 void get_stream_roots(void *d_buffers_){
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
+    std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     for (uint64_t i = 0; i < d_buffers->n_streams; i++) {
         if (d_buffers->streamsData[i].status == 0) continue;
         set_device(d_buffers->streamsData[i].gpuId);
@@ -394,7 +401,6 @@ void get_stream_roots(void *d_buffers_){
         d_buffers->streamsData[i].reset();        
     }
 }
-
 
 uint64_t check_device_memory() {
     

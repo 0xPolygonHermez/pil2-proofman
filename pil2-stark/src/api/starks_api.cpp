@@ -521,6 +521,7 @@ void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t in
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
 }
 void get_stream_proofs(void *d_buffers_){}
+void get_stream_proofs_non_blocking(void *d_buffers_){}
 
 // Recursive proof
 // ================================================================================= 

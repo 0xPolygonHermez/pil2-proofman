@@ -485,6 +485,12 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z17get_stream_proofsPv"]
     pub fn get_stream_proofs(d_buffers_: *mut ::std::os::raw::c_void);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z30get_stream_proofs_non_blockingPv"]
+    pub fn get_stream_proofs_non_blocking(d_buffers_: *mut ::std::os::raw::c_void);
+}
+extern "C" {
     #[link_name = "\u{1}_Z23add_publics_aggregationPvmS_m"]
     pub fn add_publics_aggregation(
         pProof: *mut ::std::os::raw::c_void,
@@ -609,7 +615,6 @@ extern "C" {
     #[link_name = "\u{1}_Z19check_device_memoryv"]
     pub fn check_device_memory() -> u64;
 }
-
 pub type ProofDoneCallback =
     ::std::option::Option<unsafe extern "C" fn(instanceId: u64, proofType: *const ::std::os::raw::c_char)>;
 extern "C" {
