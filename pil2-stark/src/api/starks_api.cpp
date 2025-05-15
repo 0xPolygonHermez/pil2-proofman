@@ -599,3 +599,83 @@ uint64_t get_omp_max_threads(){
 void set_omp_num_threads(uint64_t num_threads){
     omp_set_num_threads(num_threads);
 }
+
+uint64_t goldilocks_add_ffi(const uint64_t *in1, const uint64_t *in2)
+{
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+    const auto &i2 = *reinterpret_cast<const Goldilocks::Element *>(in2);
+
+    return Goldilocks::add(i1, i2).fe;
+}
+
+void goldilocks_add_assign_ffi(uint64_t *result, const uint64_t *in1, const uint64_t *in2)
+{
+    auto &res = *reinterpret_cast<Goldilocks::Element *>(result);
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+    const auto &i2 = *reinterpret_cast<const Goldilocks::Element *>(in2);
+
+    Goldilocks::add(res, i1, i2);
+}
+
+uint64_t goldilocks_sub_ffi(const uint64_t *in1, const uint64_t *in2)
+{
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+    const auto &i2 = *reinterpret_cast<const Goldilocks::Element *>(in2);
+
+    return Goldilocks::sub(i1, i2).fe;
+}
+
+void goldilocks_sub_assign_ffi(uint64_t *result, const uint64_t *in1, const uint64_t *in2)
+{
+    auto &res = *reinterpret_cast<Goldilocks::Element *>(result);
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+    const auto &i2 = *reinterpret_cast<const Goldilocks::Element *>(in2);
+
+    Goldilocks::sub(res, i1, i2);
+}
+
+uint64_t goldilocks_mul_ffi(const uint64_t *in1, const uint64_t *in2)
+{
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+    const auto &i2 = *reinterpret_cast<const Goldilocks::Element *>(in2);
+
+    return Goldilocks::mul(i1, i2).fe;
+}
+
+void goldilocks_mul_assign_ffi(uint64_t *result, const uint64_t *in1, const uint64_t *in2)
+{
+    auto &res = *reinterpret_cast<Goldilocks::Element *>(result);
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+    const auto &i2 = *reinterpret_cast<const Goldilocks::Element *>(in2);
+
+    Goldilocks::mul(res, i1, i2);
+}
+
+uint64_t goldilocks_div_ffi(const uint64_t *in1, const uint64_t *in2)
+{
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+    const auto &i2 = *reinterpret_cast<const Goldilocks::Element *>(in2);
+
+    return Goldilocks::div(i1, i2).fe;
+}
+
+void goldilocks_div_assign_ffi(uint64_t *result, const uint64_t *in1, const uint64_t *in2)
+{
+    auto &res = *reinterpret_cast<Goldilocks::Element *>(result);
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+    const auto &i2 = *reinterpret_cast<const Goldilocks::Element *>(in2);
+
+    Goldilocks::div(res, i1, i2);
+}
+
+uint64_t goldilocks_neg_ffi(const uint64_t *in1) {
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+
+    return Goldilocks::neg(i1).fe;
+}
+
+uint64_t goldilocks_inv_ffi(const uint64_t *in1) {
+    const auto &i1 = *reinterpret_cast<const Goldilocks::Element *>(in1);
+
+    return Goldilocks::inv(i1).fe;
+}
