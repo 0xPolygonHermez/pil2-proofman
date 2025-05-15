@@ -1042,16 +1042,15 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_commit_buffers_c(
+pub fn gen_device_buffers_c(
     max_sizes: *mut ::std::os::raw::c_void,
-    mpi_node_rank: u32,
 ) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_commit_buffers(max_sizes, mpi_node_rank) }
+    unsafe { gen_device_buffers(max_sizes) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
-pub fn set_max_size_thread_c(
+pub fn gen_device_streams_c(
     d_buffers: *mut ::std::os::raw::c_void,
     max_size_trace: u64,
     max_size_contribution: u64,
@@ -1063,10 +1062,10 @@ pub fn set_max_size_thread_c(
     max_size_const_aggregation: u64,
     max_size_const_tree_aggregation: u64,
     max_proof_size: u64,
-    n_threads: u64,
+    max_number_proofs_per_gpu: u64,
 ) {
     unsafe {
-        set_max_size_thread(
+        gen_device_streams(
             d_buffers,
             max_size_trace,
             max_size_contribution,
@@ -1078,27 +1077,27 @@ pub fn set_max_size_thread_c(
             max_size_const_aggregation,
             max_size_const_tree_aggregation,
             max_proof_size,
-            n_threads,
+            max_number_proofs_per_gpu,
         );
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn check_gpu_memory_c(mpi_node_rank: u32) -> u64 {
-    unsafe { check_gpu_memory(mpi_node_rank) }
+pub fn check_device_memory_c() -> u64 {
+    unsafe { check_device_memory() }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_commit_buffers_free_c(d_buffers: *mut ::std::os::raw::c_void, mpi_node_rank: u32) {
+pub fn free_device_buffers_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe {
-        gen_device_commit_buffers_free(d_buffers, mpi_node_rank);
+        free_device_buffers(d_buffers);
     }
 }
 
 
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn load_const_pols_gpu_c(
+pub fn load_device_const_pols_c(
     airgroup_id: u64,
     air_id: u64,
     initial_offset: u64,
@@ -1119,7 +1118,7 @@ pub fn load_const_pols_gpu_c(
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
-        load_const_pols_gpu(
+        load_device_const_pols(
             airgroup_id,
             air_id,
             initial_offset,
@@ -1814,9 +1813,8 @@ pub fn set_omp_num_threads(_num_threads: u64) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_commit_buffers_c(
+pub fn gen_device_buffers_c(
     _max_sizes: *mut ::std::os::raw::c_void,
-    _mpi_node_rank: u32,
 ) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",
@@ -1828,7 +1826,7 @@ pub fn gen_device_commit_buffers_c(
 
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
-pub fn set_max_size_thread_c(
+pub fn gen_device_streams_c(
     _d_buffers: *mut ::std::os::raw::c_void,
     _max_size_trace: u64,
     _max_size_contribution: u64,
@@ -1840,29 +1838,29 @@ pub fn set_max_size_thread_c(
     _max_size_const_aggregation: u64,
     _max_size_const_tree_aggregation: u64,
     _max_proof_size: u64,
-    _n_threads: u64,
+    _max_number_proofs_per_gpu: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn check_gpu_memory_c(_mpi_node_rank: u32) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "check_gpu_memory: This is a mock call because there is no linked library");
+pub fn check_device_memory_c() -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "check_device_memory: This is a mock call because there is no linked library");
     0
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_commit_buffers_free_c(_d_buffers: *mut ::std::os::raw::c_void, _mpi_node_rank: u32) {
+pub fn free_device_buffers_c(_d_buffers: *mut ::std::os::raw::c_void) {
     trace!(
         "{}: ··· {}",
         "ffi     ",
-        "gen_device_commit_buffers_free: This is a mock call because there is no linked library"
+        "free_device_buffers: This is a mock call because there is no linked library"
     );
 }
 
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
-pub fn load_const_pols_gpu_c(
+pub fn load_device_const_pols_c(
     _airgroup_id: u64,
     _air_id: u64,
     _initial_offset: u64,
@@ -1873,5 +1871,5 @@ pub fn load_const_pols_gpu_c(
     _const_tree_size: u64,
     _proof_type: &str,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "load_const_pols_gpu_: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "load_device_const_pols_: This is a mock call because there is no linked library");
 }

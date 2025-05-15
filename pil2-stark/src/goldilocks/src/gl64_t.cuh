@@ -835,8 +835,8 @@ struct StreamData{
 
     //const data
     cudaStream_t stream;
-    uint32_t gpu_id;
-    uint32_t slot_id;
+    uint32_t gpuId;
+    uint32_t slotId;
     Goldilocks::Element *pinned_buffer;
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_const;
@@ -856,12 +856,13 @@ struct StreamData{
     uint64_t airId; 
     uint64_t instanceId;
     
-    void initialize( uint64_t max_size_trace, uint64_t max_size_proof, uint64_t max_size_const, uint64_t max_size_const_aggregation, uint64_t max_size_const_tree, uint64_t max_size_const_tree_aggregation, uint32_t gpu_id_, uint32_t slot_id_){
+    void initialize( uint64_t max_size_trace, uint64_t max_size_proof, uint64_t max_size_const, uint64_t max_size_const_aggregation, uint64_t max_size_const_tree, uint64_t max_size_const_tree_aggregation, uint32_t gpuId_, uint32_t slotId_){
 
+        cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
-        gpu_id = gpu_id_;
-        slot_id = slot_id_;
+        gpuId = gpuId_;
+        slotId = slotId_;
         cudaEventCreate(&end_event);
         status = 0;
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer, max_size_trace * sizeof(Goldilocks::Element)));
@@ -880,7 +881,7 @@ struct StreamData{
     }
 
     void reset(){
-        
+        cudaSetDevice(gpuId);
         cudaEventDestroy(end_event);
         cudaEventCreate(&end_event);
         TimerResetGPU(timer);
@@ -893,6 +894,7 @@ struct StreamData{
     }
 
     void free(){
+        cudaSetDevice(gpuId);
         cudaStreamDestroy(stream);
         cudaEventDestroy(end_event);
         cudaFreeHost(pinned_buffer);
@@ -903,9 +905,9 @@ struct StreamData{
 };
 struct DeviceCommitBuffers
 {
-    gl64_t *d_constPols;
-    gl64_t *d_constPolsAggregation;
-    gl64_t *d_aux_trace;
+    gl64_t **d_constPols;
+    gl64_t **d_constPolsAggregation;
+    gl64_t **d_aux_trace;
     bool recursive;
     uint64_t max_size_prover_buffer;
     uint64_t max_size_trace;

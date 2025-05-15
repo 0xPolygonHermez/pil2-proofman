@@ -11,10 +11,10 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{gen_device_commit_buffers_c, gen_device_commit_buffers_free_c};
+use proofman_starks_lib_c::{gen_device_buffers_c, free_device_buffers_c};
 use proofman_starks_lib_c::{
-    save_challenges_c, save_proof_values_c, save_publics_c, get_const_offset_c, check_gpu_memory_c,
-    set_max_size_thread_c, get_stream_proofs_c, get_stream_roots_c,
+    save_challenges_c, save_proof_values_c, save_publics_c, get_const_offset_c, check_device_memory_c,
+    gen_device_streams_c, get_stream_proofs_c, get_stream_roots_c,
 };
 use std::fs;
 use std::collections::HashMap;
@@ -72,8 +72,7 @@ pub struct ProofMan<F: PrimeField64> {
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
     fn drop(&mut self) {
-        let mpi_node_rank = self.pctx.dctx_get_node_rank() as u32;
-        gen_device_commit_buffers_free_c(self.d_buffers.get_ptr(), mpi_node_rank);
+        free_device_buffers_c(self.d_buffers.get_ptr());
     }
 }
 impl<F: PrimeField64> ProofMan<F>
@@ -432,8 +431,10 @@ where
             &gpu_params,
         )?;
 
-        let (max_number_proofs, d_buffers) =
-            Self::prepare_gpu(pctx.clone(), sctx.clone(), setups_vadcop.clone(), aggregation, &gpu_params);
+        let d_buffers =
+            Self::prepare_gpu(sctx.clone(), setups_vadcop.clone(), aggregation, &gpu_params);
+
+        let max_number_proofs = 2;
 
         let (traces, prover_buffers): (Vec<_>, Vec<_>) = if aggregation {
             let (trace_size, prover_buffer_size) = get_recursive_buffer_sizes(&pctx, &setups_vadcop)?;
@@ -1209,16 +1210,14 @@ where
     }
 
     fn prepare_gpu(
-        pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         setups_vadcop: Arc<SetupsVadcop<F>>,
         aggregation: bool,
         gpu_params: &ParamsGPU,
-    ) -> (usize, Arc<DeviceBuffer>) {
-        let mpi_node_rank = pctx.dctx_get_node_rank() as u32;
+    ) -> Arc<DeviceBuffer> {
 
         let free_memory_gpu = match cfg!(feature = "gpu") {
-            true => check_gpu_memory_c(mpi_node_rank) as f64 * 0.98,
+            true => check_device_memory_c() as f64 * 0.98,
             false => 0.0,
         };
 
@@ -1232,7 +1231,7 @@ where
             false => 0,
         };
 
-        let mut max_size_buffer = (free_memory_gpu / 8.0).floor() as u64;
+        let mut max_size_buffer = (free_memory_gpu / 8.0).floor() as u64; //measured in GL elements
         if gpu_params.preallocate {
             max_size_buffer -= sctx.total_const_size as u64;
             if aggregation {
@@ -1244,17 +1243,17 @@ where
             MaxSizes { total_const_area, max_aux_trace_area: max_size_buffer, total_const_area_aggregation };
 
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-        let d_buffers = Arc::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr, mpi_node_rank)));
+        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(max_sizes_ptr)));
 
-        let max_number_proofs = match cfg!(feature = "gpu") {
+        let max_number_proofs_per_gpu = match cfg!(feature = "gpu") {
             true => {
-                let max_number_proofs = gpu_params
+                let max_number_proofs_per_gpu = gpu_params
                     .max_number_streams
                     .min((max_size_buffer as usize / sctx.max_prover_buffer_size) as usize);
-                if max_number_proofs < 1 {
+                if max_number_proofs_per_gpu < 1 {
                     panic!("Not enough GPU memory to run the proof");
                 }
-                max_number_proofs
+                max_number_proofs_per_gpu
             }
             false => 1,
         };
@@ -1284,7 +1283,7 @@ where
             false => sctx.max_proof_size as u64,
         };
 
-        set_max_size_thread_c(
+        gen_device_streams_c(
             d_buffers.get_ptr(),
             sctx.max_prover_trace_size as u64,
             sctx.max_prover_contribution_area as u64,
@@ -1296,10 +1295,10 @@ where
             max_size_const_aggregation,
             max_size_const_tree_aggregation,
             max_proof_size,
-            max_number_proofs as u64,
+            max_number_proofs_per_gpu as u64,
         );
 
-        (max_number_proofs, d_buffers)
+        d_buffers
     }
 
     #[allow(clippy::too_many_arguments)]

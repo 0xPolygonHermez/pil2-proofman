@@ -521,21 +521,21 @@ void get_stream_proofs(void *d_buffers_){}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_commit_buffers(void *max_sizes, uint32_t mpi_node_rank)
+void *gen_device_buffers(void *max_sizes)
 {
     return NULL;
 };
 
-void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread, uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSizeThread, uint64_t nStreams) {}
+void gen_device_streams(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread, uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU) {}
 
 void set_device_mpi(uint32_t mpi_node_rank){}
 void set_device(uint32_t gpu_id){}
 
-uint64_t check_gpu_memory(uint32_t mpi_node_rank) { return 0; }
+uint64_t check_device_memory() { return 0; }
 
-void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank) {}
+void free_device_buffers(void *d_buffers) {}
 
-void load_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
+void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char *proofType) {}
 
 void gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char* proof_file, bool vadcop, void *d_buffers, bool loadConstants, char *constPolsPath, char *constTreePath, char *proofType) {
     json globalInfo;

@@ -28,29 +28,15 @@ __device__ __forceinline__ void matmul_m4_state_(uint32_t offset);
 __device__ __constant__ uint64_t GPU_C[118];
 __device__ __constant__ uint64_t GPU_D[12];
 
-//rick: we assume one device per process
-void init_gpu_const_2(int nDevices = 0)
+void init_gpu_const_2()
 {
     static int initialized = 0;
-
     if (initialized == 0)
     {
         initialized = 1;
-        /*if (nDevices == 0)
-        {
-            CHECKCUDAERR(cudaGetDeviceCount(&nDevices));
-        }*/
-        /*if (nDevices == 0)
-        {
-            nDevices = 1;
-        }
-        for (int i = 0; i < nDevices; i++)
-        {
-            CHECKCUDAERR(cudaSetDevice(i));*/
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-        /*}
-        CHECKCUDAERR(cudaSetDevice(0));*/
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+        
     }
 }
 

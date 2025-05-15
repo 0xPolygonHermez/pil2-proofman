@@ -15,7 +15,7 @@ use std::error::Error;
 
 use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop, ParamsGPU};
 use proofman_util::DeviceBuffer;
-use proofman_starks_lib_c::load_const_pols_gpu_c;
+use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
 
 pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
@@ -347,7 +347,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
                     airgroup_id, air_id, proof_type
                 );
-                load_const_pols_gpu_c(
+                load_device_const_pols_c(
                     airgroup_id as u64,
                     air_id as u64,
                     offset,
@@ -381,7 +381,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                             "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
                             airgroup_id, air_id, proof_type
                         );
-                        load_const_pols_gpu_c(
+                        load_device_const_pols_c(
                             airgroup_id as u64,
                             air_id as u64,
                             _offset_aggregation,
@@ -413,7 +413,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                         "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
                         airgroup_id, air_id, proof_type
                     );
-                    load_const_pols_gpu_c(
+                    load_device_const_pols_c(
                         airgroup_id as u64,
                         air_id as u64,
                         _offset_aggregation,
@@ -444,7 +444,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
                     airgroup_id, 0, proof_type
                 );
-                load_const_pols_gpu_c(
+                load_device_const_pols_c(
                     airgroup_id as u64,
                     0_u64,
                     _offset_aggregation,
@@ -469,7 +469,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
             let const_pols_tree_path = setup_vadcop_final.setup_path.display().to_string() + ".consttree";
             let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
             println!("Loading const pols in GPU for airgroup {} and air {} and proof_type {}", 0, 0, proof_type);
-            load_const_pols_gpu_c(
+            load_device_const_pols_c(
                 0_u64,
                 0_u64,
                 _offset_aggregation,

@@ -552,15 +552,12 @@ extern "C" {
     pub fn set_omp_num_threads(num_threads: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z25gen_device_commit_buffersPvj"]
-    pub fn gen_device_commit_buffers(
-        maxSizes: *mut ::std::os::raw::c_void,
-        mpi_node_rank: u32,
-    ) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z18gen_device_buffersPv"]
+    pub fn gen_device_buffers(maxSizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z30gen_device_commit_buffers_freePvj"]
-    pub fn gen_device_commit_buffers_free(d_buffers: *mut ::std::os::raw::c_void, mpi_node_rank: u32);
+    #[link_name = "\u{1}_Z19free_device_buffersPv"]
+    pub fn free_device_buffers(d_buffers: *mut ::std::os::raw::c_void);
 }
 extern "C" {
     #[link_name = "\u{1}_Z14set_device_mpij"]
@@ -571,8 +568,8 @@ extern "C" {
     pub fn set_device(gpu_id: u32);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19load_const_pols_gpummmPvPcmS0_mS0_"]
-    pub fn load_const_pols_gpu(
+    #[link_name = "\u{1}_Z22load_device_const_polsmmmPvPcmS0_mS0_"]
+    pub fn load_device_const_pols(
         airgroupId: u64,
         airId: u64,
         initial_offset: u64,
@@ -585,8 +582,8 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19set_max_size_threadPvmmmmmmmmmmm"]
-    pub fn set_max_size_thread(
+    #[link_name = "\u{1}_Z18gen_device_streamsPvmmmmmmmmmmm"]
+    pub fn gen_device_streams(
         d_buffers: *mut ::std::os::raw::c_void,
         maxSizeTrace: u64,
         maxSizeContribution: u64,
@@ -597,11 +594,11 @@ extern "C" {
         maxSizeProverBufferAggregation: u64,
         maxSizeConstAggregation: u64,
         maxSizeConstTreeAggregation: u64,
-        maxProofSizeThread: u64,
-        nStreams: u64,
+        maxProofSize: u64,
+        maxProofPerGPU: u64,
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z16check_gpu_memoryj"]
-    pub fn check_gpu_memory(mpi_node_rank: u32) -> u64;
+    #[link_name = "\u{1}_Z19check_device_memoryv"]
+    pub fn check_device_memory() -> u64;
 }

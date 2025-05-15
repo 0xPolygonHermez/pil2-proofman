@@ -125,12 +125,12 @@
     
     // GPU calls
     // =================================================================================
-    void *gen_device_commit_buffers(void *maxSizes, uint32_t mpi_node_rank);
-    void gen_device_commit_buffers_free(void *d_buffers, uint32_t mpi_node_rank);
+    void *gen_device_buffers(void *maxSizes);
+    void free_device_buffers(void *d_buffers);
     void set_device_mpi(uint32_t mpi_node_rank);
     void set_device(uint32_t gpu_id);
-    void load_const_pols_gpu(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType);
-    void set_max_size_thread(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread,  uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSizeThread, uint64_t nStreams);
-    uint64_t check_gpu_memory(uint32_t mpi_node_rank);
+    void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType);
+    void gen_device_streams(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread,  uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSize, uint64_t maxProofPerGPU);
+    uint64_t check_device_memory();
 
 #endif
