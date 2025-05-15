@@ -609,3 +609,10 @@ extern "C" {
     #[link_name = "\u{1}_Z19check_device_memoryv"]
     pub fn check_device_memory() -> u64;
 }
+
+pub type ProofDoneCallback =
+    ::std::option::Option<unsafe extern "C" fn(instanceId: u64, proofType: *const ::std::os::raw::c_char)>;
+extern "C" {
+    #[link_name = "\u{1}_Z28register_proof_done_callbackPFvmPKcE"]
+    pub fn register_proof_done_callback(cb: ProofDoneCallback);
+}

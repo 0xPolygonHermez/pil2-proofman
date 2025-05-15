@@ -3,6 +3,7 @@
 #include "starks.hpp"
 #include "omp.h"
 #include "starks_api.hpp"
+#include "starks_api_internal.hpp"
 #include <cstring>
 #include <thread>
 
@@ -148,13 +149,6 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
     uint64_t slotId = d_buffers->streamsData[streamId].slotId;
     set_device(gpuId);
 
-    d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
-    d_buffers->streamsData[streamId].proofBuffer = proofBuffer;
-    d_buffers->streamsData[streamId].proofFile = proofFile;
-    d_buffers->streamsData[streamId].airgroupId = airgroupId;
-    d_buffers->streamsData[streamId].airId = airId;
-    d_buffers->streamsData[streamId].instanceId = instanceId;
-
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     StepsParams *params = (StepsParams *)params_;
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
@@ -178,10 +172,19 @@ void gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64_t i
         CHECKCUDAERR(cudaMemcpy(pCustomCommitsFixed, params->pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
     }
 
-    if (loadConstants && it == d_buffers->air_instances.end()) {
+    if (it == d_buffers->air_instances.end() && (d_buffers->streamsData[streamId].airgroupId != airgroupId || d_buffers->streamsData[streamId].airId != airId)) {
         loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
         loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
     }
+
+    d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
+    d_buffers->streamsData[streamId].proofBuffer = proofBuffer;
+    d_buffers->streamsData[streamId].proofFile = string(proofFile);
+    d_buffers->streamsData[streamId].airgroupId = airgroupId;
+    d_buffers->streamsData[streamId].airId = airId;
+    d_buffers->streamsData[streamId].instanceId = instanceId;
+    d_buffers->streamsData[streamId].proofType = "basic";
+
     Goldilocks::parcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)params->trace, N * nCols, 4);
     offset = N * nCols;
     memcpy(&d_buffers->streamsData[streamId].pinned_buffer[offset], params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
@@ -253,12 +256,17 @@ void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     uint64_t airId = d_buffers->streamsData[streamId].airId;
     uint64_t instanceId = d_buffers->streamsData[streamId].instanceId;
     uint64_t * proofBuffer = d_buffers->streamsData[streamId].proofBuffer;
-    char * proofFile = d_buffers->streamsData[streamId].proofFile;
+    string proofType = d_buffers->streamsData[streamId].proofType;
+    string proofFile = d_buffers->streamsData[streamId].proofFile;
     TimerGPU timer = d_buffers->streamsData[streamId].timer;
 
     closeStreamTimer(timer, true);
 
     writeProof(*setupCtx, d_buffers->streamsData[streamId].pinned_buffer_proof, proofBuffer, airgroupId, airId, instanceId, proofFile);
+
+    if (proof_done_callback != nullptr) {
+        proof_done_callback(instanceId, proofType.c_str());
+    }
 }
 
 void get_stream_proofs(void *d_buffers_){
@@ -299,10 +307,18 @@ void gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t airgro
 
     Goldilocks::parcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)trace, N * nCols, 4);
 
-    if (it == d_buffers->air_instances.end() && loadConstants) {
+    if (it == d_buffers->air_instances.end() && (d_buffers->streamsData[streamId].airgroupId != airgroupId || d_buffers->streamsData[streamId].airId != airId || d_buffers->streamsData[streamId].proofType != string(proofType))) {
         loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
         loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
     }
+
+    d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
+    d_buffers->streamsData[streamId].proofBuffer = proofBuffer;
+    d_buffers->streamsData[streamId].proofFile = string(proof_file);
+    d_buffers->streamsData[streamId].airgroupId = airgroupId;
+    d_buffers->streamsData[streamId].airId = airId;
+    d_buffers->streamsData[streamId].instanceId = instanceId;
+    d_buffers->streamsData[streamId].proofType = string(proofType);
 
     memcpy(&d_buffers->streamsData[streamId].pinned_buffer[N * nCols], (Goldilocks::Element *)pPublicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
 

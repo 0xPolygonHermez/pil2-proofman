@@ -3,6 +3,7 @@
 #![allow(non_snake_case)]
 
 use ::std::os::raw::c_void;
+use ::std::os::raw::c_char;
 
 #[cfg(feature = "no_lib_link")]
 use log::trace;
@@ -12,6 +13,35 @@ include!("../bindings_starks.rs");
 
 #[cfg(not(feature = "no_lib_link"))]
 use std::ffi::CString;
+
+use std::ffi::CStr;
+
+static mut PROOFS_DONE: Option<crossbeam_channel::Sender<(u64, String)>> = None;
+
+extern "C" fn on_proof_done(instance_id: u64, proof_type: *const c_char) {
+    let proof_type_str = unsafe { CStr::from_ptr(proof_type).to_string_lossy().into_owned() };
+
+    unsafe {
+        if let Some(ref tx) = PROOFS_DONE {
+            let _ = tx.send((instance_id, proof_type_str));
+        }
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String)>) {
+    unsafe {
+        PROOFS_DONE = Some(tx);
+        register_proof_done_callback(Some(on_proof_done));
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn clear_proof_done_callback_c() {
+    unsafe {
+        PROOFS_DONE = None;
+    }
+}
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn save_challenges_c(p_challenges: *mut u8, global_info_file: &str, output_dir: &str) {
@@ -527,12 +557,11 @@ pub fn commit_witness_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn get_stream_roots_c( d_buffers: *mut c_void)  {
+pub fn get_stream_roots_c(d_buffers: *mut c_void) {
     unsafe {
         get_stream_roots(d_buffers);
     }
 }
-
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn calculate_hash_c(pValue: *mut u8, pBuffer: *mut u8, nElements: u64, nOutputs: u64) {
@@ -784,7 +813,6 @@ pub fn gen_proof_c(
     }
 }
 
-
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
@@ -792,7 +820,6 @@ pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
         get_stream_proofs(d_buffers);
     }
 }
-
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
@@ -922,7 +949,12 @@ pub fn get_committed_pols_c(
 #[cfg(not(feature = "no_lib_link"))]
 pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, nPublics: u64) {
     unsafe {
-        add_publics_aggregation(proof as *mut std::os::raw::c_void, offset, publics as *mut std::os::raw::c_void, nPublics);
+        add_publics_aggregation(
+            proof as *mut std::os::raw::c_void,
+            offset,
+            publics as *mut std::os::raw::c_void,
+            nPublics,
+        );
     }
 }
 
@@ -1101,8 +1133,6 @@ pub fn free_device_buffers_c(d_buffers: *mut ::std::os::raw::c_void) {
     }
 }
 
-
-
 #[cfg(not(feature = "no_lib_link"))]
 pub fn load_device_const_pols_c(
     airgroup_id: u64,
@@ -1142,6 +1172,15 @@ pub fn load_device_const_pols_c(
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
+#[cfg(feature = "no_lib_link")]
+pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String)>) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "register_proof_done_callback: This is a mock call because there is no linked library"
+    );
+}
+
 #[cfg(feature = "no_lib_link")]
 pub fn save_challenges_c(_p_challenges: *mut u8, _global_info_file: &str, _output_dir: &str) {
     trace!("{}: ··· {}", "ffi     ", "save_challenges: This is a mock call because there is no linked library");
@@ -1454,7 +1493,7 @@ pub fn commit_witness_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_stream_roots_c( d_buffers: *mut c_void)  {
+pub fn get_stream_roots_c(d_buffers: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "get_commit_root: This is a mock call because there is no linked library");
 }
 

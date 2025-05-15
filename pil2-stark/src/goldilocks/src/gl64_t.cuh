@@ -11,7 +11,7 @@
 #include "gpu_timer.cuh"
 #include <mutex>
 #include "cuda_utils.cuh"
-
+#include <limits.h>
 
 namespace gl64_device
 {
@@ -851,10 +851,11 @@ struct StreamData{
     void *root;
     void *pSetupCtx;
     uint64_t *proofBuffer; 
-    char *proofFile;
+    string proofFile;
     uint64_t airgroupId; 
     uint64_t airId; 
     uint64_t instanceId;
+    string proofType;
     
     void initialize( uint64_t max_size_trace, uint64_t max_size_proof, uint64_t max_size_const, uint64_t max_size_const_aggregation, uint64_t max_size_const_tree, uint64_t max_size_const_tree_aggregation, uint32_t gpuId_, uint32_t slotId_){
 
@@ -877,7 +878,8 @@ struct StreamData{
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
-        proofFile = nullptr;
+        airgroupId = UINT64_MAX;
+        airId = UINT64_MAX;
     }
 
     void reset(){
@@ -890,7 +892,6 @@ struct StreamData{
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
-        proofFile = nullptr;
     }
 
     void free(){

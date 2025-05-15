@@ -96,6 +96,9 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     proof3: &Proof<F>,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     timer_start_info!(GENERATE_WITNESS_AGGREGATION);
+    println!("PROOF LEN 1: {}", proof1.proof.len());
+    println!("PROOF LEN 2: {}", proof2.proof.len());
+    println!("PROOF LEN 3: {}", proof3.proof.len());
     let proof_len = proof1.proof.len();
     assert!(proof_len == proof2.proof.len() && proof_len == proof3.proof.len());
 
@@ -143,30 +146,24 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
-    let (airgroup_id, air_id, air_instance_id, output_file_path, vadcop) =
-        if witness.proof_type == ProofType::VadcopFinal {
-            let output_file_path_ = output_dir_path.join("proofs/vadcop_final_proof.json");
-            (0, 0, 0, output_file_path_, false)
+    let (airgroup_id, air_id, instance_id, output_file_path, vadcop) = if witness.proof_type == ProofType::VadcopFinal {
+        let output_file_path_ = output_dir_path.join("proofs/vadcop_final_proof.json");
+        (0, 0, 0, output_file_path_, false)
+    } else {
+        let (airgroup_id_, air_id_) = (witness.airgroup_id, witness.air_id);
+        let air_instance_name = &pctx.global_info.airs[airgroup_id_][air_id_].name;
+        let output_file_path_ = if witness.proof_type == ProofType::Recursive2 {
+            output_dir_path.join(format!("proofs/{:?}_{}.json", witness.proof_type, air_instance_name))
         } else {
-            let (airgroup_id_, air_id_) = (witness.airgroup_id, witness.air_id);
-            let air_instance_id = if witness.proof_type == ProofType::Recursive2 {
-                0
-            } else {
-                pctx.dctx_find_air_instance_id(witness.global_idx.unwrap())
-            };
-            let air_instance_name = &pctx.global_info.airs[airgroup_id_][air_id_].name;
-            let output_file_path_ = if witness.proof_type == ProofType::Recursive2 {
-                output_dir_path.join(format!("proofs/{:?}_{}.json", witness.proof_type, air_instance_name))
-            } else {
-                output_dir_path.join(format!(
-                    "proofs/{:?}_{}_{}.json",
-                    witness.proof_type,
-                    air_instance_name,
-                    witness.global_idx.unwrap()
-                ))
-            };
-            (airgroup_id_, air_id_, air_instance_id, output_file_path_, true)
+            output_dir_path.join(format!(
+                "proofs/{:?}_{}_{}.json",
+                witness.proof_type,
+                air_instance_name,
+                witness.global_idx.unwrap()
+            ))
         };
+        (airgroup_id_, air_id_, witness.global_idx.unwrap(), output_file_path_, true)
+    };
 
     let proof_file = match save_proofs || witness.proof_type == ProofType::VadcopFinal {
         true => output_file_path.to_string_lossy().into_owned(),
@@ -212,9 +209,16 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     let proof_type: &str = setup.setup_type.clone().into();
 
     if add_aggregation_publics {
-        add_publics_aggregation_c(new_proof.as_ptr() as *mut u8, 0, publics.as_ptr() as *mut u8, publics_aggregation as u64);
+        add_publics_aggregation_c(
+            new_proof.as_ptr() as *mut u8,
+            0,
+            publics.as_ptr() as *mut u8,
+            publics_aggregation as u64,
+        );
     }
-    
+
+    println!("AIRGROUP ID {} AIR ID {} INSTANCE ID {} PROOF TYPE {}", airgroup_id, air_id, instance_id, proof_type);
+    println!("NEW PROOF SIZE FOR RECURSIVE PROOF: {}", new_proof_size);
     gen_recursive_proof_c(
         p_setup,
         trace.as_ptr() as *mut u8,
@@ -227,7 +231,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         global_info_file,
         airgroup_id as u64,
         air_id as u64,
-        air_instance_id as u64,
+        instance_id as u64,
         vadcop,
         d_buffers,
         load_constants,
@@ -237,11 +241,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     );
 
     timer_stop_and_log_info!(GEN_RECURSIVE_PROOF);
-    if witness.proof_type == ProofType::Compressor || witness.proof_type == ProofType::Recursive1 {
-        Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof)
-    } else {
-        Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, None, new_proof)
-    }
+    Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -625,6 +625,10 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
         max_trace = max_trace.max(n_cols * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
         max_prover_size = max_prover_size.max(setup.prover_buffer_size);
+    }
+
+    if cfg!(feature = "gpu") {
+        max_prover_size = 0;
     }
 
     Ok((max_trace, max_prover_size as usize))

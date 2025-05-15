@@ -7,6 +7,7 @@ build = "build.rs"
 
 [dependencies]
 log.workspace = true
+crossbeam-channel = "0.5.15"
 
 [features]
 default = []

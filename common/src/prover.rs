@@ -1,4 +1,5 @@
 use std::os::raw::c_void;
+use std::str::FromStr;
 
 use p3_field::Field;
 use transcript::FFITranscript;
@@ -16,7 +17,7 @@ pub enum ProverStatus {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ProofType {
     #[default]
-    Basic,
+    Basic = 0,
     Compressor,
     Recursive1,
     Recursive2,
@@ -46,6 +47,22 @@ impl From<ProofType> for &'static str {
             ProofType::Recursive2 => "recursive2",
             ProofType::VadcopFinal => "vadcop_final",
             ProofType::RecursiveF => "recursive_f",
+        }
+    }
+}
+
+impl FromStr for ProofType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "basic" => Ok(ProofType::Basic),
+            "compressor" => Ok(ProofType::Compressor),
+            "recursive1" => Ok(ProofType::Recursive1),
+            "recursive2" => Ok(ProofType::Recursive2),
+            "vadcop_final" => Ok(ProofType::VadcopFinal),
+            "recursive_f" => Ok(ProofType::RecursiveF),
+            _ => Err(()),
         }
     }
 }

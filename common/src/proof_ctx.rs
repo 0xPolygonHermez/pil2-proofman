@@ -80,7 +80,7 @@ impl Default for ParamsGPU {
             max_number_streams: usize::MAX,
             max_number_witness_pools: usize::MAX,
             number_threads_pools_witness: 4,
-            max_witness_stored: 16,
+            max_witness_stored: usize::MAX,
         }
     }
 }

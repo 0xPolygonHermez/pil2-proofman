@@ -12,11 +12,14 @@
 #include "exec_file.hpp"
 #include "fixed_cols.hpp"
 #include "final_snark_proof.hpp"
+#include "starks_api_internal.hpp"
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
 
 using namespace CPlusPlusLogging;
+
+ProofDoneCallback proof_done_callback = nullptr;
 
 void save_challenges(void *pGlobalChallenge, char* globalInfoFile, char *fileDir) {
 
@@ -638,4 +641,8 @@ uint64_t get_omp_max_threads(){
 
 void set_omp_num_threads(uint64_t num_threads){
     omp_set_num_threads(num_threads);
+}
+
+void register_proof_done_callback(ProofDoneCallback cb) {
+    proof_done_callback = cb;
 }
