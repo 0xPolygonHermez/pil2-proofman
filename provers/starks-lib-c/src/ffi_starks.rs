@@ -920,6 +920,13 @@ pub fn get_committed_pols_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, nPublics: u64) {
+    unsafe {
+        add_publics_aggregation(proof as *mut std::os::raw::c_void, offset, publics as *mut std::os::raw::c_void, nPublics);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn gen_final_snark_proof_c(circomWitnessFinal: *mut u8, zkeyFile: &str, outputDir: &str) {
     let zkey_file_name = CString::new(zkeyFile).unwrap();
     let zkey_file_ptr = zkey_file_name.as_ptr() as *mut std::os::raw::c_char;
@@ -1733,6 +1740,11 @@ pub fn get_committed_pols_c(
     _nCols: u64,
 ) {
     trace!("{}: ··· {}", "ffi     ", "get_committed_pols: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, nPublics: u64) {
+    trace!("{}: ··· {}", "ffi     ", "add_publics_aggregation: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

@@ -485,6 +485,13 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z17get_stream_proofsPv"]
     pub fn get_stream_proofs(d_buffers_: *mut ::std::os::raw::c_void);
+    #[link_name = "\u{1}_Z23add_publics_aggregationPvmS_m"]
+    pub fn add_publics_aggregation(
+        pProof: *mut ::std::os::raw::c_void,
+        offset: u64,
+        pPublics: *mut ::std::os::raw::c_void,
+        nPublicsAggregation: u64,
+    );
 }
 extern "C" {
     #[link_name = "\u{1}_Z21gen_final_snark_proofPvPcS0_"]
