@@ -70,6 +70,7 @@ pub struct ParamsGPU {
     pub max_number_streams: usize,
     pub max_number_witness_pools: usize,
     pub number_threads_pools_witness: usize,
+    pub max_number_proof_pools: usize,
     pub max_witness_stored: usize,
 }
 
@@ -79,8 +80,9 @@ impl Default for ParamsGPU {
             preallocate: false,
             max_number_streams: usize::MAX,
             max_number_witness_pools: usize::MAX,
+            max_number_proof_pools: 16,
             number_threads_pools_witness: 4,
-            max_witness_stored: usize::MAX,
+            max_witness_stored: 32,
         }
     }
 }
@@ -103,6 +105,10 @@ impl ParamsGPU {
     }
     pub fn with_max_witness_stored(&mut self, max_witness_stored: usize) {
         self.max_witness_stored = max_witness_stored;
+    }
+
+    pub fn with_max_number_proof_pools(&mut self, max_number_proof_pools: usize) {
+        self.max_number_proof_pools = max_number_proof_pools;
     }
 }
 

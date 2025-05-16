@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex, Condvar};
-use crossbeam_queue::ArrayQueue;
+use std::collections::VecDeque;
 use proofman_starks_lib_c::{register_proof_done_callback_c};
 use proofman_common::{ProofCtx, ProofType};
 use p3_field::Field;
@@ -45,68 +45,94 @@ impl Counter {
 
 #[derive(Debug)]
 pub struct WitnessBuffer {
-    queue: ArrayQueue<(usize, usize)>,
+    queue: Mutex<BufferData>,
     condvar: Condvar,
-    mutex: Mutex<BufferState>,
 }
 
 #[derive(Debug)]
-struct BufferState {
+struct BufferData {
+    items: VecDeque<(usize, usize)>,
+    capacity: usize,
     closed: bool,
 }
-
 impl WitnessBuffer {
     pub fn new(cap: usize) -> Self {
-        Self { queue: ArrayQueue::new(cap), condvar: Condvar::new(), mutex: Mutex::new(BufferState { closed: false }) }
+        Self {
+            queue: Mutex::new(BufferData { items: VecDeque::with_capacity(cap), capacity: cap, closed: false }),
+            condvar: Condvar::new(),
+        }
     }
 
     pub fn push(&self, item: (usize, usize)) -> bool {
-        let mut state = self.mutex.lock().unwrap();
-        while self.queue.len() >= self.queue.capacity() {
-            if state.closed {
+        let mut data = self.queue.lock().unwrap();
+        while data.items.len() >= data.capacity {
+            if data.closed {
                 return false;
             }
-            state = self.condvar.wait(state).unwrap();
+            data = self.condvar.wait(data).unwrap();
         }
 
-        let push_result = self.queue.push(item);
+        data.items.push_back(item);
         self.condvar.notify_all();
-        push_result.is_ok()
+        true
     }
 
     pub fn pop(&self) -> Option<(usize, usize)> {
-        let mut state = self.mutex.lock().unwrap();
+        let mut data = self.queue.lock().unwrap();
 
         loop {
-            if let Some(item) = self.queue.pop() {
+            if let Some(item) = data.items.pop_front() {
                 self.condvar.notify_all();
                 return Some(item);
             }
 
-            if state.closed {
+            if data.closed {
                 return None;
             }
 
-            state = self.condvar.wait(state).unwrap();
+            data = self.condvar.wait(data).unwrap();
+        }
+    }
+
+    pub fn pop_recursive(&self) -> Option<(usize, usize)> {
+        let mut data = self.queue.lock().unwrap();
+
+        loop {
+            if data.closed && data.items.is_empty() {
+                return None;
+            }
+
+            if let Some(pos) = data.items.iter().position(|&(_, proof_type)| proof_type != ProofType::Basic as usize) {
+                let item = data.items.remove(pos).unwrap();
+                self.condvar.notify_all();
+                return Some(item);
+            }
+
+            if let Some(item) = data.items.pop_front() {
+                self.condvar.notify_all();
+                return Some(item);
+            }
+
+            data = self.condvar.wait(data).unwrap();
         }
     }
 
     pub fn close(&self) {
-        let mut state = self.mutex.lock().unwrap();
-        state.closed = true;
+        let mut data = self.queue.lock().unwrap();
+        data.closed = true;
         self.condvar.notify_all();
     }
 
     pub fn wait_until_below_capacity(&self) -> bool {
-        let mut state = self.mutex.lock().unwrap();
-        while self.queue.len() >= self.queue.capacity() && !state.closed {
-            state = self.condvar.wait(state).unwrap();
+        let mut data = self.queue.lock().unwrap();
+        while data.items.len() >= data.capacity && !data.closed {
+            data = self.condvar.wait(data).unwrap();
         }
-        !state.closed
+        !data.closed
     }
 
     pub fn is_closed(&self) -> bool {
-        self.mutex.lock().unwrap().closed
+        self.queue.lock().unwrap().closed
     }
 }
 
