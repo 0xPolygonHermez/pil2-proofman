@@ -548,7 +548,7 @@ where
         let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
 
-        let n_pools = 2;
+        let n_pools = 16;
         let contribution_pools: Vec<_> = (0..n_pools)
             .map(|_| {
                 let pctx_clone = self.pctx.clone();
@@ -663,7 +663,7 @@ where
             let proof = create_buffer_fast(setup.proof_size as usize);
 
             proofs.insert(
-                self.pctx.dctx_get_instance_idx(*instance_id),
+                *instance_id,
                 Proof::new(ProofType::Basic, airgroup_id, air_id, Some(*instance_id), proof),
             );
         }
@@ -726,17 +726,15 @@ where
                     } else if new_proof_type == ProofType::Compressor as usize
                         || new_proof_type == ProofType::Recursive1 as usize
                     {
-                        let inst_id = pctx_clone.dctx_get_instance_idx(id);
-                        let proof = &proofs_clone.get(&inst_id).expect("missing proof");
+                        let proof = &proofs_clone.get(&id).expect("missing proof");
                         let witness = gen_witness_recursive(&pctx_clone, &setups_clone, proof).unwrap();
-                        recursive_witness_clone.insert(inst_id, witness);
+                        recursive_witness_clone.insert(id, witness);
                         proofs_counter_clone.fetch_add(1, Ordering::SeqCst);
                         precomputed_witnesses.push((id, new_proof_type));
                     } else if new_proof_type == ProofType::Recursive2 as usize {
                         let proof = match proof_type == ProofType::Recursive1 as usize {
                             true => {
-                                let inst_id = pctx_clone.dctx_get_instance_idx(id);
-                                proofs_clone.get(&inst_id).expect("missing proof").clone()
+                                proofs_clone.get(&id).expect("missing proof").clone()
                             }
                             false => recursive2_proofs_ongoing_clone.read().unwrap()[id].as_ref().unwrap().clone(),
                         };
@@ -803,7 +801,7 @@ where
                             let mut witness = match proof_type == ProofType::Recursive2 as usize {
                                 true => recursive2_witness_clone.get_mut(&airgroup_id).unwrap().pop().unwrap(),
                                 false => {
-                                    recursive_witness_clone.remove(&pctx_clone.dctx_get_instance_idx(id)).unwrap().1
+                                    recursive_witness_clone.remove(&id).unwrap().1
                                 }
                             };
 
@@ -836,8 +834,7 @@ where
                                 let id = proof.global_idx.unwrap();
                                 recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(proof);
                             } else {
-                                let inst_id = pctx_clone.dctx_get_instance_idx(id);
-                                proofs_clone.insert(inst_id, proof);
+                                proofs_clone.insert(id, proof);
                             }
                         }
                     }
@@ -925,7 +922,7 @@ where
                     let valid_proof = verify_basic_proof(
                         &self.pctx,
                         *instance_id,
-                        &proofs.get(&self.pctx.dctx_get_instance_idx(*instance_id)).unwrap().proof,
+                        &proofs.get(&*instance_id).unwrap().proof,
                     );
                     if !valid_proof {
                         valid_proofs = false;
@@ -945,8 +942,7 @@ where
                         .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
                         .unwrap_or(0);
 
-                    let inst_id = self.pctx.dctx_get_instance_idx(*instance_id);
-                    let proof = proofs.get(&inst_id).expect("Missing proof");
+                    let proof = proofs.get(&*instance_id).expect("Missing proof");
 
                     let airgroup_values: Vec<F> =
                         proof.proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
@@ -1113,12 +1109,6 @@ where
             }
         }
 
-        let max_sizes =
-            MaxSizes { total_const_area, max_aux_trace_area: max_size_buffer, total_const_area_aggregation };
-
-        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(max_sizes_ptr)));
-
         let max_number_proofs_per_gpu = match cfg!(feature = "gpu") {
             true => {
                 let max_number_proofs_per_gpu = gpu_params
@@ -1131,6 +1121,14 @@ where
             }
             false => 1,
         };
+
+        let max_aux_trace_area = (max_number_proofs_per_gpu * sctx.max_prover_buffer_size) as u64;
+
+        let max_sizes =
+            MaxSizes { total_const_area, max_aux_trace_area, total_const_area_aggregation };
+
+        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(max_sizes_ptr)));
 
         let max_size_const = match !gpu_params.preallocate {
             true => sctx.max_const_size as u64,
@@ -1231,7 +1229,7 @@ where
             p_setup,
             p_steps_params,
             pctx.get_global_challenge_ptr(),
-            proofs.get(&pctx.dctx_get_instance_idx(instance_id)).unwrap().proof.as_ptr() as *mut u64,
+            proofs.get(&instance_id).unwrap().proof.as_ptr() as *mut u64,
             &proof_file,
             airgroup_id as u64,
             air_id as u64,
