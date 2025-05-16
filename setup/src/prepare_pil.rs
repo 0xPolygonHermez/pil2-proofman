@@ -97,6 +97,8 @@ pub fn prepare_pil(
         }
     }
 
+    panic!("expressions: {:#?}", expressions);
+
     /* ──────────────────────── boundaries & openingPoints ──────────────────── */
     res.insert("boundaries".into(), json!([{ "name": "everyRow" }]));
 

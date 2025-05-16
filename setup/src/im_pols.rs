@@ -62,6 +62,7 @@ fn __calculate_im_pols(
     abs_max_d: &mut isize,
 ) -> (Option<Vec<Value>>, isize) {
     // JS: if (imPols === false) return [false, -1]
+    println!("exp: {}\n", serde_json::to_string_pretty(exp).unwrap());
     let mut im_pols = match im_pols_opt {
         None => return (None, -1),
         Some(v) => v,
