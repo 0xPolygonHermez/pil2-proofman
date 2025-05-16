@@ -587,7 +587,7 @@ impl DistributionCtx {
         {
             // Count number of aggregations that will be done
             let n_groups = alives.len();
-            let n_agregations: usize = alives.iter().map(|&alive| (alive + 2) / 3).sum();
+            let n_agregations: usize = alives.iter().map(|&alive| alive.div_ceil(3)).sum();
             let aggs_per_process = (n_agregations / self.n_processes as usize).max(1);
 
             let mut i_proof = 0;
@@ -597,7 +597,7 @@ impl DistributionCtx {
 
             for (group_idx, &alive) in alives.iter().enumerate() {
                 let group_proofs: &mut Vec<Option<Vec<u64>>> = &mut proofs[group_idx];
-                let n_aggs_group = (alive + 2) / 3;
+                let n_aggs_group = alive.div_ceil(3);
 
                 if n_aggs_group == 0 {
                     assert!(alive == 1);
