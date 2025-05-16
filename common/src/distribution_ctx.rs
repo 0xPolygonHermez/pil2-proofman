@@ -624,19 +624,16 @@ impl DistributionCtx {
 
                     if owner_rank == self.rank as usize {
                         for &idx in &[left_idx, mid_idx, right_idx] {
-                            if idx < alive {
-                                if group_proofs[idx].is_none() {
-                                    let tag = if idx == left_idx {
-                                        i_proof * 3 + n_groups
-                                    } else if idx == mid_idx {
-                                        i_proof * 3 + n_groups + 1
-                                    } else {
-                                        i_proof * 3 + n_groups + 2
-                                    };
-                                    let (msg, _status) =
-                                        self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
-                                    group_proofs[idx] = Some(msg);
-                                }
+                            if idx < alive && group_proofs[idx].is_none() {
+                                let tag = if idx == left_idx {
+                                    i_proof * 3 + n_groups
+                                } else if idx == mid_idx {
+                                    i_proof * 3 + n_groups + 1
+                                } else {
+                                    i_proof * 3 + n_groups + 2
+                                };
+                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
+                                group_proofs[idx] = Some(msg);
                             }
                         }
                     } else if self.n_processes > 1 {
