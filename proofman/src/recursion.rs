@@ -96,9 +96,6 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     proof3: &Proof<F>,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     timer_start_info!(GENERATE_WITNESS_AGGREGATION);
-    println!("PROOF LEN 1: {}", proof1.proof.len());
-    println!("PROOF LEN 2: {}", proof2.proof.len());
-    println!("PROOF LEN 3: {}", proof3.proof.len());
     let proof_len = proof1.proof.len();
     assert!(proof_len == proof2.proof.len() && proof_len == proof3.proof.len());
 
@@ -141,7 +138,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     d_buffers: *mut c_void,
     load_constants: bool,
     save_proofs: bool,
-) -> Proof<F> {
+) -> (u64, Proof<F>) {
     timer_start_info!(GEN_RECURSIVE_PROOF);
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
@@ -217,9 +214,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         );
     }
 
-    println!("AIRGROUP ID {} AIR ID {} INSTANCE ID {} PROOF TYPE {}", airgroup_id, air_id, instance_id, proof_type);
-    println!("NEW PROOF SIZE FOR RECURSIVE PROOF: {}", new_proof_size);
-    gen_recursive_proof_c(
+    let stream_id = gen_recursive_proof_c(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
@@ -241,7 +236,10 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     );
 
     timer_stop_and_log_info!(GEN_RECURSIVE_PROOF);
-    Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof)
+    (
+        stream_id,
+        Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -337,7 +335,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
 
                         let circom_witness = gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2, &proof3)?;
 
-                        let recursive2_proof = generate_recursive_proof::<F>(
+                        let (stream_id, recursive2_proof) = generate_recursive_proof::<F>(
                             pctx,
                             setups,
                             &circom_witness,
@@ -348,6 +346,8 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             true,
                             save_proofs,
                         );
+
+                        get_stream_id_proof_c(d_buffers, stream_id);
 
                         airgroup_proofs[airgroup][j] = Some(recursive2_proof.proof);
 
@@ -419,7 +419,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     let new_proof = Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, 24);
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
-    let final_vadcop_proof = generate_recursive_proof::<F>(
+    let (stream_id, final_vadcop_proof) = generate_recursive_proof::<F>(
         pctx,
         setups,
         &new_proof,
@@ -430,6 +430,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         true,
         save_proof,
     );
+    get_stream_id_proof_c(d_buffers, stream_id);
     log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);
 
@@ -650,11 +651,24 @@ fn get_witness_size<F: PrimeField64>(setup: &Setup<F>) -> Result<usize, Box<dyn 
     Ok(size_witness as usize)
 }
 
-pub fn total_recursive_proofs(mut n: usize) -> usize {
+#[derive(Debug)]
+pub struct Recursive2Proofs {
+    pub n_proofs: usize,
+    pub has_remaining: bool,
+}
+
+impl Recursive2Proofs {
+    pub fn new(n_proofs: usize, has_remaining: bool) -> Self {
+        Self { n_proofs, has_remaining }
+    }
+}
+
+pub fn total_recursive_proofs(mut n: usize) -> Recursive2Proofs {
     let mut total = 0;
+    let mut rem = n % 3;
     while n > 1 {
         let next = n / 3;
-        let rem = n % 3;
+        rem = n % 3;
         total += next;
         if next != 0 {
             n = next + rem;
@@ -662,5 +676,10 @@ pub fn total_recursive_proofs(mut n: usize) -> usize {
             n = next;
         }
     }
-    total
+
+    if rem == 2 {
+        Recursive2Proofs::new(total + 1, true)
+    } else {
+        Recursive2Proofs::new(total, false)
+    }
 }

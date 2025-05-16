@@ -428,7 +428,7 @@ extern "C" {
         loadConstants: bool,
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
-    );
+    ) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_bS0_S0_S0_"]
@@ -451,7 +451,7 @@ extern "C" {
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
         proofType: *mut ::std::os::raw::c_char,
-    );
+    ) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z18get_committed_polsPvPcS_S_mmmm"]
@@ -489,6 +489,10 @@ extern "C" {
 extern "C" {
     #[link_name = "\u{1}_Z30get_stream_proofs_non_blockingPv"]
     pub fn get_stream_proofs_non_blocking(d_buffers_: *mut ::std::os::raw::c_void);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z19get_stream_id_proofPvm"]
+    pub fn get_stream_id_proof(d_buffers_: *mut ::std::os::raw::c_void, streamId: u64);
 }
 extern "C" {
     #[link_name = "\u{1}_Z23add_publics_aggregationPvmS_m"]
@@ -621,3 +625,4 @@ extern "C" {
     #[link_name = "\u{1}_Z28register_proof_done_callbackPFvmPKcE"]
     pub fn register_proof_done_callback(cb: ProofDoneCallback);
 }
+

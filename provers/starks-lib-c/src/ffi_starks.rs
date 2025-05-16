@@ -3,6 +3,8 @@
 #![allow(non_snake_case)]
 
 use ::std::os::raw::c_void;
+
+#[cfg(not(feature = "no_lib_link"))]
 use ::std::os::raw::c_char;
 
 #[cfg(feature = "no_lib_link")]
@@ -14,10 +16,13 @@ include!("../bindings_starks.rs");
 #[cfg(not(feature = "no_lib_link"))]
 use std::ffi::CString;
 
+#[cfg(not(feature = "no_lib_link"))]
 use std::ffi::CStr;
 
+#[cfg(not(feature = "no_lib_link"))]
 static mut PROOFS_DONE: Option<crossbeam_channel::Sender<(u64, String)>> = None;
 
+#[cfg(not(feature = "no_lib_link"))]
 extern "C" fn on_proof_done(instance_id: u64, proof_type: *const c_char) {
     let proof_type_str = unsafe { CStr::from_ptr(proof_type).to_string_lossy().into_owned() };
 
@@ -785,7 +790,7 @@ pub fn gen_proof_c(
     load_constants: bool,
     const_pols_path: &str,
     const_tree_path: &str,
-) {
+) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
 
@@ -809,7 +814,7 @@ pub fn gen_proof_c(
             load_constants,
             const_filename_ptr,
             const_tree_filename_ptr,
-        );
+        )
     }
 }
 
@@ -829,6 +834,13 @@ pub fn get_stream_proofs_non_blocking_c(d_buffers: *mut c_void) {
     }
 }
 
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
+pub fn get_stream_id_proof_c(d_buffers: *mut c_void, stream_id: u64) {
+    unsafe {
+        get_stream_id_proof(d_buffers, stream_id);
+    }
+}
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
@@ -851,7 +863,7 @@ pub fn gen_recursive_proof_c(
     const_pols_path: &str,
     const_tree_path: &str,
     proof_type: &str,
-) {
+) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
 
@@ -887,7 +899,7 @@ pub fn gen_recursive_proof_c(
             const_filename_ptr,
             const_tree_filename_ptr,
             proof_type_ptr,
-        );
+        )
     }
 }
 
@@ -1090,9 +1102,7 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_buffers_c(
-    max_sizes: *mut ::std::os::raw::c_void,
-) -> *mut ::std::os::raw::c_void {
+pub fn gen_device_buffers_c(max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
     unsafe { gen_device_buffers(max_sizes) }
 }
 
@@ -1182,11 +1192,20 @@ pub fn load_device_const_pols_c(
 // MOCK METHODS FOR TESTING
 // ------------------------
 #[cfg(feature = "no_lib_link")]
-pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String)>) {
+pub fn register_proof_done_callback_c(_tx: crossbeam_channel::Sender<(u64, String)>) {
     trace!(
         "{}: ··· {}",
         "ffi     ",
         "register_proof_done_callback: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn clear_proof_done_callback_c() {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "_clear_proof_done_callback: This is a mock call because there is no linked library"
     );
 }
 
@@ -1502,20 +1521,7 @@ pub fn commit_witness_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn get_stream_roots_c(d_buffers: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "get_commit_root: This is a mock call because there is no linked library");
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn get_stream_roots_c(
-    _arity: u64,
-    _n_bits_ext: u64,
-    _n_cols: u64,
-    _root: *mut u8,
-    _thread_id: u64,
-    _d_buffers: *mut c_void,
-    _mpi_node_rank: u32,
-) {
+pub fn get_stream_roots_c(_d_buffers: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "get_commit_root: This is a mock call because there is no linked library");
 }
 
@@ -1701,8 +1707,9 @@ pub fn gen_proof_c(
     _load_constants: bool,
     _const_pols_path: &str,
     _const_tree_path: &str,
-) {
+) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1723,14 +1730,23 @@ pub fn get_proof_c(
 
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
-pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
+pub fn get_stream_proofs_c(_d_buffers: *mut c_void) {
     trace!("{}: ··· {}", "ffi     ", "get_stream_proofs: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
-pub fn get_stream_proofs_non_blocking_c(d_buffers: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "get_stream_proofs_non_blocking: This is a mock call because there is no linked library");
+pub fn get_stream_proofs_non_blocking_c(_d_buffers: *mut c_void) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_stream_proofs_non_blocking: This is a mock call because there is no linked library"
+    );
+}
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn get_stream_id_proof_c(_d_buffers: *mut c_void, _stream_id: u64) {
+    trace!("{}: ··· {}", "ffi     ", "get_stream_id_proof: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1754,8 +1770,9 @@ pub fn gen_recursive_proof_c(
     _const_pols_path: &str,
     _const_tree_path: &str,
     _proof_type: &str,
-) {
+) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1797,7 +1814,7 @@ pub fn get_committed_pols_c(
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, nPublics: u64) {
+pub fn add_publics_aggregation_c(_proof: *mut u8, _offset: u64, _publics: *mut u8, _nPublics: u64) {
     trace!("{}: ··· {}", "ffi     ", "add_publics_aggregation: This is a mock call because there is no linked library");
 }
 
@@ -1879,9 +1896,7 @@ pub fn set_omp_num_threads(_num_threads: u64) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_buffers_c(
-    _max_sizes: *mut ::std::os::raw::c_void,
-) -> *mut ::std::os::raw::c_void {
+pub fn gen_device_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",
         "ffi     ",
@@ -1917,11 +1932,7 @@ pub fn check_device_memory_c() -> u64 {
 
 #[cfg(feature = "no_lib_link")]
 pub fn free_device_buffers_c(_d_buffers: *mut ::std::os::raw::c_void) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "free_device_buffers: This is a mock call because there is no linked library"
-    );
+    trace!("{}: ··· {}", "ffi     ", "free_device_buffers: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

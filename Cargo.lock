@@ -1005,6 +1005,7 @@ dependencies = [
  "crossbeam-channel",
  "crossbeam-queue",
  "curves",
+ "dashmap",
  "env_logger",
  "libloading",
  "log",

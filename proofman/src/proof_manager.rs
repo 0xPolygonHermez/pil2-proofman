@@ -5,13 +5,6 @@ use proofman_common::{ProofCtx, ProofType};
 use p3_field::Field;
 use std::sync::atomic::{Ordering, AtomicUsize};
 
-#[derive(Debug)]
-pub struct ThreadInstanceInfo {
-    pub airgroup_id: usize,
-    pub air_id: usize,
-    pub proof_type: usize,
-}
-
 pub struct Counter {
     counter: Mutex<usize>,
     cvar: Condvar,
@@ -131,24 +124,23 @@ pub fn proofs_done_listener<F: Field>(
         let pctx_clone = pctx.clone();
         while let Ok((instance_id, proof_type)) = rx.recv() {
             let p: ProofType = proof_type.parse().unwrap();
-            proofs_counter.fetch_sub(1, Ordering::SeqCst);
-            println!("REMOVING PROOF: {:?}", p);
             if aggregation {
                 let new_proof_type = if p == ProofType::Basic {
                     let instances = pctx_clone.dctx_get_instances();
                     let (airgroup_id, air_id, _) = instances[instance_id as usize];
-                    let new_type = if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                    if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
                         ProofType::Compressor as usize
                     } else {
                         ProofType::Recursive1 as usize
-                    };
-                    new_type
+                    }
                 } else if p == ProofType::Compressor {
                     ProofType::Recursive1 as usize
                 } else {
                     ProofType::Recursive2 as usize
                 };
                 witness_recursive_tx.send((instance_id as usize, p as usize, new_proof_type)).unwrap();
+            } else {
+                proofs_counter.fetch_sub(1, Ordering::SeqCst);
             }
         }
     })
