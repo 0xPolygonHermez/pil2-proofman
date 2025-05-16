@@ -174,45 +174,39 @@ fn get_exp_dim_inner(exp: &mut Value, expressions: &mut [Value]) -> usize {
     }
 }
 
-/// Non‐recursive implementation of `add_info_expressions` with explicit stack
-/// and depth logging. Re-exported as `add_info_expressions` at the bottom.
+/// Non‐recursive `add_info_expressions` with explicit stack & depth logging.
 pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
-    // Track visited to avoid cycles.
     let mut visited = HashSet::new();
 
-    // Each frame is either entering or exiting a node.
     #[derive(Clone, Copy)]
     enum Frame {
-        Enter(usize, usize), // (exp_id, depth)
+        Enter(usize, usize),
         Exit(usize, usize),
     }
 
-    let mut stack: Vec<Frame> = Vec::new();
-    stack.push(Frame::Enter(start_id, 0));
+    let mut stack = vec![Frame::Enter(start_id, 0)];
 
     while let Some(frame) = stack.pop() {
         match frame {
             Frame::Enter(exp_id, depth) => {
                 println!("add_info_expressions depth: {}", depth);
 
-                // Skip already handled or annotated nodes
                 if visited.contains(&exp_id) || expressions[exp_id].get("expDeg").is_some() {
                     continue;
                 }
                 visited.insert(exp_id);
 
-                // Handle "next" → rowOffset
+                // next → rowOffset
                 if let Some(next) = expressions[exp_id].get("next") {
                     let ro = if next.as_bool().unwrap_or(false) { 1 } else { 0 };
                     expressions[exp_id]["rowOffset"] = json!(ro);
                     expressions[exp_id].as_object_mut().unwrap().remove("next");
                 }
 
-                // Pull out op
                 let op = expressions[exp_id].get("op").and_then(Value::as_str).unwrap_or("").to_string();
 
                 match op.as_str() {
-                    // exp: process child first
+                    // exp
                     "exp" => {
                         let child_id = expressions[exp_id]["id"].as_u64().unwrap() as usize;
                         if child_id != exp_id {
@@ -298,22 +292,19 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
 
                     // add | sub | mul | neg
                     op if ["add", "sub", "mul", "neg"].contains(&op) => {
-                        // clone values to avoid borrows
                         let vals_clone: Vec<Value> =
                             expressions[exp_id].get("values").and_then(Value::as_array).unwrap().clone();
 
-                        // neg → mul
                         if op == "neg" {
                             let original = vals_clone[0].clone();
                             let e = &mut expressions[exp_id];
                             e["op"] = json!("mul");
                             e["values"] = json!([
-                                { "op":"number", "value":"-1", "expDeg":0, "stage":0, "dim":1 },
+                                { "op":"number","value":"-1","expDeg":0,"stage":0,"dim":1 },
                                 original
                             ]);
                         }
 
-                        // zero-fold
                         if op == "add" {
                             let e = &mut expressions[exp_id];
                             if vals_clone[0]["op"] == "number" && vals_clone[0]["value"] == "0" {
@@ -326,16 +317,16 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                             }
                         }
 
-                        // schedule exit after children
-                        stack.push(Frame::Exit(exp_id, depth));
-                        let rhs_id = vals_clone[1]["id"].as_u64().unwrap() as usize;
                         let lhs_id = vals_clone[0]["id"].as_u64().unwrap() as usize;
-                        if rhs_id != exp_id {
-                            stack.push(Frame::Enter(rhs_id, depth + 1));
+                        let rhs_id = vals_clone[1]["id"].as_u64().unwrap() as usize;
+
+                        if lhs_id == exp_id || rhs_id == exp_id {
+                            continue;
                         }
-                        if lhs_id != exp_id {
-                            stack.push(Frame::Enter(lhs_id, depth + 1));
-                        }
+
+                        stack.push(Frame::Exit(exp_id, depth));
+                        stack.push(Frame::Enter(rhs_id, depth + 1));
+                        stack.push(Frame::Enter(lhs_id, depth + 1));
                     }
 
                     _ => panic!("Exp op not defined: {}", op),
@@ -343,8 +334,8 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
             }
 
             Frame::Exit(exp_id, _depth) => {
-                // clone child data up front
                 let op = expressions[exp_id]["op"].as_str().unwrap();
+
                 if op == "exp" {
                     let child_id = expressions[exp_id]["id"].as_u64().unwrap() as usize;
                     let child = expressions[child_id].clone();
@@ -352,9 +343,8 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                     let child_deg = child["expDeg"].clone();
                     let child_rows = child["rowsOffsets"].clone();
                     let child_dim = child.get("dim").cloned().unwrap();
-                    let child_stage = child.get("stage").cloned().unwrap();
+                    let child_st = child.get("stage").cloned().unwrap();
 
-                    // write back
                     let e = &mut expressions[exp_id];
                     e["expDeg"] = child_deg;
                     e["rowsOffsets"] = child_rows;
@@ -362,41 +352,44 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         e["dim"] = child_dim.clone();
                     }
                     if e.get("stage").is_none() {
-                        e["stage"] = child_stage.clone();
+                        e["stage"] = child_st.clone();
                     }
                     if ["cm", "const", "custom"].contains(&child_op) {
                         *e = child;
                     }
                 } else {
-                    // add/sub/mul post‐work
                     let vals = expressions[exp_id]["values"].as_array().unwrap();
                     let lhs_e = &expressions[vals[0]["id"].as_u64().unwrap() as usize];
                     let rhs_e = &expressions[vals[1]["id"].as_u64().unwrap() as usize];
 
-                    let lhs_deg = lhs_e["expDeg"].as_u64().unwrap();
-                    let rhs_deg = rhs_e["expDeg"].as_u64().unwrap();
+                    let lhs_deg = lhs_e.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
+                    let rhs_deg = rhs_e.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
                     let exp_deg = if expressions[exp_id]["op"] == json!("mul") {
                         lhs_deg + rhs_deg
                     } else {
                         lhs_deg.max(rhs_deg)
                     };
 
-                    let lhs_dim = lhs_e["dim"].as_u64().unwrap();
-                    let rhs_dim = rhs_e["dim"].as_u64().unwrap();
+                    let lhs_dim = lhs_e.get("dim").and_then(Value::as_u64).unwrap_or(1);
+                    let rhs_dim = rhs_e.get("dim").and_then(Value::as_u64).unwrap_or(1);
                     let dim = lhs_dim.max(rhs_dim);
 
-                    let lhs_st = lhs_e["stage"].as_u64().unwrap();
-                    let rhs_st = rhs_e["stage"].as_u64().unwrap();
+                    let lhs_st = lhs_e.get("stage").and_then(Value::as_u64).unwrap_or(0);
+                    let rhs_st = rhs_e.get("stage").and_then(Value::as_u64).unwrap_or(0);
                     let stage = lhs_st.max(rhs_st);
 
+                    let lhs_rows =
+                        lhs_e.get("rowsOffsets").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![json!(0)]);
+                    let rhs_rows =
+                        rhs_e.get("rowsOffsets").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![json!(0)]);
+
                     let mut set = HashSet::new();
-                    for v in lhs_e["rowsOffsets"].as_array().unwrap() {
-                        set.insert(v.as_u64().unwrap());
+                    for v in lhs_rows.iter().chain(rhs_rows.iter()) {
+                        if let Some(n) = v.as_u64() {
+                            set.insert(n);
+                        }
                     }
-                    for v in rhs_e["rowsOffsets"].as_array().unwrap() {
-                        set.insert(v.as_u64().unwrap());
-                    }
-                    let rows: Vec<_> = set.into_iter().collect();
+                    let rows: Vec<_> = set.into_iter().map(|n| json!(n)).collect();
 
                     let e = &mut expressions[exp_id];
                     e["expDeg"] = json!(exp_deg);
@@ -409,7 +402,7 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
     }
 }
 
-// Re-export so existing imports continue to work:
+// re-export under the old name:
 pub use add_info_expressions_iter as add_info_expressions;
 
 /// Adds symbol-related metadata to expressions.
