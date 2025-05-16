@@ -124,10 +124,7 @@ pub fn verify_global_constraints_proof<F: Field>(
         Ok(())
     } else {
         log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all global constraints were verified".bright_red().bold());
-        Err(Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("{}: Not all global constraints were verified.", MY_NAME),
-        )))
+        Err(Box::new(std::io::Error::other(format!("{}: Not all global constraints were verified.", MY_NAME))))
     }
 }
 
