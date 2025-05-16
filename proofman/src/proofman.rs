@@ -668,15 +668,23 @@ where
             );
         }
 
-        let n_recursive2_proofs =
-            Arc::new(n_airgroup_proofs.iter().map(|&x| total_recursive_proofs(x)).collect::<Vec<_>>());
-        let n_recursive2_proofs_done = Arc::new((0..n_airgroups).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>());
-
         let recursive_witness: Arc<DashMap<usize, Proof<F>>> = Arc::new(DashMap::new());
         let recursive2_witnesses: Arc<DashMap<usize, Vec<Proof<F>>>> = Arc::new(DashMap::new());
 
         let recursive2_proofs: Arc<DashMap<usize, Vec<Proof<F>>>> = Arc::new(DashMap::new());
         let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
+
+        for airgroup in 0..n_airgroups {
+            let n_recursive2_proofs = total_recursive_proofs(n_airgroup_proofs[airgroup]);
+            if n_recursive2_proofs.has_remaining {
+                let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2);
+                let publics_aggregation = 1 + 4 * self.pctx.global_info.agg_types[airgroup].len() + 10;
+                let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
+                let mut recursive2_proofs_airgroup = recursive2_proofs.entry(airgroup).or_default();
+                recursive2_proofs_airgroup.push(null_proof);
+            }
+        }
 
         let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<(usize, usize, usize)>();
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
@@ -696,8 +704,6 @@ where
                 let recursive2_proofs_clone = recursive2_proofs.clone();
                 let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
                 let proofs_counter_clone = proofs_counter.clone();
-                let n_recursive2_proofs_clone = n_recursive2_proofs.clone();
-                let n_recursive2_proofs_done_clone = n_recursive2_proofs_done.clone();
 
                 std::thread::spawn(move || loop {
                     if !precomputed_witnesses.wait_until_below_capacity() {
@@ -737,15 +743,6 @@ where
                         let airgroup_id = proof.airgroup_id;
                         let mut recursive2_proofs_airgroup = recursive2_proofs_clone.entry(airgroup_id).or_default();
                         recursive2_proofs_airgroup.push(proof);
-                        if n_recursive2_proofs_done_clone[airgroup_id].load(Ordering::SeqCst)
-                            == n_recursive2_proofs_clone[airgroup_id].n_proofs - 1
-                            && n_recursive2_proofs_clone[airgroup_id].has_remaining
-                            && recursive2_proofs_airgroup.len() == 2
-                        {
-                            let null_proof_buffer = vec![0; recursive2_proofs_airgroup[0].proof.len()];
-                            let null_proof = Proof::new(ProofType::Recursive2, airgroup_id, 0, None, null_proof_buffer);
-                            recursive2_proofs_airgroup.push(null_proof);
-                        };
 
                         if recursive2_proofs_airgroup.len() >= 3 {
                             let p1 = recursive2_proofs_airgroup.pop().unwrap();
@@ -780,7 +777,6 @@ where
                 let recursive2_witness_clone = recursive2_witnesses.clone();
                 let recursive_witness_clone = recursive_witness.clone();
                 let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
-                let n_recursive2_proofs_done_clone = n_recursive2_proofs_done.clone();
 
                 let trace_size = self.trace_size;
                 let prover_buffer_size = self.prover_buffer_size;
@@ -835,10 +831,6 @@ where
                                 true,
                                 options.save_proofs,
                             );
-
-                            if proof_type == ProofType::Recursive2 as usize {
-                                n_recursive2_proofs_done_clone[airgroup_id].fetch_add(1, Ordering::SeqCst);
-                            }
 
                             if proof_type == ProofType::Recursive2 as usize {
                                 let id = proof.global_idx.unwrap();
