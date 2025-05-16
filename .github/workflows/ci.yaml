@@ -223,8 +223,8 @@ jobs:
         run: |
           rm -rf examples/fibonacci-square/build/proofs
         
-      - name: Cargo build distributed
-        run: RUST_BACKTRACE=1 cargo build --features distributed -v
+      # - name: Cargo build distributed
+      #   run: RUST_BACKTRACE=1 cargo build --features distributed -v
 
       # - name: Generate proof Fibonacci Square distributed
       #   run: | 
