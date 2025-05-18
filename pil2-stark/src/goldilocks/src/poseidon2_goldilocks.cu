@@ -33,9 +33,16 @@ void init_gpu_const_2()
     static int initialized = 0;
     if (initialized == 0)
     {
+        int numDevices;
+        CHECKCUDAERR(cudaGetDeviceCount(&numDevices));
+        for(int i = 0; i < numDevices; i++)
+        {
+           CHECKCUDAERR(cudaSetDevice(i));
+           CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+           CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
+                
+        }
         initialized = 1;
-        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
-        CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
         
     }
 }
