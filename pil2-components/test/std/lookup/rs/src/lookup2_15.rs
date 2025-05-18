@@ -28,7 +28,7 @@ where
             let mut trace = Lookup2_15Trace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             // TODO: Add the ability to send inputs to lookup3
             //       and consequently add random selectors

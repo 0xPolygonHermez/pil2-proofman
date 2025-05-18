@@ -34,8 +34,6 @@ pub struct SpecifiedRanges {
 }
 
 impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
-    const MY_NAME: &'static str = "SpecRang";
-
     fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
         let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
         let air_id = air_id.expect("Air ID must be provided");
@@ -94,13 +92,13 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
 
             // Convert to the correct type
             let HintFieldValue::Field(opid) = opid else {
-                log::error!("Opid hint must be a field element");
+                tracing::error!("Opid hint must be a field element");
                 panic!();
             };
             let opid = opid.as_canonical_u64() as usize;
 
             let HintFieldValue::Field(opid_len) = opid_len else {
-                log::error!("Opid hint must be a field element");
+                tracing::error!("Opid hint must be a field element");
                 panic!();
             };
             let opid_len = opid_len.as_canonical_u64() as usize;

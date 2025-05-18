@@ -17,7 +17,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SumBus {
             let mut trace = SumBusTrace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{}: ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             for i in 0..num_rows {
                 trace[i].a = F::from_usize(i);

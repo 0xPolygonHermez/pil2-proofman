@@ -1,12 +1,16 @@
 [package]
 name = "pilout"
-version = "0.8.0"
-edition = "2021"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
 
 [dependencies]
 bytes.workspace = true
 prost.workspace = true
-log.workspace = true
+tracing.workspace = true
 
 [build-dependencies]
 prost-build.workspace = true

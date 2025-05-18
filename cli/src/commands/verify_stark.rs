@@ -66,10 +66,10 @@ impl VerifyStark {
         );
 
         if !valid {
-            log::info!("{}: ··· {}", "VStark  ", "\u{2717} Stark proof was not verified".bright_red().bold());
+            tracing::info!("··· {}", "\u{2717} Stark proof was not verified".bright_red().bold());
             Err("Stark proof was not verified".into())
         } else {
-            log::info!("{}:     {}", "VStark  ", "\u{2713} Stark proof was verified".bright_green().bold());
+            tracing::info!("    {}", "\u{2713} Stark proof was verified".bright_green().bold());
             Ok(())
         }
     }
