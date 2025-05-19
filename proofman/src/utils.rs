@@ -352,6 +352,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     proof_type,
                     (&setup.p_setup).into(),
                     d_buffers.get_ptr(),
+                    setup.verkey.as_ptr() as *mut u8,
                 );
                 if gpu_params.preallocate {
                     let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
@@ -399,6 +400,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                             proof_type,
                             (&setup.p_setup).into(),
                             d_buffers.get_ptr(),
+                            setup.verkey.as_ptr() as *mut u8,
                         );
                         if gpu_params.preallocate {
                             let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
@@ -444,6 +446,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                         proof_type,
                         (&setup.p_setup).into(),
                         d_buffers.get_ptr(),
+                        setup.verkey.as_ptr() as *mut u8,
                     );
                     if gpu_params.preallocate {
                         let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
@@ -484,10 +487,11 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 );
                 load_device_setup_c(
                     airgroup_id as u64,
-                    0 as u64,
+                    0_u64,
                     proof_type,
                     (&setup.p_setup).into(),
                     d_buffers.get_ptr(),
+                    setup.verkey.as_ptr() as *mut u8,
                 );
                 if gpu_params.preallocate {
                     let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
@@ -520,7 +524,14 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
         } else {
             let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
             println!("Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}", 0, 0, proof_type);
-            load_device_setup_c(0_u64, 0_u64, proof_type, (&setup_vadcop_final.p_setup).into(), d_buffers.get_ptr());
+            load_device_setup_c(
+                0_u64,
+                0_u64,
+                proof_type,
+                (&setup_vadcop_final.p_setup).into(),
+                d_buffers.get_ptr(),
+                setup_vadcop_final.verkey.as_ptr() as *mut u8,
+            );
             if gpu_params.preallocate {
                 let const_pols_path = setup_vadcop_final.setup_path.to_string_lossy().to_string() + ".const";
                 let const_pols_tree_path = setup_vadcop_final.setup_path.display().to_string() + ".consttree";

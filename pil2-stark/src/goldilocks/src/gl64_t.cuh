@@ -828,6 +828,9 @@ public:
 };
 
 struct AirInstanceInfo {
+    uint64_t airgroupId;
+    uint64_t airId;
+
     uint64_t const_pols_offset;
     uint64_t const_tree_offset;
 
@@ -842,12 +845,19 @@ struct AirInstanceInfo {
     
     SetupCtx *setupCtx;
 
-    AirInstanceInfo(SetupCtx *setupCtx): setupCtx(setupCtx) {
+    Goldilocks::Element *verkeyRoot;
+
+    AirInstanceInfo(uint64_t airgroupId, uint64_t airId, SetupCtx *setupCtx, Goldilocks::Element *verkeyRoot_): setupCtx(setupCtx), airgroupId(airgroupId), airId(airId) {
         int64_t *d_openingPoints;
         CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
         CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
         opening_points = d_openingPoints;
         expressions_gpu = new ExpressionsGPU(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
+
+        Goldilocks::Element *d_verkeyRoot;
+        CHECKCUDAERR(cudaMalloc(&d_verkeyRoot, HASH_SIZE * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMemcpy(d_verkeyRoot, verkeyRoot_, HASH_SIZE * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice));
+        verkeyRoot = d_verkeyRoot;
 
         uint64_t size_eval = setupCtx->starkInfo.evMap.size();
         uint64_t num_batches = (setupCtx->starkInfo.openingPoints.size() + 3) / 4;

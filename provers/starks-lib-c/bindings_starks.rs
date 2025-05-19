@@ -585,13 +585,14 @@ extern "C" {
     pub fn set_device(gpu_id: u32);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z17load_device_setupmmPcPvS0_"]
+    #[link_name = "\u{1}_Z17load_device_setupmmPcPvS0_S0_"]
     pub fn load_device_setup(
         airgroupId: u64,
         airId: u64,
         proofType: *mut ::std::os::raw::c_char,
         pSetupCtx_: *mut ::std::os::raw::c_void,
         d_buffers_: *mut ::std::os::raw::c_void,
+        verkeyRoot_: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {

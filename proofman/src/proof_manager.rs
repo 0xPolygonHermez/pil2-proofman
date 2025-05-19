@@ -44,32 +44,43 @@ impl Counter {
 }
 
 #[derive(Debug)]
+struct BufferData {
+    items: VecDeque<(usize, usize)>,
+    capacity: usize,
+    basic_count: usize, // NEW: Track only Basic items
+    closed: bool,
+}
+
+#[derive(Debug)]
 pub struct WitnessBuffer {
     queue: Mutex<BufferData>,
     condvar: Condvar,
 }
 
-#[derive(Debug)]
-struct BufferData {
-    items: VecDeque<(usize, usize)>,
-    capacity: usize,
-    closed: bool,
-}
 impl WitnessBuffer {
     pub fn new(cap: usize) -> Self {
         Self {
-            queue: Mutex::new(BufferData { items: VecDeque::with_capacity(cap), capacity: cap, closed: false }),
+            queue: Mutex::new(BufferData {
+                items: VecDeque::with_capacity(cap),
+                capacity: cap,
+                basic_count: 0,
+                closed: false,
+            }),
             condvar: Condvar::new(),
         }
     }
 
     pub fn push(&self, item: (usize, usize)) -> bool {
         let mut data = self.queue.lock().unwrap();
-        while data.items.len() >= data.capacity {
+        while item.1 == ProofType::Basic as usize && data.basic_count >= data.capacity {
             if data.closed {
                 return false;
             }
             data = self.condvar.wait(data).unwrap();
+        }
+
+        if item.1 == ProofType::Basic as usize {
+            data.basic_count += 1;
         }
 
         data.items.push_back(item);
@@ -81,9 +92,12 @@ impl WitnessBuffer {
         let mut data = self.queue.lock().unwrap();
 
         loop {
-            if let Some(item) = data.items.pop_front() {
+            if let Some((id, proof_type)) = data.items.pop_front() {
+                if proof_type == ProofType::Basic as usize {
+                    data.basic_count = data.basic_count.saturating_sub(1);
+                }
                 self.condvar.notify_all();
-                return Some(item);
+                return Some((id, proof_type));
             }
 
             if data.closed {
@@ -103,14 +117,17 @@ impl WitnessBuffer {
             }
 
             if let Some(pos) = data.items.iter().position(|&(_, proof_type)| proof_type != ProofType::Basic as usize) {
-                let item = data.items.remove(pos).unwrap();
+                let (id, proof_type) = data.items.remove(pos).unwrap();
                 self.condvar.notify_all();
-                return Some(item);
+                return Some((id, proof_type));
             }
 
-            if let Some(item) = data.items.pop_front() {
+            if let Some((id, proof_type)) = data.items.pop_front() {
+                if proof_type == ProofType::Basic as usize {
+                    data.basic_count = data.basic_count.saturating_sub(1);
+                }
                 self.condvar.notify_all();
-                return Some(item);
+                return Some((id, proof_type));
             }
 
             data = self.condvar.wait(data).unwrap();
@@ -121,14 +138,6 @@ impl WitnessBuffer {
         let mut data = self.queue.lock().unwrap();
         data.closed = true;
         self.condvar.notify_all();
-    }
-
-    pub fn wait_until_below_capacity(&self) -> bool {
-        let mut data = self.queue.lock().unwrap();
-        while data.items.len() >= data.capacity && !data.closed {
-            data = self.condvar.wait(data).unwrap();
-        }
-        !data.closed
     }
 
     pub fn is_closed(&self) -> bool {

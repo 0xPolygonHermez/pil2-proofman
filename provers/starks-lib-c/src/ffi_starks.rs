@@ -1159,12 +1159,20 @@ pub fn load_device_setup_c(
     proof_type: &str,
     p_setup: *mut ::std::os::raw::c_void,
     d_buffers: *mut ::std::os::raw::c_void,
+    verkey_root: *mut u8,
 ) {
     let proof_type_name = CString::new(proof_type).unwrap();
     let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
-        load_device_setup(airgroup_id, air_id, proof_type_ptr, p_setup, d_buffers);
+        load_device_setup(
+            airgroup_id,
+            air_id,
+            proof_type_ptr,
+            p_setup,
+            d_buffers,
+            verkey_root as *mut std::os::raw::c_void,
+        );
     }
 }
 
@@ -1959,6 +1967,7 @@ pub fn load_device_setup_c(
     _proof_type: &str,
     _p_setup: *mut ::std::os::raw::c_void,
     _d_buffers: *mut ::std::os::raw::c_void,
+    _verkey_root: *mut u8,
 ) {
     trace!("{}: ··· {}", "ffi     ", "load_device_setup: This is a mock call because there is no linked library");
 }

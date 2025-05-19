@@ -27,12 +27,8 @@ pub struct ProveCmd {
     #[clap(short = 'e', long)]
     pub elf: Option<PathBuf>,
 
-    /// Inputs path
-    #[clap(short = 'i', long)]
-    pub input_data: Option<PathBuf>,
-
     /// Public inputs path
-    #[clap(short = 'p', long)]
+    #[clap(short = 'i', long)]
     pub public_inputs: Option<PathBuf>,
 
     /// Setup folder path
@@ -80,7 +76,7 @@ pub struct ProveCmd {
     #[clap(short = 'x', long)]
     pub max_witness_stored: Option<usize>,
 
-    #[clap(short = 's', long)]
+    #[clap(short = 'p', long)]
     pub max_number_proof_pools: Option<usize>,
 
     #[clap(short = 'b', long, default_value_t = false)]
@@ -160,7 +156,7 @@ impl ProveCmd {
                 Field::Goldilocks => proofman.verify_proof_constraints(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
-                    self.input_data.clone(),
+                    None,
                     self.output_dir.clone(),
                     &debug_info.clone(),
                     self.verbose.into(),
@@ -171,7 +167,7 @@ impl ProveCmd {
                 Field::Goldilocks => proofman.generate_proof(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
-                    self.input_data.clone(),
+                    None,
                     self.verbose.into(),
                     ProofOptions::new(
                         false,

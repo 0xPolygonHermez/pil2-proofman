@@ -107,7 +107,7 @@ void free_device_buffers(void *d_buffers_)
 }
 
 
-void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_) {
+void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_) {
     
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     
@@ -115,9 +115,10 @@ void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, voi
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
 
+    Goldilocks::Element *verkeyRoot = (Goldilocks::Element *)verkeyRoot_;
     for(int i=0; i<d_buffers->n_gpus; ++i){
         cudaSetDevice(i);        
-        d_buffers->air_instances[key][proofType] = new AirInstanceInfo(setupCtx);
+        d_buffers->air_instances[key][proofType] = new AirInstanceInfo(airgroupId, airId, setupCtx, verkeyRoot);
     }
 }
 
@@ -186,7 +187,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
         CHECKCUDAERR(cudaMemcpyAsync(pCustomCommitsFixed, params->pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
     }
 
-    if (!air_instance_info->stored && (d_buffers->streamsData[streamId].airgroupId != airgroupId || d_buffers->streamsData[streamId].airId != airId)) {
+    if (!air_instance_info->stored && (d_buffers->streamsData[streamId].airgroupId != airgroupId || d_buffers->streamsData[streamId].airId != airId || d_buffers->streamsData[streamId].proofType != "basic")) {
         loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
         loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
     }
@@ -330,8 +331,8 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
     
-    gl64_t *d_trace = (gl64_t *)d_buffers->d_aux_trace[gpuId] + slotId*(d_buffers->max_size_prover_buffer_aggregation + d_buffers->max_size_trace_aggregation);
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuId] + slotId*(d_buffers->max_size_prover_buffer_aggregation + d_buffers->max_size_trace_aggregation) + d_buffers->max_size_trace_aggregation;
+    gl64_t *d_trace = (gl64_t *)d_buffers->d_aux_trace[gpuId] + slotId*(d_buffers->max_size_prover_buffer + d_buffers->max_size_trace_aggregation);
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuId] + slotId*(d_buffers->max_size_prover_buffer + d_buffers->max_size_trace_aggregation) + d_buffers->max_size_trace_aggregation;
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
