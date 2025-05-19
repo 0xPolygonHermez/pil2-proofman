@@ -928,6 +928,7 @@ struct StreamData{
     cudaStream_t stream;
     uint32_t gpuId;
     uint32_t slotId;
+    StepsParams *pinned_params;
     Goldilocks::Element *pinned_buffer;
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_const;
@@ -964,6 +965,7 @@ struct StreamData{
         status = 0;
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer, max_size_trace * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
 
         uint64_t constMaxSize = std::max(max_size_const, max_size_const_aggregation);
         uint64_t constMaxSizeTree = std::max(max_size_const_tree, max_size_const_tree_aggregation);
@@ -1012,6 +1014,7 @@ struct StreamData{
         cudaEventDestroy(end_event);
         cudaFreeHost(pinned_buffer);
         cudaFreeHost(pinned_buffer_proof);
+        cudaFreeHost(pinned_params);
         cudaFreeHost(pinned_buffer_const);
         cudaFreeHost(pinned_buffer_const_tree);
     }
@@ -1038,7 +1041,7 @@ struct DeviceCommitBuffers
     std::mutex mutex_slot_selection;
     StreamData *streamsData;
 
-    std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, AirInstanceInfo *>> air_instances;
+    std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, std::vector<AirInstanceInfo *>>> air_instances;
 };
 
 

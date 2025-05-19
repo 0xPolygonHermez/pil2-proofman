@@ -15,7 +15,7 @@
 // fer que lo dels arbres vagi igual (primer arreglar els de gen_proof)
 
 template <typename ElementType>
-void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, Goldilocks::Element *proof_buffer_pinned, TranscriptGL_GPU *d_transcript, TranscriptGL_GPU *d_transcript_helper, AirInstanceInfo *air_instance_info, StepsParams *d_params, TimerGPU &timer, cudaStream_t stream)
+void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, StepsParams *params_pinned, Goldilocks::Element *proof_buffer_pinned, TranscriptGL_GPU *d_transcript, TranscriptGL_GPU *d_transcript_helper, AirInstanceInfo *air_instance_info, StepsParams *d_params, TimerGPU &timer, cudaStream_t stream)
 {
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
@@ -52,7 +52,9 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
         pCustomCommitsFixed : nullptr,
     };
     
-    CHECKCUDAERR(cudaMemcpyAsync(d_params, &h_params, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
+    *params_pinned = h_params;
+    
+    CHECKCUDAERR(cudaMemcpyAsync(d_params, params_pinned, sizeof(StepsParams), cudaMemcpyHostToDevice, stream));
 
     uint64_t *friQueries_gpu = (uint64_t *)d_aux_trace + offsetFriQueries;
 

@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::fmt::Write;
 use std::io::Read;
-use std::sync::atomic::{AtomicUsize, AtomicBool};
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 use p3_goldilocks::Goldilocks;
@@ -630,7 +630,7 @@ where
             }
         }
 
-        witness_pending.wait_for_tables_ready();
+        witness_pending.wait_until_zero();
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if *all && self.pctx.dctx_is_my_instance(instance_id) {
@@ -699,7 +699,7 @@ where
         let (recursive_witness_tx, recursive_witness_rx) = crossbeam_channel::unbounded::<(usize, usize, usize)>();
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
 
-        let proofs_counter = Arc::new(AtomicUsize::new(0));
+        let proofs_counter = Arc::new(Counter::new());
 
         let witness_pools: Vec<_> = (0..max_concurrent_pools)
             .map(|thread_id| {
@@ -739,13 +739,13 @@ where
 
                     if new_proof_type == ProofType::Basic as usize {
                         wcm_clone.calculate_witness(1, &[id], threads_per_pool * thread_id, threads_per_pool);
-                        proofs_counter_clone.fetch_add(1, Ordering::SeqCst);
+                        proofs_counter_clone.increment();
                         precomputed_witnesses.push((id, ProofType::Basic as usize));
                     } else if new_proof_type == ProofType::Compressor as usize {
                         let proof = &proofs_clone.get(&id).expect("missing proof");
                         let witness = gen_witness_recursive(&pctx_clone, &setups_clone, proof).unwrap();
                         recursive_witness_clone.insert(id, witness);
-                        proofs_counter_clone.fetch_add(1, Ordering::SeqCst);
+                        proofs_counter_clone.increment();
                         precomputed_witnesses.push((id, new_proof_type));
                     } else if new_proof_type == ProofType::Recursive1 as usize {
                         let (airgroup_id, air_id, _) = pctx_clone.dctx_get_instances()[id];
@@ -755,7 +755,7 @@ where
                         };
                         let witness = gen_witness_recursive(&pctx_clone, &setups_clone, proof).unwrap();
                         recursive_witness_clone.insert(id, witness);
-                        proofs_counter_clone.fetch_add(1, Ordering::SeqCst);
+                        proofs_counter_clone.increment();
                         precomputed_witnesses.push((id, new_proof_type));
                     } else if new_proof_type == ProofType::Recursive2 as usize {
                         let proof = match proof_type == ProofType::Recursive1 as usize {
@@ -773,13 +773,13 @@ where
                             let witness_recursive2 =
                                 gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap();
                             recursive2_witness_clone.entry(airgroup_id).or_default().push(witness_recursive2);
-                            proofs_counter_clone.fetch_add(1, Ordering::SeqCst);
+                            proofs_counter_clone.increment();
                             precomputed_witnesses.push((airgroup_id, new_proof_type));
                         }
                     }
 
                     if new_proof_type != ProofType::Basic as usize {
-                        proofs_counter_clone.fetch_sub(1, Ordering::SeqCst);
+                        proofs_counter_clone.decrement();
                     }
                 })
             })
@@ -881,7 +881,7 @@ where
         for (instance_id, _) in instances.iter().enumerate() {
             if self.pctx.is_air_instance_stored(instance_id) {
                 my_instances_calculated[instance_id] = true;
-                proofs_counter.fetch_add(1, Ordering::SeqCst);
+                proofs_counter.increment();
                 precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
             }
         }
@@ -894,21 +894,12 @@ where
         }
         drop(basic_witness_tx);
 
-        let proofs_counter_clone = proofs_counter.clone();
-        let recursive_witness_tx_clone = recursive_witness_tx.clone();
-        let d_buffers_clone = self.d_buffers.clone();
-        let wait = std::thread::spawn(move || loop {
-            get_stream_proofs_non_blocking_c(d_buffers_clone.get_ptr());
-            if proofs_counter_clone.load(Ordering::SeqCst) == 0 {
-                for _ in 0..max_concurrent_pools {
-                    recursive_witness_tx_clone.send((usize::MAX, 0, 0)).unwrap();
-                }
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_micros(100));
-        });
+        proofs_counter.wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
-        wait.join().unwrap();
+        for _ in 0..max_concurrent_pools {
+            recursive_witness_tx.send((usize::MAX, 0, 0)).unwrap();
+        }
+
         get_stream_proofs_c(self.d_buffers.get_ptr());
 
         precomputed_witnesses.close();

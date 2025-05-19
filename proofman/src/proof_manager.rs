@@ -3,7 +3,6 @@ use std::collections::VecDeque;
 use proofman_starks_lib_c::{register_proof_done_callback_c};
 use proofman_common::{ProofCtx, ProofType};
 use p3_field::Field;
-use std::sync::atomic::{Ordering, AtomicUsize};
 
 pub struct Counter {
     counter: Mutex<usize>,
@@ -35,10 +34,20 @@ impl Counter {
         }
     }
 
-    pub fn wait_for_tables_ready(&self) {
+    pub fn wait_until_zero(&self) {
         let mut count = self.counter.lock().unwrap();
         while *count > 0 {
             count = self.cvar.wait(count).unwrap();
+        }
+    }
+
+    pub fn wait_until_zero_and_check_streams<F: FnMut()>(&self, mut check_streams: F) {
+        let mut count = self.counter.lock().unwrap();
+        while *count > 0 {
+            check_streams();
+
+            let (c, _) = self.cvar.wait_timeout(count, std::time::Duration::from_micros(100)).unwrap();
+            count = c;
         }
     }
 }
@@ -148,7 +157,7 @@ impl WitnessBuffer {
 pub fn proofs_done_listener<F: Field>(
     pctx: Arc<ProofCtx<F>>,
     witness_recursive_tx: crossbeam_channel::Sender<(usize, usize, usize)>,
-    proofs_counter: Arc<AtomicUsize>,
+    proofs_counter: Arc<Counter>,
     aggregation: bool,
 ) -> std::thread::JoinHandle<()> {
     let (tx, rx) = crossbeam_channel::unbounded::<(u64, String)>();
@@ -175,7 +184,7 @@ pub fn proofs_done_listener<F: Field>(
                 };
                 witness_recursive_tx.send((instance_id as usize, p as usize, new_proof_type)).unwrap();
             } else {
-                proofs_counter.fetch_sub(1, Ordering::SeqCst);
+                proofs_counter.decrement();
             }
         }
     })
