@@ -127,7 +127,6 @@ void init_gpu_const(int nDevices = 0)
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, PoseidonGoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_S, PoseidonGoldilocksConstants::S, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
         }
-        //CHECKCUDAERR(cudaSetDevice(0));
     }
 }
 
@@ -295,49 +294,6 @@ __global__ void hash_gpu(uint32_t nextN, uint32_t nextIndex, uint32_t pending, u
     hash_one((gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY]), pol_input, threadIdx.x);
 }
 
-void PoseidonGoldilocks::merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads, uint64_t dim)
-{
-    if (num_rows == 0)
-    {
-        return;
-    }
-
-    init_gpu_const();
-    u32 actual_tpb = TPB;
-    u32 actual_blks = num_rows / TPB + 1;
-
-    uint64_t numElementsTree = MerklehashGoldilocks::getTreeNumElements(num_rows); // includes CAPACITY
-    CHECKCUDAERR(cudaMalloc(d_tree, numElementsTree * sizeof(uint64_t)));
-
-    if (num_rows < TPB)
-    {
-        actual_tpb = num_rows;
-        actual_blks = 1;
-    }
-    linear_hash_gpu<<<actual_blks, actual_tpb>>>(*d_tree, d_input, num_cols * dim, num_rows);
-
-    // Build the merkle tree
-    uint64_t pending = num_rows;
-    uint64_t nextN = floor((pending - 1) / 2) + 1;
-    uint64_t nextIndex = 0;
-    while (pending > 1)
-    {
-        if (nextN < TPB)
-        {
-            actual_tpb = nextN;
-            actual_blks = 1;
-        }
-        else
-        {
-            actual_tpb = TPB;
-            actual_blks = nextN / TPB + 1;
-        }
-        hash_gpu<<<actual_blks, actual_tpb>>>(nextN, nextIndex, pending, *d_tree);
-        nextIndex += pending * CAPACITY;
-        pending = pending / 2;
-        nextN = floor((pending - 1) / 2) + 1;
-    }
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////

@@ -69,7 +69,6 @@ public:
 #endif
 
 #ifdef __USE_CUDA__
-    void static merkletree_cuda_gpudata_inplace(uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
     void static merkletree_cuda_coalesced(uint64_t **d_tree, uint64_t *d_input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
 
 #endif
