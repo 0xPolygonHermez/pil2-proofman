@@ -1,6 +1,6 @@
 [package]
 name = "proofman-common"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2021"
 build = "build.rs"
 
@@ -17,14 +17,19 @@ proofman-macros.workspace = true
 env_logger.workspace = true
 proofman-util = { path = "../util" }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
-mpi = { version = "0.8.0", optional = true }
 rayon.workspace = true
 sysinfo = "0.22.5"
+
+# Distributed mode (mpi) is only supported on Linux x86_64
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+mpi = { version = "0.8.0" }
 
 [features]
 default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
 disable-distributed = []
-distributed = ["dep:mpi"]
 diagnostic = ["proofman-macros/diagnostic"]
 gpu = ["proofman-starks-lib-c/gpu"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(distributed)'] }
