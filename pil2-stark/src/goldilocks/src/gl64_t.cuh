@@ -11,6 +11,8 @@
 #include "gpu_timer.cuh"
 #include <mutex>
 #include "cuda_utils.cuh"
+#include "transcriptGL.cuh"
+#include "expressions_gpu.cuh"
 #include <limits.h>
 
 namespace gl64_device
@@ -828,6 +830,85 @@ public:
 struct AirInstanceInfo {
     uint64_t const_pols_offset;
     uint64_t const_tree_offset;
+
+    bool stored = false;
+
+    ExpressionsGPU *expressions_gpu;
+    int64_t *opening_points;
+
+    uint64_t numBatchesEvals;
+    EvalInfo **evalsInfo;
+    uint64_t *evalsInfoSizes;
+    
+    SetupCtx *setupCtx;
+
+    AirInstanceInfo(SetupCtx *setupCtx): setupCtx(setupCtx) {
+        int64_t *d_openingPoints;
+        CHECKCUDAERR(cudaMalloc(&d_openingPoints, setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t)));
+        CHECKCUDAERR(cudaMemcpy(d_openingPoints, setupCtx->starkInfo.openingPoints.data(), setupCtx->starkInfo.openingPoints.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
+        opening_points = d_openingPoints;
+        expressions_gpu = new ExpressionsGPU(*setupCtx, setupCtx->starkInfo.nrowsPack, setupCtx->starkInfo.maxNBlocks);
+
+        uint64_t size_eval = setupCtx->starkInfo.evMap.size();
+        uint64_t num_batches = (setupCtx->starkInfo.openingPoints.size() + 3) / 4;
+
+        evalsInfo = new EvalInfo*[num_batches];
+        evalsInfoSizes = new uint64_t[num_batches];
+        numBatchesEvals = num_batches;
+
+        uint64_t count = 0;
+        for(uint64_t i = 0; i < setupCtx->starkInfo.openingPoints.size(); i += 4) {
+            std::vector<int64_t> openingPoints;
+            for(uint64_t j = 0; j < 4; ++j) {
+                if(i + j < setupCtx->starkInfo.openingPoints.size()) {
+                    openingPoints.push_back(setupCtx->starkInfo.openingPoints[i + j]);
+                }
+            }
+            
+            EvalInfo* evalsInfoHost = new EvalInfo[size_eval];
+
+            uint64_t nEvals = 0;
+
+            for (uint64_t k = 0; k < size_eval; k++)
+            {
+                EvMap ev = setupCtx->starkInfo.evMap[k];
+                auto it = std::find(openingPoints.begin(), openingPoints.end(), ev.prime);
+                bool containsOpening = it != openingPoints.end();
+                if(!containsOpening) continue;
+                string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom"
+                                                                                                : "fixed";
+                PolMap polInfo = type == "cm" ? setupCtx->starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx->starkInfo.customCommitsMap[ev.commitId][ev.id]
+                                                                                                            : setupCtx->starkInfo.constPolsMap[ev.id];
+                evalsInfoHost[nEvals].type = type == "cm" ? 0 : type == "custom" ? 1
+                                                                        : 2; //rick: harcoded
+                evalsInfoHost[nEvals].offset = setupCtx->starkInfo.getTraceOffset(type, polInfo, true);
+                evalsInfoHost[nEvals].stride = setupCtx->starkInfo.getTraceNColsSection(type, polInfo, true);
+                evalsInfoHost[nEvals].dim = polInfo.dim;
+                evalsInfoHost[nEvals].openingPos = std::distance(openingPoints.begin(), it);
+                evalsInfoHost[nEvals].evalPos = k;
+                nEvals++;
+            }
+
+            EvalInfo* d_evalsInfo = nullptr;
+            CHECKCUDAERR(cudaMalloc(&d_evalsInfo, nEvals * sizeof(EvalInfo)));
+            CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfoHost, nEvals * sizeof(EvalInfo), cudaMemcpyHostToDevice));
+
+            evalsInfo[count] = d_evalsInfo;
+            evalsInfoSizes[count] = nEvals;
+            delete[] evalsInfoHost;
+            count++;
+        }
+    }
+
+    ~AirInstanceInfo() {
+        delete[] opening_points;
+        delete[] expressions_gpu;
+
+        for(uint64_t i = 0; i < numBatchesEvals; ++i) {
+            CHECKCUDAERR(cudaFree(evalsInfo[i])); 
+        }
+        delete[] evalsInfo;
+    }
 };
 
 
@@ -846,6 +927,11 @@ struct StreamData{
     uint32_t status; //0: unused, 1: loading, 2: full
     cudaEvent_t end_event;
     TimerGPU timer;
+
+    TranscriptGL_GPU *transcript;
+    TranscriptGL_GPU *transcript_helper;
+
+    StepsParams *params;
 
     //callback inputs
     void *root;
@@ -880,6 +966,22 @@ struct StreamData{
         proofBuffer = nullptr;
         airgroupId = UINT64_MAX;
         airId = UINT64_MAX;
+
+        transcript = new TranscriptGL_GPU(3,
+                                    true,
+                                    stream);
+
+        transcript_helper = new TranscriptGL_GPU(3,
+                                           true,
+                                           stream);
+
+        CHECKCUDAERR(cudaMalloc(&params, sizeof(StepsParams)));
+    }
+
+    ~StreamData() {
+        delete transcript;
+        delete transcript_helper;
+        CHECKCUDAERR(cudaFree(params));
     }
 
     void reset(){
@@ -923,14 +1025,11 @@ struct DeviceCommitBuffers
 
     uint32_t n_gpus;
     uint32_t n_streams;
-    std::mutex mutex_slot_selection;  
-    std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, AirInstanceInfo>> air_instances;  
+    std::mutex mutex_slot_selection;
     StreamData *streamsData;
 
+    std::map<std::pair<uint64_t, uint64_t>, std::map<std::string, AirInstanceInfo *>> air_instances;
 };
-
-
-
 
 
 #undef inline

@@ -431,28 +431,7 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("proof_queries", false)] = mapTotalN;
         mapTotalN += queriesProofSize;
         
-        uint64_t count = 0;
-        for(uint64_t i = 0; i < openingPoints.size(); i += 4) {
-            std::vector<int64_t> openingPoints_;
-            for(uint64_t j = 0; j < 4; ++j) {
-                if(i + j < openingPoints.size()) {
-                    openingPoints_.push_back(openingPoints[i + j]);
-                }
-            }
-            
-            uint64_t nEvals = 0;
-
-            for (uint64_t i = 0; i < evMap.size(); i++)
-            {
-                auto it = std::find(openingPoints_.begin(), openingPoints_.end(), evMap[i].prime);
-                bool containsOpening = it != openingPoints_.end();
-                if(!containsOpening) continue;
-                nEvals++;
-            }
-
-            mapOffsets[std::make_pair("evals_" + to_string(count++), true)] = mapTotalN;
-            mapTotalN += nEvals * sizeof(EvalInfo);
-        }
+        // TODO: ADD EXPRESSIONS MEM
     }
 
     

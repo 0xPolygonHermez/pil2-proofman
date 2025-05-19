@@ -1,5 +1,6 @@
 #include "transcriptGL.cuh"
 #include "poseidon2_goldilocks.cuh"
+#include "gl64_t.cuh"
 
 #include "math.h"
 

@@ -1153,6 +1153,22 @@ pub fn free_device_buffers_c(d_buffers: *mut ::std::os::raw::c_void) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn load_device_setup_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    p_setup: *mut ::std::os::raw::c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        load_device_setup(airgroup_id, air_id, proof_type_ptr, p_setup, d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn load_device_const_pols_c(
     airgroup_id: u64,
     air_id: u64,
@@ -1937,6 +1953,18 @@ pub fn free_device_buffers_c(_d_buffers: *mut ::std::os::raw::c_void) {
 
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
+pub fn load_device_setup_c(
+    _airgroup_id: u64,
+    _air_id: u64,
+    _proof_type: &str,
+    _p_setup: *mut ::std::os::raw::c_void,
+    _d_buffers: *mut ::std::os::raw::c_void,
+) {
+    trace!("{}: ··· {}", "ffi     ", "load_device_setup: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn load_device_const_pols_c(
     _airgroup_id: u64,
     _air_id: u64,
@@ -1948,5 +1976,5 @@ pub fn load_device_const_pols_c(
     _const_tree_size: u64,
     _proof_type: &str,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "load_device_const_pols_: This is a mock call because there is no linked library");
+    trace!("{}: ··· {}", "ffi     ", "load_device_const_pols: This is a mock call because there is no linked library");
 }

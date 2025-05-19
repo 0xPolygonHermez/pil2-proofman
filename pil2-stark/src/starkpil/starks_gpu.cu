@@ -373,67 +373,17 @@ __global__ void computeEvals_v2(
     }
 }
 
-void prepare_evmap(SetupCtx &setupCtx, gl64_t *d_aux_trace) {
-    uint64_t size_eval = setupCtx.starkInfo.evMap.size();
-
-    uint64_t count = 0;
-    for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += 4) {
-        std::vector<int64_t> openingPoints;
-        for(uint64_t j = 0; j < 4; ++j) {
-            if(i + j < setupCtx.starkInfo.openingPoints.size()) {
-                openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
-            }
-        }
-        
-        EvalInfo evalsInfo[size_eval];
-
-        uint64_t nEvals = 0;
-
-        for (uint64_t k = 0; k < size_eval; k++)
-        {
-            EvMap ev = setupCtx.starkInfo.evMap[k];
-            auto it = std::find(openingPoints.begin(), openingPoints.end(), ev.prime);
-            bool containsOpening = it != openingPoints.end();
-            if(!containsOpening) continue;
-            string type = ev.type == EvMap::eType::cm ? "cm" : ev.type == EvMap::eType::custom ? "custom"
-                                                                                            : "fixed";
-            PolMap polInfo = type == "cm" ? setupCtx.starkInfo.cmPolsMap[ev.id] : type == "custom" ? setupCtx.starkInfo.customCommitsMap[ev.commitId][ev.id]
-                                                                                                        : setupCtx.starkInfo.constPolsMap[ev.id];
-            evalsInfo[nEvals].type = type == "cm" ? 0 : type == "custom" ? 1
-                                                                    : 2; //rick: harcoded
-            evalsInfo[nEvals].offset = setupCtx.starkInfo.getTraceOffset(type, polInfo, true);
-            evalsInfo[nEvals].stride = setupCtx.starkInfo.getTraceNColsSection(type, polInfo, true);
-            evalsInfo[nEvals].dim = polInfo.dim;
-            evalsInfo[nEvals].openingPos = std::distance(openingPoints.begin(), it);
-            evalsInfo[nEvals].evalPos = k;
-            nEvals++;
-        }
-
-        gl64_t *d_evalsInfo = (gl64_t *)d_aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("evals_" + to_string(count++), true)];
-        CHECKCUDAERR(cudaMemcpy(d_evalsInfo, evalsInfo, nEvals * sizeof(EvalInfo), cudaMemcpyHostToDevice));
-    }
-}
-
-void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, uint64_t nOpeningPoints, int64_t *openingPoints, Goldilocks::Element *d_LEv, TimerGPU &timer, cudaStream_t stream)
+void evmap_inplace(SetupCtx &setupCtx, StepsParams &h_params, uint64_t chunk, uint64_t nOpeningPoints, int64_t *openingPoints, AirInstanceInfo *air_instance_info, Goldilocks::Element *d_LEv, TimerGPU &timer, cudaStream_t stream)
 {
 
     TimerStartCategoryGPU(timer, EVALS);
     gl64_t *d_constTree = (gl64_t *)h_params.pConstPolsExtendedTreeAddress;
 
     uint64_t extendBits = setupCtx.starkInfo.starkStruct.nBitsExt - setupCtx.starkInfo.starkStruct.nBits;
-    uint64_t size_eval = setupCtx.starkInfo.evMap.size();
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     
-    uint64_t nEvals = 0;
-
-    for (uint64_t i = 0; i < size_eval; i++)
-    {
-        auto it = std::find(openingPoints, openingPoints + nOpeningPoints, setupCtx.starkInfo.evMap[i].prime);
-        bool containsOpening = it != openingPoints + nOpeningPoints;
-        if(containsOpening) nEvals++;
-    }
-
-    EvalInfo *d_evalsInfo = (EvalInfo *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("evals_" + to_string(chunk), true)]);
+    EvalInfo *d_evalsInfo = air_instance_info->evalsInfo[chunk];
+    uint64_t nEvals = air_instance_info->evalsInfoSizes[chunk];
 
     dim3 nThreads(256);
     dim3 nBlocks(nEvals);
@@ -761,7 +711,7 @@ void proveFRIQueries_inplace(SetupCtx& setupCtx, gl64_t *d_queries_buff, uint64_
     CHECKCUDAERR(cudaGetLastError());
 }
 
-void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams &h_params, StepsParams *d_params, int64_t step, TimerGPU &timer, cudaStream_t stream){
+void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams &h_params, StepsParams *d_params, int64_t step, TimerGPU &timer, cudaStream_t stream){
 
     uint64_t domainSize = (1 << setupCtx.starkInfo.starkStruct.nBits);
     std::vector<Dest> dests;
@@ -773,13 +723,13 @@ void calculateImPolsExpressions(SetupCtx& setupCtx, ExpressionsGPU& expressionsC
             Dest destStruct(NULL, domainSize, setupCtx.starkInfo.mapSectionsN["cm" + to_string(step)]);
             destStruct.addParams(setupCtx.starkInfo.cmPolsMap[i].expId, setupCtx.starkInfo.cmPolsMap[i].dim, false);
             destStruct.dest_gpu = (Goldilocks::Element *)(pAddress + offset);            
-            expressionsCtx.calculateExpressions_gpu(d_params, destStruct, domainSize, false, timer, stream);
+            expressionsCtx->calculateExpressions_gpu(d_params, destStruct, domainSize, false, timer, stream);
         }
     }
         
 }
 
-void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse, TimerGPU& timer, cudaStream_t stream){
+void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU* expressionsCtx, StepsParams *d_params, Goldilocks::Element* dest_gpu, uint64_t expressionId, bool inverse, TimerGPU& timer, cudaStream_t stream){
     
     uint64_t domainSize;
     bool domainExtended;
@@ -798,7 +748,7 @@ void calculateExpression(SetupCtx& setupCtx, ExpressionsGPU& expressionsCtx, Ste
     destStruct.addParams(expressionId, setupCtx.expressionsBin.expressionsInfo[expressionId].destDim, inverse);
     destStruct.dest_gpu = dest_gpu;
     
-    expressionsCtx.calculateExpressions_gpu(d_params, destStruct, domainSize, domainExtended, timer, stream);
+    expressionsCtx->calculateExpressions_gpu(d_params, destStruct, domainSize, domainExtended, timer, stream);
 
 }
 

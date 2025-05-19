@@ -6,7 +6,6 @@
 #include "goldilocks_cubic_extension.hpp"
 #include "poseidon2_goldilocks.hpp"
 #include "zklog.hpp"
-#include "gl64_t.cuh"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 
@@ -36,24 +35,24 @@ public:
 
     TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream)
     {
-        cudaMalloc((void**)&state, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element));
-        cudaMalloc((void**)&pending, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element));
-        cudaMalloc((void**)&out, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element));
-        cudaMalloc((void**)&pending_cursor, sizeof(uint));
-        cudaMalloc((void**)&out_cursor, sizeof(uint));
-        cudaMalloc((void**)&state_cursor, sizeof(uint));
+        CHECKCUDAERR(cudaMalloc((void**)&state, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc((void**)&pending, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc((void**)&out, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc((void**)&pending_cursor, sizeof(uint)));
+        CHECKCUDAERR(cudaMalloc((void**)&out_cursor, sizeof(uint)));
+        CHECKCUDAERR(cudaMalloc((void**)&state_cursor, sizeof(uint)));
 
         reset(stream);
         init_const();
     }
     ~TranscriptGL_GPU()
     {
-        cudaFree(state);
-        cudaFree(pending);
-        cudaFree(out);
-        cudaFree(pending_cursor);
-        cudaFree(out_cursor);
-        cudaFree(state_cursor);
+        CHECKCUDAERR(cudaFree(state));
+        CHECKCUDAERR(cudaFree(pending));
+        CHECKCUDAERR(cudaFree(out));
+        CHECKCUDAERR(cudaFree(pending_cursor));
+        CHECKCUDAERR(cudaFree(out_cursor));
+        CHECKCUDAERR(cudaFree(state_cursor));
     }
     
     void reset(cudaStream_t stream) {

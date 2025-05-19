@@ -1,5 +1,6 @@
 #include "hints.cuh"
 #include "expressions_gpu.cuh"
+#include "goldilocks_cubic_extension.cuh"
 #include "expressions_pack.hpp"
 #include "polinomial.hpp"
 
