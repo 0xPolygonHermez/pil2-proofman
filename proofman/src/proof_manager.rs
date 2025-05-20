@@ -125,6 +125,14 @@ impl WitnessBuffer {
                 return None;
             }
 
+            if let Some(pos) =
+                data.items.iter().position(|&(_, proof_type)| proof_type == ProofType::Recursive2 as usize)
+            {
+                let (id, proof_type) = data.items.remove(pos).unwrap();
+                self.condvar.notify_all();
+                return Some((id, proof_type));
+            }
+
             if let Some(pos) = data.items.iter().position(|&(_, proof_type)| proof_type != ProofType::Basic as usize) {
                 let (id, proof_type) = data.items.remove(pos).unwrap();
                 self.condvar.notify_all();
@@ -157,6 +165,7 @@ impl WitnessBuffer {
 pub fn proofs_done_listener<F: Field>(
     pctx: Arc<ProofCtx<F>>,
     witness_recursive_tx: crossbeam_channel::Sender<(usize, usize, usize)>,
+    witness_recursive2_tx: crossbeam_channel::Sender<(usize, usize, usize)>,
     proofs_counter: Arc<Counter>,
     aggregation: bool,
 ) -> std::thread::JoinHandle<()> {
@@ -182,7 +191,11 @@ pub fn proofs_done_listener<F: Field>(
                 } else {
                     ProofType::Recursive2 as usize
                 };
-                witness_recursive_tx.send((instance_id as usize, p as usize, new_proof_type)).unwrap();
+                if new_proof_type == ProofType::Recursive2 as usize {
+                    witness_recursive2_tx.send((instance_id as usize, p as usize, new_proof_type)).unwrap();
+                } else {
+                    witness_recursive_tx.send((instance_id as usize, p as usize, new_proof_type)).unwrap();
+                }
             } else {
                 proofs_counter.decrement();
             }

@@ -201,7 +201,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     d_buffers->streamsData[streamId].instanceId = instanceId;
     d_buffers->streamsData[streamId].proofType = "basic";
 
-    Goldilocks::parcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)params->trace, N * nCols, 4);
+    memcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)params->trace, N * nCols * sizeof(Goldilocks::Element));
     offset = N * nCols;
     memcpy(&d_buffers->streamsData[streamId].pinned_buffer[offset], params->publicInputs, setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element));
     offset += setupCtx->starkInfo.nPublics;
@@ -342,8 +342,7 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     auto key = std::make_pair(airgroupId, airId);
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuId];
 
-    Goldilocks::parcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)trace, N * nCols, 4);
-
+    memcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)trace, N * nCols * sizeof(Goldilocks::Element));
     if (!air_instance_info->stored && (d_buffers->streamsData[streamId].airgroupId != airgroupId || d_buffers->streamsData[streamId].airId != airId || d_buffers->streamsData[streamId].proofType != string(proofType))) {
         loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
         loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
@@ -403,7 +402,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = 0;
 
-    Goldilocks::parcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)trace, N * nCols, 4);
+    memcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)trace, N * nCols * sizeof(Goldilocks::Element));
     CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetStage1, d_buffers->streamsData[streamId].pinned_buffer, sizeTrace, cudaMemcpyHostToDevice, stream));
     genCommit_gpu(arity, nBits, nBitsExt, nCols, d_aux_trace, d_buffers->streamsData[streamId].pinned_buffer_proof, timer, stream);
 
