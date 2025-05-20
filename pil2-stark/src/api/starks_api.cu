@@ -165,6 +165,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
 
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     uint32_t streamId = skipRecalculation ? streamId_ : selectStream(d_buffers);
+    if (skipRecalculation) reserveStream(d_buffers, streamId);
     uint32_t gpuId = d_buffers->streamsData[streamId].gpuId;
     uint64_t slotId = d_buffers->streamsData[streamId].slotId;
     set_device(gpuId);
