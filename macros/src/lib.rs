@@ -775,6 +775,6 @@ fn test_empty_array() {
 #[test]
 fn test_import_asm_impl() {
     let input = quote!(goldilocks_base_field_scalar_add);
-    let output = import_asm_impl(input.into()).unwrap();
+    let output = import_asm_impl(input).unwrap();
     assert!(output.to_string().contains("asm"))
 }
