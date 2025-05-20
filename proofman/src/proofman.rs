@@ -57,6 +57,8 @@ use crate::aggregate_recursive2_proofs;
 
 use std::ffi::c_void;
 
+use rayon::prelude::*;
+
 use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info, DeviceBuffer};
 
 pub struct ProofMan<F: PrimeField64> {
@@ -557,9 +559,32 @@ where
         let n_pools = instances_mine.min(self.gpu_params.max_number_proof_pools);
 
         timer_start_info!(WITNESS_ALONE);
+        let mut vec_instances = Vec::new();
         for instance_id in my_instances_sorted.iter() {
-            self.wcm.calculate_witness(1, &[*instance_id], 0, max_num_threads);
+           //self.wcm.calculate_witness(1, &[*instance_id], 0, max_num_threads);
+           vec_instances.push(*instance_id);
         }
+
+        let chunk_size = 8;
+        let total = vec_instances.len();
+        let mut i = 0;
+        
+        while i < total {
+            let end = (i + chunk_size).min(total);
+        
+            // We collect into a Vec to make sure ownership is handled correctly.
+            let chunk: Vec<(usize, usize)> = (i..end)
+                .enumerate()
+                .map(|(offset, idx)| (idx, offset * 8))
+                .collect();
+        
+            // Run each proof calculation in parallel.
+            chunk.par_iter().for_each(|(idx, offset)| {
+                self.wcm.calculate_witness(1, &[vec_instances[*idx]], *offset, 8);
+            });
+        
+            i += chunk_size;
+        }       
         timer_stop_and_log_info!(WITNESS_ALONE);
 
         let contribution_pools: Vec<_> = (0..n_pools)
