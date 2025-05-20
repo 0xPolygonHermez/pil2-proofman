@@ -280,7 +280,7 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_S_"]
+    #[link_name = "\u{1}_Z14commit_witnessmmmmPvS_S_S_S_"]
     pub fn commit_witness(
         arity: u64,
         nBits: u64,
@@ -290,7 +290,8 @@ extern "C" {
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,
         d_buffers: *mut ::std::os::raw::c_void,
-    );
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+    ) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z16get_stream_rootsPv"]
@@ -414,7 +415,7 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_bS1_S1_"]
+    #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_bmS1_S1_"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         airgroupId: u64,
@@ -425,7 +426,8 @@ extern "C" {
         proofBuffer: *mut u64,
         proofFile: *mut ::std::os::raw::c_char,
         d_buffers: *mut ::std::os::raw::c_void,
-        loadConstants: bool,
+        skipRecalculation: bool,
+        streamId: u64,
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
     ) -> u64;
@@ -585,17 +587,6 @@ extern "C" {
     pub fn set_device(gpu_id: u32);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z17load_device_setupmmPcPvS0_S0_"]
-    pub fn load_device_setup(
-        airgroupId: u64,
-        airId: u64,
-        proofType: *mut ::std::os::raw::c_char,
-        pSetupCtx_: *mut ::std::os::raw::c_void,
-        d_buffers_: *mut ::std::os::raw::c_void,
-        verkeyRoot_: *mut ::std::os::raw::c_void,
-    );
-}
-extern "C" {
     #[link_name = "\u{1}_Z22load_device_const_polsmmmPvPcmS0_mS0_"]
     pub fn load_device_const_pols(
         airgroupId: u64,
@@ -607,6 +598,17 @@ extern "C" {
         constTreeFilename: *mut ::std::os::raw::c_char,
         constTreeSize: u64,
         proofType: *mut ::std::os::raw::c_char,
+    );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z17load_device_setupmmPcPvS0_S0_"]
+    pub fn load_device_setup(
+        airgroupId: u64,
+        airId: u64,
+        proofType: *mut ::std::os::raw::c_char,
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+        d_buffers_: *mut ::std::os::raw::c_void,
+        verkeyRoot_: *mut ::std::os::raw::c_void,
     );
 }
 extern "C" {
@@ -624,7 +626,7 @@ extern "C" {
         maxSizeConstTreeAggregation: u64,
         maxProofSize: u64,
         maxProofPerGPU: u64,
-    );
+    ) -> u64;
 }
 extern "C" {
     #[link_name = "\u{1}_Z19check_device_memoryv"]
@@ -636,4 +638,3 @@ extern "C" {
     #[link_name = "\u{1}_Z28register_proof_done_callbackPFvmPKcE"]
     pub fn register_proof_done_callback(cb: ProofDoneCallback);
 }
-

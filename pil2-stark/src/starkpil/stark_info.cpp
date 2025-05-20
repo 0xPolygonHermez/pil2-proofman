@@ -440,13 +440,26 @@ void StarkInfo::setMapOffsets() {
     uint64_t maxTotalN = 0;
     // Set offsets for all stages in the extended field (cm1, cm2, ..., cmN)
     for(uint64_t stage = 1; stage <= nStages + 1; stage++) {
-        mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapTotalN;
         mapOffsets[std::make_pair("cm" + to_string(stage), true)] = mapTotalN;
         mapTotalN += NExtended * mapSectionsN["cm" + to_string(stage)];
         if(starkStruct.verificationHashType == "GL") {
             mapOffsets[std::make_pair("mt" + to_string(stage), true)] = mapTotalN;
             mapTotalN += numNodes;
         }
+    }
+
+    if(!gpu || recursive) {
+        for(uint64_t stage = 1; stage <= nStages + 1; stage++) {
+            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapOffsets[std::make_pair("cm" + to_string(stage), true)];
+        }
+    } else {
+        uint64_t offsetTraces = mapOffsets[std::make_pair("cm2", true)];
+        for(uint64_t stage = nStages; stage >= 1; stage--) {
+            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
+            offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
+        }
+
+        mapTotalN = std::max(mapTotalN, offsetTraces);
     }
 
     if(!gpu) {
@@ -503,28 +516,24 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += (1 << (starkStruct.steps[0].nBits - starkStruct.steps[1].nBits)) >> 1;
     }
 
-    for(uint64_t stage = 1; stage <= nStages; stage++) {
-        uint64_t maxTotalNStage = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
-        if(!gpu) {
+    if (!gpu) {
+        for(uint64_t stage = 1; stage <= nStages; stage++) {
+            uint64_t maxTotalNStage = mapOffsets[std::make_pair("mt" + to_string(stage), true)];
             mapOffsets[std::make_pair("buff_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
             maxTotalNStage += NExtended * mapSectionsN["cm" + to_string(stage)];
-        } else {
-            mapOffsets[std::make_pair("extra_helper_fft_" + to_string(stage), false)] = maxTotalNStage;
-            maxTotalNStage += FIELD_EXTENSION*NExtended + qDeg;
+            maxTotalN = std::max(maxTotalN, maxTotalNStage);
         }
-        maxTotalN = std::max(maxTotalN, maxTotalNStage);
-    }
 
-    uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
-    if(!gpu) {
+        uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
         mapOffsets[std::make_pair("buff_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
         maxTotalNStageQ += NExtended * mapSectionsN["cm" + to_string(nStages + 1)];
+        maxTotalN = std::max(maxTotalN, maxTotalNStageQ);
     } else {
-        mapOffsets[std::make_pair("extra_helper_fft_" + to_string(nStages + 1), false)] = maxTotalNStageQ;
-        maxTotalNStageQ += FIELD_EXTENSION*NExtended;
-    }
-    maxTotalN = std::max(maxTotalN, maxTotalNStageQ);
-    
+        uint64_t maxTotalNStageQ = mapOffsets[std::make_pair("q", true)] + NExtended * FIELD_EXTENSION;
+        mapOffsets[std::make_pair("extra_helper_fft", false)] = maxTotalNStageQ;
+        maxTotalNStageQ += NExtended * FIELD_EXTENSION + qDeg;
+        maxTotalN = std::max(maxTotalN, maxTotalNStageQ);
+    }    
     
 
  

@@ -71,6 +71,7 @@ pub struct ProofMan<F: PrimeField64> {
     verify_constraints: bool,
     aggregation: bool,
     final_snark: bool,
+    n_streams: u64,
 }
 
 impl<F: PrimeField64> Drop for ProofMan<F> {
@@ -434,7 +435,7 @@ where
             &gpu_params,
         )?;
 
-        let d_buffers = Self::prepare_gpu(sctx.clone(), setups_vadcop.clone(), aggregation, &gpu_params);
+        let (d_buffers, n_streams) = Self::prepare_gpu(sctx.clone(), setups_vadcop.clone(), aggregation, &gpu_params);
 
         let (trace_size, prover_buffer_size) =
             if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
@@ -467,6 +468,7 @@ where
             aggregation,
             final_snark,
             verify_constraints,
+            n_streams,
         })
     }
 
@@ -554,6 +556,8 @@ where
         let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
 
+        let streams = Arc::new(Mutex::new(vec![None; self.n_streams as usize]));
+
         let contribution_thread = {
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
@@ -564,6 +568,7 @@ where
             let precomputed_witnesses = precomputed_witnesses.clone();
             let instances_clone = instances.clone();
             let contributions_calculated = contributions_calculated.clone();
+            let streams_clone = streams.clone();
 
             std::thread::spawn(move || {
                 while let Some((instance_id, _)) = precomputed_witnesses.pop() {
@@ -575,6 +580,7 @@ where
                         instance_id,
                         aux_trace_clone.clone().as_ptr() as *mut u8,
                         d_buffers_clone.clone(),
+                        streams_clone.clone(),
                     );
 
                     let count = contributions_calculated.increment();
@@ -661,6 +667,11 @@ where
         let proofs: Arc<DashMap<usize, Proof<F>>> = Arc::new(DashMap::new());
         let compressor_proofs: Arc<DashMap<usize, Proof<F>>> = Arc::new(DashMap::new());
         let recursive1_proofs: Arc<DashMap<usize, Proof<F>>> = Arc::new(DashMap::new());
+
+        let vec_streams: Vec<Option<u64>> = {
+            let mut guard = streams.lock().unwrap();
+            std::mem::take(&mut *guard)
+        };
 
         let mut n_airgroup_proofs = vec![0; n_airgroups];
         for instance_id in my_instances.iter() {
@@ -802,6 +813,7 @@ where
             let recursive2_witness_clone = recursive2_witnesses.clone();
             let recursive_witness_clone = recursive_witness.clone();
             let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
+            let stream_clone = vec_streams.clone();
 
             let trace_size = self.trace_size;
             let prover_buffer_size = self.prover_buffer_size;
@@ -809,6 +821,7 @@ where
             std::thread::spawn(move || {
                 while let Some((id, proof_type)) = precomputed_witnesses.pop_recursive() {
                     if proof_type == ProofType::Basic as usize {
+                        let stream_id = stream_clone.iter().position(|&stream| stream == Some(id as u64));
                         Self::gen_proof(
                             proofs_clone.clone(),
                             pctx_clone.clone(),
@@ -817,6 +830,7 @@ where
                             output_dir_path_clone.clone(),
                             aux_trace_clone.clone(),
                             d_buffers_clone.clone(),
+                            stream_id,
                             options.save_proofs,
                         );
                         let pctx_clone = pctx_clone.clone();
@@ -883,8 +897,15 @@ where
         );
 
         let mut my_instances_calculated = vec![false; instances.len()];
+
+        for instance_id in vec_streams.iter().flatten() {
+            my_instances_calculated[*instance_id as usize] = true;
+            proofs_counter.increment();
+            precomputed_witnesses.push((*instance_id as usize, ProofType::Basic as usize));
+        }
+
         for (instance_id, _) in instances.iter().enumerate() {
-            if self.pctx.is_air_instance_stored(instance_id) {
+            if !my_instances_calculated[instance_id] && self.pctx.is_air_instance_stored(instance_id) {
                 my_instances_calculated[instance_id] = true;
                 proofs_counter.increment();
                 precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
@@ -1109,7 +1130,7 @@ where
         setups_vadcop: Arc<SetupsVadcop<F>>,
         aggregation: bool,
         gpu_params: &ParamsGPU,
-    ) -> Arc<DeviceBuffer> {
+    ) -> (Arc<DeviceBuffer>, u64) {
         let free_memory_gpu = match cfg!(feature = "gpu") {
             true => check_device_memory_c() as f64 * 0.98,
             false => 0.0,
@@ -1178,7 +1199,7 @@ where
             false => sctx.max_proof_size as u64,
         };
 
-        gen_device_streams_c(
+        let n_streams: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
             sctx.max_prover_trace_size as u64,
             sctx.max_prover_contribution_area as u64,
@@ -1193,7 +1214,7 @@ where
             max_number_proofs_per_gpu as u64,
         );
 
-        d_buffers
+        (d_buffers, n_streams)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1205,6 +1226,7 @@ where
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
         d_buffers: Arc<DeviceBuffer>,
+        stream_id_: Option<usize>,
         save_proof: bool,
     ) {
         timer_start_info!(GEN_PROOF);
@@ -1248,6 +1270,11 @@ where
         let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
         let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
 
+        let (skip_recalculation, stream_id) = match stream_id_ {
+            Some(stream_id) => (true, stream_id),
+            None => (false, 0),
+        };
+
         gen_proof_c(
             p_setup,
             p_steps_params,
@@ -1258,7 +1285,8 @@ where
             air_id as u64,
             instance_id as u64,
             d_buffers.get_ptr(),
-            true, // TODO: MANAGE IT BACK
+            skip_recalculation,
+            stream_id as u64,
             &const_pols_path,
             &const_pols_tree_path,
         );
@@ -1537,6 +1565,7 @@ where
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
         d_buffers: Arc<DeviceBuffer>,
+        streams: Arc<Mutex<Vec<Option<u64>>>>,
     ) {
         let n_field_elements = 4;
 
@@ -1550,7 +1579,7 @@ where
         let air_values = pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id).clone();
 
         let root_ptr = roots_contributions.get(&instance_id).unwrap().value().as_ptr() as *mut u8;
-        commit_witness_c(
+        let stream_id = commit_witness_c(
             3,
             setup.stark_info.stark_struct.n_bits,
             setup.stark_info.stark_struct.n_bits_ext,
@@ -1559,7 +1588,9 @@ where
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
             d_buffers.get_ptr(),
+            (&setup.p_setup).into(),
         );
+        streams.lock().unwrap()[stream_id as usize] = Some(instance_id as u64);
 
         let n_airvalues = setup
             .stark_info

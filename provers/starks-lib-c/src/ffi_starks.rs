@@ -546,7 +546,8 @@ pub fn commit_witness_c(
     witness: *mut u8,
     aux_trace: *mut u8,
     d_buffers: *mut c_void,
-) {
+    setup: *mut c_void,
+) -> u64 {
     unsafe {
         commit_witness(
             arity,
@@ -557,7 +558,8 @@ pub fn commit_witness_c(
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
             d_buffers,
-        );
+            setup,
+        )
     }
 }
 
@@ -787,7 +789,8 @@ pub fn gen_proof_c(
     air_id: u64,
     instance_id: u64,
     d_buffers: *mut c_void,
-    load_constants: bool,
+    skip_recalculation: bool,
+    stream_id: u64,
     const_pols_path: &str,
     const_tree_path: &str,
 ) -> u64 {
@@ -811,7 +814,8 @@ pub fn gen_proof_c(
             proof_buffer,
             proof_file_ptr,
             d_buffers,
-            load_constants,
+            skip_recalculation,
+            stream_id,
             const_filename_ptr,
             const_tree_filename_ptr,
         )
@@ -1121,7 +1125,7 @@ pub fn gen_device_streams_c(
     max_size_const_tree_aggregation: u64,
     max_proof_size: u64,
     max_number_proofs_per_gpu: u64,
-) {
+) -> u64 {
     unsafe {
         gen_device_streams(
             d_buffers,
@@ -1136,7 +1140,7 @@ pub fn gen_device_streams_c(
             max_size_const_tree_aggregation,
             max_proof_size,
             max_number_proofs_per_gpu,
-        );
+        )
     }
 }
 
@@ -1540,8 +1544,10 @@ pub fn commit_witness_c(
     _witness: *mut u8,
     _aux_trace: *mut u8,
     _d_buffers: *mut c_void,
-) {
+    _setup: *mut c_void,
+) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1728,7 +1734,8 @@ pub fn gen_proof_c(
     _air_id: u64,
     _instance_id: u64,
     _d_buffers: *mut c_void,
-    _load_constants: bool,
+    _skip_recalculation: bool,
+    _stream_id: u64,
     _const_pols_path: &str,
     _const_tree_path: &str,
 ) -> u64 {
@@ -1944,8 +1951,9 @@ pub fn gen_device_streams_c(
     _max_size_const_tree_aggregation: u64,
     _max_proof_size: u64,
     _max_number_proofs_per_gpu: u64,
-) {
+) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]

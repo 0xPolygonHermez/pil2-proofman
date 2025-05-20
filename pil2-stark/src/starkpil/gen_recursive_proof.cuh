@@ -90,7 +90,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     }
     TimerStopGPU(timer, STARK_STEP_0);
     TimerStartGPU(timer, STARK_COMMIT_STAGE_1);
-    commitStage_inplace(1, setupCtx, starks.treesGL, d_trace, d_aux_trace, d_transcript, timer, stream);
+    commitStage_inplace(1, setupCtx, starks.treesGL, d_trace, d_aux_trace, d_transcript, false, timer, stream);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if (setupCtx.starkInfo.challengesMap[i].stage == 2)
@@ -135,7 +135,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
 
 
     TimerStartGPU(timer, STARK_COMMIT_STAGE_2);
-    commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_transcript, timer, stream);
+    commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_transcript, false, timer, stream);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if (setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 1)
@@ -154,7 +154,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     computeX_kernel<<<blocks_x, threads_x, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));            
     calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, timer, stream);
 
-    commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, nullptr, d_aux_trace, d_transcript, timer, stream);
+    commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, nullptr, d_aux_trace, d_transcript, false, timer, stream);
     TimerStopGPU(timer, STARK_STEP_Q);
     TimerStartGPU(timer, STARK_STEP_EVALS);
     uint64_t xiChallengeIndex = 0;
