@@ -14,6 +14,17 @@ struct ExtractedAsm {
     pub clobbers: Vec<TokenStream2>,
 }
 
+/// A macro to import assembly code from C++ inline assembly.
+///
+/// This macro extracts assembly code from a C++ function and converts it into Rust inline assembly.
+/// It supports extracting the assembly code, output operands, input operands, and clobbers.
+///
+/// # Example
+/// ```ignore
+/// import_asm!(goldilocks_base_field_scalar_add);
+/// ```
+///
+/// All assembly imports must be manually hard-coded in the macro.
 #[proc_macro]
 pub fn import_asm(input: TokenStream) -> TokenStream {
     match import_asm_impl(input.into()) {
@@ -97,7 +108,16 @@ fn extract_asm_from_function(import: &str, function_path: &str) -> Result<Extrac
             .map(|s| {
                 if let Some(caps) = operand_re.captures(s) {
                     let constraint = caps.get(1).unwrap().as_str();
-                    let expr = caps.get(2).unwrap().as_str().trim().replace('.', "_"); // convert result.fe → result_fe
+                    let expr_raw = caps.get(2).unwrap().as_str().trim();
+
+                    // Convert C++ field access like `result.fe` → `result_fe`
+                    let expr_string = expr_raw.replace('.', "_");
+                    let expr: TokenStream2 = syn::parse_str(&expr_string).map_err(|e| {
+                        Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!("Invalid operand expression `{expr_raw}`: {e}"),
+                        )
+                    })?;
 
                     let operand = match constraint {
                         "=&a" => quote! { out("eax") #expr },
@@ -113,7 +133,7 @@ fn extract_asm_from_function(import: &str, function_path: &str) -> Result<Extrac
 
                     Ok(operand)
                 } else if s.starts_with('"') && s.ends_with('"') {
-                    // Handle clobber like "%r10"
+                    // Handle clobber like: "%r10"
                     let clobber = s.trim_matches('"').trim_start_matches('%');
                     Ok(quote! { clobber(#clobber) })
                 } else {
@@ -756,6 +776,5 @@ fn test_empty_array() {
 fn test_import_asm_impl() {
     let input = quote!(goldilocks_base_field_scalar_add);
     let output = import_asm_impl(input.into()).unwrap();
-    println!("{}", output.to_string());
-    panic!("done");
+    assert!(output.to_string().contains("asm"))
 }
