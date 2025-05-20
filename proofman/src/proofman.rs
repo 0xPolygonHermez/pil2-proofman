@@ -556,6 +556,12 @@ where
 
         let n_pools = instances_mine.min(self.gpu_params.max_number_proof_pools);
 
+        timer_start_info!(WITNESS_ALONE);
+        for instance_id in my_instances_sorted.iter() {
+            self.wcm.calculate_witness(1, &[*instance_id], 0, max_num_threads);
+        }
+        timer_stop_and_log_info!(WITNESS_ALONE);
+
         let contribution_pools: Vec<_> = (0..n_pools)
             .map(|_| {
                 let pctx_clone = self.pctx.clone();
