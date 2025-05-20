@@ -1,17 +1,17 @@
-#[cfg(feature = "distributed")]
+#[cfg(distributed)]
 use mpi::traits::*;
-#[cfg(feature = "distributed")]
+#[cfg(distributed)]
 use mpi::environment::Universe;
-#[cfg(feature = "distributed")]
+#[cfg(distributed)]
 use mpi::collective::CommunicatorCollectives;
-#[cfg(feature = "distributed")]
+#[cfg(distributed)]
 use mpi::datatype::PartitionMut;
-#[cfg(feature = "distributed")]
+#[cfg(distributed)]
 use mpi::topology::Communicator;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
-#[cfg(feature = "distributed")]
+#[cfg(distributed)]
 use std::sync::atomic::Ordering;
 use p3_field::Field;
 
@@ -21,9 +21,9 @@ use crate::GlobalInfo;
 pub struct DistributionCtx {
     pub rank: i32,
     pub n_processes: i32,
-    #[cfg(feature = "distributed")]
+    #[cfg(distributed)]
     pub universe: Universe,
-    #[cfg(feature = "distributed")]
+    #[cfg(distributed)]
     pub world: mpi::topology::SimpleCommunicator,
     pub n_instances: usize,
     pub my_instances: Vec<usize>,
@@ -31,9 +31,9 @@ pub struct DistributionCtx {
     pub instances_owner: Vec<(i32, usize, u64)>, //owner_rank, owner_instance_idx, weight
     pub owners_count: Vec<i32>,
     pub owners_weight: Vec<u64>,
-    #[cfg(feature = "distributed")]
+    #[cfg(distributed)]
     pub roots_gatherv_count: Vec<i32>,
-    #[cfg(feature = "distributed")]
+    #[cfg(distributed)]
     pub roots_gatherv_displ: Vec<i32>,
     pub my_groups: Vec<Vec<usize>>,
     pub my_air_groups: Vec<Vec<usize>>,
@@ -45,7 +45,7 @@ pub struct DistributionCtx {
 
 impl std::fmt::Debug for DistributionCtx {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             f.debug_struct("DistributionCtx")
                 .field("rank", &self.rank)
@@ -66,7 +66,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("node_rank", &self.node_rank)
                 .finish()
         }
-        #[cfg(not(feature = "distributed"))]
+        #[cfg(not(distributed))]
         {
             f.debug_struct("DistributionCtx")
                 .field("rank", &self.rank)
@@ -90,7 +90,7 @@ impl std::fmt::Debug for DistributionCtx {
 
 impl DistributionCtx {
     pub fn new() -> Self {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
             let world = universe.world();
@@ -117,7 +117,7 @@ impl DistributionCtx {
                 node_rank: 0,
             }
         }
-        #[cfg(not(feature = "distributed"))]
+        #[cfg(not(distributed))]
         {
             DistributionCtx {
                 rank: 0,
@@ -147,7 +147,7 @@ impl DistributionCtx {
         self.owners_count = vec![0; self.n_processes as usize];
         self.owners_weight = vec![0; self.n_processes as usize];
 
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             self.roots_gatherv_count = vec![0; self.n_processes as usize];
             self.roots_gatherv_displ = vec![0; self.n_processes as usize];
@@ -162,7 +162,7 @@ impl DistributionCtx {
 
     #[inline]
     pub fn barrier(&self) {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             self.world.barrier();
         }
@@ -347,7 +347,7 @@ impl DistributionCtx {
         let mut group_indices: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
 
         // Calculate the partial sums of owners_count
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             self.set_node_rank();
             let mut total_instances = 0;
@@ -360,10 +360,10 @@ impl DistributionCtx {
 
         // Populate the HashMap based on group_id and buffer positions
         for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
-            #[cfg(feature = "distributed")]
+            #[cfg(distributed)]
             let pos_buffer = self.roots_gatherv_displ[self.instances_owner[idx].0 as usize] as usize
                 + self.instances_owner[idx].1 * 10;
-            #[cfg(not(feature = "distributed"))]
+            #[cfg(not(distributed))]
             let pos_buffer = idx * 10;
             group_indices.entry(group_id).or_default().push(pos_buffer);
         }
@@ -400,19 +400,19 @@ impl DistributionCtx {
     }
 
     pub fn set_node_rank(&mut self) {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             let local_comm = self.world.split_shared(self.rank);
             self.node_rank = local_comm.rank();
         }
-        #[cfg(not(feature = "distributed"))]
+        #[cfg(not(distributed))]
         {
             self.node_rank = 0;
         }
     }
 
     pub fn distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             let mut all_roots: Vec<u64> = vec![0; 10 * self.n_instances];
             let counts = &self.roots_gatherv_count;
@@ -424,7 +424,7 @@ impl DistributionCtx {
 
             all_roots
         }
-        #[cfg(not(feature = "distributed"))]
+        #[cfg(not(distributed))]
         {
             roots
         }
@@ -435,7 +435,7 @@ impl DistributionCtx {
         airgroupvalues: Vec<Vec<u64>>,
         _global_info: &GlobalInfo,
     ) -> Vec<Vec<F>> {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             let airgroupvalues_flatten: Vec<u64> = airgroupvalues.into_iter().flatten().collect();
             let mut gathered_data: Vec<u64> = vec![0; airgroupvalues_flatten.len() * self.n_processes as usize];
@@ -480,7 +480,7 @@ impl DistributionCtx {
             }
             airgroupvalues_full
         }
-        #[cfg(not(feature = "distributed"))]
+        #[cfg(not(distributed))]
         {
             airgroupvalues
                 .into_iter()
@@ -490,7 +490,7 @@ impl DistributionCtx {
     }
 
     pub fn distribute_publics(&self, publics: Vec<u64>) -> Vec<u64> {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             let size = self.n_processes;
 
@@ -521,14 +521,14 @@ impl DistributionCtx {
             // Each process will now have the same complete dataset
             all_publics
         }
-        #[cfg(not(feature = "distributed"))]
+        #[cfg(not(distributed))]
         {
             publics
         }
     }
 
     pub fn distribute_multiplicity(&self, _multiplicity: &[AtomicU64], _owner: i32) {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             //assert that I can operate with u32
             assert!(_multiplicity.len() < u32::MAX as usize);
@@ -564,7 +564,7 @@ impl DistributionCtx {
     }
 
     pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<AtomicU64>], _owner: i32) {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             // Ensure that each multiplicity vector can be operated with u32
             let mut buff_size = 0;
@@ -619,7 +619,7 @@ impl DistributionCtx {
 
     #[allow(unused_variables)]
     pub fn distribute_recursive2_proofs(&mut self, alives: &[usize], proofs: &mut [Vec<Option<Vec<u64>>>]) {
-        #[cfg(feature = "distributed")]
+        #[cfg(distributed)]
         {
             // Count number of aggregations that will be done
             let n_groups = alives.len();
