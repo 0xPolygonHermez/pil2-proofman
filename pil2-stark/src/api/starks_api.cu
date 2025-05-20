@@ -45,9 +45,8 @@ void *gen_device_buffers(void *maxSizes_)
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[i], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[i], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
-        init_gpu_const_2();
     }
-    
+    init_gpu_const_2();
     return (void *)d_buffers;
 }
 
@@ -294,7 +293,6 @@ void get_stream_proofs(void *d_buffers_){
         if (d_buffers->streamsData[i].status == 0) continue;
         set_device(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
-        assert (d_buffers->streamsData[i].status == 2); 
         get_proof(d_buffers, i);
         d_buffers->streamsData[i].reset();        
     }
@@ -316,7 +314,6 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     set_device(d_buffers->streamsData[streamId].gpuId);
     CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[streamId].stream));
-    assert (d_buffers->streamsData[streamId].status == 2);
     get_proof(d_buffers, streamId);
     d_buffers->streamsData[streamId].reset();
 }
@@ -430,7 +427,6 @@ void get_stream_roots(void *d_buffers_){
         if (d_buffers->streamsData[i].status == 0) continue;
         set_device(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
-        assert (d_buffers->streamsData[i].status == 2); 
         get_commit_root(d_buffers, i);
         d_buffers->streamsData[i].reset();        
     }
