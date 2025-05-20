@@ -3,8 +3,153 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, format_ident, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
-    parse2, Field, FieldsNamed, Generics, Ident, LitInt, Result, Token,
+    parse2, Error, Field, FieldsNamed, Generics, Ident, LitInt, Result, Token,
 };
+use regex::Regex;
+
+struct ExtractedAsm {
+    pub lines: Vec<String>,
+    pub outputs: Vec<TokenStream2>,
+    pub inputs: Vec<TokenStream2>,
+    pub clobbers: Vec<TokenStream2>,
+}
+
+/// A macro to import assembly code from C++ inline assembly.
+///
+/// This macro extracts assembly code from a C++ function and converts it into Rust inline assembly.
+/// It supports extracting the assembly code, output operands, input operands, and clobbers.
+///
+/// # Example
+/// ```ignore
+/// import_asm!(goldilocks_base_field_scalar_add);
+/// ```
+///
+/// All assembly imports must be manually hard-coded in the macro.
+#[proc_macro]
+pub fn import_asm(input: TokenStream) -> TokenStream {
+    match import_asm_impl(input.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+fn import_asm_impl(input: TokenStream2) -> Result<TokenStream2> {
+    let input = parse2::<Ident>(input)?;
+    let extracted = if input == "goldilocks_base_field_scalar_add" {
+        const IMPORT: &str = include_str!("../../pil2-stark/src/goldilocks/src/goldilocks_base_field_scalar.hpp");
+        extract_asm_from_function(IMPORT, "Goldilocks::add").map_err(|e| Error::new(input.span(), e.to_string()))?
+    } else {
+        return Err(Error::new(
+            input.span(),
+            "Unsupported function, all asm imports must be manually hard-coded in the macro!",
+        ));
+    };
+
+    let ExtractedAsm { lines, outputs, inputs, clobbers } = extracted;
+
+    let quoted_lines: Vec<TokenStream2> = lines.iter().map(|line| quote! { #line }).collect();
+
+    Ok(quote! {
+        {
+            use std::arch::asm;
+            unsafe {
+                asm!(
+                    #(#quoted_lines),*,
+                    #(#outputs,)*
+                    #(#inputs,)*
+                    #(#clobbers,)*
+                );
+            }
+        }
+    })
+}
+
+fn extract_asm_from_function(import: &str, function_path: &str) -> Result<ExtractedAsm> {
+    let func_pattern = format!(r#"inline\s+void\s+{}\s*\([^)]*\)\s*\{{(?s)(.*?)\n\}}"#, regex::escape(function_path));
+    let func_re = Regex::new(&func_pattern)
+        .map_err(|e| Error::new(proc_macro2::Span::call_site(), format!("Invalid regex: {e}")))?;
+
+    let func_body = func_re
+        .captures(import)
+        .and_then(|caps| caps.get(1))
+        .ok_or_else(|| Error::new(proc_macro2::Span::call_site(), "Function body not found"))?
+        .as_str();
+
+    // Match multi-line __asm__ with multiple quoted strings before the colon
+    let asm_block_re = Regex::new(
+        r#"__asm__\s*\(\s*((?s)(?:"(?:\\.|[^"])*"\s*)+)\s*:\s*(.*?)\s*(?::\s*(.*?)\s*)?(?::\s*(.*?)\s*)?\);"#,
+    )
+    .map_err(|e| Error::new(proc_macro2::Span::call_site(), format!("Invalid regex: {e}")))?;
+
+    let caps = asm_block_re
+        .captures(func_body)
+        .ok_or_else(|| Error::new(proc_macro2::Span::call_site(), "__asm__ block not found"))?;
+
+    let raw_lines_block = caps.get(1).unwrap().as_str();
+    let outputs = caps.get(2).map_or("", |m| m.as_str());
+    let inputs = caps.get(3).map_or("", |m| m.as_str());
+    let clobbers = caps.get(4).map_or("", |m| m.as_str());
+
+    // Extract each quoted instruction line individually
+    let line_re = Regex::new(r#""((?:\\.|[^"])*)""#).unwrap();
+    let lines = line_re
+        .captures_iter(raw_lines_block)
+        .map(|cap| cap[1].trim().replace("\\t", "\t").replace("\\n", "").replace("\\\"", "\""))
+        .collect::<Vec<_>>();
+
+    // Convert C++-style operand lists into Rust token streams
+    fn parse_operands(block: &str) -> Result<Vec<TokenStream2>> {
+        let operand_re = Regex::new(r#"^"([^"]+)"\s*\(([^)]+)\)$"#).unwrap();
+
+        block
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                if let Some(caps) = operand_re.captures(s) {
+                    let constraint = caps.get(1).unwrap().as_str();
+                    let expr_raw = caps.get(2).unwrap().as_str().trim();
+
+                    // Convert C++ field access like `result.fe` → `result_fe`
+                    let expr_string = expr_raw.replace('.', "_");
+                    let expr: TokenStream2 = syn::parse_str(&expr_string).map_err(|e| {
+                        Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!("Invalid operand expression `{expr_raw}`: {e}"),
+                        )
+                    })?;
+
+                    let operand = match constraint {
+                        "=&a" => quote! { out("eax") #expr },
+                        "r" => quote! { in(reg) #expr },
+                        "m" => quote! { in("m") #expr },
+                        _ => {
+                            return Err(Error::new(
+                                proc_macro2::Span::call_site(),
+                                format!("Unsupported constraint: `{constraint}`"),
+                            ));
+                        }
+                    };
+
+                    Ok(operand)
+                } else if s.starts_with('"') && s.ends_with('"') {
+                    // Handle clobber like: "%r10"
+                    let clobber = s.trim_matches('"').trim_start_matches('%');
+                    Ok(quote! { clobber(#clobber) })
+                } else {
+                    Err(Error::new(proc_macro2::Span::call_site(), format!("Malformed operand: `{s}`")))
+                }
+            })
+            .collect()
+    }
+
+    Ok(ExtractedAsm {
+        lines,
+        outputs: parse_operands(outputs)?,
+        inputs: parse_operands(inputs)?,
+        clobbers: parse_operands(clobbers)?,
+    })
+}
 
 #[proc_macro]
 pub fn trace(input: TokenStream) -> TokenStream {
@@ -625,4 +770,11 @@ fn test_empty_array() {
     let ty: syn::Type = syn::parse_quote! { [F; 0] };
     let size = calculate_field_size_literal(&ty).unwrap();
     assert_eq!(size, 0);
+}
+
+#[test]
+fn test_import_asm_impl() {
+    let input = quote!(goldilocks_base_field_scalar_add);
+    let output = import_asm_impl(input).unwrap();
+    assert!(output.to_string().contains("asm"))
 }
