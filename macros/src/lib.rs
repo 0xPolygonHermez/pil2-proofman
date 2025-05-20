@@ -3,8 +3,76 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, format_ident, ToTokens};
 use syn::{
     parse::{Parse, ParseStream},
-    parse2, Field, FieldsNamed, Generics, Ident, LitInt, Result, Token,
+    parse2, Error, Field, FieldsNamed, Generics, Ident, LitInt, Result, Token,
 };
+use regex::Regex;
+
+#[proc_macro]
+pub fn import_asm(input: TokenStream) -> TokenStream {
+    match import_asm_impl(input.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+fn import_asm_impl(input: TokenStream2) -> Result<TokenStream2> {
+    let input = parse2::<Ident>(input)?;
+    let asm_lines = if input == "goldilocks_base_field_scalar_add" {
+        const IMPORT: &str = include_str!("../../pil2-stark/src/goldilocks/src/goldilocks_base_field_scalar.hpp");
+        extract_asm_from_function(IMPORT, "Goldilocks::add")
+            .ok_or_else(|| Error::new(input.span(), "Could not extract asm from Goldilocks::add"))?
+    } else {
+        return Err(Error::new(
+            input.span(),
+            "Unsupported function, all asm imports must be manually hard-coded in the macro!",
+        ));
+    }
+    .into_iter()
+    .map(|line| line.trim().to_string()) // ensure clean lines
+    .collect::<Vec<_>>();
+
+    // Convert Vec<String> into Vec<TokenStream2> with quoted strings
+    let quoted_lines: Vec<TokenStream2> = asm_lines.iter().map(|line| quote! { #line }).collect();
+
+    Ok(quote! {
+        {
+            use std::arch::asm;
+            unsafe {
+                asm!(
+                    #(#quoted_lines),*
+                    ,
+                    out(reg) result,
+                    in(reg) in1,
+                    in(reg) in2,
+                    in(reg) prime,
+                    out("r10") _,
+                );
+            }
+        }
+    })
+}
+
+fn extract_asm_from_function(import: &str, function_path: &str) -> Option<Vec<String>> {
+    let func_pattern = format!(r#"inline\s+void\s+{}\s*\([^)]*\)\s*\{{(?s)(.*?)\n\}}"#, regex::escape(function_path));
+    let func_re = Regex::new(&func_pattern).ok()?;
+    let func_body = func_re.captures(import)?.get(1)?.as_str();
+
+    let asm_re = Regex::new(r#"__asm__\s*\(\s*"(?s)(.*?)"\s*\n\s*:"#).ok()?;
+    let raw = asm_re.captures(func_body)?.get(1)?.as_str();
+
+    // Clean each line
+    let cleaned = raw
+        .lines()
+        .map(|line| {
+            line.trim()
+                .trim_matches('"') // Remove surrounding quotes
+                .replace("\\t", "\t")
+                .replace("\\n", "") // We'll rejoin with \n below
+                .replace("\\\"", "\"")
+        })
+        .collect::<Vec<_>>();
+    Some(cleaned)
+}
 
 #[proc_macro]
 pub fn trace(input: TokenStream) -> TokenStream {
@@ -625,4 +693,10 @@ fn test_empty_array() {
     let ty: syn::Type = syn::parse_quote! { [F; 0] };
     let size = calculate_field_size_literal(&ty).unwrap();
     assert_eq!(size, 0);
+}
+
+#[test]
+fn test_import_asm_impl() {
+    let input = TokenStream::new();
+    import_asm_impl(input.into()).unwrap();
 }

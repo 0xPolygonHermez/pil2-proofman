@@ -839,6 +839,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rayon",
+ "regex",
  "syn",
 ]
 
