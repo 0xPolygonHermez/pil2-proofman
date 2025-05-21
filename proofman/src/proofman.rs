@@ -36,6 +36,8 @@ use proofman_starks_lib_c::{
     clear_proof_done_callback_c,
 };
 
+use std::sync::atomic::AtomicUsize;
+
 use std::{path::PathBuf, sync::Arc};
 
 use transcript::FFITranscript;
@@ -51,7 +53,7 @@ use crate::{
 };
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
-use crate::WitnessBuffer;
+use crate::{FastQueue, WitnessBuffer};
 use crate::Counter;
 use crate::aggregate_recursive2_proofs;
 
@@ -548,99 +550,88 @@ where
             false => (max_num_threads, 1),
         };
 
-        let witness_pending = Arc::new(Counter::new());
+        let number_witness_pending_to_calculate = Arc::new(Counter::new());
         let contributions_calculated = Arc::new(Counter::new());
-
-        let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
 
         let contribution_thread = {
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let aux_trace_clone = aux_trace.clone();
-            let values_contributions_clone = values_contributions.clone();
-            let roots_contributions_clone = roots_contributions.clone();
-            let d_buffers_clone = self.d_buffers.clone();
-            let precomputed_witnesses = precomputed_witnesses.clone();
-            let instances_clone = instances.clone();
-            let contributions_calculated = contributions_calculated.clone();
+            let pctx_clone = Arc::clone(&self.pctx);
+            let sctx_clone = Arc::clone(&self.sctx);
+            let aux_trace_clone = Arc::clone(&aux_trace);
+            let values_contributions_clone = Arc::clone(&values_contributions);
+            let roots_contributions_clone = Arc::clone(&roots_contributions);
+            let d_buffers_clone = Arc::clone(&self.d_buffers);
+            let precomputed_witnesses = Arc::clone(&precomputed_witnesses);
+            let contributions_calculated = Arc::clone(&contributions_calculated);
 
             std::thread::spawn(move || {
                 while let Some((instance_id, _)) = precomputed_witnesses.pop() {
                     Self::get_contribution_air(
-                        pctx_clone.clone(),
+                        &pctx_clone,
                         &sctx_clone,
-                        roots_contributions_clone.clone(),
-                        values_contributions_clone.clone(),
+                        &roots_contributions_clone,
+                        &values_contributions_clone,
                         instance_id,
-                        aux_trace_clone.clone().as_ptr() as *mut u8,
-                        d_buffers_clone.clone(),
+                        aux_trace_clone.as_ptr() as *mut u8,
+                        &d_buffers_clone,
                     );
 
                     let count = contributions_calculated.increment();
-                    let (_, _, all) = instances_clone[instance_id];
+                    let (_, _, all) = pctx_clone.dctx_get_instances()[instance_id];
                     if !all && (instances_mine - count) > max_witness_stored {
-                        let pctx_clone = pctx_clone.clone();
-                        std::thread::spawn(move || {
-                            pctx_clone.free_instance(instance_id);
-                        });
+                        pctx_clone.free_instance(instance_id);
                     }
                 }
             })
         };
 
-        let witness_pools: Vec<_> = (0..max_concurrent_pools)
+        timer_start_info!(CALCULATING_WITNESS);
+        let pending_witness = Arc::new(FastQueue::<usize>::new());
+        let next_instance_pos = Arc::new(AtomicUsize::new(0));
+        let _: Vec<_> = (0..max_concurrent_pools)
             .map(|thread_id| {
-                let witness_rx = witness_rx.clone();
                 let pctx_clone = self.pctx.clone();
-                let instances = instances.clone();
                 let wcm_clone = self.wcm.clone();
                 let precomputed_witnesses = precomputed_witnesses.clone();
-                let witness_pending_clone = witness_pending.clone();
+                let pending_witness_clone = pending_witness.clone();
+                let number_witness_pending_to_calculate_clone = number_witness_pending_to_calculate.clone();
+                let my_instances_sorted_clone = my_instances_sorted.clone();
+                let next_instance_pos_clone = next_instance_pos.clone();
 
                 std::thread::spawn(move || loop {
-                    if precomputed_witnesses.is_closed() {
-                        break;
-                    }
+                    let instance_pos = next_instance_pos_clone.fetch_add(1, Ordering::SeqCst);
 
-                    let instance_id = match witness_rx.recv() {
-                        Ok(id) => id,
-                        Err(_) => break,
-                    };
-
+                    let instance_id = my_instances_sorted_clone[instance_pos];
+                    // number_witness_pending_to_calculate_clone.increment();
                     wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
-                    let (_, _, all) = instances[instance_id];
-                    if !all {
-                        witness_pending_clone.decrement();
-                    }
+                    // number_witness_pending_to_calculate_clone.decrement();
 
-                    if pctx_clone.dctx_is_my_instance(instance_id) {
-                        precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
-                    }
+                    // if pctx_clone.dctx_is_my_instance(instance_id) {
+                    //     precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
+                    // }
                 })
             })
             .collect();
+        timer_stop_and_log_info!(CALCULATING_WITNESS);
 
         for instance_id in my_instances_sorted.iter() {
             let (_, _, all) = instances[*instance_id];
             if !all {
-                witness_pending.increment();
-                witness_tx.send(*instance_id).unwrap();
+                number_witness_pending_to_calculate.increment();
+                pending_witness.push(*instance_id);
             }
         }
 
-        witness_pending.wait_until_zero();
+        number_witness_pending_to_calculate.wait_until_zero();
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if *all {
-                witness_tx.send(instance_id).unwrap();
+                number_witness_pending_to_calculate.increment();
+                pending_witness.push(instance_id);
             }
         }
 
-        drop(witness_tx);
-        for pool in witness_pools {
-            pool.join().unwrap();
-        }
+        number_witness_pending_to_calculate.wait_until_zero();
 
         precomputed_witnesses.close();
         contribution_thread.join().unwrap();
@@ -820,9 +811,7 @@ where
                             options.save_proofs,
                         );
                         let pctx_clone = pctx_clone.clone();
-                        std::thread::spawn(move || {
-                            pctx_clone.free_instance(id);
-                        });
+                        pctx_clone.free_instance(id);
                     } else {
                         let (airgroup_id, _, _) = match proof_type == ProofType::Recursive2 as usize {
                             true => (id, 0, false),
@@ -1530,13 +1519,13 @@ where
 
     #[allow(clippy::too_many_arguments)]
     pub fn get_contribution_air(
-        pctx: Arc<ProofCtx<F>>,
+        pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
-        roots_contributions: Arc<DashMap<usize, [F; 4]>>,
-        values_contributions: Arc<DashMap<usize, Vec<F>>>,
+        roots_contributions: &DashMap<usize, [F; 4]>,
+        values_contributions: &DashMap<usize, Vec<F>>,
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
-        d_buffers: Arc<DeviceBuffer>,
+        d_buffers: &DeviceBuffer,
     ) {
         let n_field_elements = 4;
 

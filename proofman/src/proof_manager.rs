@@ -52,6 +52,36 @@ impl Counter {
     }
 }
 
+pub struct FastQueue<T> {
+    queue: Mutex<VecDeque<T>>,
+    condvar: Condvar,
+}
+
+impl<T> FastQueue<T> {
+    pub fn new() -> Self {
+        Self {
+            queue: Mutex::new(VecDeque::new()),
+            condvar: Condvar::new(),
+        }
+    }
+
+    pub fn push(&self, item: T) {
+        let mut queue = self.queue.lock().unwrap();
+        queue.push_back(item);
+        self.condvar.notify_one();
+    }
+
+    pub fn pop(&self) -> T {
+        let mut queue = self.queue.lock().unwrap();
+        loop {
+            if let Some(item) = queue.pop_front() {
+                return item;
+            }
+            queue = self.condvar.wait(queue).unwrap();
+        }
+    }
+}
+
 #[derive(Debug)]
 struct BufferData {
     items: VecDeque<(usize, usize)>,
