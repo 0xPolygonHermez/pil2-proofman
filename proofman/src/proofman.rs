@@ -524,8 +524,8 @@ where
 
         let values_contributions: Arc<DashMap<usize, Vec<F>>> = Arc::new(DashMap::new());
         let roots_contributions: Arc<DashMap<usize, [F; 4]>> = Arc::new(DashMap::new());
-        for instance_id in 0..my_instances.len() {
-            roots_contributions.insert(instance_id, [F::ZERO; 4]);
+        for instance_id in my_instances.iter() {
+            roots_contributions.insert(*instance_id, [F::ZERO; 4]);
         }
 
         let aux_trace_size = match cfg!(feature = "gpu") {
@@ -632,7 +632,7 @@ where
         witness_pending.wait_until_zero();
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
-            if *all && self.pctx.dctx_is_my_instance(instance_id) {
+            if *all {
                 witness_tx.send(instance_id).unwrap();
             }
         }

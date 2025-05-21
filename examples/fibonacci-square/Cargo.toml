@@ -25,4 +25,5 @@ num-bigint = "0.4"
 [features]
 default = []
 diagnostic = []
+dev = []
 gpu = ["proofman-common/gpu"]

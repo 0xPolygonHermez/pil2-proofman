@@ -333,7 +333,8 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
 
                         let proof3 = Proof::new(ProofType::Recursive2, airgroup, 0, None, proof_3);
 
-                        let circom_witness = gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2, &proof3)?;
+                        let mut circom_witness = gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2, &proof3)?;
+                        circom_witness.global_idx = Some(rank);
 
                         let (stream_id, recursive2_proof) = generate_recursive_proof::<F>(
                             pctx,
