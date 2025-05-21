@@ -9,7 +9,7 @@
 
 void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint64_t nCols, gl64_t *d_aux_trace, Goldilocks::Element *root_pinned, TimerGPU &timer, cudaStream_t stream) {
 
-    TimerStartGPU(timer, GEN_COMMIT_GPU);
+    TimerStartGPU(timer, STARK_GPU_COMMIT);
 
     uint64_t NExtended = 1 << nBitsExtended;
     if (nCols > 0)
@@ -33,7 +33,7 @@ void genCommit_gpu(uint64_t arity, uint64_t nBits, uint64_t nBitsExtended, uint6
         assert(0);
     }
 
-    TimerStopGPU(timer, GEN_COMMIT_GPU);
+    TimerStopGPU(timer, STARK_GPU_COMMIT);
 }
 
 #endif

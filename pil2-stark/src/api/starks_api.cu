@@ -24,7 +24,7 @@ struct MaxSizes
 };
 
 uint32_t reserveStream(DeviceCommitBuffers* d_buffers);
-void closeStreamTimer(TimerGPU timer, bool isProve);
+void closeStreamTimer(TimerGPU &timer, bool isProve);
 void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId);
 
@@ -275,7 +275,7 @@ void get_proof(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     uint64_t * proofBuffer = d_buffers->streamsData[streamId].proofBuffer;
     string proofType = d_buffers->streamsData[streamId].proofType;
     string proofFile = d_buffers->streamsData[streamId].proofFile;
-    TimerGPU timer = d_buffers->streamsData[streamId].timer;
+    TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
     closeStreamTimer(timer, true);
 
@@ -520,7 +520,7 @@ uint32_t reserveStream(DeviceCommitBuffers* d_buffers){
 
 }
 
-void closeStreamTimer(TimerGPU timer, bool isProve) {
+void closeStreamTimer(TimerGPU &timer, bool isProve) {
     TimerSyncAndLogAllGPU(timer); 
     TimerSyncCategoriesGPU(timer);
     if(isProve)

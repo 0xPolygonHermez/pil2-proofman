@@ -10,9 +10,9 @@
 #define LOG_TIME_GPU 0
 
 struct TimerEntry {
-    cudaEvent_t start;
-    cudaEvent_t stop;
-    float timeMs = -1.0f;  // Uninitialized
+    cudaEvent_t start = nullptr;
+    cudaEvent_t stop = nullptr;
+    float timeMs = -1.0f;
 };
 
 class TimerGPU {
@@ -21,20 +21,26 @@ public:
     std::unordered_map<std::string, std::vector<TimerEntry>> multiTimers;
     std::unordered_map<std::string, TimerEntry*> activeCategoryTimers;
     std::vector<std::string> order;
-    cudaStream_t stream;
+    cudaStream_t stream = nullptr;
 
-    TimerGPU() {}
-    TimerGPU(cudaStream_t s) : stream(s) {}
+    TimerGPU() = default;
+    explicit TimerGPU(cudaStream_t s) : stream(s) {}
 
-    void init(cudaStream_t s) {
-        stream = s;
+    void init(cudaStream_t s) { stream = s; }
+
+    bool createEvent(cudaEvent_t& event) {
+        cudaError_t err = cudaEventCreate(&event);
+        if (err != cudaSuccess) {
+            zklog.error("cudaEventCreate failed: " + std::string(cudaGetErrorString(err)));
+            return false;
+        }
+        return true;
     }
 
     void start(const std::string& name) {
         if (timers.find(name) == timers.end()) {
             cudaEvent_t start, stop;
-            cudaEventCreate(&start);
-            cudaEventCreate(&stop);
+            if (!createEvent(start) || !createEvent(stop)) return;
             timers[name] = {start, stop, -1.0f};
             order.push_back(name);
         }
@@ -47,7 +53,7 @@ public:
             zklog.error("TimerGPU::stop called for unknown section: " + name);
             return;
         }
-        cudaEventRecord(timers[name].stop, stream);
+        cudaEventRecord(it->second.stop, stream);
     }
 
     void startCategory(const std::string& name) {
@@ -55,12 +61,15 @@ public:
             zklog.error("TimerGPU::startCategory called without stop for previous timer: " + name);
             return;
         }
+
         cudaEvent_t start, stop;
-        cudaEventCreate(&start);
-        cudaEventCreate(&stop);
-        multiTimers[name].push_back({start, stop, -1.0f});
-        activeCategoryTimers[name] = &multiTimers[name].back();
-        cudaEventRecord(start, stream);
+        if (!createEvent(start) || !createEvent(stop)) return;
+
+        multiTimers[name].emplace_back(TimerEntry{start, stop, -1.0f});
+        TimerEntry& entry = multiTimers[name].back();
+
+        activeCategoryTimers[name] = &entry;
+        cudaEventRecord(entry.start, stream);
     }
 
     void stopCategory(const std::string& name) {
@@ -69,9 +78,7 @@ public:
             zklog.error("TimerGPU::stopCategory called without matching start: " + name);
             return;
         }
-
-        TimerEntry* entry = it->second;
-        cudaEventRecord(entry->stop, stream);
+        cudaEventRecord(it->second->stop, stream);
         activeCategoryTimers.erase(it);
     }
 
@@ -83,9 +90,7 @@ public:
 
     float getTimeMs(const std::string& name) {
         auto& entry = timers.at(name);
-        if (entry.timeMs < 0.0f) {
-            syncAndCompute(name);
-        }
+        if (entry.timeMs < 0.0f) syncAndCompute(name);
         return entry.timeMs;
     }
 
@@ -95,7 +100,6 @@ public:
 
     double getCategoryTotalTimeSec(const std::string& category) {
         double total = 0.0;
-
         auto it = multiTimers.find(category);
         if (it == multiTimers.end()) return 0.0;
 
@@ -104,25 +108,21 @@ public:
                 cudaEventSynchronize(entry.stop);
                 cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
             }
-            total += entry.timeMs / 1000.0; // Convert ms → s
+            total += entry.timeMs / 1000.0;
         }
-
         return total;
     }
 
     void syncAndLogAll() {
         for (const auto& name : order) {
             auto& entry = timers[name];
-            if (entry.timeMs < 0.0f) {
-                cudaEventSynchronize(entry.stop);
-                cudaEventElapsedTime(&entry.timeMs, entry.start, entry.stop);
-            }
+            if (entry.timeMs < 0.0f) syncAndCompute(name);
             zklog.trace("<-- " + name + " : " + std::to_string(entry.timeMs / 1000.0f) + " s");
         }
     }
 
     void syncCategories() {
-        for (auto& [category, entries] : multiTimers) {
+        for (auto& [_, entries] : multiTimers) {
             for (auto& entry : entries) {
                 if (entry.timeMs < 0.0f) {
                     cudaEventSynchronize(entry.stop);
@@ -147,16 +147,13 @@ public:
             }
         }
         multiTimers.clear();
-
         activeCategoryTimers.clear();
     }
 
     void logCategoryContributions(const std::string& total_name) {
-        auto it = timers.find(total_name);
-        if (it == timers.end()) return;
+        if (timers.find(total_name) == timers.end()) return;
 
         double time_total = getTimeSec(total_name);
-
         if (multiTimers.empty()) return;
 
         zklog.trace("     KERNELS CONTRIBUTIONS:");
@@ -164,61 +161,35 @@ public:
         std::vector<std::pair<std::string, double>> category_times;
         double accounted_time = 0.0;
 
-        // Collect and compute total times
         for (const auto& [category, entries] : multiTimers) {
             double total_sec = getCategoryTotalTimeSec(category);
             accounted_time += total_sec;
             category_times.emplace_back(category, total_sec);
         }
 
-        // Sort by descending time
         std::sort(category_times.begin(), category_times.end(),
-                [](const auto& a, const auto& b) {
-                    return a.second > b.second;
-                });
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
 
-        // Format and log
         std::ostringstream oss;
         for (const auto& [category, total_sec] : category_times) {
-            oss << std::fixed << std::setprecision(2) << total_sec << "s (";
-            oss << std::setprecision(2) << (total_sec / time_total) * 100.0 << "%";
-            oss << ")";
+           oss << std::fixed << std::setprecision(2) << total_sec << "s (" << (total_sec / time_total) * 100.0 << "%)";
             zklog.trace("        " + category + std::string(15 - std::min<size_t>(15, category.size()), ' ') + ":  " + oss.str());
             oss.str("");
             oss.clear();
         }
 
-        double other_time = time_total - accounted_time;
-        if (other_time < 0.0) other_time = 0.0;
-
-        oss << std::fixed << std::setprecision(2) << other_time << "s (";
-        oss << std::setprecision(2) << (other_time / time_total) * 100.0 << "%";
-        oss << ")";
+        double other_time = std::max(0.0, time_total - accounted_time);
+        oss << std::fixed << std::setprecision(2) << other_time << "s (" << (other_time / time_total) * 100.0 << "%)";
         zklog.trace("        OTHER" + std::string(15 - 5, ' ') + ":  " + oss.str());
     }
 
     ~TimerGPU() {
-        for (auto& [_, entry] : timers) {
-            cudaEventDestroy(entry.start);
-            cudaEventDestroy(entry.stop);
-        }
-
-        for (auto& [_, entries] : multiTimers) {
-            for (auto& entry : entries) {
-                cudaEventDestroy(entry.start);
-                cudaEventDestroy(entry.stop);
-            }
-        }
-
-        timers.clear();
-        multiTimers.clear();
-        activeCategoryTimers.clear();
-        order.clear();
+        clear();
     }
 };
 
 inline std::string makeTimerName(const std::string& base, int id) {
-    return base + "_" + to_string(id);
+    return base + "_" + std::to_string(id);
 }
 
 #if LOG_TIME_GPU
