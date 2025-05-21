@@ -1000,7 +1000,7 @@ struct StreamData{
         cudaSetDevice(gpuId);
         cudaEventDestroy(end_event);
         cudaEventCreate(&end_event);
-        TimerResetGPU(timer);
+
         status = 0;
 
         root = nullptr;
