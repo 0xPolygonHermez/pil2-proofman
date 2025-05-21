@@ -290,7 +290,7 @@ void get_stream_proofs(void *d_buffers_){
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     for (uint64_t i = 0; i < d_buffers->n_streams; i++) {
-        if (d_buffers->streamsData[i].status == 0) continue;
+        if (d_buffers->streamsData[i].status == 0 || d_buffers->streamsData[i].status == 3) continue;
         set_device(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
         get_proof(d_buffers, i);
@@ -423,7 +423,7 @@ void get_stream_roots(void *d_buffers_){
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     for (uint64_t i = 0; i < d_buffers->n_streams; i++) {
-        if (d_buffers->streamsData[i].status == 0) continue;
+        if (d_buffers->streamsData[i].status == 0 || d_buffers->streamsData[i].status == 3) continue;
         set_device(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
         get_commit_root(d_buffers, i);
@@ -467,17 +467,28 @@ uint32_t reserveStream(DeviceCommitBuffers* d_buffers){
 
     std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
     uint32_t countFreeStreamsGPU[d_buffers->n_gpus];
-    uint32_t streamIdxGPU[d_buffers->n_gpus];
-    memset(countFreeStreamsGPU, 0, sizeof(uint32_t) * d_buffers->n_gpus);
-    memset(streamIdxGPU, 0, sizeof(uint32_t) * d_buffers->n_gpus);
+    uint32_t countUnusedStreams[d_buffers->n_gpus];
+    int streamIdxGPU[d_buffers->n_gpus];
+    
+    for( uint32_t i = 0; i < d_buffers->n_gpus; i++){
+        countUnusedStreams[i] = 0;
+        countFreeStreamsGPU[i] = 0;
+        streamIdxGPU[i] = -1;
+    }
 
     bool someFree = false;
     while (!someFree){
         for (uint32_t i = 0; i < d_buffers->n_streams; i++) {
-            if (d_buffers->streamsData[i].status==0 || (d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess)) {
+            if (d_buffers->streamsData[i].status==0 || d_buffers->streamsData[i].status==3 || (d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess)) {
 
                 countFreeStreamsGPU[d_buffers->streamsData[i].gpuId]++;
-                streamIdxGPU[d_buffers->streamsData[i].gpuId] = i;
+                if(d_buffers->streamsData[i].status==0){
+                    countUnusedStreams[d_buffers->streamsData[i].gpuId]++;
+                    streamIdxGPU[d_buffers->streamsData[i].gpuId] = i;
+                }
+                if( streamIdxGPU[d_buffers->streamsData[i].gpuId] == -1 ){
+                    streamIdxGPU[d_buffers->streamsData[i].gpuId] = i;
+                }
                 someFree = true;
             }
         }
@@ -488,7 +499,7 @@ uint32_t reserveStream(DeviceCommitBuffers* d_buffers){
     uint32_t maxFree = 0;
     uint32_t streamId = 0;
     for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-        if (countFreeStreamsGPU[i] > maxFree) {
+        if (countFreeStreamsGPU[i] > maxFree || (countFreeStreamsGPU[i] == maxFree && countUnusedStreams[i] > countUnusedStreams[streamId])) {
             maxFree = countFreeStreamsGPU[i];
             streamId = streamIdxGPU[i];
         }
