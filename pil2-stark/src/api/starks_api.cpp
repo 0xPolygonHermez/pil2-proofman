@@ -376,7 +376,7 @@ void write_custom_commit(void* root, uint64_t N, uint64_t NExtended, uint64_t nC
 }
 
 #ifndef __USE_CUDA__
-void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers) {
+uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers, void *pSetupCtx_) {
     Goldilocks::Element *rootGL = (Goldilocks::Element *)root;
     Goldilocks::Element *traceGL = (Goldilocks::Element *)trace;
     Goldilocks::Element *auxTraceGL = (Goldilocks::Element *)auxTrace;
@@ -392,6 +392,7 @@ void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t 
     mt.setNodes(&auxTraceGL[NExtended * nCols]);
     mt.merkelize();
     mt.getRoot(rootGL);
+    return 0;
 }
 void get_stream_roots(void *d_buffers){}
 #endif
@@ -517,7 +518,7 @@ uint64_t set_hint_field_global_constraints(char* globalInfoFile, void* p_globali
 #ifndef __USE_CUDA__
 // Gen proof
 // =================================================================================
-uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool loadConstants, char *constPolsPath,  char *constTreePath)  {
+uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath)  {
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
     return 0;
 }
@@ -532,7 +533,7 @@ void *gen_device_buffers(void *max_sizes)
     return NULL;
 };
 
-void gen_device_streams(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread, uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU) {}
+uint64_t gen_device_streams(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread, uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU) { return 1; }
 
 void set_device_mpi(uint32_t mpi_node_rank){}
 void set_device(uint32_t gpu_id){}
