@@ -52,6 +52,7 @@ use crate::{
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
 use crate::WitnessBuffer;
+use crate::FastQueue;
 use crate::Counter;
 use crate::aggregate_recursive2_proofs;
 
@@ -550,10 +551,8 @@ where
             false => (max_num_threads, 1),
         };
 
-        let witness_pending = Arc::new(Counter::new());
         let contributions_calculated = Arc::new(Counter::new());
 
-        let (witness_tx, witness_rx) = crossbeam_channel::unbounded::<usize>();
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
 
         let streams = Arc::new(Mutex::new(vec![None; self.n_streams as usize]));
@@ -595,30 +594,22 @@ where
             })
         };
 
-        let witness_pools: Vec<_> = (0..max_concurrent_pools)
+        timer_start_info!(CALCULATING_WITNESS);
+
+        let number_witness_pending_to_calculate = Arc::new(Counter::new());
+        let pending_witness = Arc::new(FastQueue::<usize>::new());
+        let _: Vec<_> = (0..max_concurrent_pools)
             .map(|thread_id| {
-                let witness_rx = witness_rx.clone();
                 let pctx_clone = self.pctx.clone();
-                let instances = instances.clone();
                 let wcm_clone = self.wcm.clone();
                 let precomputed_witnesses = precomputed_witnesses.clone();
-                let witness_pending_clone = witness_pending.clone();
+                let pending_witness_clone = pending_witness.clone();
+                let number_witness_pending_to_calculate_clone = number_witness_pending_to_calculate.clone();
 
                 std::thread::spawn(move || loop {
-                    if precomputed_witnesses.is_closed() {
-                        break;
-                    }
-
-                    let instance_id = match witness_rx.recv() {
-                        Ok(id) => id,
-                        Err(_) => break,
-                    };
-
+                    let instance_id = pending_witness_clone.pop();
                     wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
-                    let (_, _, all) = instances[instance_id];
-                    if !all {
-                        witness_pending_clone.decrement();
-                    }
+                    number_witness_pending_to_calculate_clone.decrement();
 
                     if pctx_clone.dctx_is_my_instance(instance_id) {
                         precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
@@ -630,23 +621,23 @@ where
         for instance_id in my_instances_sorted.iter() {
             let (_, _, all) = instances[*instance_id];
             if !all {
-                witness_pending.increment();
-                witness_tx.send(*instance_id).unwrap();
+                number_witness_pending_to_calculate.increment();
+                pending_witness.push(*instance_id);
             }
         }
 
-        witness_pending.wait_until_zero();
+        number_witness_pending_to_calculate.wait_until_zero();
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if *all {
-                witness_tx.send(instance_id).unwrap();
+                number_witness_pending_to_calculate.increment();
+                pending_witness.push(instance_id);
             }
         }
 
-        drop(witness_tx);
-        for pool in witness_pools {
-            pool.join().unwrap();
-        }
+        number_witness_pending_to_calculate.wait_until_zero();
+
+        timer_stop_and_log_info!(CALCULATING_WITNESS);
 
         precomputed_witnesses.close();
         contribution_thread.join().unwrap();
