@@ -557,7 +557,7 @@ where
         timer_start_info!(CALCULATING_WITNESS);
         let pending_witness = Arc::new(FastQueue::<usize>::new());
         let next_instance_pos = Arc::new(AtomicUsize::new(0));
-        let _: Vec<_> = (0..max_concurrent_pools)
+        let witness_pools: Vec<_> = (0..max_concurrent_pools)
             .map(|thread_id| {
                 let pctx_clone = self.pctx.clone();
                 let wcm_clone = self.wcm.clone();
@@ -570,6 +570,10 @@ where
                 std::thread::spawn(move || loop {
                     let instance_pos = next_instance_pos_clone.fetch_add(1, Ordering::SeqCst);
 
+                    if instance_pos >= my_instances_sorted_clone.len() {
+                        break;
+                    }
+
                     let instance_id = my_instances_sorted_clone[instance_pos];
                     // number_witness_pending_to_calculate_clone.increment();
                     wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
@@ -581,8 +585,11 @@ where
                 })
             })
             .collect();
-        timer_stop_and_log_info!(CALCULATING_WITNESS);
 
+        for pool in witness_pools {
+            pool.join().unwrap();
+        }
+        timer_stop_and_log_info!(CALCULATING_WITNESS);
         panic!();
         let contribution_thread = {
             let pctx_clone = Arc::clone(&self.pctx);
