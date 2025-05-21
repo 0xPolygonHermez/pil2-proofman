@@ -6,48 +6,6 @@
 #include "gpu_timer.cuh"
 #include <omp.h>
 
-
-struct DestParamsGPU
-{
-    uint64_t dim; 
-    uint64_t stage; 
-    uint64_t stagePos; 
-    uint64_t polsMapId; 
-    uint64_t rowOffsetIndex; 
-    bool inverse = false; 
-    opType op; 
-    uint64_t value; 
-    uint64_t nOps;
-    uint64_t opsOffset; 
-    uint64_t nArgs;
-    uint64_t argsOffset; 
-};
-
-
-struct ExpsArguments
-{
-    uint64_t nRowsPack;
-    uint64_t *mapOffsetsExps;
-    uint64_t *mapOffsetsCustomExps;
-    uint64_t *nextStridesExps;
-    uint64_t k_min;
-    uint64_t k_max;
-    uint64_t maxTemp1Size;
-    uint64_t maxTemp3Size;
-    uint64_t offsetTmp1;
-    uint64_t offsetTmp3;
-    uint64_t offsetDestVals;
-    uint64_t domainSize;
-    uint64_t domainExtended;
-
-    Goldilocks::Element *dest_gpu = nullptr;
-    uint64_t dest_domainSize;
-    uint64_t dest_offset = 0;
-    uint64_t dest_dim = 1;
-    uint32_t dest_nParams;
-};
-
-
 struct DeviceArguments
 {
     uint64_t N;
@@ -91,7 +49,7 @@ public:
     ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack = 128, uint32_t nBlocks = 4096);
     ~ExpressionsGPU();
 
-    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, TimerGPU &timer, cudaStream_t stream);
+    void calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, TimerGPU &timer, cudaStream_t stream);
     
 };
 #endif

@@ -89,7 +89,7 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(d_deviceArgs));
 }
 
-void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, TimerGPU &timer, cudaStream_t stream)
+void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, TimerGPU &timer, cudaStream_t stream)
 {
     ExpsArguments h_expsArgs;
 
@@ -154,13 +154,9 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    DestParamsGPU* d_destParams;
-    CHECKCUDAERR(cudaMallocAsync(&d_destParams, h_expsArgs.dest_nParams * sizeof(DestParamsGPU), stream));
     CHECKCUDAERR(cudaMemcpyAsync(d_destParams, h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
     delete[] h_dest_params;
 
-    ExpsArguments *d_expsArgs;
-    CHECKCUDAERR(cudaMallocAsync(&d_expsArgs, sizeof(ExpsArguments), stream));
     CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, &h_expsArgs, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
@@ -173,9 +169,6 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
     computeExpressions_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
     TimerStopCategoryGPU(timer, EXPRESSIONS);
-    
-    CHECKCUDAERR(cudaFreeAsync(d_destParams, stream));
-    CHECKCUDAERR(cudaFreeAsync(d_expsArgs, stream));
 }
 
 __device__ __forceinline__ Goldilocks::Element* load__(

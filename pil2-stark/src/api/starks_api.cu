@@ -66,6 +66,7 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeTrace, uint64_t ma
     d_buffers->max_size_const_tree_aggregation = maxSizeConstTreeAggregation;
     d_buffers->max_size_proof = maxProofSize;
     d_buffers->n_streams = d_buffers->n_gpus * maxProofsPerGPU;
+    d_buffers->n_streams_per_gpu = maxProofsPerGPU;
 
     if (d_buffers->streamsData != nullptr) {
         for (uint64_t i = 0; i < d_buffers->n_streams; i++) {
@@ -81,7 +82,7 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeTrace, uint64_t ma
         }
     }
 
-    return d_buffers->n_streams;
+    return d_buffers->n_gpus;
 }
 
 void free_device_buffers(void *d_buffers_)
@@ -264,7 +265,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     }
 
 
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, d_buffers->streamsData[streamId].pinned_params, d_buffers->streamsData[streamId].pinned_buffer_proof, d_buffers->streamsData[streamId].transcript, d_buffers->streamsData[streamId].transcript_helper, air_instance_info, d_buffers->streamsData[streamId].params, skipRecalculation, timer, stream);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, d_buffers, air_instance_info, skipRecalculation, timer, stream);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;
@@ -385,7 +386,7 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
         CHECKCUDAERR(cudaMemcpyAsync(d_const_tree, d_buffers->streamsData[streamId].pinned_buffer_const_tree, sizeConstTree, cudaMemcpyHostToDevice, stream));
     }
 
-    genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, d_trace, d_aux_trace, d_const_pols, d_const_tree, d_buffers->streamsData[streamId].pinned_params, d_buffers->streamsData[streamId].pinned_buffer_proof, d_buffers->streamsData[streamId].transcript, d_buffers->streamsData[streamId].transcript_helper, air_instance_info, d_buffers->streamsData[streamId].params, timer, stream);
+    genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, d_trace, d_aux_trace, d_const_pols, d_const_tree, streamId, d_buffers, air_instance_info, timer, stream);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;

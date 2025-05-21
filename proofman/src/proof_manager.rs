@@ -52,30 +52,60 @@ impl Counter {
     }
 }
 
-pub struct FastQueue<T> {
-    queue: Mutex<VecDeque<T>>,
+#[derive(Debug)]
+pub enum WitnessType {
+    Basic(usize),
+    Compressor(usize, usize, usize),
+    Recursive1(usize, usize, usize),
+    Recursive2(usize, usize, usize),
+}
+
+impl WitnessType {
+    fn priority(&self) -> u8 {
+        match self {
+            WitnessType::Recursive2(..) => 3,
+            WitnessType::Recursive1(..) | WitnessType::Compressor(..) => 2,
+            WitnessType::Basic(..) => 1,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct FastQueue {
+    queue: Mutex<WitnessQueues>,
     condvar: Condvar,
 }
 
-impl<T> FastQueue<T> {
-    pub fn new() -> Self {
-        Self {
-            queue: Mutex::new(VecDeque::new()),
-            condvar: Condvar::new(),
-        }
-    }
+#[derive(Default)]
+struct WitnessQueues {
+    recursive2: VecDeque<WitnessType>,
+    recursive1: VecDeque<WitnessType>,
+    basic: VecDeque<WitnessType>,
+}
 
-    pub fn push(&self, item: T) {
-        let mut queue = self.queue.lock().unwrap();
-        queue.push_back(item);
+impl FastQueue {
+    pub fn push(&self, witness_type: WitnessType) {
+        let mut witness = self.queue.lock().unwrap();
+        match witness_type.priority() {
+            3 => witness.recursive2.push_back(witness_type),
+            2 => witness.recursive1.push_back(witness_type),
+            1 => witness.basic.push_back(witness_type),
+            _ => unreachable!(),
+        }
         self.condvar.notify_one();
     }
 
-    pub fn pop(&self) -> T {
+    pub fn pop(&self) -> WitnessType {
         let mut queue = self.queue.lock().unwrap();
         loop {
-            if let Some(item) = queue.pop_front() {
-                return item;
+            if let Some(witness_type) = queue.recursive2.pop_front() {
+                return witness_type;
+            }
+            if let Some(witness_type) = queue.recursive1.pop_front() {
+                return witness_type;
+            }
+            if let Some(witness_type) = queue.basic.pop_front() {
+                return witness_type;
             }
             queue = self.condvar.wait(queue).unwrap();
         }
@@ -131,6 +161,16 @@ impl WitnessBuffer {
         let mut data = self.queue.lock().unwrap();
 
         loop {
+            let (mut basic, mut recursive1, mut recursive2, mut compressor) = (0, 0, 0, 0);
+            for &(_, proof_type) in data.items.iter() {
+                match proof_type {
+                    x if x == ProofType::Basic as usize => basic += 1,
+                    _ => {}
+                }
+            }
+
+            println!("[pop_recursive] Queue: basic={}", basic,);
+
             if let Some((id, proof_type)) = data.items.pop_front() {
                 if proof_type == ProofType::Basic as usize {
                     data.basic_count = data.basic_count.saturating_sub(1);
@@ -154,6 +194,22 @@ impl WitnessBuffer {
             if data.closed && data.items.is_empty() {
                 return None;
             }
+
+            let (mut basic, mut recursive1, mut recursive2, mut compressor) = (0, 0, 0, 0);
+            for &(_, proof_type) in data.items.iter() {
+                match proof_type {
+                    x if x == ProofType::Basic as usize => basic += 1,
+                    x if x == ProofType::Recursive1 as usize => recursive1 += 1,
+                    x if x == ProofType::Recursive2 as usize => recursive2 += 1,
+                    x if x == ProofType::Compressor as usize => compressor += 1,
+                    _ => {}
+                }
+            }
+
+            println!(
+                "[pop_recursive] Queue: basic={}, recursive1={}, recursive2={}, compressor={}",
+                basic, recursive1, recursive2, compressor
+            );
 
             if let Some(pos) =
                 data.items.iter().position(|&(_, proof_type)| proof_type == ProofType::Recursive2 as usize)
@@ -194,8 +250,7 @@ impl WitnessBuffer {
 
 pub fn proofs_done_listener<F: Field>(
     pctx: Arc<ProofCtx<F>>,
-    witness_recursive_tx: crossbeam_channel::Sender<(usize, usize, usize)>,
-    witness_recursive2_tx: crossbeam_channel::Sender<(usize, usize, usize)>,
+    pending_witness: Arc<FastQueue>,
     proofs_counter: Arc<Counter>,
     aggregation: bool,
 ) -> std::thread::JoinHandle<()> {
@@ -222,9 +277,11 @@ pub fn proofs_done_listener<F: Field>(
                     ProofType::Recursive2 as usize
                 };
                 if new_proof_type == ProofType::Recursive2 as usize {
-                    witness_recursive2_tx.send((instance_id as usize, p as usize, new_proof_type)).unwrap();
+                    pending_witness.push(WitnessType::Recursive2(instance_id as usize, p as usize, new_proof_type));
+                } else if new_proof_type == ProofType::Recursive1 as usize {
+                    pending_witness.push(WitnessType::Recursive1(instance_id as usize, p as usize, new_proof_type));
                 } else {
-                    witness_recursive_tx.send((instance_id as usize, p as usize, new_proof_type)).unwrap();
+                    pending_witness.push(WitnessType::Compressor(instance_id as usize, p as usize, new_proof_type));
                 }
             } else {
                 proofs_counter.decrement();

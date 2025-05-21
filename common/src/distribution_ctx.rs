@@ -668,8 +668,7 @@ impl DistributionCtx {
                                 } else {
                                     i_proof * 3 + n_groups + 2
                                 };
-                                let (msg, _status) =
-                                    self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
+                                let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(tag as i32);
                                 group_proofs[idx] = Some(msg);
                             }
                         }

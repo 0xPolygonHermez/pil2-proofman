@@ -943,6 +943,8 @@ struct StreamData{
     TranscriptGL_GPU *transcript_helper;
 
     StepsParams *params;
+    ExpsArguments *d_expsArgs;
+    DestParamsGPU *d_destParams;
 
     //callback inputs
     void *root;
@@ -988,12 +990,16 @@ struct StreamData{
                                            stream);
 
         CHECKCUDAERR(cudaMalloc(&params, sizeof(StepsParams)));
+        CHECKCUDAERR(cudaMalloc(&d_destParams, 2 * sizeof(DestParamsGPU)));
+        CHECKCUDAERR(cudaMalloc(&d_expsArgs, sizeof(ExpsArguments)));
     }
 
     ~StreamData() {
         delete transcript;
         delete transcript_helper;
         CHECKCUDAERR(cudaFree(params));
+        CHECKCUDAERR(cudaFree(d_destParams));
+        CHECKCUDAERR(cudaFree(d_expsArgs));
     }
 
     void reset(){
@@ -1037,6 +1043,7 @@ struct DeviceCommitBuffers
 
     uint32_t n_gpus;
     uint32_t n_streams;
+    uint32_t n_streams_per_gpu;
     std::mutex mutex_slot_selection;
     StreamData *streamsData;
 
