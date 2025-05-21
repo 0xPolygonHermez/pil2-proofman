@@ -554,6 +554,36 @@ where
         let contributions_calculated = Arc::new(Counter::new());
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
 
+        timer_start_info!(CALCULATING_WITNESS);
+        let pending_witness = Arc::new(FastQueue::<usize>::new());
+        let next_instance_pos = Arc::new(AtomicUsize::new(0));
+        let _: Vec<_> = (0..max_concurrent_pools)
+            .map(|thread_id| {
+                let pctx_clone = self.pctx.clone();
+                let wcm_clone = self.wcm.clone();
+                let precomputed_witnesses = precomputed_witnesses.clone();
+                let pending_witness_clone = pending_witness.clone();
+                let number_witness_pending_to_calculate_clone = number_witness_pending_to_calculate.clone();
+                let my_instances_sorted_clone = my_instances_sorted.clone();
+                let next_instance_pos_clone = next_instance_pos.clone();
+
+                std::thread::spawn(move || loop {
+                    let instance_pos = next_instance_pos_clone.fetch_add(1, Ordering::SeqCst);
+
+                    let instance_id = my_instances_sorted_clone[instance_pos];
+                    // number_witness_pending_to_calculate_clone.increment();
+                    wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
+                    // number_witness_pending_to_calculate_clone.decrement();
+
+                    // if pctx_clone.dctx_is_my_instance(instance_id) {
+                    //     precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
+                    // }
+                })
+            })
+            .collect();
+        timer_stop_and_log_info!(CALCULATING_WITNESS);
+
+        panic!();
         let contribution_thread = {
             let pctx_clone = Arc::clone(&self.pctx);
             let sctx_clone = Arc::clone(&self.sctx);
@@ -585,34 +615,6 @@ where
             })
         };
 
-        timer_start_info!(CALCULATING_WITNESS);
-        let pending_witness = Arc::new(FastQueue::<usize>::new());
-        let next_instance_pos = Arc::new(AtomicUsize::new(0));
-        let _: Vec<_> = (0..max_concurrent_pools)
-            .map(|thread_id| {
-                let pctx_clone = self.pctx.clone();
-                let wcm_clone = self.wcm.clone();
-                let precomputed_witnesses = precomputed_witnesses.clone();
-                let pending_witness_clone = pending_witness.clone();
-                let number_witness_pending_to_calculate_clone = number_witness_pending_to_calculate.clone();
-                let my_instances_sorted_clone = my_instances_sorted.clone();
-                let next_instance_pos_clone = next_instance_pos.clone();
-
-                std::thread::spawn(move || loop {
-                    let instance_pos = next_instance_pos_clone.fetch_add(1, Ordering::SeqCst);
-
-                    let instance_id = my_instances_sorted_clone[instance_pos];
-                    // number_witness_pending_to_calculate_clone.increment();
-                    wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
-                    // number_witness_pending_to_calculate_clone.decrement();
-
-                    // if pctx_clone.dctx_is_my_instance(instance_id) {
-                    //     precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
-                    // }
-                })
-            })
-            .collect();
-        timer_stop_and_log_info!(CALCULATING_WITNESS);
 
         for instance_id in my_instances_sorted.iter() {
             let (_, _, all) = instances[*instance_id];
