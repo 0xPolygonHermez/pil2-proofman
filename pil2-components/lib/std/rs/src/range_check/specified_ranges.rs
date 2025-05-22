@@ -12,25 +12,25 @@ use proofman_common::{AirInstance, ProofCtx, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 use proofman_util::create_buffer_fast;
 
-use crate::{get_hint_field_constant_as_field, get_hint_field_constant_as_u64, validate_binary_field, AirComponent};
+use crate::{get_hint_field_constant_as_u64, validate_binary_field, AirComponent};
 
 #[derive(Debug)]
 pub struct SpecifiedRange {
-    id: usize,
     mul_idx: usize,
     min: i64,
 }
 
 pub struct SpecifiedRanges {
-    // Parameters
     airgroup_id: usize,
     air_id: usize,
-    instance_id: AtomicU64,
+    shift: usize,
+    mask: usize,
     num_rows: usize,
     num_cols: usize,
-    ranges: Vec<SpecifiedRange>,
     multiplicities: Vec<Vec<AtomicU64>>,
+    instance_id: AtomicU64,
     calculated: AtomicBool,
+    ranges: Vec<SpecifiedRange>,
 }
 
 impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
@@ -42,98 +42,46 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
         let setup = sctx.get_setup(airgroup_id, air_id);
+        let hint_opt = HintFieldOptions::default();
+        let hint_id = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges_data")[0] as usize;
 
         // Get the relevant data
-        let specified_data_hint =
-            get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_ranges_data")[0] as usize;
-        let col_num = get_hint_field_constant_as_u64::<F>(
-            sctx,
-            airgroup_id,
-            air_id,
-            specified_data_hint,
-            "col_num",
-            HintFieldOptions::default(),
-        );
+        let col_num =
+            get_hint_field_constant_as_u64::<F>(sctx, airgroup_id, air_id, hint_id, "col_num", hint_opt.clone());
 
-        let opids_count = get_hint_field_constant_as_u64::<F>(
-            sctx,
-            airgroup_id,
-            air_id,
-            specified_data_hint,
-            "opids_count",
-            HintFieldOptions::default(),
-        );
+        let mins = get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins", hint_opt.clone()).values;
+        let mins_neg =
+            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "mins_neg", hint_opt.clone()).values;
 
-        let opids = get_hint_field_constant_a::<F>(
-            sctx,
-            airgroup_id,
-            air_id,
-            specified_data_hint,
-            "opids",
-            HintFieldOptions::default(),
-        )
-        .values;
-
-        let opids_len = get_hint_field_constant_a::<F>(
-            sctx,
-            airgroup_id,
-            air_id,
-            specified_data_hint,
-            "opids_len",
-            HintFieldOptions::default(),
-        )
-        .values;
+        let opids_count =
+            get_hint_field_constant_as_u64::<F>(sctx, airgroup_id, air_id, hint_id, "opids_count", hint_opt.clone());
+        let opids_len =
+            get_hint_field_constant_a::<F>(sctx, airgroup_id, air_id, hint_id, "opids_len", hint_opt).values;
 
         // Get and store the ranges
-        let specified_hints = get_hint_ids_by_name(setup.p_setup.p_expressions_bin, "specified_range");
-        let mut ranges = Vec::new();
+        let mut ranges = Vec::with_capacity(opids_count as usize);
         let mut offset = 0;
-        for i in 0..opids_count as usize {
-            let opid = &opids[i];
-            let opid_len = &opids_len[i];
-
-            // Convert to the correct type
-            let HintFieldValue::Field(opid) = opid else {
-                log::error!("Opid hint must be a field element");
-                panic!();
+        for ((min_hint, min_neg_hint), opid_len_hint) in mins.iter().zip(mins_neg.iter()).zip(opids_len.iter()) {
+            let min = match min_hint {
+                HintFieldValue::Field(f) => f.as_canonical_u64(),
+                _ => panic!("Opid hint must be a field element"),
             };
-            let opid = opid.as_canonical_u64() as usize;
 
-            let HintFieldValue::Field(opid_len) = opid_len else {
-                log::error!("Opid hint must be a field element");
-                panic!();
+            let min_neg = match min_neg_hint {
+                HintFieldValue::Field(f) => validate_binary_field(*f, "Min neg"),
+                _ => panic!("Opid hint must be a field element"),
             };
-            let opid_len = opid_len.as_canonical_u64() as usize;
 
-            for j in 0..opid_len {
-                let idx = offset + j;
-                let hint = specified_hints[idx];
+            let min = if min_neg { min as i128 - F::ORDER_U64 as i128 } else { min as i128 };
 
-                let min = get_hint_field_constant_as_u64::<F>(
-                    sctx,
-                    airgroup_id,
-                    air_id,
-                    hint as usize,
-                    "min",
-                    HintFieldOptions::default(),
-                );
+            let opid_len = match opid_len_hint {
+                HintFieldValue::Field(f) => f.as_canonical_u64() as usize,
+                _ => panic!("Opid hint must be a field element"),
+            };
 
-                let min_neg = get_hint_field_constant_as_field::<F>(
-                    sctx,
-                    airgroup_id,
-                    air_id,
-                    hint as usize,
-                    "min_neg",
-                    HintFieldOptions::default(),
-                );
-                let min_neg = validate_binary_field(min_neg, "Min neg");
-
-                let min = if min_neg { min as i128 - F::ORDER_U64 as i128 } else { min as i128 };
-
-                // In this conversion we assume that min is at most of 63 bits
-                // We can safely assume it because we have already check this minimum before
-                ranges.push(SpecifiedRange { id: opid, mul_idx: idx, min: min as i64 });
-            }
+            // In this conversion we assume that min is at most of 63 bits
+            // We can safely assume it because we have already check this minimum before
+            ranges.push(SpecifiedRange { mul_idx: offset, min: min as i64 });
 
             offset += opid_len;
         }
@@ -147,12 +95,14 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         Arc::new(Self {
             airgroup_id,
             air_id,
+            shift: num_rows.trailing_zeros() as usize,
+            mask: num_rows - 1,
             num_cols,
             num_rows,
-            ranges,
             multiplicities,
             instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
+            ranges,
         })
     }
 }
@@ -163,20 +113,21 @@ impl SpecifiedRanges {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
+
         // Get the ranges for the given id
-        let ranges = self.ranges.iter().filter(|r| r.id == id).collect::<Vec<_>>();
+        let ranges = &self.ranges[id];
+        let min_global = ranges.min;
+        let base_offset = ranges.mul_idx;
 
         // Identify to which sub-range the value belongs
-        let min_global = ranges[0].min;
-        let range_idx = (value - min_global) as usize / self.num_rows;
-        let range = ranges[range_idx];
+        let offset = (value - min_global) as usize;
+        let range_idx = offset >> self.shift;
 
         // Get the row index
-        let min_local = range.min;
-        let row_idx = (value - min_local) as usize;
+        let row_idx = offset & self.mask;
 
         // Update the multiplicity
-        self.multiplicities[range.mul_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
+        self.multiplicities[base_offset + range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
     }
 
     pub fn airgroup_id(&self) -> usize {
