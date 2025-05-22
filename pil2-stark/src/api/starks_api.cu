@@ -352,8 +352,8 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
     
-    gl64_t *d_trace = (gl64_t *)d_buffers->d_aux_trace[gpuId] + slotId*(d_buffers->max_size_prover_buffer + d_buffers->max_size_trace_aggregation);
-    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuId] + slotId*(d_buffers->max_size_prover_buffer + d_buffers->max_size_trace_aggregation) + d_buffers->max_size_trace_aggregation;
+    gl64_t *d_trace = (gl64_t *)d_buffers->d_aux_trace[gpuId] + slotId*d_buffers->max_size_prover_buffer;
+    gl64_t *d_aux_trace = d_trace + d_buffers->max_size_trace_aggregation;
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
