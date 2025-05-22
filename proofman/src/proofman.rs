@@ -15,7 +15,7 @@ use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{gen_device_buffers_c, free_device_buffers_c};
 use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
-    get_stream_proofs_c, get_stream_roots_c, get_stream_proofs_non_blocking_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c,
 };
 use std::fs;
 use std::collections::HashMap;
@@ -42,7 +42,7 @@ use std::{path::PathBuf, sync::Arc};
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
-use crate::{check_tree_paths_vadcop, initialize_fixed_pols_tree, proofs_done_listener};
+use crate::{check_tree_paths_vadcop, initialize_fixed_pols_tree, proofs_done_listener, contributions_done_listener};
 use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes};
@@ -578,6 +578,7 @@ where
 
                 std::thread::spawn(move || {
                     while let Some((instance_id, _)) = precomputed_witnesses.pop() {
+                        let count = contributions_calculated.increment();
                         Self::get_contribution_air(
                             pctx_clone.clone(),
                             &sctx_clone,
@@ -589,20 +590,17 @@ where
                             streams_clone.clone(),
                         );
 
-                        let count = contributions_calculated.increment();
                         let (_, _, all) = instances_clone[instance_id];
                         if !all && (instances_mine - count) > max_witness_stored {
                             let pctx_clone = pctx_clone.clone();
                             std::thread::spawn(move || {
-                                pctx_clone.free_instance(instance_id);
+                                pctx_clone.free_instance_traces(instance_id);
                             });
                         }
                     }
                 })
             })
             .collect();
-
-        timer_start_info!(CALCULATING_WITNESS);
 
         let number_witness_pending_to_calculate = Arc::new(Counter::new());
         let pending_witness = Arc::new(FastQueue::default());
@@ -616,7 +614,12 @@ where
 
                 std::thread::spawn(move || loop {
                     let instance_id = match pending_witness_clone.pop() {
-                        WitnessType::Basic(instance_id) => instance_id,
+                        WitnessType::Basic(instance_id) => {
+                            if instance_id == usize::MAX {
+                                break;
+                            }
+                            instance_id
+                        }
                         _ => panic!(),
                     };
                     wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
@@ -628,6 +631,8 @@ where
                 })
             })
             .collect();
+
+        let contributions_listener = contributions_done_listener(contributions_calculated.clone());
 
         for instance_id in my_instances_sorted.iter() {
             let (_, _, all) = instances[*instance_id];
@@ -647,16 +652,22 @@ where
         }
 
         number_witness_pending_to_calculate.wait_until_zero();
+        contributions_calculated
+            .wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
-        timer_stop_and_log_info!(CALCULATING_WITNESS);
+        get_stream_proofs_c(self.d_buffers.get_ptr());
 
         precomputed_witnesses.close();
 
+        for _ in 0..max_concurrent_pools {
+            pending_witness.push(WitnessType::Basic(usize::MAX));
+        }
         for pool in contribution_pools {
             pool.join().unwrap();
         }
 
-        get_stream_roots_c(self.d_buffers.get_ptr());
+        clear_proof_done_callback_c();
+        contributions_listener.join().unwrap();
 
         Self::calculate_global_challenge(&self.pctx, roots_contributions, values_contributions);
 
@@ -713,7 +724,7 @@ where
         let pending_witness = Arc::new(FastQueue::default());
         let proofs_counter = Arc::new(Counter::new());
 
-        let witness_pools: Vec<_> = (0..max_concurrent_pools)
+        let _: Vec<_> = (0..max_concurrent_pools)
             .map(|thread_id| {
                 let wcm_clone = self.wcm.clone();
                 let pctx_clone = self.pctx.clone();
@@ -754,8 +765,7 @@ where
                             proofs_counter_clone.decrement();
                         }
                         WitnessType::Recursive1(id, proof_type, new_proof_type) => {
-                            let (airgroup_id, air_id, _) = pctx_clone.dctx_get_instances()[id];
-                            let proof = if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                            let proof = if proof_type == ProofType::Compressor as usize {
                                 compressor_proofs_clone.get(&id).unwrap()
                             } else {
                                 proofs_clone.get(&id).unwrap()
@@ -849,8 +859,8 @@ where
                             false => recursive_witness_clone.remove(&id).unwrap().1,
                         };
 
-                        let trace = create_buffer_fast::<F>(trace_size);
-                        let prover_buffer = create_buffer_fast::<F>(prover_buffer_size);
+                        let trace = vec![F::ZERO; trace_size];
+                        let prover_buffer = vec![F::ZERO; prover_buffer_size];
                         if proof_type == ProofType::Recursive2 as usize {
                             let id = {
                                 let mut proofs = recursive2_proofs_ongoing_clone.write().unwrap();
@@ -1596,6 +1606,7 @@ where
             setup.stark_info.stark_struct.n_bits,
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),
+            instance_id as u64,
             root_ptr,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,

@@ -542,6 +542,7 @@ pub fn commit_witness_c(
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
+    instance_id: u64,
     root: *mut u8,
     witness: *mut u8,
     aux_trace: *mut u8,
@@ -554,19 +555,13 @@ pub fn commit_witness_c(
             n_bits,
             n_bits_ext,
             n_cols,
+            instance_id,
             root as *mut std::os::raw::c_void,
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
             d_buffers,
             setup,
         )
-    }
-}
-
-#[cfg(not(feature = "no_lib_link"))]
-pub fn get_stream_roots_c(d_buffers: *mut c_void) {
-    unsafe {
-        get_stream_roots(d_buffers);
     }
 }
 
@@ -1540,6 +1535,7 @@ pub fn commit_witness_c(
     _n_bits: u64,
     _n_bits_ext: u64,
     _n_cols: u64,
+    _instance_id: u64,
     _root: *mut u8,
     _witness: *mut u8,
     _aux_trace: *mut u8,
@@ -1548,11 +1544,6 @@ pub fn commit_witness_c(
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
     0
-}
-
-#[cfg(feature = "no_lib_link")]
-pub fn get_stream_roots_c(_d_buffers: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "get_commit_root: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]

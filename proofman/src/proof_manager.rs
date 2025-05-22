@@ -161,16 +161,6 @@ impl WitnessBuffer {
         let mut data = self.queue.lock().unwrap();
 
         loop {
-            let (mut basic, mut recursive1, mut recursive2, mut compressor) = (0, 0, 0, 0);
-            for &(_, proof_type) in data.items.iter() {
-                match proof_type {
-                    x if x == ProofType::Basic as usize => basic += 1,
-                    _ => {}
-                }
-            }
-
-            println!("[pop_recursive] Queue: basic={}", basic,);
-
             if let Some((id, proof_type)) = data.items.pop_front() {
                 if proof_type == ProofType::Basic as usize {
                     data.basic_count = data.basic_count.saturating_sub(1);
@@ -194,22 +184,6 @@ impl WitnessBuffer {
             if data.closed && data.items.is_empty() {
                 return None;
             }
-
-            let (mut basic, mut recursive1, mut recursive2, mut compressor) = (0, 0, 0, 0);
-            for &(_, proof_type) in data.items.iter() {
-                match proof_type {
-                    x if x == ProofType::Basic as usize => basic += 1,
-                    x if x == ProofType::Recursive1 as usize => recursive1 += 1,
-                    x if x == ProofType::Recursive2 as usize => recursive2 += 1,
-                    x if x == ProofType::Compressor as usize => compressor += 1,
-                    _ => {}
-                }
-            }
-
-            println!(
-                "[pop_recursive] Queue: basic={}, recursive1={}, recursive2={}, compressor={}",
-                basic, recursive1, recursive2, compressor
-            );
 
             if let Some(pos) =
                 data.items.iter().position(|&(_, proof_type)| proof_type == ProofType::Recursive2 as usize)
@@ -286,6 +260,18 @@ pub fn proofs_done_listener<F: Field>(
             } else {
                 proofs_counter.decrement();
             }
+        }
+    })
+}
+
+pub fn contributions_done_listener(contributions_counter: Arc<Counter>) -> std::thread::JoinHandle<()> {
+    let (tx, rx) = crossbeam_channel::unbounded::<(u64, String)>();
+
+    register_proof_done_callback_c(tx);
+
+    std::thread::spawn(move || {
+        while rx.recv().is_ok() {
+            contributions_counter.decrement();
         }
     })
 }

@@ -249,8 +249,10 @@ impl<F: Field> AirInstance<F> {
         self.custom_commits_fixed.as_ptr() as *mut u8
     }
 
-    pub fn clear_trace(&mut self) {
+    pub fn clear_traces(&mut self) {
         self.trace.clear();
+        self.custom_commits_fixed.clear();
+        self.aux_trace.clear();
     }
 
     pub fn clear_custom_commits_fixed_trace(&mut self) {

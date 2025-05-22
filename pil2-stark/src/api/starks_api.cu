@@ -303,7 +303,11 @@ void get_stream_proofs(void *d_buffers_){
         if (d_buffers->streamsData[i].status == 0 || d_buffers->streamsData[i].status == 3) continue;
         set_device(d_buffers->streamsData[i].gpuId);
         CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
-        get_proof(d_buffers, i);
+        if(d_buffers->streamsData[i].root != nullptr) {
+            get_commit_root(d_buffers, i);
+        }else{
+            get_proof(d_buffers, i);
+        }
         d_buffers->streamsData[i].reset();        
     }
 }
@@ -314,7 +318,11 @@ void get_stream_proofs_non_blocking(void *d_buffers_){
     for (uint64_t i = 0; i < d_buffers->n_streams; i++) {
         if(d_buffers->streamsData[i].status==2 &&  cudaEventQuery(d_buffers->streamsData[i].end_event) == cudaSuccess){
             set_device(d_buffers->streamsData[i].gpuId);
-            get_proof(d_buffers, i);
+            if(d_buffers->streamsData[i].root != nullptr) {
+                get_commit_root(d_buffers, i);
+            }else{
+                get_proof(d_buffers, i);
+            }
             d_buffers->streamsData[i].reset();        
         }
     }
@@ -324,7 +332,11 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
     set_device(d_buffers->streamsData[streamId].gpuId);
     CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[streamId].stream));
-    get_proof(d_buffers, streamId);
+    if(d_buffers->streamsData[streamId].root != nullptr) {
+            get_commit_root(d_buffers, streamId);
+        }else{
+            get_proof(d_buffers, streamId);
+        }
     d_buffers->streamsData[streamId].reset();
 }
 
@@ -392,7 +404,7 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     return streamId;
 }
 
-uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
+uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, void *root, void *trace, void *auxTrace, void *d_buffers_, void *pSetupCtx_) {
 
     SetupCtx *setupCtx = (SetupCtx *)pSetupCtx_;
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
@@ -402,6 +414,7 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     set_device(gpuId);
 
     d_buffers->streamsData[streamId].root = root;
+    d_buffers->streamsData[streamId].instanceId = instanceId;
 
     uint64_t N = 1 << nBits;
 
@@ -427,19 +440,13 @@ void get_commit_root(DeviceCommitBuffers *d_buffers, uint64_t streamId) {
     Goldilocks::Element *root = (Goldilocks::Element *)d_buffers->streamsData[streamId].root;
     memcpy((Goldilocks::Element *)root, d_buffers->streamsData[streamId].pinned_buffer_proof, HASH_SIZE * sizeof(uint64_t));
     closeStreamTimer(d_buffers->streamsData[streamId].timer, false);
+    
+    uint64_t instanceId = d_buffers->streamsData[streamId].instanceId;
 
-}
-
-void get_stream_roots(void *d_buffers_){
-    DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    std::lock_guard<std::mutex> lock(d_buffers->mutex_slot_selection);
-    for (uint64_t i = 0; i < d_buffers->n_streams; i++) {
-        if (d_buffers->streamsData[i].status == 0 || d_buffers->streamsData[i].status == 3) continue;
-        set_device(d_buffers->streamsData[i].gpuId);
-        CHECKCUDAERR(cudaStreamSynchronize(d_buffers->streamsData[i].stream));
-        get_commit_root(d_buffers, i);
-        d_buffers->streamsData[i].reset();        
+    if (proof_done_callback != nullptr) {
+        proof_done_callback(instanceId, "");
     }
+
 }
 
 uint64_t check_device_memory() {

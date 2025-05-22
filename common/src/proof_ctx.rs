@@ -212,7 +212,11 @@ impl<F: Field> ProofCtx<F> {
     }
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
-        self.air_instances.contains_key(&global_idx)
+        if let Some(instance) = self.air_instances.get(&global_idx) {
+            !instance.trace.is_empty()
+        } else {
+            false
+        }
     }
 
     pub fn dctx_barrier(&self) {
@@ -526,5 +530,11 @@ impl<F: Field> ProofCtx<F> {
 
     pub fn free_instance(&self, instance_id: usize) {
         self.air_instances.remove(&instance_id);
+    }
+
+    pub fn free_instance_traces(&self, instance_id: usize) {
+        if let Some(mut instance) = self.air_instances.get_mut(&instance_id) {
+            instance.clear_traces();
+        }
     }
 }

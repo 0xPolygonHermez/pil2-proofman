@@ -12,8 +12,7 @@ use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, Pr
 use std::os::raw::{c_void, c_char};
 
 use proofman_util::{
-    create_buffer_fast, create_buffer_fast_u8, timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace,
-    timer_start_trace,
+    create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace,
 };
 
 use crate::{add_publics_circom, add_publics_aggregation};
@@ -50,7 +49,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let publics_circom_size =
             pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
 
-        let mut updated_proof: Vec<u64> = create_buffer_fast(proof.proof.len() + publics_circom_size);
+        let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
         updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
         let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
@@ -67,7 +66,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let publics_circom_size =
             pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3 + 4;
 
-        let mut updated_proof: Vec<u64> = create_buffer_fast(proof.proof.len() + publics_circom_size);
+        let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
 
         if proof.proof_type == ProofType::Compressor {
             let n_publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
@@ -109,7 +108,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
 
     let updated_proof_size = 3 * proof_len + publics_circom_size;
 
-    let mut updated_proof_recursive2: Vec<u64> = create_buffer_fast(updated_proof_size);
+    let mut updated_proof_recursive2: Vec<u64> = vec![0; updated_proof_size];
 
     updated_proof_recursive2[publics_circom_size..(publics_circom_size + proof_len)].copy_from_slice(&proof1.proof);
     updated_proof_recursive2[publics_circom_size + proof_len..publics_circom_size + 2 * proof_len]
@@ -465,7 +464,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     load_const_pols(&setup_path, setup.const_pols_size, &const_pols);
     load_const_pols_tree(setup, &const_tree);
 
-    let mut vadcop_final_proof: Vec<u64> = create_buffer_fast(proof.len() + pctx.global_info.n_publics);
+    let mut vadcop_final_proof: Vec<u64> = vec![0; proof.len() + pctx.global_info.n_publics];
     vadcop_final_proof[pctx.global_info.n_publics..].copy_from_slice(proof);
 
     let public_inputs = pctx.get_publics();
@@ -546,7 +545,7 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
         let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
         let size_witness = get_size_witness();
 
-        let witness = create_buffer_fast_u8((size_witness * 32) as usize);
+        let witness: Vec<u8> = vec![0; (size_witness * 32) as usize];
         let witness_ptr = witness.as_ptr() as *mut u8;
 
         let get_witness_final: Symbol<GetWitnessFinalFunc> = library.get(b"getWitness\0")?;
