@@ -4,10 +4,7 @@ use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use colored::*;
 
@@ -560,45 +557,39 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     }
 }
 
-pub fn initialize_size_witness<F: PrimeField64>(
+pub fn initialize_witness_circom<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     final_snark: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let instances = pctx.dctx_get_instances();
-    let my_instances = pctx.dctx_get_my_instances();
-
-    let mut airs = Vec::new();
-    let mut seen = HashSet::new();
-
-    for instance_id in my_instances.iter() {
-        let (airgroup_id, air_id, _) = instances[*instance_id];
-        if seen.insert((airgroup_id, air_id)) {
-            airs.push((airgroup_id, air_id));
-        }
-    }
-
-    for &(airgroup_id, air_id) in airs.iter() {
-        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-            let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                setup.set_size_witness()?;
+                setup.set_exec_file_data()?;
+            }
+            let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
             setup.set_size_witness()?;
+            setup.set_exec_file_data()?;
         }
-        let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-        setup.set_size_witness()?;
     }
 
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
         setup.set_size_witness()?;
+        setup.set_exec_file_data()?;
     }
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
     setup_vadcop_final.set_size_witness()?;
+    setup_vadcop_final.set_exec_file_data()?;
 
     if final_snark {
         let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
         setup_recursivef.set_size_witness()?;
+        setup_recursivef.set_exec_file_data()?;
     }
 
     Ok(())

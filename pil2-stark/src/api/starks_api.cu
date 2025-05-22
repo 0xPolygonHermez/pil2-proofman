@@ -88,7 +88,8 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeTrace, uint64_t ma
 void free_device_buffers(void *d_buffers_)
 {
     DeviceCommitBuffers *d_buffers = (DeviceCommitBuffers *)d_buffers_;
-    for(int i=0; i< d_buffers->n_gpus; ++i){
+
+    for (int i = 0; i < d_buffers->n_gpus; ++i) {
         cudaSetDevice(i);
         CHECKCUDAERR(cudaFree(d_buffers->d_aux_trace[i]));
         CHECKCUDAERR(cudaFree(d_buffers->d_constPols[i]));
@@ -105,7 +106,13 @@ void free_device_buffers(void *d_buffers_)
         delete[] d_buffers->streamsData;
     }
 
-    // TODO: DELETE
+    for (auto &outer_pair : d_buffers->air_instances) {
+        for (auto &inner_pair : outer_pair.second) {
+            for (AirInstanceInfo *ptr : inner_pair.second) {
+                delete ptr;
+            }
+        }
+    }
 
     delete d_buffers;
 }

@@ -911,14 +911,26 @@ struct AirInstanceInfo {
     }
 
     ~AirInstanceInfo() {
-        delete[] opening_points;
-        delete[] expressions_gpu;
-
-        for(uint64_t i = 0; i < numBatchesEvals; ++i) {
-            CHECKCUDAERR(cudaFree(evalsInfo[i])); 
+        if (opening_points != nullptr) {
+            CHECKCUDAERR(cudaFree(opening_points));
         }
+
+        if (verkeyRoot != nullptr) {
+            CHECKCUDAERR(cudaFree(verkeyRoot));
+        }
+
+        delete expressions_gpu;
+
+        for (uint64_t i = 0; i < numBatchesEvals; ++i) {
+            if (evalsInfo[i] != nullptr) {
+                CHECKCUDAERR(cudaFree(evalsInfo[i]));
+            }
+        }
+
+        delete[] evalsInfoSizes;
         delete[] evalsInfo;
-    }
+}
+
 };
 
 

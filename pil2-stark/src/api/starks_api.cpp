@@ -572,8 +572,12 @@ void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t 
     return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file), false);
 }
 
-void get_committed_pols(void *circomWitness, char* execFile, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
-    getCommitedPols((Goldilocks::Element *)circomWitness, string(execFile), (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
+void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {
+    readExecFile(exec_data, string(exec_file), nCommitedPols);
+}
+
+void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCommitedPols) {
+    getCommitedPols((Goldilocks::Element *)circomWitness, execData, (Goldilocks::Element *)witness, (Goldilocks::Element *)pPublics, sizeWitness, N, nPublics, nCommitedPols);
 }
 
 void gen_final_snark_proof(void *circomWitnessFinal, char* zkeyFile, char* outputDir) {

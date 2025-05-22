@@ -48,7 +48,7 @@ use crate::MaxSizes;
 use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
     gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof, generate_vadcop_final_proof,
-    generate_fflonk_snark_proof, generate_recursivef_proof, initialize_size_witness,
+    generate_fflonk_snark_proof, generate_recursivef_proof, initialize_witness_circom,
 };
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
@@ -679,10 +679,6 @@ where
 
         timer_start_info!(GENERATING_BASIC_PROOFS);
 
-        if options.aggregation {
-            initialize_size_witness(&self.pctx, &self.setups, options.final_snark)?;
-        }
-
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
         let proofs: Arc<DashMap<usize, Proof<F>>> = Arc::new(DashMap::new());
@@ -762,7 +758,8 @@ where
                         }
                         WitnessType::Compressor(id, _proof_type, new_proof_type) => {
                             let proof = proofs_clone.get(&id).expect("missing proof");
-                            let witness = gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap();
+                            let witness =
+                                gen_witness_recursive(&pctx_clone, &setups_clone, &proof, threads_per_pool).unwrap();
                             recursive_witness_clone.insert(id, witness);
                             proofs_counter_clone.increment();
                             precomputed_witnesses.push((id, new_proof_type));
@@ -774,7 +771,8 @@ where
                             } else {
                                 proofs_clone.get(&id).unwrap()
                             };
-                            let witness = gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap();
+                            let witness =
+                                gen_witness_recursive(&pctx_clone, &setups_clone, &proof, threads_per_pool).unwrap();
                             recursive_witness_clone.insert(id, witness);
                             proofs_counter_clone.increment();
                             precomputed_witnesses.push((id, new_proof_type));
@@ -798,8 +796,15 @@ where
                                 let p2 = recursive2_proofs_airgroup.pop().unwrap();
                                 let p3 = recursive2_proofs_airgroup.pop().unwrap();
 
-                                let witness_recursive2 =
-                                    gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap();
+                                let witness_recursive2 = gen_witness_aggregation(
+                                    &pctx_clone,
+                                    &setups_clone,
+                                    &p1,
+                                    &p2,
+                                    &p3,
+                                    threads_per_pool,
+                                )
+                                .unwrap();
 
                                 recursive2_witness_clone.entry(airgroup_id).or_default().push(witness_recursive2);
 
@@ -1351,6 +1356,7 @@ where
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
+            initialize_witness_circom(&pctx, &setups_vadcop, final_snark)?;
         }
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);

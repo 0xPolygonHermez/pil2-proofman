@@ -5,12 +5,13 @@ use std::sync::RwLock;
 use std::fs::File;
 use std::io::Read;
 use libloading::{Library, Symbol};
+use std::ffi::CString;
 
 use proofman_starks_lib_c::set_memory_expressions_c;
 use proofman_starks_lib_c::{
     expressions_bin_new_c, stark_info_new_c, stark_info_free_c, expressions_bin_free_c, get_map_totaln_c,
     get_map_totaln_custom_commits_fixed_c, get_proof_size_c, get_max_n_tmp1_c, get_max_n_tmp3_c, get_const_tree_size_c,
-    load_const_pols_c, load_const_tree_c,
+    load_const_pols_c, load_const_tree_c, read_exec_file_c,
 };
 use proofman_util::create_buffer_fast;
 
@@ -57,6 +58,8 @@ pub struct Setup<F: Field> {
     pub size_witness: RwLock<Option<u64>>,
     pub air_name: String,
     pub verkey: Vec<F>,
+    pub exec_data: RwLock<Option<Vec<u64>>>,
+    pub n_cols: u64,
 }
 
 impl<F: Field> Setup<F> {
@@ -91,6 +94,7 @@ impl<F: Field> Setup<F> {
             prover_buffer_size,
             custom_commits_fixed_buffer_size,
             proof_size,
+            n_cols,
         ) = if setup_type == &ProofType::Compressor && !global_info.get_air_has_compressor(airgroup_id, air_id) {
             // If the condition is met, use None for each pointer
             (
@@ -100,6 +104,7 @@ impl<F: Field> Setup<F> {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                0,
                 0,
                 0,
                 0,
@@ -142,6 +147,8 @@ impl<F: Field> Setup<F> {
 
             let verkey = vk.iter().map(|&x| F::from_u64(x)).collect::<Vec<F>>();
 
+            let n_cols = stark_info.map_sections_n["cm1"];
+
             if verify_constraints {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
                 load_const_pols(&setup_path, const_pols_size, &const_pols);
@@ -157,6 +164,7 @@ impl<F: Field> Setup<F> {
                     prover_buffer_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
+                    n_cols,
                 )
             } else {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
@@ -173,6 +181,7 @@ impl<F: Field> Setup<F> {
                     prover_buffer_size,
                     custom_commits_fixed_buffer_size,
                     proof_size,
+                    n_cols,
                 )
             }
         };
@@ -191,9 +200,11 @@ impl<F: Field> Setup<F> {
             custom_commits_fixed_buffer_size,
             proof_size,
             size_witness: RwLock::new(None),
+            exec_data: RwLock::new(None),
             setup_path: setup_path.clone(),
             setup_type: setup_type.clone(),
             air_name: global_info.airs[airgroup_id][air_id].name.clone(),
+            n_cols,
         }
     }
 
@@ -248,6 +259,28 @@ impl<F: Field> Setup<F> {
         };
 
         *self.size_witness.write().unwrap() = size_witness;
+        Ok(())
+    }
+
+    pub fn set_exec_file_data(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let exec_filename = self.setup_path.display().to_string() + ".exec";
+        let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
+        let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
+
+        let mut file = File::open(exec_filename)?;
+
+        let mut bytes = [0u8; 8];
+
+        file.read_exact(&mut bytes)?;
+        let n_adds = u64::from_le_bytes(bytes);
+
+        file.read_exact(&mut bytes)?;
+        let n_smap = u64::from_le_bytes(bytes);
+
+        let exec_data_size = 2 + n_adds * 4 + n_smap * self.n_cols;
+        let mut exec_file_data: Vec<u64> = create_buffer_fast(exec_data_size as usize);
+        read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename_ptr, self.n_cols);
+        *self.exec_data.write().unwrap() = Some(exec_file_data);
         Ok(())
     }
 }

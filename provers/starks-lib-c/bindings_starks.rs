@@ -453,10 +453,14 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z18get_committed_polsPvPcS_S_mmmm"]
+    #[link_name = "\u{1}_Z14read_exec_filePmPcm"]
+    pub fn read_exec_file(exec_data: *mut u64, exec_file: *mut ::std::os::raw::c_char, nCommitedPols: u64);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z18get_committed_polsPvPmS_S_mmmm"]
     pub fn get_committed_pols(
         circomWitness: *mut ::std::os::raw::c_void,
-        execFile: *mut ::std::os::raw::c_char,
+        execData: *mut u64,
         witness: *mut ::std::os::raw::c_void,
         pPublics: *mut ::std::os::raw::c_void,
         sizeWitness: u64,
