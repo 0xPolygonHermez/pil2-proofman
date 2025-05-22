@@ -117,7 +117,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         sctx: &SetupCtx<F>,
         airgroup_id: usize,
         air_id: usize,
-        ranges: &mut Vec<StdRange>,
+        ranges: &mut [StdRange],
         num_specified_ranges: usize,
         processed_specified_ranges: &mut usize,
     ) {
@@ -245,7 +245,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         // Find the range with the given [min,max] values, return its id
         let received_range_data = RangeData { min, max, predefined };
         if let Some(i) = self.ranges.iter().position(|r| r.data == received_range_data) {
-            return i;
+            i
         } else {
             // If the range was not computed in the setup phase, error
             let name = if predefined { "Predefined" } else { "Specified" };
