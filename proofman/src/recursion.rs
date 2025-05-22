@@ -18,7 +18,7 @@ use proofman_util::{
 use crate::{add_publics_circom, add_publics_aggregation};
 
 type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64);
+    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64);
 
 type GetWitnessFinalFunc =
     unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64);
@@ -578,19 +578,21 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
 
     let library: Library = unsafe { Library::new(rust_lib_path)? };
 
-    let dat_filename = setup.setup_path.display().to_string() + ".dat";
-    let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
-    let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
-
     let witness_size = get_witness_size(setup)?;
 
     let witness = vec![F::ZERO; witness_size];
 
     let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as u64;
 
+    let circom_circuit_guard = setup.circom_circuit.read().unwrap();
+    let circom_circuit_ptr = match *circom_circuit_guard {
+        Some(ptr) => ptr,
+        None => panic!("circom_circuit is not initialized"),
+    };
+
     unsafe {
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-        get_witness(zkin.as_ptr() as *mut u64, dat_filename_ptr, witness.as_ptr() as *mut c_void, max_num_threads);
+        get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, max_num_threads);
     }
 
     Ok(witness)

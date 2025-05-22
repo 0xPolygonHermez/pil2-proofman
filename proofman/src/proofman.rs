@@ -679,10 +679,6 @@ where
 
         timer_start_info!(GENERATING_BASIC_PROOFS);
 
-        if options.aggregation {
-            initialize_size_witness(&self.pctx, &self.setups, options.final_snark)?;
-        }
-
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
         let proofs: Arc<DashMap<usize, Proof<F>>> = Arc::new(DashMap::new());
@@ -1351,6 +1347,7 @@ where
 
         if aggregation {
             check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
+            initialize_size_witness(&pctx, &setups_vadcop, final_snark)?;
         }
 
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
