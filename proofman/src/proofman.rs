@@ -556,6 +556,7 @@ where
             false => (max_num_threads, 1),
         };
 
+        let contributions_pending = Arc::new(Counter::new());
         let contributions_calculated = Arc::new(Counter::new());
 
         let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
@@ -573,11 +574,13 @@ where
                 let d_buffers_clone = self.d_buffers.clone();
                 let precomputed_witnesses = precomputed_witnesses.clone();
                 let instances_clone = instances.clone();
+                let contributions_pending = contributions_pending.clone();
                 let contributions_calculated = contributions_calculated.clone();
                 let streams_clone = streams.clone();
 
                 std::thread::spawn(move || {
                     while let Some((instance_id, _)) = precomputed_witnesses.pop() {
+                        contributions_pending.increment();
                         let count = contributions_calculated.increment();
                         Self::get_contribution_air(
                             pctx_clone.clone(),
@@ -592,10 +595,7 @@ where
 
                         let (_, _, all) = instances_clone[instance_id];
                         if !all && (instances_mine - count) > max_witness_stored {
-                            let pctx_clone = pctx_clone.clone();
-                            std::thread::spawn(move || {
-                                pctx_clone.free_instance_traces(instance_id);
-                            });
+                            pctx_clone.free_instance_traces(instance_id);
                         }
                     }
                 })
@@ -632,7 +632,7 @@ where
             })
             .collect();
 
-        let contributions_listener = contributions_done_listener(contributions_calculated.clone());
+        let contributions_listener = contributions_done_listener(contributions_pending.clone());
 
         for instance_id in my_instances_sorted.iter() {
             let (_, _, all) = instances[*instance_id];
@@ -656,7 +656,7 @@ where
             }
         }
 
-        contributions_calculated
+        contributions_pending
             .wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
