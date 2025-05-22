@@ -644,14 +644,18 @@ where
 
         number_witness_pending_to_calculate.wait_until_zero();
 
+        let threads_per_pool_tables = std::thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(1);
+
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if *all {
-                number_witness_pending_to_calculate.increment();
-                pending_witness.push(WitnessType::Basic(instance_id));
+                self.wcm.calculate_witness(1, &[instance_id], 0, threads_per_pool_tables);
+
+                if self.pctx.dctx_is_my_instance(instance_id) {
+                    precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
+                }
             }
         }
 
-        number_witness_pending_to_calculate.wait_until_zero();
         contributions_calculated
             .wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
