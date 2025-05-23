@@ -4,6 +4,7 @@ use std::ffi::CString;
 use proofman_starks_lib_c::*;
 use std::path::{Path, PathBuf};
 use num_traits::ToPrimitive;
+use std::sync::Arc;
 
 use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
 
@@ -156,7 +157,8 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: &Path,
     d_buffers: *mut c_void,
-    load_constants: bool,
+    const_tree: Arc<Vec<F>>,
+    const_pols: Arc<Vec<F>>,
     save_proofs: bool,
 ) -> (u64, Proof<F>) {
     timer_start_info!(GEN_RECURSIVE_PROOF);
@@ -235,8 +237,8 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-        setup.get_const_ptr(),
-        setup.get_const_tree_ptr(),
+        const_pols.as_ptr() as *mut u8,
+        const_tree.as_ptr() as *mut u8,
         publics.as_ptr() as *mut u8,
         new_proof[initial_idx..].as_mut_ptr(),
         &proof_file,
@@ -246,7 +248,6 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         instance_id as u64,
         vadcop,
         d_buffers,
-        load_constants,
         &const_pols_path,
         &const_pols_tree_path,
         proof_type,
@@ -266,6 +267,8 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     proofs: &[Vec<Proof<F>>],
     trace: &[F],
     prover_buffer: &[F],
+    const_pols: Arc<Vec<F>>,
+    const_tree: Arc<Vec<F>>,
     output_dir_path: PathBuf,
     d_buffers: *mut c_void,
     save_proofs: bool,
@@ -363,7 +366,8 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             prover_buffer,
                             &output_dir_path,
                             d_buffers,
-                            true,
+                            const_pols.clone(),
+                            const_tree.clone(),
                             save_proofs,
                         );
 
@@ -429,6 +433,8 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     trace: &[F],
     prover_buffer: &[F],
     output_dir_path: PathBuf,
+    const_pols: Arc<Vec<F>>,
+    const_tree: Arc<Vec<F>>,
     d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
@@ -449,7 +455,8 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         prover_buffer,
         &output_dir_path,
         d_buffers,
-        true,
+        const_pols,
+        const_tree,
         save_proof,
     );
     get_stream_id_proof_c(d_buffers, stream_id);

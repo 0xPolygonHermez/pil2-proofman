@@ -382,10 +382,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
             for (air_id, _) in air_group.iter().enumerate() {
                 if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                     let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                    if !gpu {
-                        setup.load_const_pols();
-                        setup.load_const_pols_tree();
-                    } else {
+                    if gpu {
                         let proof_type: &str = setup.setup_type.clone().into();
                         println!(
                             "Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}",
@@ -428,10 +425,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-                if !gpu {
-                    setup.load_const_pols();
-                    setup.load_const_pols_tree();
-                } else {
+                if gpu {
                     let proof_type: &str = setup.setup_type.clone().into();
                     println!(
                         "Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}",
@@ -473,10 +467,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
         let n_airgroups = pctx.global_info.air_groups.len();
         for airgroup_id in 0..n_airgroups {
             let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
-            if !gpu {
-                setup.load_const_pols();
-                setup.load_const_pols_tree();
-            } else {
+            if gpu {
                 let proof_type: &str = setup.setup_type.clone().into();
                 println!(
                     "Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}",
@@ -515,10 +506,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
         }
 
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-        if !gpu {
-            setup_vadcop_final.load_const_pols();
-            setup_vadcop_final.load_const_pols_tree();
-        } else {
+        if gpu {
             let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
             println!("Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}", 0, 0, proof_type);
             load_device_setup_c(

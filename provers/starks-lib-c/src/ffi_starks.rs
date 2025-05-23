@@ -42,6 +42,15 @@ pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn launch_callback_c(instance_id: u64, proof_type: &str) {
+    let proof_type_str = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_str.as_ptr() as *mut std::os::raw::c_char;
+    unsafe {
+        launch_callback(instance_id, proof_type_ptr);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn clear_proof_done_callback_c() {
     unsafe {
         PROOFS_DONE = None;
@@ -858,7 +867,6 @@ pub fn gen_recursive_proof_c(
     instance_id: u64,
     vadcop: bool,
     d_buffers: *mut c_void,
-    load_constants: bool,
     const_pols_path: &str,
     const_tree_path: &str,
     proof_type: &str,
@@ -894,7 +902,6 @@ pub fn gen_recursive_proof_c(
             proof_file_ptr,
             vadcop,
             d_buffers,
-            load_constants,
             const_filename_ptr,
             const_tree_filename_ptr,
             proof_type_ptr,
@@ -1221,6 +1228,15 @@ pub fn load_device_const_pols_c(
 // ------------------------
 // MOCK METHODS FOR TESTING
 // ------------------------
+#[cfg(feature = "no_lib_link")]
+pub fn launch_callback_c(_instance_id: u64, _proof_type: &str) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "launch_callback: This is a mock call because there is no linked library"
+    );
+}
+
 #[cfg(feature = "no_lib_link")]
 pub fn register_proof_done_callback_c(_tx: crossbeam_channel::Sender<(u64, String)>) {
     trace!(
@@ -1795,7 +1811,6 @@ pub fn gen_recursive_proof_c(
     _instance_id: u64,
     _vadcop: bool,
     _d_buffers: *mut c_void,
-    _load_constants: bool,
     _const_pols_path: &str,
     _const_tree_path: &str,
     _proof_type: &str,
