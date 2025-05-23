@@ -4,4 +4,11 @@
 
 extern ProofDoneCallback proof_done_callback;
 
+struct DeviceCommitBuffersCPU
+{
+    uint64_t airgroupId;
+    uint64_t airId;
+    std::string proofType;
+};
+
 #endif

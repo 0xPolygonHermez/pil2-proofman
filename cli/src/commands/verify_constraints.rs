@@ -75,7 +75,7 @@ impl VerifyConstraintsCmd {
         let proofman = ProofMan::<Goldilocks>::new(
             self.proving_key.clone(),
             custom_commits_map,
-            false,
+            true,
             false,
             false,
             ParamsGPU::default(),

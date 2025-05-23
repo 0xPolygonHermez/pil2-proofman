@@ -430,7 +430,7 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
-    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_bS0_S0_S0_"]
+    #[link_name = "\u{1}_Z19gen_recursive_proofPvPcmmmS_S_S_S_S_PmS0_bS_S0_S0_S0_"]
     pub fn gen_recursive_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,
         globalInfoFile: *mut ::std::os::raw::c_char,
@@ -446,7 +446,6 @@ extern "C" {
         proof_file: *mut ::std::os::raw::c_char,
         vadcop: bool,
         d_buffers: *mut ::std::os::raw::c_void,
-        loadConstants: bool,
         constPolsPath: *mut ::std::os::raw::c_char,
         constTreePath: *mut ::std::os::raw::c_char,
         proofType: *mut ::std::os::raw::c_char,
@@ -638,4 +637,8 @@ pub type ProofDoneCallback =
 extern "C" {
     #[link_name = "\u{1}_Z28register_proof_done_callbackPFvmPKcE"]
     pub fn register_proof_done_callback(cb: ProofDoneCallback);
+}
+extern "C" {
+    #[link_name = "\u{1}_Z15launch_callbackmPc"]
+    pub fn launch_callback(instanceId: u64, proofType: *mut ::std::os::raw::c_char);
 }
