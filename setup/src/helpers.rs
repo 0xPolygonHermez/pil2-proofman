@@ -207,7 +207,7 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                 let op = expressions[exp_id].get("op").and_then(Value::as_str).unwrap_or("").to_string();
 
                 match op.as_str() {
-                    // -- exp --
+                    // exp
                     "exp" => {
                         let child_id = expressions[exp_id]["id"].as_u64().unwrap() as usize;
                         if child_id != exp_id {
@@ -216,7 +216,7 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         }
                     }
 
-                    // -- leaf types --
+                    // leaf types
                     op if ["x", "cm", "custom", "const"].contains(&op)
                         || (op == "Zi"
                             && expressions[exp_id].get("boundary").and_then(Value::as_str) != Some("everyRow")) =>
@@ -238,25 +238,25 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         }
                     }
 
-                    // -- xDivXSubXi --
+                    // xDivXSubXi
                     "xDivXSubXi" => {
                         expressions[exp_id]["expDeg"] = json!(1);
                     }
 
-                    // -- challenge/eval --
+                    // challenge/eval
                     op if ["challenge", "eval"].contains(&op) => {
                         expressions[exp_id]["expDeg"] = json!(0);
                         expressions[exp_id]["dim"] = json!(3);
                     }
 
-                    // -- airgroupvalue/proofvalue --
+                    // airgroupvalue/proofvalue
                     op if ["airgroupvalue", "proofvalue"].contains(&op) => {
                         let stage = expressions[exp_id].get("stage").and_then(Value::as_u64).unwrap_or(0);
                         expressions[exp_id]["expDeg"] = json!(0);
                         expressions[exp_id]["dim"] = json!((stage != 1) as u8 * 2 + 1);
                     }
 
-                    // -- airvalue --
+                    // airvalue
                     "airvalue" => {
                         let stage = expressions[exp_id].get("stage").and_then(Value::as_u64).unwrap_or(0);
                         {
@@ -268,7 +268,7 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         }
                     }
 
-                    // -- public --
+                    // public
                     "public" => {
                         let e = &mut expressions[exp_id];
                         e["expDeg"] = json!(0);
@@ -278,7 +278,7 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         }
                     }
 
-                    // -- number or Zi@everyRow --
+                    // number or Zi@everyRow
                     op if op == "number"
                         || (op == "Zi"
                             && expressions[exp_id].get("boundary").and_then(Value::as_str) == Some("everyRow")) =>
@@ -291,13 +291,11 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         }
                     }
 
-                    // -- add/sub/mul/neg --
+                    // add/sub/mul/neg
                     op if ["add", "sub", "mul", "neg"].contains(&op) => {
-                        // clone values array
                         let vals_clone: Vec<Value> =
                             expressions[exp_id].get("values").and_then(Value::as_array).unwrap().clone();
 
-                        // neg → mul rewrite
                         if op == "neg" {
                             let original = vals_clone[0].clone();
                             let e = &mut expressions[exp_id];
@@ -308,7 +306,6 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                             ]);
                         }
 
-                        // zero-fold add 0
                         if op == "add" {
                             let e = &mut expressions[exp_id];
                             if vals_clone[0]["op"] == "number" && vals_clone[0]["value"] == "0" {
@@ -321,28 +318,18 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                             }
                         }
 
-                        // collect child IDs if present
                         let child_ids: Vec<usize> = vals_clone
                             .iter()
                             .filter_map(|v| v.get("id").and_then(Value::as_u64).map(|x| x as usize))
                             .collect();
 
-                        // require exactly two children
-                        if child_ids.len() != 2 {
-                            continue;
+                        if child_ids.len() == 2 {
+                            let lhs = child_ids[0];
+                            let rhs = child_ids[1];
+                            stack.push(Frame::Exit(exp_id, depth));
+                            stack.push(Frame::Enter(rhs, depth + 1));
+                            stack.push(Frame::Enter(lhs, depth + 1));
                         }
-                        let lhs_id = child_ids[0];
-                        let rhs_id = child_ids[1];
-
-                        // bail on self-reference
-                        if lhs_id == exp_id || rhs_id == exp_id {
-                            continue;
-                        }
-
-                        // schedule exit & children
-                        stack.push(Frame::Exit(exp_id, depth));
-                        stack.push(Frame::Enter(rhs_id, depth + 1));
-                        stack.push(Frame::Enter(lhs_id, depth + 1));
                     }
 
                     _ => panic!("Exp op not defined: {}", op),
@@ -353,7 +340,6 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                 let op = expressions[exp_id]["op"].as_str().unwrap();
 
                 if op == "exp" {
-                    // child processing
                     let child_id = expressions[exp_id]["id"].as_u64().unwrap() as usize;
                     let child = expressions[child_id].clone();
                     let child_op = child["op"].as_str().unwrap_or("");
@@ -375,7 +361,6 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         *e = child;
                     }
                 } else {
-                    // post-work for add/sub/mul
                     let vals = expressions[exp_id]["values"].as_array().unwrap();
                     let lhs_e = &expressions[vals[0]["id"].as_u64().unwrap() as usize];
                     let rhs_e = &expressions[vals[1]["id"].as_u64().unwrap() as usize];
