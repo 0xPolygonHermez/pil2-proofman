@@ -1230,11 +1230,7 @@ pub fn load_device_const_pols_c(
 // ------------------------
 #[cfg(feature = "no_lib_link")]
 pub fn launch_callback_c(_instance_id: u64, _proof_type: &str) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "launch_callback: This is a mock call because there is no linked library"
-    );
+    trace!("{}: ··· {}", "ffi     ", "launch_callback: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
