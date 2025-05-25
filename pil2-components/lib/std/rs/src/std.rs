@@ -39,8 +39,8 @@ impl<F: PrimeField64> Std<F> {
             wcm.register_component_std(range_check.u16air.clone().unwrap());
         }
 
-        if range_check.specified_ranges.is_some() {
-            wcm.register_component_std(range_check.specified_ranges.clone().unwrap());
+        if range_check.specified_ranges_air.is_some() {
+            wcm.register_component_std(range_check.specified_ranges_air.clone().unwrap());
         }
 
         Arc::new(Self { range_check, std_prod, std_sum })
