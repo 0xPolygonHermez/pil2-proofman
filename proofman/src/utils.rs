@@ -16,6 +16,9 @@ use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
 use proofman_starks_lib_c::load_device_setup_c;
 
+use pil_std_lib::Std;
+use witness::WitnessManager;
+
 pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
     let mpi_rank = pctx.dctx_get_rank();
     let n_processes = pctx.dctx_get_n_processes();
@@ -657,5 +660,47 @@ pub fn add_publics_aggregation<F: PrimeField64>(
 ) {
     for p in 0..n_publics {
         proof[initial_index + p] = (publics[p].as_canonical_biguint()).to_u64().unwrap();
+    }
+}
+
+pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
+    wcm.register_component_std(std.std_prod.clone());
+    wcm.register_component_std(std.std_sum.clone());
+    wcm.register_component_std(std.range_check.clone());
+
+    if std.range_check.u8air.is_some() {
+        wcm.register_component_std(std.range_check.u8air.clone().unwrap());
+    }
+
+    if std.range_check.u16air.is_some() {
+        wcm.register_component_std(std.range_check.u16air.clone().unwrap());
+    }
+
+    if std.range_check.specified_ranges.is_some() {
+        wcm.register_component_std(std.range_check.specified_ranges.clone().unwrap());
+    }
+}
+
+pub fn register_std_dev<F: PrimeField64>(
+    wcm: &WitnessManager<F>,
+    std: &Std<F>,
+    register_u8: bool,
+    register_u16: bool,
+    register_specified_ranges: bool,
+) {
+    wcm.register_component_std(std.std_prod.clone());
+    wcm.register_component_std(std.std_sum.clone());
+    wcm.register_component_std(std.range_check.clone());
+
+    if register_u8 && std.range_check.u8air.is_some() {
+        wcm.register_component_std(std.range_check.u8air.clone().unwrap());
+    }
+
+    if register_u16 && std.range_check.u16air.is_some() {
+        wcm.register_component_std(std.range_check.u16air.clone().unwrap());
+    }
+
+    if register_specified_ranges && std.range_check.specified_ranges.is_some() {
+        wcm.register_component_std(std.range_check.specified_ranges.clone().unwrap());
     }
 }

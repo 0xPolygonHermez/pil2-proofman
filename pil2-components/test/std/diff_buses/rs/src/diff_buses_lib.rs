@@ -16,7 +16,7 @@ where
     StandardUniform: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
-        Std::new(wcm.clone());
+        Std::new(wcm.get_ctx(), wcm.get_sctx());
         let prod_bus = ProdBus::new();
         let sum_bus = SumBus::new();
         let both_buses = BothBuses::new();
