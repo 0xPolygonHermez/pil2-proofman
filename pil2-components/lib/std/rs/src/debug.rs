@@ -246,7 +246,7 @@ pub fn print_debug_info<F: PrimeField64>(
                         }
                     }
 
-                    file_path = tmp_dir.join("debug.log".to_string());
+                    file_path = tmp_dir.join("debug.log");
 
                     match File::create(&file_path) {
                         Ok(file) => {
