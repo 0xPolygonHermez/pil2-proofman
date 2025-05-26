@@ -275,3 +275,15 @@ pub fn contributions_done_listener(contributions_counter: Arc<Counter>) -> std::
         }
     })
 }
+
+pub fn basic_proofs_done_listener(proofs_counter: Arc<Counter>) -> std::thread::JoinHandle<()> {
+    let (tx, rx) = crossbeam_channel::unbounded::<(u64, String)>();
+
+    register_proof_done_callback_c(tx);
+
+    std::thread::spawn(move || {
+        while rx.recv().is_ok() {
+            proofs_counter.decrement();
+        }
+    })
+}
