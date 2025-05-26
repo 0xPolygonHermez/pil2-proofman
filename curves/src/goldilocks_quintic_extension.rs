@@ -60,8 +60,8 @@ impl SquaringFp5 for GoldilocksQuinticExtension {
 
         let a: &[Goldilocks] = self.as_basis_coefficients_slice();
         let b: &[Goldilocks] = t2.as_basis_coefficients_slice();
-        a[0] * b[0] + Goldilocks::from_u8(3) * (a[1] * b[4] + a[2] * b[3] + a[3] * b[2] + a[4] * b[1])
         // self^(p⁴ + p³ + p² + p + 1)
+        a[0] * b[0] + Goldilocks::from_u8(3) * (a[1] * b[4] + a[2] * b[3] + a[3] * b[2] + a[4] * b[1])
     }
 
     fn is_square_base(x: &Goldilocks) -> bool {
