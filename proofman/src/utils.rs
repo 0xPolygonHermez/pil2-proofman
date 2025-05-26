@@ -1,4 +1,3 @@
-use log::info;
 use p3_field::PrimeField64;
 use num_traits::ToPrimitive;
 use std::fs::{self, File};
@@ -15,15 +14,14 @@ use std::error::Error;
 
 use proofman_common::{format_bytes, ProofCtx, ProofType, Setup, SetupCtx, SetupsVadcop};
 
-pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
+pub fn print_summary_info<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
     let mpi_rank = pctx.dctx_get_rank();
     let n_processes = pctx.dctx_get_n_processes();
 
     if n_processes > 1 {
         let (average_weight, max_weight, min_weight, max_deviation) = pctx.dctx_load_balance_info();
-        log::info!(
-            "{}: Load balance. Average: {} max: {} min: {} deviation: {}",
-            name,
+        tracing::info!(
+            "Load balance. Average: {} max: {} min: {} deviation: {}",
             average_weight,
             max_weight,
             min_weight,
@@ -32,15 +30,15 @@ pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx:
     }
 
     if mpi_rank == 0 {
-        print_summary(name, pctx, sctx, true);
+        print_summary(pctx, sctx, true);
     }
 
     if n_processes > 1 {
-        print_summary(name, pctx, sctx, false);
+        print_summary(pctx, sctx, false);
     }
 }
 
-pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global: bool) {
+pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global: bool) {
     let mut air_info = HashMap::new();
 
     let mut air_instances = HashMap::new();
@@ -94,37 +92,31 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
     let mut air_groups: Vec<_> = air_instances.keys().collect();
     air_groups.sort();
 
-    info!("{}", format!("{}: --- TOTAL PROOF INSTANCES SUMMARY ------------------------", name).bright_white().bold());
-    info!("{}:     ► {} Air instances found:", name, n_instances);
+    tracing::info!("{}", "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".bright_white().bold());
+    tracing::info!("    ► {} Air instances found:", n_instances);
     for air_group in air_groups.clone() {
         let air_group_instances = air_instances.get(air_group).unwrap();
         let mut air_names: Vec<_> = air_group_instances.keys().collect();
         air_names.sort();
 
-        info!("{}:       Air Group [{}]", name, air_group);
+        tracing::info!("      Air Group [{}]", air_group);
         for air_name in air_names {
             let count = air_group_instances.get(air_name).unwrap();
             let (n_bits, total_cols, _, _, _) = air_info.get(air_name).unwrap();
-            info!(
-                "{}:       {}",
-                name,
+            tracing::info!(
+                "      {}",
                 format!("· {} x Air [{}] ({} x 2^{})", count, air_name, total_cols, n_bits).bright_white().bold()
             );
         }
     }
-    info!("{}: ----------------------------------------------------------", name);
+    tracing::info!("----------------------------------------------------------");
     if pctx.options.verify_constraints {
-        info!(
+        tracing::info!(
             "{}",
-            format!("{}: --- TOTAL CONSTRAINT CHECKER MEMORY USAGE ----------------------------", name)
-                .bright_white()
-                .bold()
+            "--- TOTAL CONSTRAINT CHECKER MEMORY USAGE ----------------------------".bright_white().bold()
         );
     } else {
-        info!(
-            "{}",
-            format!("{}: --- TOTAL PROVER MEMORY USAGE ----------------------------", name).bright_white().bold()
-        );
+        tracing::info!("{}", "--- TOTAL PROVER MEMORY USAGE ----------------------------".bright_white().bold());
     }
     let mut max_prover_memory = 0f64;
     for air_group in air_groups {
@@ -140,9 +132,8 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
                 if max_prover_memory < *memory_instance {
                     max_prover_memory = *memory_instance;
                 }
-                info!(
-                    "{}:       · {}: {} per each of {} instance",
-                    name,
+                tracing::info!(
+                    "      · {}: {} per each of {} instance",
                     air_name,
                     format_bytes(*memory_instance),
                     count,
@@ -151,9 +142,8 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
                 if max_prover_memory < *memory_instance + *memory_trace {
                     max_prover_memory = *memory_instance + *memory_trace;
                 }
-                info!(
-                    "{}:       · {}: {} + {} per each of {} instance | Total: {}",
-                    name,
+                tracing::info!(
+                    "      · {}: {} + {} per each of {} instance | Total: {}",
                     air_name,
                     format_bytes(*memory_trace),
                     format_bytes(*memory_instance),
@@ -163,10 +153,10 @@ pub fn print_summary<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &Set
             }
         }
     }
-    info!("{}:       Total memory required by proofman: {}", name, format_bytes(max_prover_memory));
-    info!("{}: ----------------------------------------------------------", name);
-    info!("{}:       Extra memory tables (CPU): {}", name, format_bytes(memory_tables));
-    info!("{}: ----------------------------------------------------------", name);
+    tracing::info!("      Total memory required by proofman: {}", format_bytes(max_prover_memory));
+    tracing::info!("----------------------------------------------------------");
+    tracing::info!("      Extra memory tables (CPU): {}", format_bytes(memory_tables));
+    tracing::info!("----------------------------------------------------------");
 }
 
 pub fn check_paths(

@@ -1,6 +1,5 @@
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve, goldilocks_quintic_extension::GoldilocksQuinticExtension};
 use libloading::{Library, Symbol};
-use log::info;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::BasedVectorSpace;
 use std::ops::Add;
@@ -57,8 +56,6 @@ impl<F: PrimeField64> ProofMan<F>
 where
     BinomialExtensionField<Goldilocks, 5>: BasedVectorSpace<F>,
 {
-    const MY_NAME: &'static str = "ProofMan";
-
     pub fn check_setup(proving_key_path: PathBuf, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
@@ -174,7 +171,7 @@ where
         pctx.dctx_assign_instances();
         pctx.dctx_close();
 
-        print_summary_info(Self::MY_NAME, &pctx, &sctx);
+        print_summary_info(&pctx, &sctx);
 
         let transcript = FFITranscript::new(2, true);
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
@@ -367,7 +364,7 @@ where
         pctx.dctx_assign_instances();
         pctx.dctx_close();
 
-        print_summary_info(Self::MY_NAME, &pctx, &sctx);
+        print_summary_info(&pctx, &sctx);
 
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
 
@@ -590,11 +587,7 @@ where
             }
 
             if valid_proofs {
-                log::info!(
-                    "{}: ··· {}",
-                    Self::MY_NAME,
-                    "\u{2713} All proofs were successfully verified".bright_green().bold()
-                );
+                tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
                 return Ok(None);
             } else {
                 return Err("Basic proofs were not verified".into());
@@ -807,18 +800,10 @@ where
                 );
                 timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
                 if !valid_proofs {
-                    log::info!(
-                        "{}: ··· {}",
-                        Self::MY_NAME,
-                        "\u{2717} Vadcop Final proof was not verified".bright_red().bold()
-                    );
+                    tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
                     return Err("Vadcop Final proof was not verified".into());
                 } else {
-                    log::info!(
-                        "{}:     {}",
-                        Self::MY_NAME,
-                        "\u{2713} Vadcop Final proof was verified".bright_green().bold()
-                    );
+                    tracing::info!("    {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
                 }
             }
         }
@@ -973,7 +958,7 @@ where
         pctx: &ProofCtx<F>,
         wcm: Arc<WitnessManager<F>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("Initializing witness");
+        tracing::info!("Initializing witness");
 
         // Load the witness computation dynamic library
         timer_start_info!(REGISTER_WITNESS);
@@ -1065,9 +1050,8 @@ where
                 } else {
                     col.name.clone()
                 };
-                log::warn!(
-                    "{}: Missing initialization {} at row {} of {} in instance {}",
-                    Self::MY_NAME,
+                tracing::warn!(
+                    "Missing initialization {} at row {} of {} in instance {}",
                     col_name,
                     row,
                     air_name,
@@ -1140,7 +1124,7 @@ where
     }
 
     fn initialize_publics(sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) -> Result<(), Box<dyn std::error::Error>> {
-        info!("{}: Initializing publics custom_commits", Self::MY_NAME);
+        tracing::info!("Initializing publics custom_commits");
         for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id);

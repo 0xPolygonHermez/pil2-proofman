@@ -31,8 +31,6 @@ pub struct U16Air {
 }
 
 impl<F: PrimeField64> AirComponent<F> for U16Air {
-    const MY_NAME: &'static str = "U16Air   ";
-
     fn new(pctx: &ProofCtx<F>, _sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
         let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
         let air_id = air_id.expect("Air ID must be provided");

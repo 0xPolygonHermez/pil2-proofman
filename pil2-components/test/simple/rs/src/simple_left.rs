@@ -28,7 +28,7 @@ where
             let mut trace = SimpleLeftTrace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let range = [
                 self.std_lib.get_range(0, (1 << 8) - 1, Some(true)),

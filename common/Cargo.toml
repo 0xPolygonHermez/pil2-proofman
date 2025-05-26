@@ -1,24 +1,32 @@
 [package]
 name = "proofman-common"
-version = "0.8.1"
-edition = "2021"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
+
 build = "build.rs"
 
 [dependencies]
-libloading = "0.8.4"
+proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
+proofman-util = { path = "../util" }
+transcript = { path = "../transcript" }
+
+libloading.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_derive.workspace = true
-log.workspace = true
-transcript = { path = "../transcript" }
+tracing.workspace = true
 p3-field.workspace = true
 p3-goldilocks.workspace = true
 proofman-macros.workspace = true
-env_logger.workspace = true
-proofman-util = { path = "../util" }
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 rayon.workspace = true
-sysinfo = "0.22.5"
+sysinfo.workspace = true
+
+mpi = { version = "0.8.0", optional = true }
+tracing-subscriber = { version = "0.3" }
 
 # Distributed mode (mpi) is only supported on Linux x86_64
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]

@@ -118,7 +118,6 @@ pub fn verify_proof_bn128<F: Field>(
 }
 
 pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proof: &[u64]) -> bool {
-    const MY_NAME: &str = "Verify  ";
     let mut is_valid = true;
 
     let instances = pctx.dctx_get_instances();
@@ -133,7 +132,7 @@ pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proo
     let verkey_path = setup_path.display().to_string() + ".verkey.json";
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
-    log::info!("{}:     Verifying proof of {}: Instance #{}", MY_NAME, air_name, air_instance_id);
+    tracing::info!("    Verifying proof of {}: Instance #{}", air_name, air_instance_id);
 
     let is_valid_proof = verify_proof(
         proof.as_ptr() as *mut u64,
@@ -147,17 +146,15 @@ pub fn verify_basic_proof<F: Field>(pctx: &ProofCtx<F>, instance_id: usize, proo
 
     if !is_valid_proof {
         is_valid = false;
-        log::info!(
-            "{}: ··· {}",
-            MY_NAME,
+        tracing::info!(
+            "··· {}",
             format!("\u{2717} Proof of {}: Instance #{} was not verified", air_name, air_instance_id,)
                 .bright_red()
                 .bold()
         );
     } else {
-        log::info!(
-            "{}:     {}",
-            MY_NAME,
+        tracing::info!(
+            "    {}",
             format!("\u{2713} Proof of {}: Instance #{} was verified", air_name, air_instance_id,)
                 .bright_green()
                 .bold()
