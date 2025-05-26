@@ -21,7 +21,15 @@ where
 {
     execute!(Permutation1_6Trace, 2);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _core_id: usize,
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
