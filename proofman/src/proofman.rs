@@ -17,6 +17,7 @@ use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
     get_stream_proofs_c, get_stream_proofs_non_blocking_c,
 };
+use crossbeam_channel::bounded;
 use std::fs;
 use std::collections::HashMap;
 use std::fs::File;
@@ -557,118 +558,109 @@ where
         };
 
         let contributions_pending = Arc::new(Counter::new());
-        let contributions_calculated = Arc::new(Counter::new());
 
-        let precomputed_witnesses = Arc::new(WitnessBuffer::new(max_witness_stored));
+        let contributions_listener = contributions_done_listener(contributions_pending.clone());
 
         let n_streams = self.n_streams_per_gpu * self.n_gpus;
         let streams = Arc::new(Mutex::new(vec![None; n_streams as usize]));
 
-        let contribution_pools: Vec<_> = (0..self.n_gpus)
-            .map(|_| {
-                let pctx_clone = self.pctx.clone();
-                let sctx_clone = self.sctx.clone();
-                let aux_trace_clone = aux_trace.clone();
-                let values_contributions_clone = values_contributions.clone();
-                let roots_contributions_clone = roots_contributions.clone();
-                let d_buffers_clone = self.d_buffers.clone();
-                let precomputed_witnesses = precomputed_witnesses.clone();
-                let instances_clone = instances.clone();
-                let contributions_pending = contributions_pending.clone();
-                let contributions_calculated = contributions_calculated.clone();
-                let streams_clone = streams.clone();
+        let (tx, rx) = bounded::<usize>(max_concurrent_pools);
 
-                std::thread::spawn(move || {
-                    while let Some((instance_id, _)) = precomputed_witnesses.pop() {
-                        contributions_pending.increment();
-                        let count = contributions_calculated.increment();
-                        Self::get_contribution_air(
-                            pctx_clone.clone(),
-                            &sctx_clone,
-                            roots_contributions_clone.clone(),
-                            values_contributions_clone.clone(),
-                            instance_id,
-                            aux_trace_clone.clone().as_ptr() as *mut u8,
-                            d_buffers_clone.clone(),
-                            streams_clone.clone(),
-                        );
-
-                        let (_, _, all) = instances_clone[instance_id];
-                        if !all && (instances_mine - count) > max_witness_stored {
-                            pctx_clone.free_instance_traces(instance_id);
-                        }
-                    }
-                })
-            })
-            .collect();
-
-        let number_witness_pending_to_calculate = Arc::new(Counter::new());
-        let pending_witness = Arc::new(FastQueue::default());
-        let _: Vec<_> = (0..max_concurrent_pools)
-            .map(|thread_id| {
-                let pctx_clone = self.pctx.clone();
-                let wcm_clone = self.wcm.clone();
-                let precomputed_witnesses = precomputed_witnesses.clone();
-                let pending_witness_clone = pending_witness.clone();
-                let number_witness_pending_to_calculate_clone = number_witness_pending_to_calculate.clone();
-
-                std::thread::spawn(move || loop {
-                    let instance_id = match pending_witness_clone.pop() {
-                        WitnessType::Basic(instance_id) => {
-                            if instance_id == usize::MAX {
-                                break;
-                            }
-                            instance_id
-                        }
-                        _ => panic!(),
-                    };
-                    wcm_clone.calculate_witness(1, &[instance_id], threads_per_pool * thread_id, threads_per_pool);
-                    number_witness_pending_to_calculate_clone.decrement();
-
-                    if pctx_clone.dctx_is_my_instance(instance_id) {
-                        precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
-                    }
-                })
-            })
-            .collect();
-
-        let contributions_listener = contributions_done_listener(contributions_pending.clone());
-
-        for instance_id in my_instances_sorted.iter() {
-            let (_, _, all) = instances[*instance_id];
-            if !all {
-                number_witness_pending_to_calculate.increment();
-                pending_witness.push(WitnessType::Basic(*instance_id));
-            }
+        for pool_id in 0..max_concurrent_pools {
+            tx.send(pool_id).unwrap();
         }
 
-        number_witness_pending_to_calculate.wait_until_zero();
+        let mut handles = Vec::new();
+        for (count, &instance_id) in my_instances_sorted.iter().enumerate() {
+            let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let values_contributions_clone = values_contributions.clone();
+            let roots_contributions_clone = roots_contributions.clone();
+            let d_buffers_clone = self.d_buffers.clone();
+            let aux_trace_clone = aux_trace.clone();
+            let streams_clone = streams.clone();
+            let tx_clone = tx.clone();
+            let rx_clone = rx.clone();
+            let instances = instances.clone();
+            let wcm = self.wcm.clone();
+            let contributions_pending = contributions_pending.clone();
 
-        let threads_per_pool_tables = std::thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(1);
+            let pool_id = rx_clone.recv().unwrap();
+            let handle = std::thread::spawn(move || {
+                let (_, _, all) = instances[instance_id];
+                if !all {
+                    wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
+                    contributions_pending.increment();
+                    Self::get_contribution_air(
+                        &pctx_clone,
+                        &sctx_clone,
+                        roots_contributions_clone.clone(),
+                        values_contributions_clone.clone(),
+                        instance_id,
+                        aux_trace_clone.clone().as_ptr() as *mut u8,
+                        d_buffers_clone.clone(),
+                        streams_clone.clone(),
+                    );
 
-        for (instance_id, (_, _, all)) in instances.iter().enumerate() {
-            if *all {
-                self.wcm.calculate_witness(1, &[instance_id], 0, threads_per_pool_tables);
-
-                if self.pctx.dctx_is_my_instance(instance_id) {
-                    precomputed_witnesses.push((instance_id, ProofType::Basic as usize));
+                    if (instances_mine - count) > max_witness_stored {
+                        pctx_clone.free_instance_traces(instance_id);
+                    }
                 }
-            }
+                tx_clone.send(pool_id).unwrap();
+            });
+            handles.push(handle);
+        }
+
+        // Join all threads
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let mut handles = Vec::new();
+        for (instance_id, (_, _, all)) in instances.iter().enumerate() {
+            let is_all = *all;
+            if !is_all {
+                continue;
+            };
+            let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let values_contributions_clone = values_contributions.clone();
+            let roots_contributions_clone = roots_contributions.clone();
+            let d_buffers_clone = self.d_buffers.clone();
+            let aux_trace_clone = aux_trace.clone();
+            let streams_clone = streams.clone();
+            let tx_clone = tx.clone();
+            let rx_clone = rx.clone();
+            let wcm = self.wcm.clone();
+            let contributions_pending = contributions_pending.clone();
+
+            let pool_id = rx_clone.recv().unwrap();
+            let handle = std::thread::spawn(move || {
+                wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
+                contributions_pending.increment();
+                Self::get_contribution_air(
+                    &pctx_clone,
+                    &sctx_clone,
+                    roots_contributions_clone.clone(),
+                    values_contributions_clone.clone(),
+                    instance_id,
+                    aux_trace_clone.clone().as_ptr() as *mut u8,
+                    d_buffers_clone.clone(),
+                    streams_clone.clone(),
+                );
+                tx_clone.send(pool_id).unwrap();
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
         }
 
         contributions_pending
             .wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
-
-        precomputed_witnesses.close();
-
-        for _ in 0..max_concurrent_pools {
-            pending_witness.push(WitnessType::Basic(usize::MAX));
-        }
-        for pool in contribution_pools {
-            pool.join().unwrap();
-        }
 
         clear_proof_done_callback_c();
         contributions_listener.join().unwrap();
@@ -1590,7 +1582,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     pub fn get_contribution_air(
-        pctx: Arc<ProofCtx<F>>,
+        pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
         roots_contributions: Arc<DashMap<usize, [F; 4]>>,
         values_contributions: Arc<DashMap<usize, Vec<F>>>,
