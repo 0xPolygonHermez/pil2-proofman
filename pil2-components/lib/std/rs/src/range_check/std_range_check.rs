@@ -224,6 +224,32 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
+    pub fn clone_without_multiplicities(&self) -> Self {
+        Self {
+            _phantom: std::marker::PhantomData,
+            ranges: self.ranges.clone(),
+            u8air: self.u8air.as_ref().map(|air| Arc::new(air.clone_without_multiplicities())),
+            u16air: self.u16air.as_ref().map(|air| Arc::new(air.clone_without_multiplicities())),
+            specified_ranges_air: self
+                .specified_ranges_air
+                .as_ref()
+                .map(|air| Arc::new(air.clone_without_multiplicities())),
+        }
+    }
+
+    pub fn accumulate_multiplicities(&self, local_range_check: &StdRangeCheck<F>) {
+        // Accumulate the multiplicities of the range check AIRs
+        if let Some(u8air) = &self.u8air {
+            u8air.accumulate_from(&local_range_check.u8air.as_ref().unwrap());
+        }
+        if let Some(u16air) = &self.u16air {
+            u16air.accumulate_from(&local_range_check.u16air.as_ref().unwrap());
+        }
+        if let Some(specified_ranges_air) = &self.specified_ranges_air {
+            specified_ranges_air.accumulate_from(&local_range_check.specified_ranges_air.as_ref().unwrap());
+        }
+    }
+
     pub fn assign_values(&self, value: i64, multiplicity: u64, id: usize) {
         // Find the range with the given id
         let range_item = self.ranges.iter().find(|r| r.id == id).unwrap_or_else(|| {

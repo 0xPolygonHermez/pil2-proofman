@@ -9,13 +9,13 @@ use p3_field::PrimeField64;
 use std::path::PathBuf;
 
 use witness::WitnessComponent;
-use proofman_common::{AirInstance, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, ProofCtx, SetupCtx, TraceInfo, PaddedAtomicU64};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
 use proofman_util::create_buffer_fast;
 
 use crate::{get_hint_field_constant_as_field, get_hint_field_constant_as_u64, validate_binary_field, AirComponent};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SpecifiedRange {
     id: usize,
     mul_idx: usize,
@@ -29,7 +29,7 @@ pub struct SpecifiedRanges {
     instance_id: AtomicU64,
     num_rows: usize,
     num_cols: usize,
-    ranges: Vec<SpecifiedRange>,
+    ranges: Vec<PaddedAtomicU64>,
     multiplicities: Vec<Vec<AtomicU64>>,
     calculated: AtomicBool,
 }
@@ -142,7 +142,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
         let num_cols = col_num as usize;
         let multiplicities = (0..num_cols)
             .into_par_iter()
-            .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
+            .map(|_| (0..num_rows).into_par_iter().map(|_| PaddedAtomicU64::new(0)).collect())
             .collect();
 
         Arc::new(Self {
@@ -161,6 +161,9 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
 impl SpecifiedRanges {
     #[inline(always)]
     pub fn update_inputs(&self, id: usize, value: i64, multiplicity: u64) {
+        if multiplicity == 0 {
+            return;
+        }
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -186,6 +189,36 @@ impl SpecifiedRanges {
 
     pub fn air_id(&self) -> usize {
         self.air_id
+    }
+
+    pub fn clone_without_multiplicities(&self) -> Self {
+        let multiplicities = (0..self.num_cols)
+            .map(|_| (0..self.num_rows).map(|_| PaddedAtomicU64::new(0)).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+
+        Self {
+            airgroup_id: self.airgroup_id,
+            air_id: self.air_id,
+            shift: self.shift,
+            mask: self.mask,
+            num_rows: self.num_rows,
+            num_cols: self.num_cols,
+            multiplicities,
+            instance_id: AtomicU64::new(0),
+            calculated: AtomicBool::new(false),
+            ranges: self.ranges.clone(), // Cloning range metadata
+        }
+    }
+
+    pub fn accumulate_from(&self, other: &Arc<SpecifiedRanges>) {
+        for (col_self, col_other) in self.multiplicities.iter().zip(other.multiplicities.iter()) {
+            for (cell_self, cell_other) in col_self.iter().zip(col_other.iter()) {
+                let value = cell_other.load(Ordering::Relaxed);
+                if value != 0 {
+                    cell_self.fetch_add(value, Ordering::Relaxed);
+                }
+            }
+        }
     }
 }
 

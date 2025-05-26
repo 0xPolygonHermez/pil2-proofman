@@ -11,6 +11,7 @@ use std::fs;
 use std::sync::Arc;
 use sysinfo::{System, SystemExt, ProcessExt};
 use rayon::{ThreadPool, ThreadPoolBuilder};
+use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
     let _ = env_logger::builder()
@@ -238,4 +239,60 @@ pub fn create_pool(core_id: usize, n_cores: usize) -> ThreadPool {
         })
         .build()
         .unwrap()
+}
+
+#[repr(align(64))]
+pub struct PaddedAtomicU64(AtomicU64);
+
+impl PaddedAtomicU64 {
+    pub fn new(val: u64) -> Self {
+        PaddedAtomicU64(AtomicU64::new(val))
+    }
+
+    pub fn fetch_add(&self, val: u64, ordering: Ordering) -> u64 {
+        self.0.fetch_add(val, ordering)
+    }
+
+    pub fn swap(&self, val: u64, ordering: Ordering) -> u64 {
+        self.0.swap(val, ordering)
+    }
+
+    pub fn load(&self, ordering: Ordering) -> u64 {
+        self.0.load(ordering)
+    }
+}
+
+impl std::fmt::Debug for PaddedAtomicU64 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = self.load(Ordering::Relaxed);
+        f.debug_tuple("PaddedAtomicU64").field(&value).finish()
+    }
+}
+
+#[repr(align(64))]
+pub struct PaddedAtomicU32(AtomicU32);
+
+impl PaddedAtomicU32 {
+    pub fn new(val: u32) -> Self {
+        PaddedAtomicU32(AtomicU32::new(val))
+    }
+
+    pub fn fetch_add(&self, val: u32, ordering: Ordering) -> u32 {
+        self.0.fetch_add(val, ordering)
+    }
+
+    pub fn swap(&self, val: u32, ordering: Ordering) -> u32 {
+        self.0.swap(val, ordering)
+    }
+
+    pub fn load(&self, ordering: Ordering) -> u32 {
+        self.0.load(ordering)
+    }
+}
+
+impl std::fmt::Debug for PaddedAtomicU32 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = self.load(Ordering::Relaxed);
+        f.debug_tuple("PaddedAtomicU32").field(&value).finish()
+    }
 }

@@ -85,4 +85,12 @@ impl<F: PrimeField64> Std<F> {
     pub fn range_check(&self, val: i64, multiplicity: u64, id: usize) {
         self.range_check.assign_values(val, multiplicity, id);
     }
+
+    pub fn accumulate_multiplicities(&self, local_range_check: &StdRangeCheck<F>) {
+        self.range_check.accumulate_multiplicities(local_range_check);
+    }
+
+    pub fn clone_std_range_check(&self) -> StdRangeCheck<F> {
+        self.range_check.clone_without_multiplicities()
+    }
 }

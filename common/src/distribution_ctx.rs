@@ -10,12 +10,12 @@ use mpi::datatype::PartitionMut;
 use mpi::topology::Communicator;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
-use std::sync::atomic::AtomicU64;
 #[cfg(distributed)]
 use std::sync::atomic::Ordering;
 use p3_field::Field;
 
 use crate::GlobalInfo;
+use crate::PaddedAtomicU64;
 
 /// Represents the context of distributed computing
 pub struct DistributionCtx {
@@ -527,7 +527,7 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_multiplicity(&self, _multiplicity: &[AtomicU64], _owner: i32) {
+    pub fn distribute_multiplicity(&self, _multiplicity: &[PaddedAtomicU64], _owner: i32) {
         #[cfg(distributed)]
         {
             //assert that I can operate with u32
@@ -563,7 +563,7 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<AtomicU64>], _owner: i32) {
+    pub fn distribute_multiplicities(&self, _multiplicities: &[Vec<PaddedAtomicU64>], _owner: i32) {
         #[cfg(distributed)]
         {
             // Ensure that each multiplicity vector can be operated with u32

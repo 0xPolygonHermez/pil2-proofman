@@ -11,7 +11,7 @@ use rayon::{
     slice::ParallelSliceMut,
 };
 use witness::WitnessComponent;
-use proofman_common::{TraceInfo, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{PaddedAtomicU64, TraceInfo, AirInstance, ProofCtx, SetupCtx};
 use std::sync::atomic::Ordering;
 
 use crate::AirComponent;
@@ -27,7 +27,7 @@ pub struct U8Air {
     num_rows: usize,
     num_cols: usize,
     mins: Vec<Min>,
-    multiplicities: Vec<Vec<AtomicU64>>,
+    multiplicities: Vec<Vec<PaddedAtomicU64>>,
     instance_id: AtomicU64,
     calculated: AtomicBool,
 }
@@ -46,7 +46,7 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
 
         let multiplicities = (0..num_cols)
             .into_par_iter()
-            .map(|_| (0..num_rows).into_par_iter().map(|_| AtomicU64::new(0)).collect())
+            .map(|_| (0..num_rows).into_par_iter().map(|_| PaddedAtomicU64::new(0)).collect())
             .collect();
 
         Arc::new(Self {
@@ -65,6 +65,9 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
 impl U8Air {
     #[inline(always)]
     pub fn update_inputs(&self, value: u8, multiplicity: u64) {
+        if multiplicity == 0 {
+            return;
+        }
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -87,6 +90,35 @@ impl U8Air {
 
     pub fn air_id(&self) -> usize {
         self.air_id
+    }
+
+    pub fn clone_without_multiplicities(&self) -> Self {
+        let multiplicities = (0..self.num_cols)
+            .map(|_| (0..self.num_rows).map(|_| PaddedAtomicU64::new(0)).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+
+        Self {
+            airgroup_id: self.airgroup_id,
+            air_id: self.air_id,
+            shift: self.shift,
+            mask: self.mask,
+            num_rows: self.num_rows,
+            num_cols: self.num_cols,
+            multiplicities,
+            instance_id: AtomicU64::new(0),
+            calculated: AtomicBool::new(false),
+        }
+    }
+
+    pub fn accumulate_from(&self, other: &Arc<U8Air>) {
+        for (col_self, col_other) in self.multiplicities.iter().zip(other.multiplicities.iter()) {
+            for (cell_self, cell_other) in col_self.iter().zip(col_other.iter()) {
+                let value = cell_other.load(Ordering::Relaxed);
+                if value != 0 {
+                    cell_self.fetch_add(value, Ordering::Relaxed);
+                }
+            }
+        }
     }
 }
 

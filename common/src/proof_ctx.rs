@@ -1,5 +1,4 @@
 use std::os::raw::c_void;
-use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, sync::RwLock};
 use dashmap::DashMap;
 use std::path::PathBuf;
@@ -7,7 +6,7 @@ use std::path::PathBuf;
 use p3_field::Field;
 use transcript::FFITranscript;
 
-use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams};
+use crate::{AirInstance, DistributionCtx, GlobalInfo, PaddedAtomicU64, SetupCtx, StdMode, StepsParams};
 
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
@@ -331,7 +330,7 @@ impl<F: Field> ProofCtx<F> {
         dctx.set_balance_distribution(balance);
     }
 
-    pub fn dctx_distribute_multiplicity(&self, multiplicity: &[AtomicU64], global_idx: usize) {
+    pub fn dctx_distribute_multiplicity(&self, multiplicity: &[PaddedAtomicU64], global_idx: usize) {
         let dctx = self.dctx.read().unwrap();
         let owner = dctx.owner(global_idx);
         dctx.distribute_multiplicity(multiplicity, owner);
@@ -345,7 +344,7 @@ impl<F: Field> ProofCtx<F> {
         }
     }
 
-    pub fn dctx_distribute_multiplicities(&self, multiplicities: &[Vec<AtomicU64>], global_idx: usize) {
+    pub fn dctx_distribute_multiplicities(&self, multiplicities: &[Vec<PaddedAtomicU64>], global_idx: usize) {
         let dctx = self.dctx.read().unwrap();
         let owner = dctx.owner(global_idx);
         dctx.distribute_multiplicities(multiplicities, owner);
