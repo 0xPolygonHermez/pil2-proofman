@@ -3,20 +3,29 @@ use crate::{
     DEFAULT_PRINT_VALS,
 };
 use proofman_starks_lib_c::set_log_level_c;
-use std::path::PathBuf;
+use tracing::dispatcher;
+use tracing::level_filters::LevelFilter;
+use std::{path::PathBuf};
 use std::collections::HashMap;
 use p3_field::Field;
 use serde::Deserialize;
 use std::fs;
-use sysinfo::{System, SystemExt, ProcessExt};
+use sysinfo::{System};
+
+use tracing_subscriber::{prelude::*, fmt};
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
-    env_logger::builder()
-        .format_timestamp(None)
-        .format_level(true)
-        .format_target(false)
-        .filter_level(verbose_mode.into())
-        .init();
+    if dispatcher::has_been_set() {
+        return;
+    }
+    let stdout_layer = fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_ansi(true)
+        .with_target(false)
+        .with_filter(LevelFilter::from(verbose_mode));
+
+    tracing_subscriber::registry().with(stdout_layer).init();
+
     set_log_level_c(verbose_mode.into());
 }
 

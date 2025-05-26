@@ -9,8 +9,6 @@ use proofman_hints::{
 };
 
 pub trait AirComponent<F: Field> {
-    const MY_NAME: &'static str;
-
     fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self>;
 }
 
@@ -50,7 +48,7 @@ pub fn validate_binary_field<F: PrimeField64>(value: F, field_name: &str) -> boo
     } else if value.is_one() {
         true
     } else {
-        log::error!("{} hint must be either 0 or 1", field_name);
+        tracing::error!("{} hint must be either 0 or 1", field_name);
         panic!();
     }
 }

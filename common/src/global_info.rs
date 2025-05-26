@@ -79,7 +79,7 @@ pub struct GlobalInfoStepsFRI {
 
 impl GlobalInfo {
     pub fn new(proving_key_path: &Path) -> Self {
-        log::debug!("glblinfo: ··· Loading GlobalInfo JSON {}", proving_key_path.display());
+        tracing::debug!("··· Loading GlobalInfo JSON {}", proving_key_path.display());
 
         let global_info = Self::from_file(&proving_key_path.display().to_string());
 

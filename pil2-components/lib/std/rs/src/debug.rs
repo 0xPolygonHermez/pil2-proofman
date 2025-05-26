@@ -166,11 +166,7 @@ pub fn update_debug_data<F: PrimeField64>(
     }
 }
 
-pub fn check_invalid_opids<F: PrimeField64>(
-    _pctx: &ProofCtx<F>,
-    name: &str,
-    debugs_data_fasts: &mut [DebugDataFast<F>],
-) -> Vec<F> {
+pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fasts: &mut [DebugDataFast<F>]) -> Vec<F> {
     let mut debug_data_fast = HashMap::new();
 
     let mut global_assumes = Vec::new();
@@ -215,20 +211,18 @@ pub fn check_invalid_opids<F: PrimeField64>(
     }
 
     if !invalid_opids.is_empty() {
-        log::error!(
-            "{}: ··· {}",
-            name,
+        tracing::error!(
+            "··· {}",
             format!("\u{2717} The following opids does not match {:?}", invalid_opids).bright_red().bold()
         );
     } else {
-        log::info!("{}: ··· {}", name, "\u{2713} All bus values match.".bright_green().bold());
+        tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());
     }
 
     invalid_opids
 }
 pub fn print_debug_info<F: PrimeField64>(
     pctx: &ProofCtx<F>,
-    name: &str,
     max_values_to_print: usize,
     print_to_file: bool,
     debug_data: &mut DebugData<F>,
@@ -244,7 +238,7 @@ pub fn print_debug_info<F: PrimeField64>(
                     let tmp_dir = Path::new("tmp");
                     if !tmp_dir.exists() {
                         match fs::create_dir_all(tmp_dir) {
-                            Ok(_) => log::info!("Debug   : Created directory: {:?}", tmp_dir),
+                            Ok(_) => tracing::info!("Debug   : Created directory: {:?}", tmp_dir),
                             Err(e) => {
                                 eprintln!("Failed to create directory {:?}: {}", tmp_dir, e);
                                 std::process::exit(1);
@@ -252,7 +246,7 @@ pub fn print_debug_info<F: PrimeField64>(
                         }
                     }
 
-                    file_path = tmp_dir.join(format!("{}_debug.log", name));
+                    file_path = tmp_dir.join(format!("debug.log"));
 
                     match File::create(&file_path) {
                         Ok(file) => {
@@ -270,7 +264,7 @@ pub fn print_debug_info<F: PrimeField64>(
                 } else {
                     "".to_string()
                 };
-                log::error!("{}: Some bus values do not match.{}", name, file_msg);
+                tracing::error!("Some bus values do not match.{}", file_msg);
 
                 // Set the flag to avoid printing the error message multiple times
                 there_are_errors = true;
@@ -331,7 +325,7 @@ pub fn print_debug_info<F: PrimeField64>(
     }
 
     if !there_are_errors {
-        log::info!("{}: ··· {}", name, "\u{2713} All bus values match.".bright_green().bold());
+        tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());
     }
 
     fn print_diffs<F: PrimeField64>(

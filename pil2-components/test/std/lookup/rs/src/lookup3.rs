@@ -23,7 +23,7 @@ where
             let mut trace = Lookup3Trace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             for i in 0..num_rows {
                 trace[i].c1 = F::from_usize(i);

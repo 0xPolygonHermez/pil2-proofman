@@ -53,8 +53,6 @@ macro_rules! define_wc {
         }
 
         impl $StructName {
-            const MY_NAME: &'static str = $name;
-
             pub fn new() -> std::sync::Arc<Self> {
                 std::sync::Arc::new(Self { instance_ids: std::sync::RwLock::new(Vec::new()) })
             }
@@ -74,8 +72,6 @@ macro_rules! define_wc_with_std {
         }
 
         impl<F: PrimeField64> $StructName<F> {
-            const MY_NAME: &'static str = $name;
-
             pub fn new(std_lib: Arc<Std<F>>) -> std::sync::Arc<Self> {
                 std::sync::Arc::new(Self {
                     std_lib,

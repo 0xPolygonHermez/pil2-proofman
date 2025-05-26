@@ -28,7 +28,7 @@ where
             let mut trace = RangeCheckDynamic2Trace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let range1 = self.std_lib.get_range(5225, 29023, Some(false));
             let range2 = self.std_lib.get_range(-8719, -7269, Some(false));
