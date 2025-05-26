@@ -3,6 +3,7 @@ use crate::{
     DEFAULT_PRINT_VALS,
 };
 use proofman_starks_lib_c::set_log_level_c;
+use tracing::dispatcher;
 use tracing::level_filters::LevelFilter;
 use std::{path::PathBuf};
 use std::collections::HashMap;
@@ -14,6 +15,9 @@ use sysinfo::{System};
 use tracing_subscriber::{prelude::*, fmt};
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
+    if dispatcher::has_been_set() {
+        return;
+    }
     let stdout_layer = fmt::layer()
         .with_writer(std::io::stdout)
         .with_ansi(true)
