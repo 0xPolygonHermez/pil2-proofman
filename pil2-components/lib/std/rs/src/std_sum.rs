@@ -28,6 +28,8 @@ pub struct StdSum<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> StdSum<F> {
+    const MY_NAME: &'static str = "STD Sum ";
+
     pub fn new() -> Arc<Self> {
         Arc::new(Self { debug_data: RwLock::new(HashMap::new()), debug_data_fast: RwLock::new(Vec::new()) })
     }
@@ -54,8 +56,9 @@ impl<F: PrimeField64> StdSum<F> {
 
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
-        tracing::debug!(
-            "··· Checking debug mode {} for instance_id {} of {}",
+        log::debug!(
+            "{}: ··· Checking debug mode {} for instance_id {} of {}",
+            Self::MY_NAME,
             if fast_mode { "fast" } else { "" },
             air_instance_id,
             air_name
@@ -281,7 +284,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                     let setup = sctx.get_setup(airgroup_id, air_id);
                     let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
-                    tracing::debug!("··· Computing witness for AIR '{}' at stage {}", air_name, stage);
+                    log::debug!("{}: ··· Computing witness for AIR '{}' at stage {}", Self::MY_NAME, air_name, stage);
 
                     let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
                     let im_airval_hints = get_hint_ids_by_name(p_expressions_bin, "im_airval");
@@ -428,13 +431,13 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
         {
             if pctx.options.debug_info.std_mode.fast_mode {
                 let mut debug_data_fast = self.debug_data_fast.write().unwrap();
-                check_invalid_opids(&pctx, &mut debug_data_fast);
+                check_invalid_opids(&pctx, Self::MY_NAME, &mut debug_data_fast);
             } else {
                 let mut debug_data = self.debug_data.write().unwrap();
 
                 let max_values_to_print = pctx.options.debug_info.std_mode.n_vals;
                 let print_to_file = pctx.options.debug_info.std_mode.print_to_file;
-                print_debug_info(&pctx, max_values_to_print, print_to_file, &mut debug_data);
+                print_debug_info(&pctx, Self::MY_NAME, max_values_to_print, print_to_file, &mut debug_data);
             }
         }
     }

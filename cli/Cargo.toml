@@ -1,12 +1,8 @@
 [package]
 name = "proofman-cli"
-version = { workspace = true }
-edition = { workspace = true }
-license = { workspace = true }
-keywords = { workspace = true }
-repository = { workspace = true }
-categories = { workspace = true }
-
+version = "0.8.0"
+authors = ["Polygon Labs"]
+edition = "2021"
 readme = "README.md"
 
 [dependencies]
@@ -15,19 +11,21 @@ proofman-util = { path = "../util" }
 proofman = { path = "../proofman" }
 proofman-common = { path = "../common" }
 witness = { path = "../witness" }
+blake3 = "1.3.1"
 
 p3-goldilocks.workspace = true
 p3-field.workspace = true
-tracing.workspace = true
-libloading.workspace = true
-blake3.workspace = true
+log.workspace = true
+env_logger.workspace = true
+libloading = "0.8.4"
+
 colored.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-clap = { version = "4.5.38", features = ["derive", "env"] }
+clap = { version = "4.5.13", features = ["derive", "env"] }
 tinytemplate = "1.1"
-convert_case = "0.8"
+convert_case = "0.6"
 
 [features]
 default = []

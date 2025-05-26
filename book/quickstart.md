@@ -111,13 +111,14 @@ On the other hand it has created the `fibonacci_executor.rs` file that specifies
 ```rust
 use proofman::{executor, executor::Executor, ProofCtx, trace};
 use goldilocks::{Goldilocks, AbstractField};
+use log::debug;
 
 executor!(FibonacciExecutor);
 
 impl Executor<Goldilocks> for FibonacciExecutor {
     fn witness_computation(&self, stage_id: u32, pctx: &mut ProofCtx<Goldilocks>) {
         if stage_id != 1 {
-            tracing::debug!("Nothing to do for stage_id {}", stage_id);
+            debug!("Nothing to do for stage_id {}", stage_id);
             return;
         }
 

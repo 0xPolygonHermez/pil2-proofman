@@ -9,6 +9,7 @@ use proofman_common::{
 };
 
 use std::os::raw::c_void;
+
 use colored::*;
 
 pub fn verify_constraints<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global_id: usize) -> Vec<ConstraintInfo> {
@@ -45,7 +46,8 @@ pub fn verify_global_constraints_proof<F: Field>(
     sctx: &SetupCtx<F>,
     airgroupvalues: Vec<Vec<F>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    tracing::info!("--> Checking global constraints");
+    const MY_NAME: &str = "GlCstVfy";
+    log::info!("{}: --> Checking global constraints", MY_NAME);
 
     let mut airgroup_values_ptrs: Vec<*mut F> = airgroupvalues
         .iter() // Iterate mutably over the inner Vecs
@@ -81,23 +83,30 @@ pub fn verify_global_constraints_proof<F: Field>(
         let line_str = if global_constraints_lines[idx].len() > 100 { "" } else { &global_constraints_lines[idx] };
 
         if constraint.skip {
-            tracing::debug!("    · Global Constraint #{} {} -> {}", idx, "is skipped".bright_yellow(), line_str,);
+            log::debug!(
+                "{}:     · Global Constraint #{} {} -> {}",
+                MY_NAME,
+                idx,
+                "is skipped".bright_yellow(),
+                line_str,
+            );
             continue;
         }
 
         let valid = if !constraint.valid { "is invalid".bright_red() } else { "is valid".bright_green() };
         if constraint.valid {
-            tracing::debug!("    · Global Constraint #{} {} -> {}", constraint.id, valid, line_str);
+            log::debug!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
         } else {
-            tracing::info!("    · Global Constraint #{} {} -> {}", constraint.id, valid, line_str);
+            log::info!("{}:     · Global Constraint #{} {} -> {}", MY_NAME, constraint.id, valid, line_str);
         }
         if !constraint.valid {
             valid_global_constraints = false;
             if constraint.dim == 1 {
-                tracing::info!("···        \u{2717} Failed with value: {}", constraint.value[0]);
+                log::info!("{}: ···        \u{2717} Failed with value: {}", MY_NAME, constraint.value[0]);
             } else {
-                tracing::info!(
-                    "···        \u{2717} Failed with value: [{}, {}, {}]",
+                log::info!(
+                    "{}: ···        \u{2717} Failed with value: [{}, {}, {}]",
+                    MY_NAME,
                     constraint.value[0],
                     constraint.value[1],
                     constraint.value[2]
@@ -107,18 +116,24 @@ pub fn verify_global_constraints_proof<F: Field>(
     }
 
     if valid_global_constraints {
-        tracing::info!("··· {}", "\u{2713} All global constraints were successfully verified".bright_green().bold());
+        log::info!(
+            "{}: ··· {}",
+            MY_NAME,
+            "\u{2713} All global constraints were successfully verified".bright_green().bold()
+        );
         Ok(())
     } else {
-        tracing::info!("··· {}", "\u{2717} Not all global constraints were verified".bright_red().bold());
+        log::info!("{}: ··· {}", MY_NAME, "\u{2717} Not all global constraints were verified".bright_red().bold());
         Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::Other,
-            format!("Not all global constraints were verified."),
+            format!("{}: Not all global constraints were verified.", MY_NAME),
         )))
     }
 }
 
 pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize) -> bool {
+    const MY_NAME: &str = "CstrVrfy";
+
     let instances = pctx.dctx_get_instances();
 
     let constraints = verify_constraints(pctx, sctx, instance_id);
@@ -128,11 +143,14 @@ pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
     let (skip, _) = skip_prover_instance(pctx, instance_id);
     if skip {
-        tracing::info!(
+        log::info!(
             "{}",
-            format!("··· \u{2713} Skipping Instance #{} of {} [{}:{}]", air_instance_id, air_name, airgroup_id, air_id)
-                .bright_yellow()
-                .bold()
+            format!(
+                "{}: ··· \u{2713} Skipping Instance #{} of {} [{}:{}]",
+                MY_NAME, air_instance_id, air_name, airgroup_id, air_id
+            )
+            .bright_yellow()
+            .bold()
         );
         return true;
     };
@@ -144,11 +162,12 @@ pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
     let mut valid_constraints_instance = true;
     let skipping = "is skipped".bright_yellow();
 
-    tracing::info!("    ► Instance #{} of {} [{}:{}]", air_instance_id, air_name, airgroup_id, air_id,);
+    log::info!("{}:     ► Instance #{} of {} [{}:{}]", MY_NAME, air_instance_id, air_name, airgroup_id, air_id,);
     for constraint in &constraints {
         if constraint.skip {
-            tracing::debug!(
-                "    · Constraint #{} (stage {}) {} -> {}",
+            log::debug!(
+                "{}:     · Constraint #{} (stage {}) {} -> {}",
+                MY_NAME,
                 constraint.id,
                 constraint.stage,
                 skipping,
@@ -163,15 +182,17 @@ pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
         };
         if constraint.im_pol {
             if constraint.n_rows == 0 {
-                tracing::trace!(
-                    "···    Intermediate polynomial (stage {}) {} -> {}",
+                log::trace!(
+                    "{}: ···    Intermediate polynomial (stage {}) {} -> {}",
+                    MY_NAME,
                     constraint.stage,
                     valid,
                     constraints_lines[constraint.id as usize]
                 );
             } else {
-                tracing::info!(
-                    "    · Constraint #{} (stage {}) {} -> {}",
+                log::info!(
+                    "{}:     · Constraint #{} (stage {}) {} -> {}",
+                    MY_NAME,
                     constraint.id,
                     constraint.stage,
                     valid,
@@ -179,16 +200,18 @@ pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
                 );
             }
         } else if constraint.n_rows == 0 {
-            tracing::debug!(
-                "    · Constraint #{} (stage {}) {} -> {}",
+            log::debug!(
+                "{}:     · Constraint #{} (stage {}) {} -> {}",
+                MY_NAME,
                 constraint.id,
                 constraint.stage,
                 valid,
                 constraints_lines[constraint.id as usize]
             );
         } else {
-            tracing::info!(
-                "    · Constraint #{} (stage {}) {} -> {}",
+            log::info!(
+                "{}:     · Constraint #{} (stage {}) {} -> {}",
+                MY_NAME,
                 constraint.id,
                 constraint.stage,
                 valid,
@@ -202,10 +225,11 @@ pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
         for i in 0..n_rows {
             let row = constraint.rows[i as usize];
             if row.dim == 1 {
-                tracing::info!("···        \u{2717} Failed at row {} with value: {}", row.row, row.value[0]);
+                log::info!("{}: ···        \u{2717} Failed at row {} with value: {}", MY_NAME, row.row, row.value[0]);
             } else {
-                tracing::info!(
-                    "···        \u{2717} Failed at row {} with value: [{}, {}, {}]",
+                log::info!(
+                    "{}: ···        \u{2717} Failed at row {} with value: [{}, {}, {}]",
+                    MY_NAME,
                     row.row,
                     row.value[0],
                     row.value[1],
@@ -216,15 +240,17 @@ pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
     }
 
     if !valid_constraints_instance {
-        tracing::info!(
-            "··· {}",
+        log::info!(
+            "{}: ··· {}",
+            MY_NAME,
             format!("\u{2717} Not all constraints for Instance #{} of {} were verified", air_instance_id, air_name)
                 .bright_red()
                 .bold()
         );
     } else {
-        tracing::info!(
-            "    {}",
+        log::info!(
+            "{}:     {}",
+            MY_NAME,
             format!("\u{2713} All constraints for Instance #{} of {} were verified", air_instance_id, air_name)
                 .bright_green()
                 .bold()

@@ -62,6 +62,8 @@ pub fn write_fixed_cols_bin<F: Field>(
 }
 
 pub fn calculate_fixed_tree<F: Field>(setup: &Setup<F>) {
+    const MY_NAME: &str = "Setup   ";
+
     let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
     let const_pols_tree_size = setup.const_tree_size;
 
@@ -71,11 +73,11 @@ pub fn calculate_fixed_tree<F: Field>(setup: &Setup<F>) {
     let const_pols_path = setup.setup_path.display().to_string() + ".const";
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
 
-    tracing::debug!("··· Loading const pols for AIR {} of type {:?}", setup.air_name, setup.setup_type);
+    log::debug!("{}   : ··· Loading const pols for AIR {} of type {:?}", MY_NAME, setup.air_name, setup.setup_type);
 
     load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
 
-    tracing::debug!("··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
+    log::debug!("{}   : ··· Loading const tree for AIR {} of type {:?}", MY_NAME, setup.air_name, setup.setup_type);
 
     let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
@@ -110,7 +112,7 @@ pub fn load_const_pols_tree<F: Field>(setup: &Setup<F>, const_tree: &[F]) {
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
     let const_pols_tree_size = setup.const_tree_size;
 
-    tracing::debug!("FixedCol   : ··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
+    log::debug!("FixedCol   : ··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 
     load_const_tree_c(
         setup.p_setup.p_stark_info,

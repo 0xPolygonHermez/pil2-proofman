@@ -1,4 +1,4 @@
-use tracing_subscriber::filter::LevelFilter;
+use log::LevelFilter;
 
 #[derive(Debug, Clone, Copy)]
 pub enum VerboseMode {
@@ -30,9 +30,9 @@ impl From<VerboseMode> for u64 {
 impl From<VerboseMode> for LevelFilter {
     fn from(val: VerboseMode) -> Self {
         match val {
-            VerboseMode::Info => LevelFilter::INFO,
-            VerboseMode::Debug => LevelFilter::DEBUG,
-            VerboseMode::Trace => LevelFilter::TRACE,
+            VerboseMode::Info => LevelFilter::Info,
+            VerboseMode::Debug => LevelFilter::Debug,
+            VerboseMode::Trace => LevelFilter::Trace,
         }
     }
 }

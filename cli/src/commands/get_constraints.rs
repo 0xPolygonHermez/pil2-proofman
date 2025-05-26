@@ -17,6 +17,8 @@ pub struct GetConstraintsCmd {
 }
 
 impl GetConstraintsCmd {
+    const MY_NAME: &str = "Cnstrnts";
+
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("{} GetConstraints", format!("{: >12}", "Command").bright_green().bold());
         println!();
@@ -28,27 +30,29 @@ impl GetConstraintsCmd {
 
         for airgroup_id in 0..global_info.air_groups.len() {
             for air_id in 0..global_info.airs[airgroup_id].len() {
-                tracing::info!(
+                log::info!(
                     "{}",
                     format!(
-                        "    ► Constraints of {} - {}",
-                        global_info.air_groups[airgroup_id], global_info.airs[airgroup_id][air_id].name,
+                        "{}:     ► Constraints of {} - {}",
+                        Self::MY_NAME,
+                        global_info.air_groups[airgroup_id],
+                        global_info.airs[airgroup_id][air_id].name,
                     )
                     .bright_white()
                     .bold()
                 );
                 let constraints_lines = get_constraints_lines_str(&sctx, airgroup_id, air_id);
                 for (idx, line) in constraints_lines.iter().enumerate() {
-                    tracing::info!("        · Constraint #{} : {}", idx, line);
+                    log::info!("{}:         · Constraint #{} : {}", Self::MY_NAME, idx, line);
                 }
             }
         }
 
         let global_constraints_lines = get_global_constraints_lines_str(&sctx);
 
-        tracing::info!("{}", format!("    ► Global Constraints",).bright_white().bold());
+        log::info!("{}", format!("{}:     ► Global Constraints", Self::MY_NAME,).bright_white().bold());
         for (idx, line) in global_constraints_lines.iter().enumerate() {
-            tracing::info!("        · Global Constraint #{} -> {}", idx, line);
+            log::info!("{}:         · Global Constraint #{} -> {}", Self::MY_NAME, idx, line);
         }
 
         Ok(())

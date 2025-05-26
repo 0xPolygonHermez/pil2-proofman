@@ -13,12 +13,14 @@ pub struct Std<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> Std<F> {
+    const MY_NAME: &'static str = "STD     ";
+
     pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
         let pctx = wcm.get_pctx();
         let sctx = wcm.get_sctx();
 
         let std_mode = pctx.options.debug_info.std_mode.clone();
-        tracing::info!("··· The PIL2 STD library has been initialized on mode {}", std_mode.name);
+        log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
         let std_prod = StdProd::new();
@@ -54,7 +56,7 @@ impl<F: PrimeField64> Std<F> {
         let sctx = wcm.get_sctx();
 
         let std_mode = pctx.options.debug_info.std_mode.clone();
-        tracing::info!("··· The PIL2 STD library has been initialized on mode {}", std_mode.name);
+        log::info!("{}: ··· The PIL2 STD library has been initialized on mode {}", Self::MY_NAME, std_mode.name);
 
         // Instantiate the STD components
         let std_prod = StdProd::new();

@@ -28,7 +28,7 @@ where
             let mut trace = Connection2Trace::new();
             let num_rows = trace.num_rows();
 
-            tracing::debug!("··· Starting witness computation stage {}", 1);
+            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
             for i in 0..num_rows {
                 trace[i].a = rng.random();

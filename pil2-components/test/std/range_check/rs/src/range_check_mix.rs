@@ -27,7 +27,7 @@ where
             let mut trace = RangeCheckMixTrace::new();
             let num_rows = trace.num_rows();
 
-            tracing::debug!("··· Starting witness computation stage {}", 1);
+            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
             let range1 = self.std_lib.get_range(0, (1 << 8) - 1, Some(true));
             let range2 = self.std_lib.get_range(50, (1 << 7) - 1, Some(true));

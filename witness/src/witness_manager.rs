@@ -17,6 +17,8 @@ pub struct WitnessManager<F: Field> {
 }
 
 impl<F: Field> WitnessManager<F> {
+    const _MY_NAME: &'static str = "WCMnager";
+
     pub fn new(
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,

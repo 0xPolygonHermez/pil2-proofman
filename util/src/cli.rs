@@ -29,8 +29,7 @@ pub fn print_banner(extended: bool) {
 pub fn print_extended_banner() {
     let system = System::new_all();
 
-    let system_cores =
-        sysinfo::System::physical_core_count().map(|c| c.to_string()).unwrap_or_else(|| "Unknown".to_owned());
+    let system_cores = system.physical_core_count().map(|c| c.to_string()).unwrap_or_else(|| "Unknown".to_owned());
     let system_cores_brand = system.cpus()[0].brand();
     println!("{} {} cores ({})", format!("{: >12}", "CPU").bright_green().bold(), system_cores, system_cores_brand);
 

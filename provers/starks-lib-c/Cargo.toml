@@ -1,16 +1,12 @@
 [package]
 name = "proofman-starks-lib-c"
-version = { workspace = true }
-edition = { workspace = true }
-license = { workspace = true }
-keywords = { workspace = true }
-repository = { workspace = true }
-categories = { workspace = true }
+version = "0.8.0"
+edition = "2021"
 
 build = "build.rs"
 
 [dependencies]
-tracing.workspace = true
+log.workspace = true
 
 [features]
 default = []

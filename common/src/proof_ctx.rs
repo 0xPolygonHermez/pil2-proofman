@@ -84,12 +84,14 @@ pub struct ProofCtx<F: Field> {
 }
 
 impl<F: Field> ProofCtx<F> {
+    const MY_NAME: &'static str = "ProofCtx";
+
     pub fn create_ctx(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
         options: ProofOptions,
     ) -> Self {
-        tracing::info!("Creating proof context");
+        log::info!("{}: Creating proof context", Self::MY_NAME);
 
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;

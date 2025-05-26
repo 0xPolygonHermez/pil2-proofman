@@ -31,7 +31,7 @@ where
             // TODO: Add the ability to send inputs to lookup3
             //       and consequently add random selectors
 
-            tracing::debug!("··· Starting witness computation stage {}", 1);
+            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
             for i in 0..num_rows {
                 // Inner lookups

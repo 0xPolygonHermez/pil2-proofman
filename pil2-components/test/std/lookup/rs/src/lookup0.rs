@@ -28,7 +28,7 @@ where
             let mut trace = Lookup0Trace::new();
             let num_rows = trace.num_rows();
 
-            tracing::debug!("··· Starting witness computation stage {}", 1);
+            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
 
             let num_lookups = trace[0].sel.len();
 

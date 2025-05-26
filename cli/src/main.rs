@@ -50,9 +50,9 @@ fn main() {
     };
 
     if let Err(e) = result {
-        tracing::error!("{}", e);
+        log::error!("{}", e);
         exit(1);
     }
 
-    tracing::info!("Done");
+    log::info!("Done");
 }

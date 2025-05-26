@@ -160,7 +160,7 @@ impl<F: Field> SetupCtx<F> {
             Some(setup) => setup,
             None => {
                 // Handle the error case as needed
-                tracing::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
+                log::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
                 // You might want to return a default value or panic
                 panic!("Setup not found"); // or return a default value if applicable
             }
@@ -176,7 +176,7 @@ impl<F: Field> SetupCtx<F> {
             }
             None => {
                 // Handle the error case as needed
-                tracing::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
+                log::error!("Setup not found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
                 // You might want to return a default value or panic
                 panic!("Setup not found"); // or return a default value if applicable
             }
