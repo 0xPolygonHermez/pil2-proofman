@@ -111,7 +111,7 @@ pub fn verify_global_constraints_proof<F: Field>(
         Ok(())
     } else {
         tracing::info!("··· {}", "\u{2717} Not all global constraints were verified".bright_red().bold());
-        Err(Box::new(std::io::Error::other(format!("Not all global constraints were verified."))))
+        Err(Box::new(std::io::Error::other("Not all global constraints were verified.".to_string())))
     }
 }
 

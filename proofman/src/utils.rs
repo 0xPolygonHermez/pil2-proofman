@@ -92,7 +92,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
     let mut air_groups: Vec<_> = air_instances.keys().collect();
     air_groups.sort();
 
-    tracing::info!("{}", format!("--- TOTAL PROOF INSTANCES SUMMARY ------------------------").bright_white().bold());
+    tracing::info!("{}", "--- TOTAL PROOF INSTANCES SUMMARY ------------------------".bright_white().bold());
     tracing::info!("    ► {} Air instances found:", n_instances);
     for air_group in air_groups.clone() {
         let air_group_instances = air_instances.get(air_group).unwrap();
@@ -113,13 +113,10 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
     if pctx.options.verify_constraints {
         tracing::info!(
             "{}",
-            format!("--- TOTAL CONSTRAINT CHECKER MEMORY USAGE ----------------------------").bright_white().bold()
+            "--- TOTAL CONSTRAINT CHECKER MEMORY USAGE ----------------------------".bright_white().bold()
         );
     } else {
-        tracing::info!(
-            "{}",
-            format!("--- TOTAL PROVER MEMORY USAGE ----------------------------").bright_white().bold()
-        );
+        tracing::info!("{}", "--- TOTAL PROVER MEMORY USAGE ----------------------------".bright_white().bold());
     }
     let mut max_prover_memory = 0f64;
     for air_group in air_groups {
