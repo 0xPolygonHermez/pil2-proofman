@@ -46,7 +46,7 @@ impl GetConstraintsCmd {
 
         let global_constraints_lines = get_global_constraints_lines_str(&sctx);
 
-        tracing::info!("{}", format!("    ► Global Constraints",).bright_white().bold());
+        tracing::info!("{}", "    ► Global Constraints".bright_white().bold());
         for (idx, line) in global_constraints_lines.iter().enumerate() {
             tracing::info!("        · Global Constraint #{} -> {}", idx, line);
         }

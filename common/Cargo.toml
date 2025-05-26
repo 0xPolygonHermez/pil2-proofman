@@ -22,7 +22,6 @@ tracing.workspace = true
 p3-field.workspace = true
 p3-goldilocks.workspace = true
 proofman-macros.workspace = true
-env_logger.workspace = true
 rayon.workspace = true
 sysinfo.workspace = true
 

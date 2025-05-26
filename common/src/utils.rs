@@ -4,7 +4,7 @@ use crate::{
 };
 use proofman_starks_lib_c::set_log_level_c;
 use tracing::dispatcher;
-use tracing::level_filters::LevelFilter;
+use tracing_subscriber::filter::LevelFilter;
 use std::{path::PathBuf};
 use std::collections::HashMap;
 use p3_field::Field;

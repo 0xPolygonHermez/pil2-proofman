@@ -112,7 +112,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
         // tracing::info!("  First row 1: {:?}", trace[1]);
         // tracing::info!("  Air values: {:?}", air_values);
         // tracing::info!("  Airgroup values: {:?}", airgroup_values);
-        // tracing::info!("  Publics: {:?}", Self:ublics);
+        // tracing::info!("  Publics: {:?}", publics);
         // tracing::info!("  Proof values: {:?}", proof_values);
     }
 }

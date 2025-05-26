@@ -160,7 +160,11 @@ pub trait EllipticCurve<F: Field, K: ExtensionField<F> + SquaringFp5>: Clone {
             if e2 { (x1, gx1.sqrt().expect("gx1 is square")) } else { (x2, gx2.sqrt().expect("gx2 is square")) };
 
         // Fix the sign of y
-        if f.sign0() == y.sign0() { Self::new(x, y) } else { Self::new(x, -y) }
+        if f.sign0() == y.sign0() {
+            Self::new(x, y)
+        } else {
+            Self::new(x, -y)
+        }
     }
 
     /// Hash to the curve
