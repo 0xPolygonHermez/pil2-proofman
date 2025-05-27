@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use p3_field::Field;
+use fields::PrimeField64;
 use proofman_common::{ProofCtx, SetupCtx};
 
-pub trait WitnessComponent<F: Field>: Send + Sync {
+pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
     fn execute(&self, _pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
         Vec::new()
     }

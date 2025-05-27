@@ -1,4 +1,4 @@
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};

@@ -8,7 +8,7 @@ use colored::Colorize;
 use crate::commands::field::Field;
 use witness::{WitnessLibInitFn, WitnessManager};
 
-use p3_goldilocks::Goldilocks;
+use fields::Goldilocks;
 
 use proofman_common::ProofOptions;
 

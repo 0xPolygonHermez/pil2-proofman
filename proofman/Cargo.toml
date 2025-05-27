@@ -18,8 +18,7 @@ transcript = { path = "../transcript" }
 witness = { path = "../witness" }
 
 tracing.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
+fields.workspace = true
 libloading.workspace = true
 colored.workspace = true
 serde_json.workspace = true

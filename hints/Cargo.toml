@@ -11,8 +11,8 @@ categories = { workspace = true }
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 proofman-common = { path = "../common" }
 proofman-util = { path = "../util" }
+fields = { path = "../fields" }
 
-p3-field.workspace = true
 tracing.workspace = true
 
 [features]

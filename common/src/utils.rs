@@ -7,7 +7,7 @@ use tracing::dispatcher;
 use tracing_subscriber::filter::LevelFilter;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use p3_field::Field;
+use fields::PrimeField64;
 use serde::Deserialize;
 use std::fs;
 use sysinfo::{System};
@@ -44,7 +44,7 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
     format!("{:.2} {}", num_bytes, units[unit_index])
 }
 
-pub fn skip_prover_instance<F: Field>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
+pub fn skip_prover_instance<F: PrimeField64>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
     if pctx.options.debug_info.debug_instances.is_empty() {
         return (false, Vec::new());
     }

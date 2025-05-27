@@ -21,8 +21,7 @@ witness.workspace = true
 tracing.workspace = true
 rand.workspace = true
 num-bigint.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
+fields.workspace = true
 rayon.workspace = true
 
 [build-dependencies]

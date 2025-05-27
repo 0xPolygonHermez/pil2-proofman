@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
 use proofman_util::create_buffer_fast;
 use rayon::{
