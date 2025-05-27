@@ -188,19 +188,19 @@ fn add_info_expressions_inner(
     let indent = "  ".repeat(depth);
     println!("{}>> enter exp_id={} op={:?}", indent, exp_id, expressions[exp_id].get("op"));
 
-    // 1) Cycle/visited guard
+    // 1) cycle/visited guard
     if !visited.insert(exp_id) {
         println!("{}   └─ already visited, returning", indent);
         return;
     }
 
-    // 2) Fast‐exit if already annotated
+    // 2) fast‐exit if already has expDeg
     if expressions[exp_id].get("expDeg").is_some() {
         println!("{}   └─ expDeg already set, returning", indent);
         return;
     }
 
-    // 3) Handle `next` → `rowOffset`
+    // 3) handle `next` → `rowOffset`
     if let Some(next) = expressions[exp_id].get("next") {
         println!("{}   └─ had `next`: {:?}", indent, next);
         let ro = if next.as_bool().unwrap_or(false) { 1 } else { 0 };
@@ -208,7 +208,7 @@ fn add_info_expressions_inner(
         expressions[exp_id].as_object_mut().unwrap().remove("next");
     }
 
-    // 4) Clone op
+    // 4) clone op
     let op = expressions[exp_id].get("op").and_then(Value::as_str).unwrap_or("<missing>").to_string();
     println!("{}   └─ processing op = `{}`", indent, op);
 
@@ -360,9 +360,24 @@ fn add_info_expressions_inner(
                 }
             }
 
-            // (c) recurse on both children, guard self‐reference
-            let lhs = expressions[exp_id]["values"][0]["id"].as_u64().unwrap() as usize;
-            let rhs = expressions[exp_id]["values"][1]["id"].as_u64().unwrap() as usize;
+            // (c) extract children safely
+            let vals = expressions[exp_id]["values"].as_array().unwrap();
+            let lhs_opt = vals.get(0).and_then(|v| v.get("id")).and_then(Value::as_u64).map(|u| u as usize);
+            let rhs_opt = vals.get(1).and_then(|v| v.get("id")).and_then(Value::as_u64).map(|u| u as usize);
+
+            if lhs_opt.is_none() || rhs_opt.is_none() {
+                println!("{}       └─ missing id on lhs/rhs ({:?}/{:?}), setting deg=0", indent, lhs_opt, rhs_opt);
+                let me = &mut expressions[exp_id];
+                me["expDeg"] = json!(0);
+                me["dim"] = json!(1);
+                me["stage"] = json!(0);
+                me["rowsOffsets"] = json!([0]);
+                return;
+            }
+            let lhs = lhs_opt.unwrap();
+            let rhs = rhs_opt.unwrap();
+
+            // (d) guard self‐reference
             if lhs == exp_id || rhs == exp_id {
                 println!(
                     "{}       └─ self‐reference detected (lhs={} rhs={} == exp_id), setting deg=0",
@@ -375,11 +390,13 @@ fn add_info_expressions_inner(
                 me["rowsOffsets"] = json!([0]);
                 return;
             }
+
+            // (e) recurse
             println!("{}       recurse lhs={} rhs={}", indent, lhs, rhs);
             add_info_expressions_inner(expressions, lhs, depth + 2, visited);
             add_info_expressions_inner(expressions, rhs, depth + 2, visited);
 
-            // (d) combine safely
+            // (f) combine
             println!("{}       combining on `{}`", indent, op);
             let lhs_e = &expressions[lhs];
             let rhs_e = &expressions[rhs];
