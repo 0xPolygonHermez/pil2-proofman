@@ -35,7 +35,9 @@ pub fn prepare_pil(
     /* ──────────────────────── normalise top-level stages ───────────────────── */
     if let Some(exprs) = pil["expressions"].as_array_mut() {
         for e in exprs {
-            e["stage"] = json!(1);
+            if e["stage"].is_null() {
+                e["stage"] = json!(0);
+            }
         }
     }
 
@@ -48,6 +50,15 @@ pub fn prepare_pil(
         let info = generate_pil1_polynomials(f, 1.0, &mut res, pil, Some(options));
         (info["expressions"].clone(), info["symbols"].clone(), info["hints"].clone(), info["constraints"].clone())
     };
+
+    // add ids if they are missing
+    if let Some(exprs_arr) = expressions.as_array_mut() {
+        for (i, exp) in exprs_arr.iter_mut().enumerate() {
+            if exp.get("id").is_none() {
+                exp["id"] = json!(i);
+            }
+        }
+    }
 
     /* ──────────────────────── fill mapSectionsN.cm? ───────────────────────── */
     let n_stages = res.get("nStages").and_then(Value::as_u64).unwrap_or(0);
