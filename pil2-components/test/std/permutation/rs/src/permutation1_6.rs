@@ -37,7 +37,7 @@ where
             let mut trace = Permutation1_6Trace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             // TODO: Add the ability to send inputs to permutation2
             //       and consequently add random selectors

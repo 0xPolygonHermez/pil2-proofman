@@ -12,8 +12,6 @@ pub struct FibonacciSquare {
 }
 
 impl FibonacciSquare {
-    const MY_NAME: &'static str = "FiboSqre";
-
     pub fn new() -> Arc<Self> {
         Arc::new(Self { instance_ids: RwLock::new(Vec::new()) })
     }
@@ -40,7 +38,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         if stage == 1 {
             let instance_id = instance_ids[0];
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let mut publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
 
@@ -111,10 +109,10 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         // let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
         // let proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());
 
-        // log::info!("{}    First row 1: {:?}", Self::MY_NAME, trace[1]);
-        // log::info!("{}    Air values: {:?}", Self::MY_NAME, air_values);
-        // log::info!("{}    Airgroup values: {:?}", Self::MY_NAME, airgroup_values);
-        // log::info!("{}    Publics: {:?}", Self::MY_NAME, publics);
-        // log::info!("{}    Proof values: {:?}", Self::MY_NAME, proof_values);
+        // tracing::info!("  First row 1: {:?}", trace[1]);
+        // tracing::info!("  Air values: {:?}", air_values);
+        // tracing::info!("  Airgroup values: {:?}", airgroup_values);
+        // tracing::info!("  Publics: {:?}", publics);
+        // tracing::info!("  Proof values: {:?}", proof_values);
     }
 }

@@ -35,7 +35,7 @@ where
             let mut trace = ConnectionNewTrace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let mut frame = [0; 6];
             let mut conn_len = [0; 6];

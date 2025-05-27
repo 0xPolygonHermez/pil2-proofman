@@ -962,7 +962,7 @@ pub fn get_hint_field<F: Field>(
     }
 
     if options.print_expression {
-        log::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
+        tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
     HintCol::from_hint_field(&hint_info[0])
@@ -988,7 +988,7 @@ pub fn get_hint_field_a<F: Field>(
             panic!("get_hint_field_m can only be called with an array of expressions!");
         }
         if options.print_expression {
-            log::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
+            tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
         }
         let hint_value = HintCol::from_hint_field(hint_info);
         hint_field_values.push(hint_value);
@@ -1023,7 +1023,7 @@ pub fn get_hint_field_m<F: Field>(
             pos.push(hint_info.pos[p as usize]);
         }
         if options.print_expression {
-            log::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
+            tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
         }
         hint_field_values.insert(pos, hint_value);
     }
@@ -1048,7 +1048,7 @@ pub fn get_hint_field_constant<F: Field>(
     }
 
     if options.print_expression {
-        log::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
+        tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
     }
 
     HintCol::from_hint_field(&hint_info[0])
@@ -1072,7 +1072,7 @@ pub fn get_hint_field_constant_a<F: Field>(
             panic!("get_hint_field_m can only be called with an array of expressions!");
         }
         if options.print_expression {
-            log::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
+            tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
         }
         let hint_value = HintCol::from_hint_field(hint_info);
         hint_field_values.push(hint_value);
@@ -1105,7 +1105,7 @@ pub fn get_hint_field_constant_m<F: Field>(
             pos.push(hint_info.pos[p as usize]);
         }
         if options.print_expression {
-            log::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
+            tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
         }
         hint_field_values.insert(pos, hint_value);
     }

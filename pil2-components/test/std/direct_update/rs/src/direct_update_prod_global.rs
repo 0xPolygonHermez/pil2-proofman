@@ -36,7 +36,7 @@ where
             let mut trace = DirectUpdateProdGlobalTrace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let chosen_index = rng.random_range(0..=num_rows - 1);
             let mut values: [F; 4] = [F::ZERO; 4];

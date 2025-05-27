@@ -14,8 +14,6 @@ pub struct Module<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> Module<F> {
-    const MY_NAME: &'static str = "ModuleSM";
-
     pub fn new(fibonacci_rows: u64, std_lib: Arc<Std<F>>) -> Arc<Self> {
         Arc::new(Module { fibonacci_rows, std_lib, instance_ids: RwLock::new(Vec::new()) })
     }
@@ -34,7 +32,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
         _n_cores: usize,
     ) {
         if stage == 1 {
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage 1");
             let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
             let module = F::as_canonical_u64(&publics.module);
             let mut a = F::as_canonical_u64(&publics.in1);

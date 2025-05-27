@@ -1,6 +1,5 @@
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve, goldilocks_quintic_extension::GoldilocksQuinticExtension};
 use libloading::{Library, Symbol};
-use log::info;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::BasedVectorSpace;
 use std::ops::Add;
@@ -87,8 +86,6 @@ impl<F: PrimeField64> ProofMan<F>
 where
     BinomialExtensionField<Goldilocks, 5>: BasedVectorSpace<F>,
 {
-    const MY_NAME: &'static str = "ProofMan";
-
     pub fn check_setup(
         proving_key_path: PathBuf,
         aggregation: bool,
@@ -225,7 +222,7 @@ where
         self.pctx.dctx_assign_instances();
         self.pctx.dctx_close();
 
-        print_summary_info(Self::MY_NAME, &self.pctx, &self.sctx);
+        print_summary_info(&self.pctx, &self.sctx);
 
         let transcript = FFITranscript::new(2, true);
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
@@ -517,7 +514,7 @@ where
         self.pctx.dctx_assign_instances();
         self.pctx.dctx_close();
 
-        print_summary_info(Self::MY_NAME, &self.pctx, &self.sctx);
+        print_summary_info(&self.pctx, &self.sctx);
 
         timer_stop_and_log_info!(EXECUTE);
 
@@ -1069,19 +1066,14 @@ where
                 }
 
                 if valid_proofs {
-                    log::info!(
-                        "{}: ··· {}",
-                        Self::MY_NAME,
-                        "\u{2713} All proofs were successfully verified".bright_green().bold()
-                    );
+                    tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
                     return Ok(None);
                 } else {
                     return Err("Basic proofs were not verified".into());
                 }
             } else {
-                log::info!(
-                    "{}: ··· {}",
-                    Self::MY_NAME,
+                tracing::info!(
+                    "··· {}",
                     "\u{2713} All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
                 );
                 return Ok(None);
@@ -1173,18 +1165,10 @@ where
             );
             timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
             if !valid_proofs {
-                log::info!(
-                    "{}: ··· {}",
-                    Self::MY_NAME,
-                    "\u{2717} Vadcop Final proof was not verified".bright_red().bold()
-                );
+                tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
                 return Err("Vadcop Final proof was not verified".into());
             } else {
-                log::info!(
-                    "{}:     {}",
-                    Self::MY_NAME,
-                    "\u{2713} Vadcop Final proof was verified".bright_green().bold()
-                );
+                tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
             }
         }
 
@@ -1460,9 +1444,8 @@ where
         let global_challenge = [F::ZERO; 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
-        println!(
-            "{}: Global challenge: [{}, {}, {}]",
-            Self::MY_NAME,
+        tracing::info!(
+            "··· Global challenge: [{}, {}, {}]",
             global_challenge[0],
             global_challenge[1],
             global_challenge[2]
@@ -1504,9 +1487,8 @@ where
                 } else {
                     col.name.clone()
                 };
-                log::warn!(
-                    "{}: Missing initialization {} at row {} of {} in instance {}",
-                    Self::MY_NAME,
+                tracing::warn!(
+                    "Missing initialization {} at row {} of {} in instance {}",
                     col_name,
                     row,
                     air_name,
@@ -1577,7 +1559,7 @@ where
     }
 
     fn initialize_publics(sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) -> Result<(), Box<dyn std::error::Error>> {
-        info!("{}: Initializing publics custom_commits", Self::MY_NAME);
+        tracing::info!("Initializing publics custom_commits");
         for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id);

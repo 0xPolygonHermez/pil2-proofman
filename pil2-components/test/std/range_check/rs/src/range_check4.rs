@@ -35,7 +35,7 @@ where
             let mut trace = RangeCheck4Trace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let range1 = self.std_lib.get_range(0, (1 << 16) - 1, Some(true));
             let range2 = self.std_lib.get_range(0, (1 << 8) - 1, Some(true));

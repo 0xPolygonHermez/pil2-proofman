@@ -273,8 +273,6 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     d_buffers: *mut c_void,
     save_proofs: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
-    const MY_NAME: &str = "AggProof";
-
     let mut dctx = pctx.dctx.write().unwrap();
     let n_processes = dctx.n_processes as usize;
     let rank = dctx.rank as usize;
@@ -375,7 +373,7 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
 
                         airgroup_proofs[airgroup][j] = Some(recursive2_proof.proof);
 
-                        log::info!("{}: ··· Recursive 2 Proof generated.", MY_NAME);
+                        tracing::info!("··· Recursive 2 Proof generated.");
                     }
                 }
                 if n_agg_proofs > 0 {
@@ -438,14 +436,12 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
-    const MY_NAME: &str = "AggProof";
-
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
     let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
     let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof, max_num_threads)?;
     let new_proof =
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
-    log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
+    tracing::info!("··· Generating vadcop final proof");
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
     let (stream_id, final_vadcop_proof) = generate_recursive_proof::<F>(
         pctx,
@@ -460,7 +456,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         save_proof,
     );
     get_stream_id_proof_c(d_buffers, stream_id);
-    log::info!("{}: ··· Vadcop final Proof generated.", MY_NAME);
+    tracing::info!("··· Vadcop final Proof generated.");
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);
 
     Ok(final_vadcop_proof)
@@ -476,8 +472,6 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     output_dir_path: PathBuf,
     save_proofs: bool,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
-    const MY_NAME: &str = "RecProof";
-
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
@@ -524,7 +518,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         false => String::from(""),
     };
 
-    log::info!("{}: ··· Generating recursiveF proof", MY_NAME);
+    tracing::info!("··· Generating recursiveF proof");
     timer_start_trace!(GENERATE_RECURSIVEF_PROOF);
     // prove
     let p_prove = gen_recursive_proof_final_c(
@@ -540,7 +534,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         0,
         0,
     );
-    log::info!("{}: ··· RecursiveF Proof generated.", MY_NAME);
+    tracing::info!("··· RecursiveF Proof generated.");
     timer_stop_and_log_trace!(GENERATE_RECURSIVEF_PROOF);
 
     Ok(p_prove)
@@ -551,8 +545,6 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     proof: *mut c_void,
     output_dir_path: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    const MY_NAME: &str = "FinProof";
-
     let setup_path = pctx.global_info.get_setup_path("final");
 
     let rust_lib_filename = setup_path.display().to_string() + ".so";
@@ -587,10 +579,10 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
         let proof_file = output_dir_path.join("proofs").to_string_lossy().into_owned();
 
         let zkey_filename = setup_path.display().to_string() + ".zkey";
-        log::info!("{}: ··· Generating final snark proof", MY_NAME);
+        tracing::info!("··· Generating final snark proof");
         gen_final_snark_proof_c(witness_ptr, zkey_filename.as_str(), &proof_file);
         timer_stop_and_log_trace!(CALCULATE_FINAL_PROOF);
-        log::info!("{}: ··· Final Snark Proof generated.", MY_NAME);
+        tracing::info!("··· Final Snark Proof generated.");
     }
 
     Ok(())

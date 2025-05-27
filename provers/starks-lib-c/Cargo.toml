@@ -1,12 +1,16 @@
 [package]
 name = "proofman-starks-lib-c"
-version = "0.8.1"
-edition = "2021"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
 
 build = "build.rs"
 
 [dependencies]
-log.workspace = true
+tracing.workspace = true
 crossbeam-channel = "0.5.15"
 
 [features]

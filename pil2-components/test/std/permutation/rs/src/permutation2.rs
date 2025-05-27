@@ -25,7 +25,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Permutation2 {
             let mut trace = Permutation2_6Trace::new();
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             // Note: Here it is assumed that num_rows of permutation2 is equal to
             //       the sum of num_rows of each variant of permutation1.

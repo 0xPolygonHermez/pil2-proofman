@@ -46,8 +46,6 @@ pub struct StdRangeCheck<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> StdRangeCheck<F> {
-    const _MY_NAME: &'static str = "STD Range Check";
-
     pub fn new(pctx: Arc<ProofCtx<F>>, sctx: &SetupCtx<F>) -> Arc<Self> {
         // Find which range check related AIRs need to be instantiated
         let u8air_hint = get_hint_ids_by_name(sctx.get_global_bin(), "u8air");
@@ -189,7 +187,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 "type",
                 HintFieldOptions::default(),
             ) else {
-                log::error!("Type hint must be a string");
+                tracing::error!("Type hint must be a string");
                 panic!();
             };
 
@@ -201,7 +199,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
 
             // Check that min does not overflow 63 bits
             if min > i64::MAX as i128 {
-                log::error!("Min value is too large");
+                tracing::error!("Min value is too large");
                 panic!();
             }
 
@@ -209,7 +207,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
 
             // Check that max does not overflow 63 bits
             if max > i64::MAX as i128 {
-                log::error!("Max value is too large");
+                tracing::error!("Max value is too large");
                 panic!();
             }
 
@@ -249,7 +247,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         } else {
             // If the range was not computed in the setup phase, error
             let name = if predefined { "Predefined" } else { "Specified" };
-            log::error!("{name} range not found: [min,max] = [{},{}]", min, max);
+            tracing::error!("{name} range not found: [min,max] = [{},{}]", min, max);
             panic!();
         }
     }
