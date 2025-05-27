@@ -175,7 +175,6 @@ fn get_exp_dim_inner(exp: &mut Value, expressions: &mut [Value]) -> usize {
 }
 
 pub fn add_info_expressions(expressions: &mut Vec<Value>, exp_id: usize) {
-    // we use a visited set so we don’t infinitely recurse on cycles
     let mut visited = std::collections::HashSet::new();
     add_info_expressions_inner(expressions, exp_id, 0, &mut visited);
 }
@@ -187,45 +186,47 @@ fn add_info_expressions_inner(
     visited: &mut std::collections::HashSet<usize>,
 ) {
     let indent = "  ".repeat(depth);
-    // Log entry
     println!("{}>> enter exp_id={} op={:?}", indent, exp_id, expressions[exp_id].get("op"));
 
-    // Cycle/visited check
+    // 1) Cycle/visited guard
     if !visited.insert(exp_id) {
-        println!("{}   └── already visited, returning", indent);
+        println!("{}   └─ already visited, returning", indent);
         return;
     }
 
-    // Fast‐exit if already has expDeg
+    // 2) Fast‐exit if already annotated
     if expressions[exp_id].get("expDeg").is_some() {
-        println!("{}   └── expDeg already set, returning", indent);
+        println!("{}   └─ expDeg already set, returning", indent);
         return;
     }
 
-    // Log and handle `next`
+    // 3) Handle `next` → `rowOffset`
     if let Some(next) = expressions[exp_id].get("next") {
-        println!("{}   └── had `next`: {:?}", indent, next);
+        println!("{}   └─ had `next`: {:?}", indent, next);
         let ro = if next.as_bool().unwrap_or(false) { 1 } else { 0 };
         expressions[exp_id]["rowOffset"] = json!(ro);
         expressions[exp_id].as_object_mut().unwrap().remove("next");
     }
 
-    // Clone op to avoid borrow conflicts
+    // 4) Clone op
     let op = expressions[exp_id].get("op").and_then(Value::as_str).unwrap_or("<missing>").to_string();
-    println!("{}   └── processing op = `{}`", indent, op);
+    println!("{}   └─ processing op = `{}`", indent, op);
 
     match op.as_str() {
+        // ==== exp ====
         "exp" => {
             let child = expressions[exp_id]["id"].as_u64().unwrap() as usize;
             println!("{}   ├─ exp → recursing into child {}", indent, child);
             add_info_expressions_inner(expressions, child, depth + 1, visited);
             println!("{}   └─ back from child {}, copying metadata", indent, child);
+
             let child_val = expressions[child].clone();
             let child_op = child_val["op"].as_str().unwrap_or("");
             let child_deg = child_val["expDeg"].clone();
             let child_rows = child_val["rowsOffsets"].clone();
             let child_dim = child_val.get("dim").cloned();
             let child_st = child_val.get("stage").cloned();
+
             {
                 let me = &mut expressions[exp_id];
                 me["expDeg"] = child_deg;
@@ -237,13 +238,14 @@ fn add_info_expressions_inner(
                     me["stage"] = child_st.unwrap();
                 }
             }
+
             if ["cm", "const", "custom"].contains(&child_op) {
-                println!("{}   └── aliasing leaf `{}` wholesale", indent, child_op);
+                println!("{}   └─ aliasing leaf `{}` wholesale", indent, child_op);
                 expressions[exp_id] = child_val;
             }
         }
 
-        // leaf types
+        // ==== leaf types deg=1 ====
         "x" | "cm" | "custom" | "const"
             if expressions[exp_id].get("boundary").and_then(Value::as_str) != Some("everyRow") =>
         {
@@ -263,26 +265,30 @@ fn add_info_expressions_inner(
             }
         }
 
+        // ==== xDivXSubXi ====
         "xDivXSubXi" => {
             println!("{}   └─ xDivXSubXi → deg=1", indent);
             expressions[exp_id]["expDeg"] = json!(1);
         }
 
-        op if ["challenge", "eval"].contains(&op) => {
-            println!("{}   └─ `{}` → deg=0, dim=3", indent, op);
+        // ==== challenge/eval ====
+        o if ["challenge", "eval"].contains(&o) => {
+            println!("{}   └─ `{}` → deg=0, dim=3", indent, o);
             let me = &mut expressions[exp_id];
             me["expDeg"] = json!(0);
             me["dim"] = json!(3);
         }
 
-        op if ["airgroupvalue", "proofvalue"].contains(&op) => {
+        // ==== airgroupvalue/proofvalue ====
+        o if ["airgroupvalue", "proofvalue"].contains(&o) => {
             let stage = expressions[exp_id].get("stage").and_then(Value::as_u64).unwrap_or(0);
-            println!("{}   └─ `{}` → deg=0, dim based on stage {}", indent, op, stage);
+            println!("{}   └─ `{}` → deg=0, dim based on stage {}", indent, o, stage);
             let me = &mut expressions[exp_id];
             me["expDeg"] = json!(0);
             me["dim"] = json!((stage != 1) as u8 * 2 + 1);
         }
 
+        // ==== airvalue ====
         "airvalue" => {
             let stage = expressions[exp_id].get("stage").and_then(Value::as_u64).unwrap_or(0);
             println!("{}   └─ airvalue → deg=0, dim based on stage {}", indent, stage);
@@ -293,6 +299,7 @@ fn add_info_expressions_inner(
             }
         }
 
+        // ==== public ====
         "public" => {
             println!("{}   └─ public → deg=0, stage=1", indent);
             let me = &mut expressions[exp_id];
@@ -303,6 +310,7 @@ fn add_info_expressions_inner(
             }
         }
 
+        // ==== number or Zi@everyRow ====
         "number" | "Zi" if expressions[exp_id].get("boundary").and_then(Value::as_str) == Some("everyRow") => {
             println!("{}   └─ number/Zi@everyRow → deg=0, stage=0", indent);
             let me = &mut expressions[exp_id];
@@ -313,11 +321,11 @@ fn add_info_expressions_inner(
             }
         }
 
-        // binary ops
+        // ==== add/sub/mul/neg ====
         "add" | "sub" | "mul" | "neg" => {
             println!("{}   └─ binary op `{}`", indent, op);
 
-            // (a) neg → mul
+            // (a) neg → mul rewrite
             if op == "neg" {
                 println!("{}       rewriting neg→mul", indent);
                 let original = expressions[exp_id]["values"][0].clone();
@@ -329,7 +337,7 @@ fn add_info_expressions_inner(
                 ]);
             }
 
-            // (b) zero‐fold
+            // (b) zero‐fold for add
             if op == "add" {
                 let (z0, z1) = {
                     let arr = expressions[exp_id]["values"].as_array().unwrap();
@@ -352,33 +360,48 @@ fn add_info_expressions_inner(
                 }
             }
 
-            // (c) recurse children
+            // (c) recurse on both children, guard self‐reference
             let lhs = expressions[exp_id]["values"][0]["id"].as_u64().unwrap() as usize;
             let rhs = expressions[exp_id]["values"][1]["id"].as_u64().unwrap() as usize;
+            if lhs == exp_id || rhs == exp_id {
+                println!(
+                    "{}       └─ self‐reference detected (lhs={} rhs={} == exp_id), setting deg=0",
+                    indent, lhs, rhs
+                );
+                let me = &mut expressions[exp_id];
+                me["expDeg"] = json!(0);
+                me["dim"] = json!(1);
+                me["stage"] = json!(0);
+                me["rowsOffsets"] = json!([0]);
+                return;
+            }
             println!("{}       recurse lhs={} rhs={}", indent, lhs, rhs);
             add_info_expressions_inner(expressions, lhs, depth + 2, visited);
             add_info_expressions_inner(expressions, rhs, depth + 2, visited);
 
-            // (d) combine
+            // (d) combine safely
             println!("{}       combining on `{}`", indent, op);
             let lhs_e = &expressions[lhs];
             let rhs_e = &expressions[rhs];
-            let lhs_deg = lhs_e["expDeg"].as_u64().unwrap();
-            let rhs_deg = rhs_e["expDeg"].as_u64().unwrap();
+            let lhs_deg = lhs_e.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
+            let rhs_deg = rhs_e.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
             let exp_deg =
                 if expressions[exp_id]["op"] == json!("mul") { lhs_deg + rhs_deg } else { lhs_deg.max(rhs_deg) };
             println!("{}         ⇒ expDeg={}", indent, exp_deg);
 
-            let lhs_dim = lhs_e["dim"].as_u64().unwrap();
-            let rhs_dim = rhs_e["dim"].as_u64().unwrap();
+            let lhs_dim = lhs_e.get("dim").and_then(Value::as_u64).unwrap_or(1);
+            let rhs_dim = rhs_e.get("dim").and_then(Value::as_u64).unwrap_or(1);
             let dim = lhs_dim.max(rhs_dim);
 
-            let lhs_st = lhs_e["stage"].as_u64().unwrap();
-            let rhs_st = rhs_e["stage"].as_u64().unwrap();
+            let lhs_st = lhs_e.get("stage").and_then(Value::as_u64).unwrap_or(0);
+            let rhs_st = rhs_e.get("stage").and_then(Value::as_u64).unwrap_or(0);
             let stage = lhs_st.max(rhs_st);
 
-            let lhs_rows = lhs_e["rowsOffsets"].as_array().cloned().unwrap_or_else(|| vec![json!(0)]);
-            let rhs_rows = rhs_e["rowsOffsets"].as_array().cloned().unwrap_or_else(|| vec![json!(0)]);
+            let lhs_rows =
+                lhs_e.get("rowsOffsets").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![json!(0)]);
+            let rhs_rows =
+                rhs_e.get("rowsOffsets").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![json!(0)]);
+
             let mut set = std::collections::HashSet::new();
             for v in lhs_rows.iter().chain(rhs_rows.iter()) {
                 if let Some(n) = v.as_u64() {
@@ -394,8 +417,9 @@ fn add_info_expressions_inner(
             me["rowsOffsets"] = json!(rows);
         }
 
+        // ==== unexpected ====
         other => {
-            panic!("Unexpected op at exp_id {}: {}", exp_id, other);
+            panic!("Unknown op at exp_id {}: {}", exp_id, other);
         }
     }
 
