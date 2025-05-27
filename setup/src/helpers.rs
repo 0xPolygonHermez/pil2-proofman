@@ -175,59 +175,79 @@ fn get_exp_dim_inner(exp: &mut Value, expressions: &mut [Value]) -> usize {
 }
 
 pub fn add_info_expressions(expressions: &mut Vec<Value>, exp_id: usize) {
-    // 1) Fast exit if already annotated
-    if expressions[exp_id].get("expDeg").is_some() {
+    // we use a visited set so we don’t infinitely recurse on cycles
+    let mut visited = std::collections::HashSet::new();
+    add_info_expressions_inner(expressions, exp_id, 0, &mut visited);
+}
+
+fn add_info_expressions_inner(
+    expressions: &mut Vec<Value>,
+    exp_id: usize,
+    depth: usize,
+    visited: &mut std::collections::HashSet<usize>,
+) {
+    let indent = "  ".repeat(depth);
+    // Log entry
+    println!("{}>> enter exp_id={} op={:?}", indent, exp_id, expressions[exp_id].get("op"));
+
+    // Cycle/visited check
+    if !visited.insert(exp_id) {
+        println!("{}   └── already visited, returning", indent);
         return;
     }
 
-    // 2) Handle `next` → `rowOffset`
+    // Fast‐exit if already has expDeg
+    if expressions[exp_id].get("expDeg").is_some() {
+        println!("{}   └── expDeg already set, returning", indent);
+        return;
+    }
+
+    // Log and handle `next`
     if let Some(next) = expressions[exp_id].get("next") {
+        println!("{}   └── had `next`: {:?}", indent, next);
         let ro = if next.as_bool().unwrap_or(false) { 1 } else { 0 };
         expressions[exp_id]["rowOffset"] = json!(ro);
         expressions[exp_id].as_object_mut().unwrap().remove("next");
     }
 
-    // 3) Pull out op into an owned String to avoid borrow conflicts
-    let op = expressions[exp_id].get("op").and_then(Value::as_str).unwrap_or("").to_owned();
+    // Clone op to avoid borrow conflicts
+    let op = expressions[exp_id].get("op").and_then(Value::as_str).unwrap_or("<missing>").to_string();
+    println!("{}   └── processing op = `{}`", indent, op);
 
     match op.as_str() {
-        // ==== exp: recurse into the referenced expression first ====
         "exp" => {
             let child = expressions[exp_id]["id"].as_u64().unwrap() as usize;
-            if child != exp_id {
-                add_info_expressions(expressions, child);
-
-                // copy back child metadata
-                let child_val = expressions[child].clone();
-                let child_op = child_val["op"].as_str().unwrap_or("");
-                let child_deg = child_val["expDeg"].clone();
-                let child_rows = child_val["rowsOffsets"].clone();
-                let child_dim = child_val.get("dim").cloned();
-                let child_st = child_val.get("stage").cloned();
-
-                {
-                    let me = &mut expressions[exp_id];
-                    me["expDeg"] = child_deg;
-                    me["rowsOffsets"] = child_rows;
-                    if me.get("dim").is_none() {
-                        me["dim"] = child_dim.unwrap();
-                    }
-                    if me.get("stage").is_none() {
-                        me["stage"] = child_st.unwrap();
-                    }
+            println!("{}   ├─ exp → recursing into child {}", indent, child);
+            add_info_expressions_inner(expressions, child, depth + 1, visited);
+            println!("{}   └─ back from child {}, copying metadata", indent, child);
+            let child_val = expressions[child].clone();
+            let child_op = child_val["op"].as_str().unwrap_or("");
+            let child_deg = child_val["expDeg"].clone();
+            let child_rows = child_val["rowsOffsets"].clone();
+            let child_dim = child_val.get("dim").cloned();
+            let child_st = child_val.get("stage").cloned();
+            {
+                let me = &mut expressions[exp_id];
+                me["expDeg"] = child_deg;
+                me["rowsOffsets"] = child_rows;
+                if me.get("dim").is_none() {
+                    me["dim"] = child_dim.unwrap();
                 }
-
-                // if it's really just an alias for a leaf, replace wholesale
-                if ["cm", "const", "custom"].contains(&child_op) {
-                    expressions[exp_id] = child_val;
+                if me.get("stage").is_none() {
+                    me["stage"] = child_st.unwrap();
                 }
+            }
+            if ["cm", "const", "custom"].contains(&child_op) {
+                println!("{}   └── aliasing leaf `{}` wholesale", indent, child_op);
+                expressions[exp_id] = child_val;
             }
         }
 
-        // ==== leaf types with degree=1 ====
+        // leaf types
         "x" | "cm" | "custom" | "const"
             if expressions[exp_id].get("boundary").and_then(Value::as_str) != Some("everyRow") =>
         {
+            println!("{}   └─ leaf‐type `{}` → deg=1", indent, op);
             let stage = if op == "cm" { 1 } else { 0 };
             let ro_opt = expressions[exp_id].get("rowOffset").cloned();
             let me = &mut expressions[exp_id];
@@ -243,29 +263,29 @@ pub fn add_info_expressions(expressions: &mut Vec<Value>, exp_id: usize) {
             }
         }
 
-        // ==== xDivXSubXi also deg=1 ====
         "xDivXSubXi" => {
+            println!("{}   └─ xDivXSubXi → deg=1", indent);
             expressions[exp_id]["expDeg"] = json!(1);
         }
 
-        // ==== challenge / eval ====
         op if ["challenge", "eval"].contains(&op) => {
+            println!("{}   └─ `{}` → deg=0, dim=3", indent, op);
             let me = &mut expressions[exp_id];
             me["expDeg"] = json!(0);
             me["dim"] = json!(3);
         }
 
-        // ==== airgroupvalue / proofvalue ====
         op if ["airgroupvalue", "proofvalue"].contains(&op) => {
             let stage = expressions[exp_id].get("stage").and_then(Value::as_u64).unwrap_or(0);
+            println!("{}   └─ `{}` → deg=0, dim based on stage {}", indent, op, stage);
             let me = &mut expressions[exp_id];
             me["expDeg"] = json!(0);
             me["dim"] = json!((stage != 1) as u8 * 2 + 1);
         }
 
-        // ==== airvalue ====
         "airvalue" => {
             let stage = expressions[exp_id].get("stage").and_then(Value::as_u64).unwrap_or(0);
+            println!("{}   └─ airvalue → deg=0, dim based on stage {}", indent, stage);
             let me = &mut expressions[exp_id];
             me["expDeg"] = json!(0);
             if me.get("dim").is_none() {
@@ -273,8 +293,8 @@ pub fn add_info_expressions(expressions: &mut Vec<Value>, exp_id: usize) {
             }
         }
 
-        // ==== public ====
         "public" => {
+            println!("{}   └─ public → deg=0, stage=1", indent);
             let me = &mut expressions[exp_id];
             me["expDeg"] = json!(0);
             me["stage"] = json!(1);
@@ -283,8 +303,8 @@ pub fn add_info_expressions(expressions: &mut Vec<Value>, exp_id: usize) {
             }
         }
 
-        // ==== number or Zi@everyRow ====
         "number" | "Zi" if expressions[exp_id].get("boundary").and_then(Value::as_str) == Some("everyRow") => {
+            println!("{}   └─ number/Zi@everyRow → deg=0, stage=0", indent);
             let me = &mut expressions[exp_id];
             me["expDeg"] = json!(0);
             me["stage"] = json!(0);
@@ -293,10 +313,13 @@ pub fn add_info_expressions(expressions: &mut Vec<Value>, exp_id: usize) {
             }
         }
 
-        // ==== add / sub / mul / neg ====
+        // binary ops
         "add" | "sub" | "mul" | "neg" => {
-            // (a) neg → mul rewrite
+            println!("{}   └─ binary op `{}`", indent, op);
+
+            // (a) neg → mul
             if op == "neg" {
+                println!("{}       rewriting neg→mul", indent);
                 let original = expressions[exp_id]["values"][0].clone();
                 let me = &mut expressions[exp_id];
                 me["op"] = json!("mul");
@@ -306,42 +329,45 @@ pub fn add_info_expressions(expressions: &mut Vec<Value>, exp_id: usize) {
                 ]);
             }
 
-            // (b) zero‐fold for add
+            // (b) zero‐fold
             if op == "add" {
-                let (zero_lhs, zero_rhs) = {
-                    let arr = &expressions[exp_id]["values"].as_array().unwrap();
+                let (z0, z1) = {
+                    let arr = expressions[exp_id]["values"].as_array().unwrap();
                     (
                         arr[0]["op"] == "number" && arr[0]["value"] == "0",
                         arr[1]["op"] == "number" && arr[1]["value"] == "0",
                     )
                 };
-                if zero_lhs || zero_rhs {
+                if z0 || z1 {
+                    println!("{}       zero‐fold: z0={} z1={}", indent, z0, z1);
                     let me = &mut expressions[exp_id];
-                    if zero_lhs {
+                    if z0 {
                         me["op"] = json!("mul");
                         me["values"][0]["value"] = json!("1");
                     }
-                    if zero_rhs {
+                    if z1 {
                         me["op"] = json!("mul");
                         me["values"][1]["value"] = json!("1");
                     }
                 }
             }
 
-            // (c) recurse on both children
+            // (c) recurse children
             let lhs = expressions[exp_id]["values"][0]["id"].as_u64().unwrap() as usize;
             let rhs = expressions[exp_id]["values"][1]["id"].as_u64().unwrap() as usize;
-            add_info_expressions(expressions, lhs);
-            add_info_expressions(expressions, rhs);
+            println!("{}       recurse lhs={} rhs={}", indent, lhs, rhs);
+            add_info_expressions_inner(expressions, lhs, depth + 2, visited);
+            add_info_expressions_inner(expressions, rhs, depth + 2, visited);
 
-            // (d) combine degrees, dims, stages, rowsOffsets
+            // (d) combine
+            println!("{}       combining on `{}`", indent, op);
             let lhs_e = &expressions[lhs];
             let rhs_e = &expressions[rhs];
-
             let lhs_deg = lhs_e["expDeg"].as_u64().unwrap();
             let rhs_deg = rhs_e["expDeg"].as_u64().unwrap();
             let exp_deg =
                 if expressions[exp_id]["op"] == json!("mul") { lhs_deg + rhs_deg } else { lhs_deg.max(rhs_deg) };
+            println!("{}         ⇒ expDeg={}", indent, exp_deg);
 
             let lhs_dim = lhs_e["dim"].as_u64().unwrap();
             let rhs_dim = rhs_e["dim"].as_u64().unwrap();
@@ -353,7 +379,6 @@ pub fn add_info_expressions(expressions: &mut Vec<Value>, exp_id: usize) {
 
             let lhs_rows = lhs_e["rowsOffsets"].as_array().cloned().unwrap_or_else(|| vec![json!(0)]);
             let rhs_rows = rhs_e["rowsOffsets"].as_array().cloned().unwrap_or_else(|| vec![json!(0)]);
-
             let mut set = std::collections::HashSet::new();
             for v in lhs_rows.iter().chain(rhs_rows.iter()) {
                 if let Some(n) = v.as_u64() {
@@ -369,9 +394,12 @@ pub fn add_info_expressions(expressions: &mut Vec<Value>, exp_id: usize) {
             me["rowsOffsets"] = json!(rows);
         }
 
-        // ==== anything else is an error ====
-        _ => panic!("Exp op not defined: {}", op),
+        other => {
+            panic!("Unexpected op at exp_id {}: {}", exp_id, other);
+        }
     }
+
+    println!("{}<< exit exp_id={} expDeg={:?}\n", indent, exp_id, expressions[exp_id].get("expDeg"));
 }
 
 /// Adds symbol-related metadata to expressions.
