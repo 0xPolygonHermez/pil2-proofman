@@ -444,7 +444,7 @@ where
         )?;
 
         let (d_buffers, n_streams_per_gpu, n_gpus) =
-            Self::prepare_gpu(sctx.clone(), setups_vadcop.clone(), aggregation, &gpu_params);
+            Self::prepare_gpu(pctx.clone(), sctx.clone(), setups_vadcop.clone(), aggregation, &gpu_params);
 
         let (trace_size, prover_buffer_size) =
             if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
@@ -1169,6 +1169,7 @@ where
     }
 
     fn prepare_gpu(
+        pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         setups_vadcop: Arc<SetupsVadcop<F>>,
         aggregation: bool,
@@ -1215,7 +1216,7 @@ where
         let max_sizes = MaxSizes { total_const_area, max_aux_trace_area, total_const_area_aggregation };
 
         let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(max_sizes_ptr)));
+        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(max_sizes_ptr, pctx.dctx_get_node_rank() as u32,pctx.dctx_get_node_n_processes() as u32)));
 
         let max_size_const = match !gpu_params.preallocate {
             true => sctx.max_const_size as u64,

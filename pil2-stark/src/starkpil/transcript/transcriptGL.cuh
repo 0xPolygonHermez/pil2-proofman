@@ -33,18 +33,7 @@ public:
     uint *out_cursor;
     uint *state_cursor;
 
-    TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream)
-    {
-        CHECKCUDAERR(cudaMalloc((void**)&state, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc((void**)&pending, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc((void**)&out, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc((void**)&pending_cursor, sizeof(uint)));
-        CHECKCUDAERR(cudaMalloc((void**)&out_cursor, sizeof(uint)));
-        CHECKCUDAERR(cudaMalloc((void**)&state_cursor, sizeof(uint)));
-
-        reset(stream);
-        init_const();
-    }
+    TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream);
     ~TranscriptGL_GPU()
     {
         CHECKCUDAERR(cudaFree(state));
@@ -69,9 +58,8 @@ public:
     void getState(Goldilocks::Element* output, cudaStream_t stream);
     void getState(Goldilocks::Element* output, uint64_t nOutputs, cudaStream_t stream);
     void getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, cudaStream_t stream);
-
-private:
-    void init_const();
+    static void init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids);
+    
 };
 
 #endif

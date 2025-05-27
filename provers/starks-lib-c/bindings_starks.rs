@@ -572,8 +572,12 @@ extern "C" {
     pub fn set_omp_num_threads(num_threads: u64);
 }
 extern "C" {
-    #[link_name = "\u{1}_Z18gen_device_buffersPv"]
-    pub fn gen_device_buffers(maxSizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+    #[link_name = "\u{1}_Z18gen_device_buffersPvjj"]
+    pub fn gen_device_buffers(
+        maxSizes_: *mut ::std::os::raw::c_void,
+        node_rank: u32,
+        node_size: u32,
+    ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
     #[link_name = "\u{1}_Z19free_device_buffersPv"]

@@ -527,7 +527,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(void *max_sizes)
+void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size)
 {
     return NULL;
 };

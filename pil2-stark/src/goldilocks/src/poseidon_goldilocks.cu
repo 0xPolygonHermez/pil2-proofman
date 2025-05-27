@@ -112,6 +112,8 @@ void init_gpu_const(int nDevices = 0)
 {
     static int initialized = 0;
 
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
     if (initialized == 0)
     {
         initialized = 1;
@@ -128,6 +130,8 @@ void init_gpu_const(int nDevices = 0)
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_S, PoseidonGoldilocksConstants::S, 507 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
         }
     }
+    cudaSetDevice(deviceId);
+
 }
 
 __device__ void hash_full_result_seq(gl64_t *state, const gl64_t *input, const gl64_t *GPU_C_GL, const gl64_t *GPU_S_GL, const gl64_t *GPU_M_GL, const gl64_t *GPU_P_GL)
