@@ -190,24 +190,20 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
         match frame {
             Frame::Enter(exp_id, depth) => {
                 println!("add_info_expressions depth: {}", depth);
-
                 if visited.contains(&exp_id) || expressions[exp_id].get("expDeg").is_some() {
                     continue;
                 }
                 visited.insert(exp_id);
 
-                // 1) next → rowOffset
                 if let Some(next) = expressions[exp_id].get("next") {
                     let ro = if next.as_bool().unwrap_or(false) { 1 } else { 0 };
                     expressions[exp_id]["rowOffset"] = json!(ro);
                     expressions[exp_id].as_object_mut().unwrap().remove("next");
                 }
 
-                // 2) pull out op
                 let op = expressions[exp_id].get("op").and_then(Value::as_str).unwrap_or("").to_string();
 
                 match op.as_str() {
-                    // exp
                     "exp" => {
                         let child_id = expressions[exp_id]["id"].as_u64().unwrap() as usize;
                         if child_id != exp_id {
@@ -216,59 +212,49 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         }
                     }
 
-                    // leaf types
                     op if ["x", "cm", "custom", "const"].contains(&op)
                         || (op == "Zi"
                             && expressions[exp_id].get("boundary").and_then(Value::as_str) != Some("everyRow")) =>
                     {
                         let stage = if op == "cm" { 1 } else { 0 };
                         let ro_opt = expressions[exp_id].get("rowOffset").cloned();
-                        {
-                            let e = &mut expressions[exp_id];
-                            e["expDeg"] = json!(1);
-                            if e.get("stage").is_none() || op == "const" {
-                                e["stage"] = json!(stage);
-                            }
-                            if e.get("dim").is_none() {
-                                e["dim"] = json!(1);
-                            }
-                            if let Some(ro) = ro_opt {
-                                e["rowsOffsets"] = json!([ro]);
-                            }
+                        let e = &mut expressions[exp_id];
+                        e["expDeg"] = json!(1);
+                        if e.get("stage").is_none() || op == "const" {
+                            e["stage"] = json!(stage);
+                        }
+                        if e.get("dim").is_none() {
+                            e["dim"] = json!(1);
+                        }
+                        if let Some(ro) = ro_opt {
+                            e["rowsOffsets"] = json!([ro]);
                         }
                     }
 
-                    // xDivXSubXi
                     "xDivXSubXi" => {
                         expressions[exp_id]["expDeg"] = json!(1);
                     }
 
-                    // challenge/eval
                     op if ["challenge", "eval"].contains(&op) => {
                         expressions[exp_id]["expDeg"] = json!(0);
                         expressions[exp_id]["dim"] = json!(3);
                     }
 
-                    // airgroupvalue/proofvalue
                     op if ["airgroupvalue", "proofvalue"].contains(&op) => {
                         let stage = expressions[exp_id].get("stage").and_then(Value::as_u64).unwrap_or(0);
                         expressions[exp_id]["expDeg"] = json!(0);
                         expressions[exp_id]["dim"] = json!((stage != 1) as u8 * 2 + 1);
                     }
 
-                    // airvalue
                     "airvalue" => {
                         let stage = expressions[exp_id].get("stage").and_then(Value::as_u64).unwrap_or(0);
-                        {
-                            let e = &mut expressions[exp_id];
-                            e["expDeg"] = json!(0);
-                            if e.get("dim").is_none() {
-                                e["dim"] = json!((stage != 1) as u8 * 2 + 1);
-                            }
+                        let e = &mut expressions[exp_id];
+                        e["expDeg"] = json!(0);
+                        if e.get("dim").is_none() {
+                            e["dim"] = json!((stage != 1) as u8 * 2 + 1);
                         }
                     }
 
-                    // public
                     "public" => {
                         let e = &mut expressions[exp_id];
                         e["expDeg"] = json!(0);
@@ -278,7 +264,6 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         }
                     }
 
-                    // number or Zi@everyRow
                     op if op == "number"
                         || (op == "Zi"
                             && expressions[exp_id].get("boundary").and_then(Value::as_str) == Some("everyRow")) =>
@@ -291,10 +276,8 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         }
                     }
 
-                    // add/sub/mul/neg
                     op if ["add", "sub", "mul", "neg"].contains(&op) => {
-                        let vals_clone: Vec<Value> =
-                            expressions[exp_id].get("values").and_then(Value::as_array).unwrap().clone();
+                        let vals_clone = expressions[exp_id].get("values").and_then(Value::as_array).unwrap().clone();
 
                         if op == "neg" {
                             let original = vals_clone[0].clone();
@@ -309,26 +292,23 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                         if op == "add" {
                             let e = &mut expressions[exp_id];
                             if vals_clone[0]["op"] == "number" && vals_clone[0]["value"] == "0" {
-                                e["op"] = json!("mul");
-                                e["values"][0]["value"] = json!("1");
+                                e["op"] = "mul".into();
+                                e["values"][0]["value"] = "1".into();
                             }
                             if vals_clone[1]["op"] == "number" && vals_clone[1]["value"] == "0" {
-                                e["op"] = json!("mul");
-                                e["values"][1]["value"] = json!("1");
+                                e["op"] = "mul".into();
+                                e["values"][1]["value"] = "1".into();
                             }
                         }
 
-                        let child_ids: Vec<usize> = vals_clone
-                            .iter()
-                            .filter_map(|v| v.get("id").and_then(Value::as_u64).map(|x| x as usize))
-                            .collect();
-
-                        if child_ids.len() == 2 {
-                            let lhs = child_ids[0];
-                            let rhs = child_ids[1];
-                            stack.push(Frame::Exit(exp_id, depth));
-                            stack.push(Frame::Enter(rhs, depth + 1));
-                            stack.push(Frame::Enter(lhs, depth + 1));
+                        stack.push(Frame::Exit(exp_id, depth));
+                        for v in vals_clone.iter().rev() {
+                            if let Some(id) = v.get("id").and_then(Value::as_u64) {
+                                let cid = id as usize;
+                                if cid != exp_id {
+                                    stack.push(Frame::Enter(cid, depth + 1));
+                                }
+                            }
                         }
                     }
 
@@ -338,7 +318,6 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
 
             Frame::Exit(exp_id, _depth) => {
                 let op = expressions[exp_id]["op"].as_str().unwrap();
-
                 if op == "exp" {
                     let child_id = expressions[exp_id]["id"].as_u64().unwrap() as usize;
                     let child = expressions[child_id].clone();
@@ -362,35 +341,49 @@ pub fn add_info_expressions_iter(expressions: &mut [Value], start_id: usize) {
                     }
                 } else {
                     let vals = expressions[exp_id]["values"].as_array().unwrap();
-                    let lhs_e = &expressions[vals[0]["id"].as_u64().unwrap() as usize];
-                    let rhs_e = &expressions[vals[1]["id"].as_u64().unwrap() as usize];
-
-                    let lhs_deg = lhs_e.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
-                    let rhs_deg = rhs_e.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
-                    let exp_deg = if expressions[exp_id]["op"] == json!("mul") {
-                        lhs_deg + rhs_deg
-                    } else {
-                        lhs_deg.max(rhs_deg)
+                    let mut info = Vec::with_capacity(2);
+                    let mut extract = |v: &Value| {
+                        if let Some(id) = v.get("id").and_then(Value::as_u64) {
+                            let c = &expressions[id as usize];
+                            let d = c.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
+                            let di = c.get("dim").and_then(Value::as_u64).unwrap_or(1);
+                            let st = c.get("stage").and_then(Value::as_u64).unwrap_or(0);
+                            let rs = c
+                                .get("rowsOffsets")
+                                .and_then(Value::as_array)
+                                .cloned()
+                                .unwrap_or_else(|| vec![json!(0)]);
+                            (d, di, st, rs)
+                        } else {
+                            let d = v.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
+                            let di = v.get("dim").and_then(Value::as_u64).unwrap_or(1);
+                            let st = v.get("stage").and_then(Value::as_u64).unwrap_or(0);
+                            let rs = v
+                                .get("rowsOffsets")
+                                .and_then(Value::as_array)
+                                .cloned()
+                                .unwrap_or_else(|| vec![json!(0)]);
+                            (d, di, st, rs)
+                        }
                     };
 
-                    let lhs_dim = lhs_e.get("dim").and_then(Value::as_u64).unwrap_or(1);
-                    let rhs_dim = rhs_e.get("dim").and_then(Value::as_u64).unwrap_or(1);
-                    let dim = lhs_dim.max(rhs_dim);
+                    info.push(extract(&vals[0]));
+                    info.push(extract(&vals[1]));
 
-                    let lhs_st = lhs_e.get("stage").and_then(Value::as_u64).unwrap_or(0);
-                    let rhs_st = rhs_e.get("stage").and_then(Value::as_u64).unwrap_or(0);
-                    let stage = lhs_st.max(rhs_st);
+                    let (lhs_deg, lhs_dim, lhs_st, lhs_rows) = &info[0];
+                    let (rhs_deg, rhs_dim, rhs_st, rhs_rows) = &info[1];
 
-                    let lhs_rows =
-                        lhs_e.get("rowsOffsets").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![json!(0)]);
-                    let rhs_rows =
-                        rhs_e.get("rowsOffsets").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![json!(0)]);
+                    let exp_deg = if expressions[exp_id]["op"] == json!("mul") {
+                        *lhs_deg + *rhs_deg
+                    } else {
+                        (*lhs_deg).max(*rhs_deg)
+                    };
+                    let dim = (*lhs_dim).max(*rhs_dim);
+                    let stage = (*lhs_st).max(*rhs_st);
 
                     let mut set = HashSet::new();
-                    for v in lhs_rows.iter().chain(rhs_rows.iter()) {
-                        if let Some(n) = v.as_u64() {
-                            set.insert(n);
-                        }
+                    for n in lhs_rows.iter().chain(rhs_rows.iter()).filter_map(|v| v.as_u64()) {
+                        set.insert(n);
                     }
                     let rows: Vec<_> = set.into_iter().map(|n| json!(n)).collect();
 
