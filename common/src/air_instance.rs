@@ -250,12 +250,12 @@ impl<F: Field> AirInstance<F> {
     }
 
     pub fn clear_traces(&mut self) {
-        self.trace.clear();
-        self.custom_commits_fixed.clear();
+        self.trace = Vec::new();
+        self.custom_commits_fixed = Vec::new();
         self.aux_trace.clear();
     }
 
     pub fn clear_custom_commits_fixed_trace(&mut self) {
-        self.custom_commits_fixed.clear();
+        self.custom_commits_fixed = Vec::new();
     }
 }

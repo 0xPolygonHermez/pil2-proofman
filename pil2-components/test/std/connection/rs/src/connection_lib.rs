@@ -8,6 +8,7 @@ use p3_goldilocks::Goldilocks;
 use rand::distr::{StandardUniform, Distribution};
 
 use crate::{Connection1, Connection2, ConnectionNew};
+use proofman_common::register_std;
 
 witness_library!(WitnessLib, Goldilocks);
 
@@ -16,11 +17,12 @@ where
     StandardUniform: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
-        Std::new(wcm.clone());
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
         let connection1 = Connection1::new();
         let connection2 = Connection2::new();
         let connection_new = ConnectionNew::new();
 
+        register_std(&wcm, &std_lib);
         wcm.register_component(connection1.clone());
         wcm.register_component(connection2.clone());
         wcm.register_component(connection_new.clone());

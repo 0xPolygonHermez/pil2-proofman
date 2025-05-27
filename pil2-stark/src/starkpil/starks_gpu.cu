@@ -544,8 +544,6 @@ void fold_inplace(uint64_t step, uint64_t friPol_offset, uint64_t offset_helper,
 
     uint64_t sizeFoldedPol = 1 << currentBits;
 
-    // Generate inverse twiddle factors
-    Goldilocks::Element *inv_twiddles = (Goldilocks::Element *)malloc(halfRatio * sizeof(Goldilocks::Element));
     Goldilocks::Element omega_inv = omegas_inv_[prevBits - currentBits];
     
     dim3 nThreads(256);

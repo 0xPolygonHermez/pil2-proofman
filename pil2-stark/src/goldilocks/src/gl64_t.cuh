@@ -911,14 +911,26 @@ struct AirInstanceInfo {
     }
 
     ~AirInstanceInfo() {
-        delete[] opening_points;
-        delete[] expressions_gpu;
-
-        for(uint64_t i = 0; i < numBatchesEvals; ++i) {
-            CHECKCUDAERR(cudaFree(evalsInfo[i])); 
+        if (opening_points != nullptr) {
+            CHECKCUDAERR(cudaFree(opening_points));
         }
+
+        if (verkeyRoot != nullptr) {
+            CHECKCUDAERR(cudaFree(verkeyRoot));
+        }
+
+        delete expressions_gpu;
+
+        for (uint64_t i = 0; i < numBatchesEvals; ++i) {
+            if (evalsInfo[i] != nullptr) {
+                CHECKCUDAERR(cudaFree(evalsInfo[i]));
+            }
+        }
+
+        delete[] evalsInfoSizes;
         delete[] evalsInfo;
-    }
+}
+
 };
 
 
@@ -1041,9 +1053,10 @@ struct DeviceCommitBuffers
     uint64_t max_size_const_aggregation;
     uint64_t max_size_const_tree_aggregation;
 
-    uint32_t n_gpus;
-    uint32_t n_streams;
-    uint32_t n_streams_per_gpu;
+    uint32_t  n_gpus;
+    uint32_t* my_gpu_ids;
+    uint32_t  n_streams;
+    uint32_t  n_streams_per_gpu;
     std::mutex mutex_slot_selection;
     StreamData *streamsData;
 

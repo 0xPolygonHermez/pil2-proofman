@@ -4,9 +4,11 @@
 
 #include "math.h"
 
+static int initialized = 0;
+
+
 __device__ __constant__ gl64_t GPU_C[118];
 __device__ __constant__ gl64_t GPU_D[12];
-
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor) 
 {
@@ -120,19 +122,30 @@ __global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Gol
 }
 
 
-void TranscriptGL_GPU::init_const()
+TranscriptGL_GPU::TranscriptGL_GPU(uint64_t arity, bool custom, cudaStream_t stream){
+
+        assert(initialized == 1);
+        CHECKCUDAERR(cudaMalloc((void**)&state, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc((void**)&pending, TRANSCRIPT_PENDING_SIZE * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc((void**)&out, TRANSCRIPT_OUT_SIZE * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc((void**)&pending_cursor, sizeof(uint)));
+        CHECKCUDAERR(cudaMalloc((void**)&out_cursor, sizeof(uint)));
+        CHECKCUDAERR(cudaMalloc((void**)&state_cursor, sizeof(uint)));
+
+        reset(stream);
+}
+
+
+void TranscriptGL_GPU::init_const(uint32_t* gpu_ids, uint32_t num_gpu_ids)
 {
-    static int initialized = 0;
 
     int deviceId;
     CHECKCUDAERR(cudaGetDevice(&deviceId));
     if (initialized == 0)
     {
-        int numDevices;
-        CHECKCUDAERR(cudaGetDeviceCount(&numDevices));
-        for(int i = 0; i < numDevices; i++)
+        for(int i = 0; i < num_gpu_ids; i++)
         { 
-            CHECKCUDAERR(cudaSetDevice(i));       
+            CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));    
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
             CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
         }   

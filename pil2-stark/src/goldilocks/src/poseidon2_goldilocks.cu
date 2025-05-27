@@ -28,22 +28,24 @@ __device__ __forceinline__ void matmul_m4_state_(uint32_t offset);
 __device__ __constant__ uint64_t GPU_C[118];
 __device__ __constant__ uint64_t GPU_D[12];
 
-void init_gpu_const_2()
+void init_gpu_const_2(uint32_t* gpu_ids, uint32_t num_gpu_ids)
 {
+    int deviceId;
+    CHECKCUDAERR(cudaGetDevice(&deviceId));
     static int initialized = 0;
     if (initialized == 0)
     {
-        int numDevices;
-        CHECKCUDAERR(cudaGetDeviceCount(&numDevices));
-        for(int i = 0; i < numDevices; i++)
+        for(int i = 0; i < num_gpu_ids; i++)
         {
-           CHECKCUDAERR(cudaSetDevice(i));
+           CHECKCUDAERR(cudaSetDevice(gpu_ids[i]));
            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_C, Poseidon2GoldilocksConstants::C, 118 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
            CHECKCUDAERR(cudaMemcpyToSymbol(GPU_D, Poseidon2GoldilocksConstants::D, 12 * sizeof(uint64_t), 0, cudaMemcpyHostToDevice));
                 
         }
         initialized = 1;        
     }
+    cudaSetDevice(deviceId);
+
 }
 
 

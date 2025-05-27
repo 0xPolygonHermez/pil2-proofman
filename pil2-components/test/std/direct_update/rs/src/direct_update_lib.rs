@@ -16,11 +16,13 @@ where
     StandardUniform: Distribution<F>,
 {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
-        Std::new(wcm.clone());
+        let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
         let direct_update_prod_local = DirectUpdateProdLocal::new();
         let direct_update_prod_global = DirectUpdateProdGlobal::new();
         let direct_update_sum_local = DirectUpdateSumLocal::new();
         let direct_update_sum_global = DirectUpdateSumGlobal::new();
+
+        register_std(&wcm, &std_lib);
 
         wcm.register_component(direct_update_prod_local.clone());
         wcm.register_component(direct_update_prod_global.clone());

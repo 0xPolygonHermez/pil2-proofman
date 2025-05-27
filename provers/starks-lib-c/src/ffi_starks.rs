@@ -941,10 +941,17 @@ pub fn gen_recursive_proof_final_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn read_exec_file_c(exec_data: *mut u64, exec_file: *const i8, nCols: u64) {
+    unsafe {
+        read_exec_file(exec_data, exec_file as *mut std::os::raw::c_char, nCols);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
     circomWitness: *mut u8,
-    execFile: *const i8,
+    exec_data: *mut u64,
     witness: *mut u8,
     pPublics: *mut u8,
     sizeWitness: u64,
@@ -955,7 +962,7 @@ pub fn get_committed_pols_c(
     unsafe {
         get_committed_pols(
             circomWitness as *mut std::os::raw::c_void,
-            execFile as *mut std::os::raw::c_char,
+            exec_data,
             witness as *mut std::os::raw::c_void,
             pPublics as *mut std::os::raw::c_void,
             sizeWitness,
@@ -1101,8 +1108,8 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_buffers_c(max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_buffers(max_sizes) }
+pub fn gen_device_buffers_c(max_sizes: *mut ::std::os::raw::c_void, node_rank: u32, node_n_processes: u32) -> *mut ::std::os::raw::c_void {
+    unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1821,10 +1828,15 @@ pub fn gen_recursive_proof_final_c(
 }
 
 #[cfg(feature = "no_lib_link")]
+pub fn read_exec_file_c(_exec_data: *mut u64, _exec_file: *const i8, _nCols: u64) {
+    trace!("{}: ··· {}", "ffi     ", "read_exec_file: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
     _circomWitness: *mut u8,
-    _execFile: *const i8,
+    _exec_data: *mut u64,
     _witness: *mut u8,
     _pPublics: *mut u8,
     _sizeWitness: u64,
@@ -1918,7 +1930,7 @@ pub fn set_omp_num_threads(_num_threads: u64) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+pub fn gen_device_buffers_c(_max_sizes: *mut ::std::os::raw::c_void, node_rank: u32, node_n_processes: u32) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",
         "ffi     ",

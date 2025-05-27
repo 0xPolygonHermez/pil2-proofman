@@ -1,10 +1,8 @@
 use libloading::{Library, Symbol};
 use p3_field::PrimeField64;
 use std::ffi::CString;
-use std::fs::File;
 use proofman_starks_lib_c::*;
 use std::path::{Path, PathBuf};
-use std::io::Read;
 use num_traits::ToPrimitive;
 
 use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
@@ -36,6 +34,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     proof: &Proof<F>,
+    num_threads: usize,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     let (airgroup_id, air_id) = (proof.airgroup_id, proof.air_id);
 
@@ -52,9 +51,16 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
         updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
-        let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
+        let circom_witness = generate_witness::<F>(setup, &updated_proof, num_threads)?;
         timer_stop_and_log_info!(GENERATE_WITNESS);
-        Ok(Proof::new_witness(ProofType::Compressor, airgroup_id, air_id, proof.global_idx, circom_witness, 24))
+        Ok(Proof::new_witness(
+            ProofType::Compressor,
+            airgroup_id,
+            air_id,
+            proof.global_idx,
+            circom_witness,
+            setup.n_cols as usize,
+        ))
     } else {
         timer_start_info!(GENERATE_WITNESS);
         let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
@@ -81,9 +87,16 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             add_publics_circom(&mut updated_proof, 0, pctx, &recursive2_verkey, true);
         }
 
-        let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
+        let circom_witness = generate_witness::<F>(setup, &updated_proof, num_threads)?;
         timer_stop_and_log_info!(GENERATE_WITNESS);
-        Ok(Proof::new_witness(ProofType::Recursive1, airgroup_id, air_id, proof.global_idx, circom_witness, 24))
+        Ok(Proof::new_witness(
+            ProofType::Recursive1,
+            airgroup_id,
+            air_id,
+            proof.global_idx,
+            circom_witness,
+            setup.n_cols as usize,
+        ))
     }
 }
 
@@ -93,6 +106,7 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     proof1: &Proof<F>,
     proof2: &Proof<F>,
     proof3: &Proof<F>,
+    num_threads: usize,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     timer_start_info!(GENERATE_WITNESS_AGGREGATION);
     let proof_len = proof1.proof.len();
@@ -120,10 +134,17 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
             + ".verkey.json";
 
     add_publics_circom(&mut updated_proof_recursive2, 0, pctx, &recursive2_verkey, true);
-    let circom_witness = generate_witness::<F>(setup_recursive2, &updated_proof_recursive2)?;
+    let circom_witness = generate_witness::<F>(setup_recursive2, &updated_proof_recursive2, num_threads)?;
 
     timer_stop_and_log_info!(GENERATE_WITNESS_AGGREGATION);
-    Ok(Proof::new_witness(ProofType::Recursive2, airgroup_id, 0, None, circom_witness, 24))
+    Ok(Proof::new_witness(
+        ProofType::Recursive2,
+        airgroup_id,
+        0,
+        None,
+        circom_witness,
+        setup_recursive2.n_cols as usize,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -167,18 +188,15 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     };
 
     let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type);
-    let setup_path = setup.setup_path.clone();
     let p_setup: *mut c_void = (&setup.p_setup).into();
-
-    let exec_filename = setup_path.display().to_string() + ".exec";
-    let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
-    let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
     let mut publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
+    let exec_data_ptr = setup.exec_data.read().unwrap().as_ref().map(|v| v.as_ptr() as *mut u64).unwrap();
+
     get_committed_pols_c(
         witness.circom_witness.as_ptr() as *mut u8,
-        exec_filename_ptr,
+        exec_data_ptr,
         trace.as_ptr() as *mut u8,
         publics.as_mut_ptr() as *mut u8,
         setup.size_witness.read().unwrap().unwrap(),
@@ -332,7 +350,9 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
 
                         let proof3 = Proof::new(ProofType::Recursive2, airgroup, 0, None, proof_3);
 
-                        let mut circom_witness = gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2, &proof3)?;
+                        let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+                        let mut circom_witness =
+                            gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2, &proof3, max_num_threads)?;
                         circom_witness.global_idx = Some(rank);
 
                         let (stream_id, recursive2_proof) = generate_recursive_proof::<F>(
@@ -415,8 +435,10 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     const MY_NAME: &str = "AggProof";
 
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
-    let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof)?;
-    let new_proof = Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, 24);
+    let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof, max_num_threads)?;
+    let new_proof =
+        Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
     log::info!("{}: ··· Generating vadcop final proof", MY_NAME);
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
     let (stream_id, final_vadcop_proof) = generate_recursive_proof::<F>(
@@ -472,17 +494,16 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
         vadcop_final_proof[p] = (public_inputs[p].as_canonical_biguint()).to_u64().unwrap();
     }
 
-    let circom_witness = generate_witness::<F>(setup, &vadcop_final_proof)?;
-
-    let exec_filename = setup.setup_path.display().to_string() + ".exec";
-    let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();
-    let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
+    let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let circom_witness = generate_witness::<F>(setup, &vadcop_final_proof, max_num_threads)?;
 
     let publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
 
+    let exec_data_ptr = setup.exec_data.read().unwrap().as_ref().map(|v| v.as_ptr() as *mut u64).unwrap();
+
     get_committed_pols_c(
         circom_witness.as_ptr() as *mut u8,
-        exec_filename_ptr,
+        exec_data_ptr,
         trace.as_ptr() as *mut u8,
         publics.as_ptr() as *mut u8,
         setup.size_witness.read().unwrap().unwrap(),
@@ -568,7 +589,11 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     Ok(())
 }
 
-fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<Vec<F>, Box<dyn std::error::Error>> {
+fn generate_witness<F: PrimeField64>(
+    setup: &Setup<F>,
+    zkin: &[u64],
+    _num_threads: usize,
+) -> Result<Vec<F>, Box<dyn std::error::Error>> {
     let rust_lib_filename = setup.setup_path.display().to_string() + ".so";
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
@@ -580,9 +605,7 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
 
     let witness_size = get_witness_size(setup)?;
 
-    let witness = vec![F::ZERO; witness_size];
-
-    let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1) as u64;
+    let witness: Vec<F> = create_buffer_fast(witness_size as usize);
 
     let circom_circuit_guard = setup.circom_circuit.read().unwrap();
     let circom_circuit_ptr = match *circom_circuit_guard {
@@ -592,7 +615,7 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
 
     unsafe {
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-        get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, max_num_threads);
+        get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1);
     }
 
     Ok(witness)
@@ -604,29 +627,30 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
 ) -> Result<(usize, usize), Box<dyn std::error::Error>> {
     let mut max_trace = 0;
     let mut max_prover_size = 0;
-    let n_cols = 24;
 
-    let instances = pctx.dctx_get_instances();
-    let my_instances = pctx.dctx_get_my_instances();
+    for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
+        for (air_id, _) in air_group.iter().enumerate() {
+            if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
+                max_trace = max_trace.max(
+                    setup_compressor.n_cols as usize
+                        * (1 << (setup_compressor.stark_info.stark_struct.n_bits)) as usize,
+                );
+                max_prover_size = max_prover_size.max(setup_compressor.prover_buffer_size);
+            }
 
-    for instance_id in my_instances.iter() {
-        let (airgroup_id, air_id, _) = instances[*instance_id];
-
-        if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-            let setup_compressor = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
-            max_trace = max_trace.max(n_cols * (1 << (setup_compressor.stark_info.stark_struct.n_bits)) as usize);
-            max_prover_size = max_prover_size.max(setup_compressor.prover_buffer_size);
+            let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
+            max_trace = max_trace.max(
+                setup_recursive1.n_cols as usize * (1 << (setup_recursive1.stark_info.stark_struct.n_bits)) as usize,
+            );
+            max_prover_size = max_prover_size.max(setup_recursive1.prover_buffer_size);
         }
-
-        let setup_recursive1 = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
-        max_trace = max_trace.max(n_cols * (1 << (setup_recursive1.stark_info.stark_struct.n_bits)) as usize);
-        max_prover_size = max_prover_size.max(setup_recursive1.prover_buffer_size);
     }
 
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
-        max_trace = max_trace.max(n_cols * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
+        max_trace = max_trace.max(setup.n_cols as usize * (1 << (setup.stark_info.stark_struct.n_bits)) as usize);
         max_prover_size = max_prover_size.max(setup.prover_buffer_size);
     }
 
@@ -635,22 +659,6 @@ pub fn get_recursive_buffer_sizes<F: PrimeField64>(
     }
 
     Ok((max_trace, max_prover_size as usize))
-}
-
-fn get_witness_size<F: PrimeField64>(setup: &Setup<F>) -> Result<usize, Box<dyn std::error::Error>> {
-    let exec_filename = setup.setup_path.display().to_string() + ".exec";
-
-    let mut size_witness = setup.size_witness.read().unwrap().unwrap();
-
-    let mut file = File::open(exec_filename)?; // Open the file
-
-    let mut n_adds = [0u8; 8]; // Buffer for nAdds (u64 is 8 bytes)
-    file.read_exact(&mut n_adds)?;
-    let n_adds = u64::from_le_bytes(n_adds);
-
-    size_witness += n_adds;
-
-    Ok(size_witness as usize)
 }
 
 #[derive(Debug)]

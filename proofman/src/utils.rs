@@ -4,10 +4,7 @@ use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use colored::*;
 
@@ -18,6 +15,9 @@ use proofman_util::DeviceBuffer;
 use proofman_starks_lib_c::load_device_const_pols_c;
 use proofman_starks_lib_c::custom_commit_size_c;
 use proofman_starks_lib_c::load_device_setup_c;
+
+use pil_std_lib::Std;
+use witness::WitnessManager;
 
 pub fn print_summary_info<F: PrimeField64>(name: &str, pctx: &ProofCtx<F>, sctx: &SetupCtx<F>) {
     let mpi_rank = pctx.dctx_get_rank();
@@ -560,7 +560,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     }
 }
 
-pub fn initialize_size_witness<F: PrimeField64>(
+pub fn initialize_witness_circom<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     final_snark: bool,
@@ -570,10 +570,12 @@ pub fn initialize_size_witness<F: PrimeField64>(
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
                 setup.set_size_witness()?;
+                setup.set_exec_file_data()?;
                 setup.set_circom_circuit()?;
             }
             let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
             setup.set_size_witness()?;
+            setup.set_exec_file_data()?;
             setup.set_circom_circuit()?;
         }
     }
@@ -583,16 +585,19 @@ pub fn initialize_size_witness<F: PrimeField64>(
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
         setup.set_size_witness()?;
         setup.set_circom_circuit()?;
+        setup.set_exec_file_data()?;
     }
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
     setup_vadcop_final.set_size_witness()?;
     setup_vadcop_final.set_circom_circuit()?;
+    setup_vadcop_final.set_exec_file_data()?;
 
     if final_snark {
         let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
         setup_recursivef.set_size_witness()?;
         setup_recursivef.set_circom_circuit()?;
+        setup_recursivef.set_exec_file_data()?;
     }
 
     Ok(())
@@ -660,5 +665,47 @@ pub fn add_publics_aggregation<F: PrimeField64>(
 ) {
     for p in 0..n_publics {
         proof[initial_index + p] = (publics[p].as_canonical_biguint()).to_u64().unwrap();
+    }
+}
+
+pub fn register_std<F: PrimeField64>(wcm: &WitnessManager<F>, std: &Std<F>) {
+    wcm.register_component_std(std.std_prod.clone());
+    wcm.register_component_std(std.std_sum.clone());
+    wcm.register_component_std(std.range_check.clone());
+
+    if std.range_check.u8air.is_some() {
+        wcm.register_component_std(std.range_check.u8air.clone().unwrap());
+    }
+
+    if std.range_check.u16air.is_some() {
+        wcm.register_component_std(std.range_check.u16air.clone().unwrap());
+    }
+
+    if std.range_check.specified_ranges.is_some() {
+        wcm.register_component_std(std.range_check.specified_ranges.clone().unwrap());
+    }
+}
+
+pub fn register_std_dev<F: PrimeField64>(
+    wcm: &WitnessManager<F>,
+    std: &Std<F>,
+    register_u8: bool,
+    register_u16: bool,
+    register_specified_ranges: bool,
+) {
+    wcm.register_component_std(std.std_prod.clone());
+    wcm.register_component_std(std.std_sum.clone());
+    wcm.register_component_std(std.range_check.clone());
+
+    if register_u8 && std.range_check.u8air.is_some() {
+        wcm.register_component_std(std.range_check.u8air.clone().unwrap());
+    }
+
+    if register_u16 && std.range_check.u16air.is_some() {
+        wcm.register_component_std(std.range_check.u16air.clone().unwrap());
+    }
+
+    if register_specified_ranges && std.range_check.specified_ranges.is_some() {
+        wcm.register_component_std(std.range_check.specified_ranges.clone().unwrap());
     }
 }
