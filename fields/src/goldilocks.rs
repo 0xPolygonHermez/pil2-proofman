@@ -119,7 +119,6 @@ impl Field for Goldilocks {
     const NEG_ONE: Self = Self::new(Self::ORDER_U64 - 1);
     const GENERATOR: Self = Self::new(7);
 
-    #[must_use]
     fn try_inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
