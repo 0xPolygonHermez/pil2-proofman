@@ -9,6 +9,7 @@ use transcript::FFITranscript;
 
 use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams};
 
+#[derive(Debug)]
 pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
 }

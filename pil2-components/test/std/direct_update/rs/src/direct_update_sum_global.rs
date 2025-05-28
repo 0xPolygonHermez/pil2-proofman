@@ -30,8 +30,7 @@ where
         _n_cores: usize,
     ) {
         if stage == 1 {
-            let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
-            let mut rng = StdRng::seed_from_u64(seed);
+            let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
             let mut trace = DirectUpdateSumGlobalTrace::new();
             let num_rows = trace.num_rows();

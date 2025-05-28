@@ -228,7 +228,8 @@ where
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
         let instances = self.pctx.dctx_get_instances();
-        let airgroup_values_air_instances = Arc::new(Mutex::new(Vec::new()));
+        let my_instances = self.pctx.dctx_get_my_instances();
+        let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
         let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
@@ -332,11 +333,8 @@ where
                 valid_constraints.fetch_and(valid, Ordering::Relaxed);
             }
 
-            airgroup_values_air_instances.lock().unwrap().push(pctx.get_air_instance_airgroup_values(
-                airgroup_id,
-                air_id,
-                air_instance_id,
-            ));
+            let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
+            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
             pctx.free_instance(instance_id);
         })
     }

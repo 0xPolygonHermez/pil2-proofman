@@ -51,13 +51,19 @@ macro_rules! execute {
 #[macro_export]
 macro_rules! define_wc {
     ($StructName:ident, $name:expr) => {
+        use std::sync::atomic::{AtomicU64, Ordering};
         pub struct $StructName {
             instance_ids: std::sync::RwLock<Vec<usize>>,
+            seed: AtomicU64,
         }
 
         impl $StructName {
             pub fn new() -> std::sync::Arc<Self> {
-                std::sync::Arc::new(Self { instance_ids: std::sync::RwLock::new(Vec::new()) })
+                std::sync::Arc::new(Self { instance_ids: std::sync::RwLock::new(Vec::new()), seed: AtomicU64::new(0) })
+            }
+
+            pub fn set_seed(&self, seed: u64) {
+                self.seed.store(seed, Ordering::Relaxed);
             }
         }
     };
