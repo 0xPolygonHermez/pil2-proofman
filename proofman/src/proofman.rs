@@ -114,6 +114,59 @@ where
         Ok(())
     }
 
+    /// Computes only the witness without generating a proof neither verifying constraints.
+    /// This is useful for debugging or benchmarking purposes.
+    pub fn compute_witness(
+        witness_lib: &mut dyn WitnessLibrary<F>,
+        proving_key_path: PathBuf,
+        output_dir_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        options: ProofOptions,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
+
+        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
+
+        witness_lib.register_witness(wcm.clone());
+
+        timer_start_info!(EXECUTE);
+        wcm.execute();
+        timer_stop_and_log_info!(EXECUTE);
+
+        pctx.dctx_assign_instances();
+        pctx.dctx_close();
+
+        print_summary_info(&pctx, &sctx);
+
+        let transcript = FFITranscript::new(2, true);
+        let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
+        transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
+
+        let global_challenge = [F::ZERO; 3];
+        transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
+        pctx.set_global_challenge(2, &global_challenge);
+        transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
+
+        let instances = pctx.dctx_get_instances();
+
+        for (instance_id, (_, _, all)) in instances.iter().enumerate() {
+            let is_my_instance = pctx.dctx_is_my_instance(instance_id);
+            let (skip, _) = skip_prover_instance(&pctx, instance_id);
+
+            if skip || (!all && !is_my_instance) {
+                continue;
+            };
+
+            wcm.calculate_witness(1, &[instance_id]);
+        }
+
+        wcm.end();
+
+        Ok(())
+    }
+
     pub fn verify_proof_constraints(
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
