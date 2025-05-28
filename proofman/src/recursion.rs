@@ -451,8 +451,8 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         prover_buffer,
         &output_dir_path,
         d_buffers,
-        const_pols,
         const_tree,
+        const_pols,
         save_proof,
     );
     get_stream_id_proof_c(d_buffers, stream_id);
