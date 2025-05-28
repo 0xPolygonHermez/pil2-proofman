@@ -148,9 +148,11 @@ where
     pub fn compute_witness(
         &self,
         input_data_path: Option<PathBuf>,
+        debug_info: &DebugInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
        
         timer_start_info!(EXECUTE);
+        self.pctx.set_debug_info(debug_info.clone());
         self.wcm.set_input_data_path(input_data_path);
 
         if !self.wcm.is_init_witness() {
