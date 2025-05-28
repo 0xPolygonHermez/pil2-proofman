@@ -146,52 +146,45 @@ where
     /// Computes only the witness without generating a proof neither verifying constraints.
     /// This is useful for debugging or benchmarking purposes.
     pub fn compute_witness(
-        witness_lib: &mut dyn WitnessLibrary<F>,
-        proving_key_path: PathBuf,
-        output_dir_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
-        options: ProofOptions,
+        &self,
+        input_data_path: Option<PathBuf>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
-
-        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
-
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
-
-        witness_lib.register_witness(wcm.clone());
-
+       
         timer_start_info!(EXECUTE);
-        wcm.execute();
+        self.wcm.set_input_data_path(input_data_path);
+
+        if !self.wcm.is_init_witness() {
+            println!("Witness computation dynamic library not initialized");
+            return Err("Witness computation dynamic library not initialized".into());
+        }
+
+        self.pctx.dctx_reset();
+
+        self.wcm.execute();
+
+        self.pctx.dctx_assign_instances();
+        self.pctx.dctx_close();
+
+        print_summary_info(&self.pctx, &self.sctx);
+
         timer_stop_and_log_info!(EXECUTE);
 
-        pctx.dctx_assign_instances();
-        pctx.dctx_close();
+        self.pctx.set_global_challenge(2, &[F::ZERO; 3]);
 
-        print_summary_info(&pctx, &sctx);
+        let instances = self.pctx.dctx_get_instances();
 
-        let transcript = FFITranscript::new(2, true);
-        let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
-        transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
-
-        let global_challenge = [F::ZERO; 3];
-        transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
-        pctx.set_global_challenge(2, &global_challenge);
-        transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
-
-        let instances = pctx.dctx_get_instances();
+        let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
-            let is_my_instance = pctx.dctx_is_my_instance(instance_id);
-            let (skip, _) = skip_prover_instance(&pctx, instance_id);
+            let is_my_instance = self.pctx.dctx_is_my_instance(instance_id);
+            let (skip, _) = skip_prover_instance(&self.pctx, instance_id);
 
             if skip || (!all && !is_my_instance) {
                 continue;
             };
 
-            wcm.calculate_witness(1, &[instance_id]);
+            self.wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
         }
-
-        wcm.end();
 
         Ok(())
     }
