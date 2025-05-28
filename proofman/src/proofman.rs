@@ -912,8 +912,8 @@ where
             let stream_clone = vec_streams.clone();
             let proofs_clone = proofs.clone();
             let output_dir_path_clone = options.output_dir_path.clone();
-            let is_stored = self.pctx.is_air_instance_stored(instance_id)
-                || vec_streams.contains(&Some(instance_id as u64));
+            let is_stored =
+                self.pctx.is_air_instance_stored(instance_id) || vec_streams.contains(&Some(instance_id as u64));
 
             let const_pols_clone = const_pols.clone();
             let const_tree_clone = const_tree.clone();
