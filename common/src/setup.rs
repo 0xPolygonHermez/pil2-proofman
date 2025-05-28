@@ -1,4 +1,4 @@
-use std::os::raw::c_void;
+use std::os::raw::{c_void, c_char};
 use p3_field::Field;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
@@ -21,6 +21,8 @@ use crate::StarkInfo;
 use crate::load_const_pols;
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
+
+type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
 #[derive(Debug, Clone)]
 #[repr(C)]
@@ -56,6 +58,7 @@ pub struct Setup<F: Field> {
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
     pub size_witness: RwLock<Option<u64>>,
+    pub circom_circuit: RwLock<Option<*mut c_void>>,
     pub air_name: String,
     pub verkey: Vec<F>,
     pub exec_data: RwLock<Option<Vec<u64>>>,
@@ -201,6 +204,7 @@ impl<F: Field> Setup<F> {
             custom_commits_fixed_buffer_size,
             proof_size,
             size_witness: RwLock::new(None),
+            circom_circuit: RwLock::new(None),
             exec_data: RwLock::new(None),
             setup_path: setup_path.clone(),
             setup_type: setup_type.clone(),
@@ -260,6 +264,29 @@ impl<F: Field> Setup<F> {
         };
 
         *self.size_witness.write().unwrap() = size_witness;
+        Ok(())
+    }
+
+    pub fn set_circom_circuit(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let rust_lib_filename = self.setup_path.display().to_string() + ".so";
+        let rust_lib_path = Path::new(rust_lib_filename.as_str());
+
+        let dat_filename = self.setup_path.display().to_string() + ".dat";
+        let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
+        let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
+
+        if !rust_lib_path.exists() {
+            return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
+        }
+
+        let library: Library = unsafe { Library::new(rust_lib_path)? };
+
+        let circom_circuit = unsafe {
+            let init_circom_circuit: Symbol<GetCircomCircuitFunc> = library.get(b"initCircuit\0")?;
+            Some(init_circom_circuit(dat_filename_ptr))
+        };
+
+        *self.circom_circuit.write().unwrap() = circom_circuit;
         Ok(())
     }
 

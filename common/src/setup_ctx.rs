@@ -24,6 +24,9 @@ pub struct SetupsVadcop<F: Field> {
     pub total_const_size: usize,
 }
 
+unsafe impl<F: Field> Send for SetupsVadcop<F> {}
+unsafe impl<F: Field> Sync for SetupsVadcop<F> {}
+
 impl<F: Field> SetupsVadcop<F> {
     pub fn new(
         global_info: &GlobalInfo,
