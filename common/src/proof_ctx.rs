@@ -239,7 +239,7 @@ impl<F: Field> ProofCtx<F> {
         dctx.node_rank as usize
     }
 
-     pub fn dctx_get_node_n_processes(&self) -> usize {
+    pub fn dctx_get_node_n_processes(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
         dctx.node_n_processes as usize
     }

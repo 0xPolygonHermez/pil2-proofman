@@ -99,6 +99,11 @@ impl DistributionCtx {
             let world = universe.world();
             let rank = world.rank();
             let n_processes = world.size();
+
+            let local_comm = world.split_shared(rank);
+            let node_rank = local_comm.rank();
+            let node_n_processes = local_comm.size();
+
             DistributionCtx {
                 rank,
                 n_processes,
@@ -117,8 +122,8 @@ impl DistributionCtx {
                 airgroup_instances_alives: Vec::new(),
                 glob2loc: Vec::new(),
                 balance_distribution: true,
-                node_rank: 0,
-                node_n_processes: 1,
+                node_rank,
+                node_n_processes,
             }
         }
         #[cfg(not(distributed))]
@@ -354,7 +359,6 @@ impl DistributionCtx {
         // Calculate the partial sums of owners_count
         #[cfg(distributed)]
         {
-            self.set_node_rank_size();
             let mut total_instances = 0;
             for i in 0..self.n_processes as usize {
                 self.roots_gatherv_displ[i] = total_instances;
@@ -401,20 +405,6 @@ impl DistributionCtx {
         self.glob2loc = vec![None; self.n_instances];
         for (loc_idx, glob_idx) in self.my_instances.iter().enumerate() {
             self.glob2loc[*glob_idx] = Some(loc_idx);
-        }
-    }
-
-    pub fn set_node_rank_size(&mut self) {
-        #[cfg(distributed)]
-        {
-            let local_comm = self.world.split_shared(self.rank);
-            self.node_rank = local_comm.rank();
-            self.node_n_processes = local_comm.size();
-        }
-        #[cfg(not(distributed))]
-        {
-            self.node_rank = 0;
-            self.node_n_processes = 1;
         }
     }
 
