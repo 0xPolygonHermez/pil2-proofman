@@ -593,15 +593,6 @@ fn generate_witness<F: PrimeField64>(
     zkin: &[u64],
     _num_threads: usize,
 ) -> Result<Vec<F>, Box<dyn std::error::Error>> {
-    let rust_lib_filename = setup.setup_path.display().to_string() + ".so";
-    let rust_lib_path = Path::new(rust_lib_filename.as_str());
-
-    if !rust_lib_path.exists() {
-        return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
-    }
-
-    let library: Library = unsafe { Library::new(rust_lib_path)? };
-
     let mut witness_size = setup.size_witness.read().unwrap().unwrap();
     witness_size += *setup.exec_data.read().unwrap().as_ref().unwrap().first().unwrap();
 
@@ -614,6 +605,8 @@ fn generate_witness<F: PrimeField64>(
     };
 
     unsafe {
+        let library_guard = setup.circom_library.read().unwrap();
+        let library = library_guard.as_ref().ok_or("Circom library not loaded")?;
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
         get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1);
     }

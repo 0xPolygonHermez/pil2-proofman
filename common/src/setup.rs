@@ -58,6 +58,7 @@ pub struct Setup<F: Field> {
     pub setup_path: PathBuf,
     pub setup_type: ProofType,
     pub size_witness: RwLock<Option<u64>>,
+    pub circom_library: RwLock<Option<Library>>,
     pub circom_circuit: RwLock<Option<*mut c_void>>,
     pub air_name: String,
     pub verkey: Vec<F>,
@@ -205,6 +206,7 @@ impl<F: Field> Setup<F> {
             proof_size,
             size_witness: RwLock::new(None),
             circom_circuit: RwLock::new(None),
+            circom_library: RwLock::new(None),
             exec_data: RwLock::new(None),
             setup_path: setup_path.clone(),
             setup_type: setup_type.clone(),
@@ -248,25 +250,6 @@ impl<F: Field> Setup<F> {
         self.const_pols_tree.as_ptr() as *mut u8
     }
 
-    pub fn set_size_witness(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let rust_lib_filename = self.setup_path.display().to_string() + ".so";
-        let rust_lib_path = Path::new(rust_lib_filename.as_str());
-
-        if !rust_lib_path.exists() {
-            return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
-        }
-
-        let library: Library = unsafe { Library::new(rust_lib_path)? };
-
-        let size_witness = unsafe {
-            let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
-            Some(get_size_witness())
-        };
-
-        *self.size_witness.write().unwrap() = size_witness;
-        Ok(())
-    }
-
     pub fn set_circom_circuit(&self) -> Result<(), Box<dyn std::error::Error>> {
         let rust_lib_filename = self.setup_path.display().to_string() + ".so";
         let rust_lib_path = Path::new(rust_lib_filename.as_str());
@@ -286,6 +269,13 @@ impl<F: Field> Setup<F> {
             Some(init_circom_circuit(dat_filename_ptr))
         };
 
+        let size_witness = unsafe {
+            let get_size_witness: Symbol<GetSizeWitnessFunc> = library.get(b"getSizeWitness\0")?;
+            Some(get_size_witness())
+        };
+
+        *self.circom_library.write().unwrap() = Some(library);
+        *self.size_witness.write().unwrap() = size_witness;
         *self.circom_circuit.write().unwrap() = circom_circuit;
         Ok(())
     }
