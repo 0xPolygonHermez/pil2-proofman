@@ -185,6 +185,7 @@ where
             };
 
             self.wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
+            self.pctx.free_instance(instance_id);
         }
 
         Ok(())
