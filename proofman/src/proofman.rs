@@ -719,8 +719,8 @@ where
 
         let (rec_proof_tx, rec_proof_rx) = bounded::<usize>(n_proof_threads as usize);
 
-        for pool_id in 0..max_concurrent_pools {
-            rec_proof_tx.send(pool_id).unwrap();
+        for pool_id in 0..n_proof_threads {
+            rec_proof_tx.send(pool_id as usize).unwrap();
         }
 
         let pctx_clone = self.pctx.clone();
@@ -850,7 +850,9 @@ where
                             recursive1_proofs_clone.insert(id, proof);
                         }
 
-                        launch_callback_c(id as u64, new_proof_type_str);
+                        if cfg!(not(feature = "gpu")) {
+                            launch_callback_c(id as u64, new_proof_type_str);
+                        }
                     }
                     proofs_pending_clone.decrement();
                     rec_proof_tx_clone.send(pool_id).unwrap();
