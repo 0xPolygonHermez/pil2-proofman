@@ -665,14 +665,12 @@ where
         for handle in handles {
             handle.join().unwrap();
         }
-
+        //self.pctx.dctx.read().unwrap().barrier();
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all {
                 continue;
             };
-
             let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-
             self.wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
             if self.pctx.dctx_is_my_instance(instance_id) {
                 contributions_pending.increment();
@@ -687,6 +685,7 @@ where
                     streams.clone(),
                 );
             }
+            //self.pctx.dctx.read().unwrap().barrier();
         }
 
         contributions_pending
@@ -1182,6 +1181,8 @@ where
             true => check_device_memory_c() as f64 * 0.98,
             false => 0.0,
         };
+
+        pctx.dctx_barrier(); // imporrant: all processes syncronize before allocation GPU memory
 
         let total_const_area = match gpu_params.preallocate {
             true => sctx.total_const_size as u64,
