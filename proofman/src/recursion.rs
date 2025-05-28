@@ -364,8 +364,8 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             prover_buffer,
                             &output_dir_path,
                             d_buffers,
-                            const_pols.clone(),
                             const_tree.clone(),
+                            const_pols.clone(),
                             save_proofs,
                         );
 

@@ -574,15 +574,15 @@ where
 
         let aux_trace_size = match cfg!(feature = "gpu") {
             true => 0,
-            false => self.sctx.max_prover_buffer_size,
+            false => self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size),
         };
         let const_pols_size = match cfg!(feature = "gpu") {
             true => 0,
-            false => self.sctx.max_const_size,
+            false => self.sctx.max_const_size.max(self.setups.max_const_size),
         };
         let const_tree_size = match cfg!(feature = "gpu") {
             true => 0,
-            false => self.sctx.max_const_tree_size,
+            false => self.sctx.max_const_tree_size.max(self.setups.max_const_tree_size),
         };
         let aux_trace: Arc<Vec<F>> = Arc::new(create_buffer_fast(aux_trace_size));
         let const_pols: Arc<Vec<F>> = Arc::new(create_buffer_fast(const_pols_size));
@@ -666,44 +666,27 @@ where
             handle.join().unwrap();
         }
 
-        let mut handles = Vec::new();
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
-            let is_all = *all;
-            if !is_all {
+            if !*all {
                 continue;
             };
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let values_contributions_clone = values_contributions.clone();
-            let roots_contributions_clone = roots_contributions.clone();
-            let d_buffers_clone = self.d_buffers.clone();
-            let aux_trace_clone = aux_trace.clone();
-            let streams_clone = streams.clone();
-            let tx_clone = tx.clone();
-            let wcm = self.wcm.clone();
-            let contributions_pending = contributions_pending.clone();
 
-            let pool_id = rx.recv().unwrap();
-            let handle = std::thread::spawn(move || {
-                wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
+            let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+
+            self.wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
+            if self.pctx.dctx_is_my_instance(instance_id) {
                 contributions_pending.increment();
                 Self::get_contribution_air(
-                    &pctx_clone,
-                    &sctx_clone,
-                    roots_contributions_clone.clone(),
-                    values_contributions_clone.clone(),
+                    &self.pctx,
+                    &self.sctx,
+                    roots_contributions.clone(),
+                    values_contributions.clone(),
                     instance_id,
-                    aux_trace_clone.clone().as_ptr() as *mut u8,
-                    d_buffers_clone.clone(),
-                    streams_clone.clone(),
+                    aux_trace.clone().as_ptr() as *mut u8,
+                    self.d_buffers.clone(),
+                    streams.clone(),
                 );
-                tx_clone.send(pool_id).unwrap();
-            });
-            handles.push(handle);
-        }
-
-        for handle in handles {
-            handle.join().unwrap();
+            }
         }
 
         contributions_pending
