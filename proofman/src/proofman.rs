@@ -711,6 +711,10 @@ where
 
         let (rec_proof_tx, rec_proof_rx) = bounded::<usize>(2 * self.n_gpus as usize);
 
+        for pool_id in 0..(2 * self.n_gpus) {
+            rec_proof_tx.send(pool_id as usize).unwrap();
+        }
+        
         let pctx_clone = self.pctx.clone();
         let setups_clone = self.setups.clone();
         let proofs_clone = proofs.clone();
@@ -721,13 +725,14 @@ where
         let output_dir_path_clone = options.output_dir_path.clone();
         let proofs_pending_clone = proofs_pending.clone();
         let instances_clone = instances.clone();
+        let rec_proof_tx_clone = rec_proof_tx.clone();
         let handle = std::thread::spawn(move || {
             while let Ok((id, proof_type)) = recursive_rx.recv() {
                 if !options.aggregation {
                     proofs_pending_clone.decrement();
                     continue;
                 }
-                let rec_proof_tx_clone = rec_proof_tx.clone();
+                let rec_proof_tx_clone = rec_proof_tx_clone.clone();
                 let rec_proof_rx_clone = rec_proof_rx.clone();
                 let pctx_clone = pctx_clone.clone();
                 let setups_clone = setups_clone.clone();
@@ -904,12 +909,6 @@ where
             handles.push(handle);
         }
 
-        // Join all threads
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        handle.join().unwrap();
         proofs_pending.wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         get_stream_proofs_c(self.d_buffers.get_ptr());

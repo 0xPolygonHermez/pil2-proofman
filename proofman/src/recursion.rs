@@ -603,7 +603,8 @@ fn generate_witness<F: PrimeField64>(
 
     let library: Library = unsafe { Library::new(rust_lib_path)? };
 
-    let witness_size = get_witness_size(setup)?;
+    let mut witness_size = setup.size_witness.read().unwrap().unwrap();
+    witness_size += *setup.exec_data.read().unwrap().as_ref().unwrap().first().unwrap();
 
     let witness: Vec<F> = create_buffer_fast(witness_size as usize);
 

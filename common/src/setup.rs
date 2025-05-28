@@ -287,8 +287,9 @@ impl<F: Field> Setup<F> {
         };
 
         *self.circom_circuit.write().unwrap() = circom_circuit;
+        Ok(())
     }
-    
+
     pub fn set_exec_file_data(&self) -> Result<(), Box<dyn std::error::Error>> {
         let exec_filename = self.setup_path.display().to_string() + ".exec";
         let exec_filename_str = CString::new(exec_filename.as_str()).unwrap();

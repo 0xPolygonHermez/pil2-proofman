@@ -190,14 +190,7 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
-&& cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libfibonacci_square.so \
-     --proving-key examples/fibonacci-square/build/provingKey/ \
-     --public-inputs examples/fibonacci-square/src/inputs.json \
-     --custom-commits rom=examples/fibonacci-square/build/rom.bin \
-     --verify-proofs \
-     --aggregation \
-     --output-dir examples/fibonacci-square/build/proofs \
+&& cargo run --bin proofman-cli   \
 && cargo run --bin proofman-cli verify-stark \
      --proof ./examples/fibonacci-square/build/proofs/proofs/vadcop_final_proof.json \
      --stark-info ./examples/fibonacci-square/build/provingKey/build/vadcop_final/vadcop_final.starkinfo.json \
