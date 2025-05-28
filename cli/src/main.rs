@@ -7,6 +7,7 @@ use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
 use commands::prove::ProveCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
+use commands::stats::StatsCmd;
 use commands::verify_stark::VerifyStark;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
 use commands::setup::CheckSetupCmd;
@@ -27,6 +28,7 @@ pub enum Commands {
     Prove(ProveCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
+    Stats(StatsCmd),
     VerifyStark(VerifyStark),
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
@@ -47,6 +49,7 @@ fn main() {
         Commands::GenCustomCommitsFixed(args) => args.run(),
         Commands::GetConstraints(args) => args.run(),
         Commands::VerifyStark(args) => args.run(),
+        Commands::Stats(args) => args.run(),
     };
 
     if let Err(e) = result {

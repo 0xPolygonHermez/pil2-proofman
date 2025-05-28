@@ -143,16 +143,43 @@ where
         Ok(())
     }
 
+    pub fn compute_witness(
+        &self,
+        witness_lib_path: PathBuf,
+        public_inputs_path: Option<PathBuf>,
+        input_data_path: Option<PathBuf>,
+        debug_info: &DebugInfo,
+        verbose_mode: VerboseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(CREATE_WITNESS_LIB);
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(verbose_mode)?;
+        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
+
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.wcm.set_input_data_path(input_data_path);
+        self.pctx.set_debug_info(debug_info.clone());
+
+        self.register_witness(&mut *witness_lib, library);
+
+        self.compute_witness_()
+    }
+
     /// Computes only the witness without generating a proof neither verifying constraints.
     /// This is useful for debugging or benchmarking purposes.
-    pub fn compute_witness(
+    pub fn compute_witness_from_lib(
         &self,
         input_data_path: Option<PathBuf>,
         debug_info: &DebugInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        timer_start_info!(EXECUTE);
         self.pctx.set_debug_info(debug_info.clone());
         self.wcm.set_input_data_path(input_data_path);
+        self.compute_witness_()
+    }
+
+    pub fn compute_witness_(&self) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(EXECUTE);
 
         if !self.wcm.is_init_witness() {
             println!("Witness computation dynamic library not initialized");
@@ -190,7 +217,6 @@ where
 
         Ok(())
     }
-
     pub fn verify_proof_constraints(
         &self,
         witness_lib_path: PathBuf,
