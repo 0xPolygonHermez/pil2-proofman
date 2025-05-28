@@ -540,10 +540,7 @@ uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_
     d_buffers->proofType = "basic";
 
     genProof(*(SetupCtx *)pSetupCtx, airgroupId, airId, instanceId, *(StepsParams *)params, (Goldilocks::Element *)globalChallenge, proofBuffer, string(proofFile));
-    if (proof_done_callback != nullptr) {
-        proof_done_callback(instanceId, "basic");
-    }
-
+    
     return 0;
 }
 void get_stream_proofs(void *d_buffers_){}
@@ -552,7 +549,7 @@ void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
 
 // Recursive proof
 // ================================================================================= 
-void *gen_device_buffers(void *max_sizes)
+void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size)
 {
     DeviceCommitBuffersCPU *d_buffers = new DeviceCommitBuffersCPU();
     return (void *)d_buffers;

@@ -1053,9 +1053,10 @@ struct DeviceCommitBuffers
     uint64_t max_size_const_aggregation;
     uint64_t max_size_const_tree_aggregation;
 
-    uint32_t n_gpus;
-    uint32_t n_streams;
-    uint32_t n_streams_per_gpu;
+    uint32_t  n_gpus;
+    uint32_t* my_gpu_ids;
+    uint32_t  n_streams;
+    uint32_t  n_streams_per_gpu;
     std::mutex mutex_slot_selection;
     StreamData *streamsData;
 

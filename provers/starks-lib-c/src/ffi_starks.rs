@@ -1115,8 +1115,12 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_buffers_c(max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_buffers(max_sizes) }
+pub fn gen_device_buffers_c(
+    max_sizes: *mut ::std::os::raw::c_void,
+    node_rank: u32,
+    node_n_processes: u32,
+) -> *mut ::std::os::raw::c_void {
+    unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -1896,7 +1900,11 @@ pub fn set_omp_num_threads(_num_threads: u64) {
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+pub fn gen_device_buffers_c(
+    _max_sizes: *mut ::std::os::raw::c_void,
+    _node_rank: u32,
+    _node_n_processes: u32,
+) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",
         "ffi     ",

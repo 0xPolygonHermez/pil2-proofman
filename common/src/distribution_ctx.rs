@@ -41,6 +41,7 @@ pub struct DistributionCtx {
     pub glob2loc: Vec<Option<usize>>,
     pub balance_distribution: bool,
     pub node_rank: i32,
+    pub node_n_processes: i32,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -64,6 +65,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("roots_gatherv_count", &self.roots_gatherv_count)
                 .field("roots_gatherv_displ", &self.roots_gatherv_displ)
                 .field("node_rank", &self.node_rank)
+                .field("node_n_processes", &self.node_n_processes)
                 .finish()
         }
         #[cfg(not(distributed))]
@@ -83,6 +85,7 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("glob2loc", &self.glob2loc)
                 .field("balance_distribution", &self.balance_distribution)
                 .field("node_rank", &self.node_rank)
+                .field("node_n_processes", &self.node_n_processes)
                 .finish()
         }
     }
@@ -115,6 +118,7 @@ impl DistributionCtx {
                 glob2loc: Vec::new(),
                 balance_distribution: true,
                 node_rank: 0,
+                node_n_processes: 1,
             }
         }
         #[cfg(not(distributed))]
@@ -134,6 +138,7 @@ impl DistributionCtx {
                 glob2loc: Vec::new(),
                 balance_distribution: false,
                 node_rank: 0,
+                node_n_processes: 1,
             }
         }
     }
@@ -349,7 +354,7 @@ impl DistributionCtx {
         // Calculate the partial sums of owners_count
         #[cfg(distributed)]
         {
-            self.set_node_rank();
+            self.set_node_rank_size();
             let mut total_instances = 0;
             for i in 0..self.n_processes as usize {
                 self.roots_gatherv_displ[i] = total_instances;
@@ -399,15 +404,17 @@ impl DistributionCtx {
         }
     }
 
-    pub fn set_node_rank(&mut self) {
+    pub fn set_node_rank_size(&mut self) {
         #[cfg(distributed)]
         {
             let local_comm = self.world.split_shared(self.rank);
             self.node_rank = local_comm.rank();
+            self.node_n_processes = local_comm.size();
         }
         #[cfg(not(distributed))]
         {
             self.node_rank = 0;
+            self.node_n_processes = 1;
         }
     }
 

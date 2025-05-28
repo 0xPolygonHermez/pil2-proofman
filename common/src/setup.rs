@@ -168,6 +168,7 @@ impl<F: Field> Setup<F> {
                 )
             } else {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
+                load_const_pols(&setup_path, const_pols_size, &const_pols);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 (
                     stark_info,

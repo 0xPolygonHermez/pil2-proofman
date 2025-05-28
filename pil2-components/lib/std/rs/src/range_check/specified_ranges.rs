@@ -15,7 +15,7 @@ use proofman_util::create_buffer_fast;
 
 use crate::{get_hint_field_constant_as_u64, validate_binary_field, AirComponent};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SpecifiedRange {
     mul_idx: usize,
     min: i64,

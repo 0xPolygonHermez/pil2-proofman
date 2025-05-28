@@ -1,11 +1,11 @@
 use std::collections::HashSet;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
 
 use p3_field::Field;
 use proofman_common::{ModeName, ProofCtx, SetupCtx, DebugInfo};
 use crate::WitnessComponent;
-
+use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct WitnessManager<F: Field> {
@@ -17,6 +17,7 @@ pub struct WitnessManager<F: Field> {
     public_inputs_path: RwLock<Option<PathBuf>>,
     input_data_path: RwLock<Option<PathBuf>>,
     init: AtomicBool,
+    library: Mutex<Option<Library>>,
 }
 
 impl<F: Field> WitnessManager<F> {
@@ -30,11 +31,13 @@ impl<F: Field> WitnessManager<F> {
             public_inputs_path: RwLock::new(None),
             input_data_path: RwLock::new(None),
             init: AtomicBool::new(false),
+            library: Mutex::new(None),
         }
     }
 
-    pub fn set_init_witness(&self, init: bool) {
+    pub fn set_init_witness(&self, init: bool, library: Library) {
         self.init.store(init, Ordering::SeqCst);
+        self.library.lock().unwrap().replace(library);
     }
 
     pub fn is_init_witness(&self) -> bool {

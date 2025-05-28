@@ -127,7 +127,7 @@
     
     // GPU calls
     // =================================================================================
-    void *gen_device_buffers(void *maxSizes);
+    void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size);
     void free_device_buffers(void *d_buffers);
     void set_device_mpi(uint32_t mpi_node_rank);
     void set_device(uint32_t gpu_id);
