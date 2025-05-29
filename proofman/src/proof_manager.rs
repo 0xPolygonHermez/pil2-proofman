@@ -31,6 +31,16 @@ impl Counter {
         }
     }
 
+    pub fn wait_until_and_check_streams<F: FnMut()>(&self, mut check_streams: F, threshold: usize) {
+        let mut count = self.counter.lock().unwrap();
+        while *count > threshold {
+            check_streams();
+
+            let (c, _) = self.cvar.wait_timeout(count, std::time::Duration::from_micros(100)).unwrap();
+            count = c;
+        }
+    }
+
     pub fn wait_until_zero(&self) {
         let mut count = self.counter.lock().unwrap();
         while *count > 0 {
