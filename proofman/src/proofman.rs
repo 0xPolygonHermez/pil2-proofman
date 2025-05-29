@@ -629,10 +629,10 @@ where
             false => (max_num_threads, 1),
         };
 
-        let contributions_pending = Arc::new(Counter::new());
-        let witness_pending = Arc::new(Counter::new());
+        let contributions_done: Arc<Counter> = Arc::new(Counter::new());
+        let witnesses_done: Arc<Counter> = Arc::new(Counter::new());
 
-        let contributions_listener = contributions_done_listener(contributions_pending.clone());
+        let contributions_listener = contributions_done_listener(contributions_done.clone());
 
         let n_proof_threads = match cfg!(feature = "gpu") {
             true => self.n_gpus,
@@ -643,12 +643,18 @@ where
         let streams = Arc::new(Mutex::new(vec![None; n_streams as usize]));
 
         let (tx, rx) = bounded::<usize>(max_concurrent_pools);
+        let (tx_memory, rx_memory) = bounded::<()>(max_witness_stored);
 
         for pool_id in 0..max_concurrent_pools {
             tx.send(pool_id).unwrap();
         }
+        for _ in 0..max_witness_stored {
+            tx_memory.send(()).unwrap();
+        }
 
-        for (count, &instance_id) in my_instances_sorted.iter().enumerate() {
+        let mut n_tables = 0;
+
+        for &instance_id in my_instances_sorted.iter() {
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
             let values_contributions_clone = values_contributions.clone();
@@ -657,20 +663,25 @@ where
             let aux_trace_clone = aux_trace.clone();
             let streams_clone = streams.clone();
             let tx_clone = tx.clone();
+            let tx_memory_clone = tx_memory.clone();
             let instances = instances.clone();
             let wcm = self.wcm.clone();
-            let contributions_pending = contributions_pending.clone();
-            let witness_pending = witness_pending.clone();
+            let witnesses_done = witnesses_done.clone();
+            let (_, _, all) = instances[instance_id];
+            if all {
+                n_tables += 1;
+            }
 
             let pool_id = rx.recv().unwrap();
+            rx_memory.recv().unwrap();
 
             let handle = std::thread::spawn(move || {
                 let (_, _, all) = instances[instance_id];
                 if !all {
-                    contributions_pending.increment();
-                    witness_pending.increment();
                     wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
-                    witness_pending.decrement();
+                    witnesses_done.increment();
+                    tx_clone.send(pool_id).unwrap();
+
                     Self::get_contribution_air(
                         &pctx_clone,
                         &sctx_clone,
@@ -682,18 +693,18 @@ where
                         streams_clone.clone(),
                     );
 
-                    if (instances_mine - count) > max_witness_stored {
+                    if (instances_mine - witnesses_done.get_count()) > max_witness_stored {
                         pctx_clone.free_instance_traces(instance_id);
+                        tx_memory_clone.send(()).unwrap();
                     }
                 }
-                tx_clone.send(pool_id).unwrap();
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
             }
         }
 
-        witness_pending.wait_until_zero();
+        witnesses_done.wait_until_value(my_instances.len() - n_tables);
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all {
@@ -702,7 +713,7 @@ where
             let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
             self.wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
             if self.pctx.dctx_is_my_instance(instance_id) {
-                contributions_pending.increment();
+                witnesses_done.increment();
                 Self::get_contribution_air(
                     &self.pctx,
                     &self.sctx,
@@ -717,8 +728,9 @@ where
             //self.pctx.dctx.read().unwrap().barrier();
         }
 
-        contributions_pending
-            .wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
+        contributions_done.wait_until_value_and_check_streams(witnesses_done.get_count(), || {
+            get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr())
+        });
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
 

@@ -58,6 +58,24 @@ impl Counter {
         }
     }
 
+    pub fn wait_until_value_and_check_streams<F: FnMut()>(&self, value: usize, mut check_streams: F) {
+        let mut count = self.counter.lock().unwrap();
+        while *count < value {
+            check_streams();
+
+            let (c, _) = self.cvar.wait_timeout(count, std::time::Duration::from_micros(100)).unwrap();
+            count = c;
+        }
+    }
+
+    pub fn wait_until_value(&self, value: usize) {
+        let mut count = self.counter.lock().unwrap();
+        while *count < value {
+            let (c, _) = self.cvar.wait_timeout(count, std::time::Duration::from_micros(100)).unwrap();
+            count = c;
+        }
+    }
+
     pub fn get_count(&self) -> usize {
         *self.counter.lock().unwrap()
     }
@@ -70,7 +88,7 @@ pub fn contributions_done_listener(contributions_counter: Arc<Counter>) -> std::
 
     std::thread::spawn(move || {
         while rx.recv().is_ok() {
-            contributions_counter.decrement();
+            contributions_counter.increment();
         }
     })
 }
