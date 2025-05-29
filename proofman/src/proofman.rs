@@ -791,7 +791,10 @@ where
             let recursive_rx_clone = recursive_rx.clone();
             let _ = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
-                    basic_proofs_pending_clone.decrement();
+                    let p: ProofType = proof_type.parse().unwrap();
+                    if p == ProofType::Basic {
+                        basic_proofs_pending_clone.decrement();
+                    }
                     if !options.aggregation {
                         proofs_pending_clone.decrement();
                         continue;
@@ -810,7 +813,6 @@ where
                     let proofs_pending_clone = proofs_pending_clone.clone();
 
                     let recursive_handle = std::thread::spawn(move || {
-                        let p: ProofType = proof_type.parse().unwrap();
                         let new_proof_type = if p == ProofType::Basic {
                             let (airgroup_id, air_id, _) = instances_clone[id as usize];
                             if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
