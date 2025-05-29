@@ -649,7 +649,6 @@ where
         let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
         let (tx_memory, rx_memory) = bounded::<()>(max_witness_stored);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
-        let (tx_contribution, rx_contribution) = bounded::<()>(instances_mine);
 
         for pool_id in 0..max_concurrent_pools {
             tx_pools.send(pool_id).unwrap();
@@ -658,6 +657,7 @@ where
             tx_memory.send(()).unwrap();
         }
         let witnesses_done = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![];
 
         // evaluate my non-all instances and launch contribution evaluations 
         for &instance_id in my_instances_sorted.iter() {
@@ -678,7 +678,6 @@ where
             let tx_pools_clone = tx_pools.clone();
             let tx_memory_clone = tx_memory.clone();
             let tx_witness_clone = tx_witness.clone();
-            let tx_contribuiton_clone = tx_contribution.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
             
@@ -701,7 +700,6 @@ where
                     d_buffers_clone.clone(),
                     streams_clone.clone(),
                 );
-                tx_contribuiton_clone.send(()).unwrap();
 
                 if instances_mine - witnesses_done_clone.load(Ordering::Acquire) > max_witness_stored {
                     pctx_clone.free_instance_traces(instance_id);
@@ -710,6 +708,8 @@ where
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
+            } else {
+                handles.push(handle);
             }
         }
 
@@ -723,7 +723,6 @@ where
             if !*all {
                 continue;
             };
-            let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
             self.wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
             if self.pctx.dctx_is_my_instance(instance_id) {
                 Self::get_contribution_air(
@@ -736,14 +735,15 @@ where
                     self.d_buffers.clone(),
                     streams.clone(),
                 );
-                tx_contribution.send(()).unwrap();
             }
         }
 
-        // syncronize to all contributions being launched (not necessarily evaluted but already in streams)
-        for _ in 0..instances_mine {
-            rx_contribution.recv().unwrap();
-         }
+        // ensure all threads have finishes, this ensures all contributions have been launched
+        if cfg!(feature = "gpu") {
+            for handle in handles {
+                handle.join().unwrap();
+            }
+        }
 
         // get roots still in the streams
         get_stream_proofs_c(self.d_buffers.get_ptr());
