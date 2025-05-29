@@ -615,7 +615,10 @@ where
         let const_pols: Arc<Vec<F>> = Arc::new(create_buffer_fast(const_pols_size));
         let const_tree: Arc<Vec<F>> = Arc::new(create_buffer_fast(const_tree_size));
 
-        let max_witness_stored = instances_mine.min(self.gpu_params.max_witness_stored);
+        let max_witness_stored = match cfg!(feature = "gpu") {
+            true => instances_mine.min(self.gpu_params.max_witness_stored),
+            false => 1,
+        };
 
         let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
         let (threads_per_pool, max_concurrent_pools) = match cfg!(feature = "gpu") {
@@ -652,7 +655,8 @@ where
             tx_memory.send(()).unwrap();
         }
 
-        let mut n_tables = 0;
+        let my_instances_all =
+            instances.iter().enumerate().filter(|(id, (_, _, all))| *all && self.pctx.dctx_is_my_instance(*id)).count();
 
         for &instance_id in my_instances_sorted.iter() {
             let pctx_clone = self.pctx.clone();
@@ -669,34 +673,29 @@ where
             let witnesses_done = witnesses_done.clone();
             let (_, _, all) = instances[instance_id];
             if all {
-                n_tables += 1;
+                continue;
             }
-
             let pool_id = rx.recv().unwrap();
             rx_memory.recv().unwrap();
-
             let handle = std::thread::spawn(move || {
-                let (_, _, all) = instances[instance_id];
-                if !all {
-                    wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
-                    witnesses_done.increment();
-                    tx_clone.send(pool_id).unwrap();
+                wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
+                witnesses_done.increment();
+                tx_clone.send(pool_id).unwrap();
 
-                    Self::get_contribution_air(
-                        &pctx_clone,
-                        &sctx_clone,
-                        roots_contributions_clone.clone(),
-                        values_contributions_clone.clone(),
-                        instance_id,
-                        aux_trace_clone.clone().as_ptr() as *mut u8,
-                        d_buffers_clone.clone(),
-                        streams_clone.clone(),
-                    );
+                Self::get_contribution_air(
+                    &pctx_clone,
+                    &sctx_clone,
+                    roots_contributions_clone.clone(),
+                    values_contributions_clone.clone(),
+                    instance_id,
+                    aux_trace_clone.clone().as_ptr() as *mut u8,
+                    d_buffers_clone.clone(),
+                    streams_clone.clone(),
+                );
 
-                    if (instances_mine - witnesses_done.get_count()) > max_witness_stored {
-                        pctx_clone.free_instance_traces(instance_id);
-                        tx_memory_clone.send(()).unwrap();
-                    }
+                if (instances_mine - witnesses_done.get_count()) > max_witness_stored {
+                    pctx_clone.free_instance_traces(instance_id);
+                    tx_memory_clone.send(()).unwrap();
                 }
             });
             if cfg!(not(feature = "gpu")) {
@@ -704,7 +703,7 @@ where
             }
         }
 
-        witnesses_done.wait_until_value(my_instances.len() - n_tables);
+        witnesses_done.wait_until_value(my_instances.len() - my_instances_all);
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all {
@@ -728,9 +727,10 @@ where
             //self.pctx.dctx.read().unwrap().barrier();
         }
 
-        contributions_done.wait_until_value_and_check_streams(witnesses_done.get_count(), || {
-            get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr())
-        });
+        contributions_done.wait_until_value_and_check_streams(
+            || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
+            witnesses_done.get_count(),
+        );
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
 
@@ -918,16 +918,22 @@ where
 
         // TODO: ORDER INSTANCES ?
 
+        let (tx_memory, rx_memory) = bounded::<()>(max_witness_stored);
+        for _ in 0..max_witness_stored {
+            tx_memory.try_send(()).unwrap();
+        }
+
         for &instance_id in my_instances_sorted.iter() {
             if my_instances_calculated[instance_id] {
                 continue;
             }
-            let pool_id = rx.recv().unwrap();
+
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
             let d_buffers_clone = self.d_buffers.clone();
             let aux_trace_clone = aux_trace.clone();
             let tx_clone = tx.clone();
+            let tx_memory_clone = tx_memory.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
             let basic_proofs_pending_clone = basic_proofs_pending.clone();
@@ -941,12 +947,16 @@ where
             let const_tree_clone = const_tree.clone();
             my_instances_calculated[instance_id] = true;
 
+            let pool_id = rx.recv().unwrap();
+            rx_memory.recv().unwrap();
+
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
                 basic_proofs_pending_clone.increment();
                 if !is_stored {
                     wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
                 }
+                tx_clone.send(pool_id).unwrap();
                 let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
                 Self::gen_proof(
                     proofs_clone.clone(),
@@ -962,7 +972,8 @@ where
                     options.save_proofs,
                 );
                 pctx_clone.free_instance(instance_id);
-                tx_clone.send(pool_id).unwrap();
+
+                tx_memory_clone.send(()).unwrap();
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
@@ -975,7 +986,7 @@ where
             }
         }
 
-        basic_proofs_pending.wait_until_and_check_streams(
+        basic_proofs_pending.wait_until_value_and_check_streams(
             || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
             n_streams as usize,
         );
