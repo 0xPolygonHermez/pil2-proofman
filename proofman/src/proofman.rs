@@ -592,6 +592,8 @@ where
         let mut my_instances_sorted = my_instances.clone();
         my_instances_sorted.shuffle(&mut rng);
         let instances_mine = my_instances.len();
+        let my_instances_all =
+            instances.iter().enumerate().filter(|(id, (_, _, all))| *all && self.pctx.dctx_is_my_instance(*id)).count();
 
         let values_contributions: Arc<DashMap<usize, Vec<F>>> = Arc::new(DashMap::new());
         let roots_contributions: Arc<DashMap<usize, [F; 4]>> = Arc::new(DashMap::new());
@@ -632,8 +634,8 @@ where
             false => (max_num_threads, 1),
         };
 
-        let contributions_done: Arc<Counter> = Arc::new(Counter::new());
-        let witnesses_done: Arc<Counter> = Arc::new(Counter::new());
+        let contributions_done: Arc<Counter> = Arc::new(Counter::new_with_threshold(my_instances.len()));
+        let witnesses_done: Arc<Counter> = Arc::new(Counter::new_with_threshold(my_instances.len() - my_instances_all));
 
         let contributions_listener = contributions_done_listener(contributions_done.clone());
 
@@ -654,9 +656,6 @@ where
         for _ in 0..max_witness_stored {
             tx_memory.send(()).unwrap();
         }
-
-        let my_instances_all =
-            instances.iter().enumerate().filter(|(id, (_, _, all))| *all && self.pctx.dctx_is_my_instance(*id)).count();
 
         for &instance_id in my_instances_sorted.iter() {
             let pctx_clone = self.pctx.clone();
@@ -703,7 +702,7 @@ where
             }
         }
 
-        witnesses_done.wait_until_value(my_instances.len() - my_instances_all);
+        witnesses_done.wait_until_threshold();
 
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all {
@@ -724,13 +723,10 @@ where
                     streams.clone(),
                 );
             }
-            //self.pctx.dctx.read().unwrap().barrier();
         }
 
-        contributions_done.wait_until_value_and_check_streams(
-            || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
-            witnesses_done.get_count(),
-        );
+        contributions_done
+            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
 
@@ -781,7 +777,9 @@ where
         }
 
         let proofs_pending = Arc::new(Counter::new());
-        let basic_proofs_pending = Arc::new(Counter::new());
+
+        let basic_proofs_threshold = (instances_mine - n_streams as usize).max(1);
+        let basic_proofs_done = Arc::new(Counter::new_with_threshold(basic_proofs_threshold));
 
         let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
         register_proof_done_callback_c(recursive_tx.clone());
@@ -797,7 +795,7 @@ where
             let recursive2_proofs_clone = recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
             let proofs_pending_clone = proofs_pending.clone();
-            let basic_proofs_pending_clone = basic_proofs_pending.clone();
+            let basic_proofs_done_clone = basic_proofs_done.clone();
             let instances_clone = instances.clone();
             let rec_witness_tx_clone = rec_witness_tx.clone();
             let recursive_rx_clone = recursive_rx.clone();
@@ -805,7 +803,7 @@ where
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
                     let p: ProofType = proof_type.parse().unwrap();
                     if p == ProofType::Basic {
-                        basic_proofs_pending_clone.decrement();
+                        basic_proofs_done_clone.increment();
                     }
                     if !options.aggregation {
                         proofs_pending_clone.decrement();
@@ -893,7 +891,6 @@ where
                 .filter_map(|(stream_id, instance)| instance.map(|id| (stream_id, id)))
                 .for_each(|(stream_id, instance_id)| {
                     proofs_pending.increment();
-                    basic_proofs_pending.increment();
                     Self::gen_proof(
                         proofs.clone(),
                         self.pctx.clone(),
@@ -936,7 +933,6 @@ where
             let tx_memory_clone = tx_memory.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
-            let basic_proofs_pending_clone = basic_proofs_pending.clone();
             let stream_clone = vec_streams.clone();
             let proofs_clone = proofs.clone();
             let output_dir_path_clone = options.output_dir_path.clone();
@@ -952,7 +948,6 @@ where
 
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
-                basic_proofs_pending_clone.increment();
                 if !is_stored {
                     wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
                 }
@@ -986,10 +981,8 @@ where
             }
         }
 
-        basic_proofs_pending.wait_until_value_and_check_streams(
-            || get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()),
-            n_streams as usize,
-        );
+        basic_proofs_done
+            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         for _ in 0..n_streams {
             let pctx_clone = self.pctx.clone();

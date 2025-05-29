@@ -8,6 +8,7 @@ pub struct Counter {
     counter: AtomicUsize,
     wait_lock: Mutex<()>,
     cvar: Condvar,
+    threshold: usize,
 }
 
 impl Default for Counter {
@@ -18,12 +19,23 @@ impl Default for Counter {
 
 impl Counter {
     pub fn new() -> Self {
-        Self { counter: AtomicUsize::new(0), wait_lock: Mutex::new(()), cvar: Condvar::new() }
+        Self { counter: AtomicUsize::new(0), wait_lock: Mutex::new(()), cvar: Condvar::new(), threshold: 0 }
+    }
+
+    pub fn new_with_threshold(threshold: usize) -> Self {
+        Self { counter: AtomicUsize::new(0), wait_lock: Mutex::new(()), cvar: Condvar::new(), threshold }
     }
 
     #[inline(always)]
     pub fn increment(&self) -> usize {
-        self.counter.fetch_add(1, Ordering::Relaxed) + 1
+        let new_val = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
+
+        if new_val == self.threshold {
+            let _guard = self.wait_lock.lock().unwrap();
+            self.cvar.notify_all();
+        }
+
+        new_val
     }
 
     #[inline(always)]
@@ -38,10 +50,10 @@ impl Counter {
         new_val
     }
 
-    pub fn wait_until_value_and_check_streams<F: FnMut()>(&self, mut check_streams: F, threshold: usize) {
+    pub fn wait_until_threshold_and_check_streams<F: FnMut()>(&self, mut check_streams: F) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
-            if self.counter.load(Ordering::Acquire) <= threshold {
+            if self.counter.load(Ordering::Acquire) < self.threshold {
                 break;
             }
             check_streams();
@@ -50,9 +62,9 @@ impl Counter {
         }
     }
 
-    pub fn wait_until_value(&self, value: usize) {
+    pub fn wait_until_threshold(&self) {
         let mut guard = self.wait_lock.lock().unwrap();
-        while self.counter.load(Ordering::Acquire) > value {
+        while self.counter.load(Ordering::Acquire) < self.threshold {
             guard = self.cvar.wait(guard).unwrap();
         }
     }
