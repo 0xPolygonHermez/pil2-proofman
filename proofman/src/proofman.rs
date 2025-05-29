@@ -3,6 +3,7 @@ use libloading::{Library, Symbol};
 use p3_field::extension::BinomialExtensionField;
 use p3_field::BasedVectorSpace;
 use std::ops::Add;
+use std::sync::atomic::AtomicUsize;
 use proofman_common::CurveType;
 use proofman_common::{
     calculate_fixed_tree, skip_prover_instance, Proof, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
@@ -592,8 +593,9 @@ where
         let mut my_instances_sorted = my_instances.clone();
         my_instances_sorted.shuffle(&mut rng);
         let instances_mine = my_instances.len();
-        let my_instances_all =
+        let instances_mine_all =
             instances.iter().enumerate().filter(|(id, (_, _, all))| *all && self.pctx.dctx_is_my_instance(*id)).count();
+        let instances_mine_no_all = instances_mine- instances_mine_all;
 
         let values_contributions: Arc<DashMap<usize, Vec<F>>> = Arc::new(DashMap::new());
         let roots_contributions: Arc<DashMap<usize, [F; 4]>> = Arc::new(DashMap::new());
@@ -634,10 +636,6 @@ where
             false => (max_num_threads, 1),
         };
 
-        let contributions_done: Arc<Counter> = Arc::new(Counter::new_with_threshold(my_instances.len()));
-        let witnesses_done: Arc<Counter> = Arc::new(Counter::new_with_threshold(my_instances.len() - my_instances_all));
-
-        let contributions_listener = contributions_done_listener(contributions_done.clone());
 
         let n_proof_threads = match cfg!(feature = "gpu") {
             true => self.n_gpus,
@@ -647,17 +645,29 @@ where
         let n_streams = self.n_streams_per_gpu * n_proof_threads;
         let streams = Arc::new(Mutex::new(vec![None; n_streams as usize]));
 
-        let (tx, rx) = bounded::<usize>(max_concurrent_pools);
+        // define managment channels and counters
+        let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
         let (tx_memory, rx_memory) = bounded::<()>(max_witness_stored);
+        let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
+        let (tx_contribution, rx_contribution) = bounded::<()>(instances_mine);
 
         for pool_id in 0..max_concurrent_pools {
-            tx.send(pool_id).unwrap();
+            tx_pools.send(pool_id).unwrap();
         }
         for _ in 0..max_witness_stored {
             tx_memory.send(()).unwrap();
         }
+        let witnesses_done = Arc::new(AtomicUsize::new(0));
 
+        // evaluate my non-all instances and launch contribution evaluations 
         for &instance_id in my_instances_sorted.iter() {
+
+            let instances = instances.clone();
+            let (_, _, all) = instances[instance_id];
+            if all {
+                continue;
+            }
+
             let pctx_clone = self.pctx.clone();
             let sctx_clone = self.sctx.clone();
             let values_contributions_clone = values_contributions.clone();
@@ -665,21 +675,21 @@ where
             let d_buffers_clone = self.d_buffers.clone();
             let aux_trace_clone = aux_trace.clone();
             let streams_clone = streams.clone();
-            let tx_clone = tx.clone();
+            let tx_pools_clone = tx_pools.clone();
             let tx_memory_clone = tx_memory.clone();
-            let instances = instances.clone();
+            let tx_witness_clone = tx_witness.clone();
+            let tx_contribuiton_clone = tx_contribution.clone();
             let wcm = self.wcm.clone();
-            let witnesses_done = witnesses_done.clone();
-            let (_, _, all) = instances[instance_id];
-            if all {
-                continue;
-            }
-            let pool_id = rx.recv().unwrap();
+            let witnesses_done_clone = witnesses_done.clone();
+            
+            let pool_id = rx_pools.recv().unwrap();
             rx_memory.recv().unwrap();
+
             let handle = std::thread::spawn(move || {
                 wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
-                witnesses_done.increment();
-                tx_clone.send(pool_id).unwrap();
+                tx_pools_clone.send(pool_id).unwrap();
+                tx_witness_clone.send(()).unwrap();
+                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
 
                 Self::get_contribution_air(
                     &pctx_clone,
@@ -691,8 +701,9 @@ where
                     d_buffers_clone.clone(),
                     streams_clone.clone(),
                 );
+                tx_contribuiton_clone.send(()).unwrap();
 
-                if (instances_mine - witnesses_done.get_count()) > max_witness_stored {
+                if instances_mine - witnesses_done_clone.load(Ordering::Acquire) > max_witness_stored {
                     pctx_clone.free_instance_traces(instance_id);
                     tx_memory_clone.send(()).unwrap();
                 }
@@ -702,8 +713,12 @@ where
             }
         }
 
-        witnesses_done.wait_until_threshold();
+        // syncronize to the non-all witnesses being evaluated
+        for _ in 0..instances_mine_no_all {
+           rx_witness.recv().unwrap();
+        }
 
+        //evalutate witness for all-type instances
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all {
                 continue;
@@ -711,7 +726,6 @@ where
             let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
             self.wcm.calculate_witness(1, &[instance_id], 0, max_num_threads);
             if self.pctx.dctx_is_my_instance(instance_id) {
-                witnesses_done.increment();
                 Self::get_contribution_air(
                     &self.pctx,
                     &self.sctx,
@@ -722,17 +736,19 @@ where
                     self.d_buffers.clone(),
                     streams.clone(),
                 );
+                tx_contribution.send(()).unwrap();
             }
         }
 
-        contributions_done
-            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
+        // syncronize to all contributions being launched (not necessarily evaluted but already in streams)
+        for _ in 0..instances_mine {
+            rx_contribution.recv().unwrap();
+         }
 
+        // get roots still in the streams
         get_stream_proofs_c(self.d_buffers.get_ptr());
 
-        clear_proof_done_callback_c();
-        contributions_listener.join().unwrap();
-
+        //calculate-challenge
         Self::calculate_global_challenge(&self.pctx, roots_contributions, values_contributions);
 
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
@@ -929,7 +945,7 @@ where
             let sctx_clone = self.sctx.clone();
             let d_buffers_clone = self.d_buffers.clone();
             let aux_trace_clone = aux_trace.clone();
-            let tx_clone = tx.clone();
+            let tx_clone = tx_pools.clone();
             let tx_memory_clone = tx_memory.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
@@ -943,7 +959,7 @@ where
             let const_tree_clone = const_tree.clone();
             my_instances_calculated[instance_id] = true;
 
-            let pool_id = rx.recv().unwrap();
+            let pool_id = rx_pools.recv().unwrap();
             rx_memory.recv().unwrap();
 
             let handle = std::thread::spawn(move || {
