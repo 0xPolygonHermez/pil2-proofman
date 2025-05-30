@@ -357,12 +357,12 @@ fn add_info_expressions_inner(
                 }
             }
 
-            // (c) extract child‐info
+            // (c) extract child‐info by looking for an `id` field, not a `values` field
             let mut child_info = Vec::with_capacity(2);
-            for (i, v) in expressions.clone()[exp_id]["values"].as_array().unwrap().iter().enumerate() {
-                if v.get("values").is_some() {
+            let vals = expressions[exp_id]["values"].as_array().unwrap().clone();
+            for (i, v) in vals.iter().enumerate() {
+                if let Some(idx) = v.get("id").and_then(Value::as_u64).map(|u| u as usize) {
                     // real global child
-                    let idx = v["id"].as_u64().unwrap() as usize;
                     println!("{}       child[{}] → recurse exp_id {}", indent, i, idx);
                     add_info_expressions_inner(expressions, idx, depth + 2, visited);
                     let e = &expressions[idx];
@@ -372,7 +372,7 @@ fn add_info_expressions_inner(
                     let rows = e["rowsOffsets"].as_array().cloned().unwrap();
                     child_info.push((deg, dim, stage, rows));
                 } else {
-                    // in-line leaf
+                    // in‐line leaf
                     let lop = v.get("op").and_then(Value::as_str).unwrap_or("<leaf>");
                     println!("{}       child[{}] inline `{}` → leaf", indent, i, lop);
                     let deg = v.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
