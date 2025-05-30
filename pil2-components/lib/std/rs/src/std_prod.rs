@@ -43,7 +43,7 @@ impl<F: PrimeField64> StdProd<F> {
     ) {
         let instances = pctx.dctx_get_instances();
 
-        let (airgroup_id, air_id, _) = instances[instance_id];
+        let (airgroup_id, air_id, _, _) = instances[instance_id];
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
@@ -237,7 +237,6 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
-        _core_id: usize,
         _n_cores: usize,
     ) {
         let std_prod_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");

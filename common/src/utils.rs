@@ -13,8 +13,6 @@ use std::fs;
 use sysinfo::System;
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
-use std::sync::Arc;
-
 use tracing_subscriber::{prelude::*, fmt};
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
@@ -53,7 +51,7 @@ pub fn skip_prover_instance<F: Field>(pctx: &ProofCtx<F>, global_idx: usize) -> 
     }
 
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id, _) = instances[global_idx];
+    let (airgroup_id, air_id, _, _) = instances[global_idx];
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
 
     if let Some(airgroup_id_map) = pctx.debug_info.read().unwrap().debug_instances.get(&airgroup_id) {
@@ -237,15 +235,6 @@ pub fn print_memory_usage() {
     }
 }
 
-pub fn create_pool(core_id: usize, n_cores: usize) -> ThreadPool {
-    let cores = Arc::new(core_affinity::get_core_ids().expect("Failed to get core IDs"));
-    ThreadPoolBuilder::new()
-        .num_threads(n_cores)
-        .thread_name(move |i| format!("pool{}_thread{}", core_id, i))
-        .start_handler(move |thread_index| {
-            let core = cores[core_id + thread_index];
-            core_affinity::set_for_current(core);
-        })
-        .build()
-        .unwrap()
+pub fn create_pool(n_cores: usize) -> ThreadPool {
+    ThreadPoolBuilder::new().num_threads(n_cores).build().unwrap()
 }

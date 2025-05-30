@@ -102,7 +102,7 @@ impl<F: Field> WitnessManager<F> {
         }
     }
 
-    pub fn calculate_witness(&self, stage: u32, instance_ids: &[usize], core_id: usize, n_cores: usize) {
+    pub fn calculate_witness(&self, stage: u32, instance_ids: &[usize], n_cores: usize) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 
@@ -121,14 +121,13 @@ impl<F: Field> WitnessManager<F> {
                     self.pctx.clone(),
                     self.sctx.clone(),
                     &instance_ids_filtered,
-                    core_id,
                     n_cores,
                 );
             }
         }
 
         for component in self.components_std.read().unwrap().iter() {
-            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), instance_ids, core_id, n_cores);
+            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), instance_ids, n_cores);
         }
     }
 

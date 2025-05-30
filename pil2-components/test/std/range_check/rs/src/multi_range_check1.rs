@@ -27,7 +27,6 @@ where
         pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
-        _core_id: usize,
         _n_cores: usize,
     ) {
         if stage == 1 {

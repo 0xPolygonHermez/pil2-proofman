@@ -13,7 +13,7 @@ use colored::*;
 
 pub fn verify_constraints<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, global_id: usize) -> Vec<ConstraintInfo> {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id, _) = instances[global_id];
+    let (airgroup_id, air_id, _, _) = instances[global_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = pctx.get_air_instance_params(sctx, global_id, false);
@@ -121,7 +121,7 @@ pub fn verify_constraints_proof<F: Field>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>
 
     let constraints = verify_constraints(pctx, sctx, instance_id);
 
-    let (airgroup_id, air_id, _) = instances[instance_id];
+    let (airgroup_id, air_id, _, _) = instances[instance_id];
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
     let (skip, _) = skip_prover_instance(pctx, instance_id);

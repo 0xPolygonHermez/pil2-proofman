@@ -17,7 +17,6 @@ pub trait WitnessComponent<F: Field>: Send + Sync {
         _pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
-        _core_id: usize,
         _n_cores: usize,
     ) {
     }

@@ -103,7 +103,6 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
         pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
-        _core_id: usize,
         _n_cores: usize,
     ) {
         if stage == 1 {
