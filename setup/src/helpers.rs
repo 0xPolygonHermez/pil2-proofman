@@ -174,9 +174,9 @@ fn get_exp_dim_inner(exp: &mut Value, expressions: &mut [Value]) -> usize {
     }
 }
 
-pub fn add_info_expressions(expressions: &mut Vec<serde_json::Value>, exp_id: usize) {
+pub fn add_info_expressions(expressions: &mut Vec<serde_json::Value>, start_id: usize) {
     let mut visited = std::collections::HashSet::new();
-    add_info_expressions_inner(expressions, exp_id, 0, &mut visited);
+    add_info_expressions_inner(expressions, start_id, 0, &mut visited);
 }
 
 fn add_info_expressions_inner(
@@ -203,7 +203,7 @@ fn add_info_expressions_inner(
     if let Some(next) = expressions[exp_id].get("next") {
         println!("{}   └─ had `next`: {:?}", indent, next);
         let ro = if next.as_bool().unwrap_or(false) { 1 } else { 0 };
-        expressions[exp_id]["rowOffset"] = serde_json::json!(ro);
+        expressions[exp_id]["rowOffset"] = json!(ro);
         expressions[exp_id].as_object_mut().unwrap().remove("next");
     }
 
@@ -252,30 +252,30 @@ fn add_info_expressions_inner(
             let stage = if op == "cm" { 1 } else { 0 };
             let ro_opt = expressions[exp_id].get("rowOffset").cloned();
             let me = &mut expressions[exp_id];
-            me["expDeg"] = serde_json::json!(1);
+            me["expDeg"] = json!(1);
             if me.get("stage").is_none() || op == "const" {
-                me["stage"] = serde_json::json!(stage);
+                me["stage"] = json!(stage);
             }
             if me.get("dim").is_none() {
-                me["dim"] = serde_json::json!(1);
+                me["dim"] = json!(1);
             }
             if let Some(ro) = ro_opt {
-                me["rowsOffsets"] = serde_json::json!([ro]);
+                me["rowsOffsets"] = json!([ro]);
             }
         }
 
         // ==== xDivXSubXi ====
         "xDivXSubXi" => {
             println!("{}   └─ xDivXSubXi → deg=1", indent);
-            expressions[exp_id]["expDeg"] = serde_json::json!(1);
+            expressions[exp_id]["expDeg"] = json!(1);
         }
 
         // ==== challenge/eval ====
         o if ["challenge", "eval"].contains(&o) => {
             println!("{}   └─ `{}` → deg=0, dim=3", indent, o);
             let me = &mut expressions[exp_id];
-            me["expDeg"] = serde_json::json!(0);
-            me["dim"] = serde_json::json!(3);
+            me["expDeg"] = json!(0);
+            me["dim"] = json!(3);
         }
 
         // ==== airgroupvalue/proofvalue ====
@@ -283,8 +283,8 @@ fn add_info_expressions_inner(
             let stage = expressions[exp_id].get("stage").and_then(serde_json::Value::as_u64).unwrap_or(0);
             println!("{}   └─ `{}` → deg=0, dim based on stage {}", indent, o, stage);
             let me = &mut expressions[exp_id];
-            me["expDeg"] = serde_json::json!(0);
-            me["dim"] = serde_json::json!((stage != 1) as u8 * 2 + 1);
+            me["expDeg"] = json!(0);
+            me["dim"] = json!((stage != 1) as u8 * 2 + 1);
         }
 
         // ==== airvalue ====
@@ -292,9 +292,9 @@ fn add_info_expressions_inner(
             let stage = expressions[exp_id].get("stage").and_then(serde_json::Value::as_u64).unwrap_or(0);
             println!("{}   └─ airvalue → deg=0, dim based on stage {}", indent, stage);
             let me = &mut expressions[exp_id];
-            me["expDeg"] = serde_json::json!(0);
+            me["expDeg"] = json!(0);
             if me.get("dim").is_none() {
-                me["dim"] = serde_json::json!((stage != 1) as u8 * 2 + 1);
+                me["dim"] = json!((stage != 1) as u8 * 2 + 1);
             }
         }
 
@@ -302,10 +302,10 @@ fn add_info_expressions_inner(
         "public" => {
             println!("{}   └─ public → deg=0, stage=1", indent);
             let me = &mut expressions[exp_id];
-            me["expDeg"] = serde_json::json!(0);
-            me["stage"] = serde_json::json!(1);
+            me["expDeg"] = json!(0);
+            me["stage"] = json!(1);
             if me.get("dim").is_none() {
-                me["dim"] = serde_json::json!(1);
+                me["dim"] = json!(1);
             }
         }
 
@@ -315,10 +315,10 @@ fn add_info_expressions_inner(
         {
             println!("{}   └─ number/Zi@everyRow → deg=0, stage=0", indent);
             let me = &mut expressions[exp_id];
-            me["expDeg"] = serde_json::json!(0);
-            me["stage"] = serde_json::json!(0);
+            me["expDeg"] = json!(0);
+            me["stage"] = json!(0);
             if me.get("dim").is_none() {
-                me["dim"] = serde_json::json!(1);
+                me["dim"] = json!(1);
             }
         }
 
@@ -331,8 +331,8 @@ fn add_info_expressions_inner(
                 println!("{}       rewriting neg→mul", indent);
                 let original = expressions[exp_id]["values"][0].clone();
                 let me = &mut expressions[exp_id];
-                me["op"] = serde_json::json!("mul");
-                me["values"] = serde_json::json!([
+                me["op"] = json!("mul");
+                me["values"] = json!([
                     { "op":"number","value":"-1","expDeg":0,"stage":0,"dim":1 },
                     original
                 ]);
@@ -347,47 +347,40 @@ fn add_info_expressions_inner(
                     println!("{}       zero‐fold: z0={} z1={}", indent, z0, z1);
                     let me = &mut expressions[exp_id];
                     if z0 {
-                        me["op"] = serde_json::json!("mul");
-                        me["values"][0]["value"] = serde_json::json!("1");
+                        me["op"] = json!("mul");
+                        me["values"][0]["value"] = json!("1");
                     }
                     if z1 {
-                        me["op"] = serde_json::json!("mul");
-                        me["values"][1]["value"] = serde_json::json!("1");
+                        me["op"] = json!("mul");
+                        me["values"][1]["value"] = json!("1");
                     }
                 }
             }
 
-            // (c) extract child IDs first (break the borrow)
-            let id_opts: Vec<Option<usize>> = expressions[exp_id]["values"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|v| v.get("id").and_then(serde_json::Value::as_u64).map(|u| u as usize))
-                .collect();
-
+            // (c) extract child‐info
             let mut child_info = Vec::with_capacity(2);
-            for (i, id_opt) in id_opts.iter().enumerate() {
-                if let Some(&idx) = id_opt.as_ref() {
-                    println!("{}       child[{}] = exp_id {}", indent, i, idx);
+            for (i, v) in expressions.clone()[exp_id]["values"].as_array().unwrap().iter().enumerate() {
+                if v.get("values").is_some() {
+                    // real global child
+                    let idx = v["id"].as_u64().unwrap() as usize;
+                    println!("{}       child[{}] → recurse exp_id {}", indent, i, idx);
                     add_info_expressions_inner(expressions, idx, depth + 2, visited);
                     let e = &expressions[idx];
-                    let deg = e["expDeg"].as_u64().unwrap_or(0);
-                    let dim = e["dim"].as_u64().unwrap_or(1);
-                    let stage = e["stage"].as_u64().unwrap_or(0);
-                    let rows = e["rowsOffsets"].as_array().cloned().unwrap_or_else(|| vec![serde_json::json!(0)]);
+                    let deg = e["expDeg"].as_u64().unwrap();
+                    let dim = e["dim"].as_u64().unwrap();
+                    let stage = e["stage"].as_u64().unwrap();
+                    let rows = e["rowsOffsets"].as_array().cloned().unwrap();
                     child_info.push((deg, dim, stage, rows));
                 } else {
-                    // inline literal → leaf
-                    let lop =
-                        expressions[exp_id]["values"][i].get("op").and_then(serde_json::Value::as_str).unwrap_or("");
+                    // in-line leaf
+                    let lop = v.get("op").and_then(Value::as_str).unwrap_or("<leaf>");
                     println!("{}       child[{}] inline `{}` → leaf", indent, i, lop);
-                    let (deg, dim, stage) = match lop {
-                        "number" => (0, 1, 0),
-                        "public" | "challenge" => (0, 1, 1),
-                        "cm" | "const" | "custom" => (1, 1, 0),
-                        _ => (0, 1, 0),
-                    };
-                    child_info.push((deg, dim, stage, vec![serde_json::json!(0)]));
+                    let deg = v.get("expDeg").and_then(Value::as_u64).unwrap_or(0);
+                    let dim = v.get("dim").and_then(Value::as_u64).unwrap_or(1);
+                    let stage = v.get("stage").and_then(Value::as_u64).unwrap_or(0);
+                    let rows =
+                        v.get("rowsOffsets").and_then(Value::as_array).cloned().unwrap_or_else(|| vec![json!(0)]);
+                    child_info.push((deg, dim, stage, rows));
                 }
             }
 
@@ -405,13 +398,13 @@ fn add_info_expressions_inner(
                     set.insert(n);
                 }
             }
-            let rows: Vec<_> = set.into_iter().map(|n| serde_json::json!(n)).collect();
+            let rows: Vec<_> = set.into_iter().map(|n| json!(n)).collect();
 
             let me = &mut expressions[exp_id];
-            me["expDeg"] = serde_json::json!(exp_deg);
-            me["dim"] = serde_json::json!(dim);
-            me["stage"] = serde_json::json!(stage);
-            me["rowsOffsets"] = serde_json::json!(rows);
+            me["expDeg"] = json!(exp_deg);
+            me["dim"] = json!(dim);
+            me["stage"] = json!(stage);
+            me["rowsOffsets"] = json!(rows);
         }
 
         other => panic!("Unknown op at exp_id {}: {}", exp_id, other),
