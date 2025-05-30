@@ -630,7 +630,7 @@ where
                 let max_concurrent_pools = self
                     .gpu_params
                     .max_number_witness_pools
-                    .min(max_num_threads / self.gpu_params.number_threads_pools_witness);
+                    .min(max_num_threads / self.gpu_params.number_threads_pools_witness).min(max_witness_stored);
                 (self.gpu_params.number_threads_pools_witness, max_concurrent_pools)
             }
             false => (max_num_threads, 1),
@@ -656,7 +656,7 @@ where
         let witnesses_done = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
 
-        // evaluate my non-all instances and launch contribution evaluations 
+        // evaluate my instances except those of type "all" and launch their contribution evaluations 
         for &instance_id in my_instances_sorted.iter() {
 
             let instances = instances.clone();
@@ -712,7 +712,7 @@ where
            rx_witness.recv().unwrap();
         }
 
-        //evalutate witness for all-type instances
+        //evalutate witness for instances of type "all"
         for (instance_id, (_, _, all)) in instances.iter().enumerate() {
             if !*all {
                 continue;
