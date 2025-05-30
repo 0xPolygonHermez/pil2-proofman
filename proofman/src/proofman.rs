@@ -43,7 +43,7 @@ use std::{path::PathBuf, sync::Arc};
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
-use crate::{check_tree_paths_vadcop, initialize_fixed_pols_tree, contributions_done_listener};
+use crate::{check_tree_paths_vadcop, initialize_fixed_pols_tree};
 use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes};
@@ -647,15 +647,12 @@ where
 
         // define managment channels and counters
         let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
-        let (tx_memory, rx_memory) = bounded::<()>(max_witness_stored);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
 
         for pool_id in 0..max_concurrent_pools {
             tx_pools.send(pool_id).unwrap();
         }
-        for _ in 0..max_witness_stored {
-            tx_memory.send(()).unwrap();
-        }
+        
         let witnesses_done = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
 
@@ -676,13 +673,11 @@ where
             let aux_trace_clone = aux_trace.clone();
             let streams_clone = streams.clone();
             let tx_pools_clone = tx_pools.clone();
-            let tx_memory_clone = tx_memory.clone();
             let tx_witness_clone = tx_witness.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
             
             let pool_id = rx_pools.recv().unwrap();
-            rx_memory.recv().unwrap();
 
             let handle = std::thread::spawn(move || {
                 wcm.calculate_witness(1, &[instance_id], pool_id * threads_per_pool, threads_per_pool);
@@ -703,7 +698,6 @@ where
 
                 if instances_mine - witnesses_done_clone.load(Ordering::Acquire) > max_witness_stored {
                     pctx_clone.free_instance_traces(instance_id);
-                    tx_memory_clone.send(()).unwrap();
                 }
             });
             if cfg!(not(feature = "gpu")) {
