@@ -1,14 +1,14 @@
 #include "transcriptGL.cuh"
 #include "poseidon2_goldilocks.cuh"
-#include "gl64_t.cuh"
+#include "gl64_tooling.cuh"
 
 #include "math.h"
 
 static int initialized = 0;
 
 
-__device__ __constant__ gl64_t GPU_C[118];
-__device__ __constant__ gl64_t GPU_D[12];
+__device__ __constant__ gl64_gpu GPU_C[118];
+__device__ __constant__ gl64_gpu GPU_D[12];
 
 __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pending, Goldilocks::Element* out, uint* pending_cursor, uint* out_cursor, uint* state_cursor) 
 {
@@ -26,7 +26,7 @@ __device__ void _updateState(Goldilocks::Element* state, Goldilocks::Element* pe
     {
         inputs[i + TRANSCRIPT_PENDING_SIZE] = state[i];
     }
-    hash_full_result_seq_2((gl64_t*)out, (gl64_t*)inputs, GPU_C, GPU_D);
+    hash_full_result_seq_2((gl64_gpu*)out, (gl64_gpu*)inputs, GPU_C, GPU_D);
 
     *out_cursor = TRANSCRIPT_OUT_SIZE;
     for (int i = 0; i < TRANSCRIPT_PENDING_SIZE; i++)
@@ -100,7 +100,7 @@ __global__ void __getPermutations(uint64_t *res, uint64_t n, uint64_t nBits, Gol
 
     uint64_t curField = 0;
     uint64_t curBit = 0;
-    gl64_t* fields_ = (gl64_t*)fields;
+    gl64_gpu* fields_ = (gl64_gpu*)fields;
     for (uint64_t i = 0; i < n; i++)
     {
         uint64_t a = 0;

@@ -12,7 +12,7 @@
 #define NUM_COLUMNS 32
 
 #ifdef __USE_CUDA__
-#include "../src/gl64_t.cuh"
+#include "../src/gl64_tooling.cuh"
 #include "../utils/cuda_utils.cuh"
 #include "../src/goldilocks_cubic_extension.cuh"
 TEST(GOLDILOCKS_TEST, full_gpu)
