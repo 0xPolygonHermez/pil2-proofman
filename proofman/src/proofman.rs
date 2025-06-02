@@ -9,7 +9,6 @@ use proofman_common::{
     calculate_fixed_tree, skip_prover_instance, Proof, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
     ParamsGPU, DebugInfo, VerboseMode,
 };
-use dashmap::DashMap;
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{gen_device_buffers_c, free_device_buffers_c};
@@ -807,10 +806,13 @@ where
 
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
-        let proofs: Arc<DashMap<usize, Proof<F>>> = Arc::new(DashMap::new());
-        let compressor_proofs: Arc<DashMap<usize, Proof<F>>> = Arc::new(DashMap::new());
-        let recursive1_proofs: Arc<DashMap<usize, Proof<F>>> = Arc::new(DashMap::new());
-        let recursive2_proofs: Arc<DashMap<usize, Vec<Proof<F>>>> = Arc::new(DashMap::new());
+        let mut proofs: Vec<RwLock<Proof<F>>> = Vec::new();
+        let compressor_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..instances.len()).map(|_| RwLock::new(None)).collect());
+        let recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..instances.len()).map(|_| RwLock::new(None)).collect());
+        let recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>> =
+            Arc::new((0..n_airgroups).map(|_| RwLock::new(Vec::new())).collect());
         let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
 
         let vec_streams: Vec<Option<u64>> = {
@@ -819,14 +821,16 @@ where
         };
 
         let mut n_airgroup_proofs = vec![0; n_airgroups];
-        for instance_id in my_instances.iter() {
-            let (airgroup_id, air_id, _, _) = instances[*instance_id];
-            n_airgroup_proofs[airgroup_id] += 1;
-            let setup = self.sctx.get_setup(airgroup_id, air_id);
+        for (instance_id, (airgroup_id, air_id, _, _)) in instances.iter().enumerate() {
+            if self.pctx.dctx_is_my_instance(instance_id) {
+                n_airgroup_proofs[*airgroup_id] += 1;
+            }
+            let setup = self.sctx.get_setup(*airgroup_id, *air_id);
             let proof = create_buffer_fast(setup.proof_size as usize);
-
-            proofs.insert(*instance_id, Proof::new(ProofType::Basic, airgroup_id, air_id, Some(*instance_id), proof));
+            proofs.push(RwLock::new(Proof::new(ProofType::Basic, *airgroup_id, *air_id, Some(instance_id), proof)));
         }
+
+        let proofs = Arc::new(proofs);
 
         if options.aggregation {
             for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
@@ -836,8 +840,7 @@ where
                     let publics_aggregation = 1 + 4 * self.pctx.global_info.agg_types[airgroup].len() + 10;
                     let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
                     let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
-                    let mut recursive2_proofs_airgroup = recursive2_proofs.entry(airgroup).or_default();
-                    recursive2_proofs_airgroup.push(null_proof);
+                    recursive2_proofs[airgroup].write().unwrap().push(null_proof);
                 }
             }
         }
@@ -911,13 +914,14 @@ where
 
                         let witness = if new_proof_type == ProofType::Recursive2 as usize {
                             let proof = if p == ProofType::Recursive1 {
-                                recursive1_proofs_clone.get(&(id as usize)).unwrap().clone()
+                                recursive1_proofs_clone[id as usize].read().unwrap().as_ref().unwrap().clone()
                             } else {
                                 recursive2_proofs_ongoing_clone.read().unwrap()[id as usize].as_ref().unwrap().clone()
                             };
 
                             let mut recursive2_proofs_airgroup =
-                                recursive2_proofs_clone.entry(proof.airgroup_id).or_default();
+                                recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+
                             recursive2_proofs_airgroup.push(proof);
 
                             if recursive2_proofs_airgroup.len() >= 3 {
@@ -929,15 +933,12 @@ where
                             } else {
                                 None
                             }
-                        } else if new_proof_type == ProofType::Recursive1 as usize {
-                            let proof = if p == ProofType::Compressor {
-                                compressor_proofs_clone.get(&(id as usize)).unwrap()
-                            } else {
-                                proofs_clone.get(&(id as usize)).unwrap()
-                            };
-                            Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof, 1).unwrap())
+                        } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
+                            let guard = compressor_proofs_clone[id as usize].read().unwrap();
+                            let proof = guard.as_ref().unwrap();
+                            Some(gen_witness_recursive(&pctx_clone, &setups_clone, proof, 1).unwrap())
                         } else {
-                            let proof = proofs_clone.get(&(id as usize)).expect("missing proof");
+                            let proof = proofs_clone[id as usize].read().unwrap();
                             Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof, 1).unwrap())
                         };
 
@@ -1093,7 +1094,7 @@ where
 
                 let trace: Vec<F> = create_buffer_fast(trace_size);
                 let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
-                if witness.proof_type == ProofType::Recursive1 || witness.proof_type == ProofType::Recursive2 {
+                if witness.proof_type == ProofType::Recursive2 {
                     let id = {
                         let mut proofs = recursive2_proofs_ongoing_clone.write().unwrap();
                         let id = proofs.len();
@@ -1124,9 +1125,9 @@ where
                 if new_proof_type == &ProofType::Recursive2 {
                     recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(proof);
                 } else if new_proof_type == &ProofType::Compressor {
-                    compressor_proofs_clone.insert(id, proof);
+                    *compressor_proofs_clone[id].write().unwrap() = Some(proof);
                 } else if new_proof_type == &ProofType::Recursive1 {
-                    recursive1_proofs_clone.insert(id, proof);
+                    *recursive1_proofs_clone[id].write().unwrap() = Some(proof);
                 }
 
                 if cfg!(not(feature = "gpu")) {
@@ -1170,8 +1171,11 @@ where
             if options.verify_proofs {
                 timer_start_info!(VERIFYING_PROOFS);
                 for instance_id in my_instances.iter() {
-                    let valid_proof =
-                        verify_basic_proof(&self.pctx, *instance_id, &proofs.get(instance_id).unwrap().proof);
+                    let valid_proof = verify_basic_proof(
+                        &self.pctx,
+                        *instance_id,
+                        &proofs[*instance_id].read().unwrap().proof.clone(),
+                    );
                     if !valid_proof {
                         valid_proofs = false;
                     }
@@ -1190,7 +1194,7 @@ where
                         .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
                         .unwrap_or(0);
 
-                    let proof = proofs.get(instance_id).expect("Missing proof");
+                    let proof = proofs[*instance_id].read().expect("Missing proof");
 
                     let airgroup_values: Vec<F> =
                         proof.proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
@@ -1228,7 +1232,7 @@ where
         let trace = create_buffer_fast::<F>(self.trace_size);
         let prover_buffer = create_buffer_fast::<F>(self.prover_buffer_size);
         let recursive2_proofs_data: Vec<Vec<Proof<F>>> =
-            recursive2_proofs.iter().map(|entry| entry.value().clone()).collect();
+            recursive2_proofs.iter().map(|lock| lock.read().unwrap().clone()).collect();
 
         let agg_recursive2_proof = aggregate_recursive2_proofs(
             &self.pctx,
@@ -1420,7 +1424,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn gen_proof(
-        proofs: Arc<DashMap<usize, Proof<F>>>,
+        proofs: Arc<Vec<RwLock<Proof<F>>>>,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         instance_id: usize,
@@ -1471,7 +1475,7 @@ where
             p_setup,
             p_steps_params,
             pctx.get_global_challenge_ptr(),
-            proofs.get(&instance_id).unwrap().proof.as_ptr() as *mut u64,
+            proofs[instance_id].read().unwrap().proof.as_ptr() as *mut u64,
             &proof_file,
             airgroup_id as u64,
             air_id as u64,

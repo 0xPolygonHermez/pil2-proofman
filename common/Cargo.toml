@@ -22,7 +22,6 @@ p3-field.workspace = true
 p3-goldilocks.workspace = true
 proofman-macros.workspace = true
 rayon.workspace = true
-core_affinity = "0.8.3"
 sysinfo.workspace = true
 
 mpi = { version = "0.8.0", optional = true }
