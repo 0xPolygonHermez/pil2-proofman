@@ -983,6 +983,7 @@ where
                         self.d_buffers.clone(),
                         Some(stream_id),
                         options.save_proofs,
+                        self.gpu_params.preallocate,
                     );
                     processed_ids.lock().unwrap().push(instance_id);
                 });
@@ -1026,6 +1027,8 @@ where
             let pool_id = rx_pools.recv().unwrap();
             rx_memory.recv().unwrap();
 
+            let preallocate = self.gpu_params.preallocate;
+
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
                 if !is_stored {
@@ -1045,6 +1048,7 @@ where
                     d_buffers_clone.clone(),
                     stream_id,
                     options.save_proofs,
+                    preallocate,
                 );
                 pctx_clone.free_instance(instance_id);
 
@@ -1435,6 +1439,7 @@ where
         d_buffers: Arc<DeviceBuffer>,
         stream_id_: Option<usize>,
         save_proof: bool,
+        gpu_preallocate: bool,
     ) {
         timer_start_info!(GEN_PROOF);
         Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
@@ -1452,6 +1457,9 @@ where
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
+        } else if !gpu_preallocate {
+            steps_params.p_const_pols = setup.get_const_ptr() as *mut u8;
+            steps_params.p_const_tree = setup.get_const_tree_ptr() as *mut u8;
         }
 
         let p_steps_params: *mut u8 = (&steps_params).into();

@@ -35,15 +35,15 @@ fn main() {
 
     // Check if the C++ library exists before recompiling
     if !lib_file.exists() {
-        if cfg!(feature = "gpu") {
-            eprintln!("`libstarksgpu.a` not found! Compiling...");
-            run_command("make", &["clean"], &pil2_stark_path);
-            run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path);
-        } else {
-            eprintln!("`libstarks.a` not found! Compiling...");
-            run_command("make", &["clean"], &pil2_stark_path);
-            run_command("make", &["-j", "starks_lib"], &pil2_stark_path);
-        }
+        // if cfg!(feature = "gpu") {
+        //     eprintln!("`libstarksgpu.a` not found! Compiling...");
+        //     run_command("make", &["clean"], &pil2_stark_path);
+        //     run_command("make", &["-j", "starks_lib_gpu"], &pil2_stark_path);
+        // } else {
+        //     eprintln!("`libstarks.a` not found! Compiling...");
+        //     run_command("make", &["clean"], &pil2_stark_path);
+        //     run_command("make", &["-j", "starks_lib"], &pil2_stark_path);
+        // }
     } else {
         println!("C++ library already compiled, skipping rebuild.");
     }
@@ -113,12 +113,12 @@ fn track_file_changes(pil2_stark_path: &Path) {
     // If any C++ source file changed, force a rebuild
     if source_files_have_changed(&source_files, &lib_file) {
         eprintln!("Changes detected! Running `make clean` and recompiling...");
-        run_command("make", &["clean"], pil2_stark_path);
-        if cfg!(feature = "gpu") {
-            run_command("make", &["-j", "starks_lib_gpu"], pil2_stark_path);
-        } else {
-            run_command("make", &["-j", "starks_lib"], pil2_stark_path);
-        }
+        // run_command("make", &["clean"], pil2_stark_path);
+        // if cfg!(feature = "gpu") {
+        //     run_command("make", &["-j", "starks_lib_gpu"], pil2_stark_path);
+        // } else {
+        //     run_command("make", &["-j", "starks_lib"], pil2_stark_path);
+        // }
     } else {
         println!("No C++ source changes detected, skipping rebuild.");
     }

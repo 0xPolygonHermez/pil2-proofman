@@ -368,6 +368,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     );
                     offset += setup.const_pols_size as u64;
                     offset += setup.const_tree_size as u64;
+                } else {
+                    setup.load_const_pols();
+                    setup.load_const_pols_tree();
                 }
             }
         }
@@ -413,6 +416,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                             );
                             _offset_aggregation += setup.const_pols_size as u64;
                             _offset_aggregation += setup.const_tree_size as u64;
+                        } else {
+                            setup.load_const_pols();
+                            setup.load_const_pols_tree();
                         }
                     }
                 }
@@ -456,6 +462,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                         );
                         _offset_aggregation += setup.const_pols_size as u64;
                         _offset_aggregation += setup.const_tree_size as u64;
+                    } else {
+                        setup.load_const_pols();
+                        setup.load_const_pols_tree();
                     }
                 }
             }
@@ -498,6 +507,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     );
                     _offset_aggregation += setup.const_pols_size as u64;
                     _offset_aggregation += setup.const_tree_size as u64;
+                } else {
+                    setup.load_const_pols();
+                    setup.load_const_pols_tree();
                 }
             }
         }
@@ -531,6 +543,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 );
                 _offset_aggregation += setup_vadcop_final.const_pols_size as u64;
                 _offset_aggregation += setup_vadcop_final.const_tree_size as u64;
+            } else {
+                setup_vadcop_final.load_const_pols();
+                setup_vadcop_final.load_const_pols_tree();
             }
         }
 
