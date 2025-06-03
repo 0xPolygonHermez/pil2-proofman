@@ -543,9 +543,12 @@ uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_
     
     return 0;
 }
+void get_stream_proof(void *d_buffers_, uint64_t *out){}
 void get_stream_proofs(void *d_buffers_){}
 void get_stream_proofs_non_blocking(void *d_buffers_){}
 void get_stream_id_proof(void *d_buffers_, uint64_t streamId) {}
+void reserveStream(void* d_buffers, uint32_t streamId){};
+
 
 // Recursive proof
 // ================================================================================= 

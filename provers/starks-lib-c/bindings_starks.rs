@@ -485,6 +485,10 @@ extern "C" {
     ) -> *mut ::std::os::raw::c_void;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z16get_stream_proofPvPm"]
+    pub fn get_stream_proof(d_buffers_: *mut ::std::os::raw::c_void, out: *mut u64);
+}
+extern "C" {
     #[link_name = "\u{1}_Z17get_stream_proofsPv"]
     pub fn get_stream_proofs(d_buffers_: *mut ::std::os::raw::c_void);
 }
@@ -504,6 +508,10 @@ extern "C" {
         pPublics: *mut ::std::os::raw::c_void,
         nPublicsAggregation: u64,
     );
+}
+extern "C" {
+    #[link_name = "\u{1}_Z13reserveStreamPvj"]
+    pub fn reserveStream(d_buffers: *mut ::std::os::raw::c_void, streamId: u32);
 }
 extern "C" {
     #[link_name = "\u{1}_Z21gen_final_snark_proofPvPcS0_"]

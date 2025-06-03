@@ -14,7 +14,8 @@ use proofman_hints::aggregate_airgroupvals;
 use proofman_starks_lib_c::{gen_device_buffers_c, free_device_buffers_c};
 use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
-    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c, /*reserve_stream_c,*/
+    get_stream_proof_c
 };
 use rayon::prelude::*;
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
@@ -24,6 +25,7 @@ use std::fs::File;
 use std::fmt::Write;
 use std::io::Read;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 use p3_goldilocks::Goldilocks;
@@ -58,6 +60,13 @@ use crate::aggregate_recursive2_proofs;
 use std::ffi::c_void;
 
 use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info, DeviceBuffer};
+
+#[repr(u32)]
+enum WitnessStatus {
+    NotReady = 0,
+    Ready = 1,
+    Launched = 2,
+}
 
 pub struct ProofMan<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
@@ -206,7 +215,7 @@ where
         my_instances_sorted.shuffle(&mut rng);
         let (my_instances_fast, my_instances_regular): (Vec<_>, Vec<_>) =
             my_instances_sorted.clone().into_iter().partition(|instance_id| instances[*instance_id].3);
-        let mut my_instances_sorted = my_instances_fast;
+        let mut my_instances_sorted: Vec<usize> = my_instances_fast;
         my_instances_sorted.extend(my_instances_regular);
         let instances_mine = my_instances.len();
         let instances_mine_all = instances
@@ -640,10 +649,10 @@ where
         let my_instances = self.pctx.dctx_get_my_instances();
         let mut my_instances_sorted = my_instances.clone();
         my_instances_sorted.shuffle(&mut rng);
-        let (my_instances_fast, my_instances_regular): (Vec<_>, Vec<_>) =
+        /*let (my_instances_fast, my_instances_regular): (Vec<_>, Vec<_>) =
             my_instances_sorted.clone().into_iter().partition(|instance_id| instances[*instance_id].3);
         let mut my_instances_sorted = my_instances_fast;
-        my_instances_sorted.extend(my_instances_regular);
+        my_instances_sorted.extend(my_instances_regular);*/
 
         let instances_mine = my_instances.len();
         let instances_mine_all = instances
@@ -698,10 +707,119 @@ where
             false => 1,
         };
 
+        println!("holaaaaa {} {} {} {}", n_proof_threads, self.n_streams_per_gpu, max_concurrent_pools, max_witness_stored);
         let n_streams = self.n_streams_per_gpu * n_proof_threads;
         let streams = Arc::new(Mutex::new(vec![None; n_streams as usize]));
 
-        // define managment channels and counters
+        // 
+        // spawn collectors threads
+        //
+        let running = Arc::new(AtomicBool::new(true));
+        let mut handles_collectors: Vec<std::thread::JoinHandle<()>> = vec![];
+        for i_gpu in 0..n_proof_threads {
+            let d_buffers_clone = self.d_buffers.clone();
+            let n_streams_per_gpu = self.n_streams_per_gpu;
+            let running_clone: Arc<AtomicBool> = running.clone();
+
+
+            let handle = std::thread::spawn(move || {
+                let mut out = [0u64; 4];
+                out[1] = i_gpu * n_streams_per_gpu; // start from the first stream of the GPU
+                while running_clone.load(Ordering::Relaxed){
+                    get_stream_proof_c(d_buffers_clone.get_ptr(), out.as_ptr() as *mut u64);
+                    if out[0] == 0 {
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                    }
+                }                
+            });
+            if cfg!(not(feature = "gpu")) {
+                handle.join().unwrap();
+            } else {
+                handles_collectors.push(handle);  
+            }
+        }
+
+        // 
+        // spawn launcher threads
+        //
+        let witnesses_launched = Arc::new(AtomicUsize::new(0));
+        let mut handle_launchers: Vec<std::thread::JoinHandle<()>> = vec![];
+
+        let (tx_memory, rx_memory) = bounded::<()>(max_witness_stored);
+        let (tx_launch, rx_launch) = bounded::<()>(instances_mine);
+
+        for _ in 0..max_witness_stored {
+            tx_memory.send(()).unwrap();
+        }
+
+        let witnesses_status: Arc<Vec<AtomicU32>> = Arc::new((0..instances.len())
+            .map(|_| AtomicU32::new(WitnessStatus::NotReady as u32))
+            .collect());
+
+         for _ in 0..n_proof_threads {
+
+            let my_instances_sorted_clone = my_instances_sorted.clone();
+            let witnesses_status_clone = witnesses_status.clone();
+            let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let roots_contributions_clone = roots_contributions.clone();
+            let values_contributions_clone = values_contributions.clone();
+            let aux_trace_clone = aux_trace.clone();
+            let d_buffers_clone = self.d_buffers.clone();
+            let streams_clone: Arc<Mutex<Vec<Option<u64>>>> = streams.clone();
+            let witnesses_launched_clone = witnesses_launched.clone();
+            let tx_memory_clone = tx_memory.clone();
+            let tx_launch_clone = tx_launch.clone();
+
+            
+            let handle = std::thread::spawn(move || {
+
+                loop {
+                    for &instance_id in my_instances_sorted_clone.iter() {
+
+                        if witnesses_status_clone[instance_id]
+                            .compare_exchange(
+                                WitnessStatus::Ready as u32,
+                                WitnessStatus::Launched as u32,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
+                            .is_ok()
+                        {
+                            Self::get_contribution_air(
+                                &pctx_clone,
+                                &sctx_clone,
+                                roots_contributions_clone.clone(),
+                                values_contributions_clone.clone(),
+                                instance_id,
+                                aux_trace_clone.clone().as_ptr() as *mut u8,
+                                d_buffers_clone.clone(),
+                                streams_clone.clone(),
+                            );
+                            witnesses_launched_clone.fetch_add(1, Ordering::AcqRel);
+
+                            if (instances_mine_no_all - witnesses_launched_clone.load(Ordering::Acquire)) >= max_witness_stored {
+                                tx_memory_clone.send(()).unwrap();
+                                pctx_clone.free_instance_traces(instance_id);
+                            }
+                            tx_launch_clone.send(()).unwrap();
+                        }
+                    }
+                    if witnesses_launched_clone.load(Ordering::Acquire) >= instances_mine_no_all {
+                        return; 
+                    }
+                }
+            });
+            if cfg!(not(feature = "gpu")) {
+                handle.join().unwrap();
+            } else {
+                handle_launchers.push(handle);
+            }
+        }
+
+        //  
+        // spawn witnessess threads
+        // 
         let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
 
@@ -709,10 +827,8 @@ where
             tx_pools.send(pool_id).unwrap();
         }
 
-        let witnesses_done = Arc::new(AtomicUsize::new(0));
-        let mut handles = vec![];
+        let mut handles_witnesses: Vec<std::thread::JoinHandle<()>> = vec![];
 
-        // evaluate my instances except those of type "all" and launch their contribution evaluations
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
             let (_, _, all, _) = instances[instance_id];
@@ -720,49 +836,31 @@ where
                 continue;
             }
 
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let values_contributions_clone = values_contributions.clone();
-            let roots_contributions_clone = roots_contributions.clone();
-            let d_buffers_clone = self.d_buffers.clone();
-            let aux_trace_clone = aux_trace.clone();
-            let streams_clone = streams.clone();
             let tx_pools_clone = tx_pools.clone();
             let tx_witness_clone = tx_witness.clone();
             let wcm = self.wcm.clone();
-            let witnesses_done_clone = witnesses_done.clone();
+            let witnesses_status_clone = witnesses_status.clone();
+
 
             let pool_id = rx_pools.recv().unwrap();
+            rx_memory.recv().unwrap();
 
             let handle = std::thread::spawn(move || {
                 wcm.calculate_witness(1, &[instance_id], threads_per_pool);
+                witnesses_status_clone[instance_id]
+                    .store(WitnessStatus::Ready as u32, Ordering::Release);
                 tx_pools_clone.send(pool_id).unwrap();
                 tx_witness_clone.send(()).unwrap();
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
 
-                Self::get_contribution_air(
-                    &pctx_clone,
-                    &sctx_clone,
-                    roots_contributions_clone.clone(),
-                    values_contributions_clone.clone(),
-                    instance_id,
-                    aux_trace_clone.clone().as_ptr() as *mut u8,
-                    d_buffers_clone.clone(),
-                    streams_clone.clone(),
-                );
-
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) > max_witness_stored {
-                    pctx_clone.free_instance_traces(instance_id);
-                }
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
             } else {
-                handles.push(handle);
+                handles_witnesses.push(handle);
             }
         }
 
-        // syncronize to the non-all witnesses being evaluated
+        // wait for the "non-all" witnesses being evaluated
         for _ in 0..instances_mine_no_all {
             rx_witness.recv().unwrap();
         }
@@ -787,9 +885,21 @@ where
             }
         }
 
+         // wait for the contributions having been launched
+        for _ in 0..instances_mine_no_all {
+            rx_launch.recv().unwrap();
+        }
+        running.store(false, Ordering::Relaxed);
+
         // ensure all threads have finishes, this ensures all contributions have been launched
         if cfg!(feature = "gpu") {
-            for handle in handles {
+            for handle in handles_witnesses {
+                handle.join().unwrap();
+            }
+            for handle in handle_launchers {
+                handle.join().unwrap();
+            }
+            for handle in handles_collectors {
                 handle.join().unwrap();
             }
         }
@@ -965,6 +1075,15 @@ where
         let processed_ids = Mutex::new(Vec::new());
 
         if cfg!(feature = "gpu") {
+            
+            // reserve the streams for the proofs
+            /*vec_streams
+                .iter()
+                .filter(|stream_id| stream_id.is_some())
+                .for_each(|stream_id| {
+                    reserve_stream_c(self.d_buffers.get_ptr(), *stream_id.as_ref().unwrap() as u64);
+                });*/
+
             vec_streams
                 .par_iter()
                 .enumerate()
@@ -1423,7 +1542,7 @@ where
             n_streams_per_gpu as u64,
         );
 
-        (d_buffers, n_gpus, n_streams_per_gpu as u64)
+        (d_buffers, n_streams_per_gpu as u64, n_gpus)
     }
 
     #[allow(clippy::too_many_arguments)]

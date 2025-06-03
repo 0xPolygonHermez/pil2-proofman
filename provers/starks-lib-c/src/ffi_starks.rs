@@ -834,6 +834,14 @@ pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
     }
 }
 
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_stream_proof_c(d_buffers: *mut c_void, out: *mut u64) {
+    unsafe {
+        get_stream_proof(d_buffers, out);
+    }
+}
+
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn get_stream_proofs_non_blocking_c(d_buffers: *mut c_void) {
@@ -847,6 +855,14 @@ pub fn get_stream_proofs_non_blocking_c(d_buffers: *mut c_void) {
 pub fn get_stream_id_proof_c(d_buffers: *mut c_void, stream_id: u64) {
     unsafe {
         get_stream_id_proof(d_buffers, stream_id);
+    }
+}
+
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn reserve_stream_c(d_buffers: *mut c_void, stream_id: u64) {
+    unsafe {
+        reserveStream(d_buffers, stream_id as u32);
     }
 }
 
@@ -1743,6 +1759,16 @@ pub fn get_stream_proofs_c(_d_buffers: *mut c_void) {
 }
 
 #[cfg(feature = "no_lib_link")]
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_stream_proof_c(d_buffers: *mut c_void, out: *mut u64) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_stream_proof: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
 pub fn get_stream_proofs_non_blocking_c(_d_buffers: *mut c_void) {
     trace!(
@@ -1755,6 +1781,11 @@ pub fn get_stream_proofs_non_blocking_c(_d_buffers: *mut c_void) {
 #[allow(clippy::too_many_arguments)]
 pub fn get_stream_id_proof_c(_d_buffers: *mut c_void, _stream_id: u64) {
     trace!("{}: ··· {}", "ffi     ", "get_stream_id_proof: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn reserve_stream_c(_d_buffers: *mut c_void, _stream_id: u64) {
+    trace!("{}: ··· {}", "ffi     ", "reserve_stream: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
