@@ -704,6 +704,8 @@ where
         let witnesses_done = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
 
+        timer_start_info!(CALCULATING_WITNESS);
+
         // evaluate my instances except those of type "all" and launch their contribution evaluations
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
@@ -759,6 +761,10 @@ where
             rx_witness.recv().unwrap();
         }
 
+        timer_stop_and_log_info!(CALCULATING_WITNESS);
+
+        timer_start_info!(CALCULATING_TABLES);
+
         //evalutate witness for instances of type "all"
         for (instance_id, (_, _, all, _)) in instances.iter().enumerate() {
             if !*all {
@@ -779,6 +785,8 @@ where
             }
         }
 
+        timer_stop_and_log_info!(CALCULATING_TABLES);
+
         // ensure all threads have finishes, this ensures all contributions have been launched
         if cfg!(feature = "gpu") {
             for handle in handles {
@@ -794,7 +802,7 @@ where
 
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
-        timer_start_info!(GENERATING_BASIC_PROOFS);
+        timer_start_info!(GENERATING_INNER_PROOFS);
 
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
@@ -1142,7 +1150,7 @@ where
 
         clear_proof_done_callback_c();
 
-        timer_stop_and_log_info!(GENERATING_BASIC_PROOFS);
+        timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
