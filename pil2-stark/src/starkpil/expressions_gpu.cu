@@ -1,21 +1,21 @@
 #include "expressions_gpu.cuh"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
-#include "gl64_t.cuh"
+#include "gl64_tooling.cuh"
 #include "goldilocks_cubic_extension.cuh"
 
 extern __shared__ Goldilocks::Element scratchpad[];
 
-__device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, gl64_t *destVals, uint64_t row);
-__device__ __noinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs,  DestParamsGPU *d_destParams, gl64_t *destVals, uint64_t row);
-__device__ __noinline__ bool caseNoOprations__(StepsParams *h_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row);
-__device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim);
-__device__ __noinline__ Goldilocks::Element*  load__(DeviceArguments *d_deviceArgs, Goldilocks::Element *value, StepsParams* h_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic);
+__device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, gl64_gpu *destVals, uint64_t row);
+__device__ __noinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs,  DestParamsGPU *d_destParams, gl64_gpu *destVals, uint64_t row);
+__device__ __noinline__ bool caseNoOperations__(StepsParams *h_params, DeviceArguments *d_deviceArgs, Goldilocks::Element *destVals, uint32_t k, uint64_t row, bool debug);
+__device__ __noinline__ void getInversePolinomial__(gl64_gpu *polynomial, uint64_t dim);
+__device__ __noinline__ Goldilocks::Element*  load__(DeviceArguments *d_deviceArgs, Goldilocks::Element *value, StepsParams* h_params, Goldilocks::Element** expressions_params, uint16_t* args, uint64_t i_args, uint64_t row, uint64_t dim, bool isCyclic, bool debug);
 
 #define DEBUG 0
-#define DEBUG_ROW 0
-__device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t dimA,  bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps);
-__device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimRes, int i);
+#define DEBUG_ROW 161699
+__device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t dimA,  bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps, bool debug);
+__device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimRes, int i, bool debug);
 
 ExpressionsGPU::ExpressionsGPU(SetupCtx &setupCtx, uint32_t nRowsPack, uint32_t nBlocks) : ExpressionsCtx(setupCtx), nRowsPack(nRowsPack), nBlocks(nBlocks)
 {
@@ -89,7 +89,7 @@ ExpressionsGPU::~ExpressionsGPU()
     CHECKCUDAERR(cudaFree(d_deviceArgs));
 }
 
-void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, TimerGPU &timer, cudaStream_t stream)
+void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, uint64_t domainSize, bool domainExtended, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream, bool debug)
 {
     ExpsArguments h_expsArgs;
 
@@ -154,10 +154,16 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
         h_dest_params[j].argsOffset =parserParams.argsOffset;
     }
 
-    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+    // CHECKCUDAERR(cudaMemcpyAsync(d_destParams, h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
+
+    memcpy(pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_dest_params, h_expsArgs.dest_nParams * sizeof(DestParamsGPU));
+    CHECKCUDAERR(cudaMemcpyAsync(d_destParams, pinned_exps_params + countId * 2 * sizeof(DestParamsGPU), h_expsArgs.dest_nParams * sizeof(DestParamsGPU), cudaMemcpyHostToDevice, stream));
     delete[] h_dest_params;
 
-    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, &h_expsArgs, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
+    // CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, &h_expsArgs, sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
+
+    memcpy(pinned_exps_args + countId * sizeof(ExpsArguments), &h_expsArgs, sizeof(ExpsArguments));
+    CHECKCUDAERR(cudaMemcpyAsync(d_expsArgs, pinned_exps_args + countId * sizeof(ExpsArguments), sizeof(ExpsArguments), cudaMemcpyHostToDevice, stream));
 
     uint32_t nblocks_ = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(nBlocks),(domainSize + nrowsPack - 1) / nrowsPack));
     uint32_t nthreads_ = nblocks_ == 1 ? domainSize : nrowsPack;
@@ -167,7 +173,7 @@ void ExpressionsGPU::calculateExpressions_gpu(StepsParams *d_params, Dest dest, 
     size_t sharedMem = (bufferCommitSize  + 9) * sizeof(Goldilocks::Element *) + 2 * nthreads_ * FIELD_EXTENSION * sizeof(Goldilocks::Element);
 
     TimerStartCategoryGPU(timer, EXPRESSIONS);
-    computeExpressions_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams);
+    computeExpressions_<<<nBlocks_, nThreads_, sharedMem, stream>>>(d_params, d_deviceArgs, d_expsArgs, d_destParams, debug);
     TimerStopCategoryGPU(timer, EXPRESSIONS);
 }
 
@@ -182,11 +188,12 @@ __device__ __forceinline__ Goldilocks::Element* load__(
     const uint16_t argOffset,
     const uint64_t row,
     const uint64_t dim,
-    const bool isCyclic
+    const bool isCyclic,
+    const bool debug
 ) {
 
 #if DEBUG 
-    bool print = threadIdx.x == 0 && row == DEBUG_ROW;
+    bool print = debug && blockIdx.x == DEBUG_ROW/blockDim.x && threadIdx.x == DEBUG_ROW%blockDim.x;
 #endif
 
     const uint32_t r = row + threadIdx.x;
@@ -302,17 +309,17 @@ __device__ __forceinline__ Goldilocks::Element* load__(
 #if DEBUG
         if(print) printf("Expression debug xi\n");
 #endif
-        const gl64_t* xDivX = (gl64_t*)&dParams->xDivXSub[argIdx * FIELD_EXTENSION];
-        const gl64_t* x = (gl64_t*)&dParams->aux_trace[dArgs->x_offset + row];
+        const gl64_gpu* xDivX = (gl64_gpu*)&dParams->xDivXSub[argIdx * FIELD_EXTENSION];
+        const gl64_gpu* x = (gl64_gpu*)&dParams->aux_trace[dArgs->x_offset + row];
         #if DEBUG
-            printArguments((Goldilocks::Element *)x, 1, false, &dParams->xDivXSub[argIdx * FIELD_EXTENSION], 3, true, row, 3, 0, 0);
+            printArguments((Goldilocks::Element *)x, 1, false, &dParams->xDivXSub[argIdx * FIELD_EXTENSION], 3, true, row, 3, 0, 0, debug);
         #endif
-        Goldilocks3GPU::sub_13_gpu_b_const((gl64_t*)temp, x, xDivX);
-        getInversePolinomial__((gl64_t*)temp, 3);
+        Goldilocks3GPU::sub_13_gpu_b_const((gl64_gpu*)temp, x, xDivX);
+        getInversePolinomial__((gl64_gpu*)temp, 3);
         #if DEBUG
-            printArguments(temp, 3, false, &dParams->aux_trace[dArgs->x_offset + row], 1, false, row, 2, 0, 0);
+            printArguments(temp, 3, false, &dParams->aux_trace[dArgs->x_offset + row], 1, false, row, 2, 0, 0, debug);
         #endif
-        Goldilocks3GPU::mul_31_gpu_no_const((gl64_t*)temp, (gl64_t*)temp, x);
+        Goldilocks3GPU::mul_31_gpu_no_const((gl64_gpu*)temp, (gl64_gpu*)temp, x);
         return temp;
     }
 
@@ -340,25 +347,25 @@ __device__ __noinline__ void storePolynomial__(ExpsArguments *d_expsArgs, Goldil
     if (d_expsArgs->dest_dim == 1)
     {
         uint64_t offset = d_expsArgs->dest_offset != 0 ? d_expsArgs->dest_offset : 1;
-        gl64_t::copy_gpu((gl64_t*) &d_expsArgs->dest_gpu[row  * offset], uint64_t(offset), (gl64_t*)&destVals[0], false);
+        gl64_gpu::copy_gpu((gl64_gpu*) &d_expsArgs->dest_gpu[row  * offset], uint64_t(offset), (gl64_gpu*)&destVals[0], false);
     }
     else
     {        
         uint64_t offset = d_expsArgs->dest_offset != 0 ? d_expsArgs->dest_offset : FIELD_EXTENSION;
-        gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_t*)&destVals[0], false);
-        gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_t*)&destVals[blockDim.x], false);
-        gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_t*)&destVals[2*blockDim.x], false);
+        gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_gpu*)&destVals[0], false);
+        gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_gpu*)&destVals[blockDim.x], false);
+        gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_gpu*)&destVals[2*blockDim.x], false);
 
     }
 }
 
-__device__ __noinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, gl64_t *destVals, uint64_t row)
+__device__ __noinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, gl64_gpu *destVals, uint64_t row)
 {
     if (d_expsArgs->dest_dim == 1)
     {
-        gl64_t::op_gpu(2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
+        gl64_gpu::op_gpu(2, &destVals[0], &destVals[0], false, &destVals[FIELD_EXTENSION * blockDim.x], false);
         uint64_t offset = d_expsArgs->dest_offset != 0 ? d_expsArgs->dest_offset : 1;
-        gl64_t::copy_gpu((gl64_t*) &d_expsArgs->dest_gpu[row  * offset], uint64_t(offset), (gl64_t*)&destVals[0], false);
+        gl64_gpu::copy_gpu((gl64_gpu*) &d_expsArgs->dest_gpu[row  * offset], uint64_t(offset), (gl64_gpu*)&destVals[0], false);
     }
     else
     {
@@ -366,29 +373,29 @@ __device__ __noinline__ void multiplyPolynomials__(ExpsArguments *d_expsArgs, De
         if (d_destParams[0].dim == FIELD_EXTENSION && d_destParams[1].dim == FIELD_EXTENSION)
         {
             Goldilocks3GPU::mul_gpu_no_const(&destVals[0], &destVals[0], &destVals[FIELD_EXTENSION * blockDim.x]);
-            gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_t*)&destVals[0], false);
-            gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_t*)&destVals[blockDim.x], false);
-            gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_t*)&destVals[2*blockDim.x], false);
+            gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_gpu*)&destVals[0], false);
+            gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_gpu*)&destVals[blockDim.x], false);
+            gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_gpu*)&destVals[2*blockDim.x], false);
         }
         else if (d_destParams[0].dim == FIELD_EXTENSION && d_destParams[1].dim == 1)
         {
             Goldilocks3GPU::mul_31_gpu_no_const(&destVals[0], &destVals[0], &destVals[FIELD_EXTENSION * blockDim.x]);
-            gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_t*)&destVals[0], false);
-            gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_t*)&destVals[blockDim.x], false);
-            gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_t*)&destVals[2*blockDim.x], false);
+            gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_gpu*)&destVals[0], false);
+            gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_gpu*)&destVals[blockDim.x], false);
+            gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_gpu*)&destVals[2*blockDim.x], false);
         }
         else
         {
             Goldilocks3GPU::mul_31_gpu_no_const(&destVals[FIELD_EXTENSION * blockDim.x], &destVals[FIELD_EXTENSION * blockDim.x], &destVals[0]);
-            gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_t*)&destVals[FIELD_EXTENSION * blockDim.x], false);
-            gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_t*)&destVals[(FIELD_EXTENSION + 1) * blockDim.x], false);
-            gl64_t::copy_gpu((gl64_t*)&d_expsArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_t*)&destVals[(FIELD_EXTENSION + 2)*blockDim.x], false);
+            gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset], uint64_t(offset), (gl64_gpu*)&destVals[FIELD_EXTENSION * blockDim.x], false);
+            gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset + 1], uint64_t(offset), (gl64_gpu*)&destVals[(FIELD_EXTENSION + 1) * blockDim.x], false);
+            gl64_gpu::copy_gpu((gl64_gpu*)&d_expsArgs->dest_gpu[row * offset + 2], uint64_t(offset), (gl64_gpu*)&destVals[(FIELD_EXTENSION + 2)*blockDim.x], false);
         }
         
     }
 }
 
-__device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t dim)
+__device__ __noinline__ void getInversePolinomial__(gl64_gpu *polynomial, uint64_t dim)
 {
     int idx = threadIdx.x;
     if (dim == 1)
@@ -408,11 +415,11 @@ __device__ __noinline__ void getInversePolinomial__(gl64_t *polynomial, uint64_t
     }
 }
 
-__device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *destVals, uint32_t k, uint64_t row)
+__device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *destVals, uint32_t k, uint64_t row, const bool debug)
 {
 
 #if DEBUG 
-    bool print = blockIdx.x == 0 && threadIdx.x == 0 && row == DEBUG_ROW;
+    bool print = debug && blockIdx.x == DEBUG_ROW/blockDim.x && threadIdx.x == DEBUG_ROW%blockDim.x;
 #endif
 
     uint32_t r = row + threadIdx.x;
@@ -459,7 +466,7 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
 #if DEBUG
             if(print) printf("Expression debug inverse\n");
 #endif
-            getInversePolinomial__((gl64_t*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_destParams[k].dim);
+            getInversePolinomial__((gl64_gpu*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_destParams[k].dim);
         }
         return true;
     }
@@ -488,35 +495,35 @@ __device__ __noinline__ bool caseNoOperations__(StepsParams *d_params, DeviceArg
     return false;
 }
 
-__device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t dimA, bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps){
-    bool print = (threadIdx.x == 0  && i == DEBUG_ROW);
+__device__ __forceinline__ void printArguments(Goldilocks::Element *a, uint32_t dimA, bool constA, Goldilocks::Element *b, uint32_t dimB, bool constB, int i, uint64_t op_type, uint64_t op, uint64_t nOps, const bool debug){
+    bool print = debug && blockIdx.x == DEBUG_ROW/blockDim.x && threadIdx.x == DEBUG_ROW%blockDim.x;
     if(print){
         printf("Expression debug op: %lu of %lu with type %lu\n", op, nOps, op_type);
         if(a!= NULL){
-            for(uint32_t i = 0; i < dimA; i++){
-                Goldilocks::Element val = constA ? a[i] : a[i*blockDim.x];
-                printf("Expression debug a[%d]: %lu (constant %u)\n", i, val.fe % GOLDILOCKS_PRIME, constA);
+            for(uint32_t j = 0; j < dimA; j++){
+                Goldilocks::Element val = constA ? a[j] : a[j*blockDim.x + DEBUG_ROW%blockDim.x];
+                printf("Expression debug a[%d]: %lu (constant %u)\n", j, val.fe % GOLDILOCKS_PRIME, constA);
             }
         }
         if(b!= NULL){
-            for(uint32_t i = 0; i < dimB; i++){
-                Goldilocks::Element val = constB ? b[i] : b[i*blockDim.x];
-                printf("Expression debug b[%d]: %lu (constant %u)\n", i, val.fe % GOLDILOCKS_PRIME, constB);
+            for(uint32_t j = 0; j < dimB; j++){
+                Goldilocks::Element val = constB ? b[j] : b[j*blockDim.x + DEBUG_ROW%blockDim.x];
+                printf("Expression debug b[%d]: %lu (constant %u)\n", j, val.fe % GOLDILOCKS_PRIME, constB);
             }
 
         }
     }
 }
 
-__device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimRes, int i){
-    bool print = threadIdx.x == 0  && i == DEBUG_ROW;
+__device__ __forceinline__ void printRes(Goldilocks::Element *res, uint32_t dimRes, int i, const bool debug){
+    bool print = debug && blockIdx.x == DEBUG_ROW/blockDim.x && threadIdx.x == DEBUG_ROW%blockDim.x;
     if(print){
-        for(uint32_t i = 0; i < dimRes; i++){
-            printf("Expression debug res[%d]: %lu\n", i, res[i*blockDim.x].fe % GOLDILOCKS_PRIME);
+        for(uint32_t j = 0; j < dimRes; j++){
+            printf("Expression debug res[%d]: %lu\n", j, res[j*blockDim.x + DEBUG_ROW%blockDim.x].fe % GOLDILOCKS_PRIME);
         }
     }
 }
-__global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams)
+__global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_deviceArgs, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, const bool debug)
 {
 
     int chunk_idx = blockIdx.x;
@@ -547,7 +554,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
 #pragma unroll 1
         for (uint64_t k = 0; k < d_expsArgs->dest_nParams; ++k)
         {
-            if(caseNoOperations__(d_params, d_deviceArgs, d_expsArgs, d_destParams, destVals, k, i)){
+            if(caseNoOperations__(d_params, d_deviceArgs, d_expsArgs, d_destParams, destVals, k, i, debug)){
                 continue;
             }
             uint8_t *ops = &d_deviceArgs->ops[d_destParams[k].opsOffset];
@@ -567,15 +574,15 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                 case 0:
                 {
                     // COPY dim1 to dim1
-                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 1], args[i_args + 2], args[i_args + 3], i, 1, isCyclic);
+                    gl64_gpu* a = (gl64_gpu*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 1], args[i_args + 2], args[i_args + 3], i, 1, isCyclic, debug);
                     bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
-                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args] * blockDim.x]);
+                    gl64_gpu *res = (gl64_gpu*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args] * blockDim.x]);
                     #if DEBUG
-                    printArguments((Goldilocks::Element *) a, 1, isConstant, NULL, true, 0, i, 4, kk, nOps);
+                    printArguments((Goldilocks::Element *) a, 1, isConstant, NULL, true, 0, i, 4, kk, nOps, debug);
                     #endif
-                    gl64_t::copy_gpu(res, a, isConstant);
+                    gl64_gpu::copy_gpu(res, a, isConstant);
                     #if DEBUG
-                    printRes((Goldilocks::Element *) res, 1, i);
+                    printRes((Goldilocks::Element *) res, 1, i, debug);
                     #endif
                     i_args += 4;
                     break;
@@ -583,17 +590,17 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                 case 1:
                 {
                     // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
-                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic);
-                    gl64_t* b = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic);
+                    gl64_gpu* a = (gl64_gpu*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, debug);
+                    gl64_gpu* b = (gl64_gpu*)load__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug);
                     bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                     bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
-                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args + 1] * blockDim.x]);
+                    gl64_gpu *res = (gl64_gpu*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize][args[i_args + 1] * blockDim.x]);
                     #if DEBUG
-                    printArguments((Goldilocks::Element *)a, 1, isConstantA, (Goldilocks::Element *)b, 1, isConstantB, i, args[i_args], kk, nOps);
+                    printArguments((Goldilocks::Element *)a, 1, isConstantA, (Goldilocks::Element *)b, 1, isConstantB, i, args[i_args], kk, nOps, debug);
                     #endif
-                    gl64_t::op_gpu( args[i_args], res, a, isConstantA, b, isConstantB);
+                    gl64_gpu::op_gpu( args[i_args], res, a, isConstantA, b, isConstantB);
                     #if DEBUG
-                    printRes((Goldilocks::Element *) res, 1, i);
+                    printRes((Goldilocks::Element *) res, 1, i, debug);
                     #endif
                     i_args += 8;
                     break;
@@ -601,17 +608,17 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                 case 2:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
-                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic);
-                    gl64_t* b = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic);
+                    gl64_gpu* a = (gl64_gpu*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug);
+                    gl64_gpu* b = (gl64_gpu*)load__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 1, isCyclic, debug);
                     bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                     bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
-                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
+                    gl64_gpu *res = (gl64_gpu*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
                     #if DEBUG
-                    printArguments((Goldilocks::Element *)a, 3, isConstantA, (Goldilocks::Element *)b, 1, isConstantB, i, args[i_args], kk, nOps);
+                    printArguments((Goldilocks::Element *)a, 3, isConstantA, (Goldilocks::Element *)b, 1, isConstantB, i, args[i_args], kk, nOps, debug);
                     #endif
                     Goldilocks3GPU::op_31_gpu(args[i_args], res, a, isConstantA, b, isConstantB);
                     #if DEBUG
-                    printRes((Goldilocks::Element *) res, 3, i);
+                    printRes((Goldilocks::Element *) res, 3, i, debug);
                     #endif
                     i_args += 8;
                     break;
@@ -619,17 +626,17 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                 case 3:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
-                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic);
-                    gl64_t* b = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, isCyclic);
+                    gl64_gpu* a = (gl64_gpu*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug);
+                    gl64_gpu* b = (gl64_gpu*)load__(d_deviceArgs, d_expsArgs, valueB, d_params, expressions_params, args[i_args + 5], args[i_args + 6], args[i_args + 7], i, 3, isCyclic, debug);
                     bool isConstantA = args[i_args + 2] > bufferCommitsSize + 1 ? true : false;
                     bool isConstantB = args[i_args + 5] > bufferCommitsSize + 1 ? true : false;
-                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
+                    gl64_gpu *res = (gl64_gpu*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args + 1] * blockDim.x]);
                     #if DEBUG
-                    printArguments((Goldilocks::Element *)a, 3, isConstantA, (Goldilocks::Element *)b, 3, isConstantB, i, args[i_args], kk, nOps);
+                    printArguments((Goldilocks::Element *)a, 3, isConstantA, (Goldilocks::Element *)b, 3, isConstantB, i, args[i_args], kk, nOps, debug);
                     #endif
                     Goldilocks3GPU::op_gpu(args[i_args], res, a, isConstantA, b, isConstantB);
                     #if DEBUG
-                    printRes((Goldilocks::Element *) res, 3, i);
+                    printRes((Goldilocks::Element *) res, 3, i, debug);
                     #endif
                     i_args += 8;
                     break;
@@ -637,12 +644,12 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                 case 4:
                 {
                     // COPY dim3 to dim3
-                    gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 1], args[i_args + 2], args[i_args + 3], i, 3, isCyclic);
+                    gl64_gpu* a = (gl64_gpu*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 1], args[i_args + 2], args[i_args + 3], i, 3, isCyclic, debug);
                     bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
-                    gl64_t *res = (gl64_t*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args] * blockDim.x]);
+                    gl64_gpu *res = (gl64_gpu*) (kk == nOps - 1 ? &destVals[k * FIELD_EXTENSION * blockDim.x] : &expressions_params[bufferCommitsSize + 1][args[i_args] * blockDim.x]);
                     Goldilocks3GPU::copy_gpu(res, a, isConstant);
                     #if DEBUG
-                    printRes((Goldilocks::Element *) res, 3, i);
+                    printRes((Goldilocks::Element *) res, 3, i, debug);
                     #endif
                     i_args += 4;
                     break;
@@ -660,7 +667,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
             }
             if (d_destParams[k].inverse)
             {
-                getInversePolinomial__((gl64_t*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_destParams[k].dim);
+                getInversePolinomial__((gl64_gpu*) &destVals[k * FIELD_EXTENSION * blockDim.x], d_destParams[k].dim);
             }
             
         }
@@ -668,7 +675,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
         if (d_expsArgs->dest_nParams == 2)
         {
 
-            multiplyPolynomials__(d_expsArgs, d_destParams, (gl64_t*) destVals, i);
+            multiplyPolynomials__(d_expsArgs, d_destParams, (gl64_gpu*) destVals, i);
         } else {
             storePolynomial__(d_expsArgs, destVals, i);
         }

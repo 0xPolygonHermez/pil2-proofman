@@ -9,6 +9,6 @@ categories = { workspace = true }
 
 [dependencies]
 colored.workspace = true
-p3-field.workspace = true
+fields.workspace = true
 tracing.workspace = true
 sysinfo.workspace = true

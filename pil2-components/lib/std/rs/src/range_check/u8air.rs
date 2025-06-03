@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use std::path::PathBuf;
 use proofman_util::create_buffer_fast;
 use rayon::{
@@ -103,7 +103,6 @@ impl<F: PrimeField64> WitnessComponent<F> for U8Air {
         pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
-        _core_id: usize,
         _n_cores: usize,
     ) {
         if stage == 1 {

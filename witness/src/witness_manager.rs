@@ -2,13 +2,13 @@ use std::collections::HashSet;
 use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
 
-use p3_field::Field;
+use fields::PrimeField64;
 use proofman_common::{ModeName, ProofCtx, SetupCtx, DebugInfo};
 use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub struct WitnessManager<F: Field> {
+pub struct WitnessManager<F: PrimeField64> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     components_instance_ids: RwLock<Vec<Vec<usize>>>,
     components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
@@ -20,7 +20,7 @@ pub struct WitnessManager<F: Field> {
     library: Mutex<Option<Library>>,
 }
 
-impl<F: Field> WitnessManager<F> {
+impl<F: PrimeField64> WitnessManager<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Self {
         WitnessManager {
             components: RwLock::new(Vec::new()),
@@ -102,7 +102,7 @@ impl<F: Field> WitnessManager<F> {
         }
     }
 
-    pub fn calculate_witness(&self, stage: u32, instance_ids: &[usize], core_id: usize, n_cores: usize) {
+    pub fn calculate_witness(&self, stage: u32, instance_ids: &[usize], n_cores: usize) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 
@@ -121,14 +121,13 @@ impl<F: Field> WitnessManager<F> {
                     self.pctx.clone(),
                     self.sctx.clone(),
                     &instance_ids_filtered,
-                    core_id,
                     n_cores,
                 );
             }
         }
 
         for component in self.components_std.read().unwrap().iter() {
-            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), instance_ids, core_id, n_cores);
+            component.calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), instance_ids, n_cores);
         }
     }
 

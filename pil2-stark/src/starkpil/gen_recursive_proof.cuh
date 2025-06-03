@@ -4,7 +4,7 @@
 #include "starks.hpp"
 #include "proof2zkinStark.hpp"
 #include "cuda_utils.cuh"
-#include "gl64_t.cuh"
+#include "gl64_tooling.cuh"
 #include "expressions_gpu.cuh"
 #include "starks_gpu.cuh"
 #include <iomanip>
@@ -15,13 +15,16 @@
 // fer que lo dels arbres vagi igual (primer arreglar els de gen_proof)
 
 template <typename ElementType>
-void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_trace, gl64_t *d_const_pols, gl64_t *d_const_tree, uint32_t stream_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, TimerGPU &timer, cudaStream_t stream)
+void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_gpu *d_trace, gl64_gpu *d_aux_trace, gl64_gpu *d_const_pols, gl64_gpu *d_const_tree, uint32_t stream_id, DeviceCommitBuffers *d_buffers, AirInstanceInfo *air_instance_info, uint64_t instanceId, TimerGPU &timer, cudaStream_t stream)
 {
     TimerStartGPU(timer, STARK_GPU_PROOF);
     TimerStartGPU(timer, STARK_STEP_0);
     
+    uint64_t countId = 0;
     StepsParams *params_pinned = d_buffers->streamsData[stream_id].pinned_params;
     Goldilocks::Element *proof_buffer_pinned = d_buffers->streamsData[stream_id].pinned_buffer_proof;
+    Goldilocks::Element *pinned_exps_params = d_buffers->streamsData[stream_id].pinned_buffer_exps_params;
+    Goldilocks::Element *pinned_exps_args = d_buffers->streamsData[stream_id].pinned_buffer_exps_args;
     TranscriptGL_GPU *d_transcript = d_buffers->streamsData[stream_id].transcript;
     TranscriptGL_GPU *d_transcript_helper = d_buffers->streamsData[stream_id].transcript_helper;
     StepsParams *d_params =  d_buffers->streamsData[stream_id].params;
@@ -68,7 +71,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
 
     Goldilocks::Element *challenge_gpu = (Goldilocks::Element *)d_aux_trace + offsetChallenge;
 
-    gl64_t *d_queries_buff = (gl64_t *)d_aux_trace + offsetProofQueries;
+    gl64_gpu *d_queries_buff = (gl64_gpu *)d_aux_trace + offsetProofQueries;
     uint64_t nTrees = setupCtx.starkInfo.nStages + setupCtx.starkInfo.customCommits.size() + 2;
     uint64_t nTreesFRI = setupCtx.starkInfo.starkStruct.steps.size() - 1;
 
@@ -127,23 +130,24 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     uint64_t xn_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("x_n", false)];
     dim3 threads_(256);
     dim3 blocks_((N + threads_.x - 1) / threads_.x);
-    computeX_kernel<<<blocks_, threads_, 0, stream>>>((gl64_t *)h_params.aux_trace + xn_offset, N, Goldilocks::one(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits));
-    air_instance_info->expressions_gpu->calculateExpressions_gpu(d_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, d_expsArgs, d_destParams, timer, stream);
+    computeX_kernel<<<blocks_, threads_, 0, stream>>>((gl64_gpu *)h_params.aux_trace + xn_offset, N, Goldilocks::one(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBits));
+    countId++;
+    air_instance_info->expressions_gpu->calculateExpressions_gpu(d_params, destStruct, uint64_t(1 << setupCtx.starkInfo.starkStruct.nBits), false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 
-    accOperationGPU((gl64_t *)vals_gpu_shifted, N, false, FIELD_EXTENSION, (gl64_t *)helpers, stream);
+    accOperationGPU((gl64_gpu *)vals_gpu_shifted, N, false, FIELD_EXTENSION, (gl64_gpu *)helpers, stream);
    
-    setProdIdentity3<<<1,1, 0, stream>>>((gl64_t *)vals_gpu);
+    setProdIdentity3<<<1,1, 0, stream>>>((gl64_gpu *)vals_gpu);
     setPolynomialGPU(setupCtx, h_params.aux_trace, vals_gpu, gprodFieldId, stream);
 
     TimerStopGPU(timer,STARK_CALCULATE_GPROD);
 
     TimerStartGPU(timer, CALCULATE_IM_POLS);
-    calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, timer, stream);
+    calculateImPolsExpressions(setupCtx, air_instance_info->expressions_gpu, h_params, d_params, 2, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     TimerStopGPU(timer, CALCULATE_IM_POLS);
 
 
     TimerStartGPU(timer, STARK_COMMIT_STAGE_2);
-    commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_t*)h_params.trace, (gl64_t*)h_params.aux_trace, d_transcript, false, timer, stream);
+    commitStage_inplace(2, setupCtx, starks.treesGL, (gl64_gpu*)h_params.trace, (gl64_gpu*)h_params.aux_trace, d_transcript, false, timer, stream);
     for (uint64_t i = 0; i < setupCtx.starkInfo.challengesMap.size(); i++)
     {
         if (setupCtx.starkInfo.challengesMap[i].stage == setupCtx.starkInfo.nStages + 1)
@@ -159,8 +163,8 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     computeZerofier(h_params.aux_trace + zi_offset, setupCtx.starkInfo.starkStruct.nBits, setupCtx.starkInfo.starkStruct.nBitsExt, stream);
     dim3 threads_x(256);
     dim3 blocks_x((NExtended + threads_x.x - 1) / threads_x.x);
-    computeX_kernel<<<blocks_x, threads_x, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));            
-    calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, d_expsArgs, d_destParams, timer, stream);
+    computeX_kernel<<<blocks_x, threads_x, 0, stream>>>((gl64_gpu *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));            
+    calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]), setupCtx.starkInfo.cExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
 
     commitStage_inplace(setupCtx.starkInfo.nStages + 1, setupCtx, starks.treesGL, nullptr, d_aux_trace, d_transcript, false, timer, stream);
     TimerStopGPU(timer, STARK_STEP_Q);
@@ -175,7 +179,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     }
 
     Goldilocks::Element *d_xiChallenge = &h_params.challenges[xiChallengeIndex * FIELD_EXTENSION];
-    gl64_t * d_LEv = (gl64_t *)  h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];;
+    gl64_gpu * d_LEv = (gl64_gpu *)  h_params.aux_trace +setupCtx.starkInfo.mapOffsets[std::make_pair("lev", false)];;
 
     uint64_t count = 0;
     for(uint64_t i = 0; i < setupCtx.starkInfo.openingPoints.size(); i += 4) {
@@ -212,8 +216,8 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
     TimerStartGPU(timer, STARK_STEP_FRI);
     calculateXis_inplace(setupCtx, h_params, air_instance_info->opening_points, d_xiChallenge, stream);    
 
-    computeX_kernel<<<blocks_x, threads_x, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
-    calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId, false, d_expsArgs, d_destParams, timer, stream);
+    computeX_kernel<<<blocks_x, threads_x, 0, stream>>>((gl64_gpu *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
+    calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
@@ -226,7 +230,7 @@ void genRecursiveProof_gpu(SetupCtx &setupCtx, gl64_t *d_trace, gl64_t *d_aux_tr
 
     uint64_t friPol_offset = setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)];
     uint64_t offset_helper = setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper", false)];
-    gl64_t *d_friPol = (gl64_t *)(h_params.aux_trace + friPol_offset);
+    gl64_gpu *d_friPol = (gl64_gpu *)(h_params.aux_trace + friPol_offset);
     
     uint64_t nBitsExt =  setupCtx.starkInfo.starkStruct.steps[0].nBits;
 

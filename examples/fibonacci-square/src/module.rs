@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use proofman_common::{AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::{WitnessComponent, execute};
 use pil_std_lib::Std;
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use rayon::prelude::*;
 use crate::{BuildPublicValues, FibonacciSquareTrace, ModuleAirValues, ModuleTrace};
 
@@ -28,7 +28,6 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
         pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
-        _core_id: usize,
         _n_cores: usize,
     ) {
         if stage == 1 {

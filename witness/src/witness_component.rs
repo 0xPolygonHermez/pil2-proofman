@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use p3_field::Field;
+use fields::PrimeField64;
 use proofman_common::{ProofCtx, SetupCtx, DebugInfo};
 use std::path::PathBuf;
 
-pub trait WitnessComponent<F: Field>: Send + Sync {
+pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
     fn execute(&self, _pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
         Vec::new()
     }
@@ -17,7 +17,6 @@ pub trait WitnessComponent<F: Field>: Send + Sync {
         _pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
-        _core_id: usize,
         _n_cores: usize,
     ) {
     }

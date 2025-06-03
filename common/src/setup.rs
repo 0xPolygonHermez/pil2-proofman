@@ -1,5 +1,5 @@
 use std::os::raw::{c_void, c_char};
-use p3_field::Field;
+use fields::PrimeField64;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::fs::File;
@@ -43,7 +43,7 @@ impl From<&SetupC> for *mut c_void {
 /// Air instance context for managing air instances (traces)
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct Setup<F: Field> {
+pub struct Setup<F: PrimeField64> {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub p_setup: SetupC,
@@ -66,7 +66,7 @@ pub struct Setup<F: Field> {
     pub n_cols: u64,
 }
 
-impl<F: Field> Setup<F> {
+impl<F: PrimeField64> Setup<F> {
     pub fn new(
         global_info: &GlobalInfo,
         airgroup_id: usize,

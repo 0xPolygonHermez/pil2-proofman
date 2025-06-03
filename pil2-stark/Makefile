@@ -19,8 +19,9 @@ WITNESS_LIB := ./witness_lib
 
 CXX := g++
 AS := nasm
-CXXFLAGS := -std=c++17 -Wall -pthread -flarge-source-files -Wno-unused-label -rdynamic -fPIC -g -D__DEBUG__
-NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH)
+CXXFLAGS := -std=c++17 -Wall -pthread -flarge-source-files -Wno-unused-label -rdynamic -fPIC
+NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED
+
 # -G -lineinfo -Xptxas=-v
 
 LDFLAGS_GPU := -lcudart -lsodium -lpthread -lgmp -lstdc++

@@ -1,4 +1,4 @@
-use goldilocks::Goldilocks;
+use fields::Goldilocks;
 
 use prover_mocked::mocked_prover_builder::MockedProverBuilder;
 

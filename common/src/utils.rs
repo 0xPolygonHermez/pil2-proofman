@@ -7,14 +7,12 @@ use tracing::dispatcher;
 use tracing_subscriber::filter::LevelFilter;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use p3_field::Field;
+use fields::PrimeField64;
 use serde::Deserialize;
 use std::fs;
 use sysinfo::System;
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
-use std::sync::Arc;
-
 use tracing_subscriber::{prelude::*, fmt};
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
@@ -47,13 +45,13 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
     format!("{:.2} {}", num_bytes, units[unit_index])
 }
 
-pub fn skip_prover_instance<F: Field>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
+pub fn skip_prover_instance<F: PrimeField64>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
     if pctx.debug_info.read().unwrap().debug_instances.is_empty() {
         return (false, Vec::new());
     }
 
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id, _) = instances[global_idx];
+    let (airgroup_id, air_id, _, _) = instances[global_idx];
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
 
     if let Some(airgroup_id_map) = pctx.debug_info.read().unwrap().debug_instances.get(&airgroup_id) {
@@ -237,15 +235,6 @@ pub fn print_memory_usage() {
     }
 }
 
-pub fn create_pool(core_id: usize, n_cores: usize) -> ThreadPool {
-    let cores = Arc::new(core_affinity::get_core_ids().expect("Failed to get core IDs"));
-    ThreadPoolBuilder::new()
-        .num_threads(n_cores)
-        .thread_name(move |i| format!("pool{}_thread{}", core_id, i))
-        .start_handler(move |thread_index| {
-            let core = cores[core_id + thread_index];
-            core_affinity::set_for_current(core);
-        })
-        .build()
-        .unwrap()
+pub fn create_pool(n_cores: usize) -> ThreadPool {
+    ThreadPoolBuilder::new().num_threads(n_cores).build().unwrap()
 }

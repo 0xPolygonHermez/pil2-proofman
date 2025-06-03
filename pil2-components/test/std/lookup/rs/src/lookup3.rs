@@ -5,7 +5,7 @@ use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use rand::distr::{StandardUniform, Distribution};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
 use crate::Lookup3Trace;
 
@@ -23,7 +23,6 @@ where
         pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
-        _core_id: usize,
         _n_cores: usize,
     ) {
         if stage == 1 {

@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use proofman_common::{write_custom_commit_trace, AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::WitnessComponent;
 use std::path::PathBuf;
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
 use crate::{BuildProofValues, BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace};
 
@@ -32,7 +32,6 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         pctx: Arc<ProofCtx<F>>,
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
-        _core_id: usize,
         _n_cores: usize,
     ) {
         if stage == 1 {

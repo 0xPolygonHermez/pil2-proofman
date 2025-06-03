@@ -8,7 +8,7 @@ use colored::Colorize;
 use crate::commands::field::Field;
 use witness::{WitnessLibInitFn, WitnessManager};
 
-use p3_goldilocks::Goldilocks;
+use fields::Goldilocks;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

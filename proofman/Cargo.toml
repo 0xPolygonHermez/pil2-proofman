@@ -19,8 +19,7 @@ witness = { path = "../witness" }
 pil-std-lib = { workspace = true }
 
 tracing.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
+fields.workspace = true
 libloading.workspace = true
 colored.workspace = true
 serde_json.workspace = true
@@ -31,7 +30,6 @@ blake3.workspace = true
 crossbeam-channel = "0.5.15"
 crossbeam-queue = "0.3"
 rand = "0.9"
-dashmap = "6.1.0"
 
 [features]
 default = []

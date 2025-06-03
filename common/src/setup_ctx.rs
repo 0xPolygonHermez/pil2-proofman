@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
 
-use p3_field::Field;
+use fields::PrimeField64;
 use proofman_starks_lib_c::{expressions_bin_new_c, get_tree_size_c};
 use proofman_util::create_buffer_fast;
 
@@ -10,7 +10,7 @@ use crate::GlobalInfo;
 use crate::Setup;
 use crate::ProofType;
 
-pub struct SetupsVadcop<F: Field> {
+pub struct SetupsVadcop<F: PrimeField64> {
     pub sctx_compressor: Option<SetupCtx<F>>,
     pub sctx_recursive1: Option<SetupCtx<F>>,
     pub sctx_recursive2: Option<SetupCtx<F>>,
@@ -24,10 +24,10 @@ pub struct SetupsVadcop<F: Field> {
     pub total_const_size: usize,
 }
 
-unsafe impl<F: Field> Send for SetupsVadcop<F> {}
-unsafe impl<F: Field> Sync for SetupsVadcop<F> {}
+unsafe impl<F: PrimeField64> Send for SetupsVadcop<F> {}
+unsafe impl<F: PrimeField64> Sync for SetupsVadcop<F> {}
 
-impl<F: Field> SetupsVadcop<F> {
+impl<F: PrimeField64> SetupsVadcop<F> {
     pub fn new(
         global_info: &GlobalInfo,
         verify_constraints: bool,
@@ -143,7 +143,7 @@ impl<F: Field> SetupsVadcop<F> {
 }
 
 #[derive(Debug)]
-pub struct SetupRepository<F: Field> {
+pub struct SetupRepository<F: PrimeField64> {
     setups: HashMap<(usize, usize), Setup<F>>,
     max_const_tree_size: usize,
     max_const_size: usize,
@@ -156,10 +156,10 @@ pub struct SetupRepository<F: Field> {
     global_info_file: String,
 }
 
-unsafe impl<F: Field> Send for SetupRepository<F> {}
-unsafe impl<F: Field> Sync for SetupRepository<F> {}
+unsafe impl<F: PrimeField64> Send for SetupRepository<F> {}
+unsafe impl<F: PrimeField64> Sync for SetupRepository<F> {}
 
-impl<F: Field> SetupRepository<F> {
+impl<F: PrimeField64> SetupRepository<F> {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool, preallocate: bool) -> Self {
         let mut setups = HashMap::new();
 
@@ -249,7 +249,7 @@ impl<F: Field> SetupRepository<F> {
 }
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
-pub struct SetupCtx<F: Field> {
+pub struct SetupCtx<F: PrimeField64> {
     setup_repository: SetupRepository<F>,
     pub max_const_tree_size: usize,
     pub max_const_size: usize,
@@ -261,7 +261,7 @@ pub struct SetupCtx<F: Field> {
     setup_type: ProofType,
 }
 
-impl<F: Field> SetupCtx<F> {
+impl<F: PrimeField64> SetupCtx<F> {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool, preallocate: bool) -> Self {
         let setup_repository = SetupRepository::new(global_info, setup_type, verify_constraints, preallocate);
         let max_const_tree_size = setup_repository.max_const_tree_size;

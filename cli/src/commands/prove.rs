@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
 
-use p3_goldilocks::Goldilocks;
+use fields::Goldilocks;
 
 use proofman::ProofMan;
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};

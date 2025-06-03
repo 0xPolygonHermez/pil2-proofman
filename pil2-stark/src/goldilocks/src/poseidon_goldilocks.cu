@@ -1,4 +1,4 @@
-#include "gl64_t.cuh"
+#include "gl64_tooling.cuh"
 #include "cuda_utils.cuh"
 #include "cuda_utils.hpp"
 #include <omp.h>
@@ -18,22 +18,22 @@ typedef uint64_t u64;
 
 #define MAX_WIDTH 12
 
-extern __shared__ gl64_t scratchpad[];
+extern __shared__ gl64_gpu scratchpad[];
 
 /* new functions */
 __global__ void linear_hash_gpu_tree(uint64_t *output, uint64_t *input, uint32_t size, uint32_t num_rows);
 __global__ void linear_hash_gpu_coalesced(uint64_t *__restrict__ output, uint64_t *__restrict__ input, uint32_t size, uint32_t num_rows);
 __device__ __forceinline__ void poseidon_store(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride);
-__device__ __forceinline__ void poseidon_store(gl64_t *out, uint32_t col_stride, size_t row_stride);
+__device__ __forceinline__ void poseidon_store(gl64_gpu *out, uint32_t col_stride, size_t row_stride);
 __device__ __forceinline__ void poseidon_hash_loop(const uint64_t *__restrict__ in, uint32_t ncols);
 __device__ __forceinline__ void poseidon_hash();
-__device__ __noinline__ void pow7(gl64_t &x);
+__device__ __noinline__ void pow7(gl64_gpu &x);
 
 /* --- Based on seq code --- */
 
-__device__ __forceinline__ void pow7_(gl64_t *x)
+__device__ __forceinline__ void pow7_(gl64_gpu *x)
 {
-    gl64_t x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
+    gl64_gpu x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
 #pragma unroll
     for (int i = 0; i < SPONGE_WIDTH; ++i)
     {
@@ -44,7 +44,7 @@ __device__ __forceinline__ void pow7_(gl64_t *x)
     }
 }
 
-__device__ __forceinline__ void add_(gl64_t *x, const gl64_t C[SPONGE_WIDTH])
+__device__ __forceinline__ void add_(gl64_gpu *x, const gl64_gpu C[SPONGE_WIDTH])
 {
 #pragma unroll
     for (int i = 0; i < SPONGE_WIDTH; ++i)
@@ -53,7 +53,7 @@ __device__ __forceinline__ void add_(gl64_t *x, const gl64_t C[SPONGE_WIDTH])
     }
 }
 
-__device__ __forceinline__ void prod_(gl64_t *x, const gl64_t alpha, const gl64_t C[SPONGE_WIDTH])
+__device__ __forceinline__ void prod_(gl64_gpu *x, const gl64_gpu alpha, const gl64_gpu C[SPONGE_WIDTH])
 {
 #pragma unroll
     for (int i = 0; i < SPONGE_WIDTH; ++i)
@@ -62,9 +62,9 @@ __device__ __forceinline__ void prod_(gl64_t *x, const gl64_t alpha, const gl64_
     }
 }
 
-__device__ __forceinline__ void pow7add_(gl64_t *x, const gl64_t C[SPONGE_WIDTH])
+__device__ __forceinline__ void pow7add_(gl64_gpu *x, const gl64_gpu C[SPONGE_WIDTH])
 {
-    gl64_t x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
+    gl64_gpu x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
 #pragma unroll
     for (int i = 0; i < SPONGE_WIDTH; ++i)
     {
@@ -76,9 +76,9 @@ __device__ __forceinline__ void pow7add_(gl64_t *x, const gl64_t C[SPONGE_WIDTH]
     }
 }
 
-__device__ __forceinline__ gl64_t dot_(gl64_t *x, const gl64_t C[SPONGE_WIDTH])
+__device__ __forceinline__ gl64_gpu dot_(gl64_gpu *x, const gl64_gpu C[SPONGE_WIDTH])
 {
-    gl64_t s0 = x[0] * C[0];
+    gl64_gpu s0 = x[0] * C[0];
 #pragma unroll
     for (int i = 1; i < SPONGE_WIDTH; i++)
     {
@@ -87,9 +87,9 @@ __device__ __forceinline__ gl64_t dot_(gl64_t *x, const gl64_t C[SPONGE_WIDTH])
     return s0;
 }
 
-__device__ __forceinline__ void mvp_(gl64_t *state, const gl64_t *__restrict__ mat)
+__device__ __forceinline__ void mvp_(gl64_gpu *state, const gl64_gpu *__restrict__ mat)
 {
-    gl64_t old_state[SPONGE_WIDTH];
+    gl64_gpu old_state[SPONGE_WIDTH];
     mymemcpy((uint64_t *)old_state, (uint64_t *)state, SPONGE_WIDTH);
 
     for (int i = 0; i < SPONGE_WIDTH; i++)
@@ -134,7 +134,7 @@ void init_gpu_const(int nDevices = 0)
 
 }
 
-__device__ void hash_full_result_seq(gl64_t *state, const gl64_t *input, const gl64_t *GPU_C_GL, const gl64_t *GPU_S_GL, const gl64_t *GPU_M_GL, const gl64_t *GPU_P_GL)
+__device__ void hash_full_result_seq(gl64_gpu *state, const gl64_gpu *input, const gl64_gpu *GPU_C_GL, const gl64_gpu *GPU_S_GL, const gl64_gpu *GPU_M_GL, const gl64_gpu *GPU_P_GL)
 {
     mymemcpy((uint64_t *)state, (uint64_t *)input, SPONGE_WIDTH);
 
@@ -152,8 +152,8 @@ __device__ void hash_full_result_seq(gl64_t *state, const gl64_t *input, const g
     {
         pow7(state[0]);
         state[0] = state[0] + GPU_C_GL[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + r];
-        gl64_t s0 = dot_(state, &(GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r]));
-        gl64_t W_[SPONGE_WIDTH];
+        gl64_gpu s0 = dot_(state, &(GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r]));
+        gl64_gpu W_[SPONGE_WIDTH];
         prod_(W_, state[0], &(GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r + SPONGE_WIDTH - 1]));
         add_(state, W_);
         state[0] = s0;
@@ -170,13 +170,13 @@ __device__ void hash_full_result_seq(gl64_t *state, const gl64_t *input, const g
 
 /* --- integration --- */
 
-__device__ void linear_hash_one(gl64_t *output, gl64_t *input, uint32_t size, int tid)
+__device__ void linear_hash_one(gl64_gpu *output, gl64_gpu *input, uint32_t size, int tid)
 {
     u32 remaining = size;
-    __shared__ gl64_t GPU_C_SM[118];
-    __shared__ gl64_t GPU_S_SM[507];
-    __shared__ gl64_t GPU_M_SM[144];
-    __shared__ gl64_t GPU_P_SM[144];
+    __shared__ gl64_gpu GPU_C_SM[118];
+    __shared__ gl64_gpu GPU_S_SM[507];
+    __shared__ gl64_gpu GPU_M_SM[144];
+    __shared__ gl64_gpu GPU_P_SM[144];
 
     if (tid == 0)
     {
@@ -187,7 +187,7 @@ __device__ void linear_hash_one(gl64_t *output, gl64_t *input, uint32_t size, in
     }
     __syncthreads();
 
-    gl64_t state[SPONGE_WIDTH];
+    gl64_gpu state[SPONGE_WIDTH];
 
     if (size <= CAPACITY)
     {
@@ -215,12 +215,12 @@ __device__ void linear_hash_one(gl64_t *output, gl64_t *input, uint32_t size, in
     mymemcpy((uint64_t *)output, (uint64_t *)state, CAPACITY);
 }
 
-__device__ void linear_partial_hash_one(gl64_t *input, uint32_t size, gl64_t *state, int tid)
+__device__ void linear_partial_hash_one(gl64_gpu *input, uint32_t size, gl64_gpu *state, int tid)
 {
-    __shared__ gl64_t GPU_C_SM[118];
-    __shared__ gl64_t GPU_S_SM[507];
-    __shared__ gl64_t GPU_M_SM[144];
-    __shared__ gl64_t GPU_P_SM[144];
+    __shared__ gl64_gpu GPU_C_SM[118];
+    __shared__ gl64_gpu GPU_S_SM[507];
+    __shared__ gl64_gpu GPU_M_SM[144];
+    __shared__ gl64_gpu GPU_P_SM[144];
 
     if (tid == 0)
     {
@@ -250,8 +250,8 @@ __global__ void linear_hash_gpu(uint64_t *output, uint64_t *input, uint32_t size
     if (tid >= num_rows)
         return;
 
-    gl64_t *inp = (gl64_t *)(input + tid * size);
-    gl64_t *out = (gl64_t *)(output + tid * CAPACITY);
+    gl64_gpu *inp = (gl64_gpu *)(input + tid * size);
+    gl64_gpu *out = (gl64_gpu *)(output + tid * CAPACITY);
     linear_hash_one(out, inp, size, threadIdx.x);
 }
 
@@ -261,16 +261,16 @@ __global__ void linear_partial_init_hash_gpu(uint64_t *gstate, int32_t num_rows)
     if (tid >= num_rows)
         return;
 
-    gl64_t *state = (gl64_t *)(gstate + tid * SPONGE_WIDTH);
-    memset(state, 0, SPONGE_WIDTH * sizeof(gl64_t));
+    gl64_gpu *state = (gl64_gpu *)(gstate + tid * SPONGE_WIDTH);
+    memset(state, 0, SPONGE_WIDTH * sizeof(gl64_gpu));
 }
 
-__device__ void hash_one(gl64_t *state, gl64_t *const input, int tid)
+__device__ void hash_one(gl64_gpu *state, gl64_gpu *const input, int tid)
 {
-    __shared__ gl64_t GPU_C_SM[118];
-    __shared__ gl64_t GPU_S_SM[507];
-    __shared__ gl64_t GPU_M_SM[144];
-    __shared__ gl64_t GPU_P_SM[144];
+    __shared__ gl64_gpu GPU_C_SM[118];
+    __shared__ gl64_gpu GPU_S_SM[507];
+    __shared__ gl64_gpu GPU_M_SM[144];
+    __shared__ gl64_gpu GPU_P_SM[144];
 
     if (tid == 0)
     {
@@ -281,7 +281,7 @@ __device__ void hash_one(gl64_t *state, gl64_t *const input, int tid)
     }
     __syncthreads();
 
-    gl64_t aux[SPONGE_WIDTH];
+    gl64_gpu aux[SPONGE_WIDTH];
     hash_full_result_seq(aux, input, GPU_C_SM, GPU_S_SM, GPU_M_SM, GPU_P_SM);
     mymemcpy((uint64_t *)state, (uint64_t *)aux, CAPACITY);
 }
@@ -292,10 +292,10 @@ __global__ void hash_gpu(uint32_t nextN, uint32_t nextIndex, uint32_t pending, u
     if (tid >= nextN)
         return;
 
-    gl64_t pol_input[SPONGE_WIDTH];
+    gl64_gpu pol_input[SPONGE_WIDTH];
     mymemset((uint64_t *)pol_input, 0, SPONGE_WIDTH);
     mymemcpy((uint64_t *)pol_input, (uint64_t *)&cursor[nextIndex + tid * RATE], RATE);
-    hash_one((gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY]), pol_input, threadIdx.x);
+    hash_one((gl64_gpu *)(&cursor[nextIndex + (pending + tid) * CAPACITY]), pol_input, threadIdx.x);
 }
 
 
@@ -354,18 +354,18 @@ __global__ void hash_gpu(uint32_t nextN, uint64_t *cursor_in, uint64_t *cursor_o
     if (tid >= nextN)
         return;
 
-    gl64_t pol_input[SPONGE_WIDTH];
+    gl64_gpu pol_input[SPONGE_WIDTH];
     mymemset((uint64_t *)pol_input + RATE, 0, CAPACITY);
     mymemcpy((uint64_t *)pol_input, (uint64_t *)&cursor_in[tid * RATE], RATE);
-    hash_one((gl64_t *)(&cursor_out[tid * CAPACITY]), pol_input, threadIdx.x);
+    hash_one((gl64_gpu *)(&cursor_out[tid * CAPACITY]), pol_input, threadIdx.x);
 }
 
 
-__device__ __noinline__ void pow7(gl64_t &x)
+__device__ __noinline__ void pow7(gl64_gpu &x)
 {
-    gl64_t x2 = x * x;
-    gl64_t x3 = x * x2;
-    gl64_t x4 = x2 * x2;
+    gl64_gpu x2 = x * x;
+    gl64_gpu x3 = x * x2;
+    gl64_gpu x4 = x2 * x2;
     x = x3 * x4;
 }
 
@@ -376,9 +376,9 @@ __device__ __noinline__ static void pow7_state_()
         pow7(scratchpad[i * blockDim.x + threadIdx.x]);
 }
 
-__device__ __forceinline__ void mvp_state_(const gl64_t *mat)
+__device__ __forceinline__ void mvp_state_(const gl64_gpu *mat)
 {
-    gl64_t state[SPONGE_WIDTH];
+    gl64_gpu state[SPONGE_WIDTH];
 #pragma unroll
     for (uint32_t i = 0; i < SPONGE_WIDTH; i++)
         state[i] = scratchpad[i * blockDim.x + threadIdx.x];
@@ -394,7 +394,7 @@ __device__ __forceinline__ void mvp_state_(const gl64_t *mat)
     }
 }
 
-__device__ __noinline__ void add_state_(const gl64_t C[SPONGE_WIDTH])
+__device__ __noinline__ void add_state_(const gl64_gpu C[SPONGE_WIDTH])
 {
 #pragma unroll
     for (uint32_t i = 0; i < SPONGE_WIDTH; i++)
@@ -404,7 +404,7 @@ __device__ __noinline__ void add_state_(const gl64_t C[SPONGE_WIDTH])
 __device__ __forceinline__ void poseidon_load(const uint64_t *in, uint32_t col, uint32_t ncols,
                                               uint32_t col_stride, size_t row_stride = 1)
 {
-    gl64_t r[RATE];
+    gl64_gpu r[RATE];
 
     const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
     in += tid * col_stride + col * row_stride;
@@ -424,7 +424,7 @@ __device__ __forceinline__ void poseidon_load(const uint64_t *in, uint32_t col, 
 
 __device__ __forceinline__ void poseidon_store(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride = 1)
 {
-    gl64_t r[CAPACITY];
+    gl64_gpu r[CAPACITY];
 
     __syncwarp();
 
@@ -469,7 +469,7 @@ __device__ __forceinline__ void poseidon_hash_loop(const uint64_t *__restrict__ 
             if ((col += RATE) >= ncols)
                 break;
 
-            gl64_t tmp[CAPACITY];
+            gl64_gpu tmp[CAPACITY];
 
 #pragma unroll
             for (uint32_t i = 0; i < CAPACITY; i++)
@@ -487,10 +487,10 @@ __device__ __forceinline__ void poseidon_hash_loop(const uint64_t *__restrict__ 
 
 __device__ __forceinline__ void poseidon_hash()
 {
-    const gl64_t *GPU_C_GL = (gl64_t *)GPU_C;
-    const gl64_t *GPU_M_GL = (gl64_t *)GPU_M;
-    const gl64_t *GPU_S_GL = (gl64_t *)GPU_S;
-    const gl64_t *GPU_P_GL = (gl64_t *)GPU_P;
+    const gl64_gpu *GPU_C_GL = (gl64_gpu *)GPU_C;
+    const gl64_gpu *GPU_M_GL = (gl64_gpu *)GPU_M;
+    const gl64_gpu *GPU_S_GL = (gl64_gpu *)GPU_S;
+    const gl64_gpu *GPU_P_GL = (gl64_gpu *)GPU_P;
 
     add_state_(GPU_C_GL);
 #pragma unroll 1
@@ -509,8 +509,8 @@ __device__ __forceinline__ void poseidon_hash()
     {
         // rick: millor tot aixo dins una funcio
         pow7(scratchpad[threadIdx.x]);
-        gl64_t p0 = scratchpad[threadIdx.x] + GPU_C_GL[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + r];
-        gl64_t s0 = p0 * GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r];
+        gl64_gpu p0 = scratchpad[threadIdx.x] + GPU_C_GL[(HALF_N_FULL_ROUNDS + 1) * SPONGE_WIDTH + r];
+        gl64_gpu s0 = p0 * GPU_S_GL[(SPONGE_WIDTH * 2 - 1) * r];
 
         for (uint32_t j = 1; j < SPONGE_WIDTH; j++)
         {
@@ -560,8 +560,8 @@ __device__ void generate_tree()
                 uint32_t idx = i * blockDim.x + threadIdx.x;
                 uint32_t prev_idx = i * blockDim.x + pos_previous;
 
-                gl64_t val1 = scratchpad[prev_idx];
-                gl64_t val2 = scratchpad[prev_idx + 1];
+                gl64_gpu val1 = scratchpad[prev_idx];
+                gl64_gpu val2 = scratchpad[prev_idx + 1];
 
                 scratchpad[idx] = val1;
                 scratchpad[(i + CAPACITY) * blockDim.x + threadIdx.x] = val2;
@@ -587,8 +587,8 @@ __device__ void generate_1level_tree()
             uint32_t idx = i * blockDim.x + threadIdx.x;
             uint32_t idx2 = idx >> 1;
 
-            gl64_t val1 = scratchpad[idx2];
-            gl64_t val2 = scratchpad[idx2 + 1];
+            gl64_gpu val1 = scratchpad[idx2];
+            gl64_gpu val2 = scratchpad[idx2 + 1];
 
             scratchpad[idx] = val1;
             scratchpad[(i + CAPACITY) * blockDim.x + threadIdx.x] = val2;

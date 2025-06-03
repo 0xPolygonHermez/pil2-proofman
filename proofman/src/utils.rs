@@ -1,4 +1,4 @@
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
@@ -61,7 +61,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
     }
 
     let mut memory_tables = 0 as f64;
-    for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
+    for (instance_id, (airgroup_id, air_id, all, _)) in instances.iter().enumerate() {
         if !print[instance_id] {
             continue;
         }
@@ -368,6 +368,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     );
                     offset += setup.const_pols_size as u64;
                     offset += setup.const_tree_size as u64;
+                } else {
+                    setup.load_const_pols();
+                    setup.load_const_pols_tree();
                 }
             }
         }
@@ -413,6 +416,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                             );
                             _offset_aggregation += setup.const_pols_size as u64;
                             _offset_aggregation += setup.const_tree_size as u64;
+                        } else {
+                            setup.load_const_pols();
+                            setup.load_const_pols_tree();
                         }
                     }
                 }
@@ -456,6 +462,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                         );
                         _offset_aggregation += setup.const_pols_size as u64;
                         _offset_aggregation += setup.const_tree_size as u64;
+                    } else {
+                        setup.load_const_pols();
+                        setup.load_const_pols_tree();
                     }
                 }
             }
@@ -498,6 +507,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     );
                     _offset_aggregation += setup.const_pols_size as u64;
                     _offset_aggregation += setup.const_tree_size as u64;
+                } else {
+                    setup.load_const_pols();
+                    setup.load_const_pols_tree();
                 }
             }
         }
@@ -531,6 +543,9 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 );
                 _offset_aggregation += setup_vadcop_final.const_pols_size as u64;
                 _offset_aggregation += setup_vadcop_final.const_tree_size as u64;
+            } else {
+                setup_vadcop_final.load_const_pols();
+                setup_vadcop_final.load_const_pols_tree();
             }
         }
 

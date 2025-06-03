@@ -1,5 +1,5 @@
 use libloading::{Library, Symbol};
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use std::ffi::CString;
 use proofman_starks_lib_c::*;
 use std::path::{Path, PathBuf};
@@ -233,12 +233,18 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         );
     }
 
+    let (const_pols_ptr, const_tree_ptr) = if cfg!(feature = "gpu") {
+        (setup.get_const_ptr(), setup.get_const_tree_ptr())
+    } else {
+        (const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8)
+    };
+
     let stream_id = gen_recursive_proof_c(
         p_setup,
         trace.as_ptr() as *mut u8,
         prover_buffer.as_ptr() as *mut u8,
-        const_pols.as_ptr() as *mut u8,
-        const_tree.as_ptr() as *mut u8,
+        const_pols_ptr,
+        const_tree_ptr,
         publics.as_ptr() as *mut u8,
         new_proof[initial_idx..].as_mut_ptr(),
         &proof_file,

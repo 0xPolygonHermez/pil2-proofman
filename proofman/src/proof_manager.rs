@@ -30,7 +30,7 @@ impl Counter {
     pub fn increment(&self) -> usize {
         let new_val = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
 
-        if new_val == self.threshold {
+        if new_val >= self.threshold {
             let _guard = self.wait_lock.lock().unwrap();
             self.cvar.notify_all();
         }
@@ -53,7 +53,7 @@ impl Counter {
     pub fn wait_until_threshold_and_check_streams<F: FnMut()>(&self, mut check_streams: F) {
         let mut guard = self.wait_lock.lock().unwrap();
         loop {
-            if self.counter.load(Ordering::Acquire) < self.threshold {
+            if self.counter.load(Ordering::Acquire) >= self.threshold {
                 break;
             }
             check_streams();
