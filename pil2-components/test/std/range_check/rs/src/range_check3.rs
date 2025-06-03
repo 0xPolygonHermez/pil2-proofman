@@ -4,7 +4,7 @@ use witness::{WitnessComponent, execute, define_wc_with_std};
 
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use rand::{
     distr::{StandardUniform, Distribution},
     Rng, SeedableRng,
@@ -21,7 +21,14 @@ where
 {
     execute!(RangeCheck3Trace, 1);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
             let mut trace = RangeCheck3Trace::new();

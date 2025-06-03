@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
-use witness::WitnessManager;
+use proofman_common::{ProofCtx, SetupCtx, StdMode};
 
 use crate::{StdProd, StdRangeCheck, StdSum};
 
@@ -10,74 +10,17 @@ pub struct Std<F: PrimeField64> {
     pub range_check: Arc<StdRangeCheck<F>>,
     pub std_prod: Arc<StdProd<F>>,
     pub std_sum: Arc<StdSum<F>>,
+    pub std_mode: RwLock<StdMode>,
 }
 
 impl<F: PrimeField64> Std<F> {
-    pub fn new(wcm: Arc<WitnessManager<F>>) -> Arc<Self> {
-        let pctx = wcm.get_pctx();
-        let sctx = wcm.get_sctx();
-
-        let std_mode = pctx.options.debug_info.std_mode.clone();
-        tracing::info!("··· The PIL2 STD library has been initialized on mode {}", std_mode.name);
-
+    pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Arc<Self> {
         // Instantiate the STD components
         let std_prod = StdProd::new();
         let std_sum = StdSum::new();
         let range_check = StdRangeCheck::new(pctx.clone(), &sctx);
 
-        wcm.register_component_std(std_prod.clone());
-        wcm.register_component_std(std_sum.clone());
-        wcm.register_component_std(range_check.clone());
-
-        if range_check.u8air.is_some() {
-            wcm.register_component_std(range_check.u8air.clone().unwrap());
-        }
-
-        if range_check.u16air.is_some() {
-            wcm.register_component_std(range_check.u16air.clone().unwrap());
-        }
-
-        if range_check.specified_ranges_air.is_some() {
-            wcm.register_component_std(range_check.specified_ranges_air.clone().unwrap());
-        }
-
-        Arc::new(Self { range_check, std_prod, std_sum })
-    }
-
-    pub fn new_dev(
-        wcm: Arc<WitnessManager<F>>,
-        register_u8: bool,
-        register_u16: bool,
-        register_specified_ranges: bool,
-    ) -> Arc<Self> {
-        let pctx = wcm.get_pctx();
-        let sctx = wcm.get_sctx();
-
-        let std_mode = pctx.options.debug_info.std_mode.clone();
-        tracing::info!("··· The PIL2 STD library has been initialized on mode {}", std_mode.name);
-
-        // Instantiate the STD components
-        let std_prod = StdProd::new();
-        let std_sum = StdSum::new();
-        let range_check = StdRangeCheck::new(pctx.clone(), &sctx);
-
-        wcm.register_component_std(std_prod.clone());
-        wcm.register_component_std(std_sum.clone());
-        wcm.register_component_std(range_check.clone());
-
-        if register_u8 && range_check.u8air.is_some() {
-            wcm.register_component_std(range_check.u8air.clone().unwrap());
-        }
-
-        if register_u16 && range_check.u16air.is_some() {
-            wcm.register_component_std(range_check.u16air.clone().unwrap());
-        }
-
-        if register_specified_ranges && range_check.specified_ranges_air.is_some() {
-            wcm.register_component_std(range_check.specified_ranges_air.clone().unwrap());
-        }
-
-        Arc::new(Self { range_check, std_prod, std_sum })
+        Arc::new(Self { range_check, std_prod, std_sum, std_mode: RwLock::new(StdMode::default()) })
     }
 
     // Gets the range for the range check.

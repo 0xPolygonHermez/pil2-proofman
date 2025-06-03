@@ -292,7 +292,7 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     bool isValid = true;
 
     zklog.trace("Verifying evaluations");
-    ExpressionsPack expressionsPack(setupCtx, proverHelpers, 1);
+    ExpressionsPack expressionsPack(setupCtx, &proverHelpers, 1);
     
     Goldilocks::Element buff[FIELD_EXTENSION];
     Dest dest(buff, 1);

@@ -16,10 +16,10 @@ proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 curves = { path = "../curves" }
 transcript = { path = "../transcript" }
 witness = { path = "../witness" }
+pil-std-lib = { workspace = true }
 
 tracing.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
+fields.workspace = true
 libloading.workspace = true
 colored.workspace = true
 serde_json.workspace = true
@@ -27,6 +27,9 @@ rayon.workspace = true
 num-bigint.workspace = true
 num-traits.workspace = true
 blake3.workspace = true
+crossbeam-channel = "0.5.15"
+crossbeam-queue = "0.3"
+rand = "0.9"
 
 [features]
 default = []

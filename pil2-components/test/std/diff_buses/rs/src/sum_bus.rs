@@ -3,7 +3,7 @@ use std::sync::Arc;
 use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
 use crate::SumBusTrace;
 
@@ -12,7 +12,14 @@ define_wc!(SumBus, "SumBus  ");
 impl<F: PrimeField64> WitnessComponent<F> for SumBus {
     execute!(SumBusTrace, 1);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             let mut trace = SumBusTrace::new();
             let num_rows = trace.num_rows();

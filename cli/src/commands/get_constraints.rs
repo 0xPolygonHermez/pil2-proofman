@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use p3_goldilocks::Goldilocks;
+use fields::Goldilocks;
 use proofman_common::initialize_logger;
 use std::path::PathBuf;
 use colored::Colorize;
@@ -22,7 +22,7 @@ impl GetConstraintsCmd {
         println!();
 
         let global_info = GlobalInfo::new(&self.proving_key);
-        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false);
+        let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false, false);
 
         initialize_logger(proofman_common::VerboseMode::Info);
 

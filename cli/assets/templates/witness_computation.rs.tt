@@ -1,5 +1,5 @@
 use proofman::\{executor, executor::Executor, ProofCtx, trace};
-use goldilocks::\{Goldilocks, AbstractField};
+use fields::\{Goldilocks, AbstractField};
 use super::{wc.snake_name}_traces::*;
 
 executor!({wc.name}WC);

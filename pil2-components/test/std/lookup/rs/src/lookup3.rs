@@ -5,7 +5,7 @@ use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use rand::distr::{StandardUniform, Distribution};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
 use crate::Lookup3Trace;
 
@@ -17,7 +17,14 @@ where
 {
     execute!(Lookup3Trace, 1);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             // For simplicity, add a single instance of each air
             let mut trace = Lookup3Trace::new();

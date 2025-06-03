@@ -3,7 +3,7 @@ use std::sync::Arc;
 use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use rand::{
     distr::{StandardUniform, Distribution},
     Rng, SeedableRng,
@@ -20,7 +20,14 @@ where
 {
     execute!(Lookup2_12Trace, 1);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);

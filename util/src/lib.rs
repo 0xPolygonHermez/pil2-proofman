@@ -24,6 +24,7 @@ pub fn create_buffer_fast_u8(buffer_size: usize) -> Vec<u8> {
 
 pub struct DeviceBuffer(pub *mut c_void);
 unsafe impl Send for DeviceBuffer {}
+unsafe impl Sync for DeviceBuffer {}
 
 impl DeviceBuffer {
     pub fn get_ptr(&self) -> *mut c_void {

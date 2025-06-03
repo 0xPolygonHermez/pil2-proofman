@@ -65,7 +65,7 @@ pub struct GlobalInfoAir {
     pub num_rows: usize,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct GlobalInfoAggType {
     #[serde(rename = "aggType")]
     pub agg_type: usize,

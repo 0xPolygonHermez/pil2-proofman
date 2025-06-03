@@ -11,14 +11,13 @@ categories = { workspace = true }
 crate-type = ["dylib"]
 
 [dependencies]
-proofman-common = { path = "../../common" }
-
+proofman-common.workspace = true
 proofman-macros.workspace = true
+proofman.workspace = true
 witness.workspace = true
 pil-std-lib.workspace = true
 tracing.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
+fields.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_arrays.workspace = true
@@ -28,4 +27,5 @@ num-bigint.workspace = true
 [features]
 default = []
 diagnostic = []
+dev = []
 gpu = ["proofman-common/gpu"]

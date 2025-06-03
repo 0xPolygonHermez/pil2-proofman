@@ -6,7 +6,7 @@
 #include "goldilocks_cubic_extension.hpp"
 #include <cassert>
 #include <vector>
-#include "gl64_t.cuh"
+#include "gl64_tooling.cuh"
 #include "cuda_utils.cuh"
 
 #ifdef __USE_CUDA__
@@ -25,16 +25,16 @@ Prime: 0xFFFFFFFF00000001
 Irreducible polynomial: x^3 - x -1
 */
 
-__device__ __forceinline__ gl64_t neg_element(gl64_t x)
+__device__ __forceinline__ gl64_gpu neg_element(gl64_gpu x)
 {
-    gl64_t z = 0ul;
+    gl64_gpu z = 0ul;
     return z - x;
 }
 
 class Goldilocks3GPU
 {
 public:
-    typedef gl64_t Element[FIELD_EXTENSION];
+    typedef gl64_gpu Element[FIELD_EXTENSION];
 
 private:
     static const Element ZERO;
@@ -71,14 +71,14 @@ public:
         return result[0].is_one() && result[1].is_zero() && result[2].is_zero();
     };
 
-    static void copy(Element &dst, const Element &src)
+    static __device__ __forceinline__ void copy(Element &dst, const Element &src)
     {
         for (uint64_t i = 0; i < FIELD_EXTENSION; i++)
         {
             dst[i] = src[i];
         }
     };
-    static void copy(Element *dst, const Element *src)
+    static __device__ __forceinline__ void copy(Element *dst, const Element *src)
     {
         for (uint64_t i = 0; i < FIELD_EXTENSION; i++)
         {
@@ -112,17 +112,17 @@ public:
     // ======== ADD ========
     static __device__ __forceinline__ void add(Element &result, const Element &a, const uint64_t &b)
     {
-        result[0] = a[0] + gl64_t(b);
+        result[0] = a[0] + gl64_gpu(b);
         result[1] = a[1];
         result[2] = a[2];
     }
-    static __device__ __forceinline__ void add(Element &result, const Element &a, const gl64_t b)
+    static __device__ __forceinline__ void add(Element &result, const Element &a, const gl64_gpu b)
     {
         result[0] = a[0] + b;
         result[1] = a[1];
         result[2] = a[2];
     }
-    static __device__ __forceinline__ void add(Element &result, const gl64_t a, const Element &b)
+    static __device__ __forceinline__ void add(Element &result, const gl64_gpu a, const Element &b)
     {
         add(result, b, a);
     }
@@ -137,17 +137,17 @@ public:
     // ======== SUB ========
     static __device__ __forceinline__ void sub(Element &result, Element &a, uint64_t &b)
     {
-        result[0] = a[0] - gl64_t(b);
+        result[0] = a[0] - gl64_gpu(b);
         result[1] = a[1];
         result[2] = a[2];
     }
-    static __device__ __forceinline__ void sub(Element &result, gl64_t a, Element const &b)
+    static __device__ __forceinline__ void sub(Element &result, gl64_gpu a, Element const &b)
     {
         result[0] = a - b[0];
         result[1] = neg_element(b[1]);
         result[2] = neg_element(b[2]);
     }
-    static __device__ __forceinline__ void sub(Element &result, Element &a, gl64_t b)
+    static __device__ __forceinline__ void sub(Element &result, Element &a, gl64_gpu b)
     {
         result[0] = a[0] - b;
         result[1] = a[1];
@@ -174,25 +174,25 @@ public:
     }
     static __device__ __forceinline__ void mul(Element &result, Element &a, Element &b)
     {
-        gl64_t A = (a[0] + a[1]) * (b[0] + b[1]);
-        gl64_t B = (a[0] + a[2]) * (b[0] + b[2]);
-        gl64_t C = (a[1] + a[2]) * (b[1] + b[2]);
-        gl64_t D = a[0] * b[0];
-        gl64_t E = a[1] * b[1];
-        gl64_t F = a[2] * b[2];
-        gl64_t G = D - E;
+        gl64_gpu A = (a[0] + a[1]) * (b[0] + b[1]);
+        gl64_gpu B = (a[0] + a[2]) * (b[0] + b[2]);
+        gl64_gpu C = (a[1] + a[2]) * (b[1] + b[2]);
+        gl64_gpu D = a[0] * b[0];
+        gl64_gpu E = a[1] * b[1];
+        gl64_gpu F = a[2] * b[2];
+        gl64_gpu G = D - E;
 
         result[0] = (C + G) - F;
         result[1] = ((((A + C) - E) - E) - D);
         result[2] = B - G;
     };
-    static __device__ __forceinline__ void mul(Element &result, Element &a, gl64_t &b)
+    static __device__ __forceinline__ void mul(Element &result, Element &a, gl64_gpu &b)
     {
         result[0] = a[0] * b;
         result[1] = a[1] * b;
         result[2] = a[2] * b;
     }
-    static __device__ __forceinline__ void mul(Element &result, gl64_t a, Element &b)
+    static __device__ __forceinline__ void mul(Element &result, gl64_gpu a, Element &b)
     {
         mul(result, b, a);
     }
@@ -204,9 +204,9 @@ public:
     }
 
     // ======== DIV ========
-    static __device__ __forceinline__ void div(Element &result, Element &a, gl64_t b)
+    static __device__ __forceinline__ void div(Element &result, Element &a, gl64_gpu b)
     {
-        gl64_t b_inv = b.reciprocal();
+        gl64_gpu b_inv = b.reciprocal();
         mul(result, a, b_inv);
     }
 
@@ -226,29 +226,29 @@ public:
     }
     static __device__ __noinline__ void inv(Element &result, Element &a)
     {
-        gl64_t aa = a[0] * a[0];
-        gl64_t ac = a[0] * a[2];
-        gl64_t ba = a[1] * a[0];
-        gl64_t bb = a[1] * a[1];
-        gl64_t bc = a[1] * a[2];
-        gl64_t cc = a[2] * a[2];
+        gl64_gpu aa = a[0] * a[0];
+        gl64_gpu ac = a[0] * a[2];
+        gl64_gpu ba = a[1] * a[0];
+        gl64_gpu bb = a[1] * a[1];
+        gl64_gpu bc = a[1] * a[2];
+        gl64_gpu cc = a[2] * a[2];
 
-        gl64_t aaa = aa * a[0];
-        gl64_t aac = aa * a[2];
-        gl64_t abc = ba * a[2];
-        gl64_t abb = ba * a[1];
-        gl64_t acc = ac * a[2];
-        gl64_t bbb = bb * a[1];
-        gl64_t bcc = bc * a[2];
-        gl64_t ccc = cc * a[2];
+        gl64_gpu aaa = aa * a[0];
+        gl64_gpu aac = aa * a[2];
+        gl64_gpu abc = ba * a[2];
+        gl64_gpu abb = ba * a[1];
+        gl64_gpu acc = ac * a[2];
+        gl64_gpu bbb = bb * a[1];
+        gl64_gpu bcc = bc * a[2];
+        gl64_gpu ccc = cc * a[2];
 
-        gl64_t t = abc + abc + abc + abb - aaa - aac - aac - acc - bbb + bcc - ccc;
+        gl64_gpu t = abc + abc + abc + abb - aaa - aac - aac - acc - bbb + bcc - ccc;
 
-        gl64_t tinv = t.reciprocal();
-        gl64_t i1 = (bc + bb - aa - ac - ac - cc) * tinv;
+        gl64_gpu tinv = t.reciprocal();
+        gl64_gpu i1 = (bc + bb - aa - ac - ac - cc) * tinv;
 
-        gl64_t i2 = (ba - cc) * tinv;
-        gl64_t i3 = (ac + cc - bb) * tinv;
+        gl64_gpu i2 = (ba - cc) * tinv;
+        gl64_gpu i3 = (ac + cc - bb) * tinv;
 
         result[0] = i1;
         result[1] = i2;
@@ -271,7 +271,7 @@ public:
     }
 
     // ======== EXPRESSIONS ========
-    static __device__ __forceinline__ void copy_gpu(gl64_t *c_, const gl64_t *a_, bool const_a)
+    static __device__ __forceinline__ void copy_gpu(gl64_gpu *c_, const gl64_gpu *a_, bool const_a)
     {
         if (const_a)
         {
@@ -286,7 +286,7 @@ public:
             c_[2 * blockDim.x + threadIdx.x] = a_[2 * blockDim.x + threadIdx.x];
         }
     }
-    static __device__ __forceinline__ void add_gpu(gl64_t *c_, const gl64_t *a_, bool const_a, const gl64_t *b_, bool const_b)
+    static __device__ __forceinline__ void add_gpu(gl64_gpu *c_, const gl64_gpu *a_, bool const_a, const gl64_gpu *b_, bool const_b)
     {
 
         if (const_a && const_b)
@@ -314,7 +314,7 @@ public:
             c_[2 * blockDim.x + threadIdx.x] = a_[2 * blockDim.x + threadIdx.x] + b_[2 * blockDim.x + threadIdx.x];
         }
     }
-    static __device__ __forceinline__ void sub_gpu(gl64_t *c_, const gl64_t *a_, bool const_a, const gl64_t *b_, bool const_b)
+    static __device__ __forceinline__ void sub_gpu(gl64_gpu *c_, const gl64_gpu *a_, bool const_a, const gl64_gpu *b_, bool const_b)
     {
         if (const_a && const_b)
         {
@@ -341,10 +341,10 @@ public:
             c_[2 * blockDim.x + threadIdx.x] = a_[2 * blockDim.x + threadIdx.x] - b_[2 * blockDim.x + threadIdx.x];
         }
     }
-    static __device__ __forceinline__ void mul_gpu(gl64_t *c_, const gl64_t *a_, bool const_a, const gl64_t *b_, bool const_b)
+    static __device__ __forceinline__ void mul_gpu(gl64_gpu *c_, const gl64_gpu *a_, bool const_a, const gl64_gpu *b_, bool const_b)
     {
 
-        gl64_t A, B, C, D, E, F, G;
+        gl64_gpu A, B, C, D, E, F, G;
 
         if (const_a && const_b)
         {
@@ -389,7 +389,7 @@ public:
         c_[2 * blockDim.x + threadIdx.x] = B - G;
     }
 
-    static __device__ __forceinline__ void op_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
+    static __device__ __forceinline__ void op_gpu(uint64_t op, gl64_gpu *c, const gl64_gpu *a, bool const_a, const gl64_gpu *b, bool const_b)
     {
         switch (op)
         {
@@ -410,7 +410,74 @@ public:
             break;
         }
     }
-    static __device__ __forceinline__ void op_31_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
+
+       static __device__ __forceinline__ void add_31_gpu_no_const(gl64_gpu *c, const gl64_gpu *a, const gl64_gpu *b) {
+        c[threadIdx.x] = a[threadIdx.x] + b[threadIdx.x];
+        c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x];
+        c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x];
+    }
+
+    static __device__ __forceinline__ void sub_13_gpu_b_const(gl64_gpu *c, const gl64_gpu *a, const gl64_gpu *b) {
+        c[threadIdx.x] = a[threadIdx.x] - b[0];
+        c[blockDim.x + threadIdx.x] = -b[1];
+        c[2 * blockDim.x + threadIdx.x] = -b[2];
+    }
+
+    static __device__ __forceinline__ void mul_31_gpu_no_const(gl64_gpu *c, const gl64_gpu *a, const gl64_gpu *b) {
+        c[threadIdx.x] = a[threadIdx.x] * b[threadIdx.x];
+        c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] * b[threadIdx.x];
+        c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] * b[threadIdx.x];
+    }
+
+    static __device__ __forceinline__ void mul_31_gpu_a_const(gl64_gpu *c, const gl64_gpu *a, const gl64_gpu *b) {
+        c[threadIdx.x] = a[0] * b[threadIdx.x];
+        c[blockDim.x + threadIdx.x] = a[1] * b[threadIdx.x];
+        c[2 * blockDim.x + threadIdx.x] = a[2] * b[threadIdx.x];
+    }
+
+    static __device__ __forceinline__ void sub_gpu_b_const(gl64_gpu *c, const gl64_gpu *a, const gl64_gpu *b) {
+        c[threadIdx.x] = a[threadIdx.x] - b[0];
+        c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] - b[1];
+        c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] - b[2];
+    }
+
+    static __device__ __forceinline__ void add_gpu_no_const(gl64_gpu *c, const gl64_gpu *a, const gl64_gpu *b) {
+        c[threadIdx.x] = a[threadIdx.x] + b[threadIdx.x];
+        c[blockDim.x + threadIdx.x] = a[blockDim.x + threadIdx.x] + b[blockDim.x + threadIdx.x];
+        c[2 * blockDim.x + threadIdx.x] = a[2 * blockDim.x + threadIdx.x] + b[2 * blockDim.x + threadIdx.x];
+    }
+
+    static __device__ __forceinline__ void mul_gpu_b_const(gl64_gpu *c, const gl64_gpu *a, const gl64_gpu *b) {
+        gl64_gpu A = (a[threadIdx.x] + a[blockDim.x + threadIdx.x]) * (b[0] + b[1]);
+        gl64_gpu B = (a[threadIdx.x] + a[2 * blockDim.x + threadIdx.x]) * (b[0] + b[2]);
+        gl64_gpu C = (a[blockDim.x + threadIdx.x] + a[2 * blockDim.x + threadIdx.x]) * (b[1] + b[2]);
+        gl64_gpu D = a[threadIdx.x] * b[0];
+        gl64_gpu E = a[blockDim.x + threadIdx.x] * b[1];
+        gl64_gpu F = a[2 * blockDim.x + threadIdx.x] * b[2];
+        
+
+        gl64_gpu G = D - E;
+        c[threadIdx.x] = (C + G) - F;
+        c[blockDim.x + threadIdx.x] = ((((A + C) - E) - E) - D);
+        c[2 * blockDim.x + threadIdx.x] = B - G;
+    }
+
+    static __device__ __forceinline__ void mul_gpu_no_const(gl64_gpu *c, const gl64_gpu *a, const gl64_gpu *b) {
+        gl64_gpu A = (a[threadIdx.x] + a[blockDim.x + threadIdx.x]) * (b[threadIdx.x] + b[blockDim.x + threadIdx.x]);
+        gl64_gpu B = (a[threadIdx.x] + a[2 * blockDim.x + threadIdx.x]) * (b[threadIdx.x] + b[2 * blockDim.x + threadIdx.x]);
+        gl64_gpu C = (a[blockDim.x + threadIdx.x] + a[2 * blockDim.x + threadIdx.x]) * (b[blockDim.x + threadIdx.x] + b[2 * blockDim.x + threadIdx.x]);
+        gl64_gpu D = a[threadIdx.x] * b[threadIdx.x];
+        gl64_gpu E = a[blockDim.x + threadIdx.x] * b[blockDim.x + threadIdx.x];
+        gl64_gpu F = a[2 * blockDim.x + threadIdx.x] * b[2 * blockDim.x + threadIdx.x];
+        
+
+        gl64_gpu G = D - E;
+        c[threadIdx.x] = (C + G) - F;
+        c[blockDim.x + threadIdx.x] = ((((A + C) - E) - E) - D);
+        c[2 * blockDim.x + threadIdx.x] = B - G;
+    }
+    
+    static __device__ __forceinline__ void op_31_gpu(uint64_t op, gl64_gpu *c, const gl64_gpu *a, bool const_a, const gl64_gpu *b, bool const_b)
     {
 
         if (const_a && const_b)

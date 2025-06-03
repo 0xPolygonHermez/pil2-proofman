@@ -14,7 +14,7 @@ use std::sync::atomic::AtomicU64;
 #[cfg(distributed)]
 use std::sync::atomic::Ordering;
 
-use p3_field::Field;
+use fields::PrimeField64;
 
 use crate::GlobalInfo;
 
@@ -28,8 +28,8 @@ pub struct DistributionCtx {
     pub world: mpi::topology::SimpleCommunicator,
     pub n_instances: usize,
     pub my_instances: Vec<usize>,
-    pub instances: Vec<(usize, usize, bool)>,    //group_id, air_id, all
-    pub instances_owner: Vec<(i32, usize, u64)>, //owner_rank, owner_instance_idx, weight
+    pub instances: Vec<(usize, usize, bool, bool)>, //group_id, air_id, all
+    pub instances_owner: Vec<(i32, usize, u64)>,    //owner_rank, owner_instance_idx, weight
     pub owners_count: Vec<i32>,
     pub owners_weight: Vec<u64>,
     #[cfg(distributed)]
@@ -41,6 +41,8 @@ pub struct DistributionCtx {
     pub airgroup_instances_alives: Vec<Vec<usize>>,
     pub glob2loc: Vec<Option<usize>>,
     pub balance_distribution: bool,
+    pub node_rank: i32,
+    pub node_n_processes: i32,
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -63,6 +65,8 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("balance_distribution", &self.balance_distribution)
                 .field("roots_gatherv_count", &self.roots_gatherv_count)
                 .field("roots_gatherv_displ", &self.roots_gatherv_displ)
+                .field("node_rank", &self.node_rank)
+                .field("node_n_processes", &self.node_n_processes)
                 .finish()
         }
         #[cfg(not(distributed))]
@@ -81,6 +85,8 @@ impl std::fmt::Debug for DistributionCtx {
                 .field("airgroup_instances_alives", &self.airgroup_instances_alives)
                 .field("glob2loc", &self.glob2loc)
                 .field("balance_distribution", &self.balance_distribution)
+                .field("node_rank", &self.node_rank)
+                .field("node_n_processes", &self.node_n_processes)
                 .finish()
         }
     }
@@ -94,6 +100,11 @@ impl DistributionCtx {
             let world = universe.world();
             let rank = world.rank();
             let n_processes = world.size();
+
+            let local_comm = world.split_shared(rank);
+            let node_rank = local_comm.rank();
+            let node_n_processes = local_comm.size();
+
             DistributionCtx {
                 rank,
                 n_processes,
@@ -112,6 +123,8 @@ impl DistributionCtx {
                 airgroup_instances_alives: Vec::new(),
                 glob2loc: Vec::new(),
                 balance_distribution: true,
+                node_rank,
+                node_n_processes,
             }
         }
         #[cfg(not(distributed))]
@@ -130,8 +143,32 @@ impl DistributionCtx {
                 airgroup_instances_alives: Vec::new(),
                 glob2loc: Vec::new(),
                 balance_distribution: false,
+                node_rank: 0,
+                node_n_processes: 1,
             }
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.n_instances = 0;
+        self.my_instances.clear();
+        self.instances.clear();
+        self.instances_owner.clear();
+
+        self.owners_count = vec![0; self.n_processes as usize];
+        self.owners_weight = vec![0; self.n_processes as usize];
+
+        #[cfg(distributed)]
+        {
+            self.roots_gatherv_count = vec![0; self.n_processes as usize];
+            self.roots_gatherv_displ = vec![0; self.n_processes as usize];
+        }
+
+        self.my_groups.clear();
+        self.my_air_groups.clear();
+        self.airgroup_instances_alives.clear();
+        self.glob2loc.clear();
+        self.balance_distribution = true;
     }
 
     #[inline]
@@ -175,9 +212,9 @@ impl DistributionCtx {
     #[inline]
     pub fn find_air_instance_id(&self, global_idx: usize) -> usize {
         let mut air_instance_id = 0;
-        let (airgroup_id, air_id, _) = self.instances[global_idx];
+        let (airgroup_id, air_id, _, _) = self.instances[global_idx];
         for idx in 0..global_idx {
-            let (instance_airgroup_id, instance_air_id, _) = self.instances[idx];
+            let (instance_airgroup_id, instance_air_id, _, _) = self.instances[idx];
             if (instance_airgroup_id, instance_air_id) == (airgroup_id, air_id) {
                 air_instance_id += 1;
             }
@@ -188,12 +225,12 @@ impl DistributionCtx {
     #[inline]
     pub fn find_instance(&self, airgroup_id: usize, air_id: usize) -> (bool, usize) {
         let indexes: Vec<_> =
-            self.instances.iter().enumerate().filter(|&(_, &(x, y, _))| x == airgroup_id && y == air_id).collect();
+            self.instances.iter().enumerate().filter(|&(_, &(x, y, _, _))| x == airgroup_id && y == air_id).collect();
 
         if indexes.is_empty() {
             (false, 0)
         } else if indexes.len() == 1 {
-            (true, self.instances.iter().position(|&(x, y, _)| x == airgroup_id && y == air_id).unwrap())
+            (true, self.instances.iter().position(|&(x, y, _, _)| x == airgroup_id && y == air_id).unwrap())
         } else {
             panic!("Multiple instances found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
         }
@@ -203,7 +240,7 @@ impl DistributionCtx {
     pub fn find_instance_id(&self, airgroup_id: usize, air_id: usize, air_instance_id: usize) -> Option<usize> {
         let mut count = 0;
         for (global_idx, instance) in self.instances.iter().enumerate() {
-            let (inst_airgroup_id, inst_air_id, _) = instance;
+            let (inst_airgroup_id, inst_air_id, _, _) = instance;
             if airgroup_id == *inst_airgroup_id && air_id == *inst_air_id {
                 if count == air_instance_id {
                     return Some(global_idx);
@@ -218,7 +255,7 @@ impl DistributionCtx {
     pub fn is_min_rank_owner(&self, airgroup_id: usize, air_id: usize) -> bool {
         let mut min_owner = self.n_processes + 1;
         for (idx, instance) in self.instances.iter().enumerate() {
-            let (inst_airgroup_id, inst_air_id, _) = instance;
+            let (inst_airgroup_id, inst_air_id, _, _) = instance;
             if airgroup_id == *inst_airgroup_id && air_id == *inst_air_id && self.instances_owner[idx].0 < min_owner {
                 min_owner = self.instances_owner[idx].0;
             }
@@ -233,14 +270,22 @@ impl DistributionCtx {
 
     #[inline]
     pub fn add_instance_no_assign(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        self.instances.push((airgroup_id, air_id, false));
+        self.instances.push((airgroup_id, air_id, false, false));
+        self.instances_owner.push((-1, 0, weight));
+        self.n_instances += 1;
+        self.n_instances - 1
+    }
+
+    #[inline]
+    pub fn add_instance_no_assign_fast(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+        self.instances.push((airgroup_id, air_id, false, true));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
     }
 
     pub fn add_instance_no_assign_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        self.instances.push((airgroup_id, air_id, true));
+        self.instances.push((airgroup_id, air_id, true, false));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
@@ -332,7 +377,7 @@ impl DistributionCtx {
         }
 
         // Populate the HashMap based on group_id and buffer positions
-        for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
+        for (idx, &(group_id, _, _, _)) in self.instances.iter().enumerate() {
             #[cfg(distributed)]
             let pos_buffer = self.roots_gatherv_displ[self.instances_owner[idx].0 as usize] as usize
                 + self.instances_owner[idx].1 * 10;
@@ -347,7 +392,7 @@ impl DistributionCtx {
         }
 
         // Create my eval groups
-        let mut my_air_groups_indices: HashMap<(usize, usize, bool), usize> = HashMap::new();
+        let mut my_air_groups_indices: HashMap<(usize, usize, bool, bool), usize> = HashMap::new();
         for (loc_idx, glob_idx) in self.my_instances.iter().enumerate() {
             let instance_idx = self.instances[*glob_idx];
             if let Some(index) = my_air_groups_indices.get(&instance_idx) {
@@ -360,12 +405,9 @@ impl DistributionCtx {
 
         //Calculate for each airgroup how many processes have instances of that airgroup alive
         self.airgroup_instances_alives = vec![vec![0; self.n_processes as usize]; n_airgroups];
-        for (idx, &(group_id, _, _)) in self.instances.iter().enumerate() {
+        for (idx, &(group_id, _, _, _)) in self.instances.iter().enumerate() {
             let owner = self.instances_owner[idx].0;
-            self.airgroup_instances_alives[group_id][owner as usize] += 1;
-            if self.airgroup_instances_alives[group_id][owner as usize] == 3 {
-                self.airgroup_instances_alives[group_id][owner as usize] = 1;
-            }
+            self.airgroup_instances_alives[group_id][owner as usize] = 1;
         }
 
         //Evaluate glob2loc
@@ -394,7 +436,7 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_airgroupvalues<F: Field>(
+    pub fn distribute_airgroupvalues<F: PrimeField64>(
         &self,
         airgroupvalues: Vec<Vec<u64>>,
         _global_info: &GlobalInfo,

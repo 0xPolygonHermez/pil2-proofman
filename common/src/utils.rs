@@ -7,11 +7,12 @@ use tracing::dispatcher;
 use tracing_subscriber::filter::LevelFilter;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use p3_field::Field;
+use fields::PrimeField64;
 use serde::Deserialize;
 use std::fs;
-use sysinfo::{System};
-
+use sysinfo::System;
+use rayon::ThreadPool;
+use rayon::ThreadPoolBuilder;
 use tracing_subscriber::{prelude::*, fmt};
 
 pub fn initialize_logger(verbose_mode: VerboseMode) {
@@ -44,16 +45,16 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
     format!("{:.2} {}", num_bytes, units[unit_index])
 }
 
-pub fn skip_prover_instance<F: Field>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
-    if pctx.options.debug_info.debug_instances.is_empty() {
+pub fn skip_prover_instance<F: PrimeField64>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
+    if pctx.debug_info.read().unwrap().debug_instances.is_empty() {
         return (false, Vec::new());
     }
 
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id, _) = instances[global_idx];
+    let (airgroup_id, air_id, _, _) = instances[global_idx];
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
 
-    if let Some(airgroup_id_map) = pctx.options.debug_info.debug_instances.get(&airgroup_id) {
+    if let Some(airgroup_id_map) = pctx.debug_info.read().unwrap().debug_instances.get(&airgroup_id) {
         if airgroup_id_map.is_empty() {
             return (false, Vec::new());
         } else if let Some(air_id_map) = airgroup_id_map.get(&air_id) {
@@ -218,12 +219,7 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         )
     };
 
-    DebugInfo {
-        debug_instances: airgroup_map.clone(),
-        debug_global_instances: global_constraints,
-        std_mode,
-        save_proofs_to_file: true,
-    }
+    DebugInfo { debug_instances: airgroup_map.clone(), debug_global_instances: global_constraints, std_mode }
 }
 
 pub fn print_memory_usage() {
@@ -237,4 +233,8 @@ pub fn print_memory_usage() {
     } else {
         println!("Could not get process information.");
     }
+}
+
+pub fn create_pool(n_cores: usize) -> ThreadPool {
+    ThreadPoolBuilder::new().num_threads(n_cores).build().unwrap()
 }

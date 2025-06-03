@@ -108,8 +108,7 @@ rm -rf ./pil2-components/test/std/direct_update/build/ \
 && cargo run --bin proofman-cli prove \
      --witness-lib ./target/debug/libdirect_update.so \
      --proving-key ./pil2-components/test/std/direct_update/build/provingKey \
-     --verify-proofs \
-     --output-dir ./pil2-components/test/std/direct_update/build/proofs
+     --output-dir ./pil2-components/test/std/direct_update/build/proofs -y
 ```
 
 ------------------------------------

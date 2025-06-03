@@ -1,4 +1,4 @@
-use p3_field::Field;
+use fields::PrimeField64;
 use crate::{HintCol, HintFieldInfoC, HintFieldInfo, HintFieldOutput, HintFieldValue, HintFieldValues, HintFieldValuesVec};
 use proofman_starks_lib_c::{
     get_hint_field_global_constraints_values_c, get_hint_field_global_constraints_sizes_c,
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use proofman_common::{skip_prover_instance, ExtensionField, ProofCtx, SetupCtx};
 
-pub fn aggregate_airgroupvals<F: Field>(pctx: &ProofCtx<F>, airgroup_values: &[Vec<F>]) -> Vec<Vec<u64>> {
+pub fn aggregate_airgroupvals<F: PrimeField64>(pctx: &ProofCtx<F>, airgroup_values: &[Vec<F>]) -> Vec<Vec<u64>> {
     const FIELD_EXTENSION: usize = 3;
 
     let mut airgroupvalues = Vec::new();
@@ -28,7 +28,7 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: &ProofCtx<F>, airgroup_values: &[V
     let my_instances = pctx.dctx_get_my_instances();
 
     for (my_instance_idx, instance_id) in my_instances.iter().enumerate() {
-        let (airgroup_id, _, _) = instances[*instance_id];
+        let (airgroup_id, _, _, _) = instances[*instance_id];
         for (idx, agg_type) in pctx.global_info.agg_types[airgroup_id].iter().enumerate() {
             let mut acc = ExtensionField {
                 value: [
@@ -75,7 +75,7 @@ pub fn aggregate_airgroupvals<F: Field>(pctx: &ProofCtx<F>, airgroup_values: &[V
     airgroupvalues_u64
 }
 
-fn get_global_hint_f<F: Field>(
+fn get_global_hint_f<F: PrimeField64>(
     pctx: Option<&ProofCtx<F>>,
     sctx: &SetupCtx<F>,
     hint_id: u64,
@@ -116,7 +116,7 @@ fn get_global_hint_f<F: Field>(
         let my_instances = pctx.dctx_get_my_instances();
         for instance_id in my_instances.iter() {
             if !skip_prover_instance(pctx, *instance_id).0 {
-                let (airgroup_id, air_id, _) = instances[*instance_id];
+                let (airgroup_id, air_id, _, _) = instances[*instance_id];
                 let air_instance_id = pctx.dctx_find_air_instance_id(*instance_id);
                 airgroup_values_air_instances.push(pctx.get_air_instance_airgroup_values(
                     airgroup_id,
@@ -151,7 +151,7 @@ fn get_global_hint_f<F: Field>(
     hint_field_values
 }
 
-pub fn get_hint_field_constant_gc<F: Field>(
+pub fn get_hint_field_constant_gc<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
@@ -170,7 +170,7 @@ pub fn get_hint_field_constant_gc<F: Field>(
     HintCol::from_hint_field(&hint_info[0])
 }
 
-pub fn get_hint_field_gc_constant_a<F: Field>(
+pub fn get_hint_field_gc_constant_a<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
@@ -193,7 +193,7 @@ pub fn get_hint_field_gc_constant_a<F: Field>(
     HintFieldValuesVec { values: hint_field_values }
 }
 
-pub fn get_hint_field_constant_gc_m<F: Field>(
+pub fn get_hint_field_constant_gc_m<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     hint_id: u64,
     hint_field_name: &str,
@@ -221,7 +221,7 @@ pub fn get_hint_field_constant_gc_m<F: Field>(
     HintFieldValues { values: hint_field_values }
 }
 
-pub fn get_hint_field_gc<F: Field>(
+pub fn get_hint_field_gc<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     hint_id: u64,
@@ -241,7 +241,7 @@ pub fn get_hint_field_gc<F: Field>(
     HintCol::from_hint_field(&hint_info[0])
 }
 
-pub fn get_hint_field_gc_a<F: Field>(
+pub fn get_hint_field_gc_a<F: PrimeField64>(
     pctx: ProofCtx<F>,
     sctx: SetupCtx<F>,
     hint_id: u64,
@@ -264,7 +264,7 @@ pub fn get_hint_field_gc_a<F: Field>(
     HintFieldValuesVec { values: hint_field_values }
 }
 
-pub fn get_hint_field_gc_m<F: Field>(
+pub fn get_hint_field_gc_m<F: PrimeField64>(
     pctx: ProofCtx<F>,
     sctx: SetupCtx<F>,
     hint_id: u64,
@@ -293,7 +293,7 @@ pub fn get_hint_field_gc_m<F: Field>(
     HintFieldValues { values: hint_field_values }
 }
 
-pub fn set_hint_field_gc<F: Field>(
+pub fn set_hint_field_gc<F: PrimeField64>(
     pctx: ProofCtx<F>,
     sctx: SetupCtx<F>,
     hint_id: u64,

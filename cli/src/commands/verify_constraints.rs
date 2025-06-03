@@ -5,10 +5,10 @@ use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
 
-use p3_goldilocks::Goldilocks;
+use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::ProofOptions;
+use proofman_common::ParamsGPU;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -72,15 +72,23 @@ impl VerifyConstraintsCmd {
             }
         }
 
+        let proofman = ProofMan::<Goldilocks>::new(
+            self.proving_key.clone(),
+            custom_commits_map,
+            true,
+            false,
+            false,
+            ParamsGPU::default(),
+        )?;
+
         match self.field {
-            Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
+            Field::Goldilocks => proofman.verify_proof_constraints(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
                 self.input_data.clone(),
-                self.proving_key.clone(),
                 PathBuf::new(),
-                custom_commits_map,
-                ProofOptions::new(true, self.verbose.into(), false, false, false, debug_info),
+                &debug_info,
+                self.verbose.into(),
             )?,
         };
 

@@ -2,18 +2,21 @@ use std::sync::Arc;
 use proofman_common::load_from_json;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
-use p3_field::PrimeField64;
-use p3_goldilocks::Goldilocks;
+use fields::PrimeField64;
+use fields::Goldilocks;
+use proofman::register_std;
 
-use crate::{BuildPublics, BuildPublicValues, FibonacciSquare, Module};
+use crate::{BuildPublics, BuildPublicValues, FibonacciSquare, Module, FibonacciSquareTrace};
 
 witness_library!(WitnessLib, Goldilocks);
 
 impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
-        let std_lib = Std::new(wcm.clone());
-        let module = Module::new(std_lib.clone());
-        let fibonacci = FibonacciSquare::new(module.clone());
+        let std_lib = Std::new(wcm.get_pctx(), wcm.get_sctx());
+        let module = Module::new(FibonacciSquareTrace::<usize>::NUM_ROWS as u64, std_lib.clone());
+        let fibonacci = FibonacciSquare::new();
+
+        register_std(&wcm, &std_lib);
 
         wcm.register_component(fibonacci.clone());
         wcm.register_component(module.clone());
