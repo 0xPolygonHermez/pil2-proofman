@@ -20,7 +20,7 @@ jobs:
           sudo apt-get install -y openmpi-bin openmpi-common libopenmpi-dev          
 
       - name: cargo test
-        run: cargo test --workspace --features no_lib_link
+        run: cargo test --workspace
   cargo-check:
     name: cargo check
     runs-on: ubuntu-latest
