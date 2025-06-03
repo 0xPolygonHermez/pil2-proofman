@@ -5,7 +5,7 @@ use proofman_starks_lib_c::{
 use std::cmp;
 use proofman_common::{
     get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, ConstraintInfo,
-    GlobalConstraintInfo, ProofCtx, SetupCtx,
+    GlobalConstraintInfo, ProofCtx, SetupCtx, DebugInfo,
 };
 
 use std::os::raw::c_void;
@@ -17,7 +17,7 @@ pub fn verify_constraints<F: PrimeField64>(
     global_id: usize,
 ) -> Vec<ConstraintInfo> {
     let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id, _) = instances[global_id];
+    let (airgroup_id, air_id, _, _) = instances[global_id];
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = pctx.get_air_instance_params(sctx, global_id, false);
@@ -47,6 +47,7 @@ pub fn verify_constraints<F: PrimeField64>(
 pub fn verify_global_constraints_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
+    debug_info: &DebugInfo,
     airgroupvalues: Vec<Vec<F>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("--> Checking global constraints");
@@ -59,9 +60,9 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
     let n_global_constraints = get_n_global_constraints_c(sctx.get_global_bin());
     let mut global_constraints = vec![GlobalConstraintInfo::default(); n_global_constraints as usize];
 
-    if !pctx.options.debug_info.debug_global_instances.is_empty() {
+    if !debug_info.debug_global_instances.is_empty() {
         global_constraints.iter_mut().for_each(|constraint| constraint.skip = true);
-        for constraint_id in &pctx.options.debug_info.debug_global_instances {
+        for constraint_id in &debug_info.debug_global_instances {
             global_constraints[*constraint_id].skip = false;
         }
     }
@@ -124,7 +125,7 @@ pub fn verify_constraints_proof<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &Setu
 
     let constraints = verify_constraints(pctx, sctx, instance_id);
 
-    let (airgroup_id, air_id, _) = instances[instance_id];
+    let (airgroup_id, air_id, _, _) = instances[instance_id];
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
     let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
     let (skip, _) = skip_prover_instance(pctx, instance_id);

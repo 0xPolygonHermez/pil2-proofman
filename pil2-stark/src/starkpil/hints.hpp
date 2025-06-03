@@ -1,3 +1,6 @@
+#ifndef HINTS_HPP
+#define HINTS_HPP
+
 #include "expressions_ctx.hpp"
 
 typedef enum {
@@ -58,28 +61,16 @@ void getHintField(
     HintFieldOptions& hintOptions
 );
 
-uint64_t setHintField(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element* values, uint64_t hintId, std::string hintFieldName, StepsParams * d_params = NULL);
-
 void addHintField(SetupCtx& setupCtx, StepsParams& params, uint64_t hintId, Dest &destStruct, std::string hintFieldName, HintFieldOptions hintFieldOptions);
-
-void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2, void* GPUExpressionsCtx = NULL, StepsParams * d_params = NULL, double *time_expressions = NULL);
 
 void accHintField(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName, bool add);
 
-#ifdef __USE_CUDA__
-void opHintFieldsGPU(StepsParams* d_params, Dest &dest, uint64_t nRows, bool domainExtended, void* GPUExpressionsCtx);
-void allocateDestGPU(Goldilocks::Element**buff, uint64_t size);
-void freeDestGPU(Goldilocks::Element* buff);
-void setPolynomialGPU(SetupCtx& setupCtx, Goldilocks::Element *buffer, Goldilocks::Element *values, uint64_t idPol);
-void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size);
-void copyValueHost( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size);
-void copyValueGPUGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint64_t size);
-void opAirgroupValueGPU(Goldilocks::Element * airgroupValue,  Goldilocks::Element* val, uint32_t dim, bool add);
-
-#endif
+uint64_t setHintField(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element* values, uint64_t hintId, std::string hintFieldName);
+void multiplyHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx& expressionsCtx, uint64_t nHints, uint64_t* hintId, std::string *hintFieldNameDest, std::string* hintFieldName1, std::string* hintFieldName2,  HintFieldOptions *hintOptions1, HintFieldOptions *hintOptions2);
+void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add);
+uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add);
+void accOperation(Goldilocks::Element* vals, uint64_t N, bool add, uint32_t dim);
 
 uint64_t getHintId(SetupCtx& setupCtx, uint64_t hintId, std::string name);
 
-void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx = NULL, StepsParams * d_params= NULL, double *time_expressions = NULL);
-
-uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx = NULL, StepsParams * d_params= NULL, double *time_expressions = NULL);
+#endif

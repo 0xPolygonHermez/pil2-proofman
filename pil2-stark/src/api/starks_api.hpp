@@ -15,13 +15,13 @@
 
     // Stark Info
     // ========================================================================================
-    void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bool verify, bool gpu);
+    void *stark_info_new(char* filename, bool recursive, bool verify_constraints, bool verify, bool gpu, bool preallocate);
     uint64_t get_proof_size(void *pStarkInfo);
     void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3);
     uint64_t get_map_total_n(void *pStarkInfo);
     uint64_t get_const_pols_offset(void *pStarkInfo);
     uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo);
-
+    uint64_t get_tree_size(void *pStarkInfo);
     void stark_info_free(void *pStarkInfo);
 
     // Const Pols
@@ -56,12 +56,13 @@
 
     // Starks
     // ========================================================================================
-    void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void *stepsParams);
-
+    void calculate_impols_expressions(void *pSetupCtx, uint64_t step, void* stepsParams);
+    
+    uint64_t custom_commit_size(void *pSetup, uint64_t commitId);
     void load_custom_commit(void *pSetup, uint64_t commitId, void *buffer, char *customCommitFile);
     void write_custom_commit(void *root, uint64_t N, uint64_t NExtended, uint64_t nCols, void *buffer, char *bufferFile, bool check);
 
-    void commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, void *root, void *trace, void *auxTrace, void *d_buffers);
+    uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint64_t nCols, uint64_t instanceId, void *root, void *trace, void *auxTrace, void *d_buffers,void *pSetupCtx_);
     void calculate_hash(void *pValue, void *pBuffer, uint64_t nElements, uint64_t nOutputs);
 
     // Transcript
@@ -91,11 +92,15 @@
 
     // Gen proof && Recursive Proof
     // =================================================================================
-    void gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t *proofBuffer, char *proofFile, void *d_buffers, bool loadConstants);
-    void gen_recursive_proof(void *pSetupCtx, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *witness, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, uint64_t *proofBuffer, char *proof_file, bool vadcop, void *d_buffers, bool loadConstants);
-    void get_committed_pols(void *circomWitness, char *execFile, void *witness, void *pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
-    void *gen_recursive_proof_final(void *pSetupCtx, char *globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *witness, void *aux_trace, void *pConstPols, void *pConstTree, void *pPublicInputs, char *proof_file);
-
+    uint64_t gen_proof(void *pSetupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void *params, void *globalChallenge, uint64_t* proofBuffer, char *proofFile, void *d_buffers, bool skipRecalculation, uint64_t streamId, char *constPolsPath,  char *constTreePath);
+    uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, uint64_t* proofBuffer, char *proof_file, bool vadcop, void *d_buffers, char *constPolsPath, char *constTreePath, char *proofType);
+    void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols);
+    void get_committed_pols(void *circomWitness, uint64_t* execData, void *witness, void* pPublics, uint64_t sizeWitness, uint64_t N, uint64_t nPublics, uint64_t nCols);
+    void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, void* witness, void* aux_trace, void *pConstPols, void *pConstTree, void* pPublicInputs, char* proof_file);
+    void get_stream_proofs(void *d_buffers_);
+    void get_stream_proofs_non_blocking(void *d_buffers_);
+    void get_stream_id_proof(void *d_buffers_, uint64_t streamId);
+    void add_publics_aggregation(void *pProof, uint64_t offset, void *pPublics, uint64_t nPublicsAggregation);
     // Final proof
     // =================================================================================
     void gen_final_snark_proof(void *circomWitnessFinal, char *zkeyFile, char *outputDir);
@@ -119,11 +124,6 @@
     uint64_t get_omp_max_threads();
     void set_omp_num_threads(uint64_t num_threads);
 
-    // GPU calls
-    // =================================================================================
-    void *gen_device_commit_buffers(void *maxSizes);
-    void gen_device_commit_buffers_free(void *d_buffers);
-
     // Goldilocks calls
     // =================================================================================
     uint64_t goldilocks_add_ffi(const uint64_t *in1, const uint64_t *in2);
@@ -141,4 +141,21 @@
     uint64_t goldilocks_neg_ffi(const uint64_t *in1);
     uint64_t goldilocks_inv_ffi(const uint64_t *in1);
 
+    
+    // GPU calls
+    // =================================================================================
+    void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size);
+    void free_device_buffers(void *d_buffers);
+    void set_device_mpi(uint32_t mpi_node_rank);
+    void set_device(uint32_t gpu_id);
+    void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initial_offset, void *d_buffers, char *constFilename, uint64_t constSize, char *constTreeFilename, uint64_t constTreeSize, char* proofType);
+    void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_);
+    uint64_t gen_device_streams(void *d_buffers, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeThread,  uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSize, uint64_t maxProofPerGPU);
+    uint64_t check_device_memory();
+    
+    typedef void (*ProofDoneCallback)(uint64_t instanceId, const char* proofType);
+    
+    void register_proof_done_callback(ProofDoneCallback cb);
+    void launch_callback(uint64_t instanceId, char *proofType);
+    
 #endif

@@ -1,4 +1,5 @@
 use std::os::raw::c_void;
+use std::str::FromStr;
 
 use fields::PrimeField64;
 use transcript::FFITranscript;
@@ -16,12 +17,54 @@ pub enum ProverStatus {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ProofType {
     #[default]
-    Basic,
+    Basic = 0,
     Compressor,
     Recursive1,
     Recursive2,
     VadcopFinal,
     RecursiveF,
+}
+
+impl ProofType {
+    pub fn as_usize(&self) -> usize {
+        match self {
+            ProofType::Basic => 0,
+            ProofType::Compressor => 1,
+            ProofType::Recursive1 => 2,
+            ProofType::Recursive2 => 3,
+            ProofType::VadcopFinal => 4,
+            ProofType::RecursiveF => 5,
+        }
+    }
+}
+
+impl From<ProofType> for &'static str {
+    fn from(p: ProofType) -> Self {
+        match p {
+            ProofType::Basic => "basic",
+            ProofType::Compressor => "compressor",
+            ProofType::Recursive1 => "recursive1",
+            ProofType::Recursive2 => "recursive2",
+            ProofType::VadcopFinal => "vadcop_final",
+            ProofType::RecursiveF => "recursive_f",
+        }
+    }
+}
+
+impl FromStr for ProofType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "basic" => Ok(ProofType::Basic),
+            "compressor" => Ok(ProofType::Compressor),
+            "recursive1" => Ok(ProofType::Recursive1),
+            "recursive2" => Ok(ProofType::Recursive2),
+            "vadcop_final" => Ok(ProofType::VadcopFinal),
+            "recursive_f" => Ok(ProofType::RecursiveF),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]

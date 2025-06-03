@@ -2,14 +2,22 @@ use libloading::{Library, Symbol};
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use std::ops::Add;
-use proofman_common::{load_const_pols, load_const_pols_tree, CurveType};
+use std::sync::atomic::AtomicUsize;
+use proofman_common::CurveType;
 use proofman_common::{
     calculate_fixed_tree, skip_prover_instance, Proof, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
+    ParamsGPU, DebugInfo, VerboseMode,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{gen_device_commit_buffers_c, gen_device_commit_buffers_free_c};
-use proofman_starks_lib_c::{save_challenges_c, save_proof_values_c, save_publics_c, get_const_offset_c};
+use proofman_starks_lib_c::{gen_device_buffers_c, free_device_buffers_c};
+use proofman_starks_lib_c::{
+    save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
+    get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c,
+};
+use rayon::prelude::*;
+use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
+use std::fs;
 use std::collections::HashMap;
 use std::fs::File;
 use std::fmt::Write;
@@ -17,11 +25,13 @@ use std::io::Read;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
-use std::sync::mpsc::channel;
-use std::sync::atomic::AtomicU64;
+
+use rand::{SeedableRng, seq::SliceRandom};
+use rand::rngs::StdRng;
 
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c, calculate_impols_expressions_c,
+    clear_proof_done_callback_c, launch_callback_c,
 };
 
 use std::{path::PathBuf, sync::Arc};
@@ -29,45 +39,65 @@ use std::{path::PathBuf, sync::Arc};
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
-use crate::{discover_max_sizes, discover_max_sizes_aggregation};
-use crate::{check_paths2, check_tree_paths, check_tree_paths_vadcop, initialize_fixed_pols_tree};
+use crate::{check_tree_paths_vadcop, initialize_fixed_pols_tree};
 use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
-use crate::{verify_constraints_proof, check_paths, print_summary_info, get_recursive_buffer_sizes};
+use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
     gen_witness_recursive, gen_witness_aggregation, generate_recursive_proof, generate_vadcop_final_proof,
-    generate_fflonk_snark_proof, generate_recursivef_proof, total_recursive_proofs, initialize_size_witness,
+    generate_fflonk_snark_proof, generate_recursivef_proof, initialize_witness_circom,
 };
+use crate::total_recursive_proofs;
+use crate::check_tree_paths;
+use crate::Counter;
 use crate::aggregate_recursive2_proofs;
 
 use std::ffi::c_void;
 
 use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info, DeviceBuffer};
 
-pub struct ProofMan<F> {
-    _phantom: std::marker::PhantomData<F>,
+pub struct ProofMan<F: PrimeField64> {
+    pctx: Arc<ProofCtx<F>>,
+    sctx: Arc<SetupCtx<F>>,
+    setups: Arc<SetupsVadcop<F>>,
+    d_buffers: Arc<DeviceBuffer>,
+    trace_size: usize,
+    prover_buffer_size: usize,
+    wcm: Arc<WitnessManager<F>>,
+    gpu_params: ParamsGPU,
+    verify_constraints: bool,
+    aggregation: bool,
+    final_snark: bool,
+    n_streams_per_gpu: u64,
+    n_gpus: u64,
 }
 
+impl<F: PrimeField64> Drop for ProofMan<F> {
+    fn drop(&mut self) {
+        free_device_buffers_c(self.d_buffers.get_ptr());
+    }
+}
 impl<F: PrimeField64> ProofMan<F>
 where
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
-    pub fn check_setup(proving_key_path: PathBuf, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn check_setup(
+        proving_key_path: PathBuf,
+        aggregation: bool,
+        final_snark: bool,
+        gpu_params: ParamsGPU,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
             return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
         }
 
-        let pctx = ProofCtx::<F>::create_ctx(proving_key_path.clone(), HashMap::new(), options);
+        let pctx = ProofCtx::<F>::create_ctx(proving_key_path.clone(), HashMap::new(), aggregation, final_snark);
 
-        let setups_aggregation = Arc::new(SetupsVadcop::<F>::new(
-            &pctx.global_info,
-            false,
-            pctx.options.aggregation,
-            pctx.options.final_snark,
-        ));
+        let setups_aggregation =
+            Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, final_snark));
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false);
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, gpu_params.preallocate);
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -75,7 +105,7 @@ where
             }
         }
 
-        if pctx.options.aggregation {
+        if aggregation {
             let sctx_compressor = setups_aggregation.sctx_compressor.as_ref().unwrap();
             for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
                 for (air_id, _) in air_group.iter().enumerate() {
@@ -101,7 +131,7 @@ where
             let setup_vadcop_final = setups_aggregation.setup_vadcop_final.as_ref().unwrap();
             calculate_fixed_tree(setup_vadcop_final);
 
-            if pctx.options.final_snark {
+            if final_snark {
                 let setup_recursivef = setups_aggregation.setup_recursivef.as_ref().unwrap();
                 calculate_fixed_tree(setup_recursivef);
             }
@@ -110,64 +140,199 @@ where
         Ok(())
     }
 
-    pub fn verify_proof_constraints(
+    pub fn compute_witness(
+        &self,
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
-        proving_key_path: PathBuf,
-        output_dir_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
-        options: ProofOptions,
+        debug_info: &DebugInfo,
+        verbose_mode: VerboseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        check_paths(
-            &witness_lib_path,
-            &public_inputs_path,
-            &input_data_path,
-            &proving_key_path,
-            &output_dir_path,
-            options.verify_constraints,
-        )?;
+        timer_start_info!(CREATE_WITNESS_LIB);
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(verbose_mode)?;
+        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
-        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.wcm.set_input_data_path(input_data_path);
+        self.pctx.set_debug_info(debug_info.clone());
 
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), public_inputs_path, input_data_path));
+        self.register_witness(&mut *witness_lib, library);
 
-        Self::init_witness_lib(witness_lib_path, &pctx, wcm.clone())?;
+        self.compute_witness_()
+    }
 
-        Self::_verify_proof_constraints(pctx, sctx, wcm)
+    /// Computes only the witness without generating a proof neither verifying constraints.
+    /// This is useful for debugging or benchmarking purposes.
+    pub fn compute_witness_from_lib(
+        &self,
+        input_data_path: Option<PathBuf>,
+        debug_info: &DebugInfo,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.pctx.set_debug_info(debug_info.clone());
+        self.wcm.set_input_data_path(input_data_path);
+        self.compute_witness_()
+    }
+
+    pub fn compute_witness_(&self) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(EXECUTE);
+
+        if !self.wcm.is_init_witness() {
+            println!("Witness computation dynamic library not initialized");
+            return Err("Witness computation dynamic library not initialized".into());
+        }
+
+        self.pctx.dctx_reset();
+
+        self.wcm.execute();
+
+        self.pctx.dctx_assign_instances();
+        self.pctx.dctx_close();
+
+        print_summary_info(&self.pctx, &self.sctx);
+
+        timer_stop_and_log_info!(EXECUTE);
+
+        self.pctx.set_global_challenge(2, &[F::ZERO; 3]);
+
+        let instances = self.pctx.dctx_get_instances();
+        let my_instances = self.pctx.dctx_get_my_instances();
+        let mut my_instances_sorted = my_instances.clone();
+        let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
+        my_instances_sorted.shuffle(&mut rng);
+        let instances_mine = my_instances.len();
+        let instances_mine_all = instances
+            .iter()
+            .enumerate()
+            .filter(|(id, (_, _, all, _))| *all && self.pctx.dctx_is_my_instance(*id))
+            .count();
+        let instances_mine_no_all = instances_mine - instances_mine_all;
+        // define managment channels and counters
+
+        let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let n_threads_per_pool = 8;
+        let (threads_per_pool, max_concurrent_pools) = match cfg!(feature = "gpu") {
+            true => (n_threads_per_pool, max_num_threads / n_threads_per_pool),
+            false => (max_num_threads, 1),
+        };
+
+        let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
+        let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
+
+        for pool_id in 0..max_concurrent_pools {
+            tx_pools.send(pool_id).unwrap();
+        }
+
+        let mut handles = vec![];
+
+        timer_start_info!(COMPUTE_WITNESS);
+        // evaluate my instances except those of type "all" and launch their contribution evaluations
+        for &instance_id in my_instances_sorted.iter() {
+            let instances = instances.clone();
+            let (_, _, all, _) = instances[instance_id];
+            if all {
+                continue;
+            }
+
+            let pctx_clone = self.pctx.clone();
+            let tx_pools_clone = tx_pools.clone();
+            let tx_witness_clone = tx_witness.clone();
+            let wcm = self.wcm.clone();
+
+            let pool_id = rx_pools.recv().unwrap();
+
+            let handle = std::thread::spawn(move || {
+                wcm.calculate_witness(1, &[instance_id], threads_per_pool);
+                tx_pools_clone.send(pool_id).unwrap();
+                tx_witness_clone.send(()).unwrap();
+                pctx_clone.free_instance(instance_id);
+            });
+            handles.push(handle);
+        }
+
+        // syncronize to the non-all witnesses being evaluated
+        for _ in 0..instances_mine_no_all {
+            rx_witness.recv().unwrap();
+        }
+        timer_stop_and_log_info!(COMPUTE_WITNESS);
+
+        Ok(())
+    }
+    pub fn verify_proof_constraints(
+        &self,
+        witness_lib_path: PathBuf,
+        public_inputs_path: Option<PathBuf>,
+        input_data_path: Option<PathBuf>,
+        output_dir_path: PathBuf,
+        debug_info: &DebugInfo,
+        verbose_mode: VerboseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Check witness_lib path exists
+        if !witness_lib_path.exists() {
+            return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
+        }
+
+        // Check input data path
+        if let Some(ref input_data_path) = input_data_path {
+            if !input_data_path.exists() {
+                return Err(format!("Input data file not found at path: {:?}", input_data_path).into());
+            }
+        }
+
+        // Check public_inputs_path is a folder
+        if let Some(ref publics_path) = public_inputs_path {
+            if !publics_path.exists() {
+                return Err(format!("Public inputs file not found at path: {:?}", publics_path).into());
+            }
+        }
+
+        if !output_dir_path.exists() {
+            fs::create_dir_all(&output_dir_path)
+                .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
+        }
+
+        timer_start_info!(CREATE_WITNESS_LIB);
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(verbose_mode)?;
+        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
+
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.wcm.set_input_data_path(input_data_path);
+
+        self.register_witness(&mut *witness_lib, library);
+
+        self._verify_proof_constraints(debug_info)
     }
 
     pub fn verify_proof_constraints_from_lib(
-        witness_lib: &mut dyn WitnessLibrary<F>,
-        proving_key_path: PathBuf,
-        output_dir_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
-        options: ProofOptions,
+        &self,
+        input_data_path: Option<PathBuf>,
+        debug_info: &DebugInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
+        self.wcm.set_input_data_path(input_data_path);
 
-        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
-
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
-
-        witness_lib.register_witness(wcm.clone());
-
-        Self::_verify_proof_constraints(pctx, sctx, wcm)
+        self._verify_proof_constraints(debug_info)
     }
 
-    fn _verify_proof_constraints(
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        wcm: Arc<WitnessManager<F>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn _verify_proof_constraints(&self, debug_info: &DebugInfo) -> Result<(), Box<dyn std::error::Error>> {
+        self.pctx.dctx_reset();
+
+        self.pctx.set_debug_info(debug_info.clone());
+
+        if !self.wcm.is_init_witness() {
+            return Err("Witness computation dynamic library not initialized".into());
+        }
+
         timer_start_info!(EXECUTE);
-        wcm.execute();
+        self.wcm.execute();
         timer_stop_and_log_info!(EXECUTE);
 
-        pctx.dctx_assign_instances();
-        pctx.dctx_close();
+        self.pctx.dctx_assign_instances();
+        self.pctx.dctx_close();
 
-        print_summary_info(&pctx, &sctx);
+        print_summary_info(&self.pctx, &self.sctx);
 
         let transcript = FFITranscript::new(2, true);
         let dummy_element = [F::ZERO, F::ONE, F::TWO, F::NEG_ONE];
@@ -175,23 +340,26 @@ where
 
         let global_challenge = [F::ZERO; 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
-        pctx.set_global_challenge(2, &global_challenge);
+        self.pctx.set_global_challenge(2, &global_challenge);
         transcript.add_elements(dummy_element.as_ptr() as *mut u8, 4);
 
-        let instances = pctx.dctx_get_instances();
-        let airgroup_values_air_instances = Arc::new(Mutex::new(Vec::new()));
+        let instances = self.pctx.dctx_get_instances();
+        let my_instances = self.pctx.dctx_get_my_instances();
+        let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
         let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        for (instance_id, (airgroup_id, air_id, all)) in instances.iter().enumerate() {
-            let is_my_instance = pctx.dctx_is_my_instance(instance_id);
-            let (skip, _) = skip_prover_instance(&pctx, instance_id);
+        for (instance_id, (airgroup_id, air_id, all, _)) in instances.iter().enumerate() {
+            let is_my_instance = self.pctx.dctx_is_my_instance(instance_id);
+            let (skip, _) = skip_prover_instance(&self.pctx, instance_id);
 
             if skip || (!all && !is_my_instance) {
                 continue;
             };
 
-            wcm.calculate_witness(1, &[instance_id]);
+            let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+
+            self.wcm.calculate_witness(1, &[instance_id], max_num_threads);
 
             // Join the previous thread (if any) before starting a new one
             if let Some(handle) = thread_handle.take() {
@@ -200,15 +368,16 @@ where
 
             thread_handle = is_my_instance.then(|| {
                 Self::verify_proof_constraints_stage(
-                    pctx.clone(),
-                    sctx.clone(),
-                    wcm.clone(),
+                    self.pctx.clone(),
+                    self.sctx.clone(),
+                    self.wcm.clone(),
                     valid_constraints.clone(),
                     airgroup_values_air_instances.clone(),
                     instance_id,
                     *airgroup_id,
                     *air_id,
-                    pctx.dctx_find_air_instance_id(instance_id),
+                    self.pctx.dctx_find_air_instance_id(instance_id),
+                    debug_info,
                 )
             });
         }
@@ -217,19 +386,20 @@ where
             handle.join().unwrap()
         }
 
-        wcm.end();
+        self.wcm.end(debug_info);
 
-        let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
-            || !pctx.options.debug_info.debug_global_instances.is_empty();
+        let check_global_constraints =
+            debug_info.debug_instances.is_empty() || !debug_info.debug_global_instances.is_empty();
 
         if check_global_constraints {
             let airgroup_values_air_instances =
                 Arc::try_unwrap(airgroup_values_air_instances).unwrap().into_inner().unwrap();
-            let airgroupvalues_u64 = aggregate_airgroupvals(&pctx, &airgroup_values_air_instances);
-            let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+            let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
+            let airgroupvalues = self.pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
 
-            if pctx.dctx_get_rank() == 0 {
-                let valid_global_constraints = verify_global_constraints_proof(&pctx, &sctx, airgroupvalues);
+            if self.pctx.dctx_get_rank() == 0 {
+                let valid_global_constraints =
+                    verify_global_constraints_proof(&self.pctx, &self.sctx, debug_info, airgroupvalues);
 
                 if valid_constraints.load(Ordering::Relaxed) && valid_global_constraints.is_ok() {
                     return Ok(());
@@ -253,7 +423,9 @@ where
         airgroup_id: usize,
         air_id: usize,
         air_instance_id: usize,
+        debug_info: &DebugInfo,
     ) -> std::thread::JoinHandle<()> {
+        let debug_info = debug_info.clone();
         std::thread::spawn(move || {
             Self::initialize_air_instance(&pctx, &sctx, instance_id, true);
 
@@ -266,711 +438,1138 @@ where
                 }
             }
 
-            wcm.calculate_witness(2, &[instance_id]);
+            let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+            wcm.calculate_witness(2, &[instance_id], max_num_threads);
             Self::calculate_im_pols(2, &sctx, &pctx, instance_id);
 
-            wcm.debug(&[instance_id]);
+            wcm.debug(&[instance_id], &debug_info);
 
-            if pctx.options.verify_constraints {
-                let valid = verify_constraints_proof(&pctx, &sctx, instance_id);
-                if !valid {
-                    valid_constraints.fetch_and(valid, Ordering::Relaxed);
-                }
+            let valid = verify_constraints_proof(&pctx, &sctx, instance_id);
+            if !valid {
+                valid_constraints.fetch_and(valid, Ordering::Relaxed);
             }
 
-            airgroup_values_air_instances.lock().unwrap().push(pctx.get_air_instance_airgroup_values(
-                airgroup_id,
-                air_id,
-                air_instance_id,
-            ));
+            let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
+            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
             pctx.free_instance(instance_id);
         })
     }
 
     pub fn generate_proof(
+        &self,
         witness_lib_path: PathBuf,
         public_inputs_path: Option<PathBuf>,
         input_data_path: Option<PathBuf>,
-        proving_key_path: PathBuf,
-        output_dir_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
+        verbose_mode: VerboseMode,
         options: ProofOptions,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        check_paths(
-            &witness_lib_path,
-            &public_inputs_path,
-            &input_data_path,
-            &proving_key_path,
-            &output_dir_path,
-            options.verify_constraints,
-        )?;
+        // Check witness_lib path exists
+        if !witness_lib_path.exists() {
+            return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
+        }
 
-        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
+        // Check input data path
+        if let Some(ref input_data_path) = input_data_path {
+            if !input_data_path.exists() {
+                return Err(format!("Input data file not found at path: {:?}", input_data_path).into());
+            }
+        }
 
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), public_inputs_path, input_data_path));
+        // Check public_inputs_path is a folder
+        if let Some(ref publics_path) = public_inputs_path {
+            if !publics_path.exists() {
+                return Err(format!("Public inputs file not found at path: {:?}", publics_path).into());
+            }
+        }
 
-        Self::init_witness_lib(witness_lib_path, &pctx, wcm.clone())?;
+        if !options.output_dir_path.exists() {
+            fs::create_dir_all(&options.output_dir_path)
+                .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
+        }
 
-        Self::_generate_proof(output_dir_path, pctx, sctx, wcm)
+        timer_start_info!(CREATE_WITNESS_LIB);
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(verbose_mode)?;
+        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
+
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.wcm.set_input_data_path(input_data_path);
+
+        self.register_witness(&mut *witness_lib, library);
+
+        self._generate_proof(options)
     }
 
     pub fn generate_proof_from_lib(
-        witness_lib: &mut dyn WitnessLibrary<F>,
-        proving_key_path: PathBuf,
-        output_dir_path: PathBuf,
-        custom_commits_fixed: HashMap<String, PathBuf>,
+        &self,
+        input_data_path: Option<PathBuf>,
         options: ProofOptions,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        check_paths2(&proving_key_path, &output_dir_path, options.verify_constraints)?;
+        if !options.output_dir_path.exists() {
+            fs::create_dir_all(&options.output_dir_path)
+                .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
+        }
 
-        let (pctx, sctx) = Self::initialize_proofman(proving_key_path, custom_commits_fixed, options)?;
-
-        timer_start_info!(REGISTERING_WITNESS);
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
-        witness_lib.register_witness(wcm.clone());
-        timer_stop_and_log_info!(REGISTERING_WITNESS);
-
-        Self::_generate_proof(output_dir_path, pctx, sctx, wcm)
+        self.wcm.set_input_data_path(input_data_path);
+        self._generate_proof(options)
     }
 
-    fn _generate_proof(
-        output_dir_path: PathBuf,
-        pctx: Arc<ProofCtx<F>>,
-        sctx: Arc<SetupCtx<F>>,
-        wcm: Arc<WitnessManager<F>>,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    pub fn new(
+        proving_key_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        verify_constraints: bool,
+        aggregation: bool,
+        final_snark: bool,
+        gpu_params: ParamsGPU,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        timer_start_info!(INIT_PROOFMAN);
+
+        // Check proving_key_path exists
+        if !proving_key_path.exists() {
+            return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
+        }
+
+        // Check proving_key_path is a folder
+        if !proving_key_path.is_dir() {
+            return Err(format!("Proving key parameter must be a folder: {:?}", proving_key_path).into());
+        }
+
+        let (pctx, sctx, setups_vadcop) = Self::initialize_proofman(
+            proving_key_path,
+            custom_commits_fixed,
+            verify_constraints,
+            aggregation,
+            final_snark,
+            &gpu_params,
+        )?;
+
+        let (d_buffers, n_streams_per_gpu, n_gpus) =
+            Self::prepare_gpu(pctx.clone(), sctx.clone(), setups_vadcop.clone(), aggregation, &gpu_params);
+
+        let (trace_size, prover_buffer_size) =
+            if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
+
+        if !verify_constraints {
+            initialize_fixed_pols_tree(
+                &pctx,
+                &sctx,
+                &setups_vadcop,
+                d_buffers.clone(),
+                aggregation,
+                final_snark,
+                &gpu_params,
+            );
+        }
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
+
+        timer_stop_and_log_info!(INIT_PROOFMAN);
+
+        Ok(Self {
+            pctx,
+            sctx,
+            wcm,
+            setups: setups_vadcop,
+            d_buffers,
+            trace_size,
+            prover_buffer_size,
+            gpu_params,
+            aggregation,
+            final_snark,
+            verify_constraints,
+            n_streams_per_gpu,
+            n_gpus,
+        })
+    }
+
+    pub fn register_witness(&self, witness_lib: &mut dyn WitnessLibrary<F>, library: Library) {
+        timer_start_info!(REGISTERING_WITNESS);
+        witness_lib.register_witness(self.wcm.clone());
+        self.wcm.set_init_witness(true, library);
+        timer_stop_and_log_info!(REGISTERING_WITNESS);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn _generate_proof(&self, options: ProofOptions) -> Result<Option<String>, Box<dyn std::error::Error>> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOFS);
 
-        let pctx_clone = pctx.clone();
-        let setup_aggregation_handle = std::thread::spawn(move || {
-            SetupsVadcop::new(
-                &pctx_clone.global_info,
-                pctx_clone.options.verify_constraints,
-                pctx_clone.options.aggregation,
-                pctx_clone.options.final_snark,
-            )
-        });
-
         timer_start_info!(EXECUTE);
-        wcm.execute();
-        timer_stop_and_log_info!(EXECUTE);
 
-        pctx.dctx_assign_instances();
-        pctx.dctx_close();
-
-        print_summary_info(&pctx, &sctx);
-
-        timer_start_info!(CALCULATING_CONTRIBUTIONS);
-
-        let instances = pctx.dctx_get_instances();
-        let my_instances = pctx.dctx_get_my_instances();
-        let my_air_groups = pctx.dctx_get_my_air_groups();
-
-        let values = Arc::new(Mutex::new(vec![0; my_instances.len() * 10]));
-
-        let mut prover_buffer_size = 0;
-        for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
-            for (air_id, _) in air_group.iter().enumerate() {
-                let setup = sctx.get_setup(airgroup_id, air_id);
-                if setup.prover_buffer_size > prover_buffer_size {
-                    prover_buffer_size = setup.prover_buffer_size;
-                }
-            }
+        if !self.wcm.is_init_witness() {
+            println!("Witness computation dynamic library not initialized");
+            return Err("Witness computation dynamic library not initialized".into());
         }
 
+        if self.verify_constraints {
+            return Err("Proofman has been initialized in verify_constraints mode".into());
+        }
+
+        if options.aggregation && !self.aggregation {
+            return Err("Proofman has not been initialized in aggregation mode".into());
+        }
+
+        if options.final_snark && !self.final_snark {
+            return Err("Proofman has not been initialized in final snark mode".into());
+        }
+
+        self.pctx.dctx_reset();
+
+        self.wcm.execute();
+
+        self.pctx.dctx_assign_instances();
+        self.pctx.dctx_close();
+
+        print_summary_info(&self.pctx, &self.sctx);
+
+        timer_stop_and_log_info!(EXECUTE);
+
+        timer_start_info!(CALCULATING_CONTRIBUTIONS);
+        let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
+
+        let instances = self.pctx.dctx_get_instances();
+        let my_instances = self.pctx.dctx_get_my_instances();
+        let mut my_instances_sorted = my_instances.clone();
+        my_instances_sorted.shuffle(&mut rng);
+
+        let instances_mine = my_instances.len();
+        let instances_mine_all = instances
+            .iter()
+            .enumerate()
+            .filter(|(id, (_, _, all, _))| *all && self.pctx.dctx_is_my_instance(*id))
+            .count();
+        let instances_mine_no_all = instances_mine - instances_mine_all;
+
+        let values_contributions: Arc<Vec<Mutex<Vec<F>>>> =
+            Arc::new((0..instances.len()).map(|_| Mutex::new(Vec::<F>::new())).collect());
+
+        let roots_contributions: Arc<Vec<Mutex<[F; 4]>>> =
+            Arc::new((0..instances.len()).map(|_| Mutex::new([F::default(); 4])).collect());
+
         let aux_trace_size = match cfg!(feature = "gpu") {
-            true => sctx.max_const_tree_size + sctx.max_const_size,
-            false => prover_buffer_size as usize,
+            true => 0,
+            false => self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size),
         };
-        let aux_trace = Arc::new(create_buffer_fast(aux_trace_size));
+        let const_pols_size = match cfg!(feature = "gpu") {
+            true => 0,
+            false => self.sctx.max_const_size.max(self.setups.max_const_size),
+        };
+        let const_tree_size = match cfg!(feature = "gpu") {
+            true => 0,
+            false => self.sctx.max_const_tree_size.max(self.setups.max_const_tree_size),
+        };
+        let aux_trace: Arc<Vec<F>> = Arc::new(create_buffer_fast(aux_trace_size));
+        let const_pols: Arc<Vec<F>> = Arc::new(create_buffer_fast(const_pols_size));
+        let const_tree: Arc<Vec<F>> = Arc::new(create_buffer_fast(const_tree_size));
 
-        let max_sizes = discover_max_sizes(&pctx, &sctx);
-        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
-        let d_buffers = Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_ptr))));
-
-        let (tx, rx) = channel::<usize>();
-        let max_pending_proofs = match cfg!(feature = "gpu") {
-            true => 3,
+        let max_witness_stored = match cfg!(feature = "gpu") {
+            true => instances_mine.min(self.gpu_params.max_witness_stored),
             false => 1,
         };
 
-        let proof_count = Arc::new(AtomicU64::new(0)); // shared between threads
-
-        let proof_count_clone = Arc::clone(&proof_count);
-        let pctx_clone = pctx.clone();
-        let sctx_clone = sctx.clone();
-        let aux_trace_clone = aux_trace.clone();
-        let values_clone = values.clone();
-        let d_buffers_clone = d_buffers.clone();
-
-        let proof_thread = std::thread::spawn(move || {
-            while let Ok(instance_id) = rx.recv() {
-                let handle = Self::get_contribution(
-                    instance_id,
-                    pctx_clone.clone(),
-                    sctx_clone.clone(),
-                    aux_trace_clone.clone(),
-                    values_clone.clone(),
-                    d_buffers_clone.clone(),
-                );
-
-                handle.join().unwrap();
-                proof_count_clone.fetch_sub(1, Ordering::SeqCst); // mark one as done
+        let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let (threads_per_pool, max_concurrent_pools) = match cfg!(feature = "gpu") {
+            true => {
+                let max_concurrent_pools = self
+                    .gpu_params
+                    .max_number_witness_pools
+                    .min(max_num_threads / self.gpu_params.number_threads_pools_witness)
+                    .min(max_witness_stored);
+                (self.gpu_params.number_threads_pools_witness, max_concurrent_pools)
             }
-        });
+            false => (max_num_threads, 1),
+        };
 
-        for (instance_id, (_, _, all)) in instances.iter().enumerate() {
-            if !all && !pctx.dctx_is_my_instance(instance_id) {
-                continue;
-            }
+        let n_proof_threads = match cfg!(feature = "gpu") {
+            true => self.n_gpus,
+            false => 1,
+        };
 
-            while proof_count.load(Ordering::SeqCst) >= max_pending_proofs {
-                std::hint::spin_loop();
-            }
+        let n_streams = self.n_streams_per_gpu * n_proof_threads;
+        let streams = Arc::new(Mutex::new(vec![None; n_streams as usize]));
 
-            wcm.calculate_witness(1, &[instance_id]);
+        // define managment channels and counters
+        let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
+        let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
 
-            if !pctx.dctx_is_my_instance(instance_id) {
-                continue;
-            }
-
-            tx.send(instance_id).unwrap();
-            proof_count.fetch_add(1, Ordering::SeqCst);
+        for pool_id in 0..max_concurrent_pools {
+            tx_pools.send(pool_id).unwrap();
         }
 
-        drop(tx);
-        proof_thread.join().unwrap();
+        let witnesses_done = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![];
 
-        let values_challenge = Arc::try_unwrap(values).unwrap().into_inner().unwrap();
+        timer_start_info!(CALCULATING_WITNESS);
+
+        // evaluate my instances except those of type "all" and launch their contribution evaluations
+        for &instance_id in my_instances_sorted.iter() {
+            let instances = instances.clone();
+            let (_, _, all, _) = instances[instance_id];
+            if all {
+                continue;
+            }
+
+            let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let values_contributions_clone = values_contributions.clone();
+            let roots_contributions_clone = roots_contributions.clone();
+            let d_buffers_clone = self.d_buffers.clone();
+            let aux_trace_clone = aux_trace.clone();
+            let streams_clone = streams.clone();
+            let tx_pools_clone = tx_pools.clone();
+            let tx_witness_clone = tx_witness.clone();
+            let wcm = self.wcm.clone();
+            let witnesses_done_clone = witnesses_done.clone();
+
+            let pool_id = rx_pools.recv().unwrap();
+
+            let handle = std::thread::spawn(move || {
+                wcm.calculate_witness(1, &[instance_id], threads_per_pool);
+                tx_pools_clone.send(pool_id).unwrap();
+                tx_witness_clone.send(()).unwrap();
+                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
+
+                Self::get_contribution_air(
+                    &pctx_clone,
+                    &sctx_clone,
+                    roots_contributions_clone.clone(),
+                    values_contributions_clone.clone(),
+                    instance_id,
+                    aux_trace_clone.clone().as_ptr() as *mut u8,
+                    d_buffers_clone.clone(),
+                    streams_clone.clone(),
+                );
+
+                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) > max_witness_stored {
+                    pctx_clone.free_instance_traces(instance_id);
+                }
+            });
+            if cfg!(not(feature = "gpu")) {
+                handle.join().unwrap();
+            } else {
+                handles.push(handle);
+            }
+        }
+
+        // syncronize to the non-all witnesses being evaluated
+        for _ in 0..instances_mine_no_all {
+            rx_witness.recv().unwrap();
+        }
+
+        timer_stop_and_log_info!(CALCULATING_WITNESS);
+
+        timer_start_info!(CALCULATING_TABLES);
+
+        //evalutate witness for instances of type "all"
+        for (instance_id, (_, _, all, _)) in instances.iter().enumerate() {
+            if !*all {
+                continue;
+            };
+            self.wcm.calculate_witness(1, &[instance_id], max_num_threads);
+            if self.pctx.dctx_is_my_instance(instance_id) {
+                Self::get_contribution_air(
+                    &self.pctx,
+                    &self.sctx,
+                    roots_contributions.clone(),
+                    values_contributions.clone(),
+                    instance_id,
+                    aux_trace.clone().as_ptr() as *mut u8,
+                    self.d_buffers.clone(),
+                    streams.clone(),
+                );
+            }
+        }
+
+        timer_stop_and_log_info!(CALCULATING_TABLES);
+
+        // ensure all threads have finishes, this ensures all contributions have been launched
+        if cfg!(feature = "gpu") {
+            for handle in handles {
+                handle.join().unwrap();
+            }
+        }
+
+        // get roots still in the streams
+        get_stream_proofs_c(self.d_buffers.get_ptr());
+
+        //calculate-challenge
+        Self::calculate_global_challenge(&self.pctx, roots_contributions, values_contributions);
 
         timer_stop_and_log_info!(CALCULATING_CONTRIBUTIONS);
 
-        Self::calculate_global_challenge(&pctx, values_challenge);
+        timer_start_info!(GENERATING_INNER_PROOFS);
 
-        let setups = Arc::new(setup_aggregation_handle.join().unwrap());
+        let n_airgroups = self.pctx.global_info.air_groups.len();
 
-        let mut init_const_tree_handle = if pctx.options.aggregation {
-            check_tree_paths_vadcop(&pctx, &setups)?;
+        let mut proofs: Vec<RwLock<Proof<F>>> = Vec::new();
+        let compressor_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..instances.len()).map(|_| RwLock::new(None)).collect());
+        let recursive1_proofs: Arc<Vec<RwLock<Option<Proof<F>>>>> =
+            Arc::new((0..instances.len()).map(|_| RwLock::new(None)).collect());
+        let recursive2_proofs: Arc<Vec<RwLock<Vec<Proof<F>>>>> =
+            Arc::new((0..n_airgroups).map(|_| RwLock::new(Vec::new())).collect());
+        let recursive2_proofs_ongoing: Arc<RwLock<Vec<Option<Proof<F>>>>> = Arc::new(RwLock::new(Vec::new()));
 
-            let setups_clone = setups.clone();
-            let pctx_clone = pctx.clone();
-            Some(std::thread::spawn(move || {
-                initialize_fixed_pols_tree(&pctx_clone.clone(), &setups_clone);
-            }))
-        } else {
-            None
+        let vec_streams: Vec<Option<u64>> = {
+            let mut guard = streams.lock().unwrap();
+            std::mem::take(&mut *guard)
         };
 
-        if pctx.options.aggregation {
-            initialize_size_witness(&pctx, &setups)?;
+        let mut n_airgroup_proofs = vec![0; n_airgroups];
+        for (instance_id, (airgroup_id, air_id, _, _)) in instances.iter().enumerate() {
+            if self.pctx.dctx_is_my_instance(instance_id) {
+                n_airgroup_proofs[*airgroup_id] += 1;
+            }
+            let setup = self.sctx.get_setup(*airgroup_id, *air_id);
+            let proof = create_buffer_fast(setup.proof_size as usize);
+            proofs.push(RwLock::new(Proof::new(ProofType::Basic, *airgroup_id, *air_id, Some(instance_id), proof)));
         }
 
-        timer_start_info!(GENERATING_BASIC_PROOFS);
+        let proofs = Arc::new(proofs);
 
-        let proofs = Arc::new(RwLock::new(vec![Proof::default(); my_instances.len()]));
-        let airgroup_values_air_instances = Arc::new(Mutex::new(vec![Vec::new(); my_instances.len()]));
-
-        let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
-
-        let mut recursive_witness = vec![None; my_instances.len()];
-        let mut previous_instance_id = None;
-        for idx in 0..my_air_groups.len() {
-            let idx = (pctx.dctx_get_rank() + idx) % my_air_groups.len();
-            let air_groups = &my_air_groups[idx];
-            let mut gen_const_tree = true;
-            for my_instance_id in air_groups.iter() {
-                let instance_id = my_instances[*my_instance_id];
-                let (airgroup_id, air_id, all) = instances[instance_id];
-
-                if !all {
-                    wcm.calculate_witness(1, &[instance_id]);
+        if options.aggregation {
+            for (airgroup, &n_proofs) in n_airgroup_proofs.iter().enumerate().take(n_airgroups) {
+                let n_recursive2_proofs = total_recursive_proofs(n_proofs);
+                if n_recursive2_proofs.has_remaining {
+                    let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2);
+                    let publics_aggregation = 1 + 4 * self.pctx.global_info.agg_types[airgroup].len() + 10;
+                    let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                    let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
+                    recursive2_proofs[airgroup].write().unwrap().push(null_proof);
                 }
+            }
+        }
+        let recursive2_proofs = Arc::new(recursive2_proofs);
 
-                // Join the previous thread (if any) before starting a new one
-                if let Some(handle) = thread_handle.take() {
-                    handle.join().unwrap();
-                }
+        let proofs_pending = Arc::new(Counter::new());
 
-                thread_handle = Some(Self::generate_proof_thread(
-                    proofs.clone(),
-                    pctx.clone(),
-                    sctx.clone(),
-                    instance_id,
-                    airgroup_id,
-                    air_id,
-                    output_dir_path.clone(),
-                    aux_trace.clone(),
-                    airgroup_values_air_instances.clone(),
-                    gen_const_tree,
-                    d_buffers.clone(),
-                ));
+        let basic_proofs_threshold = (instances_mine - n_streams as usize).max(1);
+        let basic_proofs_done = Arc::new(Counter::new_with_threshold(basic_proofs_threshold));
 
-                if previous_instance_id.is_some() {
-                    if pctx.options.aggregation {
-                        let proof =
-                            proofs.read().unwrap()[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())].clone();
-                        let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
-                        recursive_witness[pctx.dctx_get_instance_idx(previous_instance_id.unwrap())] = Some(witness);
+        let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
+        register_proof_done_callback_c(recursive_tx.clone());
+
+        let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+        let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
+
+        for _ in 0..n_streams {
+            let pctx_clone = self.pctx.clone();
+            let setups_clone = self.setups.clone();
+            let proofs_clone = proofs.clone();
+            let compressor_proofs_clone = compressor_proofs.clone();
+            let recursive1_proofs_clone = recursive1_proofs.clone();
+            let recursive2_proofs_clone = recursive2_proofs.clone();
+            let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
+            let proofs_pending_clone = proofs_pending.clone();
+            let basic_proofs_done_clone = basic_proofs_done.clone();
+            let instances_clone = instances.clone();
+            let rec1_witness_tx_clone = rec1_witness_tx.clone();
+            let rec2_witness_tx_clone = rec2_witness_tx.clone();
+            let compressor_witness_tx_clone = compressor_witness_tx.clone();
+            let recursive_rx_clone = recursive_rx.clone();
+            let _ = std::thread::spawn(move || {
+                while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
+                    let p: ProofType = proof_type.parse().unwrap();
+                    if p == ProofType::Basic {
+                        basic_proofs_done_clone.increment();
                     }
-                    let pctx_clone = pctx.clone();
-                    let instance_id = previous_instance_id.unwrap();
-                    std::thread::spawn(move || {
-                        pctx_clone.free_instance(instance_id);
-                    });
-                }
+                    if !options.aggregation {
+                        proofs_pending_clone.decrement();
+                        continue;
+                    }
+                    let pctx_clone = pctx_clone.clone();
+                    let setups_clone = setups_clone.clone();
 
-                previous_instance_id = Some(instance_id);
-                gen_const_tree = false;
+                    let proofs_clone = proofs_clone.clone();
+                    let compressor_proofs_clone = compressor_proofs_clone.clone();
+                    let recursive1_proofs_clone = recursive1_proofs_clone.clone();
+                    let recursive2_proofs_clone = recursive2_proofs_clone.clone();
+                    let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing_clone.clone();
+                    let rec1_witness_tx_clone = rec1_witness_tx_clone.clone();
+                    let rec2_witness_tx_clone = rec2_witness_tx_clone.clone();
+                    let compressor_witness_tx_clone = compressor_witness_tx_clone.clone();
+                    let instances_clone = instances_clone.clone();
+
+                    let proofs_pending_clone = proofs_pending_clone.clone();
+
+                    let recursive_handle = std::thread::spawn(move || {
+                        let new_proof_type = if p == ProofType::Basic {
+                            let (airgroup_id, air_id, _, _) = instances_clone[id as usize];
+                            if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                                ProofType::Compressor as usize
+                            } else {
+                                ProofType::Recursive1 as usize
+                            }
+                        } else if p == ProofType::Compressor {
+                            ProofType::Recursive1 as usize
+                        } else {
+                            ProofType::Recursive2 as usize
+                        };
+
+                        let witness = if new_proof_type == ProofType::Recursive2 as usize {
+                            let proof = if p == ProofType::Recursive1 {
+                                recursive1_proofs_clone[id as usize].read().unwrap().as_ref().unwrap().clone()
+                            } else {
+                                recursive2_proofs_ongoing_clone.read().unwrap()[id as usize].as_ref().unwrap().clone()
+                            };
+
+                            let recursive2_proof = {
+                                let mut recursive2_airgroup_proofs =
+                                    recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                                recursive2_airgroup_proofs.push(proof);
+
+                                if recursive2_airgroup_proofs.len() >= 3 {
+                                    let p1 = recursive2_airgroup_proofs.pop().unwrap();
+                                    let p2 = recursive2_airgroup_proofs.pop().unwrap();
+                                    let p3 = recursive2_airgroup_proofs.pop().unwrap();
+                                    Some((p1, p2, p3))
+                                } else {
+                                    None
+                                }
+                            };
+
+                            recursive2_proof.map(|(p1, p2, p3)| {
+                                gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, 1).unwrap()
+                            })
+                        } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
+                            let guard = compressor_proofs_clone[id as usize].read().unwrap();
+                            let proof = guard.as_ref().unwrap();
+                            Some(gen_witness_recursive(&pctx_clone, &setups_clone, proof, 1).unwrap())
+                        } else {
+                            let proof = proofs_clone[id as usize].read().unwrap();
+                            Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof, 1).unwrap())
+                        };
+
+                        if let Some(witness) = witness {
+                            proofs_pending_clone.increment();
+                            if new_proof_type == ProofType::Compressor as usize {
+                                compressor_witness_tx_clone.send(witness).unwrap();
+                            } else if new_proof_type == ProofType::Recursive1 as usize {
+                                rec1_witness_tx_clone.send(witness).unwrap();
+                            } else {
+                                rec2_witness_tx_clone.send(witness).unwrap();
+                            }
+                        }
+                        proofs_pending_clone.decrement();
+                    });
+
+                    if cfg!(not(feature = "gpu")) {
+                        recursive_handle.join().unwrap();
+                    }
+                }
+            });
+        }
+
+        let processed_ids = Mutex::new(Vec::new());
+
+        if cfg!(feature = "gpu") {
+            vec_streams
+                .par_iter()
+                .enumerate()
+                .filter_map(|(stream_id, instance)| instance.map(|id| (stream_id, id)))
+                .for_each(|(stream_id, instance_id)| {
+                    proofs_pending.increment();
+                    Self::gen_proof(
+                        proofs.clone(),
+                        self.pctx.clone(),
+                        self.sctx.clone(),
+                        instance_id as usize,
+                        options.output_dir_path.clone(),
+                        aux_trace.clone(),
+                        const_pols.clone(),
+                        const_tree.clone(),
+                        self.d_buffers.clone(),
+                        Some(stream_id),
+                        options.save_proofs,
+                        self.gpu_params.preallocate,
+                    );
+                    processed_ids.lock().unwrap().push(instance_id);
+                });
+        }
+
+        let mut my_instances_calculated = vec![false; instances.len()];
+        for idx in processed_ids.into_inner().unwrap() {
+            my_instances_calculated[idx as usize] = true;
+        }
+
+        // TODO: ORDER INSTANCES ?
+
+        let (tx_memory, rx_memory) = bounded::<()>(max_witness_stored);
+        for _ in 0..max_witness_stored {
+            tx_memory.try_send(()).unwrap();
+        }
+
+        for &instance_id in my_instances_sorted.iter() {
+            if my_instances_calculated[instance_id] {
+                continue;
+            }
+
+            let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let d_buffers_clone = self.d_buffers.clone();
+            let aux_trace_clone = aux_trace.clone();
+            let tx_clone = tx_pools.clone();
+            let tx_memory_clone = tx_memory.clone();
+            let wcm = self.wcm.clone();
+            let proofs_pending_clone = proofs_pending.clone();
+            let stream_clone = vec_streams.clone();
+            let proofs_clone = proofs.clone();
+            let output_dir_path_clone = options.output_dir_path.clone();
+            let is_stored =
+                self.pctx.is_air_instance_stored(instance_id) || vec_streams.contains(&Some(instance_id as u64));
+
+            let const_pols_clone = const_pols.clone();
+            let const_tree_clone = const_tree.clone();
+            my_instances_calculated[instance_id] = true;
+
+            let pool_id = rx_pools.recv().unwrap();
+            rx_memory.recv().unwrap();
+
+            let preallocate = self.gpu_params.preallocate;
+
+            let handle = std::thread::spawn(move || {
+                proofs_pending_clone.increment();
+                if !is_stored {
+                    wcm.calculate_witness(1, &[instance_id], threads_per_pool);
+                }
+                tx_clone.send(pool_id).unwrap();
+                let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
+                Self::gen_proof(
+                    proofs_clone.clone(),
+                    pctx_clone.clone(),
+                    sctx_clone.clone(),
+                    instance_id,
+                    output_dir_path_clone.clone(),
+                    aux_trace_clone.clone(),
+                    const_pols_clone.clone(),
+                    const_tree_clone.clone(),
+                    d_buffers_clone.clone(),
+                    stream_id,
+                    options.save_proofs,
+                    preallocate,
+                );
+                pctx_clone.free_instance(instance_id);
+
+                tx_memory_clone.send(()).unwrap();
+            });
+            if cfg!(not(feature = "gpu")) {
+                handle.join().unwrap();
             }
         }
 
-        if let Some(handle) = thread_handle {
-            handle.join().unwrap();
+        for &instance_id in my_instances_sorted.iter() {
+            if cfg!(not(feature = "gpu")) {
+                launch_callback_c(instance_id as u64, "basic");
+            }
         }
 
-        timer_stop_and_log_info!(GENERATING_BASIC_PROOFS);
+        basic_proofs_done
+            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
+
+        for _ in 0..n_streams {
+            let pctx_clone = self.pctx.clone();
+            let setups_clone = self.setups.clone();
+            let d_buffers_clone = self.d_buffers.clone();
+            let trace_size = self.trace_size;
+            let prover_buffer_size = self.prover_buffer_size;
+            let output_dir_path_clone = options.output_dir_path.clone();
+            let const_pols_clone = const_pols.clone();
+            let const_tree_clone = const_tree.clone();
+            let compressor_proofs_clone = compressor_proofs.clone();
+            let recursive1_proofs_clone = recursive1_proofs.clone();
+            let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
+
+            let compressor_rx = compressor_witness_rx.clone();
+            let rec2_rx = rec2_witness_rx.clone();
+            let rec1_rx = rec1_witness_rx.clone();
+
+            let _ = std::thread::spawn(move || loop {
+                let witness = rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
+
+                let mut witness = match witness {
+                    Ok(w) => w,
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        continue;
+                    }
+                };
+
+                let trace: Vec<F> = create_buffer_fast(trace_size);
+                let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
+                if witness.proof_type == ProofType::Recursive2 {
+                    let id = {
+                        let mut proofs = recursive2_proofs_ongoing_clone.write().unwrap();
+                        let id = proofs.len();
+                        proofs.push(None);
+                        id
+                    };
+
+                    witness.global_idx = Some(id);
+                }
+
+                let (_, proof) = generate_recursive_proof(
+                    &pctx_clone,
+                    &setups_clone,
+                    &witness,
+                    &trace,
+                    &prover_buffer,
+                    &output_dir_path_clone,
+                    d_buffers_clone.get_ptr(),
+                    const_tree_clone.clone(),
+                    const_pols_clone.clone(),
+                    options.save_proofs,
+                );
+
+                let new_proof_type = &proof.proof_type;
+                let new_proof_type_str: &str = proof.proof_type.clone().into();
+
+                let id = proof.global_idx.unwrap();
+                if new_proof_type == &ProofType::Recursive2 {
+                    recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(proof);
+                } else if new_proof_type == &ProofType::Compressor {
+                    *compressor_proofs_clone[id].write().unwrap() = Some(proof);
+                } else if new_proof_type == &ProofType::Recursive1 {
+                    *recursive1_proofs_clone[id].write().unwrap() = Some(proof);
+                }
+
+                if cfg!(not(feature = "gpu")) {
+                    launch_callback_c(id as u64, new_proof_type_str);
+                }
+            });
+        }
+
+        proofs_pending.wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
+
+        get_stream_proofs_c(self.d_buffers.get_ptr());
+
+        clear_proof_done_callback_c();
+
+        timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
-        let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
+        let global_info_path = self.pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
         let global_info_file = global_info_path.to_str().unwrap();
 
-        save_challenges_c(pctx.get_challenges_ptr(), global_info_file, output_dir_path.to_string_lossy().as_ref());
-        save_proof_values_c(pctx.get_proof_values_ptr(), global_info_file, output_dir_path.to_string_lossy().as_ref());
+        save_challenges_c(
+            self.pctx.get_challenges_ptr(),
+            global_info_file,
+            options.output_dir_path.to_string_lossy().as_ref(),
+        );
+        save_proof_values_c(
+            self.pctx.get_proof_values_ptr(),
+            global_info_file,
+            options.output_dir_path.to_string_lossy().as_ref(),
+        );
         save_publics_c(
-            pctx.global_info.n_publics as u64,
-            pctx.get_publics_ptr(),
-            output_dir_path.to_string_lossy().as_ref(),
+            self.pctx.global_info.n_publics as u64,
+            self.pctx.get_publics_ptr(),
+            options.output_dir_path.to_string_lossy().as_ref(),
         );
 
-        let airgroup_values_air_instances =
-            Arc::try_unwrap(airgroup_values_air_instances).unwrap().into_inner().unwrap();
-
-        if !pctx.options.aggregation {
+        if !options.aggregation {
             let mut valid_proofs = true;
 
-            if pctx.options.verify_proofs {
+            if options.verify_proofs {
                 timer_start_info!(VERIFYING_PROOFS);
-                let proofs_ = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
                 for instance_id in my_instances.iter() {
                     let valid_proof = verify_basic_proof(
-                        &pctx,
+                        &self.pctx,
                         *instance_id,
-                        &proofs_[pctx.dctx_get_instance_idx(*instance_id)].proof,
+                        &proofs[*instance_id].read().unwrap().proof.clone(),
                     );
                     if !valid_proof {
                         valid_proofs = false;
                     }
                 }
                 timer_stop_and_log_info!(VERIFYING_PROOFS);
-            }
 
-            let check_global_constraints = pctx.options.debug_info.debug_instances.is_empty()
-                || !pctx.options.debug_info.debug_global_instances.is_empty();
+                let mut airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
 
-            if check_global_constraints {
-                let airgroupvalues_u64 = aggregate_airgroupvals(&pctx, &airgroup_values_air_instances);
-                let airgroupvalues = pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+                for instance_id in my_instances.iter() {
+                    let (airgroup_id, air_id, _, _) = instances[*instance_id];
+                    let setup = self.sctx.get_setup(airgroup_id, air_id);
+                    let n_airgroup_values = setup
+                        .stark_info
+                        .airgroupvalues_map
+                        .as_ref()
+                        .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
+                        .unwrap_or(0);
 
-                if pctx.dctx_get_rank() == 0 {
-                    let valid_global_constraints = verify_global_constraints_proof(&pctx, &sctx, airgroupvalues);
+                    let proof = proofs[*instance_id].read().expect("Missing proof");
+
+                    let airgroup_values: Vec<F> =
+                        proof.proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
+
+                    airgroup_values_air_instances[self.pctx.dctx_get_instance_idx(*instance_id)] = airgroup_values;
+                }
+
+                let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
+                let airgroupvalues = self.pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
+
+                if self.pctx.dctx_get_rank() == 0 {
+                    let valid_global_constraints =
+                        verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues);
                     if valid_global_constraints.is_err() {
                         valid_proofs = false;
                     }
                 }
-            }
 
-            if valid_proofs {
-                tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
-                return Ok(None);
+                if valid_proofs {
+                    tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
+                    return Ok(None);
+                } else {
+                    return Err("Basic proofs were not verified".into());
+                }
             } else {
-                return Err("Basic proofs were not verified".into());
-            }
-        }
-
-        std::thread::spawn({
-            move || {
-                drop(aux_trace);
-                drop(wcm);
-                drop(sctx);
-            }
-        });
-
-        gen_device_commit_buffers_free_c(d_buffers.lock().unwrap().get_ptr());
-
-        let max_sizes_aggregation = discover_max_sizes_aggregation(&pctx, &setups);
-        let max_sizes_aggregation_ptr = &max_sizes_aggregation as *const MaxSizes as *mut c_void;
-        let d_buffers_aggregation =
-            Arc::new(Mutex::new(DeviceBuffer(gen_device_commit_buffers_c(max_sizes_aggregation_ptr))));
-
-        let (trace, prover_buffer) = if pctx.options.aggregation {
-            let (trace_size, prover_buffer_size) = get_recursive_buffer_sizes(&pctx, &setups)?;
-            let trace = Arc::new(create_buffer_fast::<F>(trace_size));
-            let prover_buffer = Arc::new(create_buffer_fast::<F>(prover_buffer_size));
-            (trace, prover_buffer)
-        } else {
-            (Arc::new(Vec::new()), Arc::new(Vec::new()))
-        };
-
-        let proofs = Arc::try_unwrap(proofs).unwrap().into_inner().unwrap();
-
-        if let Some(handle) = init_const_tree_handle.take() {
-            handle.join().unwrap();
-        }
-
-        timer_start_info!(GENERATING_COMPRESSED_PROOFS);
-        let mut recursive2_proofs = vec![Vec::new(); pctx.global_info.air_groups.len()];
-        #[allow(unused_assignments)]
-        let mut load_const_tree = true;
-        for air_groups in my_air_groups.iter() {
-            load_const_tree = true;
-            for my_instance_id in air_groups.iter() {
-                let instance_id = my_instances[*my_instance_id];
-                let (airgroup_id, air_id, _) = instances[instance_id];
-
-                let mut proof = proofs[*my_instance_id].clone();
-
-                if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                    if recursive_witness[*my_instance_id].is_none() {
-                        let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
-                        recursive_witness[*my_instance_id] = Some(witness);
-                    }
-                    let witness = recursive_witness[*my_instance_id].as_ref().unwrap();
-                    proof = generate_recursive_proof(
-                        &pctx,
-                        &setups,
-                        witness,
-                        &trace,
-                        &prover_buffer,
-                        &output_dir_path,
-                        d_buffers_aggregation.lock().unwrap().get_ptr(),
-                        load_const_tree,
-                    );
-                    recursive_witness[*my_instance_id] = None;
-                }
-
-                if recursive_witness[*my_instance_id].is_none() {
-                    let witness = gen_witness_recursive(&pctx, &setups, &proof)?;
-                    recursive_witness[*my_instance_id] = Some(witness);
-                }
-
-                let witness = recursive_witness[*my_instance_id].as_ref().unwrap();
-                let proof_recursive1 = generate_recursive_proof(
-                    &pctx,
-                    &setups,
-                    witness,
-                    &trace,
-                    &prover_buffer,
-                    &output_dir_path,
-                    d_buffers_aggregation.lock().unwrap().get_ptr(),
-                    load_const_tree,
+                tracing::info!(
+                    "··· {}",
+                    "\u{2713} All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
                 );
-                recursive2_proofs[airgroup_id].push(proof_recursive1);
-                load_const_tree = false;
+                return Ok(None);
             }
         }
 
-        let n_airgroups = pctx.global_info.air_groups.len();
-
-        let mut thread_handle_recursion: Option<std::thread::JoinHandle<()>> = None;
-        let recursive2_proofs = Arc::new(RwLock::new(recursive2_proofs));
-
-        let mut n_initial_proofs = vec![0; n_airgroups];
-        let mut n_rec2_proofs = vec![0; n_airgroups];
-        for airgroup in 0..n_airgroups {
-            n_initial_proofs[airgroup] = recursive2_proofs.read().unwrap()[airgroup].len();
-            n_rec2_proofs[airgroup] = total_recursive_proofs(n_initial_proofs[airgroup]);
-            load_const_tree = true;
-            for i in 0..n_rec2_proofs[airgroup] {
-                if i == n_rec2_proofs[airgroup] - 1 {
-                    if let Some(handle) = thread_handle_recursion.take() {
-                        handle.join().unwrap();
-                    }
-                }
-
-                let witness_recursive2 = gen_witness_aggregation(
-                    &pctx,
-                    &setups,
-                    &recursive2_proofs.read().unwrap()[airgroup][3 * i],
-                    &recursive2_proofs.read().unwrap()[airgroup][3 * i + 1],
-                    &recursive2_proofs.read().unwrap()[airgroup][3 * i + 2],
-                )?;
-
-                // Join the previous thread (if any) before starting a new one
-                if let Some(handle) = thread_handle_recursion.take() {
-                    handle.join().unwrap();
-                }
-
-                thread_handle_recursion = Some(Self::generate_recursive_proof_thread(
-                    recursive2_proofs.clone(),
-                    pctx.clone(),
-                    setups.clone(),
-                    witness_recursive2,
-                    airgroup,
-                    trace.clone(),
-                    prover_buffer.clone(),
-                    output_dir_path.clone(),
-                    d_buffers_aggregation.clone(),
-                    load_const_tree,
-                ));
-
-                load_const_tree = false;
-            }
-        }
-
-        if let Some(handle) = thread_handle_recursion {
-            handle.join().unwrap();
-        }
-
-        let mut recursive2_proofs = Arc::try_unwrap(recursive2_proofs).unwrap().into_inner().unwrap();
-        for airgroup in 0..n_airgroups {
-            recursive2_proofs[airgroup] = recursive2_proofs[airgroup][3 * n_rec2_proofs[airgroup]..].to_vec();
-        }
+        timer_start_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
+        let trace = create_buffer_fast::<F>(self.trace_size);
+        let prover_buffer = create_buffer_fast::<F>(self.prover_buffer_size);
+        let recursive2_proofs_data: Vec<Vec<Proof<F>>> =
+            recursive2_proofs.iter().map(|lock| lock.read().unwrap().clone()).collect();
 
         let agg_recursive2_proof = aggregate_recursive2_proofs(
-            &pctx,
-            &setups,
-            &recursive2_proofs,
+            &self.pctx,
+            &self.setups,
+            &recursive2_proofs_data,
             &trace,
             &prover_buffer,
-            output_dir_path.clone(),
-            d_buffers_aggregation.lock().unwrap().get_ptr(),
+            const_pols.clone(),
+            const_tree.clone(),
+            options.output_dir_path.clone(),
+            self.d_buffers.get_ptr(),
+            false,
         )?;
-        pctx.dctx.read().unwrap().barrier();
+        self.pctx.dctx.read().unwrap().barrier();
+        timer_stop_and_log_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
 
         let mut proof_id = None;
-        if pctx.dctx_get_rank() == 0 {
-            let mut vadcop_final_proof = generate_vadcop_final_proof(
-                &pctx,
-                &setups,
+        let mut vadcop_final_proof = Vec::new();
+        if self.pctx.dctx_get_rank() == 0 {
+            let vadcop_proof_final = generate_vadcop_final_proof(
+                &self.pctx,
+                &self.setups,
                 &agg_recursive2_proof,
                 &trace,
                 &prover_buffer,
-                output_dir_path.clone(),
-                d_buffers_aggregation.lock().unwrap().get_ptr(),
+                options.output_dir_path.clone(),
+                const_pols.clone(),
+                const_tree.clone(),
+                self.d_buffers.get_ptr(),
+                false,
             )?;
+
+            vadcop_final_proof = vadcop_proof_final.proof.clone();
 
             proof_id = Some(
                 blake3::hash(unsafe {
-                    std::slice::from_raw_parts(
-                        vadcop_final_proof.proof.as_ptr() as *const u8,
-                        vadcop_final_proof.proof.len() * 8,
-                    )
+                    std::slice::from_raw_parts(vadcop_final_proof.as_ptr() as *const u8, vadcop_final_proof.len() * 8)
                 })
                 .to_hex()
                 .to_string(),
             );
 
-            if pctx.options.final_snark {
+            if options.final_snark {
                 timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
                 let recursivef_proof = generate_recursivef_proof(
-                    &pctx,
-                    &setups,
-                    &vadcop_final_proof.proof,
+                    &self.pctx,
+                    &self.setups,
+                    &vadcop_final_proof,
                     &trace,
                     &prover_buffer,
-                    output_dir_path.clone(),
+                    options.output_dir_path.clone(),
+                    false,
                 )?;
                 timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
 
                 timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-                let _ = generate_fflonk_snark_proof(&pctx, recursivef_proof, output_dir_path.clone());
+                let _ = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, options.output_dir_path.clone());
                 timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
-            } else if pctx.options.verify_proofs {
-                let setup_path = pctx.global_info.get_setup_path("vadcop_final");
-                let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
-                let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
-                let verkey_path = setup_path.display().to_string() + ".verkey.json";
-
-                timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
-                let valid_proofs = verify_proof(
-                    vadcop_final_proof.proof.as_mut_ptr(),
-                    stark_info_path,
-                    expressions_bin_path,
-                    verkey_path,
-                    Some(pctx.get_publics().clone()),
-                    None,
-                    None,
-                );
-                timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
-                if !valid_proofs {
-                    tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
-                    return Err("Vadcop Final proof was not verified".into());
-                } else {
-                    tracing::info!("    {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
-                }
             }
         }
-        timer_stop_and_log_info!(GENERATING_COMPRESSED_PROOFS);
         timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
+
+        if self.pctx.dctx_get_rank() == 0 && options.verify_proofs {
+            let setup_path = self.pctx.global_info.get_setup_path("vadcop_final");
+            let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
+            let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
+            let verkey_path = setup_path.display().to_string() + ".verkey.json";
+
+            timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
+            let valid_proofs = verify_proof(
+                vadcop_final_proof.as_mut_ptr(),
+                stark_info_path,
+                expressions_bin_path,
+                verkey_path,
+                Some(self.pctx.get_publics().clone()),
+                None,
+                None,
+            );
+            timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
+            if !valid_proofs {
+                tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
+                return Err("Vadcop Final proof was not verified".into());
+            } else {
+                tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
+            }
+        }
+
         Ok(proof_id)
     }
 
-    fn get_contribution(
-        instance_id: usize,
+    fn prepare_gpu(
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
-        aux_trace_contribution_ptr: Arc<Vec<F>>,
-        values: Arc<Mutex<Vec<u64>>>,
-        d_buffers: Arc<Mutex<DeviceBuffer>>,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
-            let ptr = aux_trace_contribution_ptr.as_ptr() as *mut u8;
-            let value = Self::get_contribution_air(pctx.clone(), &sctx, instance_id, ptr, d_buffers.clone());
+        setups_vadcop: Arc<SetupsVadcop<F>>,
+        aggregation: bool,
+        gpu_params: &ParamsGPU,
+    ) -> (Arc<DeviceBuffer>, u64, u64) {
+        let free_memory_gpu = match cfg!(feature = "gpu") {
+            true => check_device_memory_c() as f64 * 0.98,
+            false => 0.0,
+        };
 
-            for (id, value) in value.iter().enumerate().take(10) {
-                values.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id) * 10 + id] = *value;
+        pctx.dctx_barrier(); // imporrant: all processes syncronize before allocation GPU memory
+
+        let total_const_area = match gpu_params.preallocate {
+            true => sctx.total_const_size as u64,
+            false => 0,
+        };
+
+        let total_const_area_aggregation = match aggregation && gpu_params.preallocate {
+            true => setups_vadcop.total_const_size as u64,
+            false => 0,
+        };
+
+        let mut max_size_buffer = (free_memory_gpu / 8.0).floor() as u64; //measured in GL elements
+        if gpu_params.preallocate {
+            max_size_buffer -= sctx.total_const_size as u64;
+            if aggregation {
+                max_size_buffer -= setups_vadcop.total_const_size as u64;
             }
-        })
+        }
+
+        let n_streams_per_gpu = match cfg!(feature = "gpu") {
+            true => {
+                let max_number_proofs_per_gpu = gpu_params
+                    .max_number_streams
+                    .min((max_size_buffer as usize / sctx.max_prover_buffer_size) as usize);
+                if max_number_proofs_per_gpu < 1 {
+                    panic!("Not enough GPU memory to run the proof");
+                }
+                max_number_proofs_per_gpu
+            }
+            false => 1,
+        };
+
+        let max_aux_trace_area = (n_streams_per_gpu * sctx.max_prover_buffer_size) as u64;
+
+        let max_sizes = MaxSizes { total_const_area, max_aux_trace_area, total_const_area_aggregation };
+
+        let max_sizes_ptr = &max_sizes as *const MaxSizes as *mut c_void;
+        let d_buffers = Arc::new(DeviceBuffer(gen_device_buffers_c(
+            max_sizes_ptr,
+            pctx.dctx_get_node_rank() as u32,
+            pctx.dctx_get_node_n_processes() as u32,
+        )));
+
+        let max_size_const = match !gpu_params.preallocate {
+            true => sctx.max_const_size as u64,
+            false => 0,
+        };
+
+        let max_size_const_tree = match !gpu_params.preallocate {
+            true => sctx.max_const_tree_size as u64,
+            false => 0,
+        };
+
+        let max_size_const_aggregation = match aggregation && !gpu_params.preallocate {
+            true => setups_vadcop.max_const_size as u64,
+            false => 0,
+        };
+
+        let max_size_const_tree_aggregation = match aggregation && !gpu_params.preallocate {
+            true => setups_vadcop.max_const_tree_size as u64,
+            false => 0,
+        };
+
+        let max_proof_size = match aggregation {
+            true => sctx.max_proof_size.max(setups_vadcop.max_proof_size) as u64,
+            false => sctx.max_proof_size as u64,
+        };
+
+        let n_gpus: u64 = gen_device_streams_c(
+            d_buffers.get_ptr(),
+            sctx.max_prover_trace_size as u64,
+            sctx.max_prover_contribution_area as u64,
+            sctx.max_prover_buffer_size as u64,
+            max_size_const,
+            max_size_const_tree,
+            setups_vadcop.max_prover_trace_size as u64,
+            setups_vadcop.max_prover_buffer_size as u64,
+            max_size_const_aggregation,
+            max_size_const_tree_aggregation,
+            max_proof_size,
+            n_streams_per_gpu as u64,
+        );
+
+        (d_buffers, n_streams_per_gpu as u64, n_gpus)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn generate_proof_thread(
-        proofs: Arc<RwLock<Vec<Proof<F>>>>,
+    fn gen_proof(
+        proofs: Arc<Vec<RwLock<Proof<F>>>>,
         pctx: Arc<ProofCtx<F>>,
         sctx: Arc<SetupCtx<F>>,
         instance_id: usize,
-        airgroup_id: usize,
-        air_id: usize,
         output_dir_path: PathBuf,
         aux_trace: Arc<Vec<F>>,
-        airgroup_values_air_instances: Arc<Mutex<Vec<Vec<F>>>>,
-        gen_const_tree: bool,
-        d_buffers: Arc<Mutex<DeviceBuffer>>,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
-            Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
+        const_pols: Arc<Vec<F>>,
+        const_tree: Arc<Vec<F>>,
+        d_buffers: Arc<DeviceBuffer>,
+        stream_id_: Option<usize>,
+        save_proof: bool,
+        gpu_preallocate: bool,
+    ) {
+        timer_start_info!(GEN_PROOF);
+        Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
 
-            let setup = sctx.get_setup(airgroup_id, air_id);
-            let p_setup: *mut c_void = (&setup.p_setup).into();
-            let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
-            let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
-            timer_start_info!(GEN_PROOF);
+        let instances = pctx.dctx_get_instances();
+        let (airgroup_id, air_id, _, _) = instances[instance_id];
 
-            let offset_const = get_const_offset_c(setup.p_setup.p_stark_info) as usize;
+        let setup = sctx.get_setup(airgroup_id, air_id);
+        let p_setup: *mut c_void = (&setup.p_setup).into();
+        let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
-            if gen_const_tree {
-                load_const_pols(
-                    &setup.setup_path,
-                    setup.const_pols_size,
-                    &aux_trace[offset_const..offset_const + setup.const_pols_size],
-                );
-                load_const_pols_tree(setup, &aux_trace[0..setup.const_tree_size]);
-            }
+        let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
 
-            let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
+        if cfg!(not(feature = "gpu")) {
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
+            steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
+            steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
+        } else if !gpu_preallocate {
+            steps_params.p_const_pols = setup.get_const_ptr();
+            steps_params.p_const_tree = setup.get_const_tree_ptr();
+        }
 
-            let p_steps_params: *mut u8 = (&steps_params).into();
+        let p_steps_params: *mut u8 = (&steps_params).into();
 
-            let output_file_path = output_dir_path.join(format!("proofs/{}_{}.json", air_instance_name, instance_id));
+        let output_file_path = output_dir_path.join(format!("proofs/{}_{}.json", air_instance_name, instance_id));
 
-            let proof_file = match pctx.options.debug_info.save_proofs_to_file {
-                true => output_file_path.to_string_lossy().into_owned(),
-                false => String::from(""),
-            };
+        let proof_file = match save_proof {
+            true => output_file_path.to_string_lossy().into_owned(),
+            false => String::from(""),
+        };
 
-            let mut proof: Vec<u64> = create_buffer_fast(setup.proof_size as usize);
+        let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
+        let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
 
-            gen_proof_c(
-                p_setup,
-                p_steps_params,
-                pctx.get_global_challenge_ptr(),
-                proof.as_mut_ptr(),
-                &proof_file,
-                airgroup_id as u64,
-                air_id as u64,
-                air_instance_id as u64,
-                d_buffers.lock().unwrap().get_ptr(),
-                gen_const_tree,
-            );
+        let (skip_recalculation, stream_id) = match stream_id_ {
+            Some(stream_id) => (true, stream_id),
+            None => (false, 0),
+        };
 
-            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
-                pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
+        gen_proof_c(
+            p_setup,
+            p_steps_params,
+            pctx.get_global_challenge_ptr(),
+            proofs[instance_id].read().unwrap().proof.as_ptr() as *mut u64,
+            &proof_file,
+            airgroup_id as u64,
+            air_id as u64,
+            instance_id as u64,
+            d_buffers.get_ptr(),
+            skip_recalculation,
+            stream_id as u64,
+            &const_pols_path,
+            &const_pols_tree_path,
+        );
 
-            timer_stop_and_log_info!(GEN_PROOF);
-            proofs.write().unwrap()[pctx.dctx_get_instance_idx(instance_id)] =
-                Proof::new(ProofType::Basic, airgroup_id, air_id, Some(instance_id), proof);
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn generate_recursive_proof_thread(
-        recursive2_proofs: Arc<RwLock<Vec<Vec<Proof<F>>>>>,
-        pctx: Arc<ProofCtx<F>>,
-        setups: Arc<SetupsVadcop<F>>,
-        witness_recursive2: Proof<F>,
-        airgroup_id: usize,
-        trace: Arc<Vec<F>>,
-        prover_buffer: Arc<Vec<F>>,
-        output_dir_path: PathBuf,
-        d_buffers: Arc<Mutex<DeviceBuffer>>,
-        load_constants: bool,
-    ) -> std::thread::JoinHandle<()> {
-        std::thread::spawn(move || {
-            let proof_recursive2 = generate_recursive_proof(
-                &pctx,
-                &setups,
-                &witness_recursive2,
-                &trace,
-                &prover_buffer,
-                &output_dir_path,
-                d_buffers.clone().lock().unwrap().get_ptr(),
-                load_constants,
-            );
-            recursive2_proofs.write().unwrap()[airgroup_id].push(proof_recursive2);
-        })
+        timer_stop_and_log_info!(GEN_PROOF);
     }
 
     #[allow(clippy::type_complexity)]
     fn initialize_proofman(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
-        options: ProofOptions,
-    ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>), Box<dyn std::error::Error>> {
+        verify_constraints: bool,
+        aggregation: bool,
+        final_snark: bool,
+        gpu_params: &ParamsGPU,
+    ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>), Box<dyn std::error::Error>> {
         timer_start_info!(INITIALIZING_PROOFMAN);
 
-        let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, options.clone());
+        let mut pctx = ProofCtx::create_ctx(proving_key_path.clone(), custom_commits_fixed, aggregation, final_snark);
         let sctx: Arc<SetupCtx<F>> =
-            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, options.verify_constraints));
+            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params.preallocate));
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
-        if !pctx.options.verify_constraints {
-            check_tree_paths(&pctx, &sctx)?;
-        }
+        check_tree_paths(&pctx, &sctx)?;
 
         Self::initialize_publics(&sctx, &pctx)?;
 
+        let setups_vadcop = Arc::new(SetupsVadcop::new(
+            &pctx.global_info,
+            verify_constraints,
+            aggregation,
+            final_snark,
+            gpu_params.preallocate,
+        ));
+
+        if aggregation {
+            check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
+            initialize_witness_circom(&pctx, &setups_vadcop, final_snark)?;
+        }
+
         timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
 
-        Ok((pctx, sctx))
+        Ok((pctx, sctx, setups_vadcop))
     }
 
-    fn init_witness_lib(
-        witness_lib_path: PathBuf,
+    fn calculate_global_challenge(
         pctx: &ProofCtx<F>,
-        wcm: Arc<WitnessManager<F>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        tracing::info!("Initializing witness");
-
-        // Load the witness computation dynamic library
-        timer_start_info!(REGISTER_WITNESS);
-        let library = unsafe { Library::new(&witness_lib_path)? };
-        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(pctx.options.verbose_mode)?;
-
-        witness_lib.register_witness(wcm);
-
-        timer_stop_and_log_info!(REGISTER_WITNESS);
-
-        Ok(())
-    }
-
-    fn calculate_global_challenge(pctx: &ProofCtx<F>, values: Vec<u64>) {
+        roots_contributions: Arc<Vec<Mutex<[F; 4]>>>,
+        values_contributions: Arc<Vec<Mutex<Vec<F>>>>,
+    ) {
         timer_start_info!(CALCULATE_GLOBAL_CHALLENGE);
+        let my_instances = pctx.dctx_get_my_instances();
+
+        let mut values = vec![0u64; my_instances.len() * 10];
+
+        for instance_id in my_instances.iter() {
+            let mut contribution = vec![F::ZERO; 10];
+
+            let root_contribution = *roots_contributions[*instance_id].lock().expect("Missing root_contribution");
+
+            let mut values_to_hash =
+                values_contributions[*instance_id].lock().expect("Missing values_contribution").clone();
+            values_to_hash[4..(4 + 4)].copy_from_slice(&root_contribution[..4]);
+
+            calculate_hash_c(
+                contribution.as_mut_ptr() as *mut u8,
+                values_to_hash.as_mut_ptr() as *mut u8,
+                values_to_hash.len() as u64,
+                10,
+            );
+
+            let base_idx = pctx.dctx_get_instance_idx(*instance_id) * 10;
+            for (id, v) in contribution.iter().enumerate().take(10) {
+                values[base_idx + id] = v.as_canonical_u64();
+            }
+        }
+
         let transcript = FFITranscript::new(2, true);
 
         transcript.add_elements(pctx.get_publics_ptr(), pctx.global_info.n_publics);
@@ -1009,6 +1608,12 @@ where
         let global_challenge = [F::ZERO; 3];
         transcript.get_challenge(&global_challenge[0] as *const F as *mut c_void);
 
+        tracing::info!(
+            "··· Global challenge: [{}, {}, {}]",
+            global_challenge[0],
+            global_challenge[1],
+            global_challenge[2]
+        );
         pctx.set_global_challenge(2, &global_challenge);
 
         timer_stop_and_log_info!(CALCULATE_GLOBAL_CHALLENGE);
@@ -1018,7 +1623,7 @@ where
     fn diagnostic_instance(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize) -> bool {
         let instances = pctx.dctx_get_instances();
 
-        let (airgroup_id, air_id, _) = instances[instance_id];
+        let (airgroup_id, air_id, _, _) = instances[instance_id];
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let air_name = pctx.global_info.airs[airgroup_id][air_id].clone().name;
         let setup = sctx.get_setup(airgroup_id, air_id);
@@ -1063,12 +1668,10 @@ where
     fn initialize_air_instance(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize, init_aux_trace: bool) {
         let instances = pctx.dctx_get_instances();
 
-        let mut air_instances_w = pctx.air_instances.write().unwrap();
-
-        let (airgroup_id, air_id, _) = instances[instance_id];
+        let (airgroup_id, air_id, _, _) = instances[instance_id];
         let setup = sctx.get_setup(airgroup_id, air_id);
 
-        let air_instance = air_instances_w.get_mut(&instance_id).unwrap();
+        let mut air_instance = pctx.air_instances[instance_id].write().unwrap();
         if init_aux_trace {
             air_instance.init_aux_trace(setup.prover_buffer_size as usize);
         }
@@ -1149,7 +1752,7 @@ where
 
     pub fn calculate_im_pols(stage: u32, sctx: &SetupCtx<F>, pctx: &ProofCtx<F>, instance_id: usize) {
         let instances = pctx.dctx_get_instances();
-        let (airgroup_id, air_id, _) = instances[instance_id];
+        let (airgroup_id, air_id, _, _) = instances[instance_id];
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
@@ -1157,35 +1760,42 @@ where
         calculate_impols_expressions_c((&setup.p_setup).into(), stage as u64, (&steps_params).into());
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn get_contribution_air(
-        pctx: Arc<ProofCtx<F>>,
+        pctx: &ProofCtx<F>,
         sctx: &SetupCtx<F>,
+        roots_contributions: Arc<Vec<Mutex<[F; 4]>>>,
+        values_contributions: Arc<Vec<Mutex<Vec<F>>>>,
         instance_id: usize,
         aux_trace_contribution_ptr: *mut u8,
-        d_buffers: Arc<Mutex<DeviceBuffer>>,
-    ) -> Vec<u64> {
+        d_buffers: Arc<DeviceBuffer>,
+        streams: Arc<Mutex<Vec<Option<u64>>>>,
+    ) {
         let n_field_elements = 4;
 
         timer_start_info!(GET_CONTRIBUTION_AIR);
         let instances = pctx.dctx_get_instances();
 
-        let (airgroup_id, air_id, all) = instances[instance_id];
+        let (airgroup_id, air_id, _, _) = instances[instance_id];
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let setup = sctx.get_setup(airgroup_id, air_id);
 
-        let root = vec![F::ZERO; n_field_elements];
-        commit_witness_c(
+        let air_values = pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id).clone();
+
+        let root_ptr = roots_contributions[instance_id].lock().unwrap().as_ptr() as *mut u8;
+        let stream_id = commit_witness_c(
             3,
             setup.stark_info.stark_struct.n_bits,
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),
-            root.as_ptr() as *mut u8,
+            instance_id as u64,
+            root_ptr,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
-            d_buffers.lock().unwrap().get_ptr(),
+            d_buffers.get_ptr(),
+            (&setup.p_setup).into(),
         );
-
-        let mut value = vec![F::ZERO; 10];
+        streams.lock().unwrap()[stream_id as usize] = Some(instance_id as u64);
 
         let n_airvalues = setup
             .stark_info
@@ -1198,19 +1808,7 @@ where
 
         let mut values_hash = vec![F::ZERO; size];
 
-        let verkey = pctx.global_info.get_air_setup_path(airgroup_id, air_id, &ProofType::Basic).display().to_string()
-            + ".verkey.json";
-
-        let mut file = File::open(&verkey).expect("Unable to open file");
-        let mut json_str = String::new();
-        file.read_to_string(&mut json_str).expect("Unable to read file");
-        let vk: Vec<u64> = serde_json::from_str(&json_str).expect("Unable to parse JSON");
-        for j in 0..n_field_elements {
-            values_hash[j] = F::from_u64(vk[j]);
-            values_hash[j + n_field_elements] = root[j];
-        }
-
-        let air_values = pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id);
+        values_hash[..n_field_elements].copy_from_slice(&setup.verkey[..n_field_elements]);
 
         let airvalues_map = setup.stark_info.airvalues_map.as_ref().unwrap();
         let mut p = 0;
@@ -1223,18 +1821,9 @@ where
             }
         }
 
-        calculate_hash_c(value.as_mut_ptr() as *mut u8, values_hash.as_mut_ptr() as *mut u8, size as u64, 10);
-
-        if !all {
-            let pctx_clone = pctx.clone();
-            std::thread::spawn(move || {
-                pctx_clone.free_instance(instance_id);
-            });
-        }
+        *values_contributions[instance_id].lock().unwrap() = values_hash;
 
         timer_stop_and_log_info!(GET_CONTRIBUTION_AIR);
-
-        value.iter().map(|x| x.as_canonical_u64()).collect::<Vec<u64>>()
     }
 
     fn add_contributions(curve_type: &CurveType, values: &[Vec<F>]) -> Vec<F> {

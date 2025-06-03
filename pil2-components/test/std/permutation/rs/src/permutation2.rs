@@ -12,7 +12,14 @@ define_wc!(Permutation2, "Perm2   ");
 impl<F: PrimeField64> WitnessComponent<F> for Permutation2 {
     execute!(Permutation2_6Trace, 1);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             let mut trace = Permutation2_6Trace::new();
             let num_rows = trace.num_rows();

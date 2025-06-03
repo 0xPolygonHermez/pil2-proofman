@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{initialize_logger, DebugInfo};
+use proofman_common::initialize_logger;
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -8,7 +8,7 @@ use crate::commands::field::Field;
 use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::{VerboseMode, ProofOptions};
+use proofman_common::{VerboseMode, ParamsGPU};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -40,7 +40,9 @@ impl CheckSetupCmd {
         match self.field {
             Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
                 self.proving_key.clone(),
-                ProofOptions::new(false, verbose_mode, self.aggregation, self.final_snark, false, DebugInfo::default()),
+                self.aggregation,
+                self.final_snark,
+                ParamsGPU::default(),
             )?,
         };
 

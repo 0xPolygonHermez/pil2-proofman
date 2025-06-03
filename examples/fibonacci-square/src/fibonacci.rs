@@ -2,27 +2,23 @@ use std::sync::{Arc, RwLock};
 
 use proofman_common::{write_custom_commit_trace, AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::WitnessComponent;
-
+use std::path::PathBuf;
 use fields::PrimeField64;
 
-use crate::{
-    BuildProofValues, BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace,
-    Module,
-};
+use crate::{BuildProofValues, BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace};
 
-pub struct FibonacciSquare<F: PrimeField64> {
-    module: Arc<Module<F>>,
+pub struct FibonacciSquare {
     instance_ids: RwLock<Vec<usize>>,
 }
 
-impl<F: PrimeField64> FibonacciSquare<F> {
-    pub fn new(module: Arc<Module<F>>) -> Arc<Self> {
-        Arc::new(Self { module, instance_ids: RwLock::new(Vec::new()) })
+impl FibonacciSquare {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self { instance_ids: RwLock::new(Vec::new()) })
     }
 }
 
-impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
         let instance_ids =
             vec![pctx
                 .add_instance_all(FibonacciSquareTrace::<usize>::AIRGROUP_ID, FibonacciSquareTrace::<usize>::AIR_ID)];
@@ -30,7 +26,14 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
         instance_ids
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+    ) {
         if stage == 1 {
             let instance_id = instance_ids[0];
 
@@ -47,18 +50,14 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
             trace[0].a = F::from_u64(a);
             trace[0].b = F::from_u64(b);
 
-            let mut modules = Vec::new();
             for i in 1..trace.num_rows() {
                 let tmp = b;
                 let result = (a.pow(2) + b.pow(2)) % module;
-                modules.push(a.pow(2) + b.pow(2));
                 (a, b) = (tmp, result);
 
                 trace[i].a = F::from_u64(a);
                 trace[i].b = F::from_u64(b);
             }
-
-            self.module.set_inputs(modules);
 
             publics.out = trace[trace.num_rows() - 1].b;
 
