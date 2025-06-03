@@ -5,7 +5,7 @@ use std::sync::{
 };
 use rayon::prelude::*;
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use std::path::PathBuf;
 
 use witness::WitnessComponent;

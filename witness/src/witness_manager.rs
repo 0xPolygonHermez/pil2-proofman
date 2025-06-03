@@ -2,13 +2,13 @@ use std::collections::HashSet;
 use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
 
-use p3_field::Field;
+use fields::PrimeField64;
 use proofman_common::{ModeName, ProofCtx, SetupCtx, DebugInfo};
 use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub struct WitnessManager<F: Field> {
+pub struct WitnessManager<F: PrimeField64> {
     components: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
     components_instance_ids: RwLock<Vec<Vec<usize>>>,
     components_std: RwLock<Vec<Arc<dyn WitnessComponent<F>>>>,
@@ -20,7 +20,7 @@ pub struct WitnessManager<F: Field> {
     library: Mutex<Option<Library>>,
 }
 
-impl<F: Field> WitnessManager<F> {
+impl<F: PrimeField64> WitnessManager<F> {
     pub fn new(pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>) -> Self {
         WitnessManager {
             components: RwLock::new(Vec::new()),

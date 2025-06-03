@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicU64;
 use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
-use p3_field::Field;
+use fields::PrimeField64;
 use transcript::FFITranscript;
 
 use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams};
@@ -13,7 +13,7 @@ pub struct Values<F> {
     pub values: RwLock<Vec<F>>,
 }
 
-impl<F: Field> Values<F> {
+impl<F: PrimeField64> Values<F> {
     pub fn new(n_values: usize) -> Self {
         Self { values: RwLock::new(vec![F::ZERO; n_values]) }
     }
@@ -107,7 +107,7 @@ impl ParamsGPU {
 }
 
 #[allow(dead_code)]
-pub struct ProofCtx<F: Field> {
+pub struct ProofCtx<F: PrimeField64> {
     pub public_inputs: Values<F>,
     pub proof_values: Values<F>,
     pub global_challenge: Values<F>,
@@ -124,7 +124,7 @@ pub struct ProofCtx<F: Field> {
 
 pub const MAX_INSTANCES: u64 = 10000;
 
-impl<F: Field> ProofCtx<F> {
+impl<F: PrimeField64> ProofCtx<F> {
     pub fn create_ctx(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,

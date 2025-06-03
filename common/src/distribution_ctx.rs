@@ -13,7 +13,8 @@ use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
 #[cfg(distributed)]
 use std::sync::atomic::Ordering;
-use p3_field::Field;
+
+use fields::PrimeField64;
 
 use crate::GlobalInfo;
 
@@ -435,7 +436,7 @@ impl DistributionCtx {
         }
     }
 
-    pub fn distribute_airgroupvalues<F: Field>(
+    pub fn distribute_airgroupvalues<F: PrimeField64>(
         &self,
         airgroupvalues: Vec<Vec<u64>>,
         _global_info: &GlobalInfo,

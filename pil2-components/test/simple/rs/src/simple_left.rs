@@ -3,7 +3,7 @@ use std::sync::Arc;
 use witness::{WitnessComponent, execute, define_wc_with_std};
 use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use rand::{
     distr::{Distribution, StandardUniform},
     rngs::StdRng,

@@ -5,7 +5,7 @@ use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use rand::distr::{StandardUniform, Distribution};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
 use crate::Lookup3Trace;
 

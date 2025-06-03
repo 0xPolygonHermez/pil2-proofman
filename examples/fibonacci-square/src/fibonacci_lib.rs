@@ -2,8 +2,8 @@ use std::sync::Arc;
 use proofman_common::load_from_json;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
-use p3_field::PrimeField64;
-use p3_goldilocks::Goldilocks;
+use fields::PrimeField64;
+use fields::Goldilocks;
 use proofman::register_std;
 
 use crate::{BuildPublics, BuildPublicValues, FibonacciSquare, Module, FibonacciSquareTrace};

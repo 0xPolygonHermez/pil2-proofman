@@ -1,7 +1,6 @@
-use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve, goldilocks_quintic_extension::GoldilocksQuinticExtension};
 use libloading::{Library, Symbol};
-use p3_field::extension::BinomialExtensionField;
-use p3_field::BasedVectorSpace;
+use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
+use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use std::ops::Add;
 use std::sync::atomic::AtomicUsize;
 use proofman_common::CurveType;
@@ -26,12 +25,10 @@ use std::io::Read;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
-use p3_goldilocks::Goldilocks;
 
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 
-use p3_field::PrimeField64;
 use proofman_starks_lib_c::{
     gen_proof_c, commit_witness_c, calculate_hash_c, load_custom_commit_c, calculate_impols_expressions_c,
     clear_proof_done_callback_c, launch_callback_c,
@@ -82,7 +79,7 @@ impl<F: PrimeField64> Drop for ProofMan<F> {
 }
 impl<F: PrimeField64> ProofMan<F>
 where
-    BinomialExtensionField<Goldilocks, 5>: BasedVectorSpace<F>,
+    GoldilocksQuinticExtension: ExtensionField<F>,
 {
     pub fn check_setup(
         proving_key_path: PathBuf,

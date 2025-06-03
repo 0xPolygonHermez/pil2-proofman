@@ -15,9 +15,8 @@ proofman-util = { path = "../util" }
 proofman = { path = "../proofman" }
 proofman-common = { path = "../common" }
 witness = { path = "../witness" }
+fields = { path = "../fields" }
 
-p3-goldilocks.workspace = true
-p3-field.workspace = true
 tracing.workspace = true
 libloading.workspace = true
 blake3.workspace = true

@@ -5,7 +5,7 @@ use std::{
 
 use rayon::prelude::*;
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
