@@ -204,10 +204,6 @@ where
         let mut my_instances_sorted = my_instances.clone();
         let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
         my_instances_sorted.shuffle(&mut rng);
-        let (my_instances_fast, my_instances_regular): (Vec<_>, Vec<_>) =
-            my_instances_sorted.clone().into_iter().partition(|instance_id| instances[*instance_id].3);
-        let mut my_instances_sorted = my_instances_fast;
-        my_instances_sorted.extend(my_instances_regular);
         let instances_mine = my_instances.len();
         let instances_mine_all = instances
             .iter()
@@ -640,10 +636,6 @@ where
         let my_instances = self.pctx.dctx_get_my_instances();
         let mut my_instances_sorted = my_instances.clone();
         my_instances_sorted.shuffle(&mut rng);
-        let (my_instances_fast, my_instances_regular): (Vec<_>, Vec<_>) =
-            my_instances_sorted.clone().into_iter().partition(|instance_id| instances[*instance_id].3);
-        let mut my_instances_sorted = my_instances_fast;
-        my_instances_sorted.extend(my_instances_regular);
 
         let instances_mine = my_instances.len();
         let instances_mine_all = instances
@@ -919,20 +911,24 @@ where
                                 recursive2_proofs_ongoing_clone.read().unwrap()[id as usize].as_ref().unwrap().clone()
                             };
 
-                            let mut recursive2_proofs_airgroup =
-                                recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                            let recursive2_proof = {
+                                let mut recursive2_airgroup_proofs =
+                                    recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                                recursive2_airgroup_proofs.push(proof);
 
-                            recursive2_proofs_airgroup.push(proof);
+                                if recursive2_airgroup_proofs.len() >= 3 {
+                                    let p1 = recursive2_airgroup_proofs.pop().unwrap();
+                                    let p2 = recursive2_airgroup_proofs.pop().unwrap();
+                                    let p3 = recursive2_airgroup_proofs.pop().unwrap();
+                                    Some((p1, p2, p3))
+                                } else {
+                                    None
+                                }
+                            };
 
-                            if recursive2_proofs_airgroup.len() >= 3 {
-                                let p1 = recursive2_proofs_airgroup.pop().unwrap();
-                                let p2 = recursive2_proofs_airgroup.pop().unwrap();
-                                let p3 = recursive2_proofs_airgroup.pop().unwrap();
-
-                                Some(gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, 1).unwrap())
-                            } else {
-                                None
-                            }
+                            recursive2_proof.map(|(p1, p2, p3)| {
+                                gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3, 1).unwrap()
+                            })
                         } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
                             let guard = compressor_proofs_clone[id as usize].read().unwrap();
                             let proof = guard.as_ref().unwrap();
@@ -1086,7 +1082,7 @@ where
             let rec1_rx = rec1_witness_rx.clone();
 
             let _ = std::thread::spawn(move || loop {
-                let witness = compressor_rx.try_recv().or_else(|_| rec2_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
+                let witness = rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
 
                 let mut witness = match witness {
                     Ok(w) => w,
@@ -1423,7 +1419,7 @@ where
             n_streams_per_gpu as u64,
         );
 
-        (d_buffers, n_gpus, n_streams_per_gpu as u64)
+        (d_buffers, n_streams_per_gpu as u64, n_gpus)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1458,8 +1454,8 @@ where
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
         } else if !gpu_preallocate {
-            steps_params.p_const_pols = setup.get_const_ptr() as *mut u8;
-            steps_params.p_const_tree = setup.get_const_tree_ptr() as *mut u8;
+            steps_params.p_const_pols = setup.get_const_ptr();
+            steps_params.p_const_tree = setup.get_const_tree_ptr();
         }
 
         let p_steps_params: *mut u8 = (&steps_params).into();

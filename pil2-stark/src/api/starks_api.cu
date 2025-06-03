@@ -96,7 +96,7 @@ uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeTrace, uint64_t ma
 
     for(uint64_t i=0; i< d_buffers->n_gpus; ++i){
         for (uint64_t j = 0; j < maxProofsPerGPU; j++) {
-            d_buffers->streamsData[i*maxProofsPerGPU+j].initialize(maxSizeTrace, maxProofSize, maxSizeConst, maxSizeConstAggregation, maxSizeConstTree, maxSizeConstTreeAggregation, d_buffers->my_gpu_ids[i], j);
+            d_buffers->streamsData[j*d_buffers->n_gpus+i].initialize(maxSizeTrace, maxProofSize, maxSizeConst, maxSizeConstAggregation, maxSizeConstTree, maxSizeConstTreeAggregation, d_buffers->my_gpu_ids[i], j);
         }
     }
 
