@@ -498,7 +498,7 @@ where
 
         self.register_witness(&mut *witness_lib, library);
 
-        self._generate_proof(options)
+        self._generate_proof(options, Some(&*witness_lib))
     }
 
     pub fn generate_proof_from_lib(
@@ -512,7 +512,7 @@ where
         }
 
         self.wcm.set_input_data_path(input_data_path);
-        self._generate_proof(options)
+        self._generate_proof(options, None)
     }
 
     pub fn new(
@@ -590,8 +590,19 @@ where
         timer_stop_and_log_info!(REGISTERING_WITNESS);
     }
 
+    fn _witness_num_threads(&self, instance_id: u64, max_num_threads: usize, witness_lib: Option<& dyn WitnessLibrary<F>>) -> usize {
+        
+        let n_chunks = if let Some(lib) = witness_lib {
+            lib.get_witness_weight(&self.pctx, instance_id as usize).unwrap_or(1)
+        }else{
+            1
+        };
+        let n_threads = (n_chunks/ 16).max(max_num_threads / 2).min(2);
+        n_threads
+    }
+
     #[allow(clippy::too_many_arguments)]
-    fn _generate_proof(&self, options: ProofOptions) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    fn _generate_proof(&self, options: ProofOptions, witness_lib: Option<& dyn WitnessLibrary<F>>) -> Result<Option<String>, Box<dyn std::error::Error>> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
 
         timer_start_info!(GENERATING_PROOFS);
@@ -670,7 +681,7 @@ where
         };
 
         let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-        let (threads_per_pool, max_concurrent_pools) = match cfg!(feature = "gpu") {
+        let (threads_per_pool, _ ) = match cfg!(feature = "gpu") {
             true => {
                 let max_concurrent_pools = self
                     .gpu_params
@@ -691,11 +702,11 @@ where
         let streams = Arc::new(Mutex::new(vec![None; n_streams as usize]));
 
         // define managment channels and counters
-        let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
+        let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
 
-        for pool_id in 0..max_concurrent_pools {
-            tx_pools.send(pool_id).unwrap();
+        for _ in 0..max_num_threads {
+            tx_threads.send(()).unwrap();
         }
 
         let witnesses_done = Arc::new(AtomicUsize::new(0));
@@ -718,16 +729,23 @@ where
             let d_buffers_clone = self.d_buffers.clone();
             let aux_trace_clone = aux_trace.clone();
             let streams_clone = streams.clone();
-            let tx_pools_clone = tx_pools.clone();
+            let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_witness_clone = tx_witness.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
-
-            let pool_id = rx_pools.recv().unwrap();
+            
+            let threasds_to_use = self._witness_num_threads(instance_id as u64, max_num_threads, witness_lib);
+            //wait to receive the expected threads
+            for _ in 0..threasds_to_use {
+                rx_threads.recv().unwrap();
+            }
 
             let handle = std::thread::spawn(move || {
                 wcm.calculate_witness(1, &[instance_id], threads_per_pool);
-                tx_pools_clone.send(pool_id).unwrap();
+                // send back the pool id to be reused
+                for _ in 0..threasds_to_use {
+                    tx_threads_clone.send(()).unwrap();
+                }
                 tx_witness_clone.send(()).unwrap();
                 witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
 
@@ -1011,7 +1029,7 @@ where
             let sctx_clone = self.sctx.clone();
             let d_buffers_clone = self.d_buffers.clone();
             let aux_trace_clone = aux_trace.clone();
-            let tx_clone = tx_pools.clone();
+            let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_memory_clone = tx_memory.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
@@ -1024,8 +1042,12 @@ where
             let const_pols_clone = const_pols.clone();
             let const_tree_clone = const_tree.clone();
             my_instances_calculated[instance_id] = true;
-
-            let pool_id = rx_pools.recv().unwrap();
+            let threasds_to_use = self._witness_num_threads(instance_id as u64, max_num_threads, witness_lib);
+            if !is_stored {
+                //wait to receive the expected threads
+                for _ in 0..threasds_to_use {
+                    rx_threads.recv().unwrap();
+                }            }
             rx_memory.recv().unwrap();
 
             let preallocate = self.gpu_params.preallocate;
@@ -1034,8 +1056,11 @@ where
                 proofs_pending_clone.increment();
                 if !is_stored {
                     wcm.calculate_witness(1, &[instance_id], threads_per_pool);
+                    // send back the pool id to be reused
+                    for _ in 0..threasds_to_use {
+                        tx_threads_clone.send(()).unwrap();
+                    }
                 }
-                tx_clone.send(pool_id).unwrap();
                 let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
                 Self::gen_proof(
                     proofs_clone.clone(),
