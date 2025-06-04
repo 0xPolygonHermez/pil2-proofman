@@ -187,7 +187,11 @@ where
 
         self.wcm.execute();
 
-        self.pctx.dctx_assign_instances();
+        // create a vector of instances wc weights
+        let n_instances = self.pctx.dctx_get_n_instances();
+        let instances_wc_weights: Vec<usize> = vec![1; n_instances];
+
+        self.pctx.dctx_assign_instances(&instances_wc_weights);
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
@@ -329,7 +333,11 @@ where
         self.wcm.execute();
         timer_stop_and_log_info!(EXECUTE);
 
-        self.pctx.dctx_assign_instances();
+        // create a vector of instances wc weights
+        let n_instances = self.pctx.dctx_get_n_instances();
+        let instances_wc_weights: Vec<usize> = vec![1; n_instances];
+
+        self.pctx.dctx_assign_instances(&instances_wc_weights);
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
@@ -630,7 +638,16 @@ where
 
         self.wcm.execute();
 
-        self.pctx.dctx_assign_instances();
+        // create a vector of instances wc weights
+        let n_instances = self.pctx.dctx_get_n_instances();
+        let mut instances_wc_weights: Vec<usize> = vec![1; n_instances];
+        if let Some(lib) = witness_lib {
+            for instance_id in 0..n_instances {
+                instances_wc_weights[instance_id] = lib.get_witness_weight(&self.pctx, instance_id).unwrap_or(1);
+            }
+        }
+        
+        self.pctx.dctx_assign_instances(&instances_wc_weights);
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
