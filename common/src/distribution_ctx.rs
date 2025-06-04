@@ -291,9 +291,34 @@ impl DistributionCtx {
         self.n_instances - 1
     }
 
-    pub fn assign_instances(&mut self) {
+    pub fn assign_instances(&mut self, instances_wc_weights: &Vec<usize>) {
         if self.balance_distribution {
+
+            // Sort unassigned instances according to wc_weights
+            let mut unassigned_instances = Vec::new();
+            for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
+                if owner == -1 {
+                    unassigned_instances.push((idx, instances_wc_weights[idx]));
+                }
+            }
+
             // Sort the unassigned instances by weight
+            unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
+
+            // Assign half of the unassigned instances in round-robin fashion
+            let mut owner_idx = 0;
+            for (idx, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
+                self.instances_owner[*idx].0 = owner_idx as i32;
+                self.instances_owner[*idx].1 = self.owners_count[owner_idx] as usize;
+                self.owners_count[owner_idx] += 1;
+                self.owners_weight[owner_idx] += self.instances_owner[*idx].2;
+                if owner_idx == self.rank as usize {
+                    self.my_instances.push(*idx);
+                }
+                owner_idx = (owner_idx + 1) % self.n_processes as usize;
+            }
+
+            // Sort the unassigned instances by proof weight
             let mut unassigned_instances = Vec::new();
             for (idx, &(owner, _, weight)) in self.instances_owner.iter().enumerate() {
                 if owner == -1 {
@@ -301,7 +326,7 @@ impl DistributionCtx {
                 }
             }
 
-            // Sort the unassigned instances by weight
+            // Sort the unassigned instances by proof weight
             unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
 
             // Distribute the unassigned instances to the process with minimum weight each time

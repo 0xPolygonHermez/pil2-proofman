@@ -316,6 +316,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance_no_assign_all(airgroup_id, air_id, weight)
     }
 
+    pub fn dctx_get_n_instances(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances.len()
+    }
+
     pub fn dctx_distribute_roots(&self, roots: Vec<u64>) -> Vec<u64> {
         let dctx = self.dctx.read().unwrap();
         dctx.distribute_roots(roots)
@@ -326,9 +331,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance_no_assign(airgroup_id, air_id, weight)
     }
 
-    pub fn dctx_assign_instances(&self) {
+    pub fn dctx_assign_instances(&self, instances_wc_weights: &Vec<usize>) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances();
+        dctx.assign_instances(instances_wc_weights);
     }
 
     pub fn dctx_load_balance_info(&self) -> (f64, u64, u64, f64) {
