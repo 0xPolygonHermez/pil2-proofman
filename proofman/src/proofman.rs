@@ -681,17 +681,6 @@ where
         };
 
         let max_num_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
-        let (threads_per_pool, _ ) = match cfg!(feature = "gpu") {
-            true => {
-                let max_concurrent_pools = self
-                    .gpu_params
-                    .max_number_witness_pools
-                    .min(max_num_threads / self.gpu_params.number_threads_pools_witness)
-                    .min(max_witness_stored);
-                (self.gpu_params.number_threads_pools_witness, max_concurrent_pools)
-            }
-            false => (max_num_threads, 1),
-        };
 
         let n_proof_threads = match cfg!(feature = "gpu") {
             true => self.n_gpus,
@@ -741,7 +730,7 @@ where
             }
 
             let handle = std::thread::spawn(move || {
-                wcm.calculate_witness(1, &[instance_id], threads_per_pool);
+                wcm.calculate_witness(1, &[instance_id], threasds_to_use);
                 // send back the pool id to be reused
                 for _ in 0..threasds_to_use {
                     tx_threads_clone.send(()).unwrap();
@@ -1055,7 +1044,7 @@ where
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
                 if !is_stored {
-                    wcm.calculate_witness(1, &[instance_id], threads_per_pool);
+                    wcm.calculate_witness(1, &[instance_id], threasds_to_use);
                     // send back the pool id to be reused
                     for _ in 0..threasds_to_use {
                         tx_threads_clone.send(()).unwrap();
