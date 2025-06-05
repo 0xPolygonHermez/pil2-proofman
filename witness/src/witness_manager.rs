@@ -102,6 +102,36 @@ impl<F: PrimeField64> WitnessManager<F> {
         }
     }
 
+    pub fn pre_calculate_witness(&self, stage: u32, instance_ids: &[usize], n_cores: usize) {
+        for (idx, component) in self.components.read().unwrap().iter().enumerate() {
+            let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
+
+            let instance_ids_filtered: Vec<_> = self.components_instance_ids.read().unwrap()[idx]
+                .iter()
+                .filter(|id| {
+                    ids_hash_set.contains(id)
+                        && (self.pctx.dctx_is_my_instance(**id) || self.pctx.dctx_is_instance_all(**id))
+                        && self.pctx.dctx_instance_precalculate(**id)
+                })
+                .cloned()
+                .collect();
+
+            if !instance_ids_filtered.is_empty() {
+                component.pre_calculate_witness(
+                    stage,
+                    self.pctx.clone(),
+                    self.sctx.clone(),
+                    &instance_ids_filtered,
+                    n_cores,
+                );
+            }
+        }
+
+        for component in self.components_std.read().unwrap().iter() {
+            component.pre_calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), instance_ids, n_cores);
+        }
+    }
+
     pub fn calculate_witness(&self, stage: u32, instance_ids: &[usize], n_cores: usize) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<_> = instance_ids.iter().collect();

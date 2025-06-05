@@ -99,8 +99,7 @@ pub fn skip_prover_instance<F: PrimeField64>(pctx: &ProofCtx<F>, global_idx: usi
         return (false, Vec::new());
     }
 
-    let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id, _, _) = instances[global_idx];
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_idx);
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
 
     if let Some(airgroup_id_map) = pctx.debug_info.read().unwrap().debug_instances.get(&airgroup_id) {
