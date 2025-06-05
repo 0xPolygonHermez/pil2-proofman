@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{initialize_logger, json_to_debug_instances_map, DebugInfo};
+use proofman_common::{json_to_debug_instances_map, DebugInfo};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
@@ -85,8 +85,6 @@ impl ProveCmd {
         println!("{} Prove", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        initialize_logger(self.verbose.into());
-
         if Path::new(&self.output_dir.join("proofs")).exists() {
             // In distributed mode two different processes may enter here at the same time and try to remove the same directory
             if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
@@ -142,6 +140,7 @@ impl ProveCmd {
             self.aggregation,
             self.final_snark,
             gpu_params,
+            self.verbose.into(),
         )?;
 
         if debug_info.std_mode.name == ModeName::Debug {

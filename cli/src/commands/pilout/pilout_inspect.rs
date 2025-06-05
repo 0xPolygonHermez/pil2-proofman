@@ -20,7 +20,7 @@ impl PiloutInspectCmd {
         println!("{} Pilout inspect subcommand", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        initialize_logger(self.verbose.into());
+        initialize_logger(self.verbose.into(), None);
 
         let pilout = PilOutProxy::new(&self.pilout.display().to_string())?;
 

@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{initialize_logger, json_to_debug_instances_map, DebugInfo};
+use proofman_common::{json_to_debug_instances_map, DebugInfo};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -55,8 +55,6 @@ impl VerifyConstraintsCmd {
         println!("{} VerifyConstraints", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        initialize_logger(self.verbose.into());
-
         let debug_info = match &self.debug {
             None => DebugInfo::default(),
             Some(None) => DebugInfo::new_debug(),
@@ -79,6 +77,7 @@ impl VerifyConstraintsCmd {
             false,
             false,
             ParamsGPU::default(),
+            self.verbose.into(),
         )?;
 
         match self.field {

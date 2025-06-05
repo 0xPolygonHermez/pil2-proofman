@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use fields::PrimeField64;
 use transcript::FFITranscript;
 
-use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams};
+use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams, VerboseMode, initialize_logger};
 
 #[derive(Debug)]
 pub struct Values<F> {
@@ -130,9 +130,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         custom_commits_fixed: HashMap<String, PathBuf>,
         aggregation: bool,
         final_snark: bool,
+        verbose_mode: VerboseMode,
     ) -> Self {
         tracing::info!("Creating proof context");
 
+        let dctx = DistributionCtx::new();
+
+        let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
+        initialize_logger(verbose_mode, rank);
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info
@@ -154,7 +159,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             challenges: Values::new(n_challenges * 3),
             global_challenge: Values::new(3),
             air_instances,
-            dctx: RwLock::new(DistributionCtx::new()),
+            dctx: RwLock::new(dctx),
             debug_info: RwLock::new(DebugInfo::default()),
             custom_commits_fixed,
             weights,

@@ -336,10 +336,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
             for (air_id, _) in air_group.iter().enumerate() {
                 let setup = sctx.get_setup(airgroup_id, air_id);
                 let proof_type: &str = setup.setup_type.clone().into();
-                println!(
-                    "Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}",
-                    airgroup_id, air_id, proof_type
-                );
+                tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                 load_device_setup_c(
                     airgroup_id as u64,
                     air_id as u64,
@@ -351,10 +348,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 if gpu_params.preallocate {
                     let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-                    println!(
-                        "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
-                        airgroup_id, air_id, proof_type
-                    );
+                    tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
                     load_device_const_pols_c(
                         airgroup_id as u64,
                         air_id as u64,
@@ -384,10 +378,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
                     if gpu {
                         let proof_type: &str = setup.setup_type.clone().into();
-                        println!(
-                            "Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}",
-                            airgroup_id, air_id, proof_type
-                        );
+                        tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                         load_device_setup_c(
                             airgroup_id as u64,
                             air_id as u64,
@@ -399,10 +390,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                         if gpu_params.preallocate {
                             let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                             let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-                            println!(
-                                "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
-                                airgroup_id, air_id, proof_type
-                            );
+                            tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
                             load_device_const_pols_c(
                                 airgroup_id as u64,
                                 air_id as u64,
@@ -430,10 +418,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
                 if gpu {
                     let proof_type: &str = setup.setup_type.clone().into();
-                    println!(
-                        "Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}",
-                        airgroup_id, air_id, proof_type
-                    );
+                    tracing::info!(airgroup_id, air_id, proof_type, "Loading expressions setup in GPU");
                     load_device_setup_c(
                         airgroup_id as u64,
                         air_id as u64,
@@ -445,10 +430,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     if gpu_params.preallocate {
                         let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                         let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-                        println!(
-                            "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
-                            airgroup_id, air_id, proof_type
-                        );
+                        tracing::info!(airgroup_id, air_id, proof_type, "Loading const pols in GPU");
                         load_device_const_pols_c(
                             airgroup_id as u64,
                             air_id as u64,
@@ -475,10 +457,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
             let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup_id, 0);
             if gpu {
                 let proof_type: &str = setup.setup_type.clone().into();
-                println!(
-                    "Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}",
-                    airgroup_id, 0, proof_type
-                );
+                tracing::info!(airgroup_id, air_id = 0, proof_type, "Loading expressions setup in GPU");
                 load_device_setup_c(
                     airgroup_id as u64,
                     0_u64,
@@ -490,10 +469,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 if gpu_params.preallocate {
                     let const_pols_path = setup.setup_path.to_string_lossy().to_string() + ".const";
                     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
-                    println!(
-                        "Loading const pols in GPU for airgroup {} and air {} and proof_type {}",
-                        airgroup_id, 0, proof_type
-                    );
+                    tracing::info!(airgroup_id, air_id = 0, proof_type, "Loading const pols in GPU");
                     load_device_const_pols_c(
                         airgroup_id as u64,
                         0_u64,
@@ -517,7 +493,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
         let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
         if gpu {
             let proof_type: &str = setup_vadcop_final.setup_type.clone().into();
-            println!("Loading expressions setup in GPU for airgroup {} and air {} and proof_type {}", 0, 0, proof_type);
+            tracing::info!(airgroup_id = 0, air_id = 0, proof_type, "Loading expressions setup in GPU");
             load_device_setup_c(
                 0_u64,
                 0_u64,
@@ -529,7 +505,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
             if gpu_params.preallocate {
                 let const_pols_path = setup_vadcop_final.setup_path.to_string_lossy().to_string() + ".const";
                 let const_pols_tree_path = setup_vadcop_final.setup_path.display().to_string() + ".consttree";
-                println!("Loading const pols in GPU for airgroup {} and air {} and proof_type {}", 0, 0, proof_type);
+                tracing::info!(airgroup_id = 0, air_id = 0, proof_type, "Loading const pols in GPU");
                 load_device_const_pols_c(
                     0_u64,
                     0_u64,
