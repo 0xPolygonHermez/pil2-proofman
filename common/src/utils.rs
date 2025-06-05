@@ -38,7 +38,7 @@ where
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
-        let timer = SystemTime::default();
+        let timer = SystemTime;
         timer.format_time(&mut writer)?;
         write!(writer, " ")?;
 
