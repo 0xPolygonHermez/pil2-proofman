@@ -18,13 +18,13 @@ pub struct GetConstraintsCmd {
 
 impl GetConstraintsCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{} GetConstraints", format!("{: >12}", "Command").bright_green().bold());
-        println!();
+        initialize_logger(proofman_common::VerboseMode::Info, 0);
+
+        tracing::info!("{}", format!("{} GetConstraints", format!("{: >12}", "Command").bright_green().bold()));
+        tracing::info!("");
 
         let global_info = GlobalInfo::new(&self.proving_key);
         let sctx: SetupCtx<Goldilocks> = SetupCtx::new(&global_info, &ProofType::Basic, false, false);
-
-        initialize_logger(proofman_common::VerboseMode::Info);
 
         for airgroup_id in 0..global_info.air_groups.len() {
             for air_id in 0..global_info.airs[airgroup_id].len() {

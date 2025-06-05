@@ -95,10 +95,10 @@ struct StageColumnCtx {
 
 impl PilHelpersCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{} Pil-helpers", format!("{: >12}", "Command").bright_green().bold());
-        println!();
+        initialize_logger(self.verbose.into(), 0);
 
-        initialize_logger(self.verbose.into());
+        tracing::info!("{}", format!("{} Pil-helpers", format!("{: >12}", "Command").bright_green().bold()));
+        tracing::info!("");
 
         // Check if the pilout file exists
         if !self.pilout.exists() {

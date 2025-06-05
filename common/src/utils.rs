@@ -13,16 +13,53 @@ use std::fs;
 use sysinfo::System;
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
-use tracing_subscriber::{prelude::*, fmt};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::format::DefaultFields;
+use tracing_subscriber::fmt::format::FormatFields;
+use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::fmt::FormatEvent;
+use tracing_subscriber::fmt;
+use std::sync::OnceLock;
 
-pub fn initialize_logger(verbose_mode: VerboseMode) {
+static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
+
+struct RankFormatter;
+
+impl<S, N> FormatEvent<S, N> for RankFormatter
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        _ctx: &fmt::FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
+        let rank = GLOBAL_RANK.get().copied().unwrap_or(0);
+        write!(writer, "[rank={}] ", rank)?;
+        DefaultFields::new().format_fields(writer.by_ref(), event)?;
+        writeln!(writer)?;
+        Ok(())
+    }
+}
+
+pub fn set_global_rank(rank: i32) {
+    let _ = GLOBAL_RANK.set(rank);
+}
+
+pub fn initialize_logger(verbose_mode: VerboseMode, rank: i32) {
     if dispatcher::has_been_set() {
         return;
     }
-    let stdout_layer = fmt::layer()
+
+    set_global_rank(rank);
+
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .event_format(RankFormatter)
         .with_writer(std::io::stdout)
         .with_ansi(true)
-        .with_target(false)
         .with_filter(LevelFilter::from(verbose_mode));
 
     tracing_subscriber::registry().with(stdout_layer).init();
