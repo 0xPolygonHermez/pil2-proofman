@@ -61,15 +61,16 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
     }
 
     let mut memory_tables = 0 as f64;
-    for (instance_id, (airgroup_id, air_id, all, _)) in instances.iter().enumerate() {
+    for (instance_id, &instance_info) in instances.iter().enumerate() {
+        let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
         if !print[instance_id] {
             continue;
         }
-        let air_name = pctx.global_info.airs[*airgroup_id][*air_id].clone().name;
-        let air_group_name = pctx.global_info.air_groups[*airgroup_id].clone();
+        let air_name = pctx.global_info.airs[airgroup_id][air_id].clone().name;
+        let air_group_name = pctx.global_info.air_groups[airgroup_id].clone();
         let air_instance_map = air_instances.entry(air_group_name).or_insert_with(HashMap::new);
         if !air_instance_map.contains_key(&air_name.clone()) {
-            let setup = sctx.get_setup(*airgroup_id, *air_id);
+            let setup = sctx.get_setup(airgroup_id, air_id);
             let n_bits = setup.stark_info.stark_struct.n_bits;
             let memory_trace = (*setup.stark_info.map_sections_n.get("cm1").unwrap()
                 * (1 << (setup.stark_info.stark_struct.n_bits))) as f64
@@ -77,7 +78,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
             let memory_instance = setup.prover_buffer_size as f64 * 8.0;
             let memory_fixed =
                 (setup.stark_info.n_constants * (1 << (setup.stark_info.stark_struct.n_bits))) as f64 * 8.0;
-            if *all {
+            if all {
                 memory_tables += memory_trace;
             }
             let total_cols: u64 = setup
