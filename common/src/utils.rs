@@ -15,10 +15,11 @@ use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::fmt::format::Writer;
-use tracing_subscriber::fmt::format::DefaultFields;
 use tracing_subscriber::fmt::format::FormatFields;
+use tracing_subscriber::fmt::time::SystemTime;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::fmt::FormatEvent;
+use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::fmt;
 use std::sync::OnceLock;
 
@@ -33,14 +34,23 @@ where
 {
     fn format_event(
         &self,
-        _ctx: &fmt::FmtContext<'_, S, N>,
+        ctx: &fmt::FmtContext<'_, S, N>,
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
-        let rank = GLOBAL_RANK.get().copied().unwrap_or(0);
-        write!(writer, "[rank={}] ", rank)?;
-        DefaultFields::new().format_fields(writer.by_ref(), event)?;
+        let timer = SystemTime::default();
+        timer.format_time(&mut writer)?;
+        write!(writer, " ")?;
+
+        if let Some(rank) = GLOBAL_RANK.get().copied() {
+            write!(writer, "[rank={}] ", rank)?;
+        }
+
+        // Print level and event fields
+        write!(writer, "{}: ", event.metadata().level())?;
+        ctx.format_fields(writer.by_ref(), event)?;
         writeln!(writer)?;
+
         Ok(())
     }
 }
@@ -49,12 +59,14 @@ pub fn set_global_rank(rank: i32) {
     let _ = GLOBAL_RANK.set(rank);
 }
 
-pub fn initialize_logger(verbose_mode: VerboseMode, rank: i32) {
+pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<i32>) {
     if dispatcher::has_been_set() {
         return;
     }
 
-    set_global_rank(rank);
+    if let Some(r) = rank {
+        set_global_rank(r);
+    }
 
     let stdout_layer = tracing_subscriber::fmt::layer()
         .event_format(RankFormatter)

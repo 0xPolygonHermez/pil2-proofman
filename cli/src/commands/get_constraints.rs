@@ -18,7 +18,7 @@ pub struct GetConstraintsCmd {
 
 impl GetConstraintsCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        initialize_logger(proofman_common::VerboseMode::Info, 0);
+        initialize_logger(proofman_common::VerboseMode::Info, None);
 
         tracing::info!("{}", format!("{} GetConstraints", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");

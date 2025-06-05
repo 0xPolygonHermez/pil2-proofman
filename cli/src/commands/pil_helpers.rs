@@ -95,7 +95,7 @@ struct StageColumnCtx {
 
 impl PilHelpersCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        initialize_logger(self.verbose.into(), 0);
+        initialize_logger(self.verbose.into(), None);
 
         tracing::info!("{}", format!("{} Pil-helpers", format!("{: >12}", "Command").bright_green().bold()));
         tracing::info!("");

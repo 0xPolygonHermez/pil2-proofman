@@ -136,7 +136,8 @@ impl<F: PrimeField64> ProofCtx<F> {
 
         let dctx = DistributionCtx::new();
 
-        initialize_logger(verbose_mode, dctx.rank);
+        let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
+        initialize_logger(verbose_mode, rank);
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info

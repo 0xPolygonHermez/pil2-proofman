@@ -84,8 +84,12 @@ impl<F: PrimeField64> ProofMan<F>
 where
     GoldilocksQuinticExtension: ExtensionField<F>,
 {
-    pub fn get_rank(&self) -> i32 {
-        self.pctx.dctx_get_rank() as i32
+    pub fn get_rank(&self) -> Option<i32> {
+        if self.pctx.dctx_get_n_processes() > 1 {
+            Some(self.pctx.dctx_get_rank() as i32)
+        } else {
+            None
+        }
     }
 
     pub fn check_setup(
@@ -160,7 +164,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, self.pctx.dctx_get_rank() as i32)?;
+        let mut witness_lib = witness_lib(verbose_mode, self.get_rank())?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -303,7 +307,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, self.pctx.dctx_get_rank() as i32)?;
+        let mut witness_lib = witness_lib(verbose_mode, self.get_rank())?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
@@ -499,7 +503,7 @@ where
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
         let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(verbose_mode, self.pctx.dctx_get_rank() as i32)?;
+        let mut witness_lib = witness_lib(verbose_mode, self.get_rank())?;
         timer_stop_and_log_info!(CREATE_WITNESS_LIB);
 
         self.wcm.set_public_inputs_path(public_inputs_path);
