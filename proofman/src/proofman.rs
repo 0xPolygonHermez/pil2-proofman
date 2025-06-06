@@ -221,7 +221,7 @@ where
         let instances_mine_no_all = instances_mine - instances_mine_all;
         // define managment channels and counters
 
-        let max_num_threads = rayon::max_num_threads();
+        let max_num_threads = rayon::current_num_threads();
         let threads_per_pool = 4;
         let max_concurrent_pools =  max_num_threads / threads_per_pool;
 
