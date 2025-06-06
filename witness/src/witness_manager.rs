@@ -103,7 +103,6 @@ impl<F: PrimeField64> WitnessManager<F> {
     }
 
     pub fn pre_calculate_witness(&self, stage: u32, instance_ids: &[usize], n_cores: usize) {
-        println!("N INSTANCES {} AND N CORES {}", instance_ids.len(), n_cores);
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 

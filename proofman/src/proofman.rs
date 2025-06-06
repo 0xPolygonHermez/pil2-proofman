@@ -238,34 +238,80 @@ where
 
         print_memory_usage();
 
-        let mut memory_ids = Vec::new();
+        let mut non_memory_ids = Vec::new();
+
+        let mut all_ids = Vec::new();
+
+        let mut mem_ids = Vec::new();
+
 
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
             let instance_info = instances[instance_id];
             let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-            if air_id != 2 && air_id != 3 { memory_ids.push(instance_id); }
+            if air_id != 2 && air_id != 3 { non_memory_ids.push(instance_id); } else { mem_ids.push(instance_id) };
+            all_ids.push(instance_id);
         }
 
         timer_start_info!(COLLECT2);
-        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads);
+        self.wcm.pre_calculate_witness(1, &non_memory_ids, max_num_threads);
         timer_stop_and_log_info!(COLLECT2);
 
         timer_start_info!(COLLECT3);
-        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads*3/4);
+        self.wcm.pre_calculate_witness(1, &non_memory_ids, max_num_threads*3/4);
         timer_stop_and_log_info!(COLLECT3);
 
         timer_start_info!(COLLECT4);
-        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads/2);
+        self.wcm.pre_calculate_witness(1, &non_memory_ids, max_num_threads/2);
         timer_stop_and_log_info!(COLLECT4);
 
         timer_start_info!(COLLECT5);
-        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads*3/8);
+        self.wcm.pre_calculate_witness(1, &non_memory_ids, max_num_threads*3/8);
         timer_stop_and_log_info!(COLLECT5);
 
         timer_start_info!(COLLECT6);
-        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads/4);
+        self.wcm.pre_calculate_witness(1, &non_memory_ids, max_num_threads/4);
         timer_stop_and_log_info!(COLLECT6);
+
+        timer_start_info!(COLLECT2_MEM);
+        self.wcm.pre_calculate_witness(1, &mem_ids, max_num_threads);
+        timer_stop_and_log_info!(COLLECT2_MEM);
+
+        timer_start_info!(COLLECT3_MEM);
+        self.wcm.pre_calculate_witness(1, &mem_ids, max_num_threads*3/4);
+        timer_stop_and_log_info!(COLLECT3_MEM);
+
+        timer_start_info!(COLLECT4_MEM);
+        self.wcm.pre_calculate_witness(1, &mem_ids, max_num_threads/2);
+        timer_stop_and_log_info!(COLLECT4_MEM);
+
+        timer_start_info!(COLLECT5_MEM);
+        self.wcm.pre_calculate_witness(1, &mem_ids, max_num_threads*3/8);
+        timer_stop_and_log_info!(COLLECT5_MEM);
+
+        timer_start_info!(COLLECT6_MEM);
+        self.wcm.pre_calculate_witness(1, &mem_ids, max_num_threads/4);
+        timer_stop_and_log_info!(COLLECT6_MEM);
+
+        timer_start_info!(COLLECT2_ALL);
+        self.wcm.pre_calculate_witness(1, &all_ids, max_num_threads);
+        timer_stop_and_log_info!(COLLECT2_ALL);
+
+        timer_start_info!(COLLECT3_ALL);
+        self.wcm.pre_calculate_witness(1, &all_ids, max_num_threads*3/4);
+        timer_stop_and_log_info!(COLLECT3_ALL);
+
+        timer_start_info!(COLLECT4_ALL);
+        self.wcm.pre_calculate_witness(1, &all_ids, max_num_threads/2);
+        timer_stop_and_log_info!(COLLECT4_ALL);
+
+        timer_start_info!(COLLECT5_ALL);
+        self.wcm.pre_calculate_witness(1, &all_ids, max_num_threads*3/8);
+        timer_stop_and_log_info!(COLLECT5_ALL);
+
+        timer_start_info!(COLLECT6_ALL);
+        self.wcm.pre_calculate_witness(1, &all_ids, max_num_threads/4);
+        timer_stop_and_log_info!(COLLECT6_ALL);
 
 
         timer_start_info!(COLLECT);
@@ -296,6 +342,67 @@ where
             handle.join().unwrap();
         }
         timer_stop_and_log_info!(COLLECT);
+        print_memory_usage();
+
+        timer_start_info!(COLLECT_MEM);
+        let mut handles = Vec::new();
+        for &instance_id in my_instances_sorted.iter() {
+            let instances = instances.clone();
+            let instance_info = instances[instance_id];
+            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+            if all {
+                continue;
+            }
+
+            let tx_pools_clone = tx_pools.clone();
+
+            if air_id != 2 && air_id != 3 { continue; }
+            let wcm = self.wcm.clone();
+
+            let pool_id = rx_pools.recv().unwrap();
+
+            let handle = std::thread::spawn(move || {
+                timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                wcm.pre_calculate_witness(1, &[instance_id], threads_per_pool);
+                timer_stop_and_log_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                tx_pools_clone.send(pool_id).unwrap();
+            });
+            handles.push(handle);           
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        timer_stop_and_log_info!(COLLECT_MEM);
+        print_memory_usage();
+
+        timer_start_info!(COLLECT_FULL);
+        let mut handles = Vec::new();
+        for &instance_id in my_instances_sorted.iter() {
+            let instances = instances.clone();
+            let instance_info = instances[instance_id];
+            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+            if all {
+                continue;
+            }
+
+            let tx_pools_clone = tx_pools.clone();
+
+            let wcm = self.wcm.clone();
+
+            let pool_id = rx_pools.recv().unwrap();
+
+            let handle = std::thread::spawn(move || {
+                timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                wcm.pre_calculate_witness(1, &[instance_id], threads_per_pool);
+                timer_stop_and_log_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                tx_pools_clone.send(pool_id).unwrap();
+            });
+            handles.push(handle);           
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        timer_stop_and_log_info!(COLLECT_FULL);
         print_memory_usage();
 
 
