@@ -3,7 +3,7 @@ use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use std::ops::Add;
 use std::sync::atomic::AtomicUsize;
-use proofman_common::CurveType;
+use proofman_common::{print_memory_usage, CurveType};
 use proofman_common::{
     calculate_fixed_tree, skip_prover_instance, Proof, ProofCtx, ProofType, ProofOptions, SetupCtx, SetupsVadcop,
     ParamsGPU, DebugInfo, VerboseMode,
@@ -221,8 +221,8 @@ where
         let instances_mine_no_all = instances_mine - instances_mine_all;
         // define managment channels and counters
 
-        let max_num_threads = rayon::current_num_threads();
-        let n_threads_per_pool = 8;
+        let max_num_threads = 32;
+        let n_threads_per_pool = 4;
         let (threads_per_pool, max_concurrent_pools) = match cfg!(feature = "gpu") {
             true => (n_threads_per_pool, max_num_threads / n_threads_per_pool),
             false => (max_num_threads, 1),
@@ -238,6 +238,71 @@ where
         let mut handles = vec![];
 
         timer_start_info!(COMPUTE_WITNESS);
+
+        print_memory_usage();
+
+        let mut memory_ids = Vec::new();
+
+        for &instance_id in my_instances_sorted.iter() {
+            let instances = instances.clone();
+            let instance_info = instances[instance_id];
+            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+            if air_id != 2 && air_id != 3 { memory_ids.push(instance_id); }
+        }
+
+        timer_start_info!(COLLECT2);
+        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads);
+        timer_stop_and_log_info!(COLLECT2);
+
+        timer_start_info!(COLLECT3);
+        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads*3/4);
+        timer_stop_and_log_info!(COLLECT3);
+
+        timer_start_info!(COLLECT4);
+        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads/2);
+        timer_stop_and_log_info!(COLLECT4);
+
+        timer_start_info!(COLLECT5);
+        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads*3/8);
+        timer_stop_and_log_info!(COLLECT5);
+
+        timer_start_info!(COLLECT6);
+        self.wcm.pre_calculate_witness(1, &memory_ids, max_num_threads/4);
+        timer_stop_and_log_info!(COLLECT6);
+
+
+        timer_start_info!(COLLECT);
+        for &instance_id in my_instances_sorted.iter() {
+            let instances = instances.clone();
+            let instance_info = instances[instance_id];
+            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+            if all {
+                continue;
+            }
+
+            let tx_pools_clone = tx_pools.clone();
+
+            if air_id == 2 || air_id == 3 { continue; }
+            let wcm = self.wcm.clone();
+
+            let pool_id = rx_pools.recv().unwrap();
+
+            let handle = std::thread::spawn(move || {
+                timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                wcm.pre_calculate_witness(1, &[instance_id], threads_per_pool);
+                timer_stop_and_log_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                tx_pools_clone.send(pool_id).unwrap();
+            });
+            handles.push(handle);           
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        timer_stop_and_log_info!(COLLECT);
+        print_memory_usage();
+
+
+        panic!();
         // evaluate my instances except those of type "all" and launch their contribution evaluations
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
@@ -256,9 +321,6 @@ where
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.pre_calculate_witness(1, &[instance_id], threads_per_pool);
-                timer_stop_and_log_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 timer_start_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.calculate_witness(1, &[instance_id], threads_per_pool);
                 timer_stop_and_log_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -730,6 +792,9 @@ where
         timer_start_info!(CALCULATING_WITNESS);
 
         // evaluate my instances except those of type "all" and launch their contribution evaluations
+        // timer_start_info!(COLLECT);
+        // self.wcm.pre_calculate_witness(1, &my_instances_sorted, max_num_threads);
+        // timer_stop_and_log_info!(COLLECT);
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
             let instance_info = instances[instance_id];
@@ -820,11 +885,11 @@ where
         }
 
         // ensure all threads have finishes, this ensures all contributions have been launched
-        if cfg!(feature = "gpu") {
-            for handle in handles {
-                handle.join().unwrap();
-            }
-        }
+        // if cfg!(feature = "gpu") {
+        //     for handle in handles {
+        //         handle.join().unwrap();
+        //     }
+        // }
 
         // get roots still in the streams
         get_stream_proofs_c(self.d_buffers.get_ptr());
