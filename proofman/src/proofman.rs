@@ -1,6 +1,7 @@
 use libloading::{Library, Symbol};
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
+use mpi::environment::Universe;
 use std::ops::Add;
 use std::sync::atomic::AtomicUsize;
 use proofman_common::CurveType;
@@ -98,14 +99,21 @@ where
         final_snark: bool,
         gpu_params: ParamsGPU,
         verbose_mode: VerboseMode,
+        mpi_universe: Option<Universe>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
             return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
         }
 
-        let pctx =
-            ProofCtx::<F>::create_ctx(proving_key_path.clone(), HashMap::new(), aggregation, final_snark, verbose_mode);
+        let pctx = ProofCtx::<F>::create_ctx(
+            proving_key_path.clone(),
+            HashMap::new(),
+            aggregation,
+            final_snark,
+            verbose_mode,
+            mpi_universe,
+        );
 
         let setups_aggregation =
             Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, final_snark));
@@ -222,11 +230,8 @@ where
         // define managment channels and counters
 
         let max_num_threads = rayon::current_num_threads();
-        let n_threads_per_pool = 8;
-        let (threads_per_pool, max_concurrent_pools) = match cfg!(feature = "gpu") {
-            true => (n_threads_per_pool, max_num_threads / n_threads_per_pool),
-            false => (max_num_threads, 1),
-        };
+        let threads_per_pool = 4;
+        let max_concurrent_pools =  max_num_threads / threads_per_pool;
 
         let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
@@ -545,6 +550,7 @@ where
         final_snark: bool,
         gpu_params: ParamsGPU,
         verbose_mode: VerboseMode,
+        mpi_universe: Option<Universe>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
@@ -564,6 +570,7 @@ where
             final_snark,
             &gpu_params,
             verbose_mode,
+            mpi_universe,
         )?;
 
         timer_start_info!(INIT_PROOFMAN);
@@ -1543,6 +1550,7 @@ where
         final_snark: bool,
         gpu_params: &ParamsGPU,
         verbose_mode: VerboseMode,
+        mpi_universe: Option<Universe>,
     ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>), Box<dyn std::error::Error>> {
         let mut pctx = ProofCtx::create_ctx(
             proving_key_path.clone(),
@@ -1550,6 +1558,7 @@ where
             aggregation,
             final_snark,
             verbose_mode,
+            mpi_universe,
         );
         timer_start_info!(INITIALIZING_PROOFMAN);
 
