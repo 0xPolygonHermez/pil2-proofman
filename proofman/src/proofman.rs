@@ -221,12 +221,9 @@ where
         let instances_mine_no_all = instances_mine - instances_mine_all;
         // define managment channels and counters
 
-        let max_num_threads = 32;
-        let n_threads_per_pool = 4;
-        let (threads_per_pool, max_concurrent_pools) = match cfg!(feature = "gpu") {
-            true => (n_threads_per_pool, max_num_threads / n_threads_per_pool),
-            false => (max_num_threads, 1),
-        };
+        let max_num_threads = rayon::max_num_threads();
+        let threads_per_pool = 4;
+        let max_concurrent_pools =  max_num_threads / threads_per_pool;
 
         let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
