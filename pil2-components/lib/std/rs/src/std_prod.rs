@@ -41,9 +41,7 @@ impl<F: PrimeField64> StdProd<F> {
         debug_data_fast: &mut DebugDataFast<F>,
         fast_mode: bool,
     ) {
-        let instances = pctx.dctx_get_instances();
-
-        let (airgroup_id, air_id, _, _) = instances[instance_id];
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
@@ -262,8 +260,8 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                 let air_id = extract_field_element_as_usize(&air_ids.values[i], "air_id");
 
                 for instance_id in instance_ids.iter() {
-                    if instances[*instance_id].0 != airgroup_id
-                        || instances[*instance_id].1 != air_id
+                    if instances[*instance_id].airgroup_id != airgroup_id
+                        || instances[*instance_id].air_id != air_id
                         || skip_prover_instance(&pctx, *instance_id).0
                     {
                         continue;
@@ -349,8 +347,8 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
 
                 // Get all air instances ids for this airgroup and air_id
                 for instance_id in my_instances.iter() {
-                    if instances[*instance_id].0 == airgroup_id
-                        && instances[*instance_id].1 == air_id
+                    if instances[*instance_id].airgroup_id == airgroup_id
+                        && instances[*instance_id].air_id == air_id
                         && instance_ids.contains(instance_id)
                         && !skip_prover_instance(&pctx, *instance_id).0
                     {

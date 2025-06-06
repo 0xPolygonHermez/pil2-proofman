@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use fields::PrimeField64;
 use transcript::FFITranscript;
 
-use crate::{AirInstance, DistributionCtx, GlobalInfo, SetupCtx, StdMode, StepsParams};
+use crate::{
+    initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
+    VerboseMode,
+};
 
 #[derive(Debug)]
 pub struct Values<F> {
@@ -130,9 +133,14 @@ impl<F: PrimeField64> ProofCtx<F> {
         custom_commits_fixed: HashMap<String, PathBuf>,
         aggregation: bool,
         final_snark: bool,
+        verbose_mode: VerboseMode,
     ) -> Self {
         tracing::info!("Creating proof context");
 
+        let dctx = DistributionCtx::new();
+
+        let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
+        initialize_logger(verbose_mode, rank);
         let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
         let n_publics = global_info.n_publics;
         let n_proof_values = global_info
@@ -154,7 +162,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             challenges: Values::new(n_challenges * 3),
             global_challenge: Values::new(3),
             air_instances,
-            dctx: RwLock::new(DistributionCtx::new()),
+            dctx: RwLock::new(dctx),
             debug_info: RwLock::new(DebugInfo::default()),
             custom_commits_fixed,
             weights,
@@ -248,7 +256,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.n_processes as usize
     }
 
-    pub fn dctx_get_instances(&self) -> Vec<(usize, usize, bool, bool)> {
+    pub fn dctx_get_instances(&self) -> Vec<InstanceInfo> {
         let dctx = self.dctx.read().unwrap();
         dctx.instances.clone()
     }
@@ -285,7 +293,12 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_is_instance_all(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.instances[global_idx].2
+        dctx.instances[global_idx].all
+    }
+
+    pub fn dctx_instance_precalculate(&self, global_idx: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances[global_idx].pre_calculate
     }
 
     pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> usize {
@@ -298,16 +311,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.find_instance(airgroup_id, air_id)
     }
 
-    pub fn add_instance(&self, airgroup_id: usize, air_id: usize) -> usize {
+    pub fn add_instance(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        pre_calculate: bool,
+        min_threads_witness: usize,
+    ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
-    }
-
-    pub fn add_instance_fast(&self, airgroup_id: usize, air_id: usize) -> usize {
-        let mut dctx = self.dctx.write().unwrap();
-        let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign_fast(airgroup_id, air_id, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, pre_calculate, min_threads_witness, weight)
     }
 
     pub fn add_instance_all(&self, airgroup_id: usize, air_id: usize) -> usize {
@@ -326,9 +339,16 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.distribute_roots(roots)
     }
 
-    pub fn dctx_add_instance_no_assign(&self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
+    pub fn dctx_add_instance_no_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        pre_calculate: bool,
+        min_threads_witness: usize,
+        weight: u64,
+    ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_instance_no_assign(airgroup_id, air_id, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, pre_calculate, min_threads_witness, weight)
     }
 
     pub fn dctx_assign_instances(&self, instances_wc_weights: &Vec<usize>) {
@@ -471,8 +491,7 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn get_air_instance_params(&self, sctx: &SetupCtx<F>, instance_id: usize, gen_proof: bool) -> StepsParams {
         let air_instance = self.air_instances[instance_id].read().unwrap();
 
-        let instances = self.dctx_get_instances();
-        let (airgroup_id, air_id, _, _) = instances[instance_id];
+        let (airgroup_id, air_id) = self.dctx_get_instance_info(instance_id);
         let setup = sctx.get_setup(airgroup_id, air_id);
 
         let challenges = if gen_proof { air_instance.get_challenges_ptr() } else { self.get_challenges_ptr() };

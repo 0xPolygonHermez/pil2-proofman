@@ -1,6 +1,5 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::initialize_logger;
 use std::{fs::File, path::PathBuf};
 use std::io::Read;
 use colored::Colorize;
@@ -37,8 +36,6 @@ impl VerifyStark {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("{} VerifyStark", format!("{: >12}", "Command").bright_green().bold());
         println!();
-
-        initialize_logger(self.verbose.into());
 
         let publics = if let Some(publics) = &self.public_inputs {
             let mut contents = String::new();

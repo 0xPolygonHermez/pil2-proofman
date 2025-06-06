@@ -13,16 +13,65 @@ use std::fs;
 use sysinfo::System;
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
-use tracing_subscriber::{prelude::*, fmt};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::format::FormatFields;
+use tracing_subscriber::fmt::time::SystemTime;
+use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::fmt::FormatEvent;
+use tracing_subscriber::fmt::time::FormatTime;
+use tracing_subscriber::fmt;
+use std::sync::OnceLock;
 
-pub fn initialize_logger(verbose_mode: VerboseMode) {
+static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
+
+struct RankFormatter;
+
+impl<S, N> FormatEvent<S, N> for RankFormatter
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &fmt::FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
+        let timer = SystemTime;
+        timer.format_time(&mut writer)?;
+        write!(writer, " ")?;
+
+        if let Some(rank) = GLOBAL_RANK.get().copied() {
+            write!(writer, "[rank={}] ", rank)?;
+        }
+
+        // Print level and event fields
+        write!(writer, "{}: ", event.metadata().level())?;
+        ctx.format_fields(writer.by_ref(), event)?;
+        writeln!(writer)?;
+
+        Ok(())
+    }
+}
+
+pub fn set_global_rank(rank: i32) {
+    let _ = GLOBAL_RANK.set(rank);
+}
+
+pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<i32>) {
     if dispatcher::has_been_set() {
         return;
     }
-    let stdout_layer = fmt::layer()
+
+    if let Some(r) = rank {
+        set_global_rank(r);
+    }
+
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .event_format(RankFormatter)
         .with_writer(std::io::stdout)
         .with_ansi(true)
-        .with_target(false)
         .with_filter(LevelFilter::from(verbose_mode));
 
     tracing_subscriber::registry().with(stdout_layer).init();
@@ -50,8 +99,7 @@ pub fn skip_prover_instance<F: PrimeField64>(pctx: &ProofCtx<F>, global_idx: usi
         return (false, Vec::new());
     }
 
-    let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id, _, _) = instances[global_idx];
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_idx);
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
 
     if let Some(airgroup_id_map) = pctx.debug_info.read().unwrap().debug_instances.get(&airgroup_id) {
