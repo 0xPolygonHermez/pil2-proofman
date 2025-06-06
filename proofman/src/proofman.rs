@@ -766,26 +766,31 @@ where
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
             
-            let threasds_to_use = self._witness_num_threads(instance_id as u64, max_num_threads, witness_lib);
+            let threasds_to_use_collect = self._witness_num_threads(instance_id as u64, max_num_threads, witness_lib);
             //wait to receive the expected threads
-            for _ in 0..threasds_to_use {
+            for _ in 0..threasds_to_use_collect {
                 rx_threads.recv().unwrap();
             }
+            let threads_to_use_witness = threasds_to_use_collect.min(4);
+            let threads_to_return = threasds_to_use_collect - threads_to_use_witness;
+
 
             let handle = std::thread::spawn(move || {
                 
                 
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.pre_calculate_witness(1, &[instance_id], threasds_to_use);
+                wcm.pre_calculate_witness(1, &[instance_id], threasds_to_use_collect);
                 timer_stop_and_log_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                
-                
+                // return threads to the pool
+                for _ in 0..threads_to_return {
+                    tx_threads_clone.send(()).unwrap();
+                }
                 timer_start_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.calculate_witness(1, &[instance_id], threasds_to_use);
+                wcm.calculate_witness(1, &[instance_id], threads_to_use_witness);
                 timer_stop_and_log_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 // send back the pool id to be reused
-                for _ in 0..threasds_to_use {
+                for _ in 0..threads_to_use_witness {
                     tx_threads_clone.send(()).unwrap();
                 }
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);                
@@ -1087,12 +1092,15 @@ where
             let const_pols_clone = const_pols.clone();
             let const_tree_clone = const_tree.clone();
             my_instances_calculated[instance_id] = true;
-            let threasds_to_use = self._witness_num_threads(instance_id as u64, max_num_threads, witness_lib);
+            let threads_to_use_collect = self._witness_num_threads(instance_id as u64, max_num_threads, witness_lib);
             if !is_stored {
                 //wait to receive the expected threads
-                for _ in 0..threasds_to_use {
+                for _ in 0..threads_to_use_collect {
                     rx_threads.recv().unwrap();
-                }            }
+                }
+            }
+            let threads_to_use_witness = threads_to_use_collect.min(4);
+            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
             rx_memory.recv().unwrap();
 
             let preallocate = self.gpu_params.preallocate;
@@ -1100,10 +1108,14 @@ where
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
                 if !is_stored {                    
-                    wcm.pre_calculate_witness(1, &[instance_id], threasds_to_use);
-                    wcm.calculate_witness(1, &[instance_id], threasds_to_use);
+                    wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect);
+                    // return threads to the pool
+                    for _ in 0..threads_to_return {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    wcm.calculate_witness(1, &[instance_id], threads_to_use_witness);
                     // send back the pool id to be reused
-                    for _ in 0..threasds_to_use {
+                    for _ in 0..threads_to_use_witness {
                         tx_threads_clone.send(()).unwrap();
                     }
                 }
