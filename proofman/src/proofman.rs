@@ -543,7 +543,7 @@ where
         }
 
         self.wcm.set_input_data_path(input_data_path);
-        self._generate_proof(options, None)
+        self._generate_proof(options, witness_lib)
     }
 
     pub fn new(
@@ -633,7 +633,6 @@ where
         }else{
             1
         };
-        println!("Instance {} has {} chunks", instance_id, n_chunks);
         let n_threads = (n_chunks/ 256).min(max_num_threads / 2).max(2);
         n_threads
     }

@@ -333,7 +333,7 @@ impl DistributionCtx {
 
             // Assign half of the unassigned instances in round-robin fashion
             let mut owner_idx = 0;
-            for (idx, _) in unassigned_instances.iter().take(unassigned_instances.len() / 3) {
+            for (idx, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
                 self.instances_owner[*idx].0 = owner_idx as i32;
                 self.instances_owner[*idx].1 = self.owners_count[owner_idx] as usize;
                 self.owners_count[owner_idx] += 1;
