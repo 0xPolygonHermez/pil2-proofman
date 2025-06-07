@@ -535,6 +535,7 @@ where
         &self,
         input_data_path: Option<PathBuf>,
         options: ProofOptions,
+        witness_lib: Option<&dyn WitnessLibrary<F>>,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         if !options.output_dir_path.exists() {
             fs::create_dir_all(&options.output_dir_path)
@@ -632,7 +633,8 @@ where
         }else{
             1
         };
-        let n_threads = (n_chunks/ 16).max(max_num_threads / 2).min(2);
+        println!("Instance {} has {} chunks", instance_id, n_chunks);
+        let n_threads = (n_chunks/ 256).min(max_num_threads / 2).max(2);
         n_threads
     }
 
@@ -724,6 +726,10 @@ where
         };
 
         let max_num_threads = rayon::current_num_threads();
+        println!(
+            "Using {} threads for witness generation",
+            max_num_threads
+        );
         let n_proof_threads = match cfg!(feature = "gpu") {
             true => self.n_gpus,
             false => 1,
@@ -777,18 +783,21 @@ where
 
             let handle = std::thread::spawn(move || {
                 
-                
+                println!(
+                    "Generating witness for instance {} (airgroup: {}, air: {}) with {} threads",
+                    instance_id, airgroup_id, air_id, threasds_to_use_collect
+                );
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.pre_calculate_witness(1, &[instance_id], threasds_to_use_collect);
-                timer_stop_and_log_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 // return threads to the pool
                 for _ in 0..threads_to_return {
                     tx_threads_clone.send(()).unwrap();
                 }
-                timer_start_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.calculate_witness(1, &[instance_id], threads_to_use_witness);
-                timer_stop_and_log_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 // send back the pool id to be reused
                 for _ in 0..threads_to_use_witness {
                     tx_threads_clone.send(()).unwrap();
