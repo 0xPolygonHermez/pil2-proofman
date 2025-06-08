@@ -633,7 +633,7 @@ where
         }else{
             1
         };
-        let n_threads = (n_chunks/ 256).min(max_num_threads / 2).max(2);
+        let n_threads = (n_chunks/ 16).min(max_num_threads / 2).max(2);
         n_threads
     }
 
@@ -833,6 +833,9 @@ where
         }
 
         timer_stop_and_log_info!(CALCULATING_WITNESS);
+        timer_start_info!(TIME_WAIT);
+        self.pctx.dctx_barrier();
+        timer_stop_and_log_info!(TIME_WAIT);
 
         timer_start_info!(CALCULATING_TABLES);
 
