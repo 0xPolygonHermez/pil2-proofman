@@ -109,10 +109,19 @@ impl std::fmt::Debug for DistributionCtx {
 
 impl DistributionCtx {
     pub fn new() -> Self {
+        let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
+        Self::with_universe(Some(universe))
+    }
+
+    pub fn with_universe(mpi_universe: Option<Universe>) -> Self {
         #[cfg(distributed)]
         {
-            let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
-            let world = universe.world();
+            if mpi_universe.is_none() {
+                return Self::new();
+            }
+
+            let mpi_universe = mpi_universe.unwrap();
+            let world = mpi_universe.world();
             let rank = world.rank();
             let n_processes = world.size();
 
@@ -123,7 +132,7 @@ impl DistributionCtx {
             DistributionCtx {
                 rank,
                 n_processes,
-                universe,
+                universe: mpi_universe,
                 world,
                 n_instances: 0,
                 my_instances: Vec::new(),
