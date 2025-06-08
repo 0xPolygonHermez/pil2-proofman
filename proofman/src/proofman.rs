@@ -639,10 +639,9 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn _generate_proof(&self, options: ProofOptions, witness_lib: Option<& dyn WitnessLibrary<F>>) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        self.pctx.dctx_barrier();
         timer_start_info!(GENERATING_VADCOP_PROOF);
-
         timer_start_info!(GENERATING_PROOFS);
-
         timer_start_info!(EXECUTE);
 
         if !self.wcm.is_init_witness() {
@@ -679,11 +678,13 @@ where
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
-
+        
+        self.pctx.dctx_barrier();
         timer_stop_and_log_info!(EXECUTE);
 
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
         timer_start_info!(CALCULATING_INNER_CONTRIBUTIONS);
+        timer_start_info!(PREPARING_CONTRIBUTIONS);
         let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
 
         let instances = self.pctx.dctx_get_instances();
@@ -747,6 +748,9 @@ where
 
         let witnesses_done = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
+
+        self.pctx.dctx_barrier();
+        timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
         timer_start_info!(CALCULATING_WITNESS);
 
