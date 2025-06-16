@@ -49,7 +49,12 @@ macro_rules! execute {
         fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<std::path::PathBuf>) -> Vec<usize> {
             let mut instance_ids = Vec::new();
             for _ in 0..$num_instances {
-                instance_ids.push(pctx.add_instance($Trace::<usize>::AIRGROUP_ID, $Trace::<usize>::AIR_ID, false, 1));
+                instance_ids.push(pctx.add_instance(
+                    $Trace::<usize>::AIRGROUP_ID,
+                    $Trace::<usize>::AIR_ID,
+                    proofman_common::PreCalculate::None,
+                    1,
+                ));
             }
             *self.instance_ids.write().unwrap() = instance_ids.clone();
             instance_ids

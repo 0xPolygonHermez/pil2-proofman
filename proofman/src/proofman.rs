@@ -219,6 +219,28 @@ where
         let instances_all: Vec<(usize, _)> =
             instances.iter().enumerate().filter(|(_, instance_info)| instance_info.all).collect();
         let my_instances = self.pctx.dctx_get_my_instances();
+        let my_instances_no_precalculate = my_instances
+            .iter()
+            .copied()
+            .filter(|&id| !self.pctx.dctx_instance_precalculate(id) && !self.pctx.dctx_is_instance_all(id))
+            .collect::<Vec<_>>();
+        let my_instances_precalculate_fast = my_instances
+            .iter()
+            .copied()
+            .filter(|&id| self.pctx.dctx_instance_precalculate_fast(id))
+            .collect::<Vec<_>>();
+        let my_instances_precalculate_slow = my_instances
+        .iter()
+        .copied()
+        .filter(|&id| self.pctx.dctx_instance_precalculate_slow(id))
+        .collect::<Vec<_>>();
+
+        println!("MY INSTANCES: {:?}", my_instances);
+        println!("MY INSTANCES NO PRECALCULATE: {:?}", my_instances_no_precalculate);
+        println!("MY INSTANCES PRECALCULATE FAST: {:?}", my_instances_precalculate_fast);
+        println!("MY INSTANCES PRECALCULATE SLOW: {:?}", my_instances_precalculate_slow);
+        println!("TOTAL {}", my_instances_no_precalculate.len() + my_instances_precalculate_fast.len() + my_instances_precalculate_slow.len() + instances_all.len());
+
         let mut my_instances_sorted = my_instances.clone();
         let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
         my_instances_sorted.shuffle(&mut rng);
@@ -239,6 +261,12 @@ where
         let mut handles = Vec::new();
 
         timer_start_info!(COMPUTE_WITNESS);
+        timer_start_info!(FAST_PRECALCULATE_WITNESS);
+        self.wcm.pre_calculate_witness(1, &my_instances_precalculate_fast, max_num_threads / 2);
+        timer_stop_and_log_info!(FAST_PRECALCULATE_WITNESS);
+        timer_start_info!(SLOW_PRECALCULATE_WITNESS);
+        self.wcm.pre_calculate_witness(1, &my_instances_precalculate_slow, max_num_threads / 2);
+        timer_stop_and_log_info!(SLOW_PRECALCULATE_WITNESS);
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
             let instance_info = &instances[instance_id];
@@ -250,30 +278,18 @@ where
             let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_witness_clone = tx_witness.clone();
             let wcm = self.wcm.clone();
-
-            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 2).max(2);
+            let pctx = self.pctx.clone();
+            let threads_per_pool = 4;
 
             //wait to receive the expected threads
-            for _ in 0..threads_to_use_collect {
+            for _ in 0..threads_per_pool {
                 rx_threads.recv().unwrap();
             }
-            let threads_to_use_witness = threads_to_use_collect.min(4);
-            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
-
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect);
-                timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                // return threads to the pool
-                for _ in 0..threads_to_return {
-                    tx_threads_clone.send(()).unwrap();
-                }
-                timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.calculate_witness(1, &[instance_id], threads_to_use_witness);
-                timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                // send back the pool id to be reused
-                for _ in 0..threads_to_use_witness {
+                wcm.calculate_witness(1, &[instance_id], threads_per_pool);
+                pctx.free_instance(instance_id);
+                for _ in 0..threads_per_pool {
                     tx_threads_clone.send(()).unwrap();
                 }
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
