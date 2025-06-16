@@ -108,7 +108,7 @@ impl<F: PrimeField64> AirComponent<F> for SpecifiedRanges {
 
 impl SpecifiedRanges {
     #[inline(always)]
-    pub fn update_inputs(&self, id: usize, value: i64, multiplicity: u64) {
+    pub fn update_input(&self, id: usize, value: i64, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -127,6 +127,29 @@ impl SpecifiedRanges {
 
         // Update the multiplicity
         self.multiplicities[base_offset + range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
+    }
+
+    pub fn update_inputs(&self, id: usize, values: Vec<u32>) {
+        if self.calculated.load(Ordering::Relaxed) {
+            return;
+        }
+
+        // Get the ranges for the given id
+        let ranges = &self.ranges[id];
+        let min_global = ranges.min;
+        let base_offset = ranges.mul_idx;
+
+        // Identify to which sub-range the value belongs
+        for (value, multiplicity) in values.iter().enumerate() {
+            let offset = (value as i64 - min_global) as usize;
+            let range_idx = offset >> self.shift;
+
+            // Get the row index
+            let row_idx = offset & self.mask;
+
+            // Update the multiplicity
+            self.multiplicities[base_offset + range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);
+        }
     }
 
     pub fn airgroup_id(&self) -> usize {

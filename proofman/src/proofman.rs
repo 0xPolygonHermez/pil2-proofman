@@ -231,7 +231,7 @@ where
 
         let max_num_threads = rayon::current_num_threads();
         let threads_per_pool = 4;
-        let max_concurrent_pools =  max_num_threads / threads_per_pool;
+        let max_concurrent_pools = max_num_threads / threads_per_pool;
 
         let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
@@ -542,6 +542,7 @@ where
         self._generate_proof(options)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
@@ -1542,6 +1543,7 @@ where
     }
 
     #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn initialize_proofman(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,

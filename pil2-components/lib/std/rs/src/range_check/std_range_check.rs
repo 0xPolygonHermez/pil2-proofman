@@ -252,7 +252,7 @@ impl<F: PrimeField64> StdRangeCheck<F> {
         }
     }
 
-    pub fn assign_values(&self, value: i64, multiplicity: u64, id: usize) {
+    pub fn assign_value(&self, value: i64, multiplicity: u64, id: usize) {
         // Find the range with the given id
         let range_item = &self.ranges[id];
 
@@ -265,12 +265,12 @@ impl<F: PrimeField64> StdRangeCheck<F> {
             StdRangeType::U8Air => {
                 // Here, we can safely assume that value ∊ [0,2⁸-1]
                 // Therefore, we can safely cast value to u8
-                self.u8air.as_ref().unwrap().update_inputs(value as u8, multiplicity);
+                self.u8air.as_ref().unwrap().update_input(value as u8, multiplicity);
             }
             StdRangeType::U16Air => {
                 // Here, we can safely assume that value ∊ [0,2¹⁶-1]
                 // Therefore, we can safely cast value to u16
-                self.u16air.as_ref().unwrap().update_inputs(value as u16, multiplicity);
+                self.u16air.as_ref().unwrap().update_input(value as u16, multiplicity);
             }
             StdRangeType::U8AirDouble => {
                 // Here, we can safely assume that value ∊ [0,2⁸-1], min >= 0 and max <= 2⁸-1
@@ -279,8 +279,8 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 let lower_value = (value - range_data.min) as u8;
                 let upper_value = (range_data.max - value) as u8;
                 let u8_air = self.u8air.as_ref().unwrap();
-                u8_air.update_inputs(lower_value, multiplicity);
-                u8_air.update_inputs(upper_value, multiplicity);
+                u8_air.update_input(lower_value, multiplicity);
+                u8_air.update_input(upper_value, multiplicity);
             }
             StdRangeType::U16AirDouble => {
                 // Here, we can safely assume that value ∊ [0,2¹⁶-1], min >= 0 and max <= 2¹⁶-1
@@ -289,11 +289,40 @@ impl<F: PrimeField64> StdRangeCheck<F> {
                 let lower_value = (value - range_data.min) as u16;
                 let upper_value = (range_data.max - value) as u16;
                 let u16_air = self.u16air.as_ref().unwrap();
-                u16_air.update_inputs(lower_value, multiplicity);
-                u16_air.update_inputs(upper_value, multiplicity);
+                u16_air.update_input(lower_value, multiplicity);
+                u16_air.update_input(upper_value, multiplicity);
             }
             StdRangeType::SpecifiedRanges => {
-                self.specified_ranges_air.as_ref().unwrap().update_inputs(id, value, multiplicity);
+                self.specified_ranges_air.as_ref().unwrap().update_input(id, value, multiplicity);
+            }
+        }
+    }
+
+    pub fn assign_values(&self, values: Vec<u32>, id: usize) {
+        // Find the range with the given id
+        let range_item = &self.ranges[id];
+
+        // If verify-rc-values is activated and in non-release build, check that the value is contained within the range
+        #[cfg(all(debug_assertions, feature = "verify-rc-values"))]
+        check_value_in_range(value, range_item);
+
+        // Update the multiplicity of the corresponding AIR
+        match range_item.rc_type {
+            StdRangeType::U8Air => {
+                // Here, we can safely assume that value ∊ [0,2⁸-1]
+                // Therefore, we can safely cast value to u8
+                self.u8air.as_ref().unwrap().update_inputs(values);
+            }
+            StdRangeType::U16Air => {
+                // Here, we can safely assume that value ∊ [0,2¹⁶-1]
+                // Therefore, we can safely cast value to u16
+                self.u16air.as_ref().unwrap().update_inputs(values);
+            }
+            StdRangeType::SpecifiedRanges => {
+                self.specified_ranges_air.as_ref().unwrap().update_inputs(id, values);
+            }
+            StdRangeType::U8AirDouble | StdRangeType::U16AirDouble => {
+                panic!("Double ranges are not supported for multiple values");
             }
         }
 
