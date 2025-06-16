@@ -67,6 +67,29 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
     TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+
+
+#ifdef NUMA_NODE
+    // Check device afinity with process NUMA node
+    for (int i = 0; i < d_buffers->n_gpus; i++) {
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, d_buffers->my_gpu_ids[i]);
+        if (prop.numaNode == -1) {
+            zklog.warning("Cannot verify NUMA affinity: GPU %d's NUMA node is unknown (prop.numaNode == -1). "
+                        "Assuming it matches process NUMA node %d", 
+                        d_buffers->my_gpu_ids[i], NUMA_NODE);
+        } 
+        else if (prop.numaNode != NUMA_NODE) {
+            zklog.error("NUMA affinity violation: GPU %d is on NUMA node %d, but process is bound to NUMA node %d",
+                    d_buffers->my_gpu_ids[i], prop.numaNode, NUMA_NODE);
+            exit(1);
+        }
+        else {
+            zklog.info("Verified GPU %d is on correct NUMA node %d", 
+                    d_buffers->my_gpu_ids[i], NUMA_NODE);
+        }
+    }
+#endif
     return (void *)d_buffers;
 }
 
