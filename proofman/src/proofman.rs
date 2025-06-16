@@ -55,10 +55,7 @@ use crate::aggregate_recursive2_proofs;
 
 use std::ffi::c_void;
 
-use proofman_util::{
-    create_buffer_fast, timer_start_info, timer_start_debug, timer_stop_and_log_debug, timer_stop_and_log_info,
-    DeviceBuffer,
-};
+use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info, DeviceBuffer};
 
 pub struct ProofMan<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
@@ -209,10 +206,7 @@ where
         self.wcm.execute();
 
         // create a vector of instances wc weights
-        let n_instances = self.pctx.dctx_get_n_instances();
-        let instances_wc_weights: Vec<usize> = vec![1; n_instances];
-
-        self.pctx.dctx_assign_instances(&instances_wc_weights);
+        self.pctx.dctx_assign_instances();
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
@@ -223,7 +217,7 @@ where
 
         let instances = self.pctx.dctx_get_instances();
         let instances_all: Vec<(usize, _)> =
-            instances.iter().enumerate().filter(|(_, &instance_info)| instance_info.all).collect();
+            instances.iter().enumerate().filter(|(_, instance_info)| instance_info.all).collect();
         let my_instances = self.pctx.dctx_get_my_instances();
         let mut my_instances_sorted = my_instances.clone();
         let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
@@ -234,47 +228,56 @@ where
         // define managment channels and counters
 
         let max_num_threads = rayon::current_num_threads();
-        let threads_per_pool = 4;
-        let max_concurrent_pools = max_num_threads / threads_per_pool;
 
-        let (tx_pools, rx_pools) = bounded::<usize>(max_concurrent_pools);
+        let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
 
-        for pool_id in 0..max_concurrent_pools {
-            tx_pools.send(pool_id).unwrap();
+        for _ in 0..max_num_threads {
+            tx_threads.send(()).unwrap();
         }
 
-        let mut handles = vec![];
+        let mut handles = Vec::new();
 
         timer_start_info!(COMPUTE_WITNESS);
-        // evaluate my instances except those of type "all" and launch their contribution evaluations
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
-            let instance_info = instances[instance_id];
+            let instance_info = &instances[instance_id];
             let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
             if all {
                 continue;
             }
 
-            let pctx_clone = self.pctx.clone();
-            let tx_pools_clone = tx_pools.clone();
+            let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_witness_clone = tx_witness.clone();
             let wcm = self.wcm.clone();
 
-            let pool_id = rx_pools.recv().unwrap();
+            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 2).max(2);
+
+            //wait to receive the expected threads
+            for _ in 0..threads_to_use_collect {
+                rx_threads.recv().unwrap();
+            }
+            let threads_to_use_witness = threads_to_use_collect.min(4);
+            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                timer_start_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.pre_calculate_witness(1, &[instance_id], threads_per_pool);
-                timer_stop_and_log_debug!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                timer_start_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.calculate_witness(1, &[instance_id], threads_per_pool);
-                timer_stop_and_log_debug!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect);
+                timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                // return threads to the pool
+                for _ in 0..threads_to_return {
+                    tx_threads_clone.send(()).unwrap();
+                }
+                timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                wcm.calculate_witness(1, &[instance_id], threads_to_use_witness);
+                timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                // send back the pool id to be reused
+                for _ in 0..threads_to_use_witness {
+                    tx_threads_clone.send(()).unwrap();
+                }
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                tx_pools_clone.send(pool_id).unwrap();
                 tx_witness_clone.send(()).unwrap();
-                pctx_clone.free_instance(instance_id);
             });
             handles.push(handle);
         }
@@ -358,10 +361,7 @@ where
         timer_stop_and_log_info!(EXECUTE);
 
         // create a vector of instances wc weights
-        let n_instances = self.pctx.dctx_get_n_instances();
-        let instances_wc_weights: Vec<usize> = vec![1; n_instances];
-
-        self.pctx.dctx_assign_instances(&instances_wc_weights);
+        self.pctx.dctx_assign_instances();
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
@@ -533,14 +533,13 @@ where
 
         self.register_witness(&mut *witness_lib, library);
 
-        self._generate_proof(options, Some(&*witness_lib))
+        self._generate_proof(options)
     }
 
     pub fn generate_proof_from_lib(
         &self,
         input_data_path: Option<PathBuf>,
         options: ProofOptions,
-        witness_lib: Option<&dyn WitnessLibrary<F>>,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         if !options.output_dir_path.exists() {
             fs::create_dir_all(&options.output_dir_path)
@@ -548,7 +547,7 @@ where
         }
 
         self.wcm.set_input_data_path(input_data_path);
-        self._generate_proof(options, witness_lib)
+        self._generate_proof(options)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -634,19 +633,8 @@ where
         self.pctx.dctx_barrier();
     }
 
-    fn _witness_num_threads(&self, instance_id: u64, max_num_threads: usize, witness_lib: Option<& dyn WitnessLibrary<F>>) -> usize {
-        
-        let n_chunks = if let Some(lib) = witness_lib {
-            lib.get_witness_weight(&self.pctx, instance_id as usize).unwrap_or(1)
-        }else{
-            1
-        };
-        let n_threads = (n_chunks/ 16).min(max_num_threads / 2).max(2);
-        n_threads
-    }
-
     #[allow(clippy::too_many_arguments)]
-    fn _generate_proof(&self, options: ProofOptions, witness_lib: Option<& dyn WitnessLibrary<F>>) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    fn _generate_proof(&self, options: ProofOptions) -> Result<Option<String>, Box<dyn std::error::Error>> {
         self.pctx.dctx_barrier();
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
@@ -673,20 +661,11 @@ where
 
         self.wcm.execute();
 
-        // create a vector of instances wc weights
-        let n_instances = self.pctx.dctx_get_n_instances();
-        let mut instances_wc_weights: Vec<usize> = vec![1; n_instances];
-        if let Some(lib) = witness_lib {
-            for instance_id in 0..n_instances {
-                instances_wc_weights[instance_id] = lib.get_witness_weight(&self.pctx, instance_id).unwrap_or(1);
-            }
-        }
-        
-        self.pctx.dctx_assign_instances(&instances_wc_weights);
+        self.pctx.dctx_assign_instances();
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
-        
+
         self.pctx.dctx_barrier();
         timer_stop_and_log_info!(EXECUTE);
 
@@ -697,7 +676,7 @@ where
 
         let instances = self.pctx.dctx_get_instances();
         let instances_all: Vec<(usize, _)> =
-            instances.iter().enumerate().filter(|(_, &instance_info)| instance_info.all).collect();
+            instances.iter().enumerate().filter(|(_, instance_info)| instance_info.all).collect();
         let my_instances = self.pctx.dctx_get_my_instances();
         let mut my_instances_sorted = my_instances.clone();
         my_instances_sorted.shuffle(&mut rng);
@@ -734,10 +713,6 @@ where
         };
 
         let max_num_threads = rayon::current_num_threads();
-        println!(
-            "Using {} threads for witness generation",
-            max_num_threads
-        );
         let n_proof_threads = match cfg!(feature = "gpu") {
             true => self.n_gpus,
             false => 1,
@@ -765,7 +740,7 @@ where
         // evaluate my instances except those of type "all" and launch their contribution evaluations
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
-            let instance_info = instances[instance_id];
+            let instance_info = &instances[instance_id];
             let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
             if all {
                 continue;
@@ -782,25 +757,28 @@ where
             let tx_witness_clone = tx_witness.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
-            
-            let threasds_to_use_collect = self._witness_num_threads(instance_id as u64, max_num_threads, witness_lib);
+
+            let threads_to_use_collect = match cfg!(feature = "gpu") {
+                true => (instance_info.n_chunks / 16).min(max_num_threads / 2).max(2),
+                false => max_num_threads,
+            };
+
             //wait to receive the expected threads
-            for _ in 0..threasds_to_use_collect {
+            for _ in 0..threads_to_use_collect {
                 rx_threads.recv().unwrap();
             }
-            let threads_to_use_witness = threasds_to_use_collect.min(4);
-            let threads_to_return = threasds_to_use_collect - threads_to_use_witness;
 
+            let threads_to_use_witness = match cfg!(feature = "gpu") {
+                true => threads_to_use_collect.min(4),
+                false => max_num_threads,
+            };
+
+            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
 
             let handle = std::thread::spawn(move || {
-                
-                println!(
-                    "Generating witness for instance {} (airgroup: {}, air: {}) with {} threads",
-                    instance_id, airgroup_id, air_id, threasds_to_use_collect
-                );
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.pre_calculate_witness(1, &[instance_id], threasds_to_use_collect);
+                wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect);
                 timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 // return threads to the pool
                 for _ in 0..threads_to_return {
@@ -813,7 +791,7 @@ where
                 for _ in 0..threads_to_use_witness {
                     tx_threads_clone.send(()).unwrap();
                 }
-                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);                
+                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
                 witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
 
@@ -1086,8 +1064,6 @@ where
             my_instances_calculated[idx as usize] = true;
         }
 
-        // TODO: ORDER INSTANCES ?
-
         let (tx_memory, rx_memory) = bounded::<()>(max_witness_stored);
         for _ in 0..max_witness_stored {
             tx_memory.try_send(()).unwrap();
@@ -1115,7 +1091,9 @@ where
             let const_pols_clone = const_pols.clone();
             let const_tree_clone = const_tree.clone();
             my_instances_calculated[instance_id] = true;
-            let threads_to_use_collect = self._witness_num_threads(instance_id as u64, max_num_threads, witness_lib);
+            let instance_info = &instances[instance_id];
+            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 2).max(2);
+
             if !is_stored {
                 //wait to receive the expected threads
                 for _ in 0..threads_to_use_collect {
@@ -1130,7 +1108,7 @@ where
 
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
-                if !is_stored {                    
+                if !is_stored {
                     wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect);
                     // return threads to the pool
                     for _ in 0..threads_to_return {
