@@ -59,6 +59,7 @@ impl GenCustomCommitsFixedCmd {
             false,
             false,
             self.verbose.into(),
+            None,
         ));
 
         tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));

@@ -30,6 +30,10 @@ impl<F: PrimeField64> Std<F> {
 
     // Processes the inputs for the range check.
     pub fn range_check(&self, val: i64, multiplicity: u64, id: usize) {
-        self.range_check.assign_values(val, multiplicity, id);
+        self.range_check.assign_value(val, multiplicity, id);
+    }
+
+    pub fn range_checks(&self, values: Vec<u32>, id: usize) {
+        self.range_check.assign_values(values, id);
     }
 }

@@ -754,6 +754,7 @@ dependencies = [
  "curves",
  "fields",
  "libloading",
+ "mpi",
  "num-bigint",
  "num-traits",
  "pil-std-lib",

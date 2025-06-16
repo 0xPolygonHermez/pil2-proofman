@@ -4,6 +4,7 @@ use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
 use fields::PrimeField64;
+use mpi::environment::Universe;
 use transcript::FFITranscript;
 
 use crate::{
@@ -134,10 +135,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         aggregation: bool,
         final_snark: bool,
         verbose_mode: VerboseMode,
+        mpi_universe: Option<Universe>,
     ) -> Self {
         tracing::info!("Creating proof context");
 
-        let dctx = DistributionCtx::new();
+        let dctx = DistributionCtx::with_universe(mpi_universe);
 
         let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
         initialize_logger(verbose_mode, rank);

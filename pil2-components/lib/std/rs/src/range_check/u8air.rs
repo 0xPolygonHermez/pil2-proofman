@@ -59,7 +59,7 @@ impl<F: PrimeField64> AirComponent<F> for U8Air {
 
 impl U8Air {
     #[inline(always)]
-    pub fn update_inputs(&self, value: u8, multiplicity: u64) {
+    pub fn update_input(&self, value: u8, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
@@ -72,6 +72,27 @@ impl U8Air {
 
         // Update the multiplicity
         self.multiplicities[range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
+    }
+
+    pub fn update_inputs(&self, values: Vec<u32>) {
+        if self.calculated.load(Ordering::Relaxed) {
+            return;
+        }
+
+        for (value, multiplicity) in values.iter().enumerate() {
+            if *multiplicity == 0 {
+                continue;
+            }
+
+            // Identify to which sub-range the value belongs
+            let range_idx = value >> self.shift;
+
+            // Get the row index
+            let row_idx = value & self.mask;
+
+            // Update the multiplicity
+            self.multiplicities[range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);
+        }
     }
 
     pub fn airgroup_id(&self) -> usize {

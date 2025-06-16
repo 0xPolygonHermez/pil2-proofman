@@ -41,6 +41,7 @@ impl CheckSetupCmd {
                 self.final_snark,
                 ParamsGPU::default(),
                 verbose_mode,
+                None,
             )?,
         };
 
