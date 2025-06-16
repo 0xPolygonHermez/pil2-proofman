@@ -1,8 +1,6 @@
 #[cfg(distributed)]
 use mpi::traits::*;
 #[cfg(distributed)]
-use mpi::environment::Universe;
-#[cfg(distributed)]
 use mpi::collective::CommunicatorCollectives;
 #[cfg(distributed)]
 use mpi::datatype::PartitionMut;
@@ -15,6 +13,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use fields::PrimeField64;
+use mpi::environment::Universe;
 
 use crate::GlobalInfo;
 
