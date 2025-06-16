@@ -113,7 +113,7 @@ impl DistributionCtx {
         Self::with_universe(Some(universe))
     }
 
-    pub fn with_universe(mpi_universe: Option<Universe>) -> Self {
+    pub fn with_universe(mpi_universe: Option<mpi::environment::Universe>) -> Self {
         #[cfg(distributed)]
         {
             if mpi_universe.is_none() {
