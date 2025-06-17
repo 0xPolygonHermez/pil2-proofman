@@ -113,7 +113,11 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer: Vec<#row_struct_name<#generics>> = vec![#row_struct_name::<#generics>::default(); num_rows];
+                let buffer: Vec<#row_struct_name<#generics>> =
+                    (0..num_rows)
+                    .into_par_iter()
+                    .map(|_| #row_struct_name::<#generics>::default())
+                    .collect();
 
 
                 #trace_struct_name {

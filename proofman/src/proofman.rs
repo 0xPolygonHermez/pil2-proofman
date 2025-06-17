@@ -27,6 +27,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
 
+use csv::Writer;
+
 use rand::{SeedableRng, seq::SliceRandom};
 use rand::rngs::StdRng;
 
@@ -56,6 +58,18 @@ use crate::aggregate_recursive2_proofs;
 use std::ffi::c_void;
 
 use proofman_util::{create_buffer_fast, timer_start_info, timer_stop_and_log_info, DeviceBuffer};
+
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct CsvInfo {
+    version: String,
+    airgroup_id: usize,
+    air_id: usize,
+    name: String,
+    instance_count: usize,
+    total_area: u64,
+}
 
 pub struct ProofMan<F: PrimeField64> {
     pctx: Arc<ProofCtx<F>>,
@@ -154,6 +168,141 @@ where
                 calculate_fixed_tree(setup_recursivef);
             }
         }
+
+        Ok(())
+    }
+
+    pub fn execute(
+        &self,
+        witness_lib_path: PathBuf,
+        public_inputs_path: Option<PathBuf>,
+        input_data_path: Option<PathBuf>,
+        output_path: PathBuf,
+        verbose_mode: VerboseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(CREATE_WITNESS_LIB);
+        let library = unsafe { Library::new(&witness_lib_path)? };
+        let witness_lib: Symbol<WitnessLibInitFn<F>> = unsafe { library.get(b"init_library")? };
+        let mut witness_lib = witness_lib(verbose_mode, self.get_rank())?;
+        timer_stop_and_log_info!(CREATE_WITNESS_LIB);
+
+        self.wcm.set_public_inputs_path(public_inputs_path);
+        self.wcm.set_input_data_path(input_data_path);
+
+        self.register_witness(&mut *witness_lib, library);
+
+        self.execute_(output_path)
+    }
+
+    pub fn execute_from_lib(
+        &self,
+        input_data_path: Option<PathBuf>,
+        output_path: PathBuf,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.wcm.set_input_data_path(input_data_path);
+        self.execute_(output_path)
+    }
+
+    pub fn execute_(&self, output_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        timer_start_info!(EXECUTE);
+
+        if !self.wcm.is_init_witness() {
+            println!("Witness computation dynamic library not initialized");
+            return Err("Witness computation dynamic library not initialized".into());
+        }
+
+        self.pctx.dctx_reset();
+
+        self.wcm.execute();
+
+        self.pctx.dctx_assign_instances();
+        self.pctx.dctx_close();
+        timer_stop_and_log_info!(EXECUTE);
+
+        print_summary_info(&self.pctx, &self.sctx);
+
+        let mut air_info: HashMap<String, CsvInfo> = HashMap::new();
+
+        let instances = self.pctx.dctx_get_instances();
+
+        for (airgroup_id, air_group) in self.pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let air_name = self.pctx.global_info.airs[airgroup_id][air_id].clone().name;
+
+                air_info.insert(
+                    air_name.clone(),
+                    CsvInfo {
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                        name: air_name,
+                        airgroup_id,
+                        air_id,
+                        total_area: 0,
+                        instance_count: 0,
+                    },
+                );
+            }
+        }
+        for instance_info in instances.iter() {
+            let airgroup_id = instance_info.airgroup_id;
+            let air_id = instance_info.air_id;
+
+            let air_name = self.pctx.global_info.airs[airgroup_id][air_id].clone().name;
+
+            let setup = self.sctx.get_setup(airgroup_id, air_id);
+            let n_bits = setup.stark_info.stark_struct.n_bits;
+            let total_cols: u64 = setup
+                .stark_info
+                .map_sections_n
+                .iter()
+                .filter(|(key, _)| *key != "const")
+                .map(|(_, value)| *value)
+                .sum();
+            let area = (1 << n_bits) * total_cols;
+
+            air_info.entry(air_name.clone()).and_modify(|info| {
+                info.total_area += area;
+                info.instance_count += 1;
+            });
+        }
+
+        let mut wtr = Writer::from_path(output_path)?;
+
+        let mut total_area = 0;
+        let mut total_instances = 0;
+
+        for info in air_info.values() {
+            total_area += info.total_area;
+            total_instances += info.instance_count;
+        }
+
+        for (airgroup_id, air_group) in self.pctx.global_info.airs.iter().enumerate() {
+            for (air_id, _) in air_group.iter().enumerate() {
+                let air_name = self.pctx.global_info.airs[airgroup_id][air_id].clone().name;
+                let info = air_info.get_mut(&air_name).unwrap();
+                wtr.serialize(&info)?;
+            }
+        }
+
+        #[derive(Serialize)]
+        struct Summary {
+            version: String,
+            airgroup_id: Option<usize>,
+            air_id: Option<usize>,
+            name: String,
+            total_instances: usize,
+            total_area: u64,
+        }
+
+        wtr.serialize(Summary {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            name: "TOTAL".into(),
+            airgroup_id: None,
+            air_id: None,
+            total_area,
+            total_instances,
+        })?;
+
+        wtr.flush()?;
 
         Ok(())
     }
