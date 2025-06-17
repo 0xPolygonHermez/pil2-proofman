@@ -676,7 +676,7 @@ where
 
         let instances = self.pctx.dctx_get_instances();
         let instances_all: Vec<(usize, _)> =
-            instances.iter().enumerate().filter(|(_, instance_info)| instance_info.all).collect();
+            instances.iter().enumerate().filter(|(_, &instance_info)| instance_info.all).collect();
         let my_instances = self.pctx.dctx_get_my_instances();
         let mut my_instances_sorted = my_instances.clone();
         my_instances_sorted.shuffle(&mut rng);
@@ -740,7 +740,7 @@ where
         // evaluate my instances except those of type "all" and launch their contribution evaluations
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
-            let instance_info = &instances[instance_id];
+            let instance_info = instances[instance_id];
             let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
             if all {
                 continue;

@@ -61,7 +61,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
     }
 
     let mut memory_tables = 0 as f64;
-    for (instance_id, instance_info) in instances.iter().enumerate() {
+    for (instance_id, &instance_info) in instances.iter().enumerate() {
         let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
         if !print[instance_id] {
             continue;
