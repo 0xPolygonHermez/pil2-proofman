@@ -1,6 +1,17 @@
 require "std_constants.pil";
 require "std_tools.pil";
 
+// Control how the expressions are grouped
+int EXPRESSIONS_IM_NON_REDUCED = 0; // Set to -1 to non-reduce all the terms
+
+function set_expressions_im_non_reduced(const int num) {
+    if (num < -1) {
+        error(`The non-reduced value must be at least -1, but received ${num}`);
+    }
+
+    EXPRESSIONS_IM_NON_REDUCED = num;
+}
+
 // Control how the airvals are grouped
 int AIRVALS_IM_NON_REDUCED = 0; // Set to -1 to non-reduce all the terms
 int AIRVALS_IM_REDUCE_FACTOR = 1;
@@ -19,14 +30,6 @@ function set_airvals_im_reduce_factor(const int factor) {
     }
 
     AIRVALS_IM_REDUCE_FACTOR = factor;
-}
-
-// TODO: Do the same as with the airvals for the proovals in the function piop_gsum_proof
-// Control how the proofvals are grouped
-int PROOFVALS_IM_FACTOR = 1;
-
-function set_proofvals_factor(const int factor) {
-    PROOFVALS_IM_FACTOR = factor;
 }
 
 function sum(const int name, const int type, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int direct_type = PIOP_DIRECT_TYPE_DEFAULT) {
@@ -253,178 +256,200 @@ private function piop_gsum_air() {
 
     airgroupval aggregate(sum) default(0) gsum_result;
 
-    /*
-                                            muli       seli
-        gsum === 'gsum * (1 - L1) + ∑ᵢ ( -------- - -------- )
-                                           ti + ɣ     fi + ɣ
-    */
-
-    /*
-      Transform the rational constraint to a polynomial one by substituting
-      all the rational terms by terms of degree 1 (except for one to optimize):
-            gsum === 'gsum * (1 - L1) + ∑ᵢ imi + num / den
-    */
-
-    // Identify isolated terms of specific degrees
-    int isolated_term = -1;
-    for (int i = 0; i < gsum_nargs; i++) {
-        const int gsum_s_degree = degree(gsum_s[i]);
-        const int gsum_e_degree = degree(gsum_e[i]);
-        if ((gsum_s_degree == 3 && gsum_e_degree == 1) ||
-            (gsum_s_degree == 2 && gsum_e_degree == 1)) 
-        {
-            isolated_term = i;
-            break;
-        } 
-    }
-
-    // Identify the rest
-    int low_degree_term[gsum_nargs];
-    int high_degree_term[gsum_nargs];
-    int low_degree_len = 0;
-    int high_degree_len = 0;
-    for (int i = 0; i < gsum_nargs; i++) {
-        // If the isolated term has already been identified, continue
-        if (i == isolated_term) {
-            continue;
-        }
-
-        const int gsum_s_degree = degree(gsum_s[i]);
-        const int gsum_e_degree = degree(gsum_e[i]);
-
-        if (gsum_s_degree == 0 && gsum_e_degree == 0)
-        {
-            // In the case that both the numerator and the denominator are constants, 
-            // we can directly add them through the direct terms
-            direct_gsum_s[direct_gsum_nargs] = gsum_s[i];
-            direct_gsum_e[direct_gsum_nargs] = gsum_e[i];
-            direct_gsum_nargs++;
-        } 
-        else if (gsum_s_degree > 2 || gsum_e_degree > 1) 
-        {
-            // Track high-degree terms
-            high_degree_term[high_degree_len] = i;
-            high_degree_len++;
-        } 
-        else 
-        {
-            // Handle low-degree terms
-            if (isolated_term == -1) {
-                // If the isolated term has not been identified, assign
-                isolated_term = i;
-            } else {
-                // Otherwise, add it to the low-degree terms
-                low_degree_term[low_degree_len] = i;
-                low_degree_len++;
-            }
-        }
-    }
-
     if (!defined(std_gamma)) {
         challenge stage(2) std_gamma;
     }
 
-    expr sum_ims = 0;
-    // Create an intermediate for clusters of low-degree terms so that
-    // the degree of the constraint is lower than the maximum allowed
-    if (low_degree_len > 0) {
-        const int nIm = low_degree_len/BLOWUP_FACTOR;
-        if (nIm > 0) {
-            col witness stage(2) im[nIm];
-            for (int i = 0; i < nIm; i++) {
+    /*
+    It should be satisfied that:
+        gsum === 'gsum * (1 - L1) + ∑ⱼ sⱼ / (eⱼ + ɣ)
+    where:
+        · sⱼ = mul if the j-th term is a prove (representing the "multiplicity"),
+        · sⱼ = -sel if the j-th term is an assume (representing the "selector"),
 
-                //              s[3*i]            s[3*i+1]            s[3*i+2]
-                // im[i] = --------------- + ----------------- + -----------------
-                //              e[3*i]            e[3*i+1]            e[3*i+2]
-                // where:
-                // s[x] = mul[x]  if the x-th term is a prove,
-                // s[x] = -sel[x] if the x-th term is an assume,
-                // e[x] = (t[x] + ɣ) if the x-th term is a prove,
-                // e[x] = (f[x] + ɣ) if the x-th term is an assume,
+    We transform some of the rational constraint to a polynomial one by 
+    substituting all the rational terms by individual terms:
+            gsum === 'gsum * (1 - L1) + ∑ᵢ imi + ∑ⱼ sⱼ / (eⱼ + ɣ)
+    */
+
+    expr num = 0;
+    expr den = 1;
+    expr sum_ims = 0;
+    // Compute the number of terms that are not reduced
+    int num_non_reduced = EXPRESSIONS_IM_NON_REDUCED;
+    if ((EXPRESSIONS_IM_NON_REDUCED == -1) || (gsum_nargs < EXPRESSIONS_IM_NON_REDUCED)) {
+        num_non_reduced = gsum_nargs;
+    }
+
+    // The first num_non_reduced terms are not reduced
+    for (int i = 0; i < num_non_reduced; i++) {
+        den *= (gsum_e[i] + std_gamma);
+
+        expr _tmp = gsum_s[i];
+        for (int j = 0; j < num_non_reduced; j++) {
+            if (j != i) _tmp *= (gsum_e[j] + std_gamma);
+        }
+        num += _tmp;
+    }
+
+    // The rest of the terms are grouped in clusters of size BLOWUP_FACTOR
+    const int num_terms = gsum_nargs - num_non_reduced;
+    if (num_terms > 0) {
+        // Identify isolated terms of specific degrees
+        int isolated_term = -1;
+        for (int i = num_non_reduced; i < gsum_nargs; i++) {
+            const int gsum_s_degree = degree(gsum_s[i]);
+            const int gsum_e_degree = degree(gsum_e[i]);
+            if ((gsum_s_degree == 3 && gsum_e_degree == 1) ||
+                (gsum_s_degree == 2 && gsum_e_degree == 1)) 
+            {
+                isolated_term = i;
+                break;
+            } 
+        }
+
+        // Identify the rest
+        int low_degree_term[gsum_nargs];
+        int high_degree_term[gsum_nargs];
+        int low_degree_len = 0;
+        int high_degree_len = 0;
+        for (int i = num_non_reduced; i < gsum_nargs; i++) {
+            // If the isolated term has already been identified, continue
+            if (i == isolated_term) {
+                continue;
+            }
+
+            const int gsum_s_degree = degree(gsum_s[i]);
+            const int gsum_e_degree = degree(gsum_e[i]);
+
+            if (gsum_s_degree == 0 && gsum_e_degree == 0)
+            {
+                // In the case that both the numerator and the denominator are constants, 
+                // we can directly add them through the direct terms
+                direct_gsum_s[direct_gsum_nargs] = gsum_s[i];
+                direct_gsum_e[direct_gsum_nargs] = gsum_e[i];
+                direct_gsum_nargs++;
+            } 
+            else if (gsum_s_degree > 2 || gsum_e_degree > 1) 
+            {
+                // Track high-degree terms
+                high_degree_term[high_degree_len] = i;
+                high_degree_len++;
+            } 
+            else 
+            {
+                // Handle low-degree terms
+                if (isolated_term == -1) {
+                    // If the isolated term has not been identified, assign
+                    isolated_term = i;
+                } else {
+                    // Otherwise, add it to the low-degree terms
+                    low_degree_term[low_degree_len] = i;
+                    low_degree_len++;
+                }
+            }
+        }
+
+        // Create an intermediate for clusters of low-degree terms so that
+        // the degree of the constraint is lower than the maximum allowed
+        if (low_degree_len > 0) {
+            const int nIm = low_degree_len/BLOWUP_FACTOR;
+            if (nIm > 0) {
+                col witness stage(2) im[nIm];
+                for (int i = 0; i < nIm; i++) {
+
+                    //              s[3*i]            s[3*i+1]            s[3*i+2]
+                    // im[i] = --------------- + ----------------- + -----------------
+                    //           e[3*i] + ɣ         e[3*i+1] + ɣ       e[3*i+2] + ɣ
+
+                    expr prods = 1;
+                    expr sums = 0;
+                    const int factor_offset = BLOWUP_FACTOR * i;
+                    for (int j = 0; j < BLOWUP_FACTOR; j++) {
+                        prods *= (gsum_e[low_degree_term[factor_offset + j]] + std_gamma);
+
+                        expr _partial = gsum_s[low_degree_term[factor_offset + j]];
+                        for (int k = 0; k < BLOWUP_FACTOR; k++) {
+                            if (k != j) _partial *= (gsum_e[low_degree_term[factor_offset + k]] + std_gamma);
+                        }
+                        sums += _partial;
+                    }
+                    @im_col{reference: im[i], numerator: sums, denominator: prods};
+
+                    // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
+                    //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
+                    im[i] * prods === sums;
+
+                    sum_ims += im[i];
+                }
+            }
+
+            const int nRemTerms = low_degree_len % BLOWUP_FACTOR;
+            // If there are remaining terms, add an extra cluster
+            if (nRemTerms > 0) {
+                col witness stage(2) im_extra;
 
                 expr prods = 1;
                 expr sums = 0;
-                for (int j = 0; j < BLOWUP_FACTOR; j++) {
-                    prods *= (gsum_e[low_degree_term[BLOWUP_FACTOR * i + j]] + std_gamma);
+                const int low_degree_offset = BLOWUP_FACTOR * nIm;
+                for (int j = 0; j < nRemTerms; j++) {
+                    prods *= (gsum_e[low_degree_term[low_degree_offset + j]] + std_gamma);
 
-                    expr _partial = gsum_s[low_degree_term[BLOWUP_FACTOR * i + j]];
-                    for (int k = 0; k < BLOWUP_FACTOR; k++) {
-                        if (k == j) continue;
-                        _partial *= (gsum_e[low_degree_term[BLOWUP_FACTOR * i + k]] + std_gamma);
+                    expr _partial = gsum_s[low_degree_term[low_degree_offset + j]];
+                    for (int k = 0; k < nRemTerms; k++) {
+                        if (k != j) _partial *= (gsum_e[low_degree_term[low_degree_offset + k]] + std_gamma);
                     }
                     sums += _partial;
                 }
-                @im_col{reference: im[i], numerator: sums, denominator: prods};
+                @im_col{reference: im_extra, numerator: sums, denominator: prods};
 
-                // im[i] * t[3*i] * t[3*i+1] * t[3*i+2] ===
-                //                    mul[3*i]*t[3*i+1]*t[3*i+2] + mul[3*i+1]*t[3*i]*t[3*i+2] + mul[3*i+2]*t[3*i]*t[3*i+1];
-                im[i] * prods === sums;
+                im_extra * prods === sums;
 
-                sum_ims += im[i];
+                sum_ims += im_extra;
             }
         }
 
-        const int nRemTerms = low_degree_len % BLOWUP_FACTOR;
-        // If there are remaining terms, add an extra cluster
-        if (nRemTerms > 0) {
-            col witness stage(2) im_extra;
+        // Create a single intermediate for all the high-degree terms
+        if (high_degree_len > 0) {
+            /*
+                        s[i]   
+            im[i] = ----------
+                     e[i] + ɣ  
+            */
+            col witness stage(2) im_high_degree[high_degree_len];
 
-            expr prods = 1;
-            expr sums = 0;
-            for (int j = 0; j < nRemTerms; j++) {
-                prods *= (gsum_e[low_degree_term[BLOWUP_FACTOR * nIm + j]] + std_gamma);
+            for (int i = 0; i < high_degree_len; i++) {
+                const int index = high_degree_term[i];
 
-                expr _partial = gsum_s[low_degree_term[BLOWUP_FACTOR * nIm + j]];
-                for (int k = 0; k < nRemTerms; k++) {
-                    if (k == j) continue;
-                    _partial *= (gsum_e[low_degree_term[BLOWUP_FACTOR * nIm + k]] + std_gamma);
-                }
-                sums += _partial;
+                @im_col{reference: im_high_degree[i], numerator: gsum_s[index], denominator: gsum_e[index] + std_gamma};
+
+                im_high_degree[i] * (gsum_e[index] + std_gamma) === gsum_s[index];
+
+                sum_ims += im_high_degree[i];
             }
-            @im_col{reference: im_extra, numerator: sums, denominator: prods};
-
-            im_extra * prods === sums;
-
-            sum_ims += im_extra;
         }
-    }
 
-    // Create a single intermediate for all the high-degree terms
-    if (high_degree_len > 0) {
-        /*
-                      s[i]   
-           im[i] = ----------
-                    e[i] + ɣ  
-        */
-        col witness stage(2) im_high_degree[high_degree_len];
+        // Compute the isolated term numerator and denominator
+        if (isolated_term != -1) {
+            den *= (gsum_e[isolated_term] + std_gamma);
 
-        for (int i = 0; i < high_degree_len; i++) {
-            const int index = high_degree_term[i];
-
-            @im_col{reference: im_high_degree[i], numerator: gsum_s[index], denominator: gsum_e[index] + std_gamma};
-
-            im_high_degree[i] * (gsum_e[index] + std_gamma) === gsum_s[index];
-            sum_ims += im_high_degree[i];
+            expr _tmp = gsum_s[isolated_term];
+            for (int j = 0; j < num_non_reduced; j++) {
+                _tmp *= (gsum_e[j] + std_gamma);
+            }
+            num += _tmp;
         }
-    }
-
-    // Compute the isolated term numerator and denominator
-    expr isolated_num = 0;
-    expr isolated_den = 1;
-    if (isolated_term != -1) {
-        isolated_den = (gsum_e[isolated_term] + std_gamma);
-        isolated_num = gsum_s[isolated_term];
     }
 
     //  At this point, the constraint has been transformed to:
-    //       gsum === 'gsum * (1 - L1) + ∑ᵢ imᵢ + num / den
+    //       gsum === 'gsum * (1 - L1) + ∑ᵢ imi + ∑ⱼ sⱼ / (eⱼ + ɣ)
     //  check that the constraint is satisfied
-    (gsum - 'gsum * (1 - L1) - sum_ims) * isolated_den - isolated_num === 0;
+    (gsum - 'gsum * (1 - L1) - sum_ims) * den - num === 0;
 
     /*
-     At the very last row, it should be satisfied that:
-          gsum_result === gsum + ∑ⱼ sⱼ / (eⱼ + ɣ)
-     where both sⱼ and eⱼ are field elements, for all j.
+    At the very last row, it should be satisfied that:
+        gsum_result === gsum + ∑ⱼ sⱼ / (eⱼ + ɣ)
+    where both sⱼ and eⱼ are field elements, for all j.
 
     We also transform some of the rational constraint to a polynomial one by 
     substituting all the rational terms by individual terms:
@@ -472,8 +497,7 @@ private function piop_gsum_air() {
 
                         expr _partial = direct_gsum_s[initial_offset + factor_offset + j];
                         for (int k = 0; k < AIRVALS_IM_REDUCE_FACTOR; k++) {
-                            if (k == j) continue;
-                            _partial *= (direct_gsum_e[initial_offset + factor_offset + k] + std_gamma);
+                            if (k != j) _partial *= (direct_gsum_e[initial_offset + factor_offset + k] + std_gamma);
                         }
                         sums += _partial;
                     }
@@ -500,8 +524,7 @@ private function piop_gsum_air() {
 
                     expr _partial = direct_gsum_s[offset + j];
                     for (int k = 0; k < num_rem_terms; k++) {
-                        if (k == j) continue;
-                        _partial *= (direct_gsum_e[offset + k] + std_gamma);
+                        if (k != j) _partial *= (direct_gsum_e[offset + k] + std_gamma);
                     }
                     sums += _partial;
                 }
@@ -514,7 +537,7 @@ private function piop_gsum_air() {
         }
     }
 
-    @gsum_col{reference: gsum, numerator_air: sum_ims * isolated_den + isolated_num, denominator_air: isolated_den, 
+    @gsum_col{reference: gsum, numerator_air: sum_ims * den + num, denominator_air: den, 
                                numerator_direct: direct_sum_ims * direct_den + direct_num, denominator_direct: direct_den, result: gsum_result};
     L1' * ((gsum_result - gsum - direct_sum_ims) * direct_den - direct_num) === 0;
 
