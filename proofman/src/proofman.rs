@@ -393,6 +393,9 @@ where
         let mut handles = Vec::new();
 
         timer_start_info!(COMPUTE_WITNESS);
+        timer_start_info!(PRE_CALCULATE_WITNESS);
+        self.wcm.pre_calculate_witness(1, &my_instances_sorted, max_num_threads / 2);
+        timer_stop_and_log_info!(PRE_CALCULATE_WITNESS);
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
             let instance_info = &instances[instance_id];
@@ -408,24 +411,25 @@ where
             let wcm = self.wcm.clone();
             let pctx = self.pctx.clone();
 
-            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 2).max(2);
+            // let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 2).max(2);
 
             //wait to receive the expected threads
-            for _ in 0..threads_to_use_collect {
+            let threads_to_use_witness = 4;
+            // let threads_to_return = threads_to_use_collect - threads_to_use_witness;
+
+            for _ in 0..threads_to_use_witness {
                 rx_threads.recv().unwrap();
             }
-            let threads_to_use_witness = threads_to_use_collect.min(4);
-            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
-
+            
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect);
-                timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                // timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                // wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect);
+                // timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 // return threads to the pool
-                for _ in 0..threads_to_return {
-                    tx_threads_clone.send(()).unwrap();
-                }
+                // for _ in 0..threads_to_return {
+                //     tx_threads_clone.send(()).unwrap();
+                // }
                 timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 let witness_buffer = rx_buffer_pool.recv().unwrap();
                 wcm.calculate_witness(1, &[instance_id], threads_to_use_witness, vec![witness_buffer]);
