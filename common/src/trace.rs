@@ -109,7 +109,7 @@ fn check_multi_array_2() {
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 9);
 
-    let mut trace = MyTrace::new();
+    let mut trace = MyTrace::new_from_vec(witness_buffer.remove(0));
     let num_rows = trace.num_rows();
 
     // Set values

@@ -249,25 +249,27 @@ impl<F: Field> AirInstance<F> {
         self.custom_commits_fixed.as_ptr() as *mut u8
     }
 
-    pub fn clear_traces(&mut self) {
-        self.trace = Vec::new();
+    pub fn clear_traces(&mut self) -> Vec<F> {
+        let trace = std::mem::take(&mut self.trace);
         self.custom_commits_fixed = Vec::new();
         self.aux_trace = Vec::new();
+        trace
     }
 
     pub fn clear_custom_commits_fixed_trace(&mut self) {
         self.custom_commits_fixed = Vec::new();
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self) -> Vec<F> {
         self.airgroup_id = 0;
         self.air_id = 0;
-        self.trace = Vec::new();
+        let trace = std::mem::take(&mut self.trace);
         self.aux_trace = Vec::new();
         self.custom_commits_fixed = Vec::new();
         self.airgroup_values = Vec::new();
         self.airvalues = Vec::new();
         self.evals = Vec::new();
         self.challenges = Vec::new();
+        trace
     }
 }

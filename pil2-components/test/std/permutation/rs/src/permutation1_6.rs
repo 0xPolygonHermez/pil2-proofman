@@ -28,12 +28,13 @@ where
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
+        witness_buffer: &mut Vec<Vec<F>>,
     ) {
         if stage == 1 {
             let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
-            let mut trace = Permutation1_6Trace::new();
+            let mut trace = Permutation1_6Trace::new_from_vec(witness_buffer.remove(0));
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);

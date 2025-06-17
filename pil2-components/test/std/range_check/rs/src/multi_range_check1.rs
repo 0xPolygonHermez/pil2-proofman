@@ -28,11 +28,12 @@ where
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
+        witness_buffer: &mut Vec<Vec<F>>,
     ) {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
-            let mut trace = MultiRangeCheck1Trace::new();
+            let mut trace = MultiRangeCheck1Trace::new_from_vec(witness_buffer.remove(0));
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);

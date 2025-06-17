@@ -29,6 +29,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
+        witness_buffer: &mut Vec<Vec<F>>,
     ) {
         if stage == 1 {
             tracing::debug!("··· Starting witness computation stage 1");
@@ -58,7 +59,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 }
                 let mut x_mods = Vec::new();
 
-                let mut trace = ModuleTrace::new();
+                let mut trace = ModuleTrace::new_from_vec(witness_buffer.remove(0));
 
                 let start = j * num_rows;
                 let end = ((j + 1) * num_rows).min(modules.len());

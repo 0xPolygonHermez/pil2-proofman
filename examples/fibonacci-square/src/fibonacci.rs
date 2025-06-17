@@ -33,6 +33,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
+        witness_buffer: &mut Vec<Vec<F>>,
     ) {
         if stage == 1 {
             let instance_id = instance_ids[0];
@@ -45,7 +46,7 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
             let mut a = F::as_canonical_u64(&publics.in1);
             let mut b = F::as_canonical_u64(&publics.in2);
 
-            let mut trace = FibonacciSquareTrace::new();
+            let mut trace = FibonacciSquareTrace::new_from_vec(witness_buffer.remove(0));
 
             trace[0].a = F::from_u64(a);
             trace[0].b = F::from_u64(b);
@@ -84,7 +85,9 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
         sctx: Arc<SetupCtx<F>>,
         check: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut trace_rom = FibonacciSquareRomTrace::new_zeroes();
+        let buffer =
+            vec![F::ZERO; FibonacciSquareRomTrace::<usize>::ROW_SIZE * FibonacciSquareRomTrace::<usize>::NUM_ROWS];
+        let mut trace_rom = FibonacciSquareRomTrace::new_from_vec_zeroes(buffer);
 
         for i in 0..trace_rom.num_rows() {
             trace_rom[i].line = F::from_u64(3 + i as u64);

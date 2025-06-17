@@ -10,9 +10,7 @@ use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, Pr
 
 use std::os::raw::{c_void, c_char};
 
-use proofman_util::{
-    create_buffer_fast, timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace,
-};
+use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_stop_and_log_trace, timer_start_trace};
 
 use crate::{add_publics_circom, add_publics_aggregation};
 
@@ -506,8 +504,8 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     let setup_path = pctx.global_info.get_setup_path("recursivef");
 
     let const_tree_size = setup.const_tree_size;
-    let const_tree = create_buffer_fast(const_tree_size);
-    let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
+    let const_tree = vec![F::ZERO; const_tree_size];
+    let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
 
     load_const_pols(&setup_path, setup.const_pols_size, &const_pols);
     load_const_pols_tree(setup, &const_tree);
@@ -616,7 +614,7 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
     let mut witness_size = setup.size_witness.read().unwrap().unwrap();
     witness_size += *setup.exec_data.read().unwrap().as_ref().unwrap().first().unwrap();
 
-    let witness: Vec<F> = create_buffer_fast(witness_size as usize);
+    let witness: Vec<F> = vec![F::ZERO; witness_size as usize];
 
     let circom_circuit_guard = setup.circom_circuit.read().unwrap();
     let circom_circuit_ptr = match *circom_circuit_guard {

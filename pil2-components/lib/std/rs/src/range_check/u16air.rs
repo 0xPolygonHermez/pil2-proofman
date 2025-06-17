@@ -125,6 +125,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
         _n_cores: usize,
+        _witness_buffer: &mut Vec<Vec<F>>,
     ) {
         if stage == 1 {
             let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;

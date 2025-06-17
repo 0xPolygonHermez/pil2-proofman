@@ -236,6 +236,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
         sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
+        _witness_buffer: &mut Vec<Vec<F>>,
     ) {
         let std_prod_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");
 
