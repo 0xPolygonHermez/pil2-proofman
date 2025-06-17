@@ -2,6 +2,8 @@
 // Manual modifications are not recommended and may be overwritten.
 #![allow(clippy::all)]
 #![allow(non_snake_case)]
+#![allow(non_upper_case_globals)]
+#![allow(dead_code)]
 
 use proofman_common as common;
 pub use proofman_macros::trace;
@@ -9,10 +11,12 @@ pub use proofman_macros::values;
 
 use std::fmt;
 
+use rayon::prelude::*;
+
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &[u8] = b"DiffBuses-hash";
+pub const PILOUT_HASH: &str = "67b031e9b7b6e158fe4bda629feab4568b9e9f8e2f02b3b685fcf78e10f60364";
 
 //AIRGROUP CONSTANTS
 
@@ -52,13 +56,13 @@ trace!(BothBusesTrace<F> {
 },  0, 2, 16 );
 
 values!(ProdBusAirGroupValues<F> {
- gprod_result: FieldExtension<F>,
+ gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
 });
 
 values!(SumBusAirGroupValues<F> {
- gprod_result: FieldExtension<F>,
+ gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
 });
 
 values!(BothBusesAirGroupValues<F> {
- gprod_result: FieldExtension<F>,
+ gprod_result: FieldExtension<F>, gsum_result: FieldExtension<F>,
 });
