@@ -72,7 +72,6 @@ impl ProofOptions {
 pub struct ParamsGPU {
     pub preallocate: bool,
     pub max_number_streams: usize,
-    pub max_number_witness_pools: usize,
     pub number_threads_pools_witness: usize,
     pub max_witness_stored: usize,
 }
@@ -82,7 +81,6 @@ impl Default for ParamsGPU {
         Self {
             preallocate: false,
             max_number_streams: usize::MAX,
-            max_number_witness_pools: usize::MAX,
             number_threads_pools_witness: 4,
             max_witness_stored: 32,
         }
@@ -96,10 +94,6 @@ impl ParamsGPU {
 
     pub fn with_max_number_streams(&mut self, max_number_streams: usize) {
         self.max_number_streams = max_number_streams;
-    }
-
-    pub fn with_max_number_witness_pools(&mut self, max_number_witness_pools: usize) {
-        self.max_number_witness_pools = max_number_witness_pools;
     }
 
     pub fn with_number_threads_pools_witness(&mut self, number_threads_pools_witness: usize) {

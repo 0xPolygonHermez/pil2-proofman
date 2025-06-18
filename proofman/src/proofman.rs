@@ -4,10 +4,9 @@ use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
 use mpi::environment::Universe;
 use std::ops::Add;
 use std::sync::atomic::AtomicUsize;
-use proofman_common::CurveType;
 use proofman_common::{
     MemoryHandler, calculate_fixed_tree, skip_prover_instance, Proof, ProofCtx, ProofType, ProofOptions, SetupCtx,
-    SetupsVadcop, ParamsGPU, DebugInfo, VerboseMode,
+    SetupsVadcop, ParamsGPU, DebugInfo, VerboseMode, CurveType,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -544,10 +543,7 @@ where
         let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        let memory_handler = Arc::new(MemoryHandler::new(
-            self.gpu_params.max_witness_stored.min(my_instances.len()),
-            self.sctx.max_witness_trace_size,
-        ));
+        let memory_handler = Arc::new(MemoryHandler::new(1, self.sctx.max_witness_trace_size));
 
         for (instance_id, instance_info) in instances.iter().enumerate() {
             let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
@@ -568,7 +564,7 @@ where
                 handle.join().unwrap();
             }
 
-            thread_handle = is_my_instance.then(|| {
+            if is_my_instance {
                 Self::verify_proof_constraints_stage(
                     self.pctx.clone(),
                     self.sctx.clone(),
@@ -581,12 +577,9 @@ where
                     self.pctx.dctx_find_air_instance_id(instance_id),
                     debug_info,
                     max_num_threads,
-                )
-            });
-        }
-
-        if let Some(handle) = thread_handle {
-            handle.join().unwrap()
+                    memory_handler.clone(),
+                );
+            };
         }
 
         self.wcm.end(debug_info);
@@ -628,36 +621,35 @@ where
         air_instance_id: usize,
         debug_info: &DebugInfo,
         max_num_threads: usize,
-    ) -> std::thread::JoinHandle<()> {
-        let debug_info = debug_info.clone();
-        std::thread::spawn(move || {
-            Self::initialize_air_instance(&pctx, &sctx, instance_id, true);
+        memory_handler: Arc<MemoryHandler<F>>,
+    ) {
+        Self::initialize_air_instance(&pctx, &sctx, instance_id, true);
 
-            #[cfg(feature = "diagnostic")]
-            {
-                let invalid_initialization = Self::diagnostic_instance(&pctx, &sctx, instance_id);
-                if invalid_initialization {
-                    panic!("Invalid initialization");
-                    // return Some(Err("Invalid initialization".into()));
-                }
+        #[cfg(feature = "diagnostic")]
+        {
+            let invalid_initialization = Self::diagnostic_instance(&pctx, &sctx, instance_id);
+            if invalid_initialization {
+                panic!("Invalid initialization");
+                // return Some(Err("Invalid initialization".into()));
             }
+        }
 
-            let memory_handler = Arc::new(MemoryHandler::<F>::new(1, sctx.max_witness_trace_size));
+        wcm.calculate_witness(2, &[instance_id], max_num_threads, memory_handler.as_ref());
+        Self::calculate_im_pols(2, &sctx, &pctx, instance_id);
 
-            wcm.calculate_witness(2, &[instance_id], max_num_threads, memory_handler.as_ref());
-            Self::calculate_im_pols(2, &sctx, &pctx, instance_id);
+        wcm.debug(&[instance_id], debug_info);
 
-            wcm.debug(&[instance_id], &debug_info);
+        let valid = verify_constraints_proof(&pctx, &sctx, instance_id);
+        if !valid {
+            valid_constraints.fetch_and(valid, Ordering::Relaxed);
+        }
 
-            let valid = verify_constraints_proof(&pctx, &sctx, instance_id);
-            if !valid {
-                valid_constraints.fetch_and(valid, Ordering::Relaxed);
-            }
-
-            let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
-            airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
-            pctx.free_instance(instance_id);
-        })
+        let airgroup_values = pctx.get_air_instance_airgroup_values(airgroup_id, air_id, air_instance_id);
+        airgroup_values_air_instances.lock().unwrap()[pctx.dctx_get_instance_idx(instance_id)] = airgroup_values;
+        let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
+        if is_shared_buffer {
+            memory_handler.release_buffer(witness_buffer);
+        }
     }
 
     pub fn generate_proof(
