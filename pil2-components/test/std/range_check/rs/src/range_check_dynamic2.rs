@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc_with_std};
 
-use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
 use rand::{
@@ -28,12 +28,12 @@ where
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
-        witness_buffer: &mut Vec<Vec<F>>,
+        buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
             let mut rng = StdRng::seed_from_u64(self.seed.load(Ordering::Relaxed));
 
-            let mut trace = RangeCheckDynamic2Trace::new_from_vec(witness_buffer.remove(0));
+            let mut trace = RangeCheckDynamic2Trace::new_from_vec(buffer_pool.take_buffer());
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);

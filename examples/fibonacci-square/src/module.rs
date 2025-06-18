@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use proofman_common::{AirInstance, FromTrace, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::{WitnessComponent, execute};
 use pil_std_lib::Std;
 use fields::PrimeField64;
@@ -29,7 +29,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
-        witness_buffer: &mut Vec<Vec<F>>,
+        buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
             tracing::debug!("··· Starting witness computation stage 1");
@@ -59,7 +59,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 }
                 let mut x_mods = Vec::new();
 
-                let mut trace = ModuleTrace::new_from_vec(witness_buffer.remove(0));
+                let mut trace = ModuleTrace::new_from_vec(buffer_pool.take_buffer());
 
                 let start = j * num_rows;
                 let end = ((j + 1) * num_rows).min(modules.len());

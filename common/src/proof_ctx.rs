@@ -569,11 +569,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn free_instance(&self, instance_id: usize) -> Vec<F> {
+    pub fn free_instance(&self, instance_id: usize) -> (bool, Vec<F>) {
         self.air_instances[instance_id].write().unwrap().reset()
     }
 
-    pub fn free_instance_traces(&self, instance_id: usize) -> Vec<F> {
+    pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
         self.air_instances[instance_id].write().unwrap().clear_traces()
     }
 }

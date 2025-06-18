@@ -64,6 +64,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             pub airgroup_id: usize,
             pub air_id: usize,
             pub commit_id: Option<usize>,
+            pub shared_buffer: bool,
         }
 
         impl<#generics: Default + Clone + Copy + Send> #trace_struct_name<#generics> {
@@ -94,6 +95,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
                     commit_id: #commit_id,
+                    shared_buffer: false,
                 }
             }
 
@@ -142,30 +144,12 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
                     commit_id: #commit_id,
+                    shared_buffer: true,
                 }
             }
 
             pub fn from_vec(buffer: Vec<#generics>) -> Self {
                 Self::new_from_vec(buffer)
-            }
-
-            pub fn from_slice(slice: &[#generics]) -> Self {
-                let row_size = #row_struct_name::<#generics>::ROW_SIZE;
-                let num_rows = Self::NUM_ROWS;
-                let expected_len = num_rows * row_size;
-
-                assert!(slice.len() >= expected_len, "Slice too small");
-
-                let buffer = slice[0..expected_len].to_vec();
-
-                Self {
-                    buffer,
-                    num_rows,
-                    row_size,
-                    airgroup_id: Self::AIRGROUP_ID,
-                    air_id: Self::AIR_ID,
-                    commit_id: #commit_id,
-                }
             }
 
             pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl rayon::iter::IndexedParallelIterator<Item = &mut [#row_struct_name<#generics>]> {
@@ -190,6 +174,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
             pub fn get_buffer(&mut self) -> Vec<#generics> {
                 std::mem::take(&mut self.buffer)
+            }
+
+            pub fn is_shared_buffer(&self) -> bool {
+                self.shared_buffer
             }
         }
 
@@ -250,6 +238,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
             fn get_buffer(&mut self) -> Vec<#generics> {
                 std::mem::take(&mut self.buffer)
+            }
+
+            fn is_shared_buffer(&self) -> bool {
+                self.shared_buffer
             }
         }
     };

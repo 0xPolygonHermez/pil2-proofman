@@ -5,6 +5,7 @@ pub trait Trace<F>: Send {
     fn air_id(&self) -> usize;
     fn commit_id(&self) -> Option<usize>;
     fn get_buffer(&mut self) -> Vec<F>;
+    fn is_shared_buffer(&self) -> bool;
 }
 
 pub trait Values<F>: Send {
@@ -109,7 +110,7 @@ fn check_multi_array_2() {
 
     assert_eq!(TraceRow::<usize>::ROW_SIZE, 9);
 
-    let mut trace = MyTrace::new_from_vec(witness_buffer.remove(0));
+    let mut trace = MyTrace::new();
     let num_rows = trace.num_rows();
 
     // Set values

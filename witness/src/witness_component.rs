@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use fields::PrimeField64;
-use proofman_common::{ProofCtx, SetupCtx, DebugInfo};
+use proofman_common::{BufferPool, ProofCtx, SetupCtx, DebugInfo};
 use std::path::PathBuf;
 
 pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
@@ -18,7 +18,7 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
         _n_cores: usize,
-        _witness_buffer: &mut Vec<Vec<F>>,
+        _buffer_pool: &dyn BufferPool<F>,
     ) {
     }
 

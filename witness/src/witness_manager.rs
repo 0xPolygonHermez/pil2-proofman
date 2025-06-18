@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock, Mutex};
 use std::path::PathBuf;
 
 use fields::PrimeField64;
-use proofman_common::{ModeName, ProofCtx, SetupCtx, DebugInfo};
+use proofman_common::{BufferPool, DebugInfo, ModeName, ProofCtx, SetupCtx};
 use crate::WitnessComponent;
 use libloading::Library;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -137,7 +137,7 @@ impl<F: PrimeField64> WitnessManager<F> {
         stage: u32,
         instance_ids: &[usize],
         n_cores: usize,
-        mut witness_buffer: Vec<Vec<F>>,
+        buffer_pool: &dyn BufferPool<F>,
     ) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
@@ -158,7 +158,7 @@ impl<F: PrimeField64> WitnessManager<F> {
                     self.sctx.clone(),
                     &instance_ids_filtered,
                     n_cores,
-                    &mut witness_buffer,
+                    buffer_pool,
                 );
             }
         }
@@ -170,7 +170,7 @@ impl<F: PrimeField64> WitnessManager<F> {
                 self.sctx.clone(),
                 instance_ids,
                 n_cores,
-                &mut witness_buffer,
+                buffer_pool,
             );
         }
     }
