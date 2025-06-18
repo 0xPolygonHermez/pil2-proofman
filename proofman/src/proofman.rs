@@ -362,13 +362,6 @@ where
 
         timer_stop_and_log_info!(EXECUTE);
 
-        self.pctx.set_global_challenge(2, &[F::ZERO; 3]);
-
-        let (tx_buffer_pool, rx_buffer_pool): (Sender<Vec<F>>, Receiver<Vec<F>>) = bounded(50);
-        for _ in 0..50 {
-            tx_buffer_pool.send(create_buffer_fast(self.sctx.max_witness_trace_size)).unwrap();
-        }
-
         let instances = self.pctx.dctx_get_instances();
         let instances_all: Vec<(usize, _)> =
             instances.iter().enumerate().filter(|(_, instance_info)| instance_info.all).collect();
@@ -390,11 +383,20 @@ where
             tx_threads.send(()).unwrap();
         }
 
+        let max_witness_stored = instances_mine.min(self.gpu_params.max_witness_stored);
+
+        let (tx_buffer_pool, rx_buffer_pool): (Sender<Vec<F>>, Receiver<Vec<F>>) = bounded(max_witness_stored);
+        for _ in 0..max_witness_stored {
+            tx_buffer_pool.send(create_buffer_fast(self.sctx.max_witness_trace_size)).unwrap();
+        }
+
+        let n_threads_witness = self.gpu_params.number_threads_pools_witness;
+
         let mut handles = Vec::new();
 
         timer_start_info!(COMPUTE_WITNESS);
         timer_start_info!(PRE_CALCULATE_WITNESS);
-        self.wcm.pre_calculate_witness(1, &my_instances_sorted, max_num_threads / 2);
+        self.wcm.pre_calculate_witness(1, &my_instances_sorted, max_num_threads);
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS);
         for &instance_id in my_instances_sorted.iter() {
             let instances = instances.clone();
@@ -411,31 +413,17 @@ where
             let wcm = self.wcm.clone();
             let pctx = self.pctx.clone();
 
-            // let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 2).max(2);
-
-            //wait to receive the expected threads
-            let threads_to_use_witness = 4;
-            // let threads_to_return = threads_to_use_collect - threads_to_use_witness;
-
-            for _ in 0..threads_to_use_witness {
+            for _ in 0..n_threads_witness {
                 rx_threads.recv().unwrap();
             }
-            
+
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                // timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                // wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect);
-                // timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                // return threads to the pool
-                // for _ in 0..threads_to_return {
-                //     tx_threads_clone.send(()).unwrap();
-                // }
                 timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 let witness_buffer = rx_buffer_pool.recv().unwrap();
-                wcm.calculate_witness(1, &[instance_id], threads_to_use_witness, vec![witness_buffer]);
+                wcm.calculate_witness(1, &[instance_id], n_threads_witness, vec![witness_buffer]);
                 timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                // send back the pool id to be reused
-                for _ in 0..threads_to_use_witness {
+                for _ in 0..n_threads_witness {
                     tx_threads_clone.send(()).unwrap();
                 }
                 let witness_buffer = pctx.free_instance(instance_id);

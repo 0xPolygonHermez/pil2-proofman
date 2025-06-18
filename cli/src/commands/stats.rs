@@ -48,6 +48,12 @@ pub struct StatsCmd {
 
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
+
+    #[clap(short = 'n', long)]
+    pub number_threads_witness: Option<usize>,
+
+    #[clap(short = 'x', long)]
+    pub max_witness_stored: Option<usize>,
 }
 
 impl StatsCmd {
@@ -70,13 +76,21 @@ impl StatsCmd {
             }
         }
 
+        let mut gpu_params = ParamsGPU::default();
+        if self.number_threads_witness.is_some() {
+            gpu_params.with_number_threads_pools_witness(self.number_threads_witness.unwrap());
+        }
+        if self.max_witness_stored.is_some() {
+            gpu_params.with_max_witness_stored(self.max_witness_stored.unwrap());
+        }
+
         let proofman = ProofMan::<Goldilocks>::new(
             self.proving_key.clone(),
             custom_commits_map,
             true,
             false,
             false,
-            ParamsGPU::default(),
+            gpu_params,
             self.verbose.into(),
             None,
         )?;
