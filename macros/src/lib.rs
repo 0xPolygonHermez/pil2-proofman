@@ -77,6 +77,24 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 #trace_struct_name::with_capacity(Self::NUM_ROWS)
             }
 
+            pub fn new_zeroes() -> Self {
+                let num_rows = Self::NUM_ROWS;
+                assert!(num_rows >= 2);
+                assert!(num_rows & (num_rows - 1) == 0);
+
+                let buffer: Vec<#generics> = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
+
+                #trace_struct_name {
+                    buffer,
+                    num_rows,
+                    row_size: #row_struct_name::<#generics>::ROW_SIZE,
+                    airgroup_id: Self::AIRGROUP_ID,
+                    air_id: Self::AIR_ID,
+                    commit_id: #commit_id,
+                    shared_buffer: false,
+                }
+            }
+
             pub fn with_capacity(num_rows: usize) -> Self {
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
@@ -87,6 +105,15 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     vec.set_len(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
                     std::mem::transmute(vec)
                 };
+
+                #[cfg(feature = "diagnostic")]
+                unsafe {
+                    let ptr = buffer.as_mut_ptr() as *mut u64;
+                    let expected_len = num_rows * #row_struct_name::<#generics>::ROW_SIZE;
+                    for i in 0..expected_len {
+                        ptr.add(i).write(u64::MAX - 1);
+                    }
+                }
 
                 #trace_struct_name {
                     buffer,
