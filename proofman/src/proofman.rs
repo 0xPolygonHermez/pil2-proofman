@@ -1039,7 +1039,7 @@ where
         self.wcm.pre_calculate_witness(1, &instances_mine_precalculate_fast, max_num_threads / 2);
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_FAST);
         timer_start_info!(CALCULATE_FAST_WITNESS);
-        for &instance_id in my_instances_sorted.iter() {
+        for &instance_id in instances_mine_precalculate_fast.iter() {
             let instances = instances.clone();
             let instance_info = instances[instance_id];
             let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);

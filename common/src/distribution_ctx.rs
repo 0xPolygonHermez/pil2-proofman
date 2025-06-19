@@ -31,6 +31,7 @@ pub struct InstanceInfo {
     pub pre_calculate: PreCalculate,
     pub min_threads_witness: usize,
     pub n_chunks: usize,
+    pub range: (usize, usize),
 }
 
 impl InstanceInfo {
@@ -41,7 +42,7 @@ impl InstanceInfo {
         pre_calculate: PreCalculate,
         min_threads_witness: usize,
     ) -> Self {
-        Self { airgroup_id, air_id, all, pre_calculate, min_threads_witness, n_chunks: 1 }
+        Self { airgroup_id, air_id, all, pre_calculate, min_threads_witness, n_chunks: 1, range: (0, 0) }
     }
 }
 
@@ -364,6 +365,9 @@ impl DistributionCtx {
     pub fn set_chunks(&mut self, global_idx: usize, chunks: Vec<usize>) {
         let instance_info = &mut self.instances[global_idx];
         instance_info.n_chunks = chunks.len();
+        if let (Some(&first), Some(&last)) = (chunks.first(), chunks.last()) {
+            instance_info.range = (first, last);
+        }
     }
 
     pub fn assign_instances(&mut self) {
