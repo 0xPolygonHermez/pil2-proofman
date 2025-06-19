@@ -469,7 +469,7 @@ where
             }
 
             let memory_handler_clone = memory_handler.clone();
-            
+
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
@@ -1044,11 +1044,6 @@ where
                     tx_threads_clone.send(()).unwrap();
                 }
 
-                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                if is_shared_buffer {
-                    memory_handler_clone.release_buffer(witness_buffer);
-                }
-
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
                 witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
@@ -1119,10 +1114,6 @@ where
                 for _ in 0..n_threads_witness {
                     tx_threads_clone.send(()).unwrap();
                 }
-                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                if is_shared_buffer {
-                    memory_handler_clone.release_buffer(witness_buffer);
-                }
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
                 witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
@@ -1139,7 +1130,10 @@ where
                 );
 
                 if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) > max_witness_stored {
-                    pctx_clone.free_instance_traces(instance_id);
+                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                    if is_shared_buffer {
+                        memory_handler_clone.release_buffer(witness_buffer);
+                    }
                 }
             });
             if cfg!(not(feature = "gpu")) {
@@ -1192,10 +1186,6 @@ where
                 for _ in 0..n_threads_witness {
                     tx_threads_clone.send(()).unwrap();
                 }
-                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                if is_shared_buffer {
-                    memory_handler_clone.release_buffer(witness_buffer);
-                }
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
                 witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
@@ -1212,7 +1202,10 @@ where
                 );
 
                 if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) > max_witness_stored {
-                    pctx_clone.free_instance_traces(instance_id);
+                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                    if is_shared_buffer {
+                        memory_handler_clone.release_buffer(witness_buffer);
+                    }
                 }
             });
             if cfg!(not(feature = "gpu")) {
@@ -1462,7 +1455,7 @@ where
                         self.gpu_params.preallocate,
                     );
                     let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id as usize);
-                    if !is_shared_buffer {
+                    if is_shared_buffer {
                         memory_handler.release_buffer(witness_buffer);
                     }
                     processed_ids.lock().unwrap().push(instance_id);
