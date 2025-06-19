@@ -3,7 +3,6 @@ use std::ffi::c_void;
 
 use fields::PrimeField64;
 use proofman_starks_lib_c::{expressions_bin_new_c, get_tree_size_c};
-use proofman_util::create_buffer_fast;
 
 use crate::load_const_pols;
 use crate::GlobalInfo;
@@ -215,6 +214,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                         total_prover_trace_size += global_info.proof_values_map.as_ref().map_or(0, |v| 3 * v.len());
                         total_prover_trace_size += 3;
                         max_prover_trace_size = max_prover_trace_size.max(total_prover_trace_size);
+                        max_witness_trace_size = max_witness_trace_size.max(trace_size as usize);
                         max_prover_contribution_area =
                             max_prover_contribution_area.max(trace_size + trace_ext_size + tree_size + 3 * n_extended);
                         total_const_size += setup.const_pols_size + setup.const_tree_size;
@@ -306,7 +306,7 @@ impl<F: PrimeField64> SetupCtx<F> {
     pub fn get_fixed(&self, airgroup_id: usize, air_id: usize) -> Vec<F> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
             Some(setup) => {
-                let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
+                let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
                 load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
                 const_pols
             }

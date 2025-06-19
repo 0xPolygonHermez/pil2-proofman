@@ -57,11 +57,12 @@ pub struct TraceInfo<F> {
     custom_traces: Option<Vec<CustomCommitInfo<F>>>,
     air_values: Option<Vec<F>>,
     airgroup_values: Option<Vec<F>>,
+    shared_buffer: bool,
 }
 
 impl<F> TraceInfo<F> {
-    pub fn new(airgroup_id: usize, air_id: usize, trace: Vec<F>) -> Self {
-        Self { airgroup_id, air_id, trace, custom_traces: None, air_values: None, airgroup_values: None }
+    pub fn new(airgroup_id: usize, air_id: usize, trace: Vec<F>, shared_buffer: bool) -> Self {
+        Self { airgroup_id, air_id, trace, custom_traces: None, air_values: None, airgroup_values: None, shared_buffer }
     }
 
     pub fn with_custom_traces(mut self, custom_traces: Vec<CustomCommitInfo<F>>) -> Self {
@@ -122,6 +123,7 @@ pub struct AirInstance<F> {
     pub airvalues: Vec<F>,
     pub challenges: Vec<F>,
     pub evals: Vec<F>,
+    pub shared_buffer: bool,
 }
 
 impl<F: Field> AirInstance<F> {
@@ -143,12 +145,17 @@ impl<F: Field> AirInstance<F> {
             airvalues,
             evals: Vec::new(),
             challenges: Vec::new(),
+            shared_buffer: trace_info.shared_buffer,
         }
     }
 
     pub fn new_from_trace(mut traces: FromTrace<'_, F>) -> Self {
-        let mut trace_info =
-            TraceInfo::new(traces.trace.airgroup_id(), traces.trace.air_id(), traces.trace.get_buffer());
+        let mut trace_info = TraceInfo::new(
+            traces.trace.airgroup_id(),
+            traces.trace.air_id(),
+            traces.trace.get_buffer(),
+            traces.trace.is_shared_buffer(),
+        );
 
         if let Some(custom_traces) = traces.custom_traces.as_mut() {
             let mut traces = Vec::new();
@@ -249,25 +256,30 @@ impl<F: Field> AirInstance<F> {
         self.custom_commits_fixed.as_ptr() as *mut u8
     }
 
-    pub fn clear_traces(&mut self) {
-        self.trace = Vec::new();
+    pub fn clear_traces(&mut self) -> (bool, Vec<F>) {
+        let trace = std::mem::take(&mut self.trace);
+        let shared_buffer = self.shared_buffer;
         self.custom_commits_fixed = Vec::new();
         self.aux_trace = Vec::new();
+        (shared_buffer, trace)
     }
 
     pub fn clear_custom_commits_fixed_trace(&mut self) {
         self.custom_commits_fixed = Vec::new();
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self) -> (bool, Vec<F>) {
         self.airgroup_id = 0;
         self.air_id = 0;
-        self.trace = Vec::new();
+        let trace = std::mem::take(&mut self.trace);
+        let shared_buffer = self.shared_buffer;
+        self.shared_buffer = false;
         self.aux_trace = Vec::new();
         self.custom_commits_fixed = Vec::new();
         self.airgroup_values = Vec::new();
         self.airvalues = Vec::new();
         self.evals = Vec::new();
         self.challenges = Vec::new();
+        (shared_buffer, trace)
     }
 }

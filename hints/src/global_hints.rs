@@ -100,7 +100,7 @@ fn get_global_hint_f<F: PrimeField64>(
     HintFieldInfoC::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
 
     for hint_field_value in hint_field_values.iter_mut() {
-        hint_field_value.init_buffers(true);
+        hint_field_value.init_buffers();
     }
 
     hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);

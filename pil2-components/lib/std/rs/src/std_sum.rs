@@ -9,7 +9,7 @@ use fields::PrimeField64;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
-use proofman_common::{skip_prover_instance, ModeName, ProofCtx, SetupCtx, DebugInfo};
+use proofman_common::{skip_prover_instance, BufferPool, DebugInfo, ModeName, ProofCtx, SetupCtx};
 use proofman_hints::{
     get_hint_field_gc_constant_a, get_hint_field, get_hint_field_a, acc_mul_hint_fields, update_airgroupvalue,
     get_hint_ids_by_name, mul_hint_fields, HintFieldOptions, HintFieldOutput, HintFieldValue, HintFieldValuesVec,
@@ -249,6 +249,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
         sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
     ) {
         let std_sum_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users");
 

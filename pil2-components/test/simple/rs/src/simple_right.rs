@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc};
-use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
 use rand::distr::{StandardUniform, Distribution};
@@ -23,9 +23,10 @@ where
         _sctx: Arc<SetupCtx<F>>,
         instance_ids: &[usize],
         _n_cores: usize,
+        buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
-            let mut trace = SimpleRightTrace::new();
+            let mut trace = SimpleRightTrace::new_from_vec(buffer_pool.take_buffer());
             let num_rows = trace.num_rows();
 
             tracing::debug!("··· Starting witness computation stage {}", 1);
