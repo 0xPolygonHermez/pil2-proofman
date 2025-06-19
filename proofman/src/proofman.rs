@@ -1757,8 +1757,9 @@ where
         pctx.set_weights(&sctx);
 
         let pctx = Arc::new(pctx);
-        check_tree_paths(&pctx, &sctx)?;
-
+        if !verify_constraints {
+            check_tree_paths(&pctx, &sctx)?;
+        }
         Self::initialize_publics(&sctx, &pctx)?;
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(
