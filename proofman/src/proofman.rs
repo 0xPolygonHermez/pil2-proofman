@@ -881,7 +881,6 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn _generate_proof(&self, options: ProofOptions) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        self.pctx.dctx_barrier();
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
         timer_start_info!(EXECUTE);
@@ -912,7 +911,6 @@ where
 
         print_summary_info(&self.pctx, &self.sctx);
 
-        self.pctx.dctx_barrier();
         timer_stop_and_log_info!(EXECUTE);
 
         timer_start_info!(CALCULATING_CONTRIBUTIONS);
@@ -1001,13 +999,22 @@ where
         let witnesses_done = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
 
-        self.pctx.dctx_barrier();
         timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
         let n_threads_witness = match cfg!(feature = "gpu") {
             true => self.gpu_params.number_threads_pools_witness,
             false => max_num_threads,
         };
+
+        let stop_watch = Arc::new(AtomicBool::new(false));
+        let stop_flag_clone = stop_watch.clone();
+        let d_buffers_clone = self.d_buffers.clone();
+        let watch_contributions = std::thread::spawn(move || {
+            while !stop_flag_clone.load(Ordering::Relaxed) {
+                get_stream_proofs_non_blocking_c(d_buffers_clone.get_ptr());
+                std::thread::sleep(std::time::Duration::from_micros(100));
+            }
+        });
 
         timer_start_info!(CALCULATING_WITNESS);
         timer_start_info!(CALCULATE_MAIN_WITNESS);
@@ -1046,7 +1053,6 @@ where
 
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
 
                 Self::get_contribution_air(
                     &pctx_clone,
@@ -1059,6 +1065,7 @@ where
                     streams_clone.clone(),
                 );
 
+                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
                 if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
                     let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                     if is_shared_buffer {
@@ -1111,7 +1118,6 @@ where
                 }
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
 
                 Self::get_contribution_air(
                     &pctx_clone,
@@ -1124,6 +1130,7 @@ where
                     streams_clone.clone(),
                 );
 
+                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
                 if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
                     let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                     if is_shared_buffer {
@@ -1178,7 +1185,6 @@ where
                 }
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
 
                 Self::get_contribution_air(
                     &pctx_clone,
@@ -1191,6 +1197,7 @@ where
                     streams_clone.clone(),
                 );
 
+                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
                 if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
                     let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                     if is_shared_buffer {
@@ -1206,15 +1213,15 @@ where
         }
         timer_stop_and_log_info!(CALCULATE_SLOW_WITNESS);
 
+        stop_watch.store(true, Ordering::Relaxed);
+        watch_contributions.join().unwrap();
+
         // syncronize to the non-all witnesses being evaluated
         for _ in 0..instances_mine_no_all {
             rx_witness.recv().unwrap();
         }
 
         timer_stop_and_log_info!(CALCULATING_WITNESS);
-        timer_start_info!(TIME_WAIT);
-        self.pctx.dctx_barrier();
-        timer_stop_and_log_info!(TIME_WAIT);
 
         timer_start_info!(CALCULATING_TABLES);
 
