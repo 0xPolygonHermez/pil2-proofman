@@ -1059,7 +1059,7 @@ where
                     streams_clone.clone(),
                 );
 
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored - 1 {
+                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
                     let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                     if is_shared_buffer {
                         memory_handler_clone.release_buffer(witness_buffer);
@@ -1124,7 +1124,7 @@ where
                     streams_clone.clone(),
                 );
 
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored - 1 {
+                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
                     let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                     if is_shared_buffer {
                         memory_handler_clone.release_buffer(witness_buffer);
@@ -1191,7 +1191,7 @@ where
                     streams_clone.clone(),
                 );
 
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored - 1 {
+                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
                     let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
                     if is_shared_buffer {
                         memory_handler_clone.release_buffer(witness_buffer);
@@ -1502,8 +1502,10 @@ where
 
             let preallocate = self.gpu_params.preallocate;
 
-            for _ in 0..n_threads_witness {
-                rx_threads.recv().unwrap();
+            if !is_stored {
+                for _ in 0..n_threads_witness {
+                    rx_threads.recv().unwrap();
+                }
             }
 
             let memory_handler_clone = memory_handler.clone();
