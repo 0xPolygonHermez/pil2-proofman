@@ -18,17 +18,29 @@ use mpi::environment::Universe;
 use crate::GlobalInfo;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PreCalculate {
+    None,
+    Fast,
+    Slow,
+}
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub all: bool,
-    pub pre_calculate: bool,
+    pub pre_calculate: PreCalculate,
     pub min_threads_witness: usize,
     pub n_chunks: usize,
 }
 
 impl InstanceInfo {
-    pub fn new(airgroup_id: usize, air_id: usize, all: bool, pre_calculate: bool, min_threads_witness: usize) -> Self {
+    pub fn new(
+        airgroup_id: usize,
+        air_id: usize,
+        all: bool,
+        pre_calculate: PreCalculate,
+        min_threads_witness: usize,
+    ) -> Self {
         Self { airgroup_id, air_id, all, pre_calculate, min_threads_witness, n_chunks: 1 }
     }
 }
@@ -305,11 +317,34 @@ impl DistributionCtx {
     }
 
     #[inline]
+    pub fn add_instance(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        pre_calculate: PreCalculate,
+        min_threads_witness: usize,
+        weight: u64,
+    ) -> usize {
+        let idx = self.instances.len();
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, pre_calculate, min_threads_witness));
+        self.n_instances += 1;
+        let new_owner = (idx % self.n_processes as usize) as i32;
+        let count = self.owners_count[new_owner as usize] as usize;
+        self.instances_owner.push((new_owner, count, weight));
+        self.owners_count[new_owner as usize] += 1;
+        self.owners_weight[new_owner as usize] += weight;
+        if new_owner == self.rank {
+            self.my_instances.push(idx);
+        }
+        idx
+    }
+
+    #[inline]
     pub fn add_instance_no_assign(
         &mut self,
         airgroup_id: usize,
         air_id: usize,
-        pre_calculate: bool,
+        pre_calculate: PreCalculate,
         min_threads_witness: usize,
         weight: u64,
     ) -> usize {
@@ -320,7 +355,7 @@ impl DistributionCtx {
     }
 
     pub fn add_instance_no_assign_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, PreCalculate::None, 1));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
