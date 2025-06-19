@@ -1065,7 +1065,7 @@ where
 
         let proofs_pending = Arc::new(Counter::new());
 
-        let basic_proofs_threshold = (instances_mine - n_streams as usize).max(1);
+        let basic_proofs_threshold = instances_mine.saturating_sub(n_streams as usize).max(0);
         let basic_proofs_done = Arc::new(Counter::new_with_threshold(basic_proofs_threshold));
 
         let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
