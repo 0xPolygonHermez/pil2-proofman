@@ -1223,6 +1223,10 @@ where
 
         timer_stop_and_log_info!(CALCULATING_WITNESS);
 
+        timer_start_info!(TIME_WAIT);
+        self.pctx.dctx_barrier();
+        timer_stop_and_log_info!(TIME_WAIT);
+
         timer_start_info!(CALCULATING_TABLES);
 
         //evalutate witness for instances of type "all"
