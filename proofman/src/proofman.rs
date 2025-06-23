@@ -392,8 +392,9 @@ where
 
         let instances_mine_no_all = instances_mine - instances_mine_all;
 
+        let max_witness_stored = self.gpu_params.max_witness_stored.min(instances_mine_no_all);
         let memory_handler = Arc::new(MemoryHandler::new(
-            self.gpu_params.max_witness_stored.min(instances_mine_no_all),
+            max_witness_stored,
             self.sctx.max_witness_trace_size,
         ));
 
@@ -406,7 +407,7 @@ where
             tx_threads.send(()).unwrap();
         }
 
-        let n_threads_witness = self.gpu_params.number_threads_pools_witness;
+        let n_threads_witness = self.gpu_params.number_threads_pools_witness.max(max_num_threads / max_witness_stored);
 
         let mut handles = Vec::new();
 
@@ -972,7 +973,7 @@ where
         let const_tree: Arc<Vec<F>> = Arc::new(create_buffer_fast(const_tree_size));
 
         let max_witness_stored = match cfg!(feature = "gpu") {
-            true => instances_mine.min(self.gpu_params.max_witness_stored),
+            true => instances_mine_no_all.min(self.gpu_params.max_witness_stored),
             false => 1,
         };
 
@@ -990,7 +991,7 @@ where
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
 
         let memory_handler = Arc::new(MemoryHandler::<F>::new(
-            self.gpu_params.max_witness_stored.min(instances_mine_no_all),
+            max_witness_stored,
             self.sctx.max_witness_trace_size,
         ));
 
@@ -1004,7 +1005,7 @@ where
         timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
         let n_threads_witness = match cfg!(feature = "gpu") {
-            true => self.gpu_params.number_threads_pools_witness,
+            true => self.gpu_params.number_threads_pools_witness.max(max_num_threads / max_witness_stored),
             false => max_num_threads,
         };
 
@@ -1487,7 +1488,11 @@ where
         timer_start_info!(PRECALCULATE_WITNESS);
         self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
         timer_stop_and_log_info!(PRECALCULATE_WITNESS);
-
+        
+        my_instances_sorted.sort_by_key(|&id| {
+            self.pctx.is_air_instance_stored(id).then_some(0).unwrap_or(1)
+        });
+        
         for &instance_id in my_instances_sorted.iter() {
             if my_instances_calculated[instance_id] {
                 continue;
