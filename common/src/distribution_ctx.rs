@@ -185,7 +185,7 @@ impl DistributionCtx {
                 balance_distribution: false,
                 node_rank: 0,
                 node_n_processes: 1,
-                leader_rank: None,
+                leader_rank: OnceCell::new(),
             }
         }
     }
@@ -869,12 +869,18 @@ impl DistributionCtx {
             return;
         }
 
-        let mut elected = self.rank;
 
         #[cfg(distributed)]
-        self.world.all_reduce_into(&self.rank, &mut elected, mpi::collective::SystemOperation::min());
+        {
+            let mut elected = self.rank;
+            self.world.all_reduce_into(&self.rank, &mut elected, mpi::collective::SystemOperation::min());
 
-        let _ = self.leader_rank.set(elected as u32);
+            let _ = self.leader_rank.set(elected as u32);
+        }
+        #[cfg(not(distributed))]
+        {
+            let _ = self.leader_rank.set(0);
+        }
     }
 }
 
