@@ -20,8 +20,10 @@ use crossbeam_channel::{bounded, unbounded, Sender, Receiver};
 use std::fs;
 use std::collections::HashMap;
 use std::fs::File;
-use std::fmt::Write;
+use std::fmt::Write as FmtWrite;
 use std::io::Read;
+use std::io::Write;
+use bytemuck::cast_slice;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
@@ -1759,6 +1761,12 @@ where
                     .to_hex()
                     .to_string(),
                 );
+
+                // Save the vadcop final proof
+                let output_file_path = options.output_dir_path.join("proofs/vadcop_final_proof.bin");
+                // write a Vec<u64> to a bin file stored in output_file_path
+                let mut file = File::create(output_file_path)?;
+                file.write_all(cast_slice(&vadcop_final_proof))?;
 
                 if options.final_snark {
                     timer_start_info!(GENERATING_RECURSIVE_F_PROOF);

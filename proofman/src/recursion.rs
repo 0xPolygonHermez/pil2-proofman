@@ -204,7 +204,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         (airgroup_id_, air_id_, witness.global_idx.unwrap(), output_file_path_, true)
     };
 
-    let proof_file = match save_proofs || witness.proof_type == ProofType::VadcopFinal {
+    let proof_file = match save_proofs {
         true => output_file_path.to_string_lossy().into_owned(),
         false => String::from(""),
     };
