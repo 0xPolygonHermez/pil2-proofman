@@ -1,5 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
+use proofman_common::{initialize_logger, VerboseMode};
 use std::{fs::File, path::PathBuf};
 use std::io::Read;
 use colored::Colorize;
@@ -41,6 +42,8 @@ impl VerifyStark {
         println!("{} VerifyStark", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
+        initialize_logger(VerboseMode::Info, None);
+
         let publics = if let Some(publics) = &self.public_inputs {
             let mut contents = String::new();
             let mut file = File::open(publics).unwrap();
@@ -66,7 +69,7 @@ impl VerifyStark {
                 None,
             )
         } else {
-            let mut file = File::open("path/to/proof.bin")?;
+            let mut file = File::open(self.proof.clone())?;
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer)?;
 
