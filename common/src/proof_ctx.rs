@@ -237,6 +237,21 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.rank as usize
     }
 
+    pub fn dctx_get_leader_rank(&self) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.leader_rank.get().copied().unwrap() as usize
+    }
+
+    pub fn dctx_is_leader_rank(&self) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.leader_rank.get().copied().unwrap() as usize == dctx.rank as usize
+    }
+
+    pub fn dctx_set_leader_rank(&self) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.set_leader_rank();
+    }
+
     pub fn dctx_get_node_rank(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
         dctx.node_rank as usize
@@ -270,6 +285,11 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_get_my_air_groups(&self) -> Vec<Vec<usize>> {
         let dctx = self.dctx.read().unwrap();
         dctx.my_air_groups.clone()
+    }
+
+    pub fn dctx_get_my_airgroup_instances_alive(&self) -> Vec<Vec<usize>> {
+        let dctx = self.dctx.read().unwrap();
+        dctx.airgroup_instances_alives.clone()
     }
 
     pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
@@ -412,6 +432,16 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_distribute_airgroupvalues(&self, airgroup_values: Vec<Vec<u64>>) -> Vec<Vec<F>> {
         let dctx = self.dctx.read().unwrap();
         dctx.distribute_airgroupvalues(airgroup_values, &self.global_info)
+    }
+
+    pub fn dctx_distribute_recursive2_proof(&self, airgroup_id: usize, my_proof: Option<&Vec<u64>>) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.distribute_recursive2_proof(airgroup_id, my_proof);
+    }
+
+    pub fn dctx_receive_recursive2_proof(&self) -> (u64, Vec<u64>) {
+        let dctx = self.dctx.read().unwrap();
+        dctx.recv_any_recursive2_proof()
     }
 
     pub fn dctx_close(&self) {

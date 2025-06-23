@@ -41,7 +41,7 @@ use std::{path::PathBuf, sync::Arc};
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
-use crate::{check_tree_paths_vadcop, initialize_fixed_pols_tree};
+use crate::{check_tree_paths_vadcop, initialize_fixed_pols_tree, prepare_vadcop_final_proof};
 use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes};
@@ -52,7 +52,6 @@ use crate::{
 use crate::total_recursive_proofs;
 use crate::check_tree_paths;
 use crate::Counter;
-use crate::aggregate_recursive2_proofs;
 
 use std::ffi::c_void;
 
@@ -98,6 +97,14 @@ where
     pub fn get_rank(&self) -> Option<i32> {
         if self.pctx.dctx_get_n_processes() > 1 {
             Some(self.pctx.dctx_get_rank() as i32)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_lead_rank(&self) -> Option<i32> {
+        if self.pctx.dctx_get_n_processes() > 1 {
+            Some(self.pctx.dctx_get_leader_rank() as i32)
         } else {
             None
         }
@@ -1647,32 +1654,151 @@ where
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
 
-        clear_proof_done_callback_c();
+        self.pctx.dctx_set_leader_rank();
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
-        let global_info_path = self.pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-        let global_info_file = global_info_path.to_str().unwrap();
+        let pctx_clone = self.pctx.clone();
+        let output_dir = options.output_dir_path.clone().to_string_lossy().into_owned();
 
-        save_challenges_c(
-            self.pctx.get_challenges_ptr(),
-            global_info_file,
-            options.output_dir_path.to_string_lossy().as_ref(),
-        );
-        save_proof_values_c(
-            self.pctx.get_proof_values_ptr(),
-            global_info_file,
-            options.output_dir_path.to_string_lossy().as_ref(),
-        );
-        save_publics_c(
-            self.pctx.global_info.n_publics as u64,
-            self.pctx.get_publics_ptr(),
-            options.output_dir_path.to_string_lossy().as_ref(),
-        );
+        let save_proof_info = std::thread::spawn(move || {
+            let global_info_path = pctx_clone.global_info.get_proving_key_path().join("pilout.globalInfo.json");
+            let global_info_file = global_info_path.to_str().unwrap();
+            save_challenges_c(pctx_clone.get_challenges_ptr(), global_info_file, output_dir.as_ref());
+            save_proof_values_c(pctx_clone.get_proof_values_ptr(), global_info_file, output_dir.as_ref());
+            save_publics_c(pctx_clone.global_info.n_publics as u64, pctx_clone.get_publics_ptr(), output_dir.as_ref());
+        });
+
+        let mut proof_id = None;
+        let mut vadcop_final_proof = Vec::new();
+
+        if options.aggregation {
+            if self.pctx.dctx_is_leader_rank() {
+                timer_start_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
+
+                let n_airgroups = self.pctx.global_info.air_groups.len();
+                let n_processes = self.pctx.dctx_get_n_processes();
+                let airgroup_instances_alive = self.pctx.dctx_get_my_airgroup_instances_alive();
+                let mut alives = vec![0; n_airgroups];
+                let mut pending_proofs = 0;
+                for airgroup in 0..n_airgroups {
+                    for p in 0..n_processes {
+                        let n_proofs = airgroup_instances_alive[airgroup][p];
+                        alives[airgroup] += n_proofs;
+                        if p != self.pctx.dctx_get_rank() {
+                            pending_proofs += n_proofs;
+                        }
+                    }
+                }
+
+                for _ in 0..pending_proofs {
+                    proofs_pending.increment();
+                }
+
+                for airgroup in 0..n_airgroups {
+                    let n_recursive2_proofs = total_recursive_proofs(alives[airgroup]);
+                    if n_recursive2_proofs.has_remaining {
+                        let setup = self.setups.get_setup(airgroup, 0, &ProofType::Recursive2);
+                        let publics_aggregation = 1 + 4 * self.pctx.global_info.agg_types[airgroup].len() + 10;
+                        let null_proof_buffer = vec![0; setup.proof_size as usize + publics_aggregation];
+                        let null_proof = Proof::new(ProofType::Recursive2, airgroup, 0, None, null_proof_buffer);
+                        recursive2_proofs[airgroup].write().unwrap().push(null_proof);
+                    }
+                }
+
+                while pending_proofs > 0 {
+                    let (airgroup, proof) = self.pctx.dctx_receive_recursive2_proof();
+                    let mut recursive2_proofs = recursive2_proofs_ongoing.write().unwrap();
+                    let id = recursive2_proofs.len();
+                    recursive2_proofs.push(Some(Proof::new(
+                        ProofType::Recursive2,
+                        airgroup as usize,
+                        0,
+                        Some(id),
+                        proof,
+                    )));
+                    launch_callback_c(id as u64, ProofType::Recursive2.into());
+                    pending_proofs -= 1;
+                }
+
+                proofs_pending
+                    .wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
+
+                if self.pctx.dctx_get_n_processes() > 1 {
+                    get_stream_proofs_c(self.d_buffers.get_ptr());
+                }
+                let recursive2_proofs_data: Vec<Vec<Proof<F>>> =
+                    recursive2_proofs.iter().map(|lock| lock.read().unwrap().clone()).collect();
+                let agg_recursive2_proof = prepare_vadcop_final_proof(&recursive2_proofs_data, &self.pctx);
+                let trace = create_buffer_fast::<F>(self.trace_size);
+                let prover_buffer = create_buffer_fast::<F>(self.prover_buffer_size);
+                let vadcop_proof_final = generate_vadcop_final_proof(
+                    &self.pctx,
+                    &self.setups,
+                    &agg_recursive2_proof,
+                    &trace,
+                    &prover_buffer,
+                    options.output_dir_path.clone(),
+                    const_pols.clone(),
+                    const_tree.clone(),
+                    self.d_buffers.get_ptr(),
+                    false,
+                )?;
+
+                vadcop_final_proof = vadcop_proof_final.proof.clone();
+
+                proof_id = Some(
+                    blake3::hash(unsafe {
+                        std::slice::from_raw_parts(
+                            vadcop_final_proof.as_ptr() as *const u8,
+                            vadcop_final_proof.len() * 8,
+                        )
+                    })
+                    .to_hex()
+                    .to_string(),
+                );
+
+                if options.final_snark {
+                    timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
+                    let recursivef_proof = generate_recursivef_proof(
+                        &self.pctx,
+                        &self.setups,
+                        &vadcop_final_proof,
+                        &trace,
+                        &prover_buffer,
+                        options.output_dir_path.clone(),
+                        false,
+                    )?;
+                    timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
+
+                    timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
+                    let _ = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, options.output_dir_path.clone());
+                    timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
+                }
+
+                timer_stop_and_log_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
+            } else {
+                let recursive2_proofs_data: Vec<Vec<Proof<F>>> =
+                    recursive2_proofs.iter().map(|lock| lock.read().unwrap().clone()).collect();
+                for (i, group) in recursive2_proofs_data.iter().enumerate() {
+                    if group.is_empty() {
+                        continue;
+                    }
+                    self.pctx.dctx_distribute_recursive2_proof(i, Some(&group[0].proof));
+                }
+            }
+            clear_proof_done_callback_c();
+        }
+
+        save_proof_info.join().unwrap();
+
+        timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
 
         if !options.aggregation {
+            clear_proof_done_callback_c();
+
             let mut valid_proofs = true;
 
             if options.verify_proofs {
@@ -1733,81 +1859,13 @@ where
                 );
                 return Ok(None);
             }
-        }
-
-        timer_start_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
-        let trace = create_buffer_fast::<F>(self.trace_size);
-        let prover_buffer = create_buffer_fast::<F>(self.prover_buffer_size);
-        let recursive2_proofs_data: Vec<Vec<Proof<F>>> =
-            recursive2_proofs.iter().map(|lock| lock.read().unwrap().clone()).collect();
-
-        let agg_recursive2_proof = aggregate_recursive2_proofs(
-            &self.pctx,
-            &self.setups,
-            &recursive2_proofs_data,
-            &trace,
-            &prover_buffer,
-            const_pols.clone(),
-            const_tree.clone(),
-            options.output_dir_path.clone(),
-            self.d_buffers.get_ptr(),
-            false,
-        )?;
-        self.pctx.dctx.read().unwrap().barrier();
-        timer_stop_and_log_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
-
-        let mut proof_id = None;
-        let mut vadcop_final_proof = Vec::new();
-        if self.pctx.dctx_get_rank() == 0 {
-            let vadcop_proof_final = generate_vadcop_final_proof(
-                &self.pctx,
-                &self.setups,
-                &agg_recursive2_proof,
-                &trace,
-                &prover_buffer,
-                options.output_dir_path.clone(),
-                const_pols.clone(),
-                const_tree.clone(),
-                self.d_buffers.get_ptr(),
-                false,
-            )?;
-
-            vadcop_final_proof = vadcop_proof_final.proof.clone();
-
-            proof_id = Some(
-                blake3::hash(unsafe {
-                    std::slice::from_raw_parts(vadcop_final_proof.as_ptr() as *const u8, vadcop_final_proof.len() * 8)
-                })
-                .to_hex()
-                .to_string(),
-            );
-
-            if options.final_snark {
-                timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
-                let recursivef_proof = generate_recursivef_proof(
-                    &self.pctx,
-                    &self.setups,
-                    &vadcop_final_proof,
-                    &trace,
-                    &prover_buffer,
-                    options.output_dir_path.clone(),
-                    false,
-                )?;
-                timer_stop_and_log_info!(GENERATING_RECURSIVE_F_PROOF);
-
-                timer_start_info!(GENERATING_FFLONK_SNARK_PROOF);
-                let _ = generate_fflonk_snark_proof(&self.pctx, recursivef_proof, options.output_dir_path.clone());
-                timer_stop_and_log_info!(GENERATING_FFLONK_SNARK_PROOF);
-            }
-        }
-        timer_stop_and_log_info!(GENERATING_VADCOP_PROOF);
-
-        if self.pctx.dctx_get_rank() == 0 && options.verify_proofs {
+        } else if self.pctx.dctx_is_leader_rank() && options.verify_proofs {
             let setup_path = self.pctx.global_info.get_setup_path("vadcop_final");
             let stark_info_path = setup_path.display().to_string() + ".starkinfo.json";
             let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
             let verkey_path = setup_path.display().to_string() + ".verkey.json";
 
+            println!("VADCOP PROOF LEN {}", vadcop_final_proof.len());
             timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
             let valid_proofs = verify_proof(
                 vadcop_final_proof.as_mut_ptr(),
@@ -1826,6 +1884,8 @@ where
                 tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
             }
         }
+
+        self.pctx.dctx_barrier();
 
         Ok(proof_id)
     }

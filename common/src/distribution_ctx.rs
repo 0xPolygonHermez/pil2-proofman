@@ -6,6 +6,7 @@ use mpi::collective::CommunicatorCollectives;
 use mpi::datatype::PartitionMut;
 #[cfg(distributed)]
 use mpi::topology::Communicator;
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
@@ -71,6 +72,7 @@ pub struct DistributionCtx {
     pub balance_distribution: bool,
     pub node_rank: i32,
     pub node_n_processes: i32,
+    pub leader_rank: OnceCell<u32>, // Indicates if the current process is the leader of the node
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -162,6 +164,7 @@ impl DistributionCtx {
                 balance_distribution: true,
                 node_rank,
                 node_n_processes,
+                leader_rank: OnceCell::new(),
             }
         }
         #[cfg(not(distributed))]
@@ -182,6 +185,7 @@ impl DistributionCtx {
                 balance_distribution: false,
                 node_rank: 0,
                 node_n_processes: 1,
+                leader_rank: None,
             }
         }
     }
@@ -429,36 +433,36 @@ impl DistributionCtx {
                 }
             }
         } else {
-        let mut air_info = HashMap::new();
-        for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
-            if owner == -1 {
-                let (airgroup_id, air_id) = self.get_instance_info(idx);
-                air_info.entry((airgroup_id, air_id)).or_insert_with(Vec::new).push(idx);
-            }
-        }
-
-        // Sort groups descending by size
-        let mut grouped_instances: Vec<_> = air_info.into_iter().collect();
-        grouped_instances.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
-
-        // Step 1: Find the best starting point
-        let (start_idx, _) = self.owners_count.iter().enumerate().min_by_key(|&(_, count)| count).unwrap();
-
-        // Step 2: Round-robin from there
-        let mut owner_idx = start_idx;
-
-        for (_, instance_indices) in grouped_instances {
-            for &idx in &instance_indices {
-                self.instances_owner[idx].0 = owner_idx as i32;
-                self.instances_owner[idx].1 = self.owners_count[owner_idx] as usize;
-                self.owners_count[owner_idx] += 1;
-                self.owners_weight[owner_idx] += self.instances_owner[idx].2;
-                if owner_idx == self.rank as usize {
-                    self.my_instances.push(idx);
+            let mut air_info = HashMap::new();
+            for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
+                if owner == -1 {
+                    let (airgroup_id, air_id) = self.get_instance_info(idx);
+                    air_info.entry((airgroup_id, air_id)).or_insert_with(Vec::new).push(idx);
                 }
-                owner_idx = (owner_idx + 1) % self.n_processes as usize;
             }
-        }
+
+            // Sort groups descending by size
+            let mut grouped_instances: Vec<_> = air_info.into_iter().collect();
+            grouped_instances.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+            // Step 1: Find the best starting point
+            let (start_idx, _) = self.owners_count.iter().enumerate().min_by_key(|&(_, count)| count).unwrap();
+
+            // Step 2: Round-robin from there
+            let mut owner_idx = start_idx;
+
+            for (_, instance_indices) in grouped_instances {
+                for &idx in &instance_indices {
+                    self.instances_owner[idx].0 = owner_idx as i32;
+                    self.instances_owner[idx].1 = self.owners_count[owner_idx] as usize;
+                    self.owners_count[owner_idx] += 1;
+                    self.owners_weight[owner_idx] += self.instances_owner[idx].2;
+                    if owner_idx == self.rank as usize {
+                        self.my_instances.push(idx);
+                    }
+                    owner_idx = (owner_idx + 1) % self.n_processes as usize;
+                }
+            }
         }
     }
 
@@ -818,6 +822,59 @@ impl DistributionCtx {
                 }
             }
         }
+    }
+
+    pub fn distribute_recursive2_proof(&self, airgroup_id: usize, my_proof: Option<&Vec<u64>>) {
+        #[cfg(distributed)]
+        {
+            let leader = self.leader_rank.get().copied().expect("Leader not set");
+
+            if self.rank != leader as i32 {
+                if let Some(proof) = my_proof {
+                    let mut proof_with_airgroup_id = Vec::with_capacity(proof.len() + 1);
+                    proof_with_airgroup_id.push(airgroup_id as u64); // prepend airgroup_id
+                    proof_with_airgroup_id.extend_from_slice(proof);
+
+                    self.world.process_at_rank(leader as i32).send(&proof_with_airgroup_id[..]);
+                } else {
+                    panic!("Non-leader must have a proof to send");
+                }
+            }
+        }
+    }
+
+    pub fn recv_any_recursive2_proof(&self) -> (u64, Vec<u64>) {
+        #[cfg(distributed)]
+        {
+            let leader = self.leader_rank.get().copied().expect("Leader not set");
+            if self.rank != leader as i32 {
+                return (0, vec![]);
+            }
+            let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(leader as i32);
+
+            let airgroup_id = msg[0];
+            let proof = msg[1..].to_vec();
+
+            (airgroup_id, proof)
+        }
+
+        #[cfg(not(distributed))]
+        {
+            (0, vec![])
+        }
+    }
+
+    pub fn set_leader_rank(&self) {
+        if self.leader_rank.get().is_some() {
+            return;
+        }
+
+        let mut elected = self.rank;
+
+        #[cfg(distributed)]
+        self.world.all_reduce_into(&self.rank, &mut elected, mpi::collective::SystemOperation::min());
+
+        let _ = self.leader_rank.set(elected as u32);
     }
 }
 

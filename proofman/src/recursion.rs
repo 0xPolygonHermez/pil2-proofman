@@ -286,6 +286,27 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     )
 }
 
+pub fn prepare_vadcop_final_proof<F: PrimeField64>(
+    recursive2_proofs: &[Vec<Proof<F>>],
+    pctx: &ProofCtx<F>,
+) -> Proof<F> {
+    let publics_circom_size =
+        pctx.global_info.n_publics + pctx.global_info.n_proof_values.iter().sum::<usize>() * 3 + 3;
+
+    let mut updated_proof_size = publics_circom_size;
+    for proofs in recursive2_proofs {
+        updated_proof_size += proofs[0].proof.len();
+    }
+
+    let mut updated_proof = vec![0; updated_proof_size];
+    add_publics_circom(&mut updated_proof, 0, pctx, "", false);
+
+    for proofs in recursive2_proofs {
+        updated_proof[publics_circom_size..].copy_from_slice(&proofs[0].proof);
+    }
+    Proof::new(ProofType::Recursive2, 0, 0, None, updated_proof)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
@@ -461,7 +482,9 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
+    timer_start_info!(VADCOP_FINAL_WITNESS);
     let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof)?;
+    timer_stop_and_log_info!(VADCOP_FINAL_WITNESS);
     let new_proof =
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
     tracing::info!("··· Generating vadcop final proof");
@@ -626,7 +649,7 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
         let library_guard = setup.circom_library.read().unwrap();
         let library = library_guard.as_ref().ok_or("Circom library not loaded")?;
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-        get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1);
+        get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 32);
     }
 
     Ok(witness)

@@ -258,7 +258,7 @@ impl<F: Field> AirInstance<F> {
 
     pub fn clear_traces(&mut self) -> (bool, Vec<F>) {
         let trace = std::mem::take(&mut self.trace);
-        let shared_buffer = self.shared_buffer && trace.len() > 0;
+        let shared_buffer = self.shared_buffer && !trace.is_empty();
         self.custom_commits_fixed = Vec::new();
         self.aux_trace = Vec::new();
         (shared_buffer, trace)
@@ -272,7 +272,7 @@ impl<F: Field> AirInstance<F> {
         self.airgroup_id = 0;
         self.air_id = 0;
         let trace = std::mem::take(&mut self.trace);
-        let shared_buffer = self.shared_buffer && trace.len() > 0;
+        let shared_buffer = self.shared_buffer && !trace.is_empty();
         self.shared_buffer = false;
         self.aux_trace = Vec::new();
         self.custom_commits_fixed = Vec::new();
