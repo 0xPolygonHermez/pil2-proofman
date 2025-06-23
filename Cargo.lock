@@ -138,6 +138,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bytemuck"
+version = "1.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c76a5792e44e4abe34d3abf15636779261d45a7450612059293d1d2cfc63422"
+
+[[package]]
 name = "bytes"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -760,6 +766,7 @@ name = "proofman"
 version = "0.9.0"
 dependencies = [
  "blake3",
+ "bytemuck",
  "colored",
  "crossbeam-channel",
  "csv",
@@ -789,6 +796,7 @@ name = "proofman-cli"
 version = "0.9.0"
 dependencies = [
  "blake3",
+ "bytemuck",
  "clap",
  "colored",
  "convert_case",

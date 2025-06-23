@@ -429,36 +429,36 @@ impl DistributionCtx {
                 }
             }
         } else {
-        let mut air_info = HashMap::new();
-        for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
-            if owner == -1 {
-                let (airgroup_id, air_id) = self.get_instance_info(idx);
-                air_info.entry((airgroup_id, air_id)).or_insert_with(Vec::new).push(idx);
-            }
-        }
-
-        // Sort groups descending by size
-        let mut grouped_instances: Vec<_> = air_info.into_iter().collect();
-        grouped_instances.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
-
-        // Step 1: Find the best starting point
-        let (start_idx, _) = self.owners_count.iter().enumerate().min_by_key(|&(_, count)| count).unwrap();
-
-        // Step 2: Round-robin from there
-        let mut owner_idx = start_idx;
-
-        for (_, instance_indices) in grouped_instances {
-            for &idx in &instance_indices {
-                self.instances_owner[idx].0 = owner_idx as i32;
-                self.instances_owner[idx].1 = self.owners_count[owner_idx] as usize;
-                self.owners_count[owner_idx] += 1;
-                self.owners_weight[owner_idx] += self.instances_owner[idx].2;
-                if owner_idx == self.rank as usize {
-                    self.my_instances.push(idx);
+            let mut air_info = HashMap::new();
+            for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
+                if owner == -1 {
+                    let (airgroup_id, air_id) = self.get_instance_info(idx);
+                    air_info.entry((airgroup_id, air_id)).or_insert_with(Vec::new).push(idx);
                 }
-                owner_idx = (owner_idx + 1) % self.n_processes as usize;
             }
-        }
+
+            // Sort groups descending by size
+            let mut grouped_instances: Vec<_> = air_info.into_iter().collect();
+            grouped_instances.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+            // Step 1: Find the best starting point
+            let (start_idx, _) = self.owners_count.iter().enumerate().min_by_key(|&(_, count)| count).unwrap();
+
+            // Step 2: Round-robin from there
+            let mut owner_idx = start_idx;
+
+            for (_, instance_indices) in grouped_instances {
+                for &idx in &instance_indices {
+                    self.instances_owner[idx].0 = owner_idx as i32;
+                    self.instances_owner[idx].1 = self.owners_count[owner_idx] as usize;
+                    self.owners_count[owner_idx] += 1;
+                    self.owners_weight[owner_idx] += self.instances_owner[idx].2;
+                    if owner_idx == self.rank as usize {
+                        self.my_instances.push(idx);
+                    }
+                    owner_idx = (owner_idx + 1) % self.n_processes as usize;
+                }
+            }
         }
     }
 
