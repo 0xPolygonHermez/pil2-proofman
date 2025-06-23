@@ -869,7 +869,6 @@ impl DistributionCtx {
             return;
         }
 
-
         #[cfg(distributed)]
         {
             let mut elected = self.rank;
