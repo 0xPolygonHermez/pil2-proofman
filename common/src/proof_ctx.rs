@@ -8,8 +8,8 @@ use mpi::environment::Universe;
 use transcript::FFITranscript;
 
 use crate::{
-    initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
-    VerboseMode,
+    initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PreCalculate, SetupCtx, StdMode,
+    StepsParams, VerboseMode,
 };
 
 #[derive(Debug)]
@@ -72,7 +72,6 @@ impl ProofOptions {
 pub struct ParamsGPU {
     pub preallocate: bool,
     pub max_number_streams: usize,
-    pub max_number_witness_pools: usize,
     pub number_threads_pools_witness: usize,
     pub max_witness_stored: usize,
 }
@@ -82,7 +81,6 @@ impl Default for ParamsGPU {
         Self {
             preallocate: false,
             max_number_streams: usize::MAX,
-            max_number_witness_pools: usize::MAX,
             number_threads_pools_witness: 4,
             max_witness_stored: 32,
         }
@@ -96,10 +94,6 @@ impl ParamsGPU {
 
     pub fn with_max_number_streams(&mut self, max_number_streams: usize) {
         self.max_number_streams = max_number_streams;
-    }
-
-    pub fn with_max_number_witness_pools(&mut self, max_number_witness_pools: usize) {
-        self.max_number_witness_pools = max_number_witness_pools;
     }
 
     pub fn with_number_threads_pools_witness(&mut self, number_threads_pools_witness: usize) {
@@ -300,7 +294,17 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn dctx_instance_precalculate(&self, global_idx: usize) -> bool {
         let dctx = self.dctx.read().unwrap();
-        dctx.instances[global_idx].pre_calculate
+        dctx.instances[global_idx].pre_calculate != PreCalculate::None
+    }
+
+    pub fn dctx_instance_precalculate_slow(&self, global_idx: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances[global_idx].pre_calculate == PreCalculate::Slow
+    }
+
+    pub fn dctx_instance_precalculate_fast(&self, global_idx: usize) -> bool {
+        let dctx = self.dctx.read().unwrap();
+        dctx.instances[global_idx].pre_calculate == PreCalculate::Fast
     }
 
     pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> usize {
@@ -318,11 +322,23 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.set_chunks(global_idx, chunks);
     }
 
+    pub fn add_instance_assign(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        pre_calculate: PreCalculate,
+        min_threads_witness: usize,
+    ) -> usize {
+        let mut dctx = self.dctx.write().unwrap();
+        let weight = self.get_weight(airgroup_id, air_id);
+        dctx.add_instance(airgroup_id, air_id, pre_calculate, min_threads_witness, weight)
+    }
+
     pub fn add_instance(
         &self,
         airgroup_id: usize,
         air_id: usize,
-        pre_calculate: bool,
+        pre_calculate: PreCalculate,
         min_threads_witness: usize,
     ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
@@ -350,7 +366,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         &self,
         airgroup_id: usize,
         air_id: usize,
-        pre_calculate: bool,
+        pre_calculate: PreCalculate,
         min_threads_witness: usize,
         weight: u64,
     ) -> usize {
@@ -569,11 +585,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn free_instance(&self, instance_id: usize) {
-        self.air_instances[instance_id].write().unwrap().reset();
+    pub fn free_instance(&self, instance_id: usize) -> (bool, Vec<F>) {
+        self.air_instances[instance_id].write().unwrap().reset()
     }
 
-    pub fn free_instance_traces(&self, instance_id: usize) {
-        self.air_instances[instance_id].write().unwrap().clear_traces();
+    pub fn free_instance_traces(&self, instance_id: usize) -> (bool, Vec<F>) {
+        self.air_instances[instance_id].write().unwrap().clear_traces()
     }
 }

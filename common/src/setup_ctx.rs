@@ -3,7 +3,6 @@ use std::ffi::c_void;
 
 use fields::PrimeField64;
 use proofman_starks_lib_c::{expressions_bin_new_c, get_tree_size_c};
-use proofman_util::create_buffer_fast;
 
 use crate::load_const_pols;
 use crate::GlobalInfo;
@@ -149,6 +148,7 @@ pub struct SetupRepository<F: PrimeField64> {
     max_const_size: usize,
     max_prover_buffer_size: usize,
     max_prover_trace_size: usize,
+    max_witness_trace_size: usize,
     max_prover_contribution_area: usize,
     max_proof_size: usize,
     total_const_size: usize,
@@ -179,6 +179,7 @@ impl<F: PrimeField64> SetupRepository<F> {
         let mut max_const_size = 0;
         let mut max_prover_buffer_size = 0;
         let mut max_prover_trace_size = 0;
+        let mut max_witness_trace_size = 0;
         let mut max_prover_contribution_area = 0;
         let mut max_proof_size = 0;
         let mut total_const_size = 0;
@@ -205,6 +206,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                         let trace_ext_size = setup.stark_info.map_sections_n["cm1"] * n_extended;
                         let tree_size = get_tree_size_c(setup.p_setup.p_stark_info);
                         let mut total_prover_trace_size = trace_size as usize;
+                        max_witness_trace_size = max_witness_trace_size.max(trace_size as usize);
                         total_prover_trace_size += setup.stark_info.n_publics as usize;
                         total_prover_trace_size += setup.stark_info.airvalues_map.as_ref().map_or(0, |v| 3 * v.len());
                         total_prover_trace_size +=
@@ -212,6 +214,7 @@ impl<F: PrimeField64> SetupRepository<F> {
                         total_prover_trace_size += global_info.proof_values_map.as_ref().map_or(0, |v| 3 * v.len());
                         total_prover_trace_size += 3;
                         max_prover_trace_size = max_prover_trace_size.max(total_prover_trace_size);
+                        max_witness_trace_size = max_witness_trace_size.max(trace_size as usize);
                         max_prover_contribution_area =
                             max_prover_contribution_area.max(trace_size + trace_ext_size + tree_size + 3 * n_extended);
                         total_const_size += setup.const_pols_size + setup.const_tree_size;
@@ -235,6 +238,7 @@ impl<F: PrimeField64> SetupRepository<F> {
             max_const_size,
             max_prover_buffer_size: max_prover_buffer_size as usize,
             max_prover_trace_size,
+            max_witness_trace_size,
             max_prover_contribution_area: max_prover_contribution_area as usize,
             max_proof_size: max_proof_size as usize,
             total_const_size,
@@ -255,6 +259,7 @@ pub struct SetupCtx<F: PrimeField64> {
     pub max_const_size: usize,
     pub max_prover_buffer_size: usize,
     pub max_prover_trace_size: usize,
+    pub max_witness_trace_size: usize,
     pub max_prover_contribution_area: usize,
     pub max_proof_size: usize,
     pub total_const_size: usize,
@@ -268,6 +273,7 @@ impl<F: PrimeField64> SetupCtx<F> {
         let max_const_size = setup_repository.max_const_size;
         let max_prover_buffer_size = setup_repository.max_prover_buffer_size;
         let max_prover_trace_size = setup_repository.max_prover_trace_size;
+        let max_witness_trace_size = setup_repository.max_witness_trace_size;
         let max_prover_contribution_area = setup_repository.max_prover_contribution_area;
         let max_proof_size = setup_repository.max_proof_size;
         let total_const_size = setup_repository.total_const_size;
@@ -277,6 +283,7 @@ impl<F: PrimeField64> SetupCtx<F> {
             max_const_size,
             max_prover_buffer_size,
             max_prover_trace_size,
+            max_witness_trace_size,
             max_prover_contribution_area,
             max_proof_size,
             total_const_size,
@@ -299,7 +306,7 @@ impl<F: PrimeField64> SetupCtx<F> {
     pub fn get_fixed(&self, airgroup_id: usize, air_id: usize) -> Vec<F> {
         match self.setup_repository.setups.get(&(airgroup_id, air_id)) {
             Some(setup) => {
-                let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
+                let const_pols: Vec<F> = vec![F::ZERO; setup.const_pols_size];
                 load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
                 const_pols
             }

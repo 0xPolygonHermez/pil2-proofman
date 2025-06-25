@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use fields::PrimeField64;
-use proofman_common::{ProofCtx, SetupCtx, DebugInfo};
+use proofman_common::{BufferPool, ProofCtx, SetupCtx, DebugInfo};
 use std::path::PathBuf;
 
 pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
@@ -18,6 +18,7 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
         _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
     ) {
     }
 
@@ -49,7 +50,12 @@ macro_rules! execute {
         fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<std::path::PathBuf>) -> Vec<usize> {
             let mut instance_ids = Vec::new();
             for _ in 0..$num_instances {
-                instance_ids.push(pctx.add_instance($Trace::<usize>::AIRGROUP_ID, $Trace::<usize>::AIR_ID, false, 1));
+                instance_ids.push(pctx.add_instance(
+                    $Trace::<usize>::AIRGROUP_ID,
+                    $Trace::<usize>::AIR_ID,
+                    proofman_common::PreCalculate::None,
+                    1,
+                ));
             }
             *self.instance_ids.write().unwrap() = instance_ids.clone();
             instance_ids

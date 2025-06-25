@@ -3,15 +3,15 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
+use proofman_util::create_buffer_fast;
 use rayon::prelude::*;
 
 use fields::PrimeField64;
 use std::path::PathBuf;
 
 use witness::WitnessComponent;
-use proofman_common::{AirInstance, ProofCtx, SetupCtx, TraceInfo};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
 use proofman_hints::{get_hint_field_constant_a, get_hint_ids_by_name, HintFieldOptions, HintFieldValue};
-use proofman_util::create_buffer_fast;
 
 use crate::{get_hint_field_constant_as_u64, validate_binary_field, AirComponent};
 
@@ -181,6 +181,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
         _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
             let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
@@ -202,7 +203,7 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
                     }
                 });
 
-                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
+                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }

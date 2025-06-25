@@ -5,6 +5,7 @@ pub trait Trace<F>: Send {
     fn air_id(&self) -> usize;
     fn commit_id(&self) -> Option<usize>;
     fn get_buffer(&mut self) -> Vec<F>;
+    fn is_shared_buffer(&self) -> bool;
 }
 
 pub trait Values<F>: Send {
