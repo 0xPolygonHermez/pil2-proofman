@@ -619,7 +619,7 @@ __device__ void genMerkleProof_(gl64_t *nodes, gl64_t *proof, uint64_t idx, uint
     {
         if (i == currIdx) continue;  // Skip the current index
         for( uint32_t j = 0; j < nFieldElements; j++){
-            proofPrt[j]= gl64_t(nodes[(offset + (si + i)) * nFieldElements + j][0]); 
+            proofPtr[j]= gl64_t(nodes[(offset + (si + i)) * nFieldElements + j][0]); 
         }
         proofPtr += nFieldElements;
     }
