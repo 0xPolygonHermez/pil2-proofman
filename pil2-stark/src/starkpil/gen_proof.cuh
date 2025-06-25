@@ -229,19 +229,6 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
     dim3 blocks((NExtended + threads.x - 1) / threads.x);
     computeX_kernel<<<blocks, threads, 0, stream>>>((gl64_t *)h_params.aux_trace + x_offset, NExtended, Goldilocks::shift(), Goldilocks::w(setupCtx.starkInfo.starkStruct.nBitsExt));
     calculateExpression(setupCtx, air_instance_info->expressions_gpu, d_params, (Goldilocks::Element *)(h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)]), setupCtx.starkInfo.friExpId, false, d_expsArgs, d_destParams, pinned_exps_params, pinned_exps_args, countId, timer, stream);
-    if(debug) {
-        Goldilocks::Element *fri = new Goldilocks::Element[NExtended * 3];
-        cudaMemcpy(fri, h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("f", true)], NExtended * 3 * sizeof(Goldilocks::Element), cudaMemcpyDeviceToHost);
-        Goldilocks::Element root[4];
-        Poseidon2Goldilocks::linear_hash(root, fri, NExtended * 3);
-        cout << "Hash of FRI polynomial: " << root[0].fe << " " << root[1].fe << " " << root[2].fe << " " << root[3].fe << endl;
-        
-        for (uint64_t i = 0; i < NExtended * 3; i+= 4096) {
-            Goldilocks::Element root[4];
-            Poseidon2Goldilocks::linear_hash(root, &fri[i], 4096);
-            cout << "Hash of FRI polynomial at " << i / 4096 << ": " << root[0].fe << " " << root[1].fe << " " << root[2].fe << " " << root[3].fe << endl;
-        }
-    }
     for(uint64_t step = 0; step < setupCtx.starkInfo.starkStruct.steps.size() - 1; ++step) { 
         Goldilocks::Element *src = h_params.aux_trace + setupCtx.starkInfo.mapOffsets[std::make_pair("fri_" + to_string(step + 1), true)];
         starks.treesFRI[step]->setSource(src);
