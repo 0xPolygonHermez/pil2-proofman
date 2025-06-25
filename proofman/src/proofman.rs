@@ -1483,14 +1483,8 @@ where
         self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
         timer_stop_and_log_info!(PRECALCULATE_WITNESS);
 
-        my_instances_sorted.sort_by_key(|&id| {
-            if self.pctx.is_air_instance_stored(id) {
-                0
-            } else {
-                1
-            }
-        });
-        
+        my_instances_sorted.sort_by_key(|&id| if self.pctx.is_air_instance_stored(id) { 0 } else { 1 });
+
         for &instance_id in my_instances_sorted.iter() {
             if my_instances_calculated[instance_id] {
                 continue;
