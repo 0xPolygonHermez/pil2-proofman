@@ -116,25 +116,25 @@ __device__ __constant__ uint64_t domain_size_inverse[33] = {
     0xfffffffe00000002, // (1 << 32)^{-1}
 };
 
-class gl64_gpu;
+class gl64_t;
 
 class NTT_Goldilocks_GPU : public NTT_Goldilocks {
 public:
     using NTT_Goldilocks::NTT_Goldilocks;
 
-    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_gpu* d_dst_ntt, uint64_t offset_dst_ntt,
-                                    gl64_gpu* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits,
-                                    u_int64_t n_bits_ext, u_int64_t ncols, gl64_gpu* d_aux_trace,
+    void LDE_MerkleTree_GPU_inplace(Goldilocks::Element *d_tree, gl64_t* d_dst_ntt, uint64_t offset_dst_ntt,
+                                    gl64_t* d_src_ntt, uint64_t offset_src_ntt, u_int64_t n_bits,
+                                    u_int64_t n_bits_ext, u_int64_t ncols, gl64_t* d_aux_trace,
                                     uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream);
 
     void computeQ_inplace(Goldilocks::Element *d_tree, uint64_t offset_cmQ, uint64_t offset_q,
                           uint64_t qDeg, uint64_t qDim, Goldilocks::Element shiftIn, uint64_t N,
-                          uint64_t n_bits_ext, uint64_t nCols, gl64_gpu *d_aux_trace,
+                          uint64_t n_bits_ext, uint64_t nCols, gl64_t *d_aux_trace,
                           uint64_t offset_helper, TimerGPU &timer, cudaStream_t stream);
 
     void INTT_inplace(uint64_t data_offset, u_int64_t n_bits, u_int64_t ncols,
-                      gl64_gpu* d_aux_trace, uint64_t offset_helper,
-                      gl64_gpu* d_data, cudaStream_t stream);
+                      gl64_t* d_aux_trace, uint64_t offset_helper,
+                      gl64_t* d_data, cudaStream_t stream);
 };
 
 #endif
