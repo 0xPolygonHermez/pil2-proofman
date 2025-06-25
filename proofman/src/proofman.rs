@@ -393,10 +393,7 @@ where
         let instances_mine_no_all = instances_mine - instances_mine_all;
 
         let max_witness_stored = self.gpu_params.max_witness_stored.min(instances_mine_no_all);
-        let memory_handler = Arc::new(MemoryHandler::new(
-            max_witness_stored,
-            self.sctx.max_witness_trace_size,
-        ));
+        let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, self.sctx.max_witness_trace_size));
 
         let max_num_threads = rayon::current_num_threads();
 
@@ -990,10 +987,7 @@ where
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
 
-        let memory_handler = Arc::new(MemoryHandler::<F>::new(
-            max_witness_stored,
-            self.sctx.max_witness_trace_size,
-        ));
+        let memory_handler = Arc::new(MemoryHandler::<F>::new(max_witness_stored, self.sctx.max_witness_trace_size));
 
         for _ in 0..max_num_threads {
             tx_threads.send(()).unwrap();
@@ -1488,9 +1482,13 @@ where
         timer_start_info!(PRECALCULATE_WITNESS);
         self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
         timer_stop_and_log_info!(PRECALCULATE_WITNESS);
-        
+
         my_instances_sorted.sort_by_key(|&id| {
-            self.pctx.is_air_instance_stored(id).then_some(0).unwrap_or(1)
+            if self.pctx.is_air_instance_stored(id) {
+                0
+            } else {
+                1
+            }
         });
         
         for &instance_id in my_instances_sorted.iter() {
