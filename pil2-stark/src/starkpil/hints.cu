@@ -43,7 +43,7 @@ void copyValueGPU( Goldilocks::Element * target, Goldilocks::Element* src, uint6
     CHECKCUDAERR(cudaMemcpyAsync(target, src, size * sizeof(Goldilocks::Element), cudaMemcpyDeviceToDevice, stream));
 }
 
-__global__ void opAirgroupValue_(gl64_gpu * airgroupValue,  gl64_gpu* val, uint32_t dim, bool add){
+__global__ void opAirgroupValue_(gl64_t * airgroupValue,  gl64_t* val, uint32_t dim, bool add){
     
     if(add){
         if(dim == 1){
@@ -65,7 +65,7 @@ __global__ void opAirgroupValue_(gl64_gpu * airgroupValue,  gl64_gpu* val, uint3
         
 }
 void opAirgroupValueGPU(Goldilocks::Element * airgroupValue,  Goldilocks::Element* val, uint32_t dim, bool add, cudaStream_t stream){
-    opAirgroupValue_<<<1, 1, 0, stream>>>((gl64_gpu*)airgroupValue, (gl64_gpu*)val, dim, add);
+    opAirgroupValue_<<<1, 1, 0, stream>>>((gl64_t*)airgroupValue, (gl64_t*)val, dim, add);
 }
 
 uint64_t setHintFieldGPU(SetupCtx& setupCtx, StepsParams& params, Goldilocks::Element* values, uint64_t hintId, std::string hintFieldName, cudaStream_t stream) {
@@ -186,7 +186,7 @@ void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
     
     // copy vals to the GPU
     Goldilocks::Element* helpers = h_params.aux_trace + offsetAuxTrace + dim*N;    
-    accOperationGPU((gl64_gpu *)vals_gpu, N, add, dim, (gl64_gpu *)helpers, stream);
+    accOperationGPU((gl64_t *)vals_gpu, N, add, dim, (gl64_t *)helpers, stream);
 
     setHintFieldGPU(setupCtx, h_params, vals_gpu, hintId, hintFieldNameDest,stream);
     setHintFieldGPU(setupCtx, h_params, &vals_gpu[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal, stream);
@@ -241,7 +241,7 @@ void accOperation(Goldilocks::Element* vals, uint64_t N, bool add, uint32_t dim)
 //
 // todo: bank collisions pending
 
-__device__ void scan_sum_1(gl64_gpu* temp, uint32_t N){
+__device__ void scan_sum_1(gl64_t* temp, uint32_t N){
 
     uint32_t thid = threadIdx.x;
     int offset = 1;
@@ -263,7 +263,7 @@ __device__ void scan_sum_1(gl64_gpu* temp, uint32_t N){
     
     // clear the last element
     if (thid == 0) { 
-        temp[(N- 1)+CONFLICT_FREE_OFFSET(N- 1)].set_val(0); 
+        temp[(N- 1)+CONFLICT_FREE_OFFSET(N- 1)] = gl64_t(uint64_t(0)); 
     } 
 
     // traverse down tree & build scan
@@ -277,14 +277,14 @@ __device__ void scan_sum_1(gl64_gpu* temp, uint32_t N){
             int bi = offset*(2*thid+2)-1;
             ai += CONFLICT_FREE_OFFSET(ai);
             bi += CONFLICT_FREE_OFFSET(bi);
-            gl64_gpu t = temp[ai];
+            gl64_t t = temp[ai];
             temp[ai] = temp[bi];
             temp[bi] += t;
         }
     }
 }
 
-__device__ void scan_prod_1(gl64_gpu* temp, uint32_t N){
+__device__ void scan_prod_1(gl64_t* temp, uint32_t N){
 
     uint32_t thid = threadIdx.x;
     int offset = 1;
@@ -306,7 +306,7 @@ __device__ void scan_prod_1(gl64_gpu* temp, uint32_t N){
     
     // clear the last element
     if (thid == 0) { 
-        temp[(N- 1)+CONFLICT_FREE_OFFSET(N- 1)].set_val(1); 
+        temp[(N- 1)+CONFLICT_FREE_OFFSET(N- 1)] = gl64_t(uint64_t(1)); 
     } 
 
     // traverse down tree & build scan
@@ -320,14 +320,14 @@ __device__ void scan_prod_1(gl64_gpu* temp, uint32_t N){
             int bi = offset*(2*thid+2)-1;
             ai += CONFLICT_FREE_OFFSET(ai);
             bi += CONFLICT_FREE_OFFSET(bi);
-            gl64_gpu t = temp[ai];
+            gl64_t t = temp[ai];
             temp[ai] = temp[bi];
             temp[bi] *= t;
         }
     }
 }
 
-__device__ void scan_sum_3(gl64_gpu* temp, uint32_t N){
+__device__ void scan_sum_3(gl64_t* temp, uint32_t N){
     
     uint32_t thid = threadIdx.x;
     int offset = 1;
@@ -349,9 +349,9 @@ __device__ void scan_sum_3(gl64_gpu* temp, uint32_t N){
     __syncthreads(); 
     // clear the last element
     if (thid == 0) { 
-        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))].set_val(0); 
-        temp[3*(N- 1)+1+CONFLICT_FREE_OFFSET(3*(N- 1)+1)].set_val(0);
-        temp[3*(N- 1)+2+CONFLICT_FREE_OFFSET(3*(N- 1)+2)].set_val(0);
+        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))]= gl64_t(uint64_t(0));  
+        temp[3*(N- 1)+1+CONFLICT_FREE_OFFSET(3*(N- 1)+1)]= gl64_t(uint64_t(0)); 
+        temp[3*(N- 1)+2+CONFLICT_FREE_OFFSET(3*(N- 1)+2)]= gl64_t(uint64_t(0)); 
     } 
 
     // traverse down tree & build scan
@@ -374,7 +374,7 @@ __device__ void scan_sum_3(gl64_gpu* temp, uint32_t N){
 
 }
 
-__device__ void scan_prod_3(gl64_gpu* temp, uint32_t N){
+__device__ void scan_prod_3(gl64_t* temp, uint32_t N){
     
     uint32_t thid = threadIdx.x;
     int offset = 1;
@@ -396,9 +396,9 @@ __device__ void scan_prod_3(gl64_gpu* temp, uint32_t N){
     __syncthreads(); 
     // clear the last element
     if (thid == 0) { 
-        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))].set_val(1); 
-        temp[3*(N- 1)+1+CONFLICT_FREE_OFFSET(3*(N- 1)+1)].set_val(0);
-        temp[3*(N- 1)+2+CONFLICT_FREE_OFFSET(3*(N- 1)+2)].set_val(0);
+        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))]= gl64_t(uint64_t(1));  
+        temp[3*(N- 1)+1+CONFLICT_FREE_OFFSET(3*(N- 1)+1)]= gl64_t(uint64_t(0)); 
+        temp[3*(N- 1)+2+CONFLICT_FREE_OFFSET(3*(N- 1)+2)]= gl64_t(uint64_t(0)); 
     } 
 
     // traverse down tree & build scan
@@ -421,9 +421,9 @@ __device__ void scan_prod_3(gl64_gpu* temp, uint32_t N){
 
 }
 
-__global__ void prescan(gl64_gpu *g_odata, gl64_gpu *g_idata, bool isSum, uint32_t chunk, uint32_t dim, uint32_t N)
+__global__ void prescan(gl64_t *g_odata, gl64_t *g_idata, bool isSum, uint32_t chunk, uint32_t dim, uint32_t N)
 {
-    extern __shared__ gl64_gpu temp[]; 
+    extern __shared__ gl64_t temp[]; 
 
     uint32_t thid = threadIdx.x;
     uint32_t indx1 = (blockIdx.x * blockDim.x + thid)*2;
@@ -489,7 +489,7 @@ __global__ void prescan(gl64_gpu *g_odata, gl64_gpu *g_idata, bool isSum, uint32
     }
 } 
 
-__global__ void prescan_correction(gl64_gpu *g_odata, gl64_gpu* correction, bool isSum, uint32_t dim, uint32_t N){
+__global__ void prescan_correction(gl64_t *g_odata, gl64_t* correction, bool isSum, uint32_t dim, uint32_t N){
 
     if(blockIdx.x == 0) {
         return;
@@ -512,14 +512,14 @@ __global__ void prescan_correction(gl64_gpu *g_odata, gl64_gpu* correction, bool
     }
 }
 
-void accOperationGPU(gl64_gpu* vals, uint64_t N, bool add, uint32_t dim, gl64_gpu* helper, cudaStream_t stream) {    
-    gl64_gpu* helper1;
-    gl64_gpu* helper2;
+void accOperationGPU(gl64_t* vals, uint64_t N, bool add, uint32_t dim, gl64_t* helper, cudaStream_t stream) {    
+    gl64_t* helper1;
+    gl64_t* helper2;
     uint32_t nthreads1 = min(256, (uint32_t)N>>1);
     dim3 threads1(nthreads1);
     dim3 blocks1((N + 2*threads1.x - 1) / (2*threads1.x));
     uint32_t n_shared = 2*dim*threads1.x;
-    prescan<<<blocks1, threads1, (n_shared+CONFLICT_FREE_OFFSET(n_shared))*sizeof(gl64_gpu), stream>>>(vals, vals, add, 1, dim, N);  
+    prescan<<<blocks1, threads1, (n_shared+CONFLICT_FREE_OFFSET(n_shared))*sizeof(gl64_t), stream>>>(vals, vals, add, 1, dim, N);  
     if(N > 2*nthreads1){
         helper1 = helper;
         uint32_t N2 = blocks1.x;
@@ -527,7 +527,7 @@ void accOperationGPU(gl64_gpu* vals, uint64_t N, bool add, uint32_t dim, gl64_gp
         dim3 threads2(nthreads2);
         dim3 blocks2((N2 + 2*threads2.x - 1) / (2*threads2.x));
         n_shared = 2*dim*threads2.x;
-        prescan<<<blocks2, threads2, (n_shared+CONFLICT_FREE_OFFSET(n_shared))*sizeof(gl64_gpu), stream>>>(helper1, vals, add, nthreads1 << 1, dim, N2);
+        prescan<<<blocks2, threads2, (n_shared+CONFLICT_FREE_OFFSET(n_shared))*sizeof(gl64_t), stream>>>(helper1, vals, add, nthreads1 << 1, dim, N2);
         if(N2 > 2*nthreads2){
             helper2 = helper + dim*N2;
             uint32_t N3 = blocks2.x;
@@ -536,7 +536,7 @@ void accOperationGPU(gl64_gpu* vals, uint64_t N, bool add, uint32_t dim, gl64_gp
             dim3 threads3(nthreads3);
             dim3 blocks3(1);
             n_shared = 2*dim*threads3.x;
-            prescan<<<blocks3, threads3, (n_shared+CONFLICT_FREE_OFFSET(n_shared))*sizeof(gl64_gpu), stream>>>(helper2, helper1, add, nthreads2 << 1, dim, N3);
+            prescan<<<blocks3, threads3, (n_shared+CONFLICT_FREE_OFFSET(n_shared))*sizeof(gl64_t), stream>>>(helper2, helper1, add, nthreads2 << 1, dim, N3);
             prescan_correction<<<blocks2, 2*threads2.x, 0, stream>>>(helper1, helper2, add, dim, N2);
 
         }
