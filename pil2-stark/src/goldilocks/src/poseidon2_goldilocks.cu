@@ -19,7 +19,7 @@ typedef uint64_t u64;
 
 #define MAX_WIDTH 12
 
-extern __shared__ gl64_gpu scratchpad[];
+extern __shared__ gl64_t scratchpad[];
 
 __device__ __forceinline__ void matmul_m4_state_(uint32_t offset);
 
@@ -53,11 +53,11 @@ void init_gpu_const_2(uint32_t* gpu_ids, uint32_t num_gpu_ids)
 
 /* --- integration --- */
 
-__device__ void linear_hash_one_2(gl64_gpu *output, gl64_gpu *input, uint32_t size, int tid)
+__device__ void linear_hash_one_2(gl64_t *output, gl64_t *input, uint32_t size, int tid)
 {
     u32 remaining = size;
-    __shared__ gl64_gpu GPU_C_SM[118];
-    __shared__ gl64_gpu GPU_D_SM[12];
+    __shared__ gl64_t GPU_C_SM[118];
+    __shared__ gl64_t GPU_D_SM[12];
 
     if (tid == 0)
     {
@@ -66,7 +66,7 @@ __device__ void linear_hash_one_2(gl64_gpu *output, gl64_gpu *input, uint32_t si
     }
     __syncthreads();
 
-    gl64_gpu state[SPONGE_WIDTH];
+    gl64_t state[SPONGE_WIDTH];
 
     if (size <= CAPACITY)
     {
@@ -94,10 +94,10 @@ __device__ void linear_hash_one_2(gl64_gpu *output, gl64_gpu *input, uint32_t si
     mymemcpy((uint64_t *)output, (uint64_t *)state, CAPACITY);
 }
 
-__device__ void linear_partial_hash_one_2(gl64_gpu *input, uint32_t size, gl64_gpu *state, int tid)
+__device__ void linear_partial_hash_one_2(gl64_t *input, uint32_t size, gl64_t *state, int tid)
 {
-    __shared__ gl64_gpu GPU_C_SM[118];
-    __shared__ gl64_gpu GPU_D_SM[12];
+    __shared__ gl64_t GPU_C_SM[118];
+    __shared__ gl64_t GPU_D_SM[12];
 
     if (tid == 0)
     {
@@ -125,8 +125,8 @@ __global__ void linear_hash_gpu_2_2(uint64_t *output, uint64_t *input, uint32_t 
     if (tid >= num_rows)
         return;
 
-    gl64_gpu *inp = (gl64_gpu *)(input + tid * size);
-    gl64_gpu *out = (gl64_gpu *)(output + tid * CAPACITY);
+    gl64_t *inp = (gl64_t *)(input + tid * size);
+    gl64_t *out = (gl64_t *)(output + tid * CAPACITY);
     linear_hash_one_2(out, inp, size, threadIdx.x);
 }
 
@@ -136,8 +136,8 @@ __global__ void linear_partial_init_hash_gpu_2_2(uint64_t *gstate, int32_t num_r
     if (tid >= num_rows)
         return;
 
-    gl64_gpu *state = (gl64_gpu *)(gstate + tid * SPONGE_WIDTH);
-    memset(state, 0, SPONGE_WIDTH * sizeof(gl64_gpu));
+    gl64_t *state = (gl64_t *)(gstate + tid * SPONGE_WIDTH);
+    memset(state, 0, SPONGE_WIDTH * sizeof(gl64_t));
 }
 
 __global__ void linear_partial_hash_gpu_2(uint64_t *input, uint32_t num_cols, uint32_t num_rows, uint64_t *gstate, uint32_t hash_per_thread = 1)
@@ -148,16 +148,16 @@ __global__ void linear_partial_hash_gpu_2(uint64_t *input, uint32_t num_cols, ui
 
     for (uint32_t i = 0; i < hash_per_thread; i++)
     {
-        gl64_gpu *inp = (gl64_gpu *)(input + (tid * hash_per_thread + i) * num_cols);
-        gl64_gpu *state = (gl64_gpu *)(gstate + (tid * hash_per_thread + i) * SPONGE_WIDTH);
+        gl64_t *inp = (gl64_t *)(input + (tid * hash_per_thread + i) * num_cols);
+        gl64_t *state = (gl64_t *)(gstate + (tid * hash_per_thread + i) * SPONGE_WIDTH);
         linear_partial_hash_one_2(inp, num_cols, state, threadIdx.x);
     }
 }
 
-__device__ void hash_one_2(gl64_gpu *state, gl64_gpu *const input, int tid)
+__device__ void hash_one_2(gl64_t *state, gl64_t *const input, int tid)
 {
-    __shared__ gl64_gpu GPU_C_SM[118];
-    __shared__ gl64_gpu GPU_D_SM[12];
+    __shared__ gl64_t GPU_C_SM[118];
+    __shared__ gl64_t GPU_D_SM[12];
 
     if (tid == 0)
     {
@@ -166,7 +166,7 @@ __device__ void hash_one_2(gl64_gpu *state, gl64_gpu *const input, int tid)
     }
     __syncthreads();
 
-    gl64_gpu aux[SPONGE_WIDTH];
+    gl64_t aux[SPONGE_WIDTH];
     hash_full_result_seq_2(aux, input, GPU_C_SM, GPU_D_SM);
     mymemcpy((uint64_t *)state, (uint64_t *)aux, CAPACITY);
 }
@@ -177,10 +177,10 @@ __global__ void hash_gpu_2(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
     if (tid >= nextN)
         return;
 
-    gl64_gpu pol_input[SPONGE_WIDTH];
+    gl64_t pol_input[SPONGE_WIDTH];
     mymemset((uint64_t *)pol_input, 0, SPONGE_WIDTH);
     mymemcpy((uint64_t *)pol_input, (uint64_t *)&cursor[nextIndex + tid * RATE], RATE);
-    hash_one_2((gl64_gpu *)(&cursor[nextIndex + (pending + tid) * CAPACITY]), pol_input, threadIdx.x);
+    hash_one_2((gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY]), pol_input, threadIdx.x);
 }
 
 __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending, uint64_t *cursor)
@@ -189,10 +189,10 @@ __global__ void hash_gpu_3(uint32_t nextN, uint32_t nextIndex, uint32_t pending,
     if (tid >= nextN)
         return;
 
-    gl64_gpu pol_input[SPONGE_WIDTH];
+    gl64_t pol_input[SPONGE_WIDTH];
     mymemset((uint64_t *)pol_input, 0, SPONGE_WIDTH);
     mymemcpy((uint64_t *)pol_input, (uint64_t *)&cursor[nextIndex + tid * SPONGE_WIDTH], SPONGE_WIDTH);
-    hash_one_2((gl64_gpu *)(&cursor[nextIndex + (pending + tid) * CAPACITY]), pol_input, threadIdx.x);
+    hash_one_2((gl64_t *)(&cursor[nextIndex + (pending + tid) * CAPACITY]), pol_input, threadIdx.x);
 }
 
 
@@ -259,10 +259,10 @@ __global__ void hash_gpu_2(uint32_t nextN, uint64_t *cursor_in, uint64_t *cursor
     if (tid >= nextN)
         return;
 
-    gl64_gpu pol_input[SPONGE_WIDTH];
+    gl64_t pol_input[SPONGE_WIDTH];
     mymemset((uint64_t *)pol_input + RATE, 0, CAPACITY);
     mymemcpy((uint64_t *)pol_input, (uint64_t *)&cursor_in[tid * RATE], RATE);
-    hash_one_2((gl64_gpu *)(&cursor_out[tid * CAPACITY]), pol_input, threadIdx.x);
+    hash_one_2((gl64_t *)(&cursor_out[tid * CAPACITY]), pol_input, threadIdx.x);
 }
 
 __global__ void hash_gpu_3(uint32_t nextN, uint64_t *cursor_in, uint64_t *cursor_out)
@@ -271,13 +271,13 @@ __global__ void hash_gpu_3(uint32_t nextN, uint64_t *cursor_in, uint64_t *cursor
     if (tid >= nextN)
         return;
 
-    gl64_gpu pol_input[SPONGE_WIDTH];
+    gl64_t pol_input[SPONGE_WIDTH];
     //mymemset((uint64_t *)pol_input + RATE, 0, CAPACITY);
     mymemcpy((uint64_t *)pol_input, (uint64_t *)&cursor_in[tid * SPONGE_WIDTH], SPONGE_WIDTH);
-    hash_one_2((gl64_gpu *)(&cursor_out[tid * CAPACITY]), pol_input, threadIdx.x);
+    hash_one_2((gl64_t *)(&cursor_out[tid * CAPACITY]), pol_input, threadIdx.x);
 }
 
-__device__ __noinline__ void add_state_2(gl64_gpu *x)
+__device__ __noinline__ void add_state_2(gl64_t *x)
 {
 #pragma unroll
     for (uint32_t i = 0; i < SPONGE_WIDTH; i++)
@@ -287,7 +287,7 @@ __device__ __noinline__ void add_state_2(gl64_gpu *x)
 __device__ __forceinline__ void poseidon2_load(const uint64_t *in, uint32_t col, uint32_t ncols,
                                                uint32_t col_stride, size_t row_stride = 1)
 {
-    gl64_gpu r[RATE];
+    gl64_t r[RATE];
 
     const size_t tid = threadIdx.x + blockDim.x * (size_t)blockIdx.x;
     in += tid * col_stride + col * row_stride;
@@ -308,7 +308,7 @@ __device__ __forceinline__ void poseidon2_load(const uint64_t *in, uint32_t col,
 
 __device__ __forceinline__ void poseidon2_store(uint64_t *__restrict__ out, uint32_t col_stride, size_t row_stride = 1)
 {
-    gl64_gpu r[CAPACITY];
+    gl64_t r[CAPACITY];
 
     __syncwarp();
 
@@ -333,7 +333,7 @@ __device__ __forceinline__ void poseidon2_hash_loop(const uint64_t *__restrict__
         poseidon2_load(in, 0, ncols, ncols);
         for (uint32_t i = ncols; i < CAPACITY; i++)
         {
-            scratchpad[i * blockDim.x + threadIdx.x].set_val(0);
+            scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(0); 
         }
     }
     else
@@ -346,24 +346,24 @@ __device__ __forceinline__ void poseidon2_hash_loop(const uint64_t *__restrict__
             {
                 for (uint32_t i = delta; i < RATE; i++)
                 {
-                    scratchpad[i * blockDim.x + threadIdx.x].set_val(0);
+                    scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(0); 
                 }
             }
             /*if(blockIdx.x == 0 && threadIdx.x == 0){
                 for (uint32_t i = 0; i < SPONGE_WIDTH; i++)
-                    printf("tmp abans[%d] = %lu col=%d ncols=%d\n", i, scratchpad[i * blockDim.x + threadIdx.x].get_val(), col, ncols);
+                    printf("tmp abans[%d] = %lu col=%d ncols=%d\n", i, scratchpad[i * blockDim.x + threadIdx.x][0], col, ncols);
             }*/
             poseidon2_hash();
             
             /*if(blockIdx.x == 0 && threadIdx.x == 0){
                 for (uint32_t i = 0; i < CAPACITY; i++)
-                    printf("tmp[%d] = %lu col=%d ncols=%d\n", i, scratchpad[i * blockDim.x + threadIdx.x].get_val(), col, ncols);
+                    printf("tmp[%d] = %lu col=%d ncols=%d\n", i, scratchpad[i * blockDim.x + threadIdx.x][0], col, ncols);
             }*/
 
             if ((col += RATE) >= ncols)
                 break;
 
-            gl64_gpu tmp[CAPACITY];
+            gl64_t tmp[CAPACITY];
 
 #pragma unroll
             for (uint32_t i = 0; i < CAPACITY; i++)
@@ -385,7 +385,7 @@ __device__ __forceinline__ void matmul_external_state_()
     matmul_m4_state_(4);
     matmul_m4_state_(8);
 
-    gl64_gpu stored[4] = {
+    gl64_t stored[4] = {
        scratchpad[0 * blockDim.x + threadIdx.x] + scratchpad[4 * blockDim.x + threadIdx.x] + scratchpad[8 * blockDim.x + threadIdx.x],
        scratchpad[1 * blockDim.x + threadIdx.x] + scratchpad[5 * blockDim.x + threadIdx.x] + scratchpad[9 * blockDim.x + threadIdx.x],
        scratchpad[2 * blockDim.x + threadIdx.x] + scratchpad[6 * blockDim.x + threadIdx.x] + scratchpad[10 * blockDim.x + threadIdx.x],
@@ -401,16 +401,16 @@ __device__ __forceinline__ void matmul_external_state_()
 __device__ __forceinline__ void matmul_m4_state_(uint32_t offset)
 {
     
-    gl64_gpu t0 = scratchpad[(offset + 0) * blockDim.x + threadIdx.x] + scratchpad[(offset + 1) * blockDim.x + threadIdx.x];
-    gl64_gpu t1 = scratchpad[(offset + 2) * blockDim.x + threadIdx.x] + scratchpad[(offset + 3) * blockDim.x + threadIdx.x];
-    gl64_gpu t2 = scratchpad[(offset + 1) * blockDim.x + threadIdx.x] + scratchpad[(offset + 1) * blockDim.x + threadIdx.x] + t1;
-    gl64_gpu t3 = scratchpad[(offset + 3) * blockDim.x + threadIdx.x] + scratchpad[(offset + 3) * blockDim.x + threadIdx.x] + t0;
-    gl64_gpu t1_2 = t1 + t1;
-    gl64_gpu t0_2 = t0 + t0;
-    gl64_gpu t4 = t1_2 + t1_2 + t3;
-    gl64_gpu t5 = t0_2 + t0_2 + t2;
-    gl64_gpu t6 = t3 + t5;
-    gl64_gpu t7 = t2 + t4;
+    gl64_t t0 = scratchpad[(offset + 0) * blockDim.x + threadIdx.x] + scratchpad[(offset + 1) * blockDim.x + threadIdx.x];
+    gl64_t t1 = scratchpad[(offset + 2) * blockDim.x + threadIdx.x] + scratchpad[(offset + 3) * blockDim.x + threadIdx.x];
+    gl64_t t2 = scratchpad[(offset + 1) * blockDim.x + threadIdx.x] + scratchpad[(offset + 1) * blockDim.x + threadIdx.x] + t1;
+    gl64_t t3 = scratchpad[(offset + 3) * blockDim.x + threadIdx.x] + scratchpad[(offset + 3) * blockDim.x + threadIdx.x] + t0;
+    gl64_t t1_2 = t1 + t1;
+    gl64_t t0_2 = t0 + t0;
+    gl64_t t4 = t1_2 + t1_2 + t3;
+    gl64_t t5 = t0_2 + t0_2 + t2;
+    gl64_t t6 = t3 + t5;
+    gl64_t t7 = t2 + t4;
 
     scratchpad[(offset + 0) * blockDim.x + threadIdx.x] = t6;
     scratchpad[(offset + 1) * blockDim.x + threadIdx.x] = t5;
@@ -420,13 +420,13 @@ __device__ __forceinline__ void matmul_m4_state_(uint32_t offset)
 }
 
 
-__device__ __forceinline__ void pow7add_state_(const gl64_gpu C[SPONGE_WIDTH])
+__device__ __forceinline__ void pow7add_state_(const gl64_t C[SPONGE_WIDTH])
 {
-    gl64_gpu x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
+    gl64_t x2[SPONGE_WIDTH], x3[SPONGE_WIDTH], x4[SPONGE_WIDTH];
 #pragma unroll
     for (int i = 0; i < SPONGE_WIDTH; ++i)
     {
-        gl64_gpu xi = scratchpad[i * blockDim.x + threadIdx.x] + C[i];
+        gl64_t xi = scratchpad[i * blockDim.x + threadIdx.x] + C[i];
         x2[i] = xi * xi;
         x3[i] = xi * x2[i];
         x4[i] = x2[i] * x2[i];
@@ -435,7 +435,7 @@ __device__ __forceinline__ void pow7add_state_(const gl64_gpu C[SPONGE_WIDTH])
 }
 
 
-__device__ __forceinline__ void prodadd_state_(const gl64_gpu D[SPONGE_WIDTH], const gl64_gpu &sum)
+__device__ __forceinline__ void prodadd_state_(const gl64_t D[SPONGE_WIDTH], const gl64_t &sum)
 {
 #pragma unroll
     for (int i = 0; i < SPONGE_WIDTH; ++i)
@@ -446,8 +446,8 @@ __device__ __forceinline__ void prodadd_state_(const gl64_gpu D[SPONGE_WIDTH], c
 
 __device__ __forceinline__ void poseidon2_hash()
 {
-    const gl64_gpu *GPU_C_GL = (gl64_gpu *)GPU_C;
-    const gl64_gpu *GPU_D_GL = (gl64_gpu *)GPU_D;
+    const gl64_t *GPU_C_GL = (gl64_t *)GPU_C;
+    const gl64_t *GPU_D_GL = (gl64_t *)GPU_D;
 
     matmul_external_state_();
     for (int r = 0; r < HALF_N_FULL_ROUNDS; r++)
@@ -460,8 +460,8 @@ __device__ __forceinline__ void poseidon2_hash()
     {
         scratchpad[threadIdx.x] = scratchpad[threadIdx.x] + GPU_C_GL[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + r];
         pow7_2(scratchpad[threadIdx.x]);
-        gl64_gpu sum_;
-        sum_ = gl64_gpu(0);
+        gl64_t sum_;
+        sum_ = gl64_t(0);
         add_state_2(&sum_);
         prodadd_state_(GPU_D_GL, sum_);
     }
@@ -477,7 +477,7 @@ __global__ void linear_hash_gpu_coalesced_2(uint64_t *__restrict__ output, uint6
 {
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY; i++)
-        scratchpad[(i + RATE) * blockDim.x + threadIdx.x].set_val(0);
+        scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = gl64_t(0); 
 
     poseidon2_hash_loop(input, size);
     poseidon2_store(output, CAPACITY);

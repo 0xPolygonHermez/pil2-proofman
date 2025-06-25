@@ -18,7 +18,7 @@
 #include "expressions_pack.hpp"
 #include "hints.hpp"
 
-class gl64_gpu;
+class gl64_t;
 struct DeviceCommitBuffers;
 
 template <typename ElementType>

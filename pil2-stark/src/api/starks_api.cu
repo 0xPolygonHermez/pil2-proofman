@@ -54,9 +54,9 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
         d_buffers->my_gpu_ids[i] = node_rank * d_buffers->n_gpus + i;
         d_buffers->gpus_g2l[d_buffers->my_gpu_ids[i]] = i;
     }
-    d_buffers->d_aux_trace = (gl64_gpu **)malloc(deviceCount * sizeof(gl64_gpu*));
-    d_buffers->d_constPols = (gl64_gpu **)malloc(deviceCount * sizeof(gl64_gpu*));
-    d_buffers->d_constPolsAggregation = (gl64_gpu **)malloc(deviceCount * sizeof(gl64_gpu*));
+    d_buffers->d_aux_trace = (gl64_t **)malloc(deviceCount * sizeof(gl64_t*));
+    d_buffers->d_constPols = (gl64_t **)malloc(deviceCount * sizeof(gl64_t*));
+    d_buffers->d_constPolsAggregation = (gl64_t **)malloc(deviceCount * sizeof(gl64_t*));
 
     for (int i = 0; i < d_buffers->n_gpus; i++) {
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
@@ -196,8 +196,8 @@ void load_device_const_pols(uint64_t airgroupId, uint64_t airId, uint64_t initia
     
     for(int i=0; i<d_buffers->n_gpus; ++i){
         cudaSetDevice(d_buffers->my_gpu_ids[i]);
-        gl64_gpu *d_constPols = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
-        gl64_gpu *d_constTree = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
+        gl64_t *d_constPols = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
+        gl64_t *d_constTree = (strcmp(proofType, "basic") == 0) ? d_buffers->d_constPols[i] : d_buffers->d_constPolsAggregation[i];
         CHECKCUDAERR(cudaMemcpy(d_constPols + const_pols_offset, constPols, sizeConstPols, cudaMemcpyHostToDevice));
         CHECKCUDAERR(cudaMemcpy(d_constTree + const_tree_offset, constTree, sizeConstTree, cudaMemcpyHostToDevice));
         AirInstanceInfo* air_instance_info = d_buffers->air_instances[key][proofType][i];
@@ -225,7 +225,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
-    gl64_gpu *d_aux_trace = (gl64_gpu *)d_buffers->d_aux_trace[gpuLocalId] + slotId*d_buffers->max_size_prover_buffer;
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId] + slotId*d_buffers->max_size_prover_buffer;
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
@@ -301,8 +301,8 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetChallenge, &d_buffers->streamsData[streamId].pinned_buffer[offset], FIELD_EXTENSION * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
     offset += FIELD_EXTENSION;
 
-    gl64_gpu *d_const_pols;
-    gl64_gpu *d_const_tree;
+    gl64_t *d_const_pols;
+    gl64_t *d_const_tree;
     if (air_instance_info->stored) {
         d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
         d_const_tree = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_tree_offset;
@@ -316,7 +316,7 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     }
 
 
-    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, d_buffers, air_instance_info, skipRecalculation, timer, stream);
+    genProof_gpu(*setupCtx, d_aux_trace, d_const_pols, d_const_tree, streamId, instanceId, d_buffers, air_instance_info, skipRecalculation, timer, stream);
     cudaEventRecord(d_buffers->streamsData[streamId].end_event, stream);
     d_buffers->streamsData[streamId].status = 2;
     return streamId;
@@ -404,8 +404,8 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
     
-    gl64_gpu *d_trace = (gl64_gpu *)d_buffers->d_aux_trace[gpuLocalId] + slotId*d_buffers->max_size_prover_buffer;
-    gl64_gpu *d_aux_trace = d_trace + d_buffers->max_size_trace_aggregation;
+    gl64_t *d_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId] + slotId*d_buffers->max_size_prover_buffer;
+    gl64_t *d_aux_trace = d_trace + d_buffers->max_size_trace_aggregation;
 
     uint64_t N = (1 << setupCtx->starkInfo.starkStruct.nBits);
     uint64_t nCols = setupCtx->starkInfo.mapSectionsN["cm1"];
@@ -438,8 +438,8 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     CHECKCUDAERR(cudaMemcpyAsync(d_trace, d_buffers->streamsData[streamId].pinned_buffer, sizeTrace, cudaMemcpyHostToDevice, stream));
     CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetPublicInputs, &d_buffers->streamsData[streamId].pinned_buffer[N * nCols], setupCtx->starkInfo.nPublics * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
     
-    gl64_gpu *d_const_pols;
-    gl64_gpu *d_const_tree;
+    gl64_t *d_const_pols;
+    gl64_t *d_const_tree;
     if (air_instance_info->stored) {
         d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_pols_offset;
         d_const_tree = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_tree_offset;
@@ -476,7 +476,7 @@ uint64_t commit_witness(uint64_t arity, uint64_t nBits, uint64_t nBitsExt, uint6
     cudaStream_t stream = d_buffers->streamsData[streamId].stream;
     TimerGPU &timer = d_buffers->streamsData[streamId].timer;
 
-    gl64_gpu *d_aux_trace = (gl64_gpu *)d_buffers->d_aux_trace[gpuLocalId] + slotId*d_buffers->max_size_prover_buffer;
+    gl64_t *d_aux_trace = (gl64_t *)d_buffers->d_aux_trace[gpuLocalId] + slotId*d_buffers->max_size_prover_buffer;
     uint64_t sizeTrace = N * nCols * sizeof(Goldilocks::Element);
     uint64_t offsetStage1 = setupCtx->starkInfo.mapOffsets[std::make_pair("cm1", false)];
 
