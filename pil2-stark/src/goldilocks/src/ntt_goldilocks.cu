@@ -106,7 +106,7 @@ __global__ void transpose_opt(uint64_t *dst, uint64_t *src, uint32_t nblocks, ui
 
 __global__ void applyS(gl64_t *d_cmQ, gl64_t *d_q, gl64_t *d_S, Goldilocks::Element shiftIn, uint64_t N, uint64_t qDeg, uint64_t qDim)
 {
-    d_S[0] = gl64_t::one();
+    d_S[0] = gl64_t(uint64_t(1));
     for(uint64_t i = 1; i < qDeg; ++i) {
         d_S[i] = gl64_t(shiftIn.fe) * d_S[i - 1];
     }
@@ -481,8 +481,8 @@ __global__ void init_twiddle_factors_small_size(gl64_t *fwd_twiddles, gl64_t *in
 
     uint32_t start = 1 << log_domain_size - 1;
 
-    fwd_twiddles[start] = gl64_t::one();
-    inv_twiddles[start] = gl64_t::one();
+    fwd_twiddles[start] = gl64_t(uint64_t(1));
+    inv_twiddles[start] = gl64_t(uint64_t(1));
 
     for (uint32_t i = start + 1; i < start + (1 << log_domain_size - 1); i++)
     {
@@ -498,8 +498,8 @@ __global__ void init_twiddle_factors_first_step(gl64_t *fwd_twiddles, gl64_t *in
 
     uint32_t start = 1 << log_domain_size - 1;
 
-    fwd_twiddles[start] = gl64_t::one();
-    inv_twiddles[start] = gl64_t::one();
+    fwd_twiddles[start] = gl64_t(uint64_t(1));
+    inv_twiddles[start] = gl64_t(uint64_t(1));
 
     for (uint32_t i = start + 1; i <= start + (1 << 12); i++)
     {
@@ -538,7 +538,7 @@ void init_twiddle_factors(gl64_t *fwd_twiddles, gl64_t *inv_twiddles, uint32_t l
 __global__ void init_r_small_size(gl64_t *r, uint32_t log_domain_size)
 {
     uint32_t start = 1 << log_domain_size;
-    r[start] = gl64_t::one();
+    r[start] = gl64_t(uint64_t(1));
     for (uint32_t i = start + 1; i < start + (1 << log_domain_size); i++)
     {
         r[i] = r[i - 1] * gl64_t(SHIFT);
@@ -548,7 +548,7 @@ __global__ void init_r_small_size(gl64_t *r, uint32_t log_domain_size)
 __global__ void init_r_first_step(gl64_t *r, uint32_t log_domain_size)
 {
     uint32_t start = 1 << log_domain_size;
-    r[start] = gl64_t::one();
+    r[start] = gl64_t(uint64_t(1));
     // init first 4097 elements and then init others in parallel
     for (uint32_t i = start + 1; i <= start + (1 << 12); i++)
     {

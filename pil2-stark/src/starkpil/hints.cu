@@ -263,7 +263,7 @@ __device__ void scan_sum_1(gl64_t* temp, uint32_t N){
     
     // clear the last element
     if (thid == 0) { 
-        temp[(N- 1)+CONFLICT_FREE_OFFSET(N- 1)] = gl64_t(0); 
+        temp[(N- 1)+CONFLICT_FREE_OFFSET(N- 1)] = gl64_t(uint64_t(0)); 
     } 
 
     // traverse down tree & build scan
@@ -306,7 +306,7 @@ __device__ void scan_prod_1(gl64_t* temp, uint32_t N){
     
     // clear the last element
     if (thid == 0) { 
-        temp[(N- 1)+CONFLICT_FREE_OFFSET(N- 1)] = gl64_t(1); 
+        temp[(N- 1)+CONFLICT_FREE_OFFSET(N- 1)] = gl64_t(uint64_t(1)); 
     } 
 
     // traverse down tree & build scan
@@ -349,9 +349,9 @@ __device__ void scan_sum_3(gl64_t* temp, uint32_t N){
     __syncthreads(); 
     // clear the last element
     if (thid == 0) { 
-        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))]= gl64_t(0);  
-        temp[3*(N- 1)+1+CONFLICT_FREE_OFFSET(3*(N- 1)+1)]= gl64_t(0); 
-        temp[3*(N- 1)+2+CONFLICT_FREE_OFFSET(3*(N- 1)+2)]= gl64_t(0); 
+        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))]= gl64_t(uint64_t(0));  
+        temp[3*(N- 1)+1+CONFLICT_FREE_OFFSET(3*(N- 1)+1)]= gl64_t(uint64_t(0)); 
+        temp[3*(N- 1)+2+CONFLICT_FREE_OFFSET(3*(N- 1)+2)]= gl64_t(uint64_t(0)); 
     } 
 
     // traverse down tree & build scan
@@ -396,9 +396,9 @@ __device__ void scan_prod_3(gl64_t* temp, uint32_t N){
     __syncthreads(); 
     // clear the last element
     if (thid == 0) { 
-        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))]= gl64_t(1);  
-        temp[3*(N- 1)+1+CONFLICT_FREE_OFFSET(3*(N- 1)+1)]= gl64_t(0); 
-        temp[3*(N- 1)+2+CONFLICT_FREE_OFFSET(3*(N- 1)+2)]= gl64_t(0); 
+        temp[3*(N- 1)+CONFLICT_FREE_OFFSET(3*(N- 1))]= gl64_t(uint64_t(1));  
+        temp[3*(N- 1)+1+CONFLICT_FREE_OFFSET(3*(N- 1)+1)]= gl64_t(uint64_t(0)); 
+        temp[3*(N- 1)+2+CONFLICT_FREE_OFFSET(3*(N- 1)+2)]= gl64_t(uint64_t(0)); 
     } 
 
     // traverse down tree & build scan

@@ -71,9 +71,9 @@ void computeZerofier(Goldilocks::Element *d_zi, uint64_t nBits, uint64_t nBitsEx
 }
 
 __global__ void setProdIdentity3(gl64_t *pol) {
-    pol[0] = gl64_t::one();
-    pol[1] = gl64_t::zero();
-    pol[2] = gl64_t::zero();
+    pol[0] = gl64_t(uint64_t(1));
+    pol[1] = gl64_t(uint64_t(0));
+    pol[2] = gl64_t(uint64_t(0));
 }
 
 __global__ void buildZHInv_kernel(gl64_t *d_zi, uint64_t extend, uint64_t NExtended, Goldilocks::Element w, Goldilocks::Element sn) {
@@ -83,7 +83,7 @@ __global__ void buildZHInv_kernel(gl64_t *d_zi, uint64_t extend, uint64_t NExten
 
     if (k < extend) {
         gl64_t w_k = gl64_t(w.fe) ^ k;
-        gl64_t val = (gl64_t(sn.fe) * w_k) - gl64_t::one();
+        gl64_t val = (gl64_t(sn.fe) * w_k) - gl64_t(uint64_t(1));
         zi_shared[k] = val.reciprocal();
     }
 
@@ -337,7 +337,7 @@ __global__ void computeEvals_v2(
 
         for (int i = 0; i < FIELD_EXTENSION; i++)
         {
-            shared_sum[threadIdx.x][i]= gl64_t(0); 
+            shared_sum[threadIdx.x][i]= gl64_t(uint64_t(0)); 
         }
         uint64_t tid = threadIdx.x;
         while (tid < N)
@@ -448,7 +448,7 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
 {
 
     uint64_t halfRatio = (1 << (prevBits - currentBits)) >> 1;
-    d_twiddles[0] = gl64_t::one();
+    d_twiddles[0] = gl64_t(uint64_t(1));
     for (uint32_t i = 1; i < halfRatio; i++)
     {
         d_twiddles[i] = d_twiddles[i - 1] * gl64_t(omega_inv.fe);
@@ -514,7 +514,7 @@ __global__ void fold(uint64_t step, gl64_t *friPol, gl64_t *d_challenge, gl64_t 
         {
             for (uint32_t i = 0; i < FIELD_EXTENSION; i++)
             {
-                friPol[id * FIELD_EXTENSION + i]= gl64_t(0); 
+                friPol[id * FIELD_EXTENSION + i]= gl64_t(uint64_t(0)); 
             }
         }
         else

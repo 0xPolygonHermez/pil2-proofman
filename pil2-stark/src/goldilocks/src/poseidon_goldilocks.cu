@@ -449,7 +449,7 @@ __device__ __forceinline__ void poseidon_hash_loop(const uint64_t *__restrict__ 
         poseidon_load(in, 0, ncols, ncols);
         for (uint32_t i = ncols; i < CAPACITY; i++)
         {
-            scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(0);
+            scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0));
         }
     }
     else
@@ -462,7 +462,7 @@ __device__ __forceinline__ void poseidon_hash_loop(const uint64_t *__restrict__ 
             {
                 for (uint32_t i = delta; i < RATE; i++)
                 {
-                    scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(0); 
+                    scratchpad[i * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
                 }
             }
             poseidon_hash();
@@ -534,7 +534,7 @@ __global__ void linear_hash_gpu_coalesced(uint64_t *__restrict__ output, uint64_
 {
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY; i++)
-        scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = gl64_t(0); 
+        scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
 
     poseidon_hash_loop(input, size);
     poseidon_store(output, CAPACITY);
@@ -603,12 +603,12 @@ __global__ void linear_hash_gpu_tree(uint64_t *output, uint64_t *input, uint32_t
 {
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY; i++)
-        scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = gl64_t(0); 
+        scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
 
     poseidon_hash_loop(input, size);
     poseidon_store(output, CAPACITY);
 #pragma unroll
     for (uint32_t i = 0; i < CAPACITY; i++)
-        scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = gl64_t(0); 
+        scratchpad[(i + RATE) * blockDim.x + threadIdx.x] = gl64_t(uint64_t(0)); 
     generate_1level_tree();
 }

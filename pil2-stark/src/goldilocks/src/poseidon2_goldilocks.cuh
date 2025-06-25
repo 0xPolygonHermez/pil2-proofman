@@ -118,7 +118,7 @@ __device__ __forceinline__ void hash_full_result_seq_2(gl64_t *state, const gl64
         state[0] = state[0] + GPU_C_GL[HALF_N_FULL_ROUNDS * SPONGE_WIDTH + r];
         pow7_2(state[0]);
         gl64_t sum_;
-        sum_ = gl64_t(0);
+        sum_ = gl64_t(uint64_t(0));
         add_2(&sum_, state);
         prodadd_(state, GPU_D_GL, sum_);
     }
