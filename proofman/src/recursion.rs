@@ -170,11 +170,34 @@ pub fn gen_witness_aggregation<F: PrimeField64>(
     ))
 }
 
+pub fn gen_recursive_proof_size<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    setups: &SetupsVadcop<F>,
+    witness: &Proof<F>,
+) -> Proof<F> {
+    let (airgroup_id, air_id) = (witness.airgroup_id, witness.air_id);
+
+    let setup = setups.get_setup(airgroup_id, air_id, &witness.proof_type);
+
+    let mut new_proof_size = setup.proof_size;
+
+    let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
+
+    let add_aggregation_publics = witness.proof_type != ProofType::VadcopFinal;
+    if add_aggregation_publics {
+        new_proof_size += publics_aggregation as u64;
+    }
+
+    let new_proof = vec![0; new_proof_size as usize];
+    Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn generate_recursive_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
     witness: &Proof<F>,
+    new_proof: &Proof<F>,
     trace: &[F],
     prover_buffer: &[F],
     output_dir_path: &Path,
@@ -182,7 +205,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     const_tree: Arc<Vec<F>>,
     const_pols: Arc<Vec<F>>,
     save_proofs: bool,
-) -> (u64, Proof<F>) {
+) -> u64 {
     timer_start_info!(GEN_RECURSIVE_PROOF, "GEN_RECURSIVE_PROOF_{:?}", witness.proof_type);
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
@@ -231,14 +254,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     let publics_aggregation = 1 + 4 * pctx.global_info.agg_types[airgroup_id].len() + 10;
 
-    let mut new_proof_size = setup.proof_size;
-
     let add_aggregation_publics = witness.proof_type != ProofType::VadcopFinal;
-    if add_aggregation_publics {
-        new_proof_size += publics_aggregation as u64;
-    }
-
-    let mut new_proof = vec![0; new_proof_size as usize];
 
     let initial_idx = if witness.proof_type == ProofType::VadcopFinal { 0 } else { publics_aggregation };
 
@@ -248,7 +264,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 
     if add_aggregation_publics {
         add_publics_aggregation_c(
-            new_proof.as_ptr() as *mut u8,
+            new_proof.proof.as_ptr() as *mut u8,
             0,
             publics.as_ptr() as *mut u8,
             publics_aggregation as u64,
@@ -268,7 +284,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         const_pols_ptr,
         const_tree_ptr,
         publics.as_ptr() as *mut u8,
-        new_proof[initial_idx..].as_mut_ptr(),
+        new_proof.proof[initial_idx..].as_ptr() as *mut u64,
         &proof_file,
         global_info_file,
         airgroup_id as u64,
@@ -282,10 +298,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     );
 
     timer_stop_and_log_info!(GEN_RECURSIVE_PROOF, "GEN_RECURSIVE_PROOF_{:?}", witness.proof_type);
-    (
-        stream_id,
-        Proof::new(witness.proof_type.clone(), witness.airgroup_id, witness.air_id, witness.global_idx, new_proof),
-    )
+    stream_id
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -382,10 +395,13 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                         let mut circom_witness = gen_witness_aggregation::<F>(pctx, setups, &proof1, &proof2, &proof3)?;
                         circom_witness.global_idx = Some(rank);
 
-                        let (stream_id, recursive2_proof) = generate_recursive_proof::<F>(
+                        let recursive2_proof = gen_recursive_proof_size::<F>(pctx, setups, &circom_witness);
+
+                        let stream_id = generate_recursive_proof::<F>(
                             pctx,
                             setups,
                             &circom_witness,
+                            &recursive2_proof,
                             trace,
                             prover_buffer,
                             &output_dir_path,
@@ -464,14 +480,16 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
     let setup = setups.setup_vadcop_final.as_ref().unwrap();
     let circom_witness_vadcop_final = generate_witness::<F>(setup, &proof.proof)?;
-    let new_proof =
+    let witness_final_proof =
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
     tracing::info!("··· Generating vadcop final proof");
     timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
-    let (stream_id, final_vadcop_proof) = generate_recursive_proof::<F>(
+    let final_proof = gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof);
+    let stream_id = generate_recursive_proof::<F>(
         pctx,
         setups,
-        &new_proof,
+        &witness_final_proof,
+        &final_proof,
         trace,
         prover_buffer,
         &output_dir_path,
@@ -484,7 +502,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     tracing::info!("··· Vadcop final Proof generated.");
     timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);
 
-    Ok(final_vadcop_proof)
+    Ok(final_proof)
 }
 
 #[allow(clippy::too_many_arguments)]
