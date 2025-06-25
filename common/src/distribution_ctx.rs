@@ -6,6 +6,7 @@ use mpi::collective::CommunicatorCollectives;
 use mpi::datatype::PartitionMut;
 #[cfg(distributed)]
 use mpi::topology::Communicator;
+use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
@@ -71,6 +72,7 @@ pub struct DistributionCtx {
     pub balance_distribution: bool,
     pub node_rank: i32,
     pub node_n_processes: i32,
+    pub leader_rank: OnceCell<u32>, // Indicates if the current process is the leader of the node
 }
 
 impl std::fmt::Debug for DistributionCtx {
@@ -162,6 +164,7 @@ impl DistributionCtx {
                 balance_distribution: true,
                 node_rank,
                 node_n_processes,
+                leader_rank: OnceCell::new(),
             }
         }
         #[cfg(not(distributed))]
@@ -182,6 +185,7 @@ impl DistributionCtx {
                 balance_distribution: false,
                 node_rank: 0,
                 node_n_processes: 1,
+                leader_rank: OnceCell::new(),
             }
         }
     }
@@ -817,6 +821,64 @@ impl DistributionCtx {
                     i_proof += 1;
                 }
             }
+        }
+    }
+
+    pub fn distribute_recursive2_proof(&self, airgroup_id: usize, my_proof: Option<&Vec<u64>>) {
+        #[cfg(distributed)]
+        {
+            let leader = self.leader_rank.get().copied().expect("Leader not set");
+
+            if self.rank != leader as i32 {
+                if let Some(proof) = my_proof {
+                    let mut proof_with_airgroup_id = Vec::with_capacity(proof.len() + 1);
+                    proof_with_airgroup_id.push(airgroup_id as u64); // prepend airgroup_id
+                    proof_with_airgroup_id.extend_from_slice(proof);
+
+                    self.world.process_at_rank(leader as i32).send(&proof_with_airgroup_id[..]);
+                } else {
+                    panic!("Non-leader must have a proof to send");
+                }
+            }
+        }
+    }
+
+    pub fn recv_any_recursive2_proof(&self) -> (u64, Vec<u64>) {
+        #[cfg(distributed)]
+        {
+            let leader = self.leader_rank.get().copied().expect("Leader not set");
+            if self.rank != leader as i32 {
+                return (0, vec![]);
+            }
+            let (msg, _status) = self.world.any_process().receive_vec_with_tag::<u64>(leader as i32);
+
+            let airgroup_id = msg[0];
+            let proof = msg[1..].to_vec();
+
+            (airgroup_id, proof)
+        }
+
+        #[cfg(not(distributed))]
+        {
+            (0, vec![])
+        }
+    }
+
+    pub fn set_leader_rank(&self) {
+        if self.leader_rank.get().is_some() {
+            return;
+        }
+
+        #[cfg(distributed)]
+        {
+            let mut elected = self.rank;
+            self.world.all_reduce_into(&self.rank, &mut elected, mpi::collective::SystemOperation::min());
+
+            let _ = self.leader_rank.set(elected as u32);
+        }
+        #[cfg(not(distributed))]
+        {
+            let _ = self.leader_rank.set(0);
         }
     }
 }
