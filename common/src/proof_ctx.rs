@@ -521,6 +521,26 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
+    pub fn get_air_instance_params_witness(&self, sctx: &SetupCtx<F>, airgroup_id: usize, air_id: usize, trace: &Vec<F>, airvalues: &Vec<F>, airgroupvalues: &Vec<F>) -> StepsParams {
+
+        let setup = sctx.get_setup(airgroup_id, air_id);
+
+        StepsParams {
+            trace: trace.as_ptr() as *mut u8,
+            aux_trace: std::ptr::null_mut(),
+            public_inputs: self.get_publics_ptr(),
+            proof_values: self.get_proof_values_ptr(),
+            challenges: std::ptr::null_mut(),
+            airgroup_values: airgroupvalues.as_ptr() as *mut u8,
+            airvalues: airvalues.as_ptr() as *mut u8,
+            evals: std::ptr::null_mut(),
+            xdivxsub: std::ptr::null_mut(),
+            p_const_pols: setup.get_const_ptr(),
+            p_const_tree: std::ptr::null_mut(),
+            custom_commits_fixed: std::ptr::null_mut(),
+        }
+    }
+
     pub fn get_air_instance_trace_ptr(&self, instance_id: usize) -> *mut u8 {
         self.air_instances[instance_id].read().unwrap().get_trace_ptr()
     }

@@ -939,6 +939,60 @@ fn get_hint_f<F: PrimeField64>(
 
     hint_field_values
 }
+
+#[allow(clippy::too_many_arguments)]
+fn get_hint_witness_f<F: PrimeField64>(
+    sctx: &SetupCtx<F>,
+    pctx: Option<&ProofCtx<F>>,
+    airgroup_id: usize,
+    air_id: usize,
+    trace: &Vec<F>,
+    air_values: &Vec<F>,
+    airgroup_values: &Vec<F>,
+    hint_id: usize,
+    hint_field_name: &str,
+    options: HintFieldOptions,
+) -> Vec<HintFieldInfo<F>> {
+    let setup = sctx.get_setup(airgroup_id, air_id);
+    
+    let steps_params = pctx.unwrap().get_air_instance_params_witness(sctx, airgroup_id, air_id, trace, air_values, airgroup_values);
+
+    let n_hints_values = get_hint_field_values_c((&setup.p_setup).into(), hint_id as u64, hint_field_name);
+
+    let mut hint_field_values: Vec<HintFieldInfo<F>> = vec![HintFieldInfo::default(); n_hints_values as usize];
+
+    let mut hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
+    let mut hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
+
+    get_hint_field_sizes_c(
+        (&setup.p_setup).into(),
+        hint_field_values_c_ptr,
+        hint_id as u64,
+        hint_field_name,
+        (&options).into(),
+    );
+
+    HintFieldInfoC::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
+
+    for hint_field_value in hint_field_values.iter_mut() {
+        hint_field_value.init_buffers(options.initialize_zeros);
+    }
+
+    hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
+    hint_field_values_c_ptr = hint_field_values_c.as_mut_ptr() as *mut c_void;
+
+    get_hint_field_c(
+        (&setup.p_setup).into(),
+        (&steps_params).into(),
+        hint_field_values_c_ptr,
+        hint_id as u64,
+        hint_field_name,
+        (&options).into(),
+    );
+
+    hint_field_values
+}
+
 pub fn get_hint_field<F: PrimeField64>(
     sctx: &SetupCtx<F>,
     pctx: &ProofCtx<F>,
@@ -1003,6 +1057,97 @@ pub fn get_hint_field_m<F: PrimeField64>(
 
     let hint_infos =
         get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
+
+    let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
+
+    for (v, hint_info) in hint_infos.iter().enumerate() {
+        if v == 0 && hint_info.matrix_size > 2 {
+            panic!("get_hint_field_m can only be called with a matrix of expressions!",);
+        }
+        let hint_value = HintCol::from_hint_field(hint_info);
+        let mut pos = Vec::new();
+        for p in 0..hint_info.matrix_size {
+            pos.push(hint_info.pos[p as usize]);
+        }
+        if options.print_expression {
+            tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
+        }
+        hint_field_values.insert(pos, hint_value);
+    }
+
+    HintFieldValues { values: hint_field_values }
+}
+
+pub fn get_hint_field_witness<F: PrimeField64>(
+    sctx: &SetupCtx<F>,
+    pctx: &ProofCtx<F>,
+    airgroup_id: usize,
+    air_id: usize,
+    trace: &Vec<F>,
+    airvalues: &Vec<F>,
+    airgroup_values: &Vec<F>,
+    hint_id: usize,
+    hint_field_name: &str,
+    options: HintFieldOptions,
+) -> HintFieldValue<F> {
+    let hint_info =
+        get_hint_witness_f(sctx, Some(pctx), airgroup_id, air_id, trace, airvalues, airgroup_values, hint_id, hint_field_name, options.clone());
+
+    if hint_info[0].matrix_size != 0 {
+        panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
+    }
+
+    if options.print_expression {
+        tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info[0].expression_line).unwrap());
+    }
+
+    HintCol::from_hint_field(&hint_info[0])
+}
+
+pub fn get_hint_field_winess_a<F: PrimeField64>(
+    sctx: &SetupCtx<F>,
+    pctx: &ProofCtx<F>,
+    airgroup_id: usize,
+    air_id: usize,
+    trace: &Vec<F>,
+    airvalues: &Vec<F>,
+    airgroup_values: &Vec<F>,
+    hint_id: usize,
+    hint_field_name: &str,
+    options: HintFieldOptions,
+) -> HintFieldValuesVec<F> {
+    let hint_infos =
+        get_hint_witness_f(sctx, Some(pctx), airgroup_id, air_id, trace, airvalues, airgroup_values, hint_id, hint_field_name, options.clone());
+
+    let mut hint_field_values = Vec::new();
+    for (v, hint_info) in hint_infos.iter().enumerate() {
+        if v == 0 && hint_info.matrix_size != 1 {
+            panic!("get_hint_field_m can only be called with an array of expressions!");
+        }
+        if options.print_expression {
+            tracing::info!("HintsInf: {}", std::str::from_utf8(&hint_info.expression_line).unwrap());
+        }
+        let hint_value = HintCol::from_hint_field(hint_info);
+        hint_field_values.push(hint_value);
+    }
+
+    HintFieldValuesVec { values: hint_field_values }
+}
+
+pub fn get_hint_field_witness_m<F: PrimeField64>(
+    sctx: &SetupCtx<F>,
+    pctx: &ProofCtx<F>,
+    airgroup_id: usize,
+    air_id: usize,
+    trace: &Vec<F>,
+    airvalues: &Vec<F>,
+    airgroup_values: &Vec<F>,
+    hint_id: usize,
+    hint_field_name: &str,
+    options: HintFieldOptions,
+) -> HintFieldValues<F> {
+    let hint_infos =
+        get_hint_witness_f(sctx, Some(pctx), airgroup_id, air_id, trace, airvalues, airgroup_values, hint_id, hint_field_name, options.clone());
 
     let mut hint_field_values = HashMap::with_capacity(hint_infos.len() as usize);
 
