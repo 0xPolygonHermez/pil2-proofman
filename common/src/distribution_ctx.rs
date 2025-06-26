@@ -5,6 +5,8 @@ use mpi::collective::CommunicatorCollectives;
 #[cfg(distributed)]
 use mpi::datatype::PartitionMut;
 #[cfg(distributed)]
+use mpi::environment::Universe;
+#[cfg(distributed)]
 use mpi::topology::Communicator;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
@@ -13,7 +15,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use fields::PrimeField64;
-use mpi::environment::Universe;
 
 use crate::GlobalInfo;
 
@@ -122,47 +123,9 @@ impl std::fmt::Debug for DistributionCtx {
 
 impl DistributionCtx {
     pub fn new() -> Self {
-        let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple).unwrap();
-        Self::with_universe(Some(universe))
-    }
-
-    pub fn with_universe(mpi_universe: Option<mpi::environment::Universe>) -> Self {
         #[cfg(distributed)]
         {
-            if mpi_universe.is_none() {
-                return Self::new();
-            }
-
-            let mpi_universe = mpi_universe.unwrap();
-            let world = mpi_universe.world();
-            let rank = world.rank();
-            let n_processes = world.size();
-
-            let local_comm = world.split_shared(rank);
-            let node_rank = local_comm.rank();
-            let node_n_processes = local_comm.size();
-
-            DistributionCtx {
-                rank,
-                n_processes,
-                universe: mpi_universe,
-                world,
-                n_instances: 0,
-                my_instances: Vec::new(),
-                instances: Vec::new(),
-                instances_owner: Vec::new(),
-                owners_count: vec![0; n_processes as usize],
-                owners_weight: vec![0; n_processes as usize],
-                roots_gatherv_count: vec![0; n_processes as usize],
-                roots_gatherv_displ: vec![0; n_processes as usize],
-                my_groups: Vec::new(),
-                my_air_groups: Vec::new(),
-                airgroup_instances_alives: Vec::new(),
-                glob2loc: Vec::new(),
-                balance_distribution: true,
-                node_rank,
-                node_n_processes,
-            }
+            Self::with_universe(None)
         }
         #[cfg(not(distributed))]
         {
@@ -183,6 +146,45 @@ impl DistributionCtx {
                 node_rank: 0,
                 node_n_processes: 1,
             }
+        }
+    }
+
+    #[cfg(distributed)]
+    pub fn with_universe(mpi_universe: Option<Universe>) -> Self {
+        let universe = mpi_universe.unwrap_or_else(|| {
+            let (universe, _threading) = mpi::initialize_with_threading(mpi::Threading::Multiple)
+                .expect("Failed to initialize MPI with threading");
+            universe
+        });
+
+        let world = universe.world();
+        let rank = world.rank();
+        let n_processes = world.size();
+
+        let local_comm = world.split_shared(rank);
+        let node_rank = local_comm.rank();
+        let node_n_processes = local_comm.size();
+
+        DistributionCtx {
+            rank,
+            n_processes,
+            universe,
+            world,
+            n_instances: 0,
+            my_instances: Vec::new(),
+            instances: Vec::new(),
+            instances_owner: Vec::new(),
+            owners_count: vec![0; n_processes as usize],
+            owners_weight: vec![0; n_processes as usize],
+            roots_gatherv_count: vec![0; n_processes as usize],
+            roots_gatherv_displ: vec![0; n_processes as usize],
+            my_groups: Vec::new(),
+            my_air_groups: Vec::new(),
+            airgroup_instances_alives: Vec::new(),
+            glob2loc: Vec::new(),
+            balance_distribution: true,
+            node_rank,
+            node_n_processes,
         }
     }
 

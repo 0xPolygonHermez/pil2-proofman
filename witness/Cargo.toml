@@ -21,3 +21,4 @@ serde_json.workspace = true
 [features]
 default = []
 no_lib_link = []
+disable_distributed = []

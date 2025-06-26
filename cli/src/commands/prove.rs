@@ -127,16 +127,32 @@ impl ProveCmd {
             gpu_params.with_max_witness_stored(self.max_witness_stored.unwrap());
         }
 
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            custom_commits_map,
-            verify_constraints,
-            self.aggregation,
-            self.final_snark,
-            gpu_params,
-            self.verbose.into(),
-            None,
-        )?;
+        let proofman;
+        #[cfg(distributed)]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                verify_constraints,
+                self.aggregation,
+                self.final_snark,
+                gpu_params,
+                self.verbose.into(),
+                None,
+            )?;
+        }
+        #[cfg(not(distributed))]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                verify_constraints,
+                self.aggregation,
+                self.final_snark,
+                gpu_params,
+                self.verbose.into(),
+            )?;
+        }
 
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {

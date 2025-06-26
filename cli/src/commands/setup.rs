@@ -7,7 +7,7 @@ use crate::commands::field::Field;
 use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::{VerboseMode, ParamsGPU};
+use proofman_common::VerboseMode;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -34,16 +34,29 @@ impl CheckSetupCmd {
 
         let verbose_mode = VerboseMode::Debug;
 
-        match self.field {
-            Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
-                self.proving_key.clone(),
-                self.aggregation,
-                self.final_snark,
-                ParamsGPU::default(),
-                verbose_mode,
-                None,
-            )?,
-        };
+        #[cfg(distributed)]
+        {
+            match self.field {
+                Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
+                    self.proving_key.clone(),
+                    self.aggregation,
+                    self.final_snark,
+                    verbose_mode,
+                    None,
+                )?,
+            };
+        }
+        #[cfg(not(distributed))]
+        {
+            match self.field {
+                Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
+                    self.proving_key.clone(),
+                    self.aggregation,
+                    self.final_snark,
+                    verbose_mode,
+                )?,
+            };
+        }
 
         Ok(())
     }

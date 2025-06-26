@@ -1,6 +1,7 @@
 use libloading::{Library, Symbol};
 use curves::{EcGFp5, EcMasFp5, curve::EllipticCurve};
 use fields::{ExtensionField, PrimeField64, GoldilocksQuinticExtension};
+#[cfg(distributed)]
 use mpi::environment::Universe;
 use std::ops::Add;
 use std::sync::atomic::AtomicUsize;
@@ -105,11 +106,11 @@ where
         }
     }
 
+    #[cfg(distributed)]
     pub fn check_setup(
         proving_key_path: PathBuf,
         aggregation: bool,
         final_snark: bool,
-        gpu_params: ParamsGPU,
         verbose_mode: VerboseMode,
         mpi_universe: Option<Universe>,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -127,10 +128,36 @@ where
             mpi_universe,
         );
 
+        Self::check_setup_(&pctx, aggregation, final_snark)
+    }
+
+    #[cfg(not(distributed))]
+    pub fn check_setup(
+        proving_key_path: PathBuf,
+        aggregation: bool,
+        final_snark: bool,
+        verbose_mode: VerboseMode,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Check proving_key_path exists
+        if !proving_key_path.exists() {
+            return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
+        }
+
+        let pctx =
+            ProofCtx::<F>::create_ctx(proving_key_path.clone(), HashMap::new(), aggregation, final_snark, verbose_mode);
+
+        Self::check_setup_(&pctx, aggregation, final_snark)
+    }
+
+    pub fn check_setup_(
+        pctx: &ProofCtx<F>,
+        aggregation: bool,
+        final_snark: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let setups_aggregation =
             Arc::new(SetupsVadcop::<F>::new(&pctx.global_info, false, aggregation, false, final_snark));
 
-        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, gpu_params.preallocate);
+        let sctx: SetupCtx<F> = SetupCtx::new(&pctx.global_info, &ProofType::Basic, false, false);
 
         for (airgroup_id, air_group) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in air_group.iter().enumerate() {
@@ -797,6 +824,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[cfg(distributed)]
     pub fn new(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
@@ -826,6 +854,80 @@ where
             &gpu_params,
             verbose_mode,
             mpi_universe,
+        )?;
+
+        timer_start_info!(INIT_PROOFMAN);
+
+        let (d_buffers, n_streams_per_gpu, n_gpus) =
+            Self::prepare_gpu(pctx.clone(), sctx.clone(), setups_vadcop.clone(), aggregation, &gpu_params);
+
+        let (trace_size, prover_buffer_size) =
+            if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
+
+        if !verify_constraints {
+            initialize_fixed_pols_tree(
+                &pctx,
+                &sctx,
+                &setups_vadcop,
+                d_buffers.clone(),
+                aggregation,
+                final_snark,
+                &gpu_params,
+            );
+        }
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
+
+        timer_stop_and_log_info!(INIT_PROOFMAN);
+
+        pctx.dctx_barrier();
+
+        Ok(Self {
+            pctx,
+            sctx,
+            wcm,
+            setups: setups_vadcop,
+            d_buffers,
+            trace_size,
+            prover_buffer_size,
+            gpu_params,
+            aggregation,
+            final_snark,
+            verify_constraints,
+            n_streams_per_gpu,
+            n_gpus,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(not(distributed))]
+    pub fn new(
+        proving_key_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        verify_constraints: bool,
+        aggregation: bool,
+        final_snark: bool,
+        gpu_params: ParamsGPU,
+        verbose_mode: VerboseMode,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        // Check proving_key_path exists
+        if !proving_key_path.exists() {
+            return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
+        }
+
+        // Check proving_key_path is a folder
+        if !proving_key_path.is_dir() {
+            return Err(format!("Proving key parameter must be a folder: {:?}", proving_key_path).into());
+        }
+
+        let (pctx, sctx, setups_vadcop) = Self::initialize_proofman(
+            proving_key_path,
+            custom_commits_fixed,
+            verify_constraints,
+            aggregation,
+            final_snark,
+            &gpu_params,
+            verbose_mode,
         )?;
 
         timer_start_info!(INIT_PROOFMAN);
@@ -2038,6 +2140,7 @@ where
 
     #[allow(clippy::type_complexity)]
     #[allow(clippy::too_many_arguments)]
+    #[cfg(distributed)]
     fn initialize_proofman(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
@@ -2055,6 +2158,55 @@ where
             final_snark,
             verbose_mode,
             mpi_universe,
+        );
+        timer_start_info!(INITIALIZING_PROOFMAN);
+
+        let sctx: Arc<SetupCtx<F>> =
+            Arc::new(SetupCtx::new(&pctx.global_info, &ProofType::Basic, verify_constraints, gpu_params.preallocate));
+        pctx.set_weights(&sctx);
+
+        let pctx = Arc::new(pctx);
+        if !verify_constraints {
+            check_tree_paths(&pctx, &sctx)?;
+        }
+        Self::initialize_publics(&sctx, &pctx)?;
+
+        let setups_vadcop = Arc::new(SetupsVadcop::new(
+            &pctx.global_info,
+            verify_constraints,
+            aggregation,
+            final_snark,
+            gpu_params.preallocate,
+        ));
+
+        if aggregation {
+            check_tree_paths_vadcop(&pctx, &setups_vadcop, final_snark)?;
+            initialize_witness_circom(&pctx, &setups_vadcop, final_snark)?;
+        }
+
+        timer_stop_and_log_info!(INITIALIZING_PROOFMAN);
+
+        Ok((pctx, sctx, setups_vadcop))
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
+    #[cfg(not(distributed))]
+    fn initialize_proofman(
+        proving_key_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        verify_constraints: bool,
+        aggregation: bool,
+        final_snark: bool,
+        gpu_params: &ParamsGPU,
+        verbose_mode: VerboseMode,
+    ) -> Result<(Arc<ProofCtx<F>>, Arc<SetupCtx<F>>, Arc<SetupsVadcop<F>>), Box<dyn std::error::Error>> {
+        let mut pctx = ProofCtx::create_ctx(
+            proving_key_path.clone(),
+            custom_commits_fixed,
+            aggregation,
+            final_snark,
+            verbose_mode,
         );
         timer_start_info!(INITIALIZING_PROOFMAN);
 
