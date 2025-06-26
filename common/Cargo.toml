@@ -23,12 +23,11 @@ proofman-macros.workspace = true
 rayon.workspace = true
 sysinfo.workspace = true
 
-mpi = { version = "0.8.0", optional = true }
 tracing-subscriber = { version = "0.3.19" }
 
 # Distributed mode (mpi) is only supported on Linux x86_64
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
-mpi = { version = "0.8.0" }
+mpi = { version = "0.8.0", optional = true }
 
 [features]
 default = []
