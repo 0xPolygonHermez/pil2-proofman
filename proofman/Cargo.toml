@@ -7,6 +7,8 @@ keywords = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
+build = "build.rs"
+
 [dependencies]
 proofman-common = { path = "../common" }
 proofman-macros = { path = "../macros" }
@@ -31,11 +33,18 @@ blake3.workspace = true
 crossbeam-channel = "0.5.15"
 crossbeam-queue = "0.3"
 rand = "0.9"
-mpi = "0.8.0"
 csv = "1.3.1"
+
+# Distributed mode (mpi) is only supported on Linux x86_64
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+mpi = { version = "0.8.0" }
 
 [features]
 default = []
 no_lib_link = ["proofman-common/no_lib_link"]
+disable_distributed = []
 diagnostic = ["proofman-macros/diagnostic"]
 gpu = ["proofman-common/gpu", "proofman-starks-lib-c/gpu"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(distributed)'] }

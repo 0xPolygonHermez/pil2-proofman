@@ -23,7 +23,6 @@ proofman-macros.workspace = true
 rayon.workspace = true
 sysinfo.workspace = true
 
-mpi = { version = "0.8.0", optional = true }
 tracing-subscriber = { version = "0.3.19" }
 
 # Distributed mode (mpi) is only supported on Linux x86_64
@@ -33,7 +32,7 @@ mpi = { version = "0.8.0" }
 [features]
 default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
-disable-distributed = []
+disable_distributed = []
 diagnostic = ["proofman-macros/diagnostic"]
 gpu = ["proofman-starks-lib-c/gpu"]
 

@@ -9,6 +9,8 @@ categories = { workspace = true }
 
 readme = "README.md"
 
+build = "build.rs"
+
 [dependencies]
 pilout = { path = "../pilout" }
 proofman-util = { path = "../util" }
@@ -28,6 +30,14 @@ clap = { version = "4.5.38", features = ["derive", "env"] }
 tinytemplate = "1.1"
 convert_case = "0.8"
 
+# Distributed mode (mpi) is only supported on Linux x86_64
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+mpi = { version = "0.8.0" }
+
 [features]
 default = []
+disable_distributed = ["proofman-common/disable_distributed"]
 dev = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(distributed)'] }
