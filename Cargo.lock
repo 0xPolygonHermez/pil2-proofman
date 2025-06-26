@@ -804,6 +804,7 @@ dependencies = [
  "convert_case",
  "fields",
  "libloading",
+ "mpi",
  "pilout",
  "proofman",
  "proofman-common",

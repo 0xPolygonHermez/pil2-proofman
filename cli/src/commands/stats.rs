@@ -70,16 +70,33 @@ impl StatsCmd {
             }
         }
 
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            custom_commits_map,
-            true,
-            false,
-            false,
-            ParamsGPU::default(),
-            self.verbose.into(),
-            None,
-        )?;
+        let proofman;
+        #[cfg(distributed)]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                true,
+                false,
+                false,
+                ParamsGPU::default(),
+                self.verbose.into(),
+                None,
+            )?;
+        }
+
+        #[cfg(not(distributed))]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                true,
+                false,
+                false,
+                ParamsGPU::default(),
+                self.verbose.into(),
+            )?;
+        }
 
         match self.field {
             Field::Goldilocks => proofman.compute_witness(

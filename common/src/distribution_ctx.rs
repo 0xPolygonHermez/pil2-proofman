@@ -11,6 +11,7 @@ use mpi::topology::Communicator;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 use std::sync::atomic::AtomicU64;
+#[cfg(distributed)]
 use std::sync::atomic::Ordering;
 
 use fields::PrimeField64;

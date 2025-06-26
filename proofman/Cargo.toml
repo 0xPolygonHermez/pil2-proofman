@@ -7,6 +7,8 @@ keywords = { workspace = true }
 repository = { workspace = true }
 categories = { workspace = true }
 
+build = "build.rs"
+
 [dependencies]
 proofman-common = { path = "../common" }
 proofman-macros = { path = "../macros" }
@@ -40,7 +42,7 @@ mpi = { version = "0.8.0" }
 [features]
 default = []
 no_lib_link = ["proofman-common/no_lib_link"]
-disable-distributed = []
+disable_distributed = []
 diagnostic = ["proofman-macros/diagnostic"]
 gpu = ["proofman-common/gpu", "proofman-starks-lib-c/gpu"]
 

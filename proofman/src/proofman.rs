@@ -135,7 +135,6 @@ where
         proving_key_path: PathBuf,
         aggregation: bool,
         final_snark: bool,
-        gpu_params: ParamsGPU,
         verbose_mode: VerboseMode,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Check proving_key_path exists

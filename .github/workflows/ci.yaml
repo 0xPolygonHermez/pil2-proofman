@@ -436,7 +436,7 @@ jobs:
           cargo run --bin proofman-cli pil-helpers --pilout ./pil2-components/test/simple/build/build.pilout --path ./pil2-components/test/simple/rs/src -o
 
       - name: Cargo build
-        run: RUST_BACKTRACE=1 cargo build -v
+        run: RUST_BACKTRACE=1 cargo build -v --features disable_distributed
 
       - name: Cargo check-setup lookup
         run: cargo run --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/lookup/build/provingKey
