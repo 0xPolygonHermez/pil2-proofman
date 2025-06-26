@@ -184,7 +184,7 @@ pub fn gen_recursive_proof_size<F: PrimeField64>(
     if witness.proof_type != ProofType::VadcopFinal {
         new_proof_size += publics_aggregation as u64;
     } else {
-        new_proof_size += 1 + setup.stark_info.n_publics as u64;
+        new_proof_size += 1 + setup.stark_info.n_publics;
     }
 
     let new_proof = vec![0; new_proof_size as usize];
