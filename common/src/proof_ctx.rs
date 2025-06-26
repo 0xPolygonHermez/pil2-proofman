@@ -4,8 +4,10 @@ use std::{collections::HashMap, sync::RwLock};
 use std::path::PathBuf;
 
 use fields::PrimeField64;
-use mpi::environment::Universe;
 use transcript::FFITranscript;
+
+#[cfg(distributed)]
+use mpi::environment::Universe;
 
 use crate::{
     initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
@@ -129,6 +131,7 @@ pub struct ProofCtx<F: PrimeField64> {
 pub const MAX_INSTANCES: u64 = 10000;
 
 impl<F: PrimeField64> ProofCtx<F> {
+    #[cfg(distributed)]
     pub fn create_ctx(
         proving_key_path: PathBuf,
         custom_commits_fixed: HashMap<String, PathBuf>,
@@ -140,6 +143,50 @@ impl<F: PrimeField64> ProofCtx<F> {
         tracing::info!("Creating proof context");
 
         let dctx = DistributionCtx::with_universe(mpi_universe);
+
+        let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
+        initialize_logger(verbose_mode, rank);
+        let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
+        let n_publics = global_info.n_publics;
+        let n_proof_values = global_info
+            .proof_values_map
+            .as_ref()
+            .map(|map| map.iter().filter(|entry| entry.stage == 1).count())
+            .unwrap_or(0);
+        let n_challenges = global_info.n_challenges.iter().sum::<usize>();
+
+        let weights = HashMap::new();
+
+        let air_instances: Vec<RwLock<AirInstance<F>>> =
+            (0..MAX_INSTANCES).map(|_| RwLock::new(AirInstance::<F>::default())).collect();
+
+        Self {
+            global_info,
+            public_inputs: Values::new(n_publics),
+            proof_values: Values::new(n_proof_values),
+            challenges: Values::new(n_challenges * 3),
+            global_challenge: Values::new(3),
+            air_instances,
+            dctx: RwLock::new(dctx),
+            debug_info: RwLock::new(DebugInfo::default()),
+            custom_commits_fixed,
+            weights,
+            aggregation,
+            final_snark,
+        }
+    }
+
+    #[cfg(not(distributed))]
+    pub fn create_ctx(
+        proving_key_path: PathBuf,
+        custom_commits_fixed: HashMap<String, PathBuf>,
+        aggregation: bool,
+        final_snark: bool,
+        verbose_mode: VerboseMode,
+    ) -> Self {
+        tracing::info!("Creating proof context");
+
+        let dctx = DistributionCtx::new();
 
         let rank = if dctx.n_processes > 1 { Some(dctx.rank) } else { None };
         initialize_logger(verbose_mode, rank);

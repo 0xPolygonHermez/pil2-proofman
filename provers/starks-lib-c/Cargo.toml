@@ -16,4 +16,5 @@ crossbeam-channel = "0.5.15"
 [features]
 default = []
 no_lib_link = []
+disable_distributed = []
 gpu = []

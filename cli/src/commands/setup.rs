@@ -7,7 +7,7 @@ use crate::commands::field::Field;
 use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::{VerboseMode, ParamsGPU};
+use proofman_common::VerboseMode;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -39,7 +39,6 @@ impl CheckSetupCmd {
                 self.proving_key.clone(),
                 self.aggregation,
                 self.final_snark,
-                ParamsGPU::default(),
                 verbose_mode,
                 None,
             )?,
