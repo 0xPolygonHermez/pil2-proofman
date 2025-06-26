@@ -44,7 +44,7 @@ use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
 use crate::{check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree};
-use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
+use crate::{verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
@@ -1853,15 +1853,8 @@ where
             let verkey_path = setup_path.display().to_string() + ".verkey.json";
 
             timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
-            let valid_proofs = verify_proof(
-                vadcop_final_proof.as_mut_ptr(),
-                stark_info_path,
-                expressions_bin_path,
-                verkey_path,
-                Some(self.pctx.get_publics().clone()),
-                None,
-                None,
-            );
+            let valid_proofs =
+                verify_final_proof(&vadcop_final_proof, stark_info_path, expressions_bin_path, verkey_path);
             timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
             if !valid_proofs {
                 tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
