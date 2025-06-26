@@ -43,8 +43,8 @@ use std::{path::PathBuf, sync::Arc};
 use transcript::FFITranscript;
 
 use witness::{WitnessLibInitFn, WitnessLibrary, WitnessManager};
-use crate::{check_tree_paths_vadcop, initialize_fixed_pols_tree, prepare_vadcop_final_proof};
-use crate::{verify_basic_proof, verify_proof, verify_global_constraints_proof};
+use crate::{check_tree_paths_vadcop, gen_recursive_proof_size, initialize_fixed_pols_tree, prepare_vadcop_final_proof};
+use crate::{verify_basic_proof, verify_final_proof, verify_global_constraints_proof};
 use crate::MaxSizes;
 use crate::{verify_constraints_proof, print_summary_info, get_recursive_buffer_sizes};
 use crate::{
@@ -399,10 +399,8 @@ where
 
         let instances_mine_no_all = instances_mine - instances_mine_all;
 
-        let memory_handler = Arc::new(MemoryHandler::new(
-            self.gpu_params.max_witness_stored.min(instances_mine_no_all),
-            self.sctx.max_witness_trace_size,
-        ));
+        let max_witness_stored = self.gpu_params.max_witness_stored.min(instances_mine_no_all);
+        let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, self.sctx.max_witness_trace_size));
 
         let max_num_threads = rayon::current_num_threads();
 
@@ -413,7 +411,7 @@ where
             tx_threads.send(()).unwrap();
         }
 
-        let n_threads_witness = self.gpu_params.number_threads_pools_witness;
+        let n_threads_witness = self.gpu_params.number_threads_pools_witness.max(max_num_threads / max_witness_stored);
 
         let mut handles = Vec::new();
 
@@ -979,7 +977,7 @@ where
         let const_tree: Arc<Vec<F>> = Arc::new(create_buffer_fast(const_tree_size));
 
         let max_witness_stored = match cfg!(feature = "gpu") {
-            true => instances_mine.min(self.gpu_params.max_witness_stored),
+            true => instances_mine_no_all.min(self.gpu_params.max_witness_stored),
             false => 1,
         };
 
@@ -996,10 +994,7 @@ where
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
 
-        let memory_handler = Arc::new(MemoryHandler::<F>::new(
-            self.gpu_params.max_witness_stored.min(instances_mine_no_all),
-            self.sctx.max_witness_trace_size,
-        ));
+        let memory_handler = Arc::new(MemoryHandler::<F>::new(max_witness_stored, self.sctx.max_witness_trace_size));
 
         for _ in 0..max_num_threads {
             tx_threads.send(()).unwrap();
@@ -1011,7 +1006,7 @@ where
         timer_stop_and_log_info!(PREPARING_CONTRIBUTIONS);
 
         let n_threads_witness = match cfg!(feature = "gpu") {
-            true => self.gpu_params.number_threads_pools_witness,
+            true => self.gpu_params.number_threads_pools_witness.max(max_num_threads / max_witness_stored),
             false => max_num_threads,
         };
 
@@ -1495,6 +1490,8 @@ where
         self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
         timer_stop_and_log_info!(PRECALCULATE_WITNESS);
 
+        my_instances_sorted.sort_by_key(|&id| if self.pctx.is_air_instance_stored(id) { 0 } else { 1 });
+
         for &instance_id in my_instances_sorted.iter() {
             if my_instances_calculated[instance_id] {
                 continue;
@@ -1621,29 +1618,68 @@ where
                     witness.global_idx = Some(id);
                 }
 
-                let (_, proof) = generate_recursive_proof(
-                    &pctx_clone,
-                    &setups_clone,
-                    &witness,
-                    &trace,
-                    &prover_buffer,
-                    &output_dir_path_clone,
-                    d_buffers_clone.get_ptr(),
-                    const_tree_clone.clone(),
-                    const_pols_clone.clone(),
-                    options.save_proofs,
-                );
+                let new_proof = gen_recursive_proof_size(&pctx_clone, &setups_clone, &witness);
 
-                let new_proof_type = &proof.proof_type;
-                let new_proof_type_str: &str = proof.proof_type.clone().into();
+                let new_proof_type = new_proof.proof_type.clone();
+                let new_proof_type_str: &str = new_proof_type.clone().into();
 
-                let id = proof.global_idx.unwrap();
-                if new_proof_type == &ProofType::Recursive2 {
-                    recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(proof);
-                } else if new_proof_type == &ProofType::Compressor {
-                    *compressor_proofs_clone[id].write().unwrap() = Some(proof);
-                } else if new_proof_type == &ProofType::Recursive1 {
-                    *recursive1_proofs_clone[id].write().unwrap() = Some(proof);
+                let id = new_proof.global_idx.unwrap();
+                if new_proof_type == ProofType::Recursive2 {
+                    recursive2_proofs_ongoing_clone.write().unwrap()[id] = Some(new_proof);
+                } else if new_proof_type == ProofType::Compressor {
+                    *compressor_proofs_clone[id].write().unwrap() = Some(new_proof);
+                } else if new_proof_type == ProofType::Recursive1 {
+                    *recursive1_proofs_clone[id].write().unwrap() = Some(new_proof);
+                }
+
+                if new_proof_type == ProofType::Recursive2 {
+                    let recursive2_lock = recursive2_proofs_ongoing_clone.read().unwrap();
+                    let new_proof_ref = recursive2_lock[id].as_ref().unwrap();
+                    let _ = generate_recursive_proof(
+                        &pctx_clone,
+                        &setups_clone,
+                        &witness,
+                        new_proof_ref,
+                        &trace,
+                        &prover_buffer,
+                        &output_dir_path_clone,
+                        d_buffers_clone.get_ptr(),
+                        const_tree_clone.clone(),
+                        const_pols_clone.clone(),
+                        options.save_proofs,
+                    );
+                } else if new_proof_type == ProofType::Compressor {
+                    let compressor_lock = compressor_proofs_clone[id].read().unwrap();
+                    let new_proof_ref = compressor_lock.as_ref().unwrap();
+                    let _ = generate_recursive_proof(
+                        &pctx_clone,
+                        &setups_clone,
+                        &witness,
+                        new_proof_ref,
+                        &trace,
+                        &prover_buffer,
+                        &output_dir_path_clone,
+                        d_buffers_clone.get_ptr(),
+                        const_tree_clone.clone(),
+                        const_pols_clone.clone(),
+                        options.save_proofs,
+                    );
+                } else {
+                    let recursive1_lock = recursive1_proofs_clone[id].read().unwrap();
+                    let new_proof_ref = recursive1_lock.as_ref().unwrap();
+                    let _ = generate_recursive_proof(
+                        &pctx_clone,
+                        &setups_clone,
+                        &witness,
+                        new_proof_ref,
+                        &trace,
+                        &prover_buffer,
+                        &output_dir_path_clone,
+                        d_buffers_clone.get_ptr(),
+                        const_tree_clone.clone(),
+                        const_pols_clone.clone(),
+                        options.save_proofs,
+                    );
                 }
 
                 if cfg!(not(feature = "gpu")) {
@@ -1873,17 +1909,9 @@ where
             let expressions_bin_path = setup_path.display().to_string() + ".verifier.bin";
             let verkey_path = setup_path.display().to_string() + ".verkey.json";
 
-            println!("VADCOP PROOF LEN {}", vadcop_final_proof.len());
             timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
-            let valid_proofs = verify_proof(
-                vadcop_final_proof.as_mut_ptr(),
-                stark_info_path,
-                expressions_bin_path,
-                verkey_path,
-                Some(self.pctx.get_publics().clone()),
-                None,
-                None,
-            );
+            let valid_proofs =
+                verify_final_proof(&vadcop_final_proof, stark_info_path, expressions_bin_path, verkey_path);
             timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
             if !valid_proofs {
                 tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());

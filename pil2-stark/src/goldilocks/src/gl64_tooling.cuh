@@ -12,77 +12,23 @@
 #include <limits.h>
 #include "gl64_t.cuh"
 
-class gl64_gpu : public gl64_t
+class gl64_gpu
 {
 public:
-    __device__ gl64_gpu() {}
-
-    // Construct from base gl64_t
-    __device__ gl64_gpu(const gl64_t& base) {
-        (*this)[0] = static_cast<uint64_t>(base);
-        to(); // apply modular reduction if needed
-    }
-
-    // Copy constructor from same type
-    __device__ gl64_gpu(const gl64_gpu& other) {
-        (*this)[0] = static_cast<uint64_t>(other);
-        to();
-    }
-
-    // Construct from raw uint64_t
-    __device__ gl64_gpu(uint64_t x) {
-        (*this)[0] = x;
-        to();
-    }
-
-    // Assignment from base type
-    __device__ gl64_gpu& operator=(const gl64_t& other) {
-        (*this)[0] = static_cast<uint64_t>(other);
-        to();
-        return *this;
-    }
-
-    __device__ static gl64_gpu zero() { return gl64_gpu(0); }
-
-    // Assignment from same type
-    __device__ gl64_gpu& operator=(const gl64_gpu& other) {
-        if (this != &other) {
-            (*this)[0] = static_cast<uint64_t>(other);
-            to();
-        }
-        return *this;
-    }
-
-    __device__ gl64_gpu& operator=(uint64_t x) {
-        (*this)[0] = x;
-        to();
-        return *this;
-    }
-
-    // Helper methods
-    __device__ uint64_t get_val() const {
-        return (*this)[0];
-    }
-
-    __device__ void set_val(uint64_t x) {
-        (*this)[0] = x;
-        to();
-    }
-
     // GPU utilities
-    static __device__ __forceinline__ void copy_gpu(gl64_gpu *dst, const gl64_gpu *src, bool const_src)
+    static __device__ __forceinline__ void copy_gpu(gl64_t *dst, const gl64_t *src, bool const_src)
     {
         int tid = const_src ? 0 : threadIdx.x;
         dst[threadIdx.x] = src[tid];
     }
 
-    static __device__ __forceinline__ void copy_gpu(gl64_gpu *dst, uint64_t stride_dst, const gl64_gpu *src, bool const_src)
+    static __device__ __forceinline__ void copy_gpu(gl64_t *dst, uint64_t stride_dst, const gl64_t *src, bool const_src)
     {
         int tid = const_src ? 0 : threadIdx.x;
         dst[threadIdx.x * stride_dst] = src[tid];
     }
 
-    static __device__ __forceinline__ void op_gpu(uint64_t op, gl64_gpu *c, const gl64_gpu *a, bool const_a, const gl64_gpu *b, bool const_b)
+    static __device__ __forceinline__ void op_gpu(uint64_t op, gl64_t *c, const gl64_t *a, bool const_a, const gl64_t *b, bool const_b)
     {
         int tida = const_a ? 0 : threadIdx.x;
         int tidb = const_b ? 0 : threadIdx.x;
@@ -315,9 +261,9 @@ struct StreamData{
 };
 struct DeviceCommitBuffers
 {
-    gl64_gpu **d_constPols;
-    gl64_gpu **d_constPolsAggregation;
-    gl64_gpu **d_aux_trace;
+    gl64_t **d_constPols;
+    gl64_t **d_constPolsAggregation;
+    gl64_t **d_aux_trace;
     bool recursive;
     uint64_t max_size_prover_buffer;
     uint64_t max_size_trace;
