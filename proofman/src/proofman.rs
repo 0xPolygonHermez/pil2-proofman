@@ -23,8 +23,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::fmt::Write as FmtWrite;
 use std::io::Read;
-use std::io::Write;
-use bytemuck::cast_slice;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, RwLock};
@@ -761,6 +759,7 @@ where
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn generate_proof(
         &self,
         witness_lib_path: PathBuf,
@@ -768,7 +767,7 @@ where
         input_data_path: Option<PathBuf>,
         verbose_mode: VerboseMode,
         options: ProofOptions,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    ) -> Result<(Option<String>, Option<Vec<u64>>), Box<dyn std::error::Error>> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
             return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
@@ -807,11 +806,12 @@ where
         self._generate_proof(options)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn generate_proof_from_lib(
         &self,
         input_data_path: Option<PathBuf>,
         options: ProofOptions,
-    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    ) -> Result<(Option<String>, Option<Vec<u64>>), Box<dyn std::error::Error>> {
         if !options.output_dir_path.exists() {
             fs::create_dir_all(&options.output_dir_path)
                 .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
@@ -996,7 +996,11 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn _generate_proof(&self, options: ProofOptions) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    #[allow(clippy::type_complexity)]
+    fn _generate_proof(
+        &self,
+        options: ProofOptions,
+    ) -> Result<(Option<String>, Option<Vec<u64>>), Box<dyn std::error::Error>> {
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
         timer_start_info!(EXECUTE);
@@ -1881,7 +1885,7 @@ where
 
                 if valid_proofs {
                     tracing::info!("··· {}", "\u{2713} All proofs were successfully verified".bright_green().bold());
-                    return Ok(None);
+                    return Ok((None, None));
                 } else {
                     return Err("Basic proofs were not verified".into());
                 }
@@ -1890,7 +1894,7 @@ where
                     "··· {}",
                     "\u{2713} All proofs were successfully generated. Verification Skipped".bright_yellow().bold()
                 );
-                return Ok(None);
+                return Ok((None, None));
             }
         }
 
@@ -1916,7 +1920,7 @@ where
         timer_stop_and_log_info!(GENERATING_OUTER_COMPRESSED_PROOFS);
 
         let mut proof_id = None;
-        let mut vadcop_final_proof = Vec::new();
+        let mut vadcop_final_proof = None;
         if self.pctx.dctx_get_rank() == 0 {
             let vadcop_proof_final = generate_vadcop_final_proof(
                 &self.pctx,
@@ -1931,28 +1935,25 @@ where
                 false,
             )?;
 
-            vadcop_final_proof = vadcop_proof_final.proof.clone();
-
             proof_id = Some(
                 blake3::hash(unsafe {
-                    std::slice::from_raw_parts(vadcop_final_proof.as_ptr() as *const u8, vadcop_final_proof.len() * 8)
+                    std::slice::from_raw_parts(
+                        vadcop_proof_final.proof.as_ptr() as *const u8,
+                        vadcop_proof_final.proof.len() * 8,
+                    )
                 })
                 .to_hex()
                 .to_string(),
             );
 
-            // Save the vadcop final proof
-            let output_file_path = options.output_dir_path.join("proofs/vadcop_final_proof.bin");
-            // write a Vec<u64> to a bin file stored in output_file_path
-            let mut file = File::create(output_file_path)?;
-            file.write_all(cast_slice(&vadcop_final_proof))?;
+            vadcop_final_proof = Some(vadcop_proof_final.proof.clone());
 
             if options.final_snark {
                 timer_start_info!(GENERATING_RECURSIVE_F_PROOF);
                 let recursivef_proof = generate_recursivef_proof(
                     &self.pctx,
                     &self.setups,
-                    &vadcop_final_proof,
+                    &vadcop_proof_final.proof,
                     &trace,
                     &prover_buffer,
                     options.output_dir_path.clone(),
@@ -1974,8 +1975,12 @@ where
             let verkey_path = setup_path.display().to_string() + ".verkey.json";
 
             timer_start_info!(VERIFYING_VADCOP_FINAL_PROOF);
-            let valid_proofs =
-                verify_final_proof(&vadcop_final_proof, stark_info_path, expressions_bin_path, verkey_path);
+            let valid_proofs = verify_final_proof(
+                &vadcop_final_proof.clone().unwrap(),
+                stark_info_path,
+                expressions_bin_path,
+                verkey_path,
+            );
             timer_stop_and_log_info!(VERIFYING_VADCOP_FINAL_PROOF);
             if !valid_proofs {
                 tracing::info!("··· {}", "\u{2717} Vadcop Final proof was not verified".bright_red().bold());
@@ -1986,7 +1991,7 @@ where
         }
         self.pctx.dctx_barrier();
 
-        Ok(proof_id)
+        Ok((proof_id, vadcop_final_proof))
     }
 
     fn prepare_gpu(

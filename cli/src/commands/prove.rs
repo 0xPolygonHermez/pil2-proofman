@@ -5,12 +5,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
-
+use std::io::Write;
+use bytemuck::cast_slice;
 use fields::Goldilocks;
 
 use proofman::ProofMan;
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};
-use std::fs;
+use std::fs::{self, File};
 use std::path::Path;
 
 #[derive(Parser)]
@@ -166,7 +167,7 @@ impl ProveCmd {
                 )?,
             };
         } else {
-            match self.field {
+            let (_, vadcop_final_proof) = match self.field {
                 Field::Goldilocks => proofman.generate_proof(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
@@ -182,6 +183,14 @@ impl ProveCmd {
                     ),
                 )?,
             };
+
+            if let Some(vadcop_final_proof) = vadcop_final_proof {
+                // Save the vadcop final proof
+                let output_file_path = self.output_dir.join("proofs/vadcop_final_proof.bin");
+                // write a Vec<u64> to a bin file stored in output_file_path
+                let mut file = File::create(output_file_path)?;
+                file.write_all(cast_slice(&vadcop_final_proof))?;
+            }
         }
 
         Ok(())
