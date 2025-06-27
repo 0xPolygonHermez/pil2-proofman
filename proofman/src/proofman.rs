@@ -380,7 +380,7 @@ where
         }
 
         self.pctx.dctx_reset();
-
+        
         self.wcm.execute();
 
         // create a vector of instances wc weights
@@ -989,7 +989,6 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn _generate_proof(&self, options: ProofOptions) -> Result<Option<String>, Box<dyn std::error::Error>> {
-        println!("N_BUFFERS {}", self.memory_handler.get_n_buffers());
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
         timer_start_info!(EXECUTE);
@@ -1971,7 +1970,6 @@ where
             }
         }
 
-        println!("N_BUFFERS {}", self.memory_handler.get_n_buffers());
         Ok(proof_id)
     }
 
