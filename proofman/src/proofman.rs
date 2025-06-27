@@ -380,7 +380,7 @@ where
         }
 
         self.pctx.dctx_reset();
-        
+
         self.wcm.execute();
 
         // create a vector of instances wc weights
@@ -878,14 +878,14 @@ where
 
         timer_stop_and_log_info!(INIT_PROOFMAN);
 
-        pctx.dctx_barrier();
-
         let max_witness_stored = match cfg!(feature = "gpu") {
             true => gpu_params.max_witness_stored,
             false => 1,
         };
 
         let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
+
+        pctx.dctx_barrier();
 
         Ok(Self {
             pctx,
@@ -960,6 +960,13 @@ where
 
         timer_stop_and_log_info!(INIT_PROOFMAN);
 
+        let max_witness_stored = match cfg!(feature = "gpu") {
+            true => gpu_params.max_witness_stored,
+            false => 1,
+        };
+
+        let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
+
         pctx.dctx_barrier();
 
         Ok(Self {
@@ -976,6 +983,7 @@ where
             verify_constraints,
             n_streams_per_gpu,
             n_gpus,
+            memory_handler,
         })
     }
 
