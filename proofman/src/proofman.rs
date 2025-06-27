@@ -1806,8 +1806,6 @@ where
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
 
-        self.pctx.dctx_set_leader_rank();
-
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
@@ -1816,11 +1814,17 @@ where
         let output_dir = options.output_dir_path.clone().to_string_lossy().into_owned();
 
         let save_proof_info = std::thread::spawn(move || {
-            let global_info_path = pctx_clone.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-            let global_info_file = global_info_path.to_str().unwrap();
-            save_challenges_c(pctx_clone.get_challenges_ptr(), global_info_file, output_dir.as_ref());
-            save_proof_values_c(pctx_clone.get_proof_values_ptr(), global_info_file, output_dir.as_ref());
-            save_publics_c(pctx_clone.global_info.n_publics as u64, pctx_clone.get_publics_ptr(), output_dir.as_ref());
+            if options.save_proofs {
+                let global_info_path = pctx_clone.global_info.get_proving_key_path().join("pilout.globalInfo.json");
+                let global_info_file = global_info_path.to_str().unwrap();
+                save_challenges_c(pctx_clone.get_challenges_ptr(), global_info_file, output_dir.as_ref());
+                save_proof_values_c(pctx_clone.get_proof_values_ptr(), global_info_file, output_dir.as_ref());
+                save_publics_c(
+                    pctx_clone.global_info.n_publics as u64,
+                    pctx_clone.get_publics_ptr(),
+                    output_dir.as_ref(),
+                );
+            }
         });
 
         let mut proof_id = None;

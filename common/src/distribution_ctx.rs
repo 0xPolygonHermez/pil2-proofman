@@ -147,7 +147,7 @@ impl DistributionCtx {
                 balance_distribution: false,
                 node_rank: 0,
                 node_n_processes: 1,
-                leader_rank: OnceCell::new(),
+                leader_rank: OnceCell::from(0),
             }
         }
     }
@@ -186,7 +186,7 @@ impl DistributionCtx {
             my_air_groups: Vec::new(),
             airgroup_instances_alives: Vec::new(),
             glob2loc: Vec::new(),
-            balance_distribution: true,
+            balance_distribution: false,
             node_rank,
             node_n_processes,
         }
@@ -211,7 +211,7 @@ impl DistributionCtx {
         self.my_air_groups.clear();
         self.airgroup_instances_alives.clear();
         self.glob2loc.clear();
-        self.balance_distribution = true;
+        self.balance_distribution = false;
     }
 
     #[inline]
@@ -465,6 +465,30 @@ impl DistributionCtx {
                     owner_idx = (owner_idx + 1) % self.n_processes as usize;
                 }
             }
+        }
+
+        #[cfg(distributed)]
+        {
+            let mut min_instances = usize::MAX;
+            let mut min_weight = u64::MAX;
+            let mut min_rank = 0;
+            for i in 0..self.n_processes as usize {
+                if ((self.owners_count[i] as usize) < min_instances)
+                    || (self.owners_count[i] as usize == min_instances && self.owners_weight[i] < min_weight)
+                {
+                    min_instances = self.owners_count[i] as usize;
+                    min_weight = self.owners_weight[i];
+                    min_rank = i as i32;
+                }
+            }
+
+            tracing::info!(
+                "Minimum instances: {}, minimum weight: {}, minimum rank: {}",
+                min_instances,
+                min_weight,
+                min_rank
+            );
+            let _ = self.leader_rank.set(min_rank as u32);
         }
     }
 
@@ -863,24 +887,6 @@ impl DistributionCtx {
         #[cfg(not(distributed))]
         {
             (0, vec![])
-        }
-    }
-
-    pub fn set_leader_rank(&self) {
-        if self.leader_rank.get().is_some() {
-            return;
-        }
-
-        #[cfg(distributed)]
-        {
-            let mut elected = self.rank;
-            self.world.all_reduce_into(&self.rank, &mut elected, mpi::collective::SystemOperation::min());
-
-            let _ = self.leader_rank.set(elected as u32);
-        }
-        #[cfg(not(distributed))]
-        {
-            let _ = self.leader_rank.set(0);
         }
     }
 }
