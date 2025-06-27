@@ -387,7 +387,7 @@ where
         }
 
         self.pctx.dctx_reset();
-        
+
         self.wcm.execute();
 
         // create a vector of instances wc weights
@@ -1797,8 +1797,6 @@ where
         proofs_pending.wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
-
-        self.pctx.dctx_set_leader_rank();
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 

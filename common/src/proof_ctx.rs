@@ -294,11 +294,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.leader_rank.get().copied().unwrap() as usize == dctx.rank as usize
     }
 
-    pub fn dctx_set_leader_rank(&self) {
-        let dctx = self.dctx.read().unwrap();
-        dctx.set_leader_rank();
-    }
-
     pub fn dctx_get_node_rank(&self) -> usize {
         let dctx = self.dctx.read().unwrap();
         dctx.node_rank as usize
