@@ -86,6 +86,7 @@ pub struct ProofMan<F: PrimeField64> {
     aggregation: bool,
     final_snark: bool,
     n_streams_per_gpu: u64,
+    memory_handler: Arc<MemoryHandler<F>>,
     n_gpus: u64,
 }
 
@@ -420,7 +421,6 @@ where
         let instances_mine_no_all = instances_mine - instances_mine_all;
 
         let max_witness_stored = self.gpu_params.max_witness_stored.min(instances_mine_no_all);
-        let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, self.sctx.max_witness_trace_size));
 
         let max_num_threads = rayon::current_num_threads();
 
@@ -454,7 +454,7 @@ where
                 rx_threads.recv().unwrap();
             }
 
-            let memory_handler_clone = memory_handler.clone();
+            let memory_handler_clone = self.memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -495,7 +495,7 @@ where
                 rx_threads.recv().unwrap();
             }
 
-            let memory_handler_clone = memory_handler.clone();
+            let memory_handler_clone = self.memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -536,7 +536,7 @@ where
                 rx_threads.recv().unwrap();
             }
 
-            let memory_handler_clone = memory_handler.clone();
+            let memory_handler_clone = self.memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -654,8 +654,6 @@ where
         let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        let memory_handler = Arc::new(MemoryHandler::new(1, self.sctx.max_witness_trace_size));
-
         for (instance_id, instance_info) in instances.iter().enumerate() {
             let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
             let is_my_instance = self.pctx.dctx_is_my_instance(instance_id);
@@ -668,7 +666,7 @@ where
             let max_num_threads = rayon::current_num_threads();
 
             self.wcm.pre_calculate_witness(1, &[instance_id], max_num_threads);
-            self.wcm.calculate_witness(1, &[instance_id], max_num_threads, memory_handler.as_ref());
+            self.wcm.calculate_witness(1, &[instance_id], max_num_threads, self.memory_handler.as_ref());
 
             // Join the previous thread (if any) before starting a new one
             if let Some(handle) = thread_handle.take() {
@@ -688,7 +686,7 @@ where
                     self.pctx.dctx_find_air_instance_id(instance_id),
                     debug_info,
                     max_num_threads,
-                    memory_handler.clone(),
+                    self.memory_handler.clone(),
                 );
             };
         }
@@ -882,6 +880,13 @@ where
 
         pctx.dctx_barrier();
 
+        let max_witness_stored = match cfg!(feature = "gpu") {
+            true => gpu_params.max_witness_stored,
+            false => 1,
+        };
+
+        let memory_handler = Arc::new(MemoryHandler::new(max_witness_stored, sctx.max_witness_trace_size));
+
         Ok(Self {
             pctx,
             sctx,
@@ -896,6 +901,7 @@ where
             verify_constraints,
             n_streams_per_gpu,
             n_gpus,
+            memory_handler,
         })
     }
 
@@ -983,6 +989,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     fn _generate_proof(&self, options: ProofOptions) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        println!("N_BUFFERS {}", self.memory_handler.get_n_buffers());
         timer_start_info!(GENERATING_VADCOP_PROOF);
         timer_start_info!(GENERATING_PROOFS);
         timer_start_info!(EXECUTE);
@@ -1089,8 +1096,6 @@ where
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
 
-        let memory_handler = Arc::new(MemoryHandler::<F>::new(max_witness_stored, self.sctx.max_witness_trace_size));
-
         for _ in 0..max_num_threads {
             tx_threads.send(()).unwrap();
         }
@@ -1141,7 +1146,7 @@ where
                 rx_threads.recv().unwrap();
             }
 
-            let memory_handler_clone = memory_handler.clone();
+            let memory_handler_clone = self.memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -1207,7 +1212,7 @@ where
                 rx_threads.recv().unwrap();
             }
 
-            let memory_handler_clone = memory_handler.clone();
+            let memory_handler_clone = self.memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -1274,7 +1279,7 @@ where
                 rx_threads.recv().unwrap();
             }
 
-            let memory_handler_clone = memory_handler.clone();
+            let memory_handler_clone = self.memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -1331,7 +1336,7 @@ where
         //evalutate witness for instances of type "all"
         for (instance_id, _) in instances_all.iter() {
             self.wcm.pre_calculate_witness(1, &[*instance_id], max_num_threads);
-            self.wcm.calculate_witness(1, &[*instance_id], max_num_threads, memory_handler.as_ref());
+            self.wcm.calculate_witness(1, &[*instance_id], max_num_threads, self.memory_handler.as_ref());
         }
 
         timer_stop_and_log_info!(CALCULATING_TABLES);
@@ -1556,7 +1561,7 @@ where
                     );
                     let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id as usize);
                     if is_shared_buffer {
-                        memory_handler.release_buffer(witness_buffer);
+                        self.memory_handler.release_buffer(witness_buffer);
                     }
                     processed_ids.lock().unwrap().push(instance_id);
                 });
@@ -1620,7 +1625,7 @@ where
                 }
             }
 
-            let memory_handler_clone = memory_handler.clone();
+            let memory_handler_clone = self.memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
@@ -1966,6 +1971,7 @@ where
             }
         }
 
+        println!("N_BUFFERS {}", self.memory_handler.get_n_buffers());
         Ok(proof_id)
     }
 
