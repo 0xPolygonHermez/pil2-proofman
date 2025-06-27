@@ -84,16 +84,33 @@ impl StatsCmd {
             gpu_params.with_max_witness_stored(self.max_witness_stored.unwrap());
         }
 
-        let proofman = ProofMan::<Goldilocks>::new(
-            self.proving_key.clone(),
-            custom_commits_map,
-            true,
-            false,
-            false,
-            gpu_params,
-            self.verbose.into(),
-            None,
-        )?;
+        let proofman;
+        #[cfg(distributed)]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                true,
+                false,
+                false,
+                gpu_params,
+                self.verbose.into(),
+                None,
+            )?;
+        }
+
+        #[cfg(not(distributed))]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                true,
+                false,
+                false,
+                gpu_params,
+                self.verbose.into(),
+            )?;
+        }
 
         match self.field {
             Field::Goldilocks => proofman.compute_witness(

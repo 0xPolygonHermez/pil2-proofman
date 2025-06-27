@@ -23,6 +23,10 @@ impl<F: Send + Sync + 'static> MemoryHandler<F> {
     pub fn release_buffer(&self, buffer: Vec<F>) {
         self.sender.send(buffer).expect("Failed to send buffer back to pool");
     }
+
+    pub fn get_n_buffers(&self) -> usize {
+        self.receiver.len()
+    }
 }
 
 pub trait BufferPool<F>: Send + Sync
