@@ -205,6 +205,12 @@ impl<F: PrimeField64> WitnessComponent<F> for SpecifiedRanges {
 
                 let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
                 pctx.add_air_instance(air_instance, instance_id);
+            } else {
+                self.multiplicities.par_iter().for_each(|vec| {
+                    for row in 0..self.num_rows {
+                        vec[row].swap(0, Ordering::Relaxed);
+                    }
+                });
             }
         }
     }
