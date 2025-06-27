@@ -1597,7 +1597,13 @@ where
         self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
         timer_stop_and_log_info!(PRECALCULATE_WITNESS);
 
-        my_instances_sorted.sort_by_key(|&id| if self.pctx.is_air_instance_stored(id) { 0 } else { 1 });
+        my_instances_sorted.sort_by_key(|&id| {
+            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(id);
+            (
+                if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
+                if self.pctx.global_info.get_air_has_compressor(airgroup_id, air_id) { 0 } else { 1 },
+            )
+        });
 
         for &instance_id in my_instances_sorted.iter() {
             if my_instances_calculated[instance_id] {
@@ -1805,24 +1811,25 @@ where
 
         timer_stop_and_log_info!(GENERATING_PROOFS);
 
-        let global_info_path = self.pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
-        let global_info_file = global_info_path.to_str().unwrap();
-
-        save_challenges_c(
-            self.pctx.get_challenges_ptr(),
-            global_info_file,
-            options.output_dir_path.to_string_lossy().as_ref(),
-        );
-        save_proof_values_c(
-            self.pctx.get_proof_values_ptr(),
-            global_info_file,
-            options.output_dir_path.to_string_lossy().as_ref(),
-        );
-        save_publics_c(
-            self.pctx.global_info.n_publics as u64,
-            self.pctx.get_publics_ptr(),
-            options.output_dir_path.to_string_lossy().as_ref(),
-        );
+        if options.save_proofs {
+            let global_info_path = self.pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
+            let global_info_file = global_info_path.to_str().unwrap();
+            save_challenges_c(
+                self.pctx.get_challenges_ptr(),
+                global_info_file,
+                options.output_dir_path.to_string_lossy().as_ref(),
+            );
+            save_proof_values_c(
+                self.pctx.get_proof_values_ptr(),
+                global_info_file,
+                options.output_dir_path.to_string_lossy().as_ref(),
+            );
+            save_publics_c(
+                self.pctx.global_info.n_publics as u64,
+                self.pctx.get_publics_ptr(),
+                options.output_dir_path.to_string_lossy().as_ref(),
+            );
+        }
 
         if !options.aggregation {
             let mut valid_proofs = true;
@@ -1977,6 +1984,7 @@ where
                 tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
             }
         }
+        self.pctx.dctx_barrier();
 
         Ok(proof_id)
     }
