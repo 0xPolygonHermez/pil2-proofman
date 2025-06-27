@@ -11,6 +11,34 @@ use proofman_common::{ProofCtx, ProofType};
 
 use std::os::raw::c_void;
 
+pub fn verify_final_proof(
+    proof: &[u64],
+    stark_info_path: String,
+    expressions_bin_path: String,
+    verkey_path: String,
+) -> bool {
+    let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, true, false, false);
+    let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
+
+    let n_max_tmp1 = get_max_n_tmp1_c(p_expressions_bin);
+    let n_max_tmp3 = get_max_n_tmp3_c(p_expressions_bin);
+    set_memory_expressions_c(p_stark_info, n_max_tmp1, n_max_tmp3);
+
+    let n_publics = proof[0];
+    let proof = &proof[1..];
+    let (publics, vadcop_proof) = proof.split_at(n_publics as usize);
+
+    stark_verify_c(
+        &verkey_path,
+        vadcop_proof.as_ptr() as *mut u64,
+        p_stark_info,
+        p_expressions_bin,
+        publics.as_ptr() as *mut u8,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    )
+}
+
 pub fn verify_proof_from_file<F: PrimeField64>(
     proof_file: String,
     stark_info_path: String,

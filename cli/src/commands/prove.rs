@@ -5,12 +5,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
-
+use std::io::Write;
+use bytemuck::cast_slice;
 use fields::Goldilocks;
 
 use proofman::ProofMan;
 use proofman_common::{ModeName, ProofOptions, ParamsGPU};
-use std::fs;
+use std::fs::{self, File};
 use std::path::Path;
 
 #[derive(Parser)]
@@ -70,9 +71,6 @@ pub struct ProveCmd {
     #[clap(short = 'n', long)]
     pub number_threads_witness: Option<usize>,
 
-    #[clap(short = 'm', long)]
-    pub max_number_witness_pools: Option<usize>,
-
     #[clap(short = 'x', long)]
     pub max_witness_stored: Option<usize>,
 
@@ -126,9 +124,6 @@ impl ProveCmd {
         if self.number_threads_witness.is_some() {
             gpu_params.with_number_threads_pools_witness(self.number_threads_witness.unwrap());
         }
-        if self.max_number_witness_pools.is_some() {
-            gpu_params.with_max_number_witness_pools(self.max_number_witness_pools.unwrap());
-        }
         if self.max_witness_stored.is_some() {
             gpu_params.with_max_witness_stored(self.max_witness_stored.unwrap());
         }
@@ -172,7 +167,7 @@ impl ProveCmd {
                 )?,
             };
         } else {
-            match self.field {
+            let (_, vadcop_final_proof) = match self.field {
                 Field::Goldilocks => proofman.generate_proof(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
@@ -188,6 +183,14 @@ impl ProveCmd {
                     ),
                 )?,
             };
+
+            if let Some(vadcop_final_proof) = vadcop_final_proof {
+                // Save the vadcop final proof
+                let output_file_path = self.output_dir.join("proofs/vadcop_final_proof.bin");
+                // write a Vec<u64> to a bin file stored in output_file_path
+                let mut file = File::create(output_file_path)?;
+                file.write_all(cast_slice(&vadcop_final_proof))?;
+            }
         }
 
         Ok(())

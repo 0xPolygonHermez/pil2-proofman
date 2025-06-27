@@ -11,7 +11,7 @@ use rayon::{
     slice::ParallelSliceMut,
 };
 use witness::WitnessComponent;
-use proofman_common::{TraceInfo, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
 use std::sync::atomic::Ordering;
 
 use crate::AirComponent;
@@ -125,6 +125,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
         _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
             let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
@@ -146,7 +147,7 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                     }
                 });
 
-                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
+                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
                 pctx.add_air_instance(air_instance, instance_id);
             }
         }

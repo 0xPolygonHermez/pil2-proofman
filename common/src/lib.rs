@@ -15,6 +15,7 @@ pub mod utils;
 pub mod custom_commits;
 pub mod constraints;
 pub mod fixed_cols;
+pub mod memory_handler;
 
 pub use air_instance::*;
 pub use verbose_mode::*;
@@ -32,3 +33,4 @@ pub use distribution_ctx::*;
 pub use custom_commits::*;
 pub use constraints::*;
 pub use fixed_cols::*;
+pub use memory_handler::*;

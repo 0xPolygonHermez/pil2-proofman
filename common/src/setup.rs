@@ -296,7 +296,7 @@ impl<F: PrimeField64> Setup<F> {
         let n_smap = u64::from_le_bytes(bytes);
 
         let exec_data_size = 2 + n_adds * 4 + n_smap * self.n_cols;
-        let mut exec_file_data: Vec<u64> = create_buffer_fast(exec_data_size as usize);
+        let mut exec_file_data: Vec<u64> = vec![0; exec_data_size as usize];
         read_exec_file_c(exec_file_data.as_mut_ptr(), exec_filename_ptr, self.n_cols);
         *self.exec_data.write().unwrap() = Some(exec_file_data);
         Ok(())

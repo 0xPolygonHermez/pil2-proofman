@@ -1,12 +1,11 @@
 // extern crate env_logger;
 use clap::Parser;
-use std::{fs::File, path::PathBuf};
+use proofman::verify_final_proof;
+use proofman_common::{initialize_logger, VerboseMode};
+use std::fs::File;
 use std::io::Read;
 use colored::Colorize;
-
-use fields::{Goldilocks, PrimeField64};
-
-use proofman::verify_proof_from_file;
+use bytemuck::cast_slice;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -24,9 +23,6 @@ pub struct VerifyStark {
     #[clap(short = 'k', long)]
     pub verkey: String,
 
-    #[clap(short = 'u', long)]
-    pub public_inputs: Option<PathBuf>,
-
     /// Verbosity (-v, -vv)
     #[arg(short, long, action = clap::ArgAction::Count, help = "Increase verbosity level")]
     pub verbose: u8, // Using u8 to hold the number of `-v`
@@ -37,29 +33,16 @@ impl VerifyStark {
         println!("{} VerifyStark", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        let publics = if let Some(publics) = &self.public_inputs {
-            let mut contents = String::new();
-            let mut file = File::open(publics).unwrap();
+        initialize_logger(VerboseMode::Info, None);
 
-            let _ =
-                file.read_to_string(&mut contents).map_err(|err| format!("Failed to read public inputs file: {}", err));
-            let verkey_json_string: Vec<String> = serde_json::from_str(&contents).unwrap();
-            let verkey_json: Vec<u64> =
-                verkey_json_string.iter().map(|s| s.parse::<u64>().expect("Failed to parse string as u64")).collect();
-            Some(verkey_json.into_iter().map(Goldilocks::from_u64).collect::<Vec<Goldilocks>>())
-        } else {
-            None
-        };
+        let mut file = File::open(self.proof.clone())?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
 
-        let valid = verify_proof_from_file::<Goldilocks>(
-            self.proof.clone(),
-            self.stark_info.clone(),
-            self.verifier_bin.clone(),
-            self.verkey.clone(),
-            publics,
-            None,
-            None,
-        );
+        let proof_slice: &[u64] = cast_slice(&buffer);
+
+        let valid =
+            verify_final_proof(proof_slice, self.stark_info.clone(), self.verifier_bin.clone(), self.verkey.clone());
 
         if !valid {
             tracing::info!("··· {}", "\u{2717} Stark proof was not verified".bright_red().bold());

@@ -19,18 +19,31 @@ use fields::PrimeField64;
 use crate::GlobalInfo;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PreCalculate {
+    None,
+    Fast,
+    Slow,
+}
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub all: bool,
-    pub pre_calculate: bool,
+    pub pre_calculate: PreCalculate,
     pub min_threads_witness: usize,
     pub n_chunks: usize,
+    pub range: (usize, usize),
 }
 
 impl InstanceInfo {
-    pub fn new(airgroup_id: usize, air_id: usize, all: bool, pre_calculate: bool, min_threads_witness: usize) -> Self {
-        Self { airgroup_id, air_id, all, pre_calculate, min_threads_witness, n_chunks: 1 }
+    pub fn new(
+        airgroup_id: usize,
+        air_id: usize,
+        all: bool,
+        pre_calculate: PreCalculate,
+        min_threads_witness: usize,
+    ) -> Self {
+        Self { airgroup_id, air_id, all, pre_calculate, min_threads_witness, n_chunks: 1, range: (0, 0) }
     }
 }
 
@@ -307,12 +320,35 @@ impl DistributionCtx {
     }
 
     #[inline]
+    pub fn add_instance(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        pre_calculate: PreCalculate,
+        min_threads_witness: usize,
+        weight: u64,
+    ) -> usize {
+        let idx = self.instances.len();
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, pre_calculate, min_threads_witness));
+        self.n_instances += 1;
+        let new_owner = (idx % self.n_processes as usize) as i32;
+        let count = self.owners_count[new_owner as usize] as usize;
+        self.instances_owner.push((new_owner, count, weight));
+        self.owners_count[new_owner as usize] += 1;
+        self.owners_weight[new_owner as usize] += weight;
+        if new_owner == self.rank {
+            self.my_instances.push(idx);
+        }
+        idx
+    }
+
+    #[inline]
     pub fn add_instance_assign_rank(
         &mut self,
         airgroup_id: usize,
         air_id: usize,
         owner_idx: usize,
-        pre_calculate: bool,
+        pre_calculate: PreCalculate,
         min_threads_witness: usize,
         weight: u64,
     ) -> usize {
@@ -329,7 +365,7 @@ impl DistributionCtx {
         &mut self,
         airgroup_id: usize,
         air_id: usize,
-        pre_calculate: bool,
+        pre_calculate: PreCalculate,
         min_threads_witness: usize,
         weight: u64,
     ) -> usize {
@@ -340,7 +376,7 @@ impl DistributionCtx {
     }
 
     pub fn add_instance_no_assign_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, false, 1));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, PreCalculate::None, 1));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
@@ -349,6 +385,9 @@ impl DistributionCtx {
     pub fn set_chunks(&mut self, global_idx: usize, chunks: Vec<usize>) {
         let instance_info = &mut self.instances[global_idx];
         instance_info.n_chunks = chunks.len();
+        if let (Some(&first), Some(&last)) = (chunks.first(), chunks.last()) {
+            instance_info.range = (first, last);
+        }
     }
 
     pub fn assign_instances(&mut self) {
@@ -410,17 +449,34 @@ impl DistributionCtx {
                 }
             }
         } else {
-            for (idx, instance) in self.instances_owner.iter_mut().enumerate() {
-                let (ref mut owner, ref mut count, ref mut weight) = *instance;
-                if *owner == -1 {
-                    let new_owner = (idx % self.n_processes as usize) as i32;
-                    *owner = new_owner;
-                    *count = self.owners_count[new_owner as usize] as usize;
-                    self.owners_count[new_owner as usize] += 1;
-                    self.owners_weight[new_owner as usize] += *weight;
-                    if new_owner == self.rank {
+            let mut air_info = HashMap::new();
+            for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
+                if owner == -1 {
+                    let (airgroup_id, air_id) = self.get_instance_info(idx);
+                    air_info.entry((airgroup_id, air_id)).or_insert_with(Vec::new).push(idx);
+                }
+            }
+
+            // Sort groups descending by size
+            let mut grouped_instances: Vec<_> = air_info.into_iter().collect();
+            grouped_instances.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+            // Step 1: Find the best starting point
+            let (start_idx, _) = self.owners_count.iter().enumerate().min_by_key(|&(_, count)| count).unwrap();
+
+            // Step 2: Round-robin from there
+            let mut owner_idx = start_idx;
+
+            for (_, instance_indices) in grouped_instances {
+                for &idx in &instance_indices {
+                    self.instances_owner[idx].0 = owner_idx as i32;
+                    self.instances_owner[idx].1 = self.owners_count[owner_idx] as usize;
+                    self.owners_count[owner_idx] += 1;
+                    self.owners_weight[owner_idx] += self.instances_owner[idx].2;
+                    if owner_idx == self.rank as usize {
                         self.my_instances.push(idx);
                     }
+                    owner_idx = (owner_idx + 1) % self.n_processes as usize;
                 }
             }
         }

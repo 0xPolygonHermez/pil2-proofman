@@ -9,7 +9,6 @@ use std::ffi::c_void;
 
 use fields::PrimeField64;
 use proofman_common::{ExtensionField, ProofCtx, SetupCtx, StepsParams};
-use proofman_util::create_buffer_fast;
 
 use std::ops::{Add, Div, Mul, Sub, AddAssign, DivAssign, MulAssign, SubAssign};
 
@@ -107,13 +106,9 @@ impl<F: PrimeField64> Default for HintFieldInfo<F> {
 }
 
 impl<F: PrimeField64> HintFieldInfo<F> {
-    pub fn init_buffers(&mut self, initialize_zeros: bool) {
+    pub fn init_buffers(&mut self) {
         if self.size > 0 {
-            if initialize_zeros {
-                self.values = vec![F::ZERO; self.size as usize];
-            } else {
-                self.values = create_buffer_fast(self.size as usize);
-            }
+            self.values = vec![F::ZERO; self.size as usize];
         }
 
         if self.matrix_size > 0 {
@@ -922,7 +917,7 @@ fn get_hint_f<F: PrimeField64>(
     HintFieldInfoC::sync_to_hint_field_info(&mut hint_field_values, &hint_field_values_c);
 
     for hint_field_value in hint_field_values.iter_mut() {
-        hint_field_value.init_buffers(options.initialize_zeros);
+        hint_field_value.init_buffers();
     }
 
     hint_field_values_c = HintFieldInfoC::from_hint_field_info_vec(&mut hint_field_values);
