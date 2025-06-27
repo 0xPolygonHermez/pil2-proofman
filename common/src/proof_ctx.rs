@@ -365,6 +365,19 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.set_chunks(global_idx, chunks);
     }
 
+    pub fn add_instance_rank(
+        &self,
+        airgroup_id: usize,
+        air_id: usize,
+        owner_idx: usize,
+        pre_calculate: bool,
+        min_threads_witness: usize,
+    ) -> usize {
+        let mut dctx = self.dctx.write().unwrap();
+        let weight = self.get_weight(airgroup_id, air_id);
+        dctx.add_instance_assign_rank(airgroup_id, air_id, owner_idx, pre_calculate, min_threads_witness, weight)
+    }
+
     pub fn add_instance(
         &self,
         airgroup_id: usize,

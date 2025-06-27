@@ -307,6 +307,24 @@ impl DistributionCtx {
     }
 
     #[inline]
+    pub fn add_instance_assign_rank(
+        &mut self,
+        airgroup_id: usize,
+        air_id: usize,
+        owner_idx: usize,
+        pre_calculate: bool,
+        min_threads_witness: usize,
+        weight: u64,
+    ) -> usize {
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, pre_calculate, min_threads_witness));
+        let owners_count = self.owners_count[owner_idx] as usize;
+        self.instances_owner.push((owner_idx as i32, owners_count, weight));
+        self.owners_weight[owner_idx] += weight;
+        self.n_instances += 1;
+        self.n_instances - 1
+    }
+
+    #[inline]
     pub fn add_instance_no_assign(
         &mut self,
         airgroup_id: usize,
