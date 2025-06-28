@@ -105,6 +105,10 @@ where
         }
     }
 
+    pub fn set_barrier(&self) {
+        self.pctx.dctx_barrier();
+    }
+
     #[cfg(distributed)]
     pub fn check_setup(
         proving_key_path: PathBuf,
@@ -1989,7 +1993,6 @@ where
                 tracing::info!("··· {}", "\u{2713} Vadcop Final proof was verified".bright_green().bold());
             }
         }
-        self.pctx.dctx_barrier();
 
         Ok((proof_id, vadcop_final_proof))
     }

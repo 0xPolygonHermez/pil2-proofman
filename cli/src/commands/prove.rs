@@ -184,6 +184,8 @@ impl ProveCmd {
                 )?,
             };
 
+            proofman.set_barrier();
+            
             if let Some(vadcop_final_proof) = vadcop_final_proof {
                 // Save the vadcop final proof
                 let output_file_path = self.output_dir.join("proofs/vadcop_final_proof.bin");
