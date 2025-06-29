@@ -356,6 +356,9 @@ impl DistributionCtx {
         let owners_count = self.owners_count[owner_idx] as usize;
         self.instances_owner.push((owner_idx as i32, owners_count, weight));
         self.owners_weight[owner_idx] += weight;
+        if owner_idx == self.rank as usize {
+            self.my_instances.push(self.n_instances);
+        }
         self.n_instances += 1;
         self.n_instances - 1
     }
