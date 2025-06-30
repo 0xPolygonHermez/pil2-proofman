@@ -87,7 +87,7 @@ impl ProveCmd {
             // In distributed mode two different processes may enter here at the same time and try to remove the same directory
             if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    panic!("Failed to remove the proofs directory: {:?}", e);
+                    panic!("Failed to remove the proofs directory: {e:?}");
                 }
             }
         }
@@ -95,7 +95,7 @@ impl ProveCmd {
         if let Err(e) = fs::create_dir_all(self.output_dir.join("proofs")) {
             if e.kind() != std::io::ErrorKind::AlreadyExists {
                 // prevent collision in distributed mode
-                panic!("Failed to create the proofs directory: {:?}", e);
+                panic!("Failed to create the proofs directory: {e:?}");
             }
         }
 
@@ -110,7 +110,7 @@ impl ProveCmd {
             if let Some((key, value)) = commit.split_once('=') {
                 custom_commits_map.insert(key.to_string(), PathBuf::from(value));
             } else {
-                eprintln!("Invalid commit format: {:?}", commit);
+                eprintln!("Invalid commit format: {commit:?}");
             }
         }
 

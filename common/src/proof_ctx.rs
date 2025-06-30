@@ -255,7 +255,7 @@ impl<F: PrimeField64> ProofCtx<F> {
                 // Return error
                 Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("Custom Commit Fixed {:?} not found", file_name),
+                    format!("Custom Commit Fixed {file_name:?} not found"),
                 )))
             }
         }
@@ -608,8 +608,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             return self.air_instances[index].read().unwrap().get_trace();
         } else {
             panic!(
-                "Air Instance with id {} for airgroup {} and air {} not found",
-                air_instance_id, airgroup_id, air_id
+                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
             );
         }
     }
@@ -621,8 +620,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             return self.air_instances[index].read().unwrap().get_air_values();
         } else {
             panic!(
-                "Air Instance with id {} for airgroup {} and air {} not found",
-                air_instance_id, airgroup_id, air_id
+                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
             );
         }
     }
@@ -639,8 +637,7 @@ impl<F: PrimeField64> ProofCtx<F> {
             return self.air_instances[index].read().unwrap().get_airgroup_values();
         } else {
             panic!(
-                "Air Instance with id {} for airgroup {} and air {} not found",
-                air_instance_id, airgroup_id, air_id
+                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
             );
         }
     }

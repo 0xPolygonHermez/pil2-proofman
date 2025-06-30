@@ -119,7 +119,7 @@ where
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
-            return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
+            return Err(format!("Proving key folder not found at path: {proving_key_path:?}").into());
         }
 
         let pctx = ProofCtx::<F>::create_ctx(
@@ -576,26 +576,26 @@ where
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
-            return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
+            return Err(format!("Witness computation dynamic library not found at path: {witness_lib_path:?}").into());
         }
 
         // Check input data path
         if let Some(ref input_data_path) = input_data_path {
             if !input_data_path.exists() {
-                return Err(format!("Input data file not found at path: {:?}", input_data_path).into());
+                return Err(format!("Input data file not found at path: {input_data_path:?}").into());
             }
         }
 
         // Check public_inputs_path is a folder
         if let Some(ref publics_path) = public_inputs_path {
             if !publics_path.exists() {
-                return Err(format!("Public inputs file not found at path: {:?}", publics_path).into());
+                return Err(format!("Public inputs file not found at path: {publics_path:?}").into());
             }
         }
 
         if !output_dir_path.exists() {
             fs::create_dir_all(&output_dir_path)
-                .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
+                .map_err(|err| format!("Failed to create output directory: {err:?}"))?;
         }
 
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -774,26 +774,26 @@ where
     ) -> Result<(Option<String>, Option<Vec<u64>>), Box<dyn std::error::Error>> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
-            return Err(format!("Witness computation dynamic library not found at path: {:?}", witness_lib_path).into());
+            return Err(format!("Witness computation dynamic library not found at path: {witness_lib_path:?}").into());
         }
 
         // Check input data path
         if let Some(ref input_data_path) = input_data_path {
             if !input_data_path.exists() {
-                return Err(format!("Input data file not found at path: {:?}", input_data_path).into());
+                return Err(format!("Input data file not found at path: {input_data_path:?}").into());
             }
         }
 
         // Check public_inputs_path is a folder
         if let Some(ref publics_path) = public_inputs_path {
             if !publics_path.exists() {
-                return Err(format!("Public inputs file not found at path: {:?}", publics_path).into());
+                return Err(format!("Public inputs file not found at path: {publics_path:?}").into());
             }
         }
 
         if !options.output_dir_path.exists() {
             fs::create_dir_all(&options.output_dir_path)
-                .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
+                .map_err(|err| format!("Failed to create output directory: {err:?}"))?;
         }
 
         timer_start_info!(CREATE_WITNESS_LIB);
@@ -818,7 +818,7 @@ where
     ) -> Result<(Option<String>, Option<Vec<u64>>), Box<dyn std::error::Error>> {
         if !options.output_dir_path.exists() {
             fs::create_dir_all(&options.output_dir_path)
-                .map_err(|err| format!("Failed to create output directory: {:?}", err))?;
+                .map_err(|err| format!("Failed to create output directory: {err:?}"))?;
         }
 
         self.wcm.set_input_data_path(input_data_path);
@@ -839,12 +839,12 @@ where
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
-            return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
+            return Err(format!("Proving key folder not found at path: {proving_key_path:?}").into());
         }
 
         // Check proving_key_path is a folder
         if !proving_key_path.is_dir() {
-            return Err(format!("Proving key parameter must be a folder: {:?}", proving_key_path).into());
+            return Err(format!("Proving key parameter must be a folder: {proving_key_path:?}").into());
         }
 
         let (pctx, sctx, setups_vadcop) = Self::initialize_proofman(
@@ -2132,7 +2132,7 @@ where
 
         let p_steps_params: *mut u8 = (&steps_params).into();
 
-        let output_file_path = output_dir_path.join(format!("proofs/{}_{}.json", air_instance_name, instance_id));
+        let output_file_path = output_dir_path.join(format!("proofs/{air_instance_name}_{instance_id}.json"));
 
         let proof_file = match save_proof {
             true => output_file_path.to_string_lossy().into_owned(),
@@ -2370,7 +2370,7 @@ where
                 let col = cm_pols_map.get(col_id).unwrap();
                 let col_name = if !col.lengths.is_empty() {
                     let lengths = col.lengths.iter().fold(String::new(), |mut acc, l| {
-                        write!(acc, "[{}]", l).unwrap();
+                        write!(acc, "[{l}]").unwrap();
                         acc
                     });
                     format!("{}{}", col.name, lengths)

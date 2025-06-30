@@ -107,7 +107,7 @@ pub fn update_debug_data_fast<F: PrimeField64>(
     } else if proves {
         bus_opid_times.num_proves += hash_value * times.as_canonical_biguint();
     } else {
-        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {:?}.", times);
+        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
         bus_opid_times.num_assumes += hash_value;
     }
 }
@@ -160,7 +160,7 @@ pub fn update_debug_data<F: PrimeField64>(
         bus_val.shared_data.num_proves += times;
         grouped_data.row_proves.push(row);
     } else {
-        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {:?}.", times);
+        assert!(times.is_one(), "The selector value is invalid: expected 1, but received {times:?}.");
         bus_val.shared_data.num_assumes += times;
         grouped_data.row_assumes.push(row);
     }
@@ -213,7 +213,7 @@ pub fn check_invalid_opids<F: PrimeField64>(_pctx: &ProofCtx<F>, debugs_data_fas
     if !invalid_opids.is_empty() {
         tracing::error!(
             "··· {}",
-            format!("\u{2717} The following opids does not match {:?}", invalid_opids).bright_red().bold()
+            format!("\u{2717} The following opids does not match {invalid_opids:?}").bright_red().bold()
         );
     } else {
         tracing::info!("··· {}", "\u{2713} All bus values match.".bright_green().bold());
@@ -240,7 +240,7 @@ pub fn print_debug_info<F: PrimeField64>(
                         match fs::create_dir_all(tmp_dir) {
                             Ok(_) => tracing::info!("Debug   : Created directory: {:?}", tmp_dir),
                             Err(e) => {
-                                eprintln!("Failed to create directory {:?}: {}", tmp_dir, e);
+                                eprintln!("Failed to create directory {tmp_dir:?}: {e}");
                                 std::process::exit(1);
                             }
                         }
@@ -253,14 +253,14 @@ pub fn print_debug_info<F: PrimeField64>(
                             output = Box::new(file);
                         }
                         Err(e) => {
-                            eprintln!("Failed to create log file at {:?}: {}", file_path, e);
+                            eprintln!("Failed to create log file at {file_path:?}: {e}");
                             std::process::exit(1);
                         }
                     }
                 }
 
                 let file_msg = if print_to_file {
-                    format!(" Check the {:?} file for more details.", file_path)
+                    format!(" Check the {file_path:?} file for more details.")
                 } else {
                     "".to_string()
                 };
@@ -269,7 +269,7 @@ pub fn print_debug_info<F: PrimeField64>(
                 // Set the flag to avoid printing the error message multiple times
                 there_are_errors = true;
             }
-            writeln!(output, "\t► Mismatched bus values for opid {}:", opid).expect("Write error");
+            writeln!(output, "\t► Mismatched bus values for opid {opid}:").expect("Write error");
         } else {
             continue;
         }
@@ -280,7 +280,7 @@ pub fn print_debug_info<F: PrimeField64>(
         let len_overassumed = overassumed_values.len();
 
         if len_overassumed > 0 {
-            writeln!(output, "\t  ⁃ There are {} unmatching values thrown as 'assume':", len_overassumed)
+            writeln!(output, "\t  ⁃ There are {len_overassumed} unmatching values thrown as 'assume':")
                 .expect("Write error");
         }
 
@@ -304,7 +304,7 @@ pub fn print_debug_info<F: PrimeField64>(
         let len_overproven = overproven_values.len();
 
         if len_overproven > 0 {
-            writeln!(output, "\t  ⁃ There are {} unmatching values thrown as 'prove':", len_overproven)
+            writeln!(output, "\t  ⁃ There are {len_overproven} unmatching values thrown as 'prove':")
                 .expect("Write error");
         }
 
@@ -385,11 +385,11 @@ pub fn print_debug_info<F: PrimeField64>(
                 rows.iter().map(|x| x.to_string()).take(max_values_to_print).collect::<Vec<_>>().join(",");
 
             let truncated = rows.len() > max_values_to_print;
-            writeln!(output, "\t        - Airgroup: {} (id: {})", airgroup_name, airgroup_id).expect("Write error");
-            writeln!(output, "\t          Air: {} (id: {})", air_name, air_id).expect("Write error");
+            writeln!(output, "\t        - Airgroup: {airgroup_name} (id: {airgroup_id})").expect("Write error");
+            writeln!(output, "\t          Air: {air_name} (id: {air_id})").expect("Write error");
 
-            writeln!(output, "\t          PIOP: {}", piop_name).expect("Write error");
-            writeln!(output, "\t          Expression: {:?}", expr_name).expect("Write error");
+            writeln!(output, "\t          PIOP: {piop_name}").expect("Write error");
+            writeln!(output, "\t          Expression: {expr_name:?}").expect("Write error");
 
             writeln!(
                 output,
@@ -406,8 +406,7 @@ pub fn print_debug_info<F: PrimeField64>(
         let diff = if proves { num_proves - num_assumes } else { num_assumes - num_proves };
         writeln!(
             output,
-            "\t    Total Num Assumes: {}.\n\t    Total Num Proves: {}.\n\t    Total Unmatched: {}.",
-            num_assumes, num_proves, diff
+            "\t    Total Num Assumes: {num_assumes}.\n\t    Total Num Proves: {num_proves}.\n\t    Total Unmatched: {diff}."
         )
         .expect("Write error");
         writeln!(output, "\t    ==================================================\n").expect("Write error");

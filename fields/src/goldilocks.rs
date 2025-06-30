@@ -402,7 +402,7 @@ mod tests {
         // Note that for unsigned integers, from_canonical_checked returns
         // None when the input is bigger or equal to the field order.
         // Similarly, from_canonical_unchecked may also return invalid results in these cases.
-        let field_order = Goldilocks::ORDER_U64 as u64;
+        let field_order = Goldilocks::ORDER_U64;
 
         // On the other hand, everything should work fine for field_order - 1 and (field_order + 1)/2.
         assert_eq!(Goldilocks::from_int(field_order - 1), -Goldilocks::ONE);

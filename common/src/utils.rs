@@ -43,7 +43,7 @@ where
         write!(writer, " ")?;
 
         if let Some(rank) = GLOBAL_RANK.get().copied() {
-            write!(writer, "[rank={}] ", rank)?;
+            write!(writer, "[rank={rank}] ")?;
         }
 
         // Print level and event fields
@@ -173,17 +173,17 @@ struct InstanceJson {
 pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String) -> DebugInfo {
     // Check proving_key_path exists
     if !proving_key_path.exists() {
-        panic!("Proving key folder not found at path: {:?}", proving_key_path);
+        panic!("Proving key folder not found at path: {proving_key_path:?}");
     }
 
     let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
 
     // Read the file contents
-    let debug_json = fs::read_to_string(&json_path).unwrap_or_else(|_| panic!("Failed to read file {}", json_path));
+    let debug_json = fs::read_to_string(&json_path).unwrap_or_else(|_| panic!("Failed to read file {json_path}"));
 
     // Deserialize the JSON into the `DebugJson` struct
     let json: DebugJson = serde_json::from_str(&debug_json)
-        .unwrap_or_else(|err| panic!("Failed to parse JSON file: {}: {}", json_path, err));
+        .unwrap_or_else(|err| panic!("Failed to parse JSON file: {json_path}: {err}"));
 
     // Initialize the airgroup map
     let mut airgroup_map: AirGroupMap = HashMap::new();
@@ -206,7 +206,7 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
                 let airgroup_name = airgroup.airgroup.unwrap().to_string();
                 let airgroup_id = global_info.air_groups.iter().position(|x| x == &airgroup_name);
                 if airgroup_id.is_none() {
-                    panic!("Airgroup name {} not found in global_info.airgroups", airgroup_name);
+                    panic!("Airgroup name {airgroup_name} not found in global_info.airgroups");
                 }
                 airgroup_id.unwrap()
             };
@@ -226,7 +226,7 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
                         let air_name = air.air.unwrap().to_string();
                         let air_id = global_info.airs[airgroup_id].iter().position(|x| x.name == air_name);
                         if air_id.is_none() {
-                            panic!("Airgroup name {} not found in global_info.airgroups", air_name);
+                            panic!("Airgroup name {air_name} not found in global_info.airgroups");
                         }
                         air_id.unwrap()
                     };

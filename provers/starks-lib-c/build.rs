@@ -21,7 +21,7 @@ fn main() {
     let library_folder =
         if cfg!(feature = "gpu") { pil2_stark_path.join("lib-gpu") } else { pil2_stark_path.join("lib") };
     let library_name = if cfg!(feature = "gpu") { "starksgpu" } else { "starks" };
-    let lib_file = library_folder.join(format!("lib{}.a", library_name));
+    let lib_file = library_folder.join(format!("lib{library_name}.a"));
 
     if !pil2_stark_path.exists() {
         panic!("Missing `pil2-stark` submodule! Run `git submodule update --init --recursive`");
@@ -64,11 +64,11 @@ fn main() {
 
     // Link the static library
     println!("cargo:rustc-link-search=native={}", abs_lib_path.display());
-    println!("cargo:rustc-link-lib=static={}", library_name);
+    println!("cargo:rustc-link-lib=static={library_name}");
     if cfg!(feature = "gpu") {
         // Add the CUDA library path
         let cuda_path = "/usr/local/cuda/lib64"; // Adjust this path if necessary
-        println!("cargo:rustc-link-search=native={}", cuda_path);
+        println!("cargo:rustc-link-search=native={cuda_path}");
         println!("cargo:rustc-link-lib=dylib=cudart"); // Link the CUDA runtime library
 
         // Specify the CUDA architecture
@@ -77,7 +77,7 @@ fn main() {
 
     // Link required libraries
     for lib in &["sodium", "pthread", "gmp", "stdc++", "gmpxx", "crypto", "iomp5"] {
-        println!("cargo:rustc-link-lib={}", lib);
+        println!("cargo:rustc-link-lib={lib}");
     }
 }
 
@@ -87,7 +87,7 @@ fn run_command(cmd: &str, args: &[&str], dir: &Path) {
         .args(args)
         .current_dir(dir)
         .status()
-        .unwrap_or_else(|e| panic!("Failed to execute `{}`: {}", cmd, e));
+        .unwrap_or_else(|e| panic!("Failed to execute `{cmd}`: {e}"));
 
     if !status.success() {
         panic!("Command `{}` failed with exit code {:?}", cmd, status.code());

@@ -280,7 +280,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
 
                     // We know that at most one product hint exists
                     let gprod_hint = if gprod_hints.len() > 1 {
-                        panic!("Multiple product hints found for AIR '{}'", air_name);
+                        panic!("Multiple product hints found for AIR '{air_name}'");
                     } else {
                         gprod_hints[0] as usize
                     };

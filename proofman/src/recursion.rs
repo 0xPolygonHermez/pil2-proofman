@@ -602,7 +602,7 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
     if !rust_lib_path.exists() {
-        return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
+        return Err(format!("Rust lib dynamic library not found at path: {rust_lib_path:?}").into());
     }
     let library: Library = unsafe { Library::new(rust_lib_path)? };
 

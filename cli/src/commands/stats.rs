@@ -72,7 +72,7 @@ impl StatsCmd {
             if let Some((key, value)) = commit.split_once('=') {
                 custom_commits_map.insert(key.to_string(), PathBuf::from(value));
             } else {
-                eprintln!("Invalid commit format: {:?}", commit);
+                eprintln!("Invalid commit format: {commit:?}");
             }
         }
 

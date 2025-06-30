@@ -21,13 +21,13 @@ impl PilOutProxy {
 
         // Open the file
         let mut file = File::open(pilout_filename).unwrap_or_else(|error| {
-            panic!("Failed to open file {}: {}", pilout_filename, error);
+            panic!("Failed to open file {pilout_filename}: {error}");
         });
 
         // Read the file content into a Vec<u8>
         let mut file_content = Vec::new();
         if let Err(e) = file.read_to_end(&mut file_content) {
-            panic!("Failed to read file content {}: {}", pilout_filename, e);
+            panic!("Failed to read file content {pilout_filename}: {e}");
         }
 
         // Parse the protobuf message
@@ -77,7 +77,7 @@ impl PilOutProxy {
         let base_field: &Vec<u8> = self.pilout.base_field.as_ref();
         let mut hex_string = "0x".to_owned();
         for &byte in base_field {
-            hex_string.push_str(&format!("{:02X}", byte));
+            hex_string.push_str(&format!("{byte:02X}"));
         }
         tracing::trace!("    Base field: {}", hex_string);
 
