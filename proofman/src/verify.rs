@@ -174,16 +174,12 @@ pub fn verify_basic_proof<F: PrimeField64>(pctx: &ProofCtx<F>, instance_id: usiz
         is_valid = false;
         tracing::info!(
             "··· {}",
-            format!("\u{2717} Proof of {air_name}: Instance #{air_instance_id} was not verified",)
-                .bright_red()
-                .bold()
+            format!("\u{2717} Proof of {air_name}: Instance #{air_instance_id} was not verified",).bright_red().bold()
         );
     } else {
         tracing::info!(
             "    {}",
-            format!("\u{2713} Proof of {air_name}: Instance #{air_instance_id} was verified",)
-                .bright_green()
-                .bold()
+            format!("\u{2713} Proof of {air_name}: Instance #{air_instance_id} was verified",).bright_green().bold()
         );
     }
 

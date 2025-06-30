@@ -182,8 +182,8 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
     let debug_json = fs::read_to_string(&json_path).unwrap_or_else(|_| panic!("Failed to read file {json_path}"));
 
     // Deserialize the JSON into the `DebugJson` struct
-    let json: DebugJson = serde_json::from_str(&debug_json)
-        .unwrap_or_else(|err| panic!("Failed to parse JSON file: {json_path}: {err}"));
+    let json: DebugJson =
+        serde_json::from_str(&debug_json).unwrap_or_else(|err| panic!("Failed to parse JSON file: {json_path}: {err}"));
 
     // Initialize the airgroup map
     let mut airgroup_map: AirGroupMap = HashMap::new();

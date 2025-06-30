@@ -607,9 +607,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         if let Some(index) = index {
             return self.air_instances[index].read().unwrap().get_trace();
         } else {
-            panic!(
-                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
-            );
+            panic!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found");
         }
     }
 
@@ -619,9 +617,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         if let Some(index) = index {
             return self.air_instances[index].read().unwrap().get_air_values();
         } else {
-            panic!(
-                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
-            );
+            panic!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found");
         }
     }
 
@@ -636,9 +632,7 @@ impl<F: PrimeField64> ProofCtx<F> {
         if let Some(index) = index {
             return self.air_instances[index].read().unwrap().get_airgroup_values();
         } else {
-            panic!(
-                "Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found"
-            );
+            panic!("Air Instance with id {air_instance_id} for airgroup {airgroup_id} and air {air_id} not found");
         }
     }
 

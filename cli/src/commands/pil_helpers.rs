@@ -231,11 +231,7 @@ impl PilHelpersCmd {
                         "u64".to_string() // Case when lengths.len() == 0
                     } else {
                         // Start with "u64" and apply each length in reverse order
-                        symbol
-                            .lengths
-                            .iter()
-                            .rev()
-                            .fold("u64".to_string(), |acc, &length| format!("[{acc}; {length}]"))
+                        symbol.lengths.iter().rev().fold("u64".to_string(), |acc, &length| format!("[{acc}; {length}]"))
                     };
                     let default = "0".to_string();
                     let r#type_default = if symbol.lengths.is_empty() {
@@ -298,15 +294,16 @@ impl PilHelpersCmd {
                                 .rev()
                                 .fold("F".to_string(), |acc, &length| format!("[{acc}; {length}]"))
                         };
-                        let ext_type =
-                            if symbol.lengths.is_empty() {
-                                "FieldExtension<F>".to_string() // Case when lengths.len() == 0
-                            } else {
-                                // Start with "F" and apply each length in reverse order
-                                symbol.lengths.iter().rev().fold("FieldExtension<F>".to_string(), |acc, &length| {
-                                    format!("[{acc}; {length}]")
-                                })
-                            };
+                        let ext_type = if symbol.lengths.is_empty() {
+                            "FieldExtension<F>".to_string() // Case when lengths.len() == 0
+                        } else {
+                            // Start with "F" and apply each length in reverse order
+                            symbol
+                                .lengths
+                                .iter()
+                                .rev()
+                                .fold("FieldExtension<F>".to_string(), |acc, &length| format!("[{acc}; {length}]"))
+                        };
                         if symbol.r#type == SymbolType::WitnessCol as i32 {
                             if symbol.stage.unwrap() == 1 {
                                 air.columns.push(ColumnCtx { name: name.to_owned(), r#type });

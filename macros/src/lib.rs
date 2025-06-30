@@ -345,9 +345,10 @@ fn calculate_field_size_literal(field_type: &syn::Type) -> Result<usize> {
     match field_type {
         // Handle arrays with multiple dimensions
         syn::Type::Array(type_array) => {
-            let len = type_array.len.to_token_stream().to_string().parse::<usize>().map_err(|e| {
-                syn::Error::new_spanned(&type_array.len, format!("Failed to parse array length: {e}"))
-            })?;
+            let len =
+                type_array.len.to_token_stream().to_string().parse::<usize>().map_err(|e| {
+                    syn::Error::new_spanned(&type_array.len, format!("Failed to parse array length: {e}"))
+                })?;
             let elem_size = calculate_field_size_literal(&type_array.elem)?;
             Ok(len * elem_size)
         }
@@ -530,9 +531,10 @@ fn calculate_field_slots(ty: &syn::Type) -> Result<usize> {
 
         // Handle `[F; N]` and `[FieldExtension<F>; N]`
         syn::Type::Array(type_array) => {
-            let len = type_array.len.to_token_stream().to_string().parse::<usize>().map_err(|e| {
-                syn::Error::new_spanned(&type_array.len, format!("Failed to parse array length: {e}"))
-            })?;
+            let len =
+                type_array.len.to_token_stream().to_string().parse::<usize>().map_err(|e| {
+                    syn::Error::new_spanned(&type_array.len, format!("Failed to parse array length: {e}"))
+                })?;
             let elem_slots = calculate_field_slots(&type_array.elem)?;
             Ok(len * elem_slots)
         }
