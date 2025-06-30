@@ -484,7 +484,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     let witness_final_proof =
         Proof::new_witness(ProofType::VadcopFinal, 0, 0, None, circom_witness_vadcop_final, setup.n_cols as usize);
     tracing::info!("··· Generating vadcop final proof");
-    timer_start_trace!(GENERATE_VADCOP_FINAL_PROOF);
+    timer_start_info!(GENERATE_VADCOP_FINAL_PROOF);
     let mut final_proof = gen_recursive_proof_size::<F>(pctx, setups, &witness_final_proof);
     let stream_id = generate_recursive_proof::<F>(
         pctx,
@@ -509,7 +509,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     }
 
     tracing::info!("··· Vadcop final Proof generated.");
-    timer_stop_and_log_trace!(GENERATE_VADCOP_FINAL_PROOF);
+    timer_stop_and_log_info!(GENERATE_VADCOP_FINAL_PROOF);
 
     Ok(final_proof)
 }
