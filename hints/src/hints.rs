@@ -185,17 +185,17 @@ pub enum HintFieldValue<F: PrimeField64> {
 impl<F: PrimeField64> Display for HintFieldValue<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            HintFieldValue::Field(value) => write!(f, "{}", value),
-            HintFieldValue::FieldExtended(ext_field) => write!(f, "{}", ext_field),
+            HintFieldValue::Field(value) => write!(f, "{value}"),
+            HintFieldValue::FieldExtended(ext_field) => write!(f, "{ext_field}"),
             HintFieldValue::Column(column) => {
-                let formatted: Vec<String> = column.iter().map(|v| format!("{}", v)).collect();
+                let formatted: Vec<String> = column.iter().map(|v| format!("{v}")).collect();
                 write!(f, "[{}]", formatted.join(", "))
             }
             HintFieldValue::ColumnExtended(ext_column) => {
-                let formatted: Vec<String> = ext_column.iter().map(|v| format!("{}", v)).collect();
+                let formatted: Vec<String> = ext_column.iter().map(|v| format!("{v}")).collect();
                 write!(f, "[{}]", formatted.join(", "))
             }
-            HintFieldValue::String(s) => write!(f, "{}", s),
+            HintFieldValue::String(s) => write!(f, "{s}"),
         }
     }
 }
@@ -228,7 +228,7 @@ impl<F: PrimeField64> Display for HintFieldValuesVec<F> {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", value)?;
+            write!(f, "{value}")?;
         }
         write!(f, "]")
     }
@@ -244,8 +244,8 @@ pub enum HintFieldOutput<F: Clone + Copy + Display> {
 impl<F: Clone + Copy + Display> Display for HintFieldOutput<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            HintFieldOutput::Field(value) => write!(f, "{}", value),
-            HintFieldOutput::FieldExtended(ext_field) => write!(f, "{}", ext_field),
+            HintFieldOutput::Field(value) => write!(f, "{value}"),
+            HintFieldOutput::FieldExtended(ext_field) => write!(f, "{ext_field}"),
         }
     }
 }
@@ -948,7 +948,7 @@ pub fn get_hint_field<F: PrimeField64>(
         get_hint_f(sctx, Some(pctx), airgroup_id, air_id, Some(instance_id), hint_id, hint_field_name, options.clone());
 
     if hint_info[0].matrix_size != 0 {
-        panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
+        panic!("get_hint_field can only be called with single expressions, but {hint_field_name} is an array");
     }
 
     if options.print_expression {
@@ -1032,7 +1032,7 @@ pub fn get_hint_field_constant<F: PrimeField64>(
     let hint_info = get_hint_f(sctx, None, airgroup_id, air_id, None, hint_id, hint_field_name, options.clone());
 
     if hint_info[0].matrix_size != 0 {
-        panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
+        panic!("get_hint_field can only be called with single expressions, but {hint_field_name} is an array");
     }
 
     if options.print_expression {

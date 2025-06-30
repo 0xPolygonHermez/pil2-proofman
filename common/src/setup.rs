@@ -259,7 +259,7 @@ impl<F: PrimeField64> Setup<F> {
         let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
         if !rust_lib_path.exists() {
-            return Err(format!("Rust lib dynamic library not found at path: {:?}", rust_lib_path).into());
+            return Err(format!("Rust lib dynamic library not found at path: {rust_lib_path:?}").into());
         }
 
         let library: Library = unsafe { Library::new(rust_lib_path)? };

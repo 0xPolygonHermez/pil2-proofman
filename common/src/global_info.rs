@@ -89,25 +89,25 @@ impl GlobalInfo {
     pub fn from_file(folder_path: &String) -> Self {
         let file_path = folder_path.to_string() + "/pilout.globalInfo.json";
         let global_info_json =
-            fs::read_to_string(&file_path).unwrap_or_else(|_| panic!("Failed to read file {}", file_path));
+            fs::read_to_string(&file_path).unwrap_or_else(|_| panic!("Failed to read file {file_path}"));
 
         let mut global_info_value: Value = serde_json::from_str(&global_info_json)
-            .unwrap_or_else(|err| panic!("Failed to parse JSON file: {}: {}", file_path, err));
+            .unwrap_or_else(|err| panic!("Failed to parse JSON file: {file_path}: {err}"));
 
         // Add the folder_path to the JSON object
         if let Some(obj) = global_info_value.as_object_mut() {
             obj.insert("folder_path".to_string(), Value::String(folder_path.to_string()));
         } else {
-            panic!("JSON is not an object: {}", file_path);
+            panic!("JSON is not an object: {file_path}");
         }
 
         // Serialize the updated JSON object back to a string
         let updated_global_info_json = serde_json::to_string(&global_info_value)
-            .unwrap_or_else(|err| panic!("Failed to serialize updated JSON: {}", err));
+            .unwrap_or_else(|err| panic!("Failed to serialize updated JSON: {err}"));
 
         // Deserialize the updated JSON string into the `GlobalInfo` struct
         let global_info: GlobalInfo = serde_json::from_str(&updated_global_info_json)
-            .unwrap_or_else(|err| panic!("Failed to parse updated JSON file: {}: {}", file_path, err));
+            .unwrap_or_else(|err| panic!("Failed to parse updated JSON file: {file_path}: {err}"));
         global_info
     }
 
@@ -169,7 +169,7 @@ impl GlobalInfo {
         self.air_groups
             .iter()
             .position(|name| name == air_group_name)
-            .unwrap_or_else(|| panic!("Air group '{}' not found", air_group_name))
+            .unwrap_or_else(|| panic!("Air group '{air_group_name}' not found"))
     }
 
     pub fn get_air_id(&self, air_group_name: &str, air_name: &str) -> (usize, usize) {
@@ -177,12 +177,12 @@ impl GlobalInfo {
             .air_groups
             .iter()
             .position(|name| name == air_group_name)
-            .unwrap_or_else(|| panic!("Air group '{}' not found", air_group_name));
+            .unwrap_or_else(|| panic!("Air group '{air_group_name}' not found"));
 
         let air_id = self.airs[airgroup_id]
             .iter()
             .position(|air| air.name == air_name)
-            .unwrap_or_else(|| panic!("Air '{}' not found in air group '{}'", air_name, air_group_name));
+            .unwrap_or_else(|| panic!("Air '{air_name}' not found in air group '{air_group_name}'"));
 
         (airgroup_id, air_id)
     }

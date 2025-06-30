@@ -158,7 +158,7 @@ pub fn get_hint_field_constant_gc<F: PrimeField64>(
     let hint_info = get_global_hint_f(None, sctx, hint_id, hint_field_name, print_expression);
 
     if hint_info[0].matrix_size != 0 {
-        panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
+        panic!("get_hint_field can only be called with single expressions, but {hint_field_name} is an array");
     }
 
     if print_expression {
@@ -229,7 +229,7 @@ pub fn get_hint_field_gc<F: PrimeField64>(
     let hint_info = get_global_hint_f(Some(pctx), sctx, hint_id, hint_field_name, print_expression);
 
     if hint_info[0].matrix_size != 0 {
-        panic!("get_hint_field can only be called with single expressions, but {} is an array", hint_field_name);
+        panic!("get_hint_field can only be called with single expressions, but {hint_field_name} is an array");
     }
 
     if print_expression {

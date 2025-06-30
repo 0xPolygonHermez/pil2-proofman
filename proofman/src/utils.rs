@@ -110,7 +110,7 @@ pub fn print_summary<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, gl
             let (n_bits, total_cols, _, _, _) = air_info.get(air_name).unwrap();
             tracing::info!(
                 "      {}",
-                format!("· {} x Air [{}] ({} x 2^{})", count, air_name, total_cols, n_bits).bright_white().bold()
+                format!("· {count} x Air [{air_name}] ({total_cols} x 2^{n_bits})").bright_white().bold()
             );
         }
     }
@@ -172,19 +172,17 @@ fn check_const_tree<F: PrimeField64>(
 
     if !PathBuf::from(&const_pols_tree_path).exists() {
         let error_message = format!(
-            "Error: Unable to find the constant tree at '{}'.\n\
+            "Error: Unable to find the constant tree at '{const_pols_tree_path}'.\n\
             Please run the following command:\n\
-            \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{}\x1b[0m",
-            const_pols_tree_path, flags
+            \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
         );
         return Err(error_message.into());
     }
 
     let error_message = format!(
-        "Error: The constant tree file at '{}' exists but is invalid or corrupted.\n\
+        "Error: The constant tree file at '{const_pols_tree_path}' exists but is invalid or corrupted.\n\
         Please regenerate it by running:\n\
-        \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{}\x1b[0m",
-        const_pols_tree_path, flags
+        \x1b[1mcargo run --bin proofman-cli check-setup --proving-key <PROVING_KEY>{flags}\x1b[0m"
     );
 
     let const_pols_tree_size = setup.const_tree_size;
@@ -204,7 +202,7 @@ fn check_const_tree<F: PrimeField64>(
 
         let mut contents = String::new();
         let mut file = File::open(verkey_path).unwrap();
-        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {}", err));
+        let _ = file.read_to_string(&mut contents).map_err(|err| format!("Failed to read verkey path file: {err}"));
         let verkey_u64: Vec<u64> = serde_json::from_str(&contents).unwrap();
 
         let mut file = File::open(&const_pols_tree_path)?;

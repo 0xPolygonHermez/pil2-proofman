@@ -283,7 +283,7 @@ impl DistributionCtx {
                     .unwrap(),
             )
         } else {
-            panic!("Multiple instances found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
+            panic!("Multiple instances found for airgroup_id: {airgroup_id}, air_id: {air_id}");
         }
     }
 
@@ -313,7 +313,7 @@ impl DistributionCtx {
         }
 
         if min_owner == self.n_processes + 1 {
-            panic!("No instance found for airgroup_id: {}, air_id: {}", airgroup_id, air_id);
+            panic!("No instance found for airgroup_id: {airgroup_id}, air_id: {air_id}");
         }
 
         min_owner == self.rank

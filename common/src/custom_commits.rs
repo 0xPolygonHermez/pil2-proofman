@@ -31,7 +31,7 @@ pub fn write_custom_commit_trace<F: PrimeField64>(
             *val = F::from_u64(value);
         }
 
-        println!("Root from file: {:?}", root_file);
+        println!("Root from file: {root_file:?}");
     }
 
     write_custom_commit_c(

@@ -151,8 +151,8 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                 pctx.add_air_instance(air_instance, instance_id);
             } else {
                 self.multiplicities.par_iter().for_each(|vec| {
-                    for row in 0..self.num_rows {
-                        vec[row].swap(0, Ordering::Relaxed);
+                    for vec_row in vec.iter() {
+                        vec_row.swap(0, Ordering::Relaxed);
                     }
                 });
             }

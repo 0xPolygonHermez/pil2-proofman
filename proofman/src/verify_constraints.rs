@@ -129,7 +129,7 @@ pub fn verify_constraints_proof<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &Setu
     if skip {
         tracing::info!(
             "{}",
-            format!("··· \u{2713} Skipping Instance #{} of {} [{}:{}]", air_instance_id, air_name, airgroup_id, air_id)
+            format!("··· \u{2713} Skipping Instance #{air_instance_id} of {air_name} [{airgroup_id}:{air_id}]")
                 .bright_yellow()
                 .bold()
         );
@@ -217,14 +217,14 @@ pub fn verify_constraints_proof<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &Setu
     if !valid_constraints_instance {
         tracing::info!(
             "··· {}",
-            format!("\u{2717} Not all constraints for Instance #{} of {} were verified", air_instance_id, air_name)
+            format!("\u{2717} Not all constraints for Instance #{air_instance_id} of {air_name} were verified")
                 .bright_red()
                 .bold()
         );
     } else {
         tracing::info!(
             "    {}",
-            format!("\u{2713} All constraints for Instance #{} of {} were verified", air_instance_id, air_name)
+            format!("\u{2713} All constraints for Instance #{air_instance_id} of {air_name} were verified")
                 .bright_green()
                 .bold()
         );
