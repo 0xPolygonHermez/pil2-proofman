@@ -656,16 +656,15 @@ where
         let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        for (instance_id, instance_info) in instances.iter().enumerate() {
+        let max_num_threads = rayon::current_num_threads();
+
+        for &instance_id in my_instances.iter() {
+            let instance_info = instances[instance_id];
             let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-            let is_my_instance = self.pctx.dctx_is_my_instance(instance_id);
             let (skip, _) = skip_prover_instance(&self.pctx, instance_id);
-
-            if skip || (!all && !is_my_instance) {
+            if all || skip {
                 continue;
-            };
-
-            let max_num_threads = rayon::current_num_threads();
+            }
 
             self.wcm.pre_calculate_witness(1, &[instance_id], max_num_threads);
             self.wcm.calculate_witness(1, &[instance_id], max_num_threads, self.memory_handler.as_ref());
@@ -675,22 +674,60 @@ where
                 handle.join().unwrap();
             }
 
-            if is_my_instance {
-                Self::verify_proof_constraints_stage(
-                    self.pctx.clone(),
-                    self.sctx.clone(),
-                    self.wcm.clone(),
-                    valid_constraints.clone(),
-                    airgroup_values_air_instances.clone(),
-                    instance_id,
-                    airgroup_id,
-                    air_id,
-                    self.pctx.dctx_find_air_instance_id(instance_id),
-                    debug_info,
-                    max_num_threads,
-                    self.memory_handler.clone(),
-                );
+            Self::verify_proof_constraints_stage(
+                self.pctx.clone(),
+                self.sctx.clone(),
+                self.wcm.clone(),
+                valid_constraints.clone(),
+                airgroup_values_air_instances.clone(),
+                instance_id,
+                airgroup_id,
+                air_id,
+                self.pctx.dctx_find_air_instance_id(instance_id),
+                debug_info,
+                max_num_threads,
+                self.memory_handler.clone(),
+            );
+        }
+
+        self.pctx.dctx_barrier();
+
+        let instances_all: Vec<(usize, _)> =
+            instances.iter().enumerate().filter(|(_, instance_info)| instance_info.all).collect();
+
+        timer_start_info!(CALCULATING_TABLES);
+        for (instance_id, _) in instances_all.iter() {
+            self.wcm.calculate_witness(1, &[*instance_id], max_num_threads, self.memory_handler.as_ref());
+        }
+        timer_stop_and_log_info!(CALCULATING_TABLES);
+
+        for &(instance_id, instance_info) in instances_all.iter() {
+            let (skip, _) = skip_prover_instance(&self.pctx, instance_id);
+
+            if skip || !self.pctx.dctx_is_my_instance(instance_id) {
+                continue;
             };
+
+            // Join the previous thread (if any) before starting a new one
+            if let Some(handle) = thread_handle.take() {
+                handle.join().unwrap();
+            }
+
+            let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
+            Self::verify_proof_constraints_stage(
+                self.pctx.clone(),
+                self.sctx.clone(),
+                self.wcm.clone(),
+                valid_constraints.clone(),
+                airgroup_values_air_instances.clone(),
+                instance_id,
+                airgroup_id,
+                air_id,
+                self.pctx.dctx_find_air_instance_id(instance_id),
+                debug_info,
+                max_num_threads,
+                self.memory_handler.clone(),
+            );
         }
 
         self.wcm.end(debug_info);
@@ -1445,6 +1482,7 @@ where
         let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
         let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
 
+        let mut handle_recursives = Vec::new();
         for _ in 0..n_streams {
             let pctx_clone = self.pctx.clone();
             let setups_clone = self.setups.clone();
@@ -1459,8 +1497,11 @@ where
             let rec2_witness_tx_clone = rec2_witness_tx.clone();
             let compressor_witness_tx_clone = compressor_witness_tx.clone();
             let recursive_rx_clone = recursive_rx.clone();
-            let _ = std::thread::spawn(move || {
+            let handle_recursive = std::thread::spawn(move || {
                 while let Ok((id, proof_type)) = recursive_rx_clone.recv() {
+                    if id == u64::MAX - 1 {
+                        return;
+                    }
                     let p: ProofType = proof_type.parse().unwrap();
                     if p == ProofType::Basic {
                         basic_proofs_done_clone.increment();
@@ -1469,86 +1510,68 @@ where
                         proofs_pending_clone.decrement();
                         continue;
                     }
-                    let pctx_clone = pctx_clone.clone();
-                    let setups_clone = setups_clone.clone();
 
-                    let proofs_clone = proofs_clone.clone();
-                    let compressor_proofs_clone = compressor_proofs_clone.clone();
-                    let recursive1_proofs_clone = recursive1_proofs_clone.clone();
-                    let recursive2_proofs_clone = recursive2_proofs_clone.clone();
-                    let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing_clone.clone();
-                    let rec1_witness_tx_clone = rec1_witness_tx_clone.clone();
-                    let rec2_witness_tx_clone = rec2_witness_tx_clone.clone();
-                    let compressor_witness_tx_clone = compressor_witness_tx_clone.clone();
-
-                    let proofs_pending_clone = proofs_pending_clone.clone();
-
-                    let recursive_handle = std::thread::spawn(move || {
-                        let new_proof_type = if p == ProofType::Basic {
-                            let (airgroup_id, air_id) = pctx_clone.dctx_get_instance_info(id as usize);
-                            if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
-                                ProofType::Compressor as usize
-                            } else {
-                                ProofType::Recursive1 as usize
-                            }
-                        } else if p == ProofType::Compressor {
+                    let new_proof_type = if p == ProofType::Basic {
+                        let (airgroup_id, air_id) = pctx_clone.dctx_get_instance_info(id as usize);
+                        if pctx_clone.global_info.get_air_has_compressor(airgroup_id, air_id) {
+                            ProofType::Compressor as usize
+                        } else {
                             ProofType::Recursive1 as usize
-                        } else {
-                            ProofType::Recursive2 as usize
-                        };
-
-                        let witness = if new_proof_type == ProofType::Recursive2 as usize {
-                            let proof = if p == ProofType::Recursive1 {
-                                recursive1_proofs_clone[id as usize].read().unwrap().as_ref().unwrap().clone()
-                            } else {
-                                recursive2_proofs_ongoing_clone.read().unwrap()[id as usize].as_ref().unwrap().clone()
-                            };
-
-                            let recursive2_proof = {
-                                let mut recursive2_airgroup_proofs =
-                                    recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
-                                recursive2_airgroup_proofs.push(proof);
-
-                                if recursive2_airgroup_proofs.len() >= 3 {
-                                    let p1 = recursive2_airgroup_proofs.pop().unwrap();
-                                    let p2 = recursive2_airgroup_proofs.pop().unwrap();
-                                    let p3 = recursive2_airgroup_proofs.pop().unwrap();
-                                    Some((p1, p2, p3))
-                                } else {
-                                    None
-                                }
-                            };
-
-                            recursive2_proof.map(|(p1, p2, p3)| {
-                                gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap()
-                            })
-                        } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
-                            let guard = compressor_proofs_clone[id as usize].read().unwrap();
-                            let proof = guard.as_ref().unwrap();
-                            Some(gen_witness_recursive(&pctx_clone, &setups_clone, proof).unwrap())
-                        } else {
-                            let proof = proofs_clone[id as usize].read().unwrap();
-                            Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap())
-                        };
-
-                        if let Some(witness) = witness {
-                            proofs_pending_clone.increment();
-                            if new_proof_type == ProofType::Compressor as usize {
-                                compressor_witness_tx_clone.send(witness).unwrap();
-                            } else if new_proof_type == ProofType::Recursive1 as usize {
-                                rec1_witness_tx_clone.send(witness).unwrap();
-                            } else {
-                                rec2_witness_tx_clone.send(witness).unwrap();
-                            }
                         }
-                        proofs_pending_clone.decrement();
-                    });
+                    } else if p == ProofType::Compressor {
+                        ProofType::Recursive1 as usize
+                    } else {
+                        ProofType::Recursive2 as usize
+                    };
 
-                    if cfg!(not(feature = "gpu")) {
-                        recursive_handle.join().unwrap();
+                    let witness = if new_proof_type == ProofType::Recursive2 as usize {
+                        let proof = if p == ProofType::Recursive1 {
+                            recursive1_proofs_clone[id as usize].read().unwrap().as_ref().unwrap().clone()
+                        } else {
+                            recursive2_proofs_ongoing_clone.read().unwrap()[id as usize].as_ref().unwrap().clone()
+                        };
+
+                        let recursive2_proof = {
+                            let mut recursive2_airgroup_proofs =
+                                recursive2_proofs_clone[proof.airgroup_id].write().unwrap();
+                            recursive2_airgroup_proofs.push(proof);
+
+                            if recursive2_airgroup_proofs.len() >= 3 {
+                                let p1 = recursive2_airgroup_proofs.pop().unwrap();
+                                let p2 = recursive2_airgroup_proofs.pop().unwrap();
+                                let p3 = recursive2_airgroup_proofs.pop().unwrap();
+                                Some((p1, p2, p3))
+                            } else {
+                                None
+                            }
+                        };
+
+                        recursive2_proof.map(|(p1, p2, p3)| {
+                            gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap()
+                        })
+                    } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
+                        let guard = compressor_proofs_clone[id as usize].read().unwrap();
+                        let proof = guard.as_ref().unwrap();
+                        Some(gen_witness_recursive(&pctx_clone, &setups_clone, proof).unwrap())
+                    } else {
+                        let proof = proofs_clone[id as usize].read().unwrap();
+                        Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap())
+                    };
+
+                    if let Some(witness) = witness {
+                        proofs_pending_clone.increment();
+                        if new_proof_type == ProofType::Compressor as usize {
+                            compressor_witness_tx_clone.send(witness).unwrap();
+                        } else if new_proof_type == ProofType::Recursive1 as usize {
+                            rec1_witness_tx_clone.send(witness).unwrap();
+                        } else {
+                            rec2_witness_tx_clone.send(witness).unwrap();
+                        }
                     }
+                    proofs_pending_clone.decrement();
                 }
             });
+            handle_recursives.push(handle_recursive);
         }
 
         let processed_ids = Mutex::new(Vec::new());
@@ -1698,6 +1721,7 @@ where
         basic_proofs_done
             .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
+        let proofs_finished = Arc::new(AtomicBool::new(false));
         for _ in 0..n_streams {
             let pctx_clone = self.pctx.clone();
             let setups_clone = self.setups.clone();
@@ -1715,12 +1739,17 @@ where
             let rec2_rx = rec2_witness_rx.clone();
             let rec1_rx = rec1_witness_rx.clone();
 
-            let _ = std::thread::spawn(move || loop {
+            let proofs_finished_clone = proofs_finished.clone();
+
+            let handle_recursive = std::thread::spawn(move || loop {
                 let witness = rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
 
                 let mut witness = match witness {
                     Ok(w) => w,
                     Err(_) => {
+                        if proofs_finished_clone.load(Ordering::Relaxed) {
+                            return;
+                        }
                         std::thread::sleep(std::time::Duration::from_millis(1));
                         continue;
                     }
@@ -1807,12 +1836,22 @@ where
                     launch_callback_c(id as u64, new_proof_type_str);
                 }
             });
+            handle_recursives.push(handle_recursive);
         }
 
         proofs_pending.wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
 
+        proofs_finished.store(true, Ordering::Relaxed);
+        recursive_tx.send((u64::MAX - 1, "Basic".to_string())).unwrap();
+        drop(recursive_tx);
+        drop(rec2_witness_tx);
+        drop(compressor_witness_tx);
+        drop(rec1_witness_tx);
+        for handle in handle_recursives {
+            handle.join().unwrap();
+        }
         clear_proof_done_callback_c();
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
