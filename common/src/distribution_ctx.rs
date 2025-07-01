@@ -392,6 +392,7 @@ impl DistributionCtx {
 
     pub fn assign_instances(&mut self) {
         if self.balance_distribution {
+            /*  temporally unused balance by chunk execution requirements
             // Sort unassigned instances according to wc_weights
             let mut unassigned_instances = Vec::new();
             for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
@@ -414,7 +415,7 @@ impl DistributionCtx {
                     self.my_instances.push(*idx);
                 }
                 owner_idx = (owner_idx + 1) % self.n_processes as usize;
-            }
+            }*/
 
             // Sort the unassigned instances by proof weight
             let mut unassigned_instances = Vec::new();
