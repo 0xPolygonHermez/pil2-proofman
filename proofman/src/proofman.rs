@@ -656,16 +656,15 @@ where
         let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        for (instance_id, instance_info) in instances.iter().enumerate() {
+        let max_num_threads = rayon::current_num_threads();
+
+        for &instance_id in my_instances.iter() {
+            let instance_info = instances[instance_id];
             let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-            let is_my_instance = self.pctx.dctx_is_my_instance(instance_id);
             let (skip, _) = skip_prover_instance(&self.pctx, instance_id);
-
-            if skip || (!all && !is_my_instance) {
+            if all || skip {
                 continue;
-            };
-
-            let max_num_threads = rayon::current_num_threads();
+            }
 
             self.wcm.pre_calculate_witness(1, &[instance_id], max_num_threads);
             self.wcm.calculate_witness(1, &[instance_id], max_num_threads, self.memory_handler.as_ref());
@@ -675,22 +674,60 @@ where
                 handle.join().unwrap();
             }
 
-            if is_my_instance {
-                Self::verify_proof_constraints_stage(
-                    self.pctx.clone(),
-                    self.sctx.clone(),
-                    self.wcm.clone(),
-                    valid_constraints.clone(),
-                    airgroup_values_air_instances.clone(),
-                    instance_id,
-                    airgroup_id,
-                    air_id,
-                    self.pctx.dctx_find_air_instance_id(instance_id),
-                    debug_info,
-                    max_num_threads,
-                    self.memory_handler.clone(),
-                );
+            Self::verify_proof_constraints_stage(
+                self.pctx.clone(),
+                self.sctx.clone(),
+                self.wcm.clone(),
+                valid_constraints.clone(),
+                airgroup_values_air_instances.clone(),
+                instance_id,
+                airgroup_id,
+                air_id,
+                self.pctx.dctx_find_air_instance_id(instance_id),
+                debug_info,
+                max_num_threads,
+                self.memory_handler.clone(),
+            );
+        }
+
+        self.pctx.dctx_barrier();
+
+        let instances_all: Vec<(usize, _)> =
+            instances.iter().enumerate().filter(|(_, instance_info)| instance_info.all).collect();
+
+        timer_start_info!(CALCULATING_TABLES);
+        for (instance_id, _) in instances_all.iter() {
+            self.wcm.calculate_witness(1, &[*instance_id], max_num_threads, self.memory_handler.as_ref());
+        }
+        timer_stop_and_log_info!(CALCULATING_TABLES);
+
+        for &(instance_id, instance_info) in instances_all.iter() {
+            let (skip, _) = skip_prover_instance(&self.pctx, instance_id);
+
+            if skip || !self.pctx.dctx_is_my_instance(instance_id) {
+                continue;
             };
+
+            // Join the previous thread (if any) before starting a new one
+            if let Some(handle) = thread_handle.take() {
+                handle.join().unwrap();
+            }
+
+            let (airgroup_id, air_id) = (instance_info.airgroup_id, instance_info.air_id);
+            Self::verify_proof_constraints_stage(
+                self.pctx.clone(),
+                self.sctx.clone(),
+                self.wcm.clone(),
+                valid_constraints.clone(),
+                airgroup_values_air_instances.clone(),
+                instance_id,
+                airgroup_id,
+                air_id,
+                self.pctx.dctx_find_air_instance_id(instance_id),
+                debug_info,
+                max_num_threads,
+                self.memory_handler.clone(),
+            );
         }
 
         self.wcm.end(debug_info);

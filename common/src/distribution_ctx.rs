@@ -355,10 +355,10 @@ impl DistributionCtx {
         let idx = self.instances.len();
         self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, pre_calculate, min_threads_witness));
         self.n_instances += 1;
-        let count = self.owners_count[owner_idx as usize] as usize;
+        let count = self.owners_count[owner_idx] as usize;
         self.instances_owner.push((owner_idx as i32, count, weight));
-        self.owners_count[owner_idx as usize] += 1;
-        self.owners_weight[owner_idx as usize] += weight;
+        self.owners_count[owner_idx] += 1;
+        self.owners_weight[owner_idx] += weight;
         if owner_idx as i32 == self.rank {
             self.my_instances.push(idx);
         }
