@@ -1844,6 +1844,7 @@ where
         get_stream_proofs_c(self.d_buffers.get_ptr());
 
         proofs_finished.store(true, Ordering::Relaxed);
+        clear_proof_done_callback_c();
         recursive_tx.send((u64::MAX - 1, "Basic".to_string())).unwrap();
         drop(recursive_tx);
         drop(rec2_witness_tx);
@@ -1852,7 +1853,6 @@ where
         for handle in handle_recursives {
             handle.join().unwrap();
         }
-        clear_proof_done_callback_c();
 
         timer_stop_and_log_info!(GENERATING_INNER_PROOFS);
 
