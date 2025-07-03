@@ -6,8 +6,8 @@ use mpi::environment::Universe;
 use std::ops::Add;
 use std::sync::atomic::AtomicUsize;
 use proofman_common::{
-    MemoryHandler, calculate_fixed_tree, skip_prover_instance, Proof, ProofCtx, ProofType, ProofOptions, SetupCtx,
-    SetupsVadcop, ParamsGPU, DebugInfo, VerboseMode, CurveType,
+    calculate_fixed_tree, configured_num_threads, skip_prover_instance, CurveType, DebugInfo, MemoryHandler, ParamsGPU,
+    Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -424,7 +424,7 @@ where
 
         let max_witness_stored = self.gpu_params.max_witness_stored.min(instances_mine_no_all);
 
-        let max_num_threads = rayon::current_num_threads();
+        let max_num_threads = configured_num_threads(self.pctx.dctx_get_n_processes());
 
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
@@ -476,7 +476,13 @@ where
         }
         timer_stop_and_log_info!(CALCULATE_MAIN_WITNESS);
         timer_start_info!(PRE_CALCULATE_WITNESS_FAST);
+        for _ in 0..max_num_threads / 2 {
+            rx_threads.recv().unwrap();
+        }
         self.wcm.pre_calculate_witness(1, &instances_mine_precalculate_fast, max_num_threads / 2);
+        for _ in 0..max_num_threads / 2 {
+            tx_threads.send(()).unwrap();
+        }
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_FAST);
         timer_start_info!(CALCULATE_FAST_WITNESS);
         for &instance_id in instances_mine_precalculate_fast.iter() {
@@ -517,7 +523,13 @@ where
         timer_stop_and_log_info!(CALCULATE_FAST_WITNESS);
 
         timer_start_info!(PRE_CALCULATE_WITNESS_SLOW);
+        for _ in 0..max_num_threads / 2 {
+            rx_threads.recv().unwrap();
+        }
         self.wcm.pre_calculate_witness(1, &instances_mine_precalculate_slow, max_num_threads / 2);
+        for _ in 0..max_num_threads / 2 {
+            tx_threads.send(()).unwrap();
+        }
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_SLOW);
 
         timer_start_info!(CALCULATE_SLOW_WITNESS);
@@ -656,7 +668,7 @@ where
         let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        let max_num_threads = rayon::current_num_threads();
+        let max_num_threads = configured_num_threads(self.pctx.dctx_get_n_processes());
 
         for &instance_id in my_instances.iter() {
             let instance_info = instances[instance_id];
@@ -1135,7 +1147,7 @@ where
             false => 1,
         };
 
-        let max_num_threads = rayon::current_num_threads();
+        let max_num_threads = configured_num_threads(self.pctx.dctx_get_n_processes());
         let n_proof_threads = match cfg!(feature = "gpu") {
             true => self.n_gpus,
             false => 1,
@@ -1163,10 +1175,10 @@ where
         };
 
         let stop_watch = Arc::new(AtomicBool::new(false));
-        let stop_flag_clone = stop_watch.clone();
+        let stop_watch_clone = stop_watch.clone();
         let d_buffers_clone = self.d_buffers.clone();
         let watch_contributions = std::thread::spawn(move || {
-            while !stop_flag_clone.load(Ordering::Relaxed) {
+            while !stop_watch_clone.load(Ordering::Relaxed) {
                 get_stream_proofs_non_blocking_c(d_buffers_clone.get_ptr());
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
@@ -1628,6 +1640,15 @@ where
         self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
         timer_stop_and_log_info!(PRECALCULATE_WITNESS);
 
+        stop_watch.store(false, Ordering::SeqCst);
+        let stop_watch_clone = stop_watch.clone();
+        let d_buffers_clone = self.d_buffers.clone();
+        let watch_proofs = std::thread::spawn(move || {
+            while !stop_watch_clone.load(Ordering::Relaxed) {
+                get_stream_proofs_non_blocking_c(d_buffers_clone.get_ptr());
+                std::thread::sleep(std::time::Duration::from_micros(100));
+            }
+        });
         my_instances_sorted.sort_by_key(|&id| {
             let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(id);
             (
@@ -1717,6 +1738,9 @@ where
                 launch_callback_c(instance_id as u64, "basic");
             }
         }
+
+        stop_watch.store(true, Ordering::Relaxed);
+        watch_proofs.join().unwrap();
 
         basic_proofs_done
             .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));

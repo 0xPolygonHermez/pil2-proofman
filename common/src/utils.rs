@@ -283,6 +283,24 @@ pub fn print_memory_usage() {
     }
 }
 
+pub fn configured_num_threads(n_processes: usize) -> usize {
+    if let Ok(val) = env::var("RAYON_NUM_THREADS") {
+        match val.parse::<usize>() {
+            Ok(n) if n > 0 => {
+                tracing::info!("Using {n} threads based on RAYON_NUM_THREADS environment variable");
+                return n;
+            }
+            _ => eprintln!("Warning: RAYON_NUM_THREADS=\"{val}\" invalid, falling back to physical cores"),
+        }
+    }
+
+    println!("RAYON NUM THREADS {}", rayon::current_num_threads());
+    println!("N_PROCESSES {n_processes}");
+    let num = num_cpus::get_physical() / n_processes;
+    tracing::info!("Using {num} threads based on physical cores");
+    num
+}
+
 pub fn create_pool(n_cores: usize) -> ThreadPool {
     ThreadPoolBuilder::new().num_threads(n_cores).build().unwrap()
 }
