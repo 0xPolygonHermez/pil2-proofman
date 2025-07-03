@@ -1159,9 +1159,14 @@ where
         // define managment channels and counters
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
+        let (tx_streams, rx_streams) = bounded::<()>(n_streams as usize);
 
         for _ in 0..max_num_threads {
             tx_threads.send(()).unwrap();
+        }
+
+        for _ in 0..n_streams {
+            tx_streams.send(()).unwrap();
         }
 
         let witnesses_done = Arc::new(AtomicUsize::new(0));
@@ -1203,6 +1208,7 @@ where
             let streams_clone = streams.clone();
             let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_witness_clone = tx_witness.clone();
+            let tx_streams_clone = tx_streams.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
 
@@ -1212,6 +1218,7 @@ where
 
             let memory_handler_clone = self.memory_handler.clone();
 
+            rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
@@ -1232,7 +1239,7 @@ where
                     d_buffers_clone.clone(),
                     streams_clone.clone(),
                 );
-
+                tx_streams_clone.send(()).unwrap();
                 witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
                 if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
                     let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
@@ -1269,6 +1276,7 @@ where
             let streams_clone = streams.clone();
             let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_witness_clone = tx_witness.clone();
+            let tx_streams_clone = tx_streams.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
 
@@ -1278,6 +1286,7 @@ where
 
             let memory_handler_clone = self.memory_handler.clone();
 
+            rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
@@ -1297,7 +1306,7 @@ where
                     d_buffers_clone.clone(),
                     streams_clone.clone(),
                 );
-
+                tx_streams_clone.send(()).unwrap();
                 witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
                 if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
                     let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
@@ -1336,6 +1345,7 @@ where
             let streams_clone = streams.clone();
             let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_witness_clone = tx_witness.clone();
+            let tx_streams_clone = tx_streams.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
 
@@ -1345,6 +1355,7 @@ where
 
             let memory_handler_clone = self.memory_handler.clone();
 
+            rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
@@ -1364,6 +1375,7 @@ where
                     d_buffers_clone.clone(),
                     streams_clone.clone(),
                 );
+                tx_streams_clone.send(()).unwrap();
 
                 witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
                 if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
@@ -1595,6 +1607,7 @@ where
                 .filter_map(|(stream_id, instance)| instance.map(|id| (stream_id, id)))
                 .for_each(|(stream_id, instance_id)| {
                     proofs_pending.increment();
+                    rx_streams.recv().unwrap();
                     Self::gen_proof(
                         proofs.clone(),
                         self.pctx.clone(),
@@ -1609,6 +1622,7 @@ where
                         options.save_proofs,
                         self.gpu_params.preallocate,
                     );
+                    tx_streams.send(()).unwrap();
                     let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id as usize);
                     if is_shared_buffer {
                         self.memory_handler.release_buffer(witness_buffer);
@@ -1667,6 +1681,7 @@ where
             let d_buffers_clone = self.d_buffers.clone();
             let aux_trace_clone = aux_trace.clone();
             let tx_threads_clone: Sender<()> = tx_threads.clone();
+            let tx_streams_clone = tx_streams.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
             let stream_clone = vec_streams.clone();
@@ -1692,6 +1707,7 @@ where
 
             let memory_handler_clone = self.memory_handler.clone();
 
+            rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
                 if !is_stored {
@@ -1723,6 +1739,7 @@ where
                     options.save_proofs,
                     preallocate,
                 );
+                tx_streams_clone.send(()).unwrap();
                 let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
                 if is_shared_buffer {
                     memory_handler_clone.release_buffer(witness_buffer);
