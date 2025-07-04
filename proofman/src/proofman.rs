@@ -1162,14 +1162,9 @@ where
         // define managment channels and counters
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
-        let (tx_streams, rx_streams) = bounded::<()>(n_streams as usize);
 
         for _ in 0..max_num_threads {
             tx_threads.send(()).unwrap();
-        }
-
-        for _ in 0..n_streams {
-            tx_streams.send(()).unwrap();
         }
 
         let witnesses_done = Arc::new(AtomicUsize::new(0));
@@ -1201,7 +1196,6 @@ where
             let streams_clone = streams.clone();
             let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_witness_clone = tx_witness.clone();
-            let tx_streams_clone = tx_streams.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
 
@@ -1211,7 +1205,6 @@ where
 
             let memory_handler_clone = self.memory_handler.clone();
 
-            rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
@@ -1235,7 +1228,6 @@ where
                     witnesses_done_clone.clone(),
                     max_witness_stored,
                     memory_handler_clone.as_ref(),
-                    tx_streams_clone,
                 );
             });
             if cfg!(not(feature = "gpu")) {
@@ -1266,7 +1258,6 @@ where
             let streams_clone = streams.clone();
             let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_witness_clone = tx_witness.clone();
-            let tx_streams_clone = tx_streams.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
 
@@ -1276,7 +1267,6 @@ where
 
             let memory_handler_clone = self.memory_handler.clone();
 
-            rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
@@ -1299,7 +1289,6 @@ where
                     witnesses_done_clone.clone(),
                     max_witness_stored,
                     memory_handler_clone.as_ref(),
-                    tx_streams_clone,
                 );
             });
             if cfg!(not(feature = "gpu")) {
@@ -1332,7 +1321,6 @@ where
             let streams_clone = streams.clone();
             let tx_threads_clone: Sender<()> = tx_threads.clone();
             let tx_witness_clone = tx_witness.clone();
-            let tx_streams_clone = tx_streams.clone();
             let wcm = self.wcm.clone();
             let witnesses_done_clone = witnesses_done.clone();
 
@@ -1342,7 +1330,6 @@ where
 
             let memory_handler_clone = self.memory_handler.clone();
 
-            rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
@@ -1365,16 +1352,7 @@ where
                     witnesses_done_clone.clone(),
                     max_witness_stored,
                     memory_handler_clone.as_ref(),
-                    tx_streams_clone.clone(),
                 );
-
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
-                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                    if is_shared_buffer {
-                        memory_handler_clone.release_buffer(witness_buffer);
-                    }
-                }
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
@@ -1407,7 +1385,6 @@ where
 
         for (instance_id, _) in instances_all.iter() {
             if self.pctx.dctx_is_my_instance(*instance_id) {
-                rx_streams.recv().unwrap();
                 Self::get_contribution_air(
                     &self.pctx,
                     &self.sctx,
@@ -1421,7 +1398,6 @@ where
                     witnesses_done.clone(),
                     max_witness_stored,
                     self.memory_handler.as_ref(),
-                    tx_streams.clone(),
                 );
             }
         }
@@ -1603,7 +1579,6 @@ where
                 .filter_map(|(stream_id, instance)| instance.map(|id| (stream_id, id)))
                 .for_each(|(stream_id, instance_id)| {
                     proofs_pending.increment();
-                    rx_streams.recv().unwrap();
                     Self::gen_proof(
                         proofs.clone(),
                         self.pctx.clone(),
@@ -1619,7 +1594,6 @@ where
                         self.gpu_params.preallocate,
                         self.memory_handler.as_ref(),
                     );
-                    tx_streams.send(()).unwrap();
                     processed_ids.lock().unwrap().push(instance_id);
                 });
         }
@@ -1679,7 +1653,6 @@ where
             let sctx_clone = self.sctx.clone();
             let d_buffers_clone = self.d_buffers.clone();
             let aux_trace_clone = aux_trace.clone();
-            let tx_streams_clone = tx_streams.clone();
             let proofs_pending_clone = proofs_pending.clone();
             let stream_clone = vec_streams.clone();
             let proofs_clone = proofs.clone();
@@ -1701,7 +1674,6 @@ where
 
             let memory_handler_clone = self.memory_handler.clone();
 
-            rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
                 let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
@@ -1720,7 +1692,6 @@ where
                     preallocate,
                     memory_handler_clone.as_ref(),
                 );
-                tx_streams_clone.send(()).unwrap();
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
@@ -1741,7 +1712,6 @@ where
             let d_buffers_clone = self.d_buffers.clone();
             let aux_trace_clone = aux_trace.clone();
             let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let tx_streams_clone = tx_streams.clone();
             let wcm = self.wcm.clone();
             let proofs_pending_clone = proofs_pending.clone();
             let stream_clone = vec_streams.clone();
@@ -1767,7 +1737,6 @@ where
 
             let memory_handler_clone = self.memory_handler.clone();
 
-            rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -1792,7 +1761,6 @@ where
                     preallocate,
                     memory_handler_clone.as_ref(),
                 );
-                tx_streams_clone.send(()).unwrap();
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
@@ -2659,7 +2627,6 @@ where
         witnesses_done_clone: Arc<AtomicUsize>,
         max_witness_stored: usize,
         memory_handler: &MemoryHandler<F>,
-        tx_streams: Sender<()>,
     ) {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
@@ -2704,7 +2671,6 @@ where
             d_buffers.get_ptr(),
             (&setup.p_setup).into(),
         );
-        tx_streams.send(()).unwrap();
         streams.lock().unwrap()[stream_id as usize] = Some(instance_id as u64);
 
         if cfg!(not(feature = "gpu")) && !all {
