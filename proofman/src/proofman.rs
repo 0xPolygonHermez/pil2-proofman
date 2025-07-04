@@ -11,7 +11,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{free_device_buffers_c, gen_device_buffers_c, prepare_proof_c};
+use proofman_starks_lib_c::{free_device_buffers_c, gen_device_buffers_c, prepare_proof_c, prepare_witness_c};
 use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c,
@@ -1228,15 +1228,12 @@ where
                     aux_trace_clone.clone().as_ptr() as *mut u8,
                     d_buffers_clone.clone(),
                     streams_clone.clone(),
+                    instances_mine_no_all,
+                    witnesses_done_clone.clone(),
+                    max_witness_stored,
+                    memory_handler_clone.as_ref(),
+                    tx_streams_clone,
                 );
-                tx_streams_clone.send(()).unwrap();
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
-                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                    if is_shared_buffer {
-                        memory_handler_clone.release_buffer(witness_buffer);
-                    }
-                }
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
@@ -1295,15 +1292,12 @@ where
                     aux_trace_clone.clone().as_ptr() as *mut u8,
                     d_buffers_clone.clone(),
                     streams_clone.clone(),
+                    instances_mine_no_all,
+                    witnesses_done_clone.clone(),
+                    max_witness_stored,
+                    memory_handler_clone.as_ref(),
+                    tx_streams_clone,
                 );
-                tx_streams_clone.send(()).unwrap();
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
-                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                    if is_shared_buffer {
-                        memory_handler_clone.release_buffer(witness_buffer);
-                    }
-                }
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
@@ -1364,8 +1358,12 @@ where
                     aux_trace_clone.clone().as_ptr() as *mut u8,
                     d_buffers_clone.clone(),
                     streams_clone.clone(),
+                    instances_mine_no_all,
+                    witnesses_done_clone.clone(),
+                    max_witness_stored,
+                    memory_handler_clone.as_ref(),
+                    tx_streams_clone.clone(),
                 );
-                tx_streams_clone.send(()).unwrap();
 
                 witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
                 if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
@@ -1406,6 +1404,7 @@ where
 
         for (instance_id, _) in instances_all.iter() {
             if self.pctx.dctx_is_my_instance(*instance_id) {
+                rx_streams.recv().unwrap();
                 Self::get_contribution_air(
                     &self.pctx,
                     &self.sctx,
@@ -1415,6 +1414,11 @@ where
                     aux_trace.clone().as_ptr() as *mut u8,
                     self.d_buffers.clone(),
                     streams.clone(),
+                    instances_mine_no_all,
+                    witnesses_done.clone(),
+                    max_witness_stored,
+                    self.memory_handler.as_ref(),
+                    tx_streams.clone(),
                 );
             }
         }
@@ -2573,9 +2577,15 @@ where
         aux_trace_contribution_ptr: *mut u8,
         d_buffers: Arc<DeviceBuffer>,
         streams: Arc<Mutex<Vec<Option<u64>>>>,
+        instances_mine_no_all: usize,
+        witnesses_done_clone: Arc<AtomicUsize>,
+        max_witness_stored: usize,
+        memory_handler: &MemoryHandler<F>,
+        tx_streams: Sender<()>,
     ) {
         let n_field_elements = 4;
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
+        let all = pctx.dctx_is_instance_all(instance_id);
 
         timer_start_info!(GET_CONTRIBUTION_AIR, "GET_CONTRIBUTION_AIR_{} [{}:{}]", instance_id, airgroup_id, air_id);
 
@@ -2585,19 +2595,49 @@ where
         let air_values = pctx.get_air_instance_air_values(airgroup_id, air_id, air_instance_id).clone();
 
         let root_ptr = roots_contributions[instance_id].lock().unwrap().as_ptr() as *mut u8;
+        let stream_id = prepare_witness_c(
+            setup.stark_info.stark_struct.n_bits,
+            *setup.stark_info.map_sections_n.get("cm1").unwrap(),
+            pctx.get_air_instance_trace_ptr(instance_id),
+            d_buffers.get_ptr(),
+            (&setup.p_setup).into(),
+        );
+
+        if cfg!(feature = "gpu") && !all {
+            witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
+            if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
+                let (is_shared_buffer, witness_buffer) = pctx.free_instance_traces(instance_id);
+                if is_shared_buffer {
+                    memory_handler.release_buffer(witness_buffer);
+                }
+            }
+        }
+
         let stream_id = commit_witness_c(
             3,
             setup.stark_info.stark_struct.n_bits,
             setup.stark_info.stark_struct.n_bits_ext,
             *setup.stark_info.map_sections_n.get("cm1").unwrap(),
             instance_id as u64,
+            stream_id,
             root_ptr,
             pctx.get_air_instance_trace_ptr(instance_id),
             aux_trace_contribution_ptr,
             d_buffers.get_ptr(),
             (&setup.p_setup).into(),
         );
+        tx_streams.send(()).unwrap();
         streams.lock().unwrap()[stream_id as usize] = Some(instance_id as u64);
+
+        if cfg!(not(feature = "gpu")) && !all {
+            witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
+            if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
+                let (is_shared_buffer, witness_buffer) = pctx.free_instance_traces(instance_id);
+                if is_shared_buffer {
+                    memory_handler.release_buffer(witness_buffer);
+                }
+            }
+        }
 
         let n_airvalues = setup
             .stark_info

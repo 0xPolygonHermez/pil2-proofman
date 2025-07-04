@@ -280,13 +280,24 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z14commit_witnessmmmmmPvS_S_S_S_"]
+    #[link_name = "\u{1}_Z15prepare_witnessmmPvS_S_"]
+    pub fn prepare_witness(
+        nBits: u64,
+        nCols: u64,
+        trace: *mut ::std::os::raw::c_void,
+        d_buffers: *mut ::std::os::raw::c_void,
+        pSetupCtx_: *mut ::std::os::raw::c_void,
+    ) -> u64;
+}
+extern "C" {
+    #[link_name = "\u{1}_Z14commit_witnessmmmmmmPvS_S_S_S_"]
     pub fn commit_witness(
         arity: u64,
         nBits: u64,
         nBitsExt: u64,
         nCols: u64,
         instanceId: u64,
+        streamId: u64,
         root: *mut ::std::os::raw::c_void,
         trace: *mut ::std::os::raw::c_void,
         auxTrace: *mut ::std::os::raw::c_void,

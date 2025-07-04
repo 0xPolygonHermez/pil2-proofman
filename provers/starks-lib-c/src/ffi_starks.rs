@@ -546,12 +546,32 @@ pub fn write_custom_commit_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn prepare_witness_c(
+    n_bits: u64,
+    n_cols: u64,
+    witness: *mut u8,
+    d_buffers: *mut c_void,
+    setup: *mut c_void,
+) -> u64 {
+    unsafe {
+        prepare_witness(
+            n_bits,
+            n_cols,
+            witness as *mut std::os::raw::c_void,
+            d_buffers,
+            setup,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn commit_witness_c(
     arity: u64,
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
     instance_id: u64,
+    stream_id: u64,
     root: *mut u8,
     witness: *mut u8,
     aux_trace: *mut u8,
@@ -565,6 +585,7 @@ pub fn commit_witness_c(
             n_bits_ext,
             n_cols,
             instance_id,
+            stream_id,
             root as *mut std::os::raw::c_void,
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
@@ -1594,12 +1615,26 @@ pub fn write_custom_commit_c(
 
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
+pub fn prepare_witness_c(
+    _n_bits: u64,
+    _n_cols: u64,
+    _witness: *mut u8,
+    _d_buffers: *mut c_void,
+    _setup: *mut c_void,
+) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "prepare_witness: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
 pub fn commit_witness_c(
     _arity: u64,
     _n_bits: u64,
     _n_bits_ext: u64,
     _n_cols: u64,
     _instance_id: u64,
+    _stream_id: u64,
     _root: *mut u8,
     _witness: *mut u8,
     _aux_trace: *mut u8,
