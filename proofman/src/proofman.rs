@@ -1638,19 +1638,93 @@ where
             }
         }
 
-        timer_start_info!(PRECALCULATE_WITNESS);
-        self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
-        timer_stop_and_log_info!(PRECALCULATE_WITNESS);
-
-        my_instances_sorted.sort_by_key(|&id| {
-            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(id);
-            (
-                if self.pctx.is_air_instance_stored(id) { 0 } else { 1 },
-                if self.pctx.global_info.get_air_has_compressor(airgroup_id, air_id) { 0 } else { 1 },
-            )
+        for _ in 0..max_num_threads / 2 {
+            rx_threads.recv().unwrap();
+        }
+        let wcm_clone = self.wcm.clone();
+        let tx_threads_clone: Sender<()> = tx_threads.clone();
+        let handle_precalculate = std::thread::spawn(move || {
+            timer_start_info!(PRECALCULATE_WITNESS);
+            wcm_clone.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
+            for _ in 0..max_num_threads / 2 {
+                tx_threads_clone.send(()).unwrap();
+            }
+            timer_stop_and_log_info!(PRECALCULATE_WITNESS);
         });
 
-        for &instance_id in my_instances_sorted.iter() {
+        let (mut my_instances_stored, mut my_instances_not_stored): (Vec<_>, Vec<_>) =
+            my_instances_sorted.into_iter().partition(|&id| self.pctx.is_air_instance_stored(id));
+
+        my_instances_stored.sort_by_key(|&id| {
+            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(id);
+            (if self.pctx.global_info.get_air_has_compressor(airgroup_id, air_id) { 0 } else { 1 },)
+        });
+
+        my_instances_not_stored.sort_by_key(|&id| {
+            let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(id);
+            (if self.pctx.global_info.get_air_has_compressor(airgroup_id, air_id) { 0 } else { 1 },)
+        });
+
+        for &instance_id in my_instances_stored.iter() {
+            if my_instances_calculated[instance_id] {
+                continue;
+            }
+
+            let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let d_buffers_clone = self.d_buffers.clone();
+            let aux_trace_clone = aux_trace.clone();
+            let tx_streams_clone = tx_streams.clone();
+            let proofs_pending_clone = proofs_pending.clone();
+            let stream_clone = vec_streams.clone();
+            let proofs_clone = proofs.clone();
+            let output_dir_path_clone = options.output_dir_path.clone();
+            let is_stored =
+                self.pctx.is_air_instance_stored(instance_id) || vec_streams.contains(&Some(instance_id as u64));
+
+            let const_pols_clone = const_pols.clone();
+            let const_tree_clone = const_tree.clone();
+            my_instances_calculated[instance_id] = true;
+
+            let preallocate = self.gpu_params.preallocate;
+
+            if !is_stored {
+                for _ in 0..n_threads_witness {
+                    rx_threads.recv().unwrap();
+                }
+            }
+
+            let memory_handler_clone = self.memory_handler.clone();
+
+            rx_streams.recv().unwrap();
+            let handle = std::thread::spawn(move || {
+                proofs_pending_clone.increment();
+                let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
+                Self::gen_proof(
+                    proofs_clone.clone(),
+                    pctx_clone.clone(),
+                    sctx_clone.clone(),
+                    instance_id,
+                    output_dir_path_clone.clone(),
+                    aux_trace_clone.clone(),
+                    const_pols_clone.clone(),
+                    const_tree_clone.clone(),
+                    d_buffers_clone.clone(),
+                    stream_id,
+                    options.save_proofs,
+                    preallocate,
+                    memory_handler_clone.as_ref(),
+                );
+                tx_streams_clone.send(()).unwrap();
+            });
+            if cfg!(not(feature = "gpu")) {
+                handle.join().unwrap();
+            }
+        }
+
+        handle_precalculate.join().unwrap();
+
+        for &instance_id in my_instances_not_stored.iter() {
             if my_instances_calculated[instance_id] {
                 continue;
             }
@@ -1689,20 +1763,12 @@ where
             rx_streams.recv().unwrap();
             let handle = std::thread::spawn(move || {
                 proofs_pending_clone.increment();
-                if !is_stored {
-                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
-                    for _ in 0..n_threads_witness {
-                        tx_threads_clone.send(()).unwrap();
-                    }
-                    timer_stop_and_log_info!(
-                        GENERATING_WC,
-                        "GENERATING_WC_{} [{}:{}]",
-                        instance_id,
-                        airgroup_id,
-                        air_id
-                    );
+                timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
+                for _ in 0..n_threads_witness {
+                    tx_threads_clone.send(()).unwrap();
                 }
+                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
                 Self::gen_proof(
                     proofs_clone.clone(),
@@ -1726,8 +1792,8 @@ where
             }
         }
 
-        for &instance_id in my_instances_sorted.iter() {
-            if cfg!(not(feature = "gpu")) {
+        if cfg!(not(feature = "gpu")) {
+            for &instance_id in my_instances.iter() {
                 launch_callback_c(instance_id as u64, "basic");
             }
         }

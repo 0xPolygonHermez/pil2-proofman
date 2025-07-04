@@ -553,15 +553,7 @@ pub fn prepare_witness_c(
     d_buffers: *mut c_void,
     setup: *mut c_void,
 ) -> u64 {
-    unsafe {
-        prepare_witness(
-            n_bits,
-            n_cols,
-            witness as *mut std::os::raw::c_void,
-            d_buffers,
-            setup,
-        )
-    }
+    unsafe { prepare_witness(n_bits, n_cols, witness as *mut std::os::raw::c_void, d_buffers, setup) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
