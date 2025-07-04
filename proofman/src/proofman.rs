@@ -424,7 +424,7 @@ where
 
         let max_witness_stored = self.gpu_params.max_witness_stored.min(instances_mine_no_all);
 
-        let max_num_threads = configured_num_threads(self.pctx.dctx_get_n_processes());
+        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
 
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
@@ -671,7 +671,7 @@ where
         let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        let max_num_threads = configured_num_threads(self.pctx.dctx_get_n_processes());
+        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
 
         for &instance_id in my_instances.iter() {
             let instance_info = instances[instance_id];
@@ -1150,7 +1150,7 @@ where
             false => 1,
         };
 
-        let max_num_threads = configured_num_threads(self.pctx.dctx_get_n_processes());
+        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
         let n_proof_threads = match cfg!(feature = "gpu") {
             true => self.n_gpus,
             false => 1,
