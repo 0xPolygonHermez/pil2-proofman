@@ -412,6 +412,24 @@ extern "C" {
     ) -> u64;
 }
 extern "C" {
+    #[link_name = "\u{1}_Z13prepare_proofPvmmmS_S_PmPcS_bmS1_S1_"]
+    pub fn prepare_proof(
+        pSetupCtx: *mut ::std::os::raw::c_void,
+        airgroupId: u64,
+        airId: u64,
+        instanceId: u64,
+        params: *mut ::std::os::raw::c_void,
+        globalChallenge: *mut ::std::os::raw::c_void,
+        proofBuffer: *mut u64,
+        proofFile: *mut ::std::os::raw::c_char,
+        d_buffers: *mut ::std::os::raw::c_void,
+        skipRecalculation: bool,
+        streamId: u64,
+        constPolsPath: *mut ::std::os::raw::c_char,
+        constTreePath: *mut ::std::os::raw::c_char,
+    ) -> u64;
+}
+extern "C" {
     #[link_name = "\u{1}_Z9gen_proofPvmmmS_S_PmPcS_bmS1_S1_"]
     pub fn gen_proof(
         pSetupCtx: *mut ::std::os::raw::c_void,

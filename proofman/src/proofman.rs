@@ -11,7 +11,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{gen_device_buffers_c, free_device_buffers_c};
+use proofman_starks_lib_c::{free_device_buffers_c, gen_device_buffers_c, prepare_proof_c};
 use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c,
@@ -1179,16 +1179,6 @@ where
             false => max_num_threads,
         };
 
-        let stop_watch = Arc::new(AtomicBool::new(false));
-        let stop_watch_clone = stop_watch.clone();
-        let d_buffers_clone = self.d_buffers.clone();
-        let watch_contributions = std::thread::spawn(move || {
-            while !stop_watch_clone.load(Ordering::Relaxed) {
-                get_stream_proofs_non_blocking_c(d_buffers_clone.get_ptr());
-                std::thread::sleep(std::time::Duration::from_micros(100));
-            }
-        });
-
         timer_start_info!(CALCULATING_WITNESS);
         timer_start_info!(CALCULATE_MAIN_WITNESS);
         for &instance_id in instances_mine_no_precalculate.iter() {
@@ -1392,9 +1382,6 @@ where
             }
         }
         timer_stop_and_log_info!(CALCULATE_SLOW_WITNESS);
-
-        stop_watch.store(true, Ordering::Relaxed);
-        watch_contributions.join().unwrap();
 
         // syncronize to the non-all witnesses being evaluated
         for _ in 0..instances_mine_no_all {
@@ -1621,12 +1608,9 @@ where
                         Some(stream_id),
                         options.save_proofs,
                         self.gpu_params.preallocate,
+                        self.memory_handler.as_ref(),
                     );
                     tx_streams.send(()).unwrap();
-                    let (is_shared_buffer, witness_buffer) = self.pctx.free_instance(instance_id as usize);
-                    if is_shared_buffer {
-                        self.memory_handler.release_buffer(witness_buffer);
-                    }
                     processed_ids.lock().unwrap().push(instance_id);
                 });
         }
@@ -1654,15 +1638,6 @@ where
         self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
         timer_stop_and_log_info!(PRECALCULATE_WITNESS);
 
-        stop_watch.store(false, Ordering::SeqCst);
-        let stop_watch_clone = stop_watch.clone();
-        let d_buffers_clone = self.d_buffers.clone();
-        let watch_proofs = std::thread::spawn(move || {
-            while !stop_watch_clone.load(Ordering::Relaxed) {
-                get_stream_proofs_non_blocking_c(d_buffers_clone.get_ptr());
-                std::thread::sleep(std::time::Duration::from_micros(100));
-            }
-        });
         my_instances_sorted.sort_by_key(|&id| {
             let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(id);
             (
@@ -1738,12 +1713,9 @@ where
                     stream_id,
                     options.save_proofs,
                     preallocate,
+                    memory_handler_clone.as_ref(),
                 );
                 tx_streams_clone.send(()).unwrap();
-                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                if is_shared_buffer {
-                    memory_handler_clone.release_buffer(witness_buffer);
-                }
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
@@ -1755,9 +1727,6 @@ where
                 launch_callback_c(instance_id as u64, "basic");
             }
         }
-
-        stop_watch.store(true, Ordering::Relaxed);
-        watch_proofs.join().unwrap();
 
         basic_proofs_done
             .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
@@ -2190,6 +2159,7 @@ where
         stream_id_: Option<usize>,
         save_proof: bool,
         gpu_preallocate: bool,
+        memory_handler: &MemoryHandler<F>,
     ) {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
         timer_start_info!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -2227,7 +2197,7 @@ where
             None => (false, 0),
         };
 
-        gen_proof_c(
+        let proof_stream_id = prepare_proof_c(
             p_setup,
             p_steps_params,
             pctx.get_global_challenge_ptr(),
@@ -2242,6 +2212,36 @@ where
             &const_pols_path,
             &const_pols_tree_path,
         );
+
+        if cfg!(feature = "gpu") {
+            let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
+            if is_shared_buffer {
+                memory_handler.release_buffer(witness_buffer);
+            }
+        }
+
+        gen_proof_c(
+            p_setup,
+            p_steps_params,
+            pctx.get_global_challenge_ptr(),
+            proofs[instance_id].read().unwrap().proof.as_ptr() as *mut u64,
+            &proof_file,
+            airgroup_id as u64,
+            air_id as u64,
+            instance_id as u64,
+            d_buffers.get_ptr(),
+            skip_recalculation,
+            proof_stream_id,
+            &const_pols_path,
+            &const_pols_tree_path,
+        );
+
+        if cfg!(not(feature = "gpu")) {
+            let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
+            if is_shared_buffer {
+                memory_handler.release_buffer(witness_buffer);
+            }
+        }
 
         timer_stop_and_log_info!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
     }

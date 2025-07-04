@@ -828,6 +828,51 @@ pub fn gen_proof_c(
 
 #[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
+pub fn prepare_proof_c(
+    p_setup: *mut c_void,
+    p_params: *mut u8,
+    p_global_challenge: *mut u8,
+    proof_buffer: *mut u64,
+    proof_file: &str,
+    airgroup_id: u64,
+    air_id: u64,
+    instance_id: u64,
+    d_buffers: *mut c_void,
+    skip_recalculation: bool,
+    stream_id: u64,
+    const_pols_path: &str,
+    const_tree_path: &str,
+) -> u64 {
+    let proof_file_name = CString::new(proof_file).unwrap();
+    let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_filename_name = CString::new(const_pols_path).unwrap();
+    let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_tree_filename_name = CString::new(const_tree_path).unwrap();
+    let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        prepare_proof(
+            p_setup,
+            airgroup_id,
+            air_id,
+            instance_id,
+            p_params as *mut std::os::raw::c_void,
+            p_global_challenge as *mut std::os::raw::c_void,
+            proof_buffer,
+            proof_file_ptr,
+            d_buffers,
+            skip_recalculation,
+            stream_id,
+            const_filename_ptr,
+            const_tree_filename_ptr,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
 pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
     unsafe {
         get_stream_proofs(d_buffers);
@@ -1717,6 +1762,27 @@ pub fn gen_proof_c(
     _const_tree_path: &str,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_proof_c(
+    _p_setup_ctx: *mut c_void,
+    _p_params: *mut u8,
+    _p_global_challenge: *mut u8,
+    _proof_buffer: *mut u64,
+    _proof_file: &str,
+    _airgroup_id: u64,
+    _air_id: u64,
+    _instance_id: u64,
+    _d_buffers: *mut c_void,
+    _skip_recalculation: bool,
+    _stream_id: u64,
+    _const_pols_path: &str,
+    _const_tree_path: &str,
+) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "prepare_proof: This is a mock call because there is no linked library");
     0
 }
 
