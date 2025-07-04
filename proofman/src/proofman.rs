@@ -573,6 +573,9 @@ where
         for _ in 0..instances_mine_no_all {
             rx_witness.recv().unwrap();
         }
+        for handle in handles {
+            handle.join().unwrap();
+        }
         timer_stop_and_log_info!(COMPUTE_WITNESS);
 
         Ok(())
@@ -1442,6 +1445,8 @@ where
 
         timer_start_info!(GENERATING_INNER_PROOFS);
 
+        let mut handles_proofs = vec![];
+
         let n_airgroups = self.pctx.global_info.air_groups.len();
 
         let mut proofs: Vec<RwLock<Proof<F>>> = Vec::new();
@@ -1719,6 +1724,8 @@ where
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
+            } else {
+                handles_proofs.push(handle);
             }
         }
 
@@ -1789,6 +1796,8 @@ where
             });
             if cfg!(not(feature = "gpu")) {
                 handle.join().unwrap();
+            } else {
+                handles_proofs.push(handle);
             }
         }
 
@@ -1930,6 +1939,9 @@ where
         drop(rec2_witness_tx);
         drop(compressor_witness_tx);
         drop(rec1_witness_tx);
+        for handle in handles_proofs {
+            handle.join().unwrap();
+        }
         for handle in handle_recursives {
             handle.join().unwrap();
         }
