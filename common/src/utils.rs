@@ -286,3 +286,21 @@ pub fn print_memory_usage() {
 pub fn create_pool(n_cores: usize) -> ThreadPool {
     ThreadPoolBuilder::new().num_threads(n_cores).build().unwrap()
 }
+
+pub fn configured_num_threads(n_local_processes: usize) -> usize {
+    let num_cores = num_cpus::get_physical();
+    tracing::info!("Node has {num_cores} cores");
+    if let Ok(val) = env::var("RAYON_NUM_THREADS") {
+        match val.parse::<usize>() {
+            Ok(n) if n > 0 => {
+                tracing::info!("Using {n} threads per process based on RAYON_NUM_THREADS environment variable");
+                return n;
+            }
+            _ => eprintln!("Warning: RAYON_NUM_THREADS=\"{val}\" invalid, falling back to physical cores"),
+        }
+    }
+
+    let num = num_cpus::get_physical() / n_local_processes;
+    tracing::info!("Using {num} threads based on physical cores per process, considering there are {n_local_processes} local processes");
+    num
+}

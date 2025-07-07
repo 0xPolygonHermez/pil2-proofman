@@ -19,11 +19,112 @@ use crate::{quotient_map_small_int, Field, PrimeField, PrimeField64, QuotientMap
 #[derive(Copy, Clone, Default, Serialize, Deserialize)]
 pub struct Goldilocks(u64);
 
+#[inline(always)]
+pub fn branch_hint() {
+    // NOTE: These are the currently supported assembly architectures. See the
+    // [nightly reference](https://doc.rust-lang.org/nightly/reference/inline-assembly.html) for
+    // the most up-to-date list.
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("", options(nomem, nostack, preserves_flags));
+    }
+}
+
 impl Goldilocks {
     const P: u64 = 0xFFFF_FFFF_0000_0001;
+    const NEG_ORDER: u64 = 0xFFFF_FFFF;
+    pub const SHIFT: u64 = 7;
 
-    pub(crate) const fn new(value: u64) -> Self {
+    pub const W: [u64; 33] = [
+        1,
+        18446744069414584320,
+        281474976710656,
+        16777216,
+        4096,
+        64,
+        8,
+        2198989700608,
+        4404853092538523347,
+        6434636298004421797,
+        4255134452441852017,
+        9113133275150391358,
+        4355325209153869931,
+        4308460244895131701,
+        7126024226993609386,
+        1873558160482552414,
+        8167150655112846419,
+        5718075921287398682,
+        3411401055030829696,
+        8982441859486529725,
+        1971462654193939361,
+        6553637399136210105,
+        8124823329697072476,
+        5936499541590631774,
+        2709866199236980323,
+        8877499657461974390,
+        3757607247483852735,
+        4969973714567017225,
+        2147253751702802259,
+        2530564950562219707,
+        1905180297017055339,
+        3524815499551269279,
+        7277203076849721926,
+    ];
+
+    pub const fn new(value: u64) -> Self {
         Self(value)
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn add_internal(a: u64, b: u64) -> u64 {
+        let (sum, over) = a.overflowing_add(b);
+        let (mut sum, over) = sum.overflowing_add(u64::from(over) * Self::NEG_ORDER);
+        if over {
+            branch_hint();
+            sum += Self::NEG_ORDER;
+        }
+        sum
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn sub_internal(a: u64, b: u64) -> u64 {
+        let (diff, under) = a.overflowing_sub(b);
+        let (mut diff, under) = diff.overflowing_sub(u64::from(under) * Self::NEG_ORDER);
+        if under {
+            branch_hint();
+            diff -= Self::NEG_ORDER;
+        }
+        diff
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn neg_internal(a: u64) -> u64 {
+        Self::sub_internal(0, a)
+    }
+
+    #[inline(always)]
+    #[allow(dead_code)]
+    fn mul_internal(a: u64, b: u64) -> u64 {
+        let res = u128::from(a) * u128::from(b);
+        let rl = res as u64;
+        let rh = (res >> 64) as u64;
+
+        let rhh = rh >> 32;
+        let rhl = rh & Self::NEG_ORDER;
+
+        let (mut aux1, borrow) = rl.overflowing_sub(rhh);
+        if borrow {
+            branch_hint();
+            aux1 -= Self::NEG_ORDER;
+        }
+
+        let aux = rhl * Self::NEG_ORDER;
+
+        let (result, carry) = aux1.overflowing_add(aux);
+        result + Self::NEG_ORDER * u64::from(carry)
     }
 }
 
@@ -119,11 +220,47 @@ impl Field for Goldilocks {
     const NEG_ONE: Self = Self::new(Self::ORDER_U64 - 1);
     const GENERATOR: Self = Self::new(7);
 
+    fn inverse(&self) -> Self {
+        let mut t: u64 = 0;
+        let mut r = Self::P;
+        let mut newt = 1;
+        let mut newr = self.0;
+
+        let mut q: u64;
+        let mut aux1: u64;
+        let mut aux2: u64;
+
+        while newr != 0 {
+            q = r / newr;
+            aux1 = t;
+            aux2 = newt;
+            t = aux2;
+            newt = Self::sub_internal(aux1, Self::mul_internal(q, aux2));
+
+            aux1 = r;
+            aux2 = newr;
+            r = aux2;
+
+            newr = Self::sub_internal(aux1, Self::mul_internal(q, aux2));
+        }
+
+        Goldilocks(t)
+    }
+
     fn try_inverse(&self) -> Option<Self> {
         if self.is_zero() {
             return None;
         }
-        Some(unsafe { Self::new(goldilocks_inv_ffi(&self.0)) })
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            Some(unsafe { Self::new(goldilocks_inv_ffi(&self.0)) })
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            Some(Self::new(self.inverse().0))
+        }
     }
 }
 
@@ -158,7 +295,7 @@ impl Add for Goldilocks {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
-            unreachable!("non-x86_64 architecture not supported");
+            Self(Self::add_internal(self.0, rhs.0))
         }
     }
 }
@@ -166,7 +303,14 @@ impl Add for Goldilocks {
 impl AddAssign for Goldilocks {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        unsafe { goldilocks_add_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { goldilocks_add_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.0 = Self::add_internal(self.0, rhs.0);
+        }
     }
 }
 
@@ -182,7 +326,7 @@ impl Sub for Goldilocks {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
-            unreachable!("non-x86_64 architecture not supported");
+            Self(Self::sub_internal(self.0, rhs.0))
         }
     }
 }
@@ -190,7 +334,14 @@ impl Sub for Goldilocks {
 impl SubAssign for Goldilocks {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        unsafe { goldilocks_sub_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { goldilocks_sub_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.0 = Self::sub_internal(self.0, rhs.0);
+        }
     }
 }
 
@@ -199,7 +350,14 @@ impl Neg for Goldilocks {
 
     #[inline]
     fn neg(self) -> Self::Output {
-        Self(unsafe { goldilocks_neg_ffi(&self.0) })
+        #[cfg(target_arch = "x86_64")]
+        {
+            Self(unsafe { goldilocks_neg_ffi(&self.0) })
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            Self(Self::neg_internal(self.0))
+        }
     }
 }
 
@@ -215,7 +373,7 @@ impl Mul for Goldilocks {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
-            unreachable!("non-x86_64 architecture not supported");
+            Self(Self::mul_internal(self.0, rhs.0))
         }
     }
 }
@@ -223,7 +381,15 @@ impl Mul for Goldilocks {
 impl MulAssign for Goldilocks {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
-        unsafe { goldilocks_mul_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { goldilocks_mul_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.0 = Self::mul_internal(self.0, rhs.0)
+        }
     }
 }
 
@@ -239,7 +405,7 @@ impl Div for Goldilocks {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
-            unreachable!("non-x86_64 architecture not supported");
+            Self(Self::mul_internal(self.0, rhs.inverse().0))
         }
     }
 }
@@ -247,7 +413,14 @@ impl Div for Goldilocks {
 impl DivAssign for Goldilocks {
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn div_assign(&mut self, rhs: Self) {
-        unsafe { goldilocks_div_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { goldilocks_div_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.0 = Self::mul_internal(self.0, rhs.inverse().0)
+        }
     }
 }
 
