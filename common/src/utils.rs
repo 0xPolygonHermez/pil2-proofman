@@ -301,6 +301,6 @@ pub fn configured_num_threads(n_local_processes: usize) -> usize {
     }
 
     let num = num_cpus::get_physical() / n_local_processes;
-    tracing::info!("Using {num} threads based on physical cores per process, considering there are {n_local_processes} local processes");
+    tracing::info!("Using {num} threads based on physical cores per process, considering there are {n_local_processes} processes per node");
     num
 }
