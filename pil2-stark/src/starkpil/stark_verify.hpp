@@ -571,7 +571,28 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
             isValid = false;
         }
     }
-    
+
+    zklog.trace("Verifying final pol");
+    uint64_t finalPolSize = ( 1<< starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits);
+    NTT_Goldilocks ntt(finalPolSize, 1);
+    Goldilocks::Element finalPol[finalPolSize * FIELD_EXTENSION];
+    for(uint64_t i = 0; i < finalPolSize; ++i) {
+        for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
+            finalPol[i*FIELD_EXTENSION + j] = Goldilocks::fromString(jproof["finalPol"][i][j]);
+        }
+    }
+    ntt.INTT(finalPol, finalPol, finalPolSize, FIELD_EXTENSION);
+    uint64_t lastStep = starkInfo.starkStruct.steps[starkInfo.starkStruct.steps.size() - 1].nBits;
+    uint64_t blowupFactor = starkInfo.starkStruct.nBitsExt - starkInfo.starkStruct.nBits;
+    uint64_t init = blowupFactor > lastStep ? 0 : 1 << (lastStep - blowupFactor);
+    for(uint64_t i = init; i < finalPolSize; ++i) {
+        for(uint64_t j = 0; j < FIELD_EXTENSION; ++j) {
+            if (!Goldilocks::isZero(finalPol[i*FIELD_EXTENSION + j])) {
+                zklog.error("Final polynomial is not zero at position " + std::to_string(i));
+                isValid = false;
+            }
+        }
+    }
     delete[] xDivXSub;
     delete[] trace;
     delete[] aux_trace;
