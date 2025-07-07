@@ -514,8 +514,8 @@ uint64_t check_device_memory() {
         return 0;
     }
 
-    std::cout << "Free memory: " << freeMem / (1024.0 * 1024.0) << " MB" << std::endl;
-    std::cout << "Total memory: " << totalMem / (1024.0 * 1024.0) << " MB" << std::endl;
+    zklog.trace("Free memory GPU: " +  to_string(freeMem / (1024.0 * 1024.0)) + " MB");
+    zklog.trace("Total memory GPU: " + to_string(totalMem / (1024.0 * 1024.0)) + " MB");
 
     return freeMem;
 }
