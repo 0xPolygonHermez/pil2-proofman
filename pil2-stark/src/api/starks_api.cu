@@ -36,61 +36,113 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
 {
     int deviceCount;
     cudaGetDeviceCount(&deviceCount);
-    if (deviceCount % node_size != 0) {
-        zklog.error("Device count must be divisible by numer of processe per node");
-        exit(1);
-    }
-    if (deviceCount < node_size) {
-        zklog.error("Numer of processes per node can not be greater than number of GPUs");
-        exit(1);
-    }
     MaxSizes *maxSizes = (MaxSizes *)maxSizes_;
 
-    DeviceCommitBuffers *d_buffers = new DeviceCommitBuffers();
-    d_buffers->n_gpus = (uint32_t) deviceCount / node_size;
-    d_buffers->gpus_g2l = (uint32_t *)malloc(deviceCount * sizeof(uint32_t));
-    d_buffers->my_gpu_ids = (uint32_t *)malloc(d_buffers->n_gpus * sizeof(uint32_t));
-    for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
-        d_buffers->my_gpu_ids[i] = node_rank * d_buffers->n_gpus + i;
-        d_buffers->gpus_g2l[d_buffers->my_gpu_ids[i]] = i;
-    }
-    d_buffers->d_aux_trace = (gl64_t **)malloc(deviceCount * sizeof(gl64_t*));
-    d_buffers->d_constPols = (gl64_t **)malloc(deviceCount * sizeof(gl64_t*));
-    d_buffers->d_constPolsAggregation = (gl64_t **)malloc(deviceCount * sizeof(gl64_t*));
 
-    for (int i = 0; i < d_buffers->n_gpus; i++) {
-        cudaSetDevice(d_buffers->my_gpu_ids[i]);
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[i], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
-        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[i], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
-    }
-    init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+    if(deviceCount <= node_size) {
+       
+        if (deviceCount % node_size != 0) {
+            zklog.error("Device count must be divisible by number of processes per node");
+            exit(1);
+        }
+        
+        DeviceCommitBuffers *d_buffers = new DeviceCommitBuffers();
+        d_buffers->n_gpus = (uint32_t) deviceCount / node_size;
+        d_buffers->gpus_g2l = (uint32_t *)malloc(deviceCount * sizeof(uint32_t));
+        d_buffers->my_gpu_ids = (uint32_t *)malloc(d_buffers->n_gpus * sizeof(uint32_t));
+        for (uint32_t i = 0; i < d_buffers->n_gpus; i++) {
+            d_buffers->my_gpu_ids[i] = node_rank * d_buffers->n_gpus + i;
+            d_buffers->gpus_g2l[d_buffers->my_gpu_ids[i]] = i;
+        }
+        d_buffers->d_aux_trace = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
 
-    TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+        for (int i = 0; i < d_buffers->n_gpus; i++) {
+            cudaSetDevice(d_buffers->my_gpu_ids[i]);
+            CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[i], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[i], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[i], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
+        }
+        init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+
+        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
 
 
 #ifdef NUMA_NODE
-    // Check device afinity with process NUMA node
-    for (int i = 0; i < d_buffers->n_gpus; i++) {
-        cudaDeviceProp prop;
-        cudaGetDeviceProperties(&prop, d_buffers->my_gpu_ids[i]);
-        if (prop.numaNode == -1) {
-            zklog.warning("Cannot verify NUMA affinity: GPU %d's NUMA node is unknown (prop.numaNode == -1). "
-                        "Assuming it matches process NUMA node %d", 
+        // Check device afinity with process NUMA node
+        for (int i = 0; i < d_buffers->n_gpus; i++) {
+            cudaDeviceProp prop;
+            cudaGetDeviceProperties(&prop, d_buffers->my_gpu_ids[i]);
+            if (prop.numaNode == -1) {
+                zklog.warning("Cannot verify NUMA affinity: GPU %d's NUMA node is unknown (prop.numaNode == -1). "
+                            "Assuming it matches process NUMA node %d", 
+                            d_buffers->my_gpu_ids[i], NUMA_NODE);
+            } 
+            else if (prop.numaNode != NUMA_NODE) {
+                zklog.error("NUMA affinity violation: GPU %d is on NUMA node %d, but process is bound to NUMA node %d",
+                        d_buffers->my_gpu_ids[i], prop.numaNode, NUMA_NODE);
+                exit(1);
+            }
+            else {
+                zklog.info("Verified GPU %d is on correct NUMA node %d", 
                         d_buffers->my_gpu_ids[i], NUMA_NODE);
-        } 
-        else if (prop.numaNode != NUMA_NODE) {
-            zklog.error("NUMA affinity violation: GPU %d is on NUMA node %d, but process is bound to NUMA node %d",
-                    d_buffers->my_gpu_ids[i], prop.numaNode, NUMA_NODE);
+            }
+        }
+#endif
+        return (void *)d_buffers;
+    } else {
+
+        if (node_size % deviceCount  != 0) {
+            zklog.error("Numer of processes per node must be divisible by device count");
             exit(1);
         }
-        else {
-            zklog.info("Verified GPU %d is on correct NUMA node %d", 
-                    d_buffers->my_gpu_ids[i], NUMA_NODE);
+        
+
+        DeviceCommitBuffers *d_buffers = new DeviceCommitBuffers();
+        d_buffers->n_gpus = 1;
+        d_buffers->gpus_g2l = (uint32_t *)malloc(deviceCount * sizeof(uint32_t));
+        d_buffers->my_gpu_ids = (uint32_t *)malloc(d_buffers->n_gpus * sizeof(uint32_t));
+        d_buffers->my_gpu_ids[0] = node_rank % deviceCount;
+        d_buffers->gpus_g2l[d_buffers->my_gpu_ids[0]] = 0;
+        
+        d_buffers->d_aux_trace = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->d_constPols = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+        d_buffers->d_constPolsAggregation = (gl64_t **)malloc(d_buffers->n_gpus * sizeof(gl64_t*));
+
+        cudaSetDevice(d_buffers->my_gpu_ids[0]);
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_aux_trace[0], maxSizes->maxAuxTraceArea * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPols[0], maxSizes->totalConstPols * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMalloc(&d_buffers->d_constPolsAggregation[0], maxSizes->totalConstPolsAggregation * sizeof(Goldilocks::Element)));
+        
+        init_gpu_const_2(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+
+        TranscriptGL_GPU::init_const(d_buffers->my_gpu_ids, d_buffers->n_gpus);
+
+
+#ifdef NUMA_NODE
+        // Check device afinity with process NUMA node
+        for (int i = 0; i < d_buffers->n_gpus; i++) {
+            cudaDeviceProp prop;
+            cudaGetDeviceProperties(&prop, d_buffers->my_gpu_ids[i]);
+            if (prop.numaNode == -1) {
+                zklog.warning("Cannot verify NUMA affinity: GPU %d's NUMA node is unknown (prop.numaNode == -1). "
+                            "Assuming it matches process NUMA node %d", 
+                            d_buffers->my_gpu_ids[i], NUMA_NODE);
+            } 
+            else if (prop.numaNode != NUMA_NODE) {
+                zklog.error("NUMA affinity violation: GPU %d is on NUMA node %d, but process is bound to NUMA node %d",
+                        d_buffers->my_gpu_ids[i], prop.numaNode, NUMA_NODE);
+                exit(1);
+            }
+            else {
+                zklog.info("Verified GPU %d is on correct NUMA node %d", 
+                        d_buffers->my_gpu_ids[i], NUMA_NODE);
+            }
         }
-    }
 #endif
-    return (void *)d_buffers;
+        return (void *)d_buffers;
+    }
 }
 
 uint64_t gen_device_streams(void *d_buffers_, uint64_t maxSizeTrace, uint64_t maxSizeContribution, uint64_t maxSizeProverBuffer, uint64_t maxSizeConst, uint64_t maxSizeConstTree, uint64_t maxSizeTraceAggregation, uint64_t maxSizeProverBufferAggregation, uint64_t maxSizeConstAggregation, uint64_t maxSizeConstTreeAggregation, uint64_t maxProofSize, uint64_t maxProofsPerGPU) {
