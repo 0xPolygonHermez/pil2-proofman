@@ -1,7 +1,6 @@
-use proofman_starks_lib_c::register_proof_done_callback_c;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Condvar, Mutex, Arc,
+    Condvar, Mutex,
 };
 
 pub struct Counter {
@@ -92,16 +91,4 @@ impl Counter {
     pub fn get_count(&self) -> usize {
         self.counter.load(Ordering::Acquire)
     }
-}
-
-pub fn contributions_done_listener(contributions_counter: Arc<Counter>) -> std::thread::JoinHandle<()> {
-    let (tx, rx) = crossbeam_channel::unbounded::<(u64, String)>();
-
-    register_proof_done_callback_c(tx);
-
-    std::thread::spawn(move || {
-        while rx.recv().is_ok() {
-            contributions_counter.increment();
-        }
-    })
 }

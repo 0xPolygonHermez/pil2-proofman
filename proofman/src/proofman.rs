@@ -6,8 +6,8 @@ use mpi::environment::Universe;
 use std::ops::Add;
 use std::sync::atomic::AtomicUsize;
 use proofman_common::{
-    MemoryHandler, calculate_fixed_tree, skip_prover_instance, Proof, ProofCtx, ProofType, ProofOptions, SetupCtx,
-    SetupsVadcop, ParamsGPU, DebugInfo, VerboseMode, CurveType,
+    calculate_fixed_tree, configured_num_threads, skip_prover_instance, CurveType, DebugInfo, MemoryHandler, ParamsGPU,
+    Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -424,7 +424,7 @@ where
 
         let max_witness_stored = self.gpu_params.max_witness_stored.min(instances_mine_no_all);
 
-        let max_num_threads = rayon::current_num_threads();
+        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
 
         let (tx_threads, rx_threads) = bounded::<()>(max_num_threads);
         let (tx_witness, rx_witness) = bounded::<()>(instances_mine);
@@ -656,7 +656,7 @@ where
         let valid_constraints = Arc::new(AtomicBool::new(true));
         let mut thread_handle: Option<std::thread::JoinHandle<()>> = None;
 
-        let max_num_threads = rayon::current_num_threads();
+        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
 
         for &instance_id in my_instances.iter() {
             let instance_info = instances[instance_id];
@@ -1135,7 +1135,7 @@ where
             false => 1,
         };
 
-        let max_num_threads = rayon::current_num_threads();
+        let max_num_threads = configured_num_threads(self.pctx.dctx_get_node_n_processes());
         let n_proof_threads = match cfg!(feature = "gpu") {
             true => self.n_gpus,
             false => 1,
