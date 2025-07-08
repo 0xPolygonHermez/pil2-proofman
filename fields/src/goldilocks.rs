@@ -6,10 +6,12 @@ use std::ops::DivAssign;
 
 use num_bigint::BigUint;
 
+#[cfg(target_arch = "x86_64")]
 use proofman_starks_lib_c::{
     goldilocks_add_assign_ffi, goldilocks_add_ffi, goldilocks_div_assign_ffi, goldilocks_div_ffi, goldilocks_inv_ffi,
     goldilocks_mul_assign_ffi, goldilocks_mul_ffi, goldilocks_neg_ffi, goldilocks_sub_assign_ffi, goldilocks_sub_ffi,
 };
+
 use rand::distr::{Distribution, StandardUniform};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -123,7 +125,16 @@ impl Field for Goldilocks {
         if self.is_zero() {
             return None;
         }
-        Some(unsafe { Self::new(goldilocks_inv_ffi(&self.0)) })
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            Some(unsafe { Self::new(goldilocks_inv_ffi(&self.0)) })
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            unreachable!("non-x86_64 architecture not supported");
+        }
     }
 }
 
@@ -158,6 +169,7 @@ impl Add for Goldilocks {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
+            let _ = rhs; // avoid unused variable warning
             unreachable!("non-x86_64 architecture not supported");
         }
     }
@@ -166,7 +178,16 @@ impl Add for Goldilocks {
 impl AddAssign for Goldilocks {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        unsafe { goldilocks_add_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { goldilocks_add_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let _ = rhs; // avoid unused variable warning
+            unreachable!("non-x86_64 architecture not supported");
+        }
     }
 }
 
@@ -182,6 +203,7 @@ impl Sub for Goldilocks {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
+            let _ = rhs; // avoid unused variable warning
             unreachable!("non-x86_64 architecture not supported");
         }
     }
@@ -190,7 +212,16 @@ impl Sub for Goldilocks {
 impl SubAssign for Goldilocks {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        unsafe { goldilocks_sub_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { goldilocks_sub_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let _ = rhs; // avoid unused variable warning
+            unreachable!("non-x86_64 architecture not supported");
+        }        
     }
 }
 
@@ -199,7 +230,15 @@ impl Neg for Goldilocks {
 
     #[inline]
     fn neg(self) -> Self::Output {
-        Self(unsafe { goldilocks_neg_ffi(&self.0) })
+        #[cfg(target_arch = "x86_64")]
+        {
+            Self(unsafe { goldilocks_neg_ffi(&self.0) })
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            unreachable!("non-x86_64 architecture not supported");
+        }        
     }
 }
 
@@ -215,6 +254,7 @@ impl Mul for Goldilocks {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
+            let _ = rhs; // avoid unused variable warning
             unreachable!("non-x86_64 architecture not supported");
         }
     }
@@ -223,7 +263,16 @@ impl Mul for Goldilocks {
 impl MulAssign for Goldilocks {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
-        unsafe { goldilocks_mul_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { goldilocks_mul_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let _ = rhs; // avoid unused variable warning
+            unreachable!("non-x86_64 architecture not supported");
+        }        
     }
 }
 
@@ -239,6 +288,7 @@ impl Div for Goldilocks {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
+            let _ = rhs; // avoid unused variable warning
             unreachable!("non-x86_64 architecture not supported");
         }
     }
@@ -247,7 +297,16 @@ impl Div for Goldilocks {
 impl DivAssign for Goldilocks {
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn div_assign(&mut self, rhs: Self) {
-        unsafe { goldilocks_div_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { goldilocks_div_assign_ffi(&mut self.0, &self.0, &rhs.0) }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let _ = rhs; // avoid unused variable warning
+            unreachable!("non-x86_64 architecture not supported");
+        }        
     }
 }
 
