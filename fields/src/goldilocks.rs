@@ -6,6 +6,7 @@ use std::ops::DivAssign;
 
 use num_bigint::BigUint;
 
+#[cfg(target_arch = "x86_64")]
 use proofman_starks_lib_c::{
     goldilocks_add_assign_ffi, goldilocks_add_ffi, goldilocks_div_assign_ffi, goldilocks_div_ffi, goldilocks_inv_ffi,
     goldilocks_mul_assign_ffi, goldilocks_mul_ffi, goldilocks_neg_ffi, goldilocks_sub_assign_ffi, goldilocks_sub_ffi,
