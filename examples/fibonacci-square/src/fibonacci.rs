@@ -1,30 +1,24 @@
 use std::sync::{Arc, RwLock};
 
-use proofman_common::{write_custom_commit_trace, AirInstance, FromTrace, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, write_custom_commit_trace, AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::WitnessComponent;
+use std::path::PathBuf;
+use fields::PrimeField64;
 
-use p3_field::PrimeField64;
+use crate::{BuildProofValues, BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace};
 
-use crate::{
-    BuildProofValues, BuildPublicValues, FibonacciSquareAirValues, FibonacciSquareRomTrace, FibonacciSquareTrace,
-    Module,
-};
-
-pub struct FibonacciSquare<F: PrimeField64> {
-    module: Arc<Module<F>>,
+pub struct FibonacciSquare {
     instance_ids: RwLock<Vec<usize>>,
 }
 
-impl<F: PrimeField64> FibonacciSquare<F> {
-    const MY_NAME: &'static str = "FiboSqre";
-
-    pub fn new(module: Arc<Module<F>>) -> Arc<Self> {
-        Arc::new(Self { module, instance_ids: RwLock::new(Vec::new()) })
+impl FibonacciSquare {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self { instance_ids: RwLock::new(Vec::new()) })
     }
 }
 
-impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
         let instance_ids =
             vec![pctx
                 .add_instance_all(FibonacciSquareTrace::<usize>::AIRGROUP_ID, FibonacciSquareTrace::<usize>::AIR_ID)];
@@ -32,11 +26,19 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
         instance_ids
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
         if stage == 1 {
             let instance_id = instance_ids[0];
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             let mut publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
 
@@ -49,18 +51,14 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
             trace[0].a = F::from_u64(a);
             trace[0].b = F::from_u64(b);
 
-            let mut modules = Vec::new();
             for i in 1..trace.num_rows() {
                 let tmp = b;
                 let result = (a.pow(2) + b.pow(2)) % module;
-                modules.push(a.pow(2) + b.pow(2));
                 (a, b) = (tmp, result);
 
                 trace[i].a = F::from_u64(a);
                 trace[i].b = F::from_u64(b);
             }
-
-            self.module.set_inputs(modules);
 
             publics.out = trace[trace.num_rows() - 1].b;
 
@@ -87,7 +85,9 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
         sctx: Arc<SetupCtx<F>>,
         check: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut trace_rom = FibonacciSquareRomTrace::new_zeroes();
+        let buffer =
+            vec![F::ZERO; FibonacciSquareRomTrace::<usize>::ROW_SIZE * FibonacciSquareRomTrace::<usize>::NUM_ROWS];
+        let mut trace_rom = FibonacciSquareRomTrace::new_from_vec_zeroes(buffer);
 
         for i in 0..trace_rom.num_rows() {
             trace_rom[i].line = F::from_u64(3 + i as u64);
@@ -111,10 +111,10 @@ impl<F: PrimeField64> WitnessComponent<F> for FibonacciSquare<F> {
         // let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
         // let proof_values = BuildProofValues::from_vec_guard(pctx.get_proof_values());
 
-        // log::info!("{}    First row 1: {:?}", Self::MY_NAME, trace[1]);
-        // log::info!("{}    Air values: {:?}", Self::MY_NAME, air_values);
-        // log::info!("{}    Airgroup values: {:?}", Self::MY_NAME, airgroup_values);
-        // log::info!("{}    Publics: {:?}", Self::MY_NAME, publics);
-        // log::info!("{}    Proof values: {:?}", Self::MY_NAME, proof_values);
+        // tracing::info!("  First row 1: {:?}", trace[1]);
+        // tracing::info!("  Air values: {:?}", air_values);
+        // tracing::info!("  Airgroup values: {:?}", airgroup_values);
+        // tracing::info!("  Publics: {:?}", publics);
+        // tracing::info!("  Proof values: {:?}", proof_values);
     }
 }

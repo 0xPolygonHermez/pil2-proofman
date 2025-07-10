@@ -1,9 +1,7 @@
-use p3_field::{Field, ExtensionField};
-
-use crate::goldilocks_quintic_extension::SquaringFp5;
+use fields::{ExtensionField, PrimeField64, SquaringFp5};
 
 /// Trait for elliptic curves
-pub trait EllipticCurve<F: Field, K: ExtensionField<F> + SquaringFp5>: Clone {
+pub trait EllipticCurve<F: PrimeField64, K: ExtensionField<F> + SquaringFp5<F>>: Clone {
     /// Parameter `A` of the curve
     const A: [u64; 5];
     /// Parameter `B` of the curve
@@ -160,7 +158,11 @@ pub trait EllipticCurve<F: Field, K: ExtensionField<F> + SquaringFp5>: Clone {
             if e2 { (x1, gx1.sqrt().expect("gx1 is square")) } else { (x2, gx2.sqrt().expect("gx2 is square")) };
 
         // Fix the sign of y
-        if f.sign0() == y.sign0() { Self::new(x, y) } else { Self::new(x, -y) }
+        if f.sign0() == y.sign0() {
+            Self::new(x, y)
+        } else {
+            Self::new(x, -y)
+        }
     }
 
     /// Hash to the curve

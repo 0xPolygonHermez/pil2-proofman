@@ -1,28 +1,31 @@
 [package]
 name = "fibonacci-square"
-version = "0.8.1"
-edition = "2021"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
 
 [lib]
 crate-type = ["dylib"]
 
 [dependencies]
-proofman-common = { path = "../../common" }
+proofman-common.workspace = true
 proofman-macros.workspace = true
+proofman.workspace = true
 witness.workspace = true
 pil-std-lib.workspace = true
-env_logger.workspace = true
-log.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
-rayon = "1"
-
+tracing.workspace = true
+fields.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_arrays.workspace = true
-num-bigint = "0.4"
+rayon.workspace = true
+num-bigint.workspace = true
 
 [features]
 default = []
 diagnostic = []
+dev = []
 gpu = ["proofman-common/gpu"]

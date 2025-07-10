@@ -2,15 +2,13 @@
 use clap::Parser;
 use libloading::{Library, Symbol};
 use std::sync::Arc;
-use proofman_common::{initialize_logger, DebugInfo, ProofCtx, ProofType, SetupCtx};
+use proofman_common::{ProofCtx, ProofType, SetupCtx};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
 use witness::{WitnessLibInitFn, WitnessManager};
 
-use p3_goldilocks::Goldilocks;
-
-use proofman_common::ProofOptions;
+use fields::Goldilocks;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -46,32 +44,50 @@ pub struct GenCustomCommitsFixedCmd {
 
 impl GenCustomCommitsFixedCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold());
-        println!();
-
-        initialize_logger(self.verbose.into());
-
         let mut custom_commits_map: HashMap<String, PathBuf> = HashMap::new();
         for commit in &self.custom_commits {
             if let Some((key, value)) = commit.split_once('=') {
                 custom_commits_map.insert(key.to_string(), PathBuf::from(value));
             } else {
-                eprintln!("Invalid commit format: {:?}", commit);
+                eprintln!("Invalid commit format: {commit:?}");
             }
         }
 
-        let options = ProofOptions::new(false, self.verbose.into(), false, false, false, DebugInfo::default());
-        let pctx = Arc::new(ProofCtx::create_ctx(self.proving_key.clone(), custom_commits_map, options));
+        let pctx;
+        #[cfg(distributed)]
+        {
+            pctx = Arc::new(ProofCtx::create_ctx(
+                self.proving_key.clone(),
+                custom_commits_map,
+                false,
+                false,
+                self.verbose.into(),
+                None,
+            ));
+        }
+        #[cfg(not(distributed))]
+        {
+            pctx = Arc::new(ProofCtx::create_ctx(
+                self.proving_key.clone(),
+                custom_commits_map,
+                false,
+                false,
+                self.verbose.into(),
+            ));
+        }
 
-        let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false));
+        tracing::info!("{}", format!("{} GenCustomCommitsFixed", format!("{: >12}", "Command").bright_green().bold()));
+        tracing::info!("");
 
-        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone(), None, None));
+        let sctx = Arc::new(SetupCtx::<Goldilocks>::new(&pctx.global_info, &ProofType::Basic, false, false));
+
+        let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
 
         // Load the witness computation dynamic library
         let library = unsafe { Library::new(&self.witness_lib)? };
 
         let witness_lib: Symbol<WitnessLibInitFn<Goldilocks>> = unsafe { library.get(b"init_library")? };
-        let mut witness_lib = witness_lib(wcm.get_pctx().options.verbose_mode)?;
+        let mut witness_lib = witness_lib(self.verbose.into(), None)?;
         witness_lib.register_witness(wcm.clone());
 
         wcm.gen_custom_commits_fixed(self.check)

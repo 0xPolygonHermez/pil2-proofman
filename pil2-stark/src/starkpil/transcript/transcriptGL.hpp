@@ -15,6 +15,7 @@ class TranscriptGL
 private:
     void _add1(Goldilocks::Element input);
     void _updateState();
+    Goldilocks::Element getFields1();
 
 public:
     Goldilocks::Element state[TRANSCRIPT_OUT_SIZE];
@@ -36,7 +37,6 @@ public:
     void getState(Goldilocks::Element* output);
     void getState(Goldilocks::Element* output, uint64_t nOutputs);
     void getPermutations(uint64_t *res, uint64_t n, uint64_t nBits);
-    Goldilocks::Element getFields1();
 };
 
 #endif

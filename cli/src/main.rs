@@ -7,7 +7,9 @@ use commands::get_constraints::GetConstraintsCmd;
 use commands::pil_helpers::PilHelpersCmd;
 use commands::prove::ProveCmd;
 use commands::verify_constraints::VerifyConstraintsCmd;
+use commands::stats::StatsCmd;
 use commands::verify_stark::VerifyStark;
+use commands::execute::ExecuteCmd;
 use commands::pilout::{PiloutSubcommands, PiloutCmd};
 use commands::setup::CheckSetupCmd;
 use proofman_util::cli::print_banner;
@@ -27,6 +29,8 @@ pub enum Commands {
     Prove(ProveCmd),
     PilHelpers(PilHelpersCmd),
     VerifyConstraints(VerifyConstraintsCmd),
+    Stats(StatsCmd),
+    Execute(ExecuteCmd),
     VerifyStark(VerifyStark),
     GetConstraints(GetConstraintsCmd),
     GenCustomCommitsFixed(GenCustomCommitsFixedCmd),
@@ -47,12 +51,14 @@ fn main() {
         Commands::GenCustomCommitsFixed(args) => args.run(),
         Commands::GetConstraints(args) => args.run(),
         Commands::VerifyStark(args) => args.run(),
+        Commands::Stats(args) => args.run(),
+        Commands::Execute(args) => args.run(),
     };
 
     if let Err(e) = result {
-        log::error!("{}", e);
+        tracing::error!("{}", e);
         exit(1);
     }
 
-    log::info!("Done");
+    tracing::info!("Done");
 }

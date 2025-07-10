@@ -112,6 +112,10 @@ public:
     void loadConstPols(void *constPols, std::string constPolsFile, uint64_t constPolsSize) {
         loadFileParallel(constPols, constPolsFile, constPolsSize);
     }
+
+    void loadConstTree(void *constTreePols, std::string constTreeFile, uint64_t constTreeSize) {
+        loadFileParallel(constTreePols, constTreeFile, constTreeSize, false);
+    }
 };
 
 #endif

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc};
-use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use rand::{
     distr::{Distribution, StandardUniform},
     rngs::StdRng,
@@ -21,15 +21,23 @@ where
 {
     execute!(Permutation1_6Trace, 2);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+        buffer_pool: &dyn BufferPool<F>,
+    ) {
         if stage == 1 {
             let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
-            let mut trace = Permutation1_6Trace::new();
+            let mut trace = Permutation1_6Trace::new_from_vec(buffer_pool.take_buffer());
             let num_rows = trace.num_rows();
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             // TODO: Add the ability to send inputs to permutation2
             //       and consequently add random selectors

@@ -47,11 +47,9 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
 
     FRIProof<Goldilocks::Element> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
     
-    params.pConstPolsAddress = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("const", false)]];
-    params.pConstPolsExtendedTreeAddress = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("const", true)]];
-    Starks<Goldilocks::Element> starks(setupCtx, proverHelpers, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
+    Starks<Goldilocks::Element> starks(setupCtx, params.pConstPolsExtendedTreeAddress, params.pCustomCommitsFixed);
     
-    ExpressionsPack expressionsCtx(setupCtx, proverHelpers);
+    ExpressionsPack expressionsCtx(setupCtx, &proverHelpers);
 
     TranscriptGL transcript(setupCtx.starkInfo.starkStruct.merkleTreeArity, setupCtx.starkInfo.starkStruct.merkleTreeCustom);
 

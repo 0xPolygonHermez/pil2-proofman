@@ -17,6 +17,16 @@ using namespace std;
 /* StarkInfo class contains the contents of the file zkevm.starkinfo.json,
    which is parsed during the constructor */
 
+struct EvalInfo
+{
+    uint64_t type; // 0: cm, 1: custom, 2: fixed
+    uint64_t offset;
+    uint64_t stride;
+    uint64_t dim;
+    uint64_t openingPos;
+    uint64_t evalPos;
+};
+
 typedef enum
 {
     const_ = 0,
@@ -127,7 +137,10 @@ public:
     uint64_t nConstants;
     
     uint64_t nStages;
-
+    uint64_t maxProofBuffSize;
+    uint64_t maxProofSize;
+    uint64_t maxTreeWidth;
+    
     vector<CustomCommits> customCommits;
 
     vector<PolMap> cmPolsMap;
@@ -159,6 +172,7 @@ public:
     bool verify_constraints = false;
     bool verify = false;
     bool gpu = false;
+    bool preallocate = false;
 
     uint64_t mapTotalN;
     uint64_t mapTotalNCustomCommitsFixed;
@@ -172,7 +186,7 @@ public:
     uint64_t proofValuesSize;
 
     /* Constructor */
-    StarkInfo(string file, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false);
+    StarkInfo(string file, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false, bool preallocate = false);
 
     /* Loads data from a json object */
     void load (json j);

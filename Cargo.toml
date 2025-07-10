@@ -1,8 +1,17 @@
+[workspace.package]
+version = "0.9.0"
+edition = "2021"
+license = "Apache-2.0 or MIT"
+keywords = ["pil2-proofman", "prover", "zero-knowledge"]
+repository = "https://github.com/0xPolygonHermez/pil2-proofman"
+categories = ["cryptography"]
+
 [workspace]
 members = [
     "cli",
     "curves",
     "common",
+    "fields",
     "hints",
     "pilout",
     "proofman",
@@ -11,7 +20,7 @@ members = [
     "transcript",
     "witness",
     "util",
-    "pil2-components/lib/std/rs",
+    # "pil2-components/lib/std/rs",
     # "pil2-components/test/std/direct_update/rs",
     # "pil2-components/test/std/diff_buses/rs",
     # "pil2-components/test/std/range_check/rs",
@@ -29,28 +38,32 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-proofman-macros = { path = "macros", version = "0.8.1" }
-proofman = { path = "proofman", version = "0.8.1" }
-proofman-common = { path = "common", version = "0.8.1" }
-proofman-hints = { path = "hints", version = "0.8.1" }
-proofman-util = { path = "util", version = "0.8.1" }
-proofman-cli = { path = "cli", version = "0.8.1" }
-pil-std-lib = { path = "pil2-components/lib/std/rs", version = "0.8.1" }
-witness = { path = "witness", version = "0.8.1" }
-pilout = { path = "pilout", version = "0.8.1" }
+proofman-macros = { path = "macros" }
+proofman = { path = "proofman" }
+proofman-common = { path = "common" }
+proofman-hints = { path = "hints" }
+proofman-util = { path = "util" }
+proofman-cli = { path = "cli" }
+pil-std-lib = { path = "pil2-components/lib/std/rs" }
+witness = { path = "witness" }
+pilout = { path = "pilout" }
+fields = { path = "fields"}
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
-p3-goldilocks = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
-p3-field = { git = "https://github.com/Plonky3/Plonky3.git", rev = "f00191a5303f2ff6ec99b9889aa66bee9f1f66ac" }
 bytes = "1.7"
 prost = "0.13"
 rand = "0.9"
 num-bigint = "0.4"
 prost-build = "0.13"
 num-traits = "0.2"
+crossbeam-channel = "0.5.15"
 rayon = "1"
 serde = { version = "1.0.130", features = ["derive"] }
+bytemuck = "1.23.1"
 serde_json = "1.0.68"
-serde_arrays = "0.1"
-serde_derive = "1.0.196"
+serde_arrays = "0.2"
 colored = "3"
+tracing = "0.1"
+libloading = "0.8.7"
+sysinfo = "0.35.1"
+blake3 = "1.3.1"

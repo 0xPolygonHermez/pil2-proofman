@@ -2,12 +2,12 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-use p3_field::Field;
+use fields::PrimeField64;
 use proofman_starks_lib_c::write_custom_commit_c;
 
 use crate::trace::Trace;
 
-pub fn write_custom_commit_trace<F: Field>(
+pub fn write_custom_commit_trace<F: PrimeField64>(
     custom_trace: &mut dyn Trace<F>,
     blowup_factor: u64,
     file_name: &Path,
@@ -31,7 +31,7 @@ pub fn write_custom_commit_trace<F: Field>(
             *val = F::from_u64(value);
         }
 
-        println!("Root from file: {:?}", root_file);
+        println!("Root from file: {root_file:?}");
     }
 
     write_custom_commit_c(

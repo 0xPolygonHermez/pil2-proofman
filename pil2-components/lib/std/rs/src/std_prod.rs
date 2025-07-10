@@ -5,11 +5,11 @@ use std::{
 
 use rayon::prelude::*;
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 
 use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
-use proofman_common::{skip_prover_instance, ModeName, ProofCtx, SetupCtx};
+use proofman_common::{skip_prover_instance, BufferPool, DebugInfo, ModeName, ProofCtx, SetupCtx};
 use proofman_hints::{
     get_hint_field_gc_constant_a, get_hint_field, get_hint_field_a, acc_mul_hint_fields, update_airgroupvalue,
     get_hint_ids_by_name, HintFieldOptions, HintFieldValue, HintFieldValuesVec,
@@ -28,8 +28,6 @@ pub struct StdProd<F: PrimeField64> {
 }
 
 impl<F: PrimeField64> StdProd<F> {
-    const MY_NAME: &'static str = "STD Prod";
-
     pub fn new() -> Arc<Self> {
         Arc::new(Self { debug_data: RwLock::new(HashMap::new()), debug_data_fast: RwLock::new(Vec::new()) })
     }
@@ -43,9 +41,7 @@ impl<F: PrimeField64> StdProd<F> {
         debug_data_fast: &mut DebugDataFast<F>,
         fast_mode: bool,
     ) {
-        let instances = pctx.dctx_get_instances();
-
-        let (airgroup_id, air_id, _) = instances[instance_id];
+        let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
         let air_instance_id = pctx.dctx_find_air_instance_id(instance_id);
         let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
@@ -56,9 +52,8 @@ impl<F: PrimeField64> StdProd<F> {
 
         let num_rows = pctx.global_info.airs[airgroup_id][air_id].num_rows;
 
-        log::debug!(
-            "{}: ··· Checking debug mode {} for instance_id {} of {}",
-            Self::MY_NAME,
+        tracing::debug!(
+            "··· Checking debug mode {} for instance_id {} of {}",
             if fast_mode { "fast" } else { "" },
             air_instance_id,
             air_name
@@ -95,8 +90,8 @@ impl<F: PrimeField64> StdProd<F> {
             );
 
             // If opids are specified, then only update the bus if the opid is in the list
-            if !pctx.options.debug_info.std_mode.opids.is_empty()
-                && !pctx.options.debug_info.std_mode.opids.contains(&opid.as_canonical_u64())
+            if !pctx.debug_info.read().unwrap().std_mode.opids.is_empty()
+                && !pctx.debug_info.read().unwrap().std_mode.opids.contains(&opid.as_canonical_u64())
             {
                 continue;
             }
@@ -234,7 +229,15 @@ impl<F: PrimeField64> StdProd<F> {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
         let std_prod_users_id = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users");
 
         if std_prod_users_id.is_empty() {
@@ -258,8 +261,8 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                 let air_id = extract_field_element_as_usize(&air_ids.values[i], "air_id");
 
                 for instance_id in instance_ids.iter() {
-                    if instances[*instance_id].0 != airgroup_id
-                        || instances[*instance_id].1 != air_id
+                    if instances[*instance_id].airgroup_id != airgroup_id
+                        || instances[*instance_id].air_id != air_id
                         || skip_prover_instance(&pctx, *instance_id).0
                     {
                         continue;
@@ -271,13 +274,13 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                     let setup = sctx.get_setup(airgroup_id, air_id);
                     let p_expressions_bin = setup.p_setup.p_expressions_bin;
 
-                    log::debug!("{}: ··· Computing witness for AIR '{}' at stage {}", Self::MY_NAME, air_name, stage);
+                    tracing::debug!("··· Computing witness for AIR '{}' at stage {}", air_name, stage);
 
                     let gprod_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_col");
 
                     // We know that at most one product hint exists
                     let gprod_hint = if gprod_hints.len() > 1 {
-                        panic!("Multiple product hints found for AIR '{}'", air_name);
+                        panic!("Multiple product hints found for AIR '{air_name}'");
                     } else {
                         gprod_hints[0] as usize
                     };
@@ -333,7 +336,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
             let instances = pctx.dctx_get_instances();
             let my_instances = pctx.dctx_get_my_instances();
 
-            let fast_mode = pctx.options.debug_info.std_mode.fast_mode;
+            let fast_mode = pctx.debug_info.read().unwrap().std_mode.fast_mode;
 
             let mut debug_data = self.debug_data.write().unwrap();
 
@@ -345,8 +348,8 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
 
                 // Get all air instances ids for this airgroup and air_id
                 for instance_id in my_instances.iter() {
-                    if instances[*instance_id].0 == airgroup_id
-                        && instances[*instance_id].1 == air_id
+                    if instances[*instance_id].airgroup_id == airgroup_id
+                        && instances[*instance_id].air_id == air_id
                         && instance_ids.contains(instance_id)
                         && !skip_prover_instance(&pctx, *instance_id).0
                     {
@@ -392,19 +395,17 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
         timer_stop_and_log_info!(DEBUG_MODE_PROD);
     }
 
-    fn end(&self, pctx: Arc<ProofCtx<F>>) {
-        if pctx.options.debug_info.std_mode.name == ModeName::Debug
-            || !pctx.options.debug_info.debug_instances.is_empty()
-        {
-            if pctx.options.debug_info.std_mode.fast_mode {
+    fn end(&self, pctx: Arc<ProofCtx<F>>, debug_info: &DebugInfo) {
+        if debug_info.std_mode.name == ModeName::Debug || !debug_info.debug_instances.is_empty() {
+            if debug_info.std_mode.fast_mode {
                 let mut debug_data_fast = self.debug_data_fast.write().unwrap();
-                check_invalid_opids(&pctx, Self::MY_NAME, &mut debug_data_fast);
+                check_invalid_opids(&pctx, &mut debug_data_fast);
             } else {
                 let mut debug_data = self.debug_data.write().unwrap();
 
-                let max_values_to_print = pctx.options.debug_info.std_mode.n_vals;
-                let print_to_file = pctx.options.debug_info.std_mode.print_to_file;
-                print_debug_info(&pctx, Self::MY_NAME, max_values_to_print, print_to_file, &mut debug_data);
+                let max_values_to_print = debug_info.std_mode.n_vals;
+                let print_to_file = debug_info.std_mode.print_to_file;
+                print_debug_info(&pctx, max_values_to_print, print_to_file, &mut debug_data);
             }
         }
     }

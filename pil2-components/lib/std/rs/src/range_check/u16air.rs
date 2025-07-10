@@ -3,37 +3,34 @@ use std::sync::{
     Arc,
 };
 
-use p3_field::PrimeField64;
-
+use fields::PrimeField64;
+use std::path::PathBuf;
 use proofman_util::create_buffer_fast;
 use rayon::{
     iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
     slice::ParallelSliceMut,
 };
 use witness::WitnessComponent;
-use proofman_common::{TraceInfo, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{AirInstance, BufferPool, ProofCtx, SetupCtx, TraceInfo};
 use std::sync::atomic::Ordering;
-
+use rayon::prelude::*;
 use crate::AirComponent;
 
 const P2_16: usize = 65536;
 
-type Min = u16;
-
 pub struct U16Air {
     airgroup_id: usize,
     air_id: usize,
+    shift: usize,
+    mask: usize,
     num_rows: usize,
     num_cols: usize,
-    mins: Vec<Min>,
     multiplicities: Vec<Vec<AtomicU64>>,
     instance_id: AtomicU64,
     calculated: AtomicBool,
 }
 
 impl<F: PrimeField64> AirComponent<F> for U16Air {
-    const MY_NAME: &'static str = "U16Air   ";
-
     fn new(pctx: &ProofCtx<F>, _sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self> {
         let airgroup_id = airgroup_id.expect("Airgroup ID must be provided");
         let air_id = air_id.expect("Air ID must be provided");
@@ -41,7 +38,6 @@ impl<F: PrimeField64> AirComponent<F> for U16Air {
 
         // Get and store the ranges
         let num_cols: usize = P2_16.div_ceil(num_rows);
-        let mins = (0..num_cols).into_par_iter().map(|i| (i * num_rows) as Min).collect();
 
         let multiplicities = (0..num_cols)
             .into_par_iter()
@@ -51,9 +47,10 @@ impl<F: PrimeField64> AirComponent<F> for U16Air {
         Arc::new(Self {
             airgroup_id,
             air_id,
+            shift: num_rows.trailing_zeros() as usize,
+            mask: num_rows - 1,
             num_rows,
             num_cols,
-            mins,
             multiplicities,
             instance_id: AtomicU64::new(0),
             calculated: AtomicBool::new(false),
@@ -63,21 +60,40 @@ impl<F: PrimeField64> AirComponent<F> for U16Air {
 
 impl U16Air {
     #[inline(always)]
-    pub fn update_inputs(&self, value: u16, multiplicity: u64) {
+    pub fn update_input(&self, value: u16, multiplicity: u64) {
         if self.calculated.load(Ordering::Relaxed) {
             return;
         }
-        let mins = &self.mins;
 
         // Identify to which sub-range the value belongs
-        let range_idx = value as usize / self.num_rows;
+        let range_idx = (value as usize) >> self.shift;
 
         // Get the row index
-        let min_local = mins[range_idx];
-        let row_idx = (value - min_local) as usize;
+        let row_idx = (value as usize) & self.mask;
 
         // Update the multiplicity
         self.multiplicities[range_idx][row_idx].fetch_add(multiplicity, Ordering::Relaxed);
+    }
+
+    pub fn update_inputs(&self, values: Vec<u32>) {
+        if self.calculated.load(Ordering::Relaxed) {
+            return;
+        }
+
+        for (value, multiplicity) in values.iter().enumerate() {
+            if *multiplicity == 0 {
+                continue;
+            }
+
+            // Identify to which sub-range the value belongs
+            let range_idx = value >> self.shift;
+
+            // Get the row index
+            let row_idx = value & self.mask;
+
+            // Update the multiplicity
+            self.multiplicities[range_idx][row_idx].fetch_add(*multiplicity as u64, Ordering::Relaxed);
+        }
     }
 
     pub fn airgroup_id(&self) -> usize {
@@ -90,18 +106,27 @@ impl U16Air {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for U16Air {
-    fn execute(&self, pctx: Arc<ProofCtx<F>>) -> Vec<usize> {
+    fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
         let (instance_found, mut instance_id) = pctx.dctx_find_instance(self.airgroup_id, self.air_id);
 
         if !instance_found {
             instance_id = pctx.add_instance_all(self.airgroup_id, self.air_id);
         }
 
+        self.calculated.store(false, Ordering::Relaxed);
         self.instance_id.store(instance_id as u64, Ordering::SeqCst);
         Vec::new()
     }
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, _instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
         if stage == 1 {
             let instance_id = self.instance_id.load(Ordering::Relaxed) as usize;
 
@@ -118,12 +143,18 @@ impl<F: PrimeField64> WitnessComponent<F> for U16Air {
                 let mut buffer = create_buffer_fast::<F>(buffer_size);
                 buffer.par_chunks_mut(self.num_cols).enumerate().for_each(|(row, chunk)| {
                     for (col, vec) in self.multiplicities.iter().enumerate() {
-                        chunk[col] = F::from_u64(vec[row].load(Ordering::Relaxed));
+                        chunk[col] = F::from_u64(vec[row].swap(0, Ordering::Relaxed));
                     }
                 });
 
-                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer));
+                let air_instance = AirInstance::new(TraceInfo::new(self.airgroup_id, self.air_id, buffer, false));
                 pctx.add_air_instance(air_instance, instance_id);
+            } else {
+                self.multiplicities.par_iter().for_each(|vec| {
+                    for vec_row in vec.iter() {
+                        vec_row.swap(0, Ordering::Relaxed);
+                    }
+                });
             }
         }
     }

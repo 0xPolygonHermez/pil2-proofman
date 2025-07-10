@@ -1,7 +1,11 @@
 [package]
 name = "transcript"
-version = "0.8.1"
-edition = "2021"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
 
 [dependencies]
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
@@ -9,4 +13,5 @@ proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 [features]
 default = []
 no_lib_link = ["proofman-starks-lib-c/no_lib_link"]
+disable_distributed = []
 gpu = ["proofman-starks-lib-c/gpu"]

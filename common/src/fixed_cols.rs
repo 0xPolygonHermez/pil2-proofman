@@ -3,7 +3,7 @@ use std::{
     path::{PathBuf, Path},
 };
 
-use p3_field::Field;
+use fields::PrimeField64;
 use proofman_starks_lib_c::{
     calculate_const_tree_c, load_const_pols_c, load_const_tree_c, write_const_tree_c, write_fixed_cols_bin_c,
 };
@@ -13,7 +13,7 @@ use crate::Setup;
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct FixedColsInfoC<F: Field> {
+pub struct FixedColsInfoC<F: PrimeField64> {
     name_size: u64,
     name: *mut u8,
     n_lengths: u64,
@@ -21,7 +21,7 @@ pub struct FixedColsInfoC<F: Field> {
     values: *mut F,
 }
 
-impl<F: Field> FixedColsInfoC<F> {
+impl<F: PrimeField64> FixedColsInfoC<F> {
     pub fn from_fixed_cols_info_vec(fixed_cols: &mut [FixedColsInfo<F>]) -> Vec<FixedColsInfoC<F>> {
         fixed_cols
             .iter_mut()
@@ -37,19 +37,19 @@ impl<F: Field> FixedColsInfoC<F> {
 }
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub struct FixedColsInfo<F: Field> {
+pub struct FixedColsInfo<F: PrimeField64> {
     name: String, // AirName.ColumnName
     lengths: Vec<u64>,
     values: Vec<F>,
 }
 
-impl<F: Field> FixedColsInfo<F> {
+impl<F: PrimeField64> FixedColsInfo<F> {
     pub fn new(name_: &str, lengths: Option<Vec<u64>>, values: Vec<F>) -> Self {
         FixedColsInfo { name: name_.to_string(), lengths: lengths.unwrap_or_default(), values }
     }
 }
 
-pub fn write_fixed_cols_bin<F: Field>(
+pub fn write_fixed_cols_bin<F: PrimeField64>(
     bin_file: &str,
     airgroup_name: &str,
     air_name: &str,
@@ -61,9 +61,7 @@ pub fn write_fixed_cols_bin<F: Field>(
     write_fixed_cols_bin_c(bin_file, airgroup_name, air_name, n, fixed_cols.len() as u64, fixed_cols_info_c_ptr);
 }
 
-pub fn calculate_fixed_tree<F: Field>(setup: &Setup<F>) {
-    const MY_NAME: &str = "Setup   ";
-
+pub fn calculate_fixed_tree<F: PrimeField64>(setup: &Setup<F>) {
     let const_pols_size = (setup.stark_info.n_constants * (1 << setup.stark_info.stark_struct.n_bits)) as usize;
     let const_pols_tree_size = setup.const_tree_size;
 
@@ -73,11 +71,11 @@ pub fn calculate_fixed_tree<F: Field>(setup: &Setup<F>) {
     let const_pols_path = setup.setup_path.display().to_string() + ".const";
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
 
-    log::debug!("{}   : ··· Loading const pols for AIR {} of type {:?}", MY_NAME, setup.air_name, setup.setup_type);
+    tracing::debug!("··· Loading const pols for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 
     load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols.len() as u64 * 8);
 
-    log::debug!("{}   : ··· Loading const tree for AIR {} of type {:?}", MY_NAME, setup.air_name, setup.setup_type);
+    tracing::debug!("··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 
     let verkey_path = setup.setup_path.display().to_string() + ".verkey.json";
 
@@ -103,16 +101,16 @@ pub fn calculate_fixed_tree<F: Field>(setup: &Setup<F>) {
     }
 }
 
-pub fn load_const_pols<F: Field>(setup_path: &Path, const_pols_size: usize, const_pols: &[F]) {
+pub fn load_const_pols<F: PrimeField64>(setup_path: &Path, const_pols_size: usize, const_pols: &[F]) {
     let const_pols_path = setup_path.to_string_lossy().to_string() + ".const";
     load_const_pols_c(const_pols.as_ptr() as *mut u8, const_pols_path.as_str(), const_pols_size as u64 * 8);
 }
 
-pub fn load_const_pols_tree<F: Field>(setup: &Setup<F>, const_tree: &[F]) {
+pub fn load_const_pols_tree<F: PrimeField64>(setup: &Setup<F>, const_tree: &[F]) {
     let const_pols_tree_path = setup.setup_path.display().to_string() + ".consttree";
     let const_pols_tree_size = setup.const_tree_size;
 
-    log::debug!("FixedCol   : ··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
+    tracing::debug!("FixedCol   : ··· Loading const tree for AIR {} of type {:?}", setup.air_name, setup.setup_type);
 
     load_const_tree_c(
         setup.p_setup.p_stark_info,

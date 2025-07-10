@@ -1,16 +1,17 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{initialize_logger, json_to_debug_instances_map, DebugInfo};
+use proofman_common::{json_to_debug_instances_map, DebugInfo};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
-
-use p3_goldilocks::Goldilocks;
+use std::io::Write;
+use bytemuck::cast_slice;
+use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::{ModeName, ProofOptions};
-use std::fs;
+use proofman_common::{ModeName, ProofOptions, ParamsGPU};
+use std::fs::{self, File};
 use std::path::Path;
 
 #[derive(Parser)]
@@ -18,7 +19,7 @@ use std::path::Path;
 #[command(propagate_version = true)]
 pub struct ProveCmd {
     /// Witness computation dynamic library path
-    #[clap(short, long)]
+    #[clap(short = 'w', long)]
     pub witness_lib: PathBuf,
 
     /// ROM file path
@@ -27,12 +28,8 @@ pub struct ProveCmd {
     #[clap(short = 'e', long)]
     pub elf: Option<PathBuf>,
 
-    /// Inputs path
-    #[clap(short = 'i', long)]
-    pub input_data: Option<PathBuf>,
-
     /// Public inputs path
-    #[clap(short = 'p', long)]
+    #[clap(short = 'i', long)]
     pub public_inputs: Option<PathBuf>,
 
     /// Setup folder path
@@ -64,6 +61,21 @@ pub struct ProveCmd {
 
     #[clap(short = 'c', long, value_name="KEY=VALUE", num_args(1..))]
     pub custom_commits: Vec<String>,
+
+    #[clap(short = 'r', long, default_value_t = false)]
+    pub preallocate: bool,
+
+    #[clap(short = 't', long)]
+    pub max_streams: Option<usize>,
+
+    #[clap(short = 'n', long)]
+    pub number_threads_witness: Option<usize>,
+
+    #[clap(short = 'x', long)]
+    pub max_witness_stored: Option<usize>,
+
+    #[clap(short = 'b', long, default_value_t = false)]
+    pub save_proofs: bool,
 }
 
 impl ProveCmd {
@@ -71,13 +83,11 @@ impl ProveCmd {
         println!("{} Prove", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        initialize_logger(self.verbose.into());
-
         if Path::new(&self.output_dir.join("proofs")).exists() {
             // In distributed mode two different processes may enter here at the same time and try to remove the same directory
             if let Err(e) = fs::remove_dir_all(self.output_dir.join("proofs")) {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    panic!("Failed to remove the proofs directory: {:?}", e);
+                    panic!("Failed to remove the proofs directory: {e:?}");
                 }
             }
         }
@@ -85,7 +95,7 @@ impl ProveCmd {
         if let Err(e) = fs::create_dir_all(self.output_dir.join("proofs")) {
             if e.kind() != std::io::ErrorKind::AlreadyExists {
                 // prevent collision in distributed mode
-                panic!("Failed to create the proofs directory: {:?}", e);
+                panic!("Failed to create the proofs directory: {e:?}");
             }
         }
 
@@ -100,48 +110,89 @@ impl ProveCmd {
             if let Some((key, value)) = commit.split_once('=') {
                 custom_commits_map.insert(key.to_string(), PathBuf::from(value));
             } else {
-                eprintln!("Invalid commit format: {:?}", commit);
+                eprintln!("Invalid commit format: {commit:?}");
             }
+        }
+
+        let verify_constraints = debug_info.std_mode.name == ModeName::Debug;
+
+        let mut gpu_params = ParamsGPU::new(self.preallocate);
+
+        if self.max_streams.is_some() {
+            gpu_params.with_max_number_streams(self.max_streams.unwrap());
+        }
+        if self.number_threads_witness.is_some() {
+            gpu_params.with_number_threads_pools_witness(self.number_threads_witness.unwrap());
+        }
+        if self.max_witness_stored.is_some() {
+            gpu_params.with_max_witness_stored(self.max_witness_stored.unwrap());
+        }
+
+        let proofman;
+        #[cfg(distributed)]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                verify_constraints,
+                self.aggregation,
+                self.final_snark,
+                gpu_params,
+                self.verbose.into(),
+                None,
+            )?;
+        }
+        #[cfg(not(distributed))]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                verify_constraints,
+                self.aggregation,
+                self.final_snark,
+                gpu_params,
+                self.verbose.into(),
+            )?;
         }
 
         if debug_info.std_mode.name == ModeName::Debug {
             match self.field {
-                Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
+                Field::Goldilocks => proofman.verify_proof_constraints(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
-                    self.input_data.clone(),
-                    self.proving_key.clone(),
+                    None,
                     self.output_dir.clone(),
-                    custom_commits_map,
-                    ProofOptions::new(
-                        false,
-                        self.verbose.into(),
-                        self.aggregation,
-                        self.final_snark,
-                        self.verify_proofs,
-                        debug_info,
-                    ),
+                    &debug_info.clone(),
+                    self.verbose.into(),
                 )?,
             };
         } else {
-            match self.field {
-                Field::Goldilocks => ProofMan::<Goldilocks>::generate_proof(
+            let (_, vadcop_final_proof) = match self.field {
+                Field::Goldilocks => proofman.generate_proof(
                     self.witness_lib.clone(),
                     self.public_inputs.clone(),
-                    self.input_data.clone(),
-                    self.proving_key.clone(),
-                    self.output_dir.clone(),
-                    custom_commits_map,
+                    None,
+                    self.verbose.into(),
                     ProofOptions::new(
                         false,
-                        self.verbose.into(),
                         self.aggregation,
                         self.final_snark,
                         self.verify_proofs,
-                        debug_info,
+                        self.save_proofs,
+                        self.output_dir.clone(),
                     ),
                 )?,
             };
+
+            proofman.set_barrier();
+
+            if let Some(vadcop_final_proof) = vadcop_final_proof {
+                // Save the vadcop final proof
+                let output_file_path = self.output_dir.join("proofs/vadcop_final_proof.bin");
+                // write a Vec<u64> to a bin file stored in output_file_path
+                let mut file = File::create(output_file_path)?;
+                file.write_all(cast_slice(&vadcop_final_proof))?;
+            }
         }
 
         Ok(())

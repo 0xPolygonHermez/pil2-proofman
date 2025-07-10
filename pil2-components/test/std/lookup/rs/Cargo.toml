@@ -1,25 +1,27 @@
 [package]
 name = "lookup"
-version = "0.8.1"
-edition = "2021"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
 
 [lib]
 crate-type = ["dylib"]
 
 [dependencies]
+pil-std-lib = { path = "../../../../lib/std/rs" }
+
 proofman.workspace = true
 proofman-common.workspace = true
 proofman-macros.workspace = true
 proofman-cli.workspace = true
 witness.workspace = true
-pil-std-lib = { path = "../../../../lib/std/rs" }
-
-env_logger.workspace = true
-log.workspace = true
+tracing.workspace = true
 rand.workspace = true
 num-bigint.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
+fields.workspace = true
 rayon.workspace = true
 
 [build-dependencies]
@@ -29,4 +31,6 @@ proofman-cli.workspace = true
 default = []
 no_lib_link = ["proofman-common/no_lib_link"]
 diagnostic = ["proofman-macros/diagnostic"]
+disable_distributed = ["proofman-common/disable_distributed"]
 debug = []
+dev = []
