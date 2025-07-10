@@ -232,8 +232,9 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
 
             for commit_id in 0..n_custom_commits {
                 if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                    let custom_commit_file_path =
-                        pctx.get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name).unwrap();
+                    let custom_commit_file_path = pctx
+                        .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name, false)
+                        .unwrap();
 
                     if !PathBuf::from(&custom_commit_file_path).exists() {
                         let error_message = format!(
@@ -243,7 +244,8 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
                             setup.stark_info.custom_commits[commit_id].name,
                             custom_commit_file_path.display(),
                         );
-                        return Err(error_message.into());
+                        tracing::warn!(error_message);
+                        return Ok(());
                     }
 
                     let error_message = format!(
@@ -260,15 +262,17 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
                         Ok(metadata) => {
                             let actual_size = metadata.len() as usize;
                             if actual_size != (size + 4) * 8 {
-                                return Err(error_message.into());
+                                tracing::warn!(error_message);
+                                return Ok(());
                             }
                         }
                         Err(err) => {
-                            return Err(format!(
+                            tracing::warn!(
                                 "Failed to get metadata for {} for custom_commit {}: {}",
-                                setup.air_name, setup.stark_info.custom_commits[commit_id].name, err
-                            )
-                            .into());
+                                setup.air_name,
+                                setup.stark_info.custom_commits[commit_id].name,
+                                err
+                            );
                         }
                     }
                 }

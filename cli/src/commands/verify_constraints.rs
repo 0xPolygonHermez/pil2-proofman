@@ -105,6 +105,7 @@ impl VerifyConstraintsCmd {
                 PathBuf::new(),
                 &debug_info,
                 self.verbose.into(),
+                false,
             )?,
         };
 
