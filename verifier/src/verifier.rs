@@ -328,18 +328,18 @@ pub fn stark_verify(
         .flat_map(|pol| pol.value.iter().cloned())
         .collect();
 
-    tracing::debug!("Verifying proof");
+    println!("Verifying proof");
     for q in 0..verifier_info.n_fri_queries as usize {
         // 1) Fixed MT
         if !verify_mt(&verifier_info.root_c, &s0_siblings[q][0], fri_queries[q], &s0_vals[q][0], verifier_info.arity) {
-            tracing::error!("Fixed MT verification failed for query {}", q);
+            println!("Fixed MT verification failed for query {}", q);
             return false;
         }
 
         // 2) stage MTs
         for (s, root) in roots.iter().enumerate().take(verifier_info.n_stages as usize + 1) {
             if !verify_mt(root, &s0_siblings[q][s + 1], fri_queries[q], &s0_vals[q][s + 1], verifier_info.arity) {
-                tracing::error!("Stage MT verification failed for query {}", q);
+                println!("Stage MT verification failed for query {}", q);
                 return false;
             }
         }
@@ -354,7 +354,7 @@ pub fn stark_verify(
                 &vals_fri[q][s as usize],
                 verifier_info.arity,
             ) {
-                tracing::error!("FRI step MT verification failed for query {}", q);
+                println!("FRI step MT verification failed for query {}", q);
                 return false;
             }
         }
@@ -372,7 +372,7 @@ pub fn stark_verify(
             query_fri == final_pol[idx as usize]
         };
         if !valid_query {
-            tracing::error!("FRI query verification failed for query {}", q);
+            println!("FRI query verification failed for query {}", q);
             return false;
         }
 
@@ -391,14 +391,14 @@ pub fn stark_verify(
                 let group_idx = (idx / (1 << verifier_info.fri_steps[s + 1])) as usize;
                 for (i, val) in value.iter().enumerate().take(3usize) {
                     if vals_fri[q][s][group_idx * 3 + i] != *val {
-                        tracing::error!("FRI foldings verification failed at step {} for query {}", s, q,);
+                        println!("FRI foldings verification failed at step {} for query {}", s, q,);
                         return false;
                     }
                 }
             } else {
                 for (i, val) in value.iter().enumerate().take(3usize) {
                     if final_pol[idx as usize][i] != *val {
-                        tracing::error!("Final polynomial verification failed at index {} for query {}", idx, q,);
+                        println!("Final polynomial verification failed at index {} for query {}", idx, q,);
                         return false;
                     }
                 }
@@ -406,7 +406,7 @@ pub fn stark_verify(
         }
     }
 
-    tracing::debug!("Verifying Quotient polynomial");
+    println!("Verifying Quotient polynomial");
     let mut x_acc = CubicExtensionField { value: [Goldilocks::ONE, Goldilocks::ZERO, Goldilocks::ZERO] };
     let mut q = CubicExtensionField { value: [Goldilocks::ZERO, Goldilocks::ZERO, Goldilocks::ZERO] };
     for i in 0..verifier_info.q_deg {
@@ -416,12 +416,12 @@ pub fn stark_verify(
 
     let q_val = q_verify(&challenges, &evals, &publics, &zi, xi_challenge);
     if q_val != q {
-        tracing::error!("Quotient polynomial verification failed");
+        println!("Quotient polynomial verification failed");
         return false;
     }
-    tracing::debug!("Quotient polynomial verification passed");
+    println!("Quotient polynomial verification passed");
 
-    tracing::debug!("Verifying final polynomial");
+    println!("Verifying final polynomial");
     let final_pol_size = 1 << verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize];
     intt_tiny(&mut final_pol_vals, verifier_info.fri_steps[(verifier_info.n_fri_steps - 1) as usize] as usize, 3);
     let init = 1
@@ -430,13 +430,13 @@ pub fn stark_verify(
     for i in init..final_pol_size as usize {
         for j in 0..3usize {
             if final_pol_vals[i * 3 + j] != Goldilocks::ZERO {
-                tracing::error!("Final polynomial has non-zero value at index {}: {:?}", i, final_pol_vals[i * 3 + j]);
+                println!("Final polynomial has non-zero value at index {}: {:?}", i, final_pol_vals[i * 3 + j]);
                 return false;
             }
         }
     }
-    tracing::debug!("Final polynomial verification passed");
-    tracing::debug!("Proof verification succeeded");
+    println!("Final polynomial verification passed");
+    println!("Proof verification succeeded");
 
     true
 }

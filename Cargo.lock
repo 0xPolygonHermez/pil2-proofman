@@ -915,7 +915,6 @@ dependencies = [
  "fields",
  "num-bigint",
  "rand",
- "tracing",
 ]
 
 [[package]]

@@ -10,7 +10,6 @@ categories = { workspace = true }
 [dependencies]
 fields = { workspace = true }
 
-tracing = { workspace = true }
 num-bigint = { workspace = true }
 rand = { workspace = true }
 
