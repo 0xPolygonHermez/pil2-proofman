@@ -1,14 +1,13 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{initialize_logger, DebugInfo};
 use std::path::PathBuf;
 use colored::Colorize;
 use crate::commands::field::Field;
 
-use p3_goldilocks::Goldilocks;
+use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::{VerboseMode, ProofOptions};
+use proofman_common::VerboseMode;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -35,14 +34,29 @@ impl CheckSetupCmd {
 
         let verbose_mode = VerboseMode::Debug;
 
-        initialize_logger(verbose_mode);
-
-        match self.field {
-            Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
-                self.proving_key.clone(),
-                ProofOptions::new(false, verbose_mode, self.aggregation, self.final_snark, false, DebugInfo::default()),
-            )?,
-        };
+        #[cfg(distributed)]
+        {
+            match self.field {
+                Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
+                    self.proving_key.clone(),
+                    self.aggregation,
+                    self.final_snark,
+                    verbose_mode,
+                    None,
+                )?,
+            };
+        }
+        #[cfg(not(distributed))]
+        {
+            match self.field {
+                Field::Goldilocks => ProofMan::<Goldilocks>::check_setup(
+                    self.proving_key.clone(),
+                    self.aggregation,
+                    self.final_snark,
+                    verbose_mode,
+                )?,
+            };
+        }
 
         Ok(())
     }

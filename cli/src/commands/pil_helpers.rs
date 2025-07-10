@@ -95,10 +95,10 @@ struct StageColumnCtx {
 
 impl PilHelpersCmd {
     pub fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("{} Pil-helpers", format!("{: >12}", "Command").bright_green().bold());
-        println!();
+        initialize_logger(self.verbose.into(), None);
 
-        initialize_logger(self.verbose.into());
+        tracing::info!("{}", format!("{} Pil-helpers", format!("{: >12}", "Command").bright_green().bold()));
+        tracing::info!("");
 
         // Check if the pilout file exists
         if !self.pilout.exists() {
@@ -193,7 +193,7 @@ impl PilHelpersCmd {
                     "F".to_string() // Case when lengths.len() == 0
                 } else {
                     // Start with "F" and apply each length in reverse order
-                    symbol.lengths.iter().rev().fold("F".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
+                    symbol.lengths.iter().rev().fold("F".to_string(), |acc, &length| format!("[{acc}; {length}]"))
                 };
                 let ext_type = if symbol.lengths.is_empty() {
                     "FieldExtension<F>".to_string() // Case when lengths.len() == 0
@@ -203,7 +203,7 @@ impl PilHelpersCmd {
                         .lengths
                         .iter()
                         .rev()
-                        .fold("FieldExtension<F>".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
+                        .fold("FieldExtension<F>".to_string(), |acc, &length| format!("[{acc}; {length}]"))
                 };
                 if symbol.r#type == SymbolType::ProofValue as i32 {
                     if proof_values.is_empty() {
@@ -231,18 +231,14 @@ impl PilHelpersCmd {
                         "u64".to_string() // Case when lengths.len() == 0
                     } else {
                         // Start with "u64" and apply each length in reverse order
-                        symbol
-                            .lengths
-                            .iter()
-                            .rev()
-                            .fold("u64".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
+                        symbol.lengths.iter().rev().fold("u64".to_string(), |acc, &length| format!("[{acc}; {length}]"))
                     };
                     let default = "0".to_string();
                     let r#type_default = if symbol.lengths.is_empty() {
                         default // Case when lengths.len() == 0
                     } else {
                         // Start with "u64" and apply each length in reverse order
-                        symbol.lengths.iter().rev().fold(default, |acc, &length| format!("[{}; {}]", acc, length))
+                        symbol.lengths.iter().rev().fold(default, |acc, &length| format!("[{acc}; {length}]"))
                     };
                     publics[0].values_u64.push(Column64Ctx {
                         name: name.to_owned(),
@@ -296,17 +292,18 @@ impl PilHelpersCmd {
                                 .lengths
                                 .iter()
                                 .rev()
-                                .fold("F".to_string(), |acc, &length| format!("[{}; {}]", acc, length))
+                                .fold("F".to_string(), |acc, &length| format!("[{acc}; {length}]"))
                         };
-                        let ext_type =
-                            if symbol.lengths.is_empty() {
-                                "FieldExtension<F>".to_string() // Case when lengths.len() == 0
-                            } else {
-                                // Start with "F" and apply each length in reverse order
-                                symbol.lengths.iter().rev().fold("FieldExtension<F>".to_string(), |acc, &length| {
-                                    format!("[{}; {}]", acc, length)
-                                })
-                            };
+                        let ext_type = if symbol.lengths.is_empty() {
+                            "FieldExtension<F>".to_string() // Case when lengths.len() == 0
+                        } else {
+                            // Start with "F" and apply each length in reverse order
+                            symbol
+                                .lengths
+                                .iter()
+                                .rev()
+                                .fold("FieldExtension<F>".to_string(), |acc, &length| format!("[{acc}; {length}]"))
+                        };
                         if symbol.r#type == SymbolType::WitnessCol as i32 {
                             if symbol.stage.unwrap() == 1 {
                                 air.columns.push(ColumnCtx { name: name.to_owned(), r#type });

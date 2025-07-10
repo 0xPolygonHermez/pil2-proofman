@@ -1,43 +1,53 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
-use proofman_common::{AirInstance, FromTrace, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, AirInstance, FromTrace, ProofCtx, SetupCtx};
 use witness::{WitnessComponent, execute};
 use pil_std_lib::Std;
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use rayon::prelude::*;
 use crate::{BuildPublicValues, FibonacciSquareTrace, ModuleAirValues, ModuleTrace};
 
 pub struct Module<F: PrimeField64> {
-    inputs: Mutex<Vec<u64>>,
+    fibonacci_rows: u64,
     instance_ids: RwLock<Vec<usize>>,
     std_lib: Arc<Std<F>>,
 }
 
 impl<F: PrimeField64> Module<F> {
-    const MY_NAME: &'static str = "ModuleSM";
-
-    pub fn new(std_lib: Arc<Std<F>>) -> Arc<Self> {
-        Arc::new(Module { inputs: Mutex::new(Vec::new()), std_lib, instance_ids: RwLock::new(Vec::new()) })
-    }
-
-    pub fn set_inputs(&self, inputs: Vec<u64>) {
-        *self.inputs.lock().unwrap() = inputs;
+    pub fn new(fibonacci_rows: u64, std_lib: Arc<Std<F>>) -> Arc<Self> {
+        Arc::new(Module { fibonacci_rows, std_lib, instance_ids: RwLock::new(Vec::new()) })
     }
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
     execute!(ModuleTrace, FibonacciSquareTrace::<usize>::NUM_ROWS / ModuleTrace::<usize>::NUM_ROWS);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+        buffer_pool: &dyn BufferPool<F>,
+    ) {
         if stage == 1 {
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage 1");
             let publics = BuildPublicValues::from_vec_guard(pctx.get_publics());
             let module = F::as_canonical_u64(&publics.module);
+            let mut a = F::as_canonical_u64(&publics.in1);
+            let mut b = F::as_canonical_u64(&publics.in2);
 
             //range_check(colu: mod - x_mod, min: 1, max: 2**8-1);
             let range = self.std_lib.get_range(1, (1 << 8) - 1, None);
 
-            let inputs = self.inputs.lock().unwrap();
+            let mut modules = Vec::new();
+            for _ in 1..self.fibonacci_rows {
+                let tmp = b;
+                let result = (a.pow(2) + b.pow(2)) % module;
+                modules.push(a.pow(2) + b.pow(2));
+                (a, b) = (tmp, result);
+            }
 
             let num_rows = ModuleTrace::<F>::NUM_ROWS;
 
@@ -49,14 +59,14 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 }
                 let mut x_mods = Vec::new();
 
-                let mut trace = ModuleTrace::new();
+                let mut trace = ModuleTrace::new_from_vec(buffer_pool.take_buffer());
 
                 let start = j * num_rows;
-                let end = ((j + 1) * num_rows).min(inputs.len());
+                let end = ((j + 1) * num_rows).min(modules.len());
 
-                let inputs_slice = inputs[start..end].to_vec();
+                let modules_slice = modules[start..end].to_vec();
 
-                for (i, input) in inputs_slice.iter().enumerate() {
+                for (i, input) in modules_slice.iter().enumerate() {
                     let x = *input;
                     let q = x / module;
                     let x_mod = x % module;
@@ -67,7 +77,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                     x_mods.push(x_mod);
                 }
 
-                for i in inputs_slice.len()..num_rows {
+                for i in modules_slice.len()..num_rows {
                     trace[i].x = F::ZERO;
                     trace[i].q = F::ZERO;
                     trace[i].x_mod = F::ZERO;
@@ -81,7 +91,7 @@ impl<F: PrimeField64> WitnessComponent<F> for Module<F> {
                 });
 
                 // Trivial range check for the remaining rows
-                for _ in inputs_slice.len()..trace.num_rows() {
+                for _ in modules_slice.len()..trace.num_rows() {
                     self.std_lib.range_check(module as i64, 1, range);
                 }
 

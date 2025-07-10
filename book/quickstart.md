@@ -98,7 +98,7 @@ Note: By the time being we are working by default with Goldilocks but we will ad
 
 ```rust
 use proofman_common::trace;
-use goldilocks::Goldilocks;
+use fields::Goldilocks;
 
 trace!(Fibonacci {
 	a: Goldilocks,
@@ -110,15 +110,14 @@ On the other hand it has created the `fibonacci_executor.rs` file that specifies
 
 ```rust
 use proofman::{executor, executor::Executor, ProofCtx, trace};
-use goldilocks::{Goldilocks, AbstractField};
-use log::debug;
+use fields::{Goldilocks, AbstractField};
 
 executor!(FibonacciExecutor);
 
 impl Executor<Goldilocks> for FibonacciExecutor {
     fn witness_computation(&self, stage_id: u32, pctx: &mut ProofCtx<Goldilocks>) {
         if stage_id != 1 {
-            debug!("Nothing to do for stage_id {}", stage_id);
+            tracing::debug!("Nothing to do for stage_id {}", stage_id);
             return;
         }
 

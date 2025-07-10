@@ -44,8 +44,9 @@ impl Default for StdMode {
 }
 
 #[allow(dead_code)]
-#[derive(Copy, Clone)]
+#[derive(Default, Copy, Clone)]
 pub enum ModeName {
+    #[default]
     Standard = 0,
     Debug = 1,
 }

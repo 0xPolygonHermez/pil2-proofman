@@ -132,7 +132,6 @@ class ProverHelpers {
         
         Goldilocks::Element w = Goldilocks::one();
         Goldilocks::Element sn = Goldilocks::shift();
-
         for (uint64_t i = 0; i < nBits; i++) Goldilocks::square(sn, sn);
 
         for (uint64_t i=0; i<extend; i++) {

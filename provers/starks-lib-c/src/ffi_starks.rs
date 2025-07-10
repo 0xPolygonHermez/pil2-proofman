@@ -4,14 +4,58 @@
 
 use ::std::os::raw::c_void;
 
+#[cfg(not(feature = "no_lib_link"))]
+use ::std::os::raw::c_char;
+
 #[cfg(feature = "no_lib_link")]
-use log::trace;
+use tracing::trace;
 
 #[cfg(not(feature = "no_lib_link"))]
 include!("../bindings_starks.rs");
 
 #[cfg(not(feature = "no_lib_link"))]
 use std::ffi::CString;
+
+#[cfg(not(feature = "no_lib_link"))]
+use std::ffi::CStr;
+
+#[cfg(not(feature = "no_lib_link"))]
+static mut PROOFS_DONE: Option<crossbeam_channel::Sender<(u64, String)>> = None;
+
+#[cfg(not(feature = "no_lib_link"))]
+extern "C" fn on_proof_done(instance_id: u64, proof_type: *const c_char) {
+    let proof_type_str = unsafe { CStr::from_ptr(proof_type).to_string_lossy().into_owned() };
+
+    unsafe {
+        if let Some(ref tx) = PROOFS_DONE {
+            let _ = tx.send((instance_id, proof_type_str));
+        }
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn register_proof_done_callback_c(tx: crossbeam_channel::Sender<(u64, String)>) {
+    unsafe {
+        PROOFS_DONE = Some(tx);
+        register_proof_done_callback(Some(on_proof_done));
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn launch_callback_c(instance_id: u64, proof_type: &str) {
+    let proof_type_str = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_str.as_ptr() as *mut std::os::raw::c_char;
+    unsafe {
+        launch_callback(instance_id, proof_type_ptr);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn clear_proof_done_callback_c() {
+    unsafe {
+        PROOFS_DONE = None;
+    }
+}
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn save_challenges_c(p_challenges: *mut u8, global_info_file: &str, output_dir: &str) {
@@ -61,17 +105,30 @@ pub fn stark_info_new_c(
     verify_constraints: bool,
     verify: bool,
     gpu: bool,
+    preallocate: bool,
 ) -> *mut c_void {
     unsafe {
         let filename = CString::new(filename).unwrap();
 
-        stark_info_new(filename.as_ptr() as *mut std::os::raw::c_char, recursive, verify_constraints, verify, gpu)
+        stark_info_new(
+            filename.as_ptr() as *mut std::os::raw::c_char,
+            recursive,
+            verify_constraints,
+            verify,
+            gpu,
+            preallocate,
+        )
     }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
 pub fn get_map_totaln_c(p_stark_info: *mut c_void) -> u64 {
     unsafe { get_map_total_n(p_stark_info) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn get_tree_size_c(p_stark_info: *mut c_void) -> u64 {
+    unsafe { get_tree_size(p_stark_info) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
@@ -447,6 +504,11 @@ pub fn calculate_impols_expressions_c(p_setup: *mut c_void, step: u64, p_steps_p
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn custom_commit_size_c(p_setup: *mut c_void, commit_id: u64) -> u64 {
+    unsafe { custom_commit_size(p_setup, commit_id) }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn load_custom_commit_c(setup: *mut c_void, commit_id: u64, buffer: *mut u8, buffer_file: &str) {
     let buffer_file_name = CString::new(buffer_file).unwrap();
     unsafe {
@@ -489,22 +551,26 @@ pub fn commit_witness_c(
     n_bits: u64,
     n_bits_ext: u64,
     n_cols: u64,
+    instance_id: u64,
     root: *mut u8,
     witness: *mut u8,
     aux_trace: *mut u8,
     d_buffers: *mut c_void,
-) {
+    setup: *mut c_void,
+) -> u64 {
     unsafe {
         commit_witness(
             arity,
             n_bits,
             n_bits_ext,
             n_cols,
+            instance_id,
             root as *mut std::os::raw::c_void,
             witness as *mut std::os::raw::c_void,
             aux_trace as *mut std::os::raw::c_void,
             d_buffers,
-        );
+            setup,
+        )
     }
 }
 
@@ -727,10 +793,19 @@ pub fn gen_proof_c(
     air_id: u64,
     instance_id: u64,
     d_buffers: *mut c_void,
-    load_constants: bool,
-) {
+    skip_recalculation: bool,
+    stream_id: u64,
+    const_pols_path: &str,
+    const_tree_path: &str,
+) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_filename_name = CString::new(const_pols_path).unwrap();
+    let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_tree_filename_name = CString::new(const_tree_path).unwrap();
+    let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
         gen_proof(
@@ -743,8 +818,35 @@ pub fn gen_proof_c(
             proof_buffer,
             proof_file_ptr,
             d_buffers,
-            load_constants,
-        );
+            skip_recalculation,
+            stream_id,
+            const_filename_ptr,
+            const_tree_filename_ptr,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
+pub fn get_stream_proofs_c(d_buffers: *mut c_void) {
+    unsafe {
+        get_stream_proofs(d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
+pub fn get_stream_proofs_non_blocking_c(d_buffers: *mut c_void) {
+    unsafe {
+        get_stream_proofs_non_blocking(d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+#[allow(clippy::too_many_arguments)]
+pub fn get_stream_id_proof_c(d_buffers: *mut c_void, stream_id: u64) {
+    unsafe {
+        get_stream_id_proof(d_buffers, stream_id);
     }
 }
 
@@ -765,13 +867,24 @@ pub fn gen_recursive_proof_c(
     instance_id: u64,
     vadcop: bool,
     d_buffers: *mut c_void,
-    load_constants: bool,
-) {
+    const_pols_path: &str,
+    const_tree_path: &str,
+    proof_type: &str,
+) -> u64 {
     let proof_file_name = CString::new(proof_file).unwrap();
     let proof_file_ptr = proof_file_name.as_ptr() as *mut std::os::raw::c_char;
 
     let global_info_file_name = CString::new(global_info_file).unwrap();
     let global_info_file_ptr = global_info_file_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_filename_name = CString::new(const_pols_path).unwrap();
+    let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_tree_filename_name = CString::new(const_tree_path).unwrap();
+    let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
 
     unsafe {
         gen_recursive_proof(
@@ -789,8 +902,10 @@ pub fn gen_recursive_proof_c(
             proof_file_ptr,
             vadcop,
             d_buffers,
-            load_constants,
-        );
+            const_filename_ptr,
+            const_tree_filename_ptr,
+            proof_type_ptr,
+        )
     }
 }
 
@@ -833,10 +948,17 @@ pub fn gen_recursive_proof_final_c(
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn read_exec_file_c(exec_data: *mut u64, exec_file: *const i8, nCols: u64) {
+    unsafe {
+        read_exec_file(exec_data, exec_file as *mut std::os::raw::c_char, nCols);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
     circomWitness: *mut u8,
-    execFile: *const i8,
+    exec_data: *mut u64,
     witness: *mut u8,
     pPublics: *mut u8,
     sizeWitness: u64,
@@ -847,13 +969,25 @@ pub fn get_committed_pols_c(
     unsafe {
         get_committed_pols(
             circomWitness as *mut std::os::raw::c_void,
-            execFile as *mut std::os::raw::c_char,
+            exec_data,
             witness as *mut std::os::raw::c_void,
             pPublics as *mut std::os::raw::c_void,
             sizeWitness,
             N,
             nPublics,
             nCols,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn add_publics_aggregation_c(proof: *mut u8, offset: u64, publics: *mut u8, nPublics: u64) {
+    unsafe {
+        add_publics_aggregation(
+            proof as *mut std::os::raw::c_void,
+            offset,
+            publics as *mut std::os::raw::c_void,
+            nPublics,
         );
     }
 }
@@ -981,14 +1115,117 @@ pub fn set_omp_num_threads_c(num_threads: u64) {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_commit_buffers_c(max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
-    unsafe { gen_device_commit_buffers(max_sizes) }
+pub fn gen_device_buffers_c(
+    max_sizes: *mut ::std::os::raw::c_void,
+    node_rank: u32,
+    node_n_processes: u32,
+) -> *mut ::std::os::raw::c_void {
+    unsafe { gen_device_buffers(max_sizes, node_rank, node_n_processes) }
 }
 
 #[cfg(not(feature = "no_lib_link"))]
-pub fn gen_device_commit_buffers_free_c(d_buffers: *mut ::std::os::raw::c_void) {
+#[allow(clippy::too_many_arguments)]
+pub fn gen_device_streams_c(
+    d_buffers: *mut ::std::os::raw::c_void,
+    max_size_trace: u64,
+    max_size_contribution: u64,
+    max_size_buffer: u64,
+    max_size_const: u64,
+    max_size_const_tree: u64,
+    max_size_trace_aggregation: u64,
+    max_size_buffer_aggregation: u64,
+    max_size_const_aggregation: u64,
+    max_size_const_tree_aggregation: u64,
+    max_proof_size: u64,
+    max_number_proofs_per_gpu: u64,
+) -> u64 {
     unsafe {
-        gen_device_commit_buffers_free(d_buffers);
+        gen_device_streams(
+            d_buffers,
+            max_size_trace,
+            max_size_contribution,
+            max_size_buffer,
+            max_size_const,
+            max_size_const_tree,
+            max_size_trace_aggregation,
+            max_size_buffer_aggregation,
+            max_size_const_aggregation,
+            max_size_const_tree_aggregation,
+            max_proof_size,
+            max_number_proofs_per_gpu,
+        )
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn check_device_memory_c() -> u64 {
+    unsafe { check_device_memory() }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn free_device_buffers_c(d_buffers: *mut ::std::os::raw::c_void) {
+    unsafe {
+        free_device_buffers(d_buffers);
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn load_device_setup_c(
+    airgroup_id: u64,
+    air_id: u64,
+    proof_type: &str,
+    p_setup: *mut ::std::os::raw::c_void,
+    d_buffers: *mut ::std::os::raw::c_void,
+    verkey_root: *mut u8,
+) {
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        load_device_setup(
+            airgroup_id,
+            air_id,
+            proof_type_ptr,
+            p_setup,
+            d_buffers,
+            verkey_root as *mut std::os::raw::c_void,
+        );
+    }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
+pub fn load_device_const_pols_c(
+    airgroup_id: u64,
+    air_id: u64,
+    initial_offset: u64,
+    d_buffers: *mut ::std::os::raw::c_void,
+    const_filename: &str,
+    const_size: u64,
+    const_tree_filename: &str,
+    const_tree_size: u64,
+    proof_type: &str,
+) {
+    let const_filename_name = CString::new(const_filename).unwrap();
+    let const_filename_ptr = const_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let const_tree_filename_name = CString::new(const_tree_filename).unwrap();
+    let const_tree_filename_ptr = const_tree_filename_name.as_ptr() as *mut std::os::raw::c_char;
+
+    let proof_type_name = CString::new(proof_type).unwrap();
+    let proof_type_ptr = proof_type_name.as_ptr() as *mut std::os::raw::c_char;
+
+    unsafe {
+        load_device_const_pols(
+            airgroup_id,
+            air_id,
+            initial_offset,
+            d_buffers,
+            const_filename_ptr,
+            const_size,
+            const_tree_filename_ptr,
+            const_tree_size,
+            proof_type_ptr,
+        );
     }
 }
 
@@ -996,18 +1233,41 @@ pub fn gen_device_commit_buffers_free_c(d_buffers: *mut ::std::os::raw::c_void) 
 // MOCK METHODS FOR TESTING
 // ------------------------
 #[cfg(feature = "no_lib_link")]
+pub fn launch_callback_c(_instance_id: u64, _proof_type: &str) {
+    trace!("{}: ··· {}", "ffi     ", "launch_callback: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn register_proof_done_callback_c(_tx: crossbeam_channel::Sender<(u64, String)>) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "register_proof_done_callback: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn clear_proof_done_callback_c() {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "_clear_proof_done_callback: This is a mock call because there is no linked library"
+    );
+}
+
+#[cfg(feature = "no_lib_link")]
 pub fn save_challenges_c(_p_challenges: *mut u8, _global_info_file: &str, _output_dir: &str) {
-    trace!("{}: ··· {}", "ffi     ", "save_challenges: This is a mock call because there is no linked library");
+    trace!("··· {}", "save_challenges: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn save_publics_c(_n_publics: u64, _public_inputs: *mut u8, _output_dir: &str) {
-    trace!("{}: ··· {}", "ffi     ", "save_publics: This is a mock call because there is no linked library");
+    trace!("··· {}", "save_publics: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn save_proof_values_c(_proof_values: *mut u8, _global_info_file: &str, _output_dir: &str) {
-    trace!("{}: ··· {}", "ffi     ", "save_proof_values: This is a mock call because there is no linked library");
+    trace!("··· {}", "save_proof_values: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1017,65 +1277,72 @@ pub fn stark_info_new_c(
     _verify_constraints: bool,
     _verify: bool,
     _gpu: bool,
+    _preallocate: bool,
 ) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "starkinfo_new: This is a mock call because there is no linked library");
+    trace!("··· {}", "starkinfo_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_map_totaln_c(_p_stark_info: *mut c_void) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_map_totaln: This is a mock call because there is no linked library");
+    100000000
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_tree_size_c(_p_stark_info: *mut c_void) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_tree_size: This is a mock call because there is no linked library");
     100000000
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_const_offset_c(_p_stark_info: *mut c_void) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_const_offset: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_const_offset: This is a mock call because there is no linked library");
     100000000
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_proof_size_c(_p_stark_info: *mut c_void) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_proof_size: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_proof_size: This is a mock call because there is no linked library");
     100000000
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn set_memory_expressions_c(_p_stark_info: *mut c_void, _n_tmp1: u64, _n_tmp3: u64) {
-    trace!("{}: ··· {}", "ffi     ", "set_memory_expressions: This is a mock call because there is no linked library");
+    trace!("··· {}", "set_memory_expressions: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_map_totaln_custom_commits_fixed_c(_p_stark_info: *mut c_void) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_map_totaln: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_map_totaln: This is a mock call because there is no linked library");
     100000000
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_custom_commit_id_c(_p_stark_info: *mut c_void, _name: &str) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_custom_commit_id: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_custom_commit_id: This is a mock call because there is no linked library");
     100000000
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn stark_info_free_c(_p_stark_info: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "starkinfo_free: This is a mock call because there is no linked library");
+    trace!("··· {}", "starkinfo_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn load_const_pols_c(_pConstPolsAddress: *mut u8, _const_filename: &str, _const_size: u64) {
-    trace!("{}: ··· {}", "ffi     ", "load_const_pols: This is a mock call because there is no linked library");
+    trace!("··· {}", "load_const_pols: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_const_tree_size_c(_pStarkInfo: *mut c_void) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_const_tree_size: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_const_tree_size: This is a mock call because there is no linked library");
     1000000
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_const_size_c(_pStarkInfo: *mut c_void) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_const_size: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_const_size: This is a mock call because there is no linked library");
     1000000
 }
 
@@ -1087,18 +1354,18 @@ pub fn load_const_tree_c(
     _const_tree_size: u64,
     _verkey_path: &str,
 ) -> bool {
-    trace!("{}: ··· {}", "ffi     ", "load_const_tree: This is a mock call because there is no linked library");
+    trace!("··· {}", "load_const_tree: This is a mock call because there is no linked library");
     true
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_const_tree_c(_pStarkInfo: *mut c_void, _pConstPols: *mut u8, _pConstPolsTreeAddress: *mut u8) {
-    trace!("{}: ··· {}", "ffi     ", "calculate_const_tree: This is a mock call because there is no linked library");
+    trace!("··· {}", "calculate_const_tree: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn write_const_tree_c(_pStarkInfo: *mut c_void, _pConstPolsTreeAddress: *mut u8, _tree_filename: &str) {
-    trace!("{}: ··· {}", "ffi     ", "write_const_tree: This is a mock call because there is no linked library");
+    trace!("··· {}", "write_const_tree: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1131,13 +1398,13 @@ pub fn expressions_bin_free_c(_p_expressions_bin: *mut c_void) {}
 
 #[cfg(feature = "no_lib_link")]
 pub fn n_hint_ids_by_name_c(_p_expressions_bin: *mut c_void, _hint_name: &str) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "n_hint_ids_by_name: This is a mock call because there is no linked library");
+    trace!("··· {}", "n_hint_ids_by_name: This is a mock call because there is no linked library");
     0
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_hint_ids_by_name_c(_p_expressions_bin: *mut c_void, _hint_ids: *mut u64, _hint_name: &str) {
-    trace!("{}: ··· {}", "ffi     ", "get_hint_ids_by_name: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_hint_ids_by_name: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1149,7 +1416,7 @@ pub fn get_hint_field_c(
     _hint_field_name: &str,
     _hint_options: *mut u8,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "get_hint_field: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_hint_field: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1160,12 +1427,12 @@ pub fn get_hint_field_sizes_c(
     _hint_field_name: &str,
     _hint_options: *mut u8,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "get_hint_field_sizes: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_hint_field_sizes: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_hint_field_values_c(_p_setup_ctx: *mut c_void, _hint_id: u64, _hint_field_name: &str) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_hint_field: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_hint_field: This is a mock call because there is no linked library");
     0
 }
 
@@ -1182,7 +1449,7 @@ pub fn mul_hint_fields_c(
     _hint_options1: *mut *mut u8,
     _hint_options2: *mut *mut u8,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "mul_hint_fields: This is a mock call because there is no linked library");
+    trace!("··· {}", "mul_hint_fields: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1196,7 +1463,7 @@ pub fn acc_hint_field_c(
     _hint_field_name: &str,
     _add: bool,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "acc_hint_fields: This is a mock call because there is no linked library");
+    trace!("··· {}", "acc_hint_fields: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1213,7 +1480,7 @@ pub fn acc_mul_hint_fields_c(
     _hint_options2: *mut u8,
     _add: bool,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "acc_mul_hint_fields: This is a mock call because there is no linked library");
+    trace!("··· {}", "acc_mul_hint_fields: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1229,7 +1496,7 @@ pub fn update_airgroupvalue_c(
     _hint_options2: *mut u8,
     _add: bool,
 ) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "update_airgroupvalue: This is a mock call because there is no linked library");
+    trace!("··· {}", "update_airgroupvalue: This is a mock call because there is no linked library");
     10000
 }
 
@@ -1241,28 +1508,30 @@ pub fn set_hint_field_c(
     _hint_id: u64,
     _hint_field_name: &str,
 ) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "set_hint_field: This is a mock call because there is no linked library");
+    trace!("··· {}", "set_hint_field: This is a mock call because there is no linked library");
     0
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_hint_field_id_c(_p_setup_ctx: *mut c_void, _hint_id: u64, _hint_field_name: &str) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_hint_field_id: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_hint_field_id: This is a mock call because there is no linked library");
     0
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_impols_expressions_c(_p_setup: *mut c_void, _step: u64, _p_steps_params: *mut u8) {
-    trace!(
-        "{}: ··· {}",
-        "mckzkevm",
-        "calculate_impols_expression: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "calculate_impols_expression: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn custom_commit_size_c(_p_setup: *mut c_void, _commit_id: u64) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "custom_commit_size: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn load_custom_commit_c(_p_setup: *mut c_void, _commit_id: u64, _buffer: *mut u8, _tree_file: &str) {
-    trace!("{}: ··· {}", "ffi     ", "load_custom_commit: This is a mock call because there is no linked library");
+    trace!("··· {}", "load_custom_commit: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1275,7 +1544,7 @@ pub fn write_custom_commit_c(
     _buffer_file: &str,
     _check: bool,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "write_custom_commit: This is a mock call because there is no linked library");
+    trace!("··· {}", "write_custom_commit: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1285,72 +1554,67 @@ pub fn commit_witness_c(
     _n_bits: u64,
     _n_bits_ext: u64,
     _n_cols: u64,
+    _instance_id: u64,
     _root: *mut u8,
     _witness: *mut u8,
     _aux_trace: *mut u8,
     _d_buffers: *mut c_void,
-) {
+    _setup: *mut c_void,
+) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "commit_witness: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn calculate_hash_c(_pValue: *mut u8, _pBuffer: *mut u8, _nElements: u64, _nOutputs: u64) {
-    trace!("{}: ··· {}", "ffi     ", "calculate_hash: This is a mock call because there is no linked library");
+    trace!("··· {}", "calculate_hash: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn transcript_new_c(_arity: u64, _custom: bool) -> *mut c_void {
-    trace!("{}: ··· {}", "ffi     ", "transcript_new: This is a mock call because there is no linked library");
+    trace!("··· {}", "transcript_new: This is a mock call because there is no linked library");
     std::ptr::null_mut()
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn transcript_add_c(_p_transcript: *mut c_void, _p_input: *mut u8, _size: u64) {
-    trace!("{}: ··· {}", "ffi     ", "transcript_add: This is a mock call because there is no linked library");
+    trace!("··· {}", "transcript_add: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn transcript_free_c(_p_transcript: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "transcript_free: This is a mock call because there is no linked library");
+    trace!("··· {}", "transcript_free: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_challenge_c(_p_transcript: *mut c_void, _p_element: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "get_challenges: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_challenges: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_n_constraints_c(_p_setup: *mut c_void) -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_n_constraints: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_n_constraints: This is a mock call because there is no linked library");
     0
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_constraints_lines_sizes_c(_p_setup: *mut c_void, _constraints_sizes: *mut u64) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_constraints_lines_sizes: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "get_constraints_lines_sizes: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_constraints_lines_c(_p_setup: *mut c_void, _constraints_lines: *mut *mut u8) {
-    trace!("{}: ··· {}", "ffi     ", "get_constraints_lines: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_constraints_lines: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn verify_constraints_c(_p_setup: *mut c_void, _p_steps_params: *mut u8, _constraints_info: *mut c_void) {
-    trace!("{}: ··· {}", "ffi     ", "verify_constraints: This is a mock call because there is no linked library");
+    trace!("··· {}", "verify_constraints: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_n_global_constraints_c(_p_global_constraints_bin: *mut c_void) -> u64 {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_n_global_constraints: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "get_n_global_constraints: This is a mock call because there is no linked library");
     0
 }
 
@@ -1359,20 +1623,12 @@ pub fn get_global_constraints_lines_sizes_c(
     _p_global_constraints_bin: *mut c_void,
     _global_constraints_sizes: *mut u64,
 ) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_global_constraints_lines_sizes: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "get_global_constraints_lines_sizes: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_global_constraints_lines_c(_p_global_constraints_bin: *mut c_void, _global_constraints_lines: *mut *mut u8) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_global_constraints_lines: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "get_global_constraints_lines: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1385,11 +1641,7 @@ pub fn verify_global_constraints_c(
     _airgroupvalues: *mut *mut u8,
     _global_constraints_info: *mut c_void,
 ) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "verify_global_constraints: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "verify_global_constraints: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1406,11 +1658,7 @@ pub fn get_hint_field_global_constraints_c(
     _hint_field_name: &str,
     _print_expression: bool,
 ) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_hint_field_global_constraints: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "get_hint_field_global_constraints: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1420,8 +1668,7 @@ pub fn get_hint_field_global_constraints_values_c(
     _hint_field_name: &str,
 ) -> u64 {
     trace!(
-        "{}: ··· {}",
-        "ffi     ",
+        "··· {}",
         "get_hint_field_global_constraints_values: This is a mock call because there is no linked library"
     );
     0
@@ -1436,11 +1683,7 @@ pub fn get_hint_field_global_constraints_sizes_c(
     _hint_field_name: &str,
     _print_expression: bool,
 ) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "get_hint_field_global_constraints_sizes: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "get_hint_field_global_constraints_sizes: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1452,11 +1695,7 @@ pub fn set_hint_field_global_constraints_c(
     _hint_id: u64,
     _hint_field_name: &str,
 ) -> u64 {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "set_hint_field_global_constraints: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "set_hint_field_global_constraints: This is a mock call because there is no linked library");
     100000
 }
 
@@ -1472,9 +1711,50 @@ pub fn gen_proof_c(
     _air_id: u64,
     _instance_id: u64,
     _d_buffers: *mut c_void,
-    _load_constants: bool,
-) {
+    _skip_recalculation: bool,
+    _stream_id: u64,
+    _const_pols_path: &str,
+    _const_tree_path: &str,
+) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "gen_proof: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn get_proof_c(
+    _p_setup: *mut c_void,
+    _proof_buffer: *mut u64,
+    _proof_file: &str,
+    _thread_id: u64,
+    _airgroup_id: u64,
+    _air_id: u64,
+    _instance_id: u64,
+    _d_buffers: *mut c_void,
+    _mpi_node_rank: u32,
+) {
+    trace!("{}: ··· {}", "ffi     ", "get_proof: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn get_stream_proofs_c(_d_buffers: *mut c_void) {
+    trace!("{}: ··· {}", "ffi     ", "get_stream_proofs: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn get_stream_proofs_non_blocking_c(_d_buffers: *mut c_void) {
+    trace!(
+        "{}: ··· {}",
+        "ffi     ",
+        "get_stream_proofs_non_blocking: This is a mock call because there is no linked library"
+    );
+}
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn get_stream_id_proof_c(_d_buffers: *mut c_void, _stream_id: u64) {
+    trace!("{}: ··· {}", "ffi     ", "get_stream_id_proof: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1494,9 +1774,12 @@ pub fn gen_recursive_proof_c(
     _instance_id: u64,
     _vadcop: bool,
     _d_buffers: *mut c_void,
-    _load_constants: bool,
-) {
+    _const_pols_path: &str,
+    _const_tree_path: &str,
+    _proof_type: &str,
+) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "gen_recursive_proof: This is a mock call because there is no linked library");
+    0
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1514,19 +1797,20 @@ pub fn gen_recursive_proof_final_c(
     _air_id: u64,
     _instance_id: u64,
 ) -> *mut c_void {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "gen_recursive_proof_final: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "gen_recursive_proof_final: This is a mock call because there is no linked library");
     std::ptr::null_mut()
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn read_exec_file_c(_exec_data: *mut u64, _exec_file: *const i8, _nCols: u64) {
+    trace!("{}: ··· {}", "ffi     ", "read_exec_file: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 #[allow(clippy::too_many_arguments)]
 pub fn get_committed_pols_c(
     _circomWitness: *mut u8,
-    _execFile: *const i8,
+    _exec_data: *mut u64,
     _witness: *mut u8,
     _pPublics: *mut u8,
     _sizeWitness: u64,
@@ -1534,17 +1818,22 @@ pub fn get_committed_pols_c(
     _nPublics: u64,
     _nCols: u64,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "get_committed_pols: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_committed_pols: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn add_publics_aggregation_c(_proof: *mut u8, _offset: u64, _publics: *mut u8, _nPublics: u64) {
+    trace!("{}: ··· {}", "ffi     ", "add_publics_aggregation: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn gen_final_snark_proof_c(_circomWitnessFinal: *mut u8, _zkeyFile: &str, _outputDir: &str) {
-    trace!("{}: ··· {}", "ffi     ", "gen_final_snark_proof: This is a mock call because there is no linked library");
+    trace!("··· {}", "gen_final_snark_proof: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn set_log_level_c(_level: u64) {
-    trace!("{}: ··· {}", "ffi     ", "set_log_level: This is a mock call because there is no linked library");
+    trace!("··· {}", "set_log_level: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
@@ -1557,7 +1846,7 @@ pub fn stark_verify_c(
     _p_proof_values: *mut u8,
     _p_challenges: *mut u8,
 ) -> bool {
-    trace!("{}: ··· {}", "ffi     ", "stark_verify_c: This is a mock call because there is no linked library");
+    trace!("··· {}", "stark_verify_c: This is a mock call because there is no linked library");
     true
 }
 
@@ -1569,7 +1858,7 @@ pub fn stark_verify_bn128_c(
     _p_expressions_bin: *mut c_void,
     _p_publics: *mut u8,
 ) -> bool {
-    trace!("{}: ··· {}", "ffi     ", "stark_verify_bn128_c: This is a mock call because there is no linked library");
+    trace!("··· {}", "stark_verify_bn128_c: This is a mock call because there is no linked library");
     false
 }
 
@@ -1583,11 +1872,7 @@ pub fn stark_verify_from_file_c(
     _p_proof_values: *mut u8,
     _p_challenges: *mut u8,
 ) -> bool {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "stark_verify_from_file_c: This is a mock call because there is no linked library"
-    );
+    trace!("··· {}", "stark_verify_from_file_c: This is a mock call because there is no linked library");
     true
 }
 
@@ -1600,22 +1885,26 @@ pub fn write_fixed_cols_bin_c(
     _n_fixed_pols: u64,
     _fixed_pols_info: *mut c_void,
 ) {
-    trace!("{}: ··· {}", "ffi     ", "write_fixed_cols_bi: This is a mock call because there is no linked library");
+    trace!("··· {}", "write_fixed_cols_bi: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn get_omp_max_threads() -> u64 {
-    trace!("{}: ··· {}", "ffi     ", "get_omp_max_threads: This is a mock call because there is no linked library");
+    trace!("··· {}", "get_omp_max_threads: This is a mock call because there is no linked library");
     1
 }
 
 #[cfg(feature = "no_lib_link")]
 pub fn set_omp_num_threads(_num_threads: u64) {
-    trace!("{}: ··· {}", "ffi     ", "set_omp_num_threads: This is a mock call because there is no linked library");
+    trace!("··· {}", "set_omp_num_threads: This is a mock call because there is no linked library");
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void {
+pub fn gen_device_buffers_c(
+    _max_sizes: *mut ::std::os::raw::c_void,
+    _node_rank: u32,
+    _node_n_processes: u32,
+) -> *mut ::std::os::raw::c_void {
     trace!(
         "{}: ··· {}",
         "ffi     ",
@@ -1625,10 +1914,61 @@ pub fn gen_device_commit_buffers_c(_max_sizes: *mut ::std::os::raw::c_void) -> *
 }
 
 #[cfg(feature = "no_lib_link")]
-pub fn gen_device_commit_buffers_free_c(_d_buffers: *mut ::std::os::raw::c_void) {
-    trace!(
-        "{}: ··· {}",
-        "ffi     ",
-        "gen_device_commit_buffers_free: This is a mock call because there is no linked library"
-    );
+#[allow(clippy::too_many_arguments)]
+pub fn gen_device_streams_c(
+    _d_buffers: *mut ::std::os::raw::c_void,
+    _max_size_trace: u64,
+    _max_size_contribution: u64,
+    _max_size_buffer: u64,
+    _max_size_const: u64,
+    _max_size_const_tree: u64,
+    _max_size_trace_aggregation: u64,
+    _max_size_buffer_aggregation: u64,
+    _max_size_const_aggregation: u64,
+    _max_size_const_tree_aggregation: u64,
+    _max_proof_size: u64,
+    _max_number_proofs_per_gpu: u64,
+) -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn check_device_memory_c() -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "check_device_memory: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn free_device_buffers_c(_d_buffers: *mut ::std::os::raw::c_void) {
+    trace!("{}: ··· {}", "ffi     ", "free_device_buffers: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn load_device_setup_c(
+    _airgroup_id: u64,
+    _air_id: u64,
+    _proof_type: &str,
+    _p_setup: *mut ::std::os::raw::c_void,
+    _d_buffers: *mut ::std::os::raw::c_void,
+    _verkey_root: *mut u8,
+) {
+    trace!("{}: ··· {}", "ffi     ", "load_device_setup: This is a mock call because there is no linked library");
+}
+
+#[cfg(feature = "no_lib_link")]
+#[allow(clippy::too_many_arguments)]
+pub fn load_device_const_pols_c(
+    _airgroup_id: u64,
+    _air_id: u64,
+    _initial_offset: u64,
+    _d_buffers: *mut ::std::os::raw::c_void,
+    _const_filename: &str,
+    _const_size: u64,
+    _const_tree_filename: &str,
+    _const_tree_size: u64,
+    _proof_type: &str,
+) {
+    trace!("{}: ··· {}", "ffi     ", "load_device_const_pols: This is a mock call because there is no linked library");
 }

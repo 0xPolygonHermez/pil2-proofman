@@ -1,14 +1,14 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{initialize_logger, json_to_debug_instances_map, DebugInfo};
+use proofman_common::{json_to_debug_instances_map, DebugInfo};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
 
-use p3_goldilocks::Goldilocks;
+use fields::Goldilocks;
 
 use proofman::ProofMan;
-use proofman_common::ProofOptions;
+use proofman_common::ParamsGPU;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -55,8 +55,6 @@ impl VerifyConstraintsCmd {
         println!("{} VerifyConstraints", format!("{: >12}", "Command").bright_green().bold());
         println!();
 
-        initialize_logger(self.verbose.into());
-
         let debug_info = match &self.debug {
             None => DebugInfo::default(),
             Some(None) => DebugInfo::new_debug(),
@@ -68,19 +66,45 @@ impl VerifyConstraintsCmd {
             if let Some((key, value)) = commit.split_once('=') {
                 custom_commits_map.insert(key.to_string(), PathBuf::from(value));
             } else {
-                eprintln!("Invalid commit format: {:?}", commit);
+                eprintln!("Invalid commit format: {commit:?}");
             }
         }
 
+        let proofman;
+        #[cfg(distributed)]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                true,
+                false,
+                false,
+                ParamsGPU::default(),
+                self.verbose.into(),
+                None,
+            )?;
+        }
+        #[cfg(not(distributed))]
+        {
+            proofman = ProofMan::<Goldilocks>::new(
+                self.proving_key.clone(),
+                custom_commits_map,
+                true,
+                false,
+                false,
+                ParamsGPU::default(),
+                self.verbose.into(),
+            )?;
+        }
+
         match self.field {
-            Field::Goldilocks => ProofMan::<Goldilocks>::verify_proof_constraints(
+            Field::Goldilocks => proofman.verify_proof_constraints(
                 self.witness_lib.clone(),
                 self.public_inputs.clone(),
                 self.input_data.clone(),
-                self.proving_key.clone(),
                 PathBuf::new(),
-                custom_commits_map,
-                ProofOptions::new(true, self.verbose.into(), false, false, false, debug_info),
+                &debug_info,
+                self.verbose.into(),
             )?,
         };
 

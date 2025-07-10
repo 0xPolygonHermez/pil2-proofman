@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use witness::{WitnessComponent, execute, define_wc};
-use proofman_common::{FromTrace, AirInstance, ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
-use p3_field::PrimeField64;
+use fields::PrimeField64;
 use rand::{
     distr::{StandardUniform, Distribution},
     Rng, SeedableRng,
@@ -20,18 +20,26 @@ where
 {
     execute!(Lookup2_13Trace, 1);
 
-    fn calculate_witness(&self, stage: u32, pctx: Arc<ProofCtx<F>>, _sctx: Arc<SetupCtx<F>>, instance_ids: &[usize]) {
+    fn calculate_witness(
+        &self,
+        stage: u32,
+        pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        instance_ids: &[usize],
+        _n_cores: usize,
+        buffer_pool: &dyn BufferPool<F>,
+    ) {
         if stage == 1 {
             let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
             let mut rng = StdRng::seed_from_u64(seed);
 
-            let mut trace = Lookup2_13Trace::new();
+            let mut trace = Lookup2_13Trace::new_from_vec(buffer_pool.take_buffer());
             let num_rows = trace.num_rows();
 
             // TODO: Add the ability to send inputs to lookup3
             //       and consequently add random selectors
 
-            log::debug!("{} ··· Starting witness computation stage {}", Self::MY_NAME, 1);
+            tracing::debug!("··· Starting witness computation stage {}", 1);
 
             for i in 0..num_rows {
                 // Inner lookups

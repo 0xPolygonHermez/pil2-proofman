@@ -3,20 +3,79 @@ use crate::{
     DEFAULT_PRINT_VALS,
 };
 use proofman_starks_lib_c::set_log_level_c;
+use tracing::dispatcher;
+use tracing_subscriber::filter::LevelFilter;
 use std::path::PathBuf;
 use std::collections::HashMap;
-use p3_field::Field;
+use fields::PrimeField64;
 use serde::Deserialize;
 use std::fs;
-use sysinfo::{System, SystemExt, ProcessExt};
+use sysinfo::System;
+use rayon::ThreadPool;
+use rayon::ThreadPoolBuilder;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::fmt::format::Writer;
+use tracing_subscriber::fmt::format::FormatFields;
+use tracing_subscriber::fmt::time::SystemTime;
+use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::fmt::FormatEvent;
+use tracing_subscriber::fmt::time::FormatTime;
+use tracing_subscriber::fmt;
+use std::sync::OnceLock;
 
-pub fn initialize_logger(verbose_mode: VerboseMode) {
-    env_logger::builder()
-        .format_timestamp(None)
-        .format_level(true)
-        .format_target(false)
-        .filter_level(verbose_mode.into())
-        .init();
+static GLOBAL_RANK: OnceLock<i32> = OnceLock::new();
+
+struct RankFormatter;
+
+impl<S, N> FormatEvent<S, N> for RankFormatter
+where
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &fmt::FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
+        let timer = SystemTime;
+        timer.format_time(&mut writer)?;
+        write!(writer, " ")?;
+
+        if let Some(rank) = GLOBAL_RANK.get().copied() {
+            write!(writer, "[rank={rank}] ")?;
+        }
+
+        // Print level and event fields
+        write!(writer, "{}: ", event.metadata().level())?;
+        ctx.format_fields(writer.by_ref(), event)?;
+        writeln!(writer)?;
+
+        Ok(())
+    }
+}
+
+pub fn set_global_rank(rank: i32) {
+    let _ = GLOBAL_RANK.set(rank);
+}
+
+pub fn initialize_logger(verbose_mode: VerboseMode, rank: Option<i32>) {
+    if dispatcher::has_been_set() {
+        return;
+    }
+
+    if let Some(r) = rank {
+        set_global_rank(r);
+    }
+
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .event_format(RankFormatter)
+        .with_writer(std::io::stdout)
+        .with_ansi(true)
+        .with_filter(LevelFilter::from(verbose_mode));
+
+    tracing_subscriber::registry().with(stdout_layer).init();
+
     set_log_level_c(verbose_mode.into());
 }
 
@@ -35,16 +94,15 @@ pub fn format_bytes(mut num_bytes: f64) -> String {
     format!("{:.2} {}", num_bytes, units[unit_index])
 }
 
-pub fn skip_prover_instance<F: Field>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
-    if pctx.options.debug_info.debug_instances.is_empty() {
+pub fn skip_prover_instance<F: PrimeField64>(pctx: &ProofCtx<F>, global_idx: usize) -> (bool, Vec<usize>) {
+    if pctx.debug_info.read().unwrap().debug_instances.is_empty() {
         return (false, Vec::new());
     }
 
-    let instances = pctx.dctx_get_instances();
-    let (airgroup_id, air_id, _) = instances[global_idx];
+    let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_idx);
     let air_instance_id = pctx.dctx_find_air_instance_id(global_idx);
 
-    if let Some(airgroup_id_map) = pctx.options.debug_info.debug_instances.get(&airgroup_id) {
+    if let Some(airgroup_id_map) = pctx.debug_info.read().unwrap().debug_instances.get(&airgroup_id) {
         if airgroup_id_map.is_empty() {
             return (false, Vec::new());
         } else if let Some(air_id_map) = airgroup_id_map.get(&air_id) {
@@ -115,17 +173,17 @@ struct InstanceJson {
 pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String) -> DebugInfo {
     // Check proving_key_path exists
     if !proving_key_path.exists() {
-        panic!("Proving key folder not found at path: {:?}", proving_key_path);
+        panic!("Proving key folder not found at path: {proving_key_path:?}");
     }
 
     let global_info: GlobalInfo = GlobalInfo::new(&proving_key_path);
 
     // Read the file contents
-    let debug_json = fs::read_to_string(&json_path).unwrap_or_else(|_| panic!("Failed to read file {}", json_path));
+    let debug_json = fs::read_to_string(&json_path).unwrap_or_else(|_| panic!("Failed to read file {json_path}"));
 
     // Deserialize the JSON into the `DebugJson` struct
-    let json: DebugJson = serde_json::from_str(&debug_json)
-        .unwrap_or_else(|err| panic!("Failed to parse JSON file: {}: {}", json_path, err));
+    let json: DebugJson =
+        serde_json::from_str(&debug_json).unwrap_or_else(|err| panic!("Failed to parse JSON file: {json_path}: {err}"));
 
     // Initialize the airgroup map
     let mut airgroup_map: AirGroupMap = HashMap::new();
@@ -148,7 +206,7 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
                 let airgroup_name = airgroup.airgroup.unwrap().to_string();
                 let airgroup_id = global_info.air_groups.iter().position(|x| x == &airgroup_name);
                 if airgroup_id.is_none() {
-                    panic!("Airgroup name {} not found in global_info.airgroups", airgroup_name);
+                    panic!("Airgroup name {airgroup_name} not found in global_info.airgroups");
                 }
                 airgroup_id.unwrap()
             };
@@ -168,7 +226,7 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
                         let air_name = air.air.unwrap().to_string();
                         let air_id = global_info.airs[airgroup_id].iter().position(|x| x.name == air_name);
                         if air_id.is_none() {
-                            panic!("Airgroup name {} not found in global_info.airgroups", air_name);
+                            panic!("Airgroup name {air_name} not found in global_info.airgroups");
                         }
                         air_id.unwrap()
                     };
@@ -209,12 +267,7 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         )
     };
 
-    DebugInfo {
-        debug_instances: airgroup_map.clone(),
-        debug_global_instances: global_constraints,
-        std_mode,
-        save_proofs_to_file: true,
-    }
+    DebugInfo { debug_instances: airgroup_map.clone(), debug_global_instances: global_constraints, std_mode }
 }
 
 pub fn print_memory_usage() {
@@ -228,4 +281,26 @@ pub fn print_memory_usage() {
     } else {
         println!("Could not get process information.");
     }
+}
+
+pub fn create_pool(n_cores: usize) -> ThreadPool {
+    ThreadPoolBuilder::new().num_threads(n_cores).build().unwrap()
+}
+
+pub fn configured_num_threads(n_local_processes: usize) -> usize {
+    let num_cores = num_cpus::get_physical();
+    tracing::info!("Node has {num_cores} cores");
+    if let Ok(val) = env::var("RAYON_NUM_THREADS") {
+        match val.parse::<usize>() {
+            Ok(n) if n > 0 => {
+                tracing::info!("Using {n} threads per process based on RAYON_NUM_THREADS environment variable");
+                return n;
+            }
+            _ => eprintln!("Warning: RAYON_NUM_THREADS=\"{val}\" invalid, falling back to physical cores"),
+        }
+    }
+
+    let num = num_cpus::get_physical() / n_local_processes;
+    tracing::info!("Using {num} threads based on physical cores per process, considering there are {n_local_processes} processes per node");
+    num
 }

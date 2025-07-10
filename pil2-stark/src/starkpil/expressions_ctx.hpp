@@ -6,6 +6,47 @@
 #include "steps.hpp"
 #include "setup_ctx.hpp"
 
+struct DestParamsGPU
+{
+    uint64_t dim; 
+    uint64_t stage; 
+    uint64_t stagePos; 
+    uint64_t polsMapId; 
+    uint64_t rowOffsetIndex; 
+    bool inverse = false; 
+    opType op; 
+    uint64_t value; 
+    uint64_t nOps;
+    uint64_t opsOffset; 
+    uint64_t nArgs;
+    uint64_t argsOffset; 
+};
+
+
+struct ExpsArguments
+{
+    uint64_t nRowsPack;
+    uint64_t *mapOffsetsExps;
+    uint64_t *mapOffsetsCustomExps;
+    uint64_t *nextStridesExps;
+    uint64_t k_min;
+    uint64_t k_max;
+    uint64_t maxTemp1Size;
+    uint64_t maxTemp3Size;
+    uint64_t offsetTmp1;
+    uint64_t offsetTmp3;
+    uint64_t offsetDestVals;
+    uint64_t domainSize;
+    uint64_t domainExtended;
+
+    Goldilocks::Element *dest_gpu = nullptr;
+    uint64_t dest_domainSize;
+    uint64_t dest_offset = 0;
+    uint64_t dest_dim = 1;
+    uint32_t dest_nParams;
+};
+
+
 struct Params {
     uint64_t expId;
     uint64_t dim;
@@ -77,7 +118,7 @@ class ExpressionsCtx {
 public:
 
     SetupCtx &setupCtx;
-    ProverHelpers &proverHelpers;
+    ProverHelpers *proverHelpers;
 
     Goldilocks::Element *xis;
     int64_t *nextStrides;
@@ -100,7 +141,7 @@ public:
     uint64_t nChallenges;
     uint64_t nEvals;
 
-    ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers& proverHelpers_) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {
+    ExpressionsCtx(SetupCtx& _setupCtx, ProverHelpers* proverHelpers_ = nullptr) : setupCtx(_setupCtx), proverHelpers(proverHelpers_) {
         nextStrides = new int64_t[setupCtx.starkInfo.openingPoints.size()];
         nextStridesExtended = new int64_t[setupCtx.starkInfo.openingPoints.size()];
         mapOffsets = new uint64_t[1 + setupCtx.starkInfo.nStages + 1];
@@ -168,7 +209,7 @@ public:
         delete[] mapSectionsNCustomFixed;
     };
     
-    virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false) {};
+    virtual void calculateExpressions(StepsParams& params, Dest &dest, uint64_t domainSize, bool domainExtended, bool compilationTime = false, bool verify_constraints = false, bool debug = false) {};
  
     void calculateExpression(StepsParams& params, Goldilocks::Element* dest, uint64_t expressionId, bool inverse = false, bool compilation_time = false) {
         uint64_t domainSize;

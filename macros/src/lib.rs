@@ -58,12 +58,13 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
         use rayon::prelude::*;
 
         pub struct #trace_struct_name<#generics> {
-            pub buffer: Vec<#row_struct_name<#generics>>,
+            pub buffer: Vec<#generics>,
             pub num_rows: usize,
             pub row_size: usize,
             pub airgroup_id: usize,
             pub air_id: usize,
             pub commit_id: Option<usize>,
+            pub shared_buffer: bool,
         }
 
         impl<#generics: Default + Clone + Copy + Send> #trace_struct_name<#generics> {
@@ -76,45 +77,12 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                 #trace_struct_name::with_capacity(Self::NUM_ROWS)
             }
 
-            pub fn with_capacity(num_rows: usize) -> Self {
-                assert!(num_rows >= 2);
-                assert!(num_rows & (num_rows - 1) == 0);
-
-                let buffer: Vec<#row_struct_name::<#generics>> = if cfg!(feature = "diagnostic") {
-                    let mut buffer_u64 = vec![u64::MAX - 1; num_rows * #row_struct_name::<#generics>::ROW_SIZE];
-
-                    // Convert safely by properly managing size & alignment
-                    let ptr = buffer_u64.as_mut_ptr();
-                    let len = buffer_u64.len() / #row_struct_name::<#generics>::ROW_SIZE;
-                    let cap = buffer_u64.capacity() / #row_struct_name::<#generics>::ROW_SIZE;
-                    std::mem::forget(buffer_u64);
-
-                    unsafe { Vec::from_raw_parts(ptr as *mut #row_struct_name<#generics>, len, cap) }
-                } else {
-                    let mut buff_uninit: Vec<std::mem::MaybeUninit<#row_struct_name<#generics>>> = Vec::with_capacity(num_rows);
-                    unsafe {
-                        buff_uninit.set_len(num_rows);
-                    }
-                    unsafe { std::mem::transmute(buff_uninit) }
-                };
-
-                #trace_struct_name {
-                    buffer,
-                    num_rows,
-                    row_size: #row_struct_name::<#generics>::ROW_SIZE,
-                    airgroup_id: Self::AIRGROUP_ID,
-                    air_id: Self::AIR_ID,
-                    commit_id: #commit_id,
-                }
-            }
-
             pub fn new_zeroes() -> Self {
                 let num_rows = Self::NUM_ROWS;
                 assert!(num_rows >= 2);
                 assert!(num_rows & (num_rows - 1) == 0);
 
-                let buffer: Vec<#row_struct_name<#generics>> = vec![#row_struct_name::<#generics>::default(); num_rows];
-
+                let buffer: Vec<#generics> = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
 
                 #trace_struct_name {
                     buffer,
@@ -123,63 +91,100 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
                     commit_id: #commit_id,
+                    shared_buffer: false,
                 }
             }
 
-            pub fn from_vec(
-                mut external_buffer: Vec<#generics>,
-            ) -> Self {
-                let num_rows = Self::NUM_ROWS;
-                let buffer: Vec<#row_struct_name::<#generics>> = unsafe { std::mem::transmute(external_buffer) };
-                #trace_struct_name {
-                    buffer,
-                    num_rows,
-                    row_size: #row_struct_name::<#generics>::ROW_SIZE,
-                    airgroup_id: Self::AIRGROUP_ID,
-                    air_id: Self::AIR_ID,
-                    commit_id: #commit_id,
-                }
-            }
+            pub fn with_capacity(num_rows: usize) -> Self {
+                assert!(num_rows >= 2);
+                assert!(num_rows & (num_rows - 1) == 0);
 
-            pub fn from_slice(
-                slice: &[#generics],
-            ) -> Self {
-                let num_rows = Self::NUM_ROWS;
+                // Allocate uninitialized memory for performance
+                let mut vec: Vec<std::mem::MaybeUninit<#generics>> = Vec::with_capacity(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
+                let buffer = unsafe {
+                    vec.set_len(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
+                    std::mem::transmute(vec)
+                };
 
+                #[cfg(feature = "diagnostic")]
                 unsafe {
-                    // Create a mutable slice from the raw pointer
-                    let buffer: &mut [#row_struct_name<#generics>] = std::slice::from_raw_parts_mut(
-                        slice.as_ptr() as *mut #row_struct_name<#generics>,
-                        num_rows
-                    );
-
-                    // Convert the slice into a Vec without taking ownership (caller still owns the memory)
-                    let buffer_vec = buffer.to_vec(); // This creates a new Vec, without modifying the original memory
-
-                    Self {
-                        buffer: buffer_vec,
-                        num_rows,
-                        row_size: #row_struct_name::<#generics>::ROW_SIZE,
-                        airgroup_id: Self::AIRGROUP_ID,
-                        air_id: Self::AIR_ID,
-                        commit_id: #commit_id,
+                    let ptr = buffer.as_mut_ptr() as *mut u64;
+                    let expected_len = num_rows * #row_struct_name::<#generics>::ROW_SIZE;
+                    for i in 0..expected_len {
+                        ptr.add(i).write(u64::MAX - 1);
                     }
                 }
+
+                #trace_struct_name {
+                    buffer,
+                    num_rows,
+                    row_size: #row_struct_name::<#generics>::ROW_SIZE,
+                    airgroup_id: Self::AIRGROUP_ID,
+                    air_id: Self::AIR_ID,
+                    commit_id: #commit_id,
+                    shared_buffer: false,
+                }
             }
 
-            /// Returns parallel mutable iterators to access the buffer.
-            ///
-            /// # Arguments
-            /// * `n` - The number of segments to divide the buffer into. Must be a power of two and <= `NUM_ROWS`.
-            ///
-            /// # Panics
-            /// Panics if `n` is not a power of two or if `n > NUM_ROWS`.
+            pub fn new_from_vec_zeroes(mut buffer: Vec<#generics>) -> Self {
+                let row_size = #row_struct_name::<#generics>::ROW_SIZE;
+                let num_rows = Self::NUM_ROWS;
+                let used_len = num_rows * row_size;
+
+                assert!(
+                    buffer.len() >= used_len,
+                    "Provided buffer too small: got {}, expected at least {}",
+                    buffer.len(),
+                    used_len
+                );
+
+                buffer[..used_len]
+                .par_iter_mut()
+                .for_each(|x| {
+                    *x = <#generics>::default();
+                });
+                Self::new_from_vec(buffer)
+            }
+
+            pub fn new_from_vec(mut buffer: Vec<#generics>) -> Self {
+                let row_size = #row_struct_name::<#generics>::ROW_SIZE;
+                let num_rows = Self::NUM_ROWS;
+                let expected_len = num_rows * row_size;
+
+                assert!(buffer.len() >= expected_len, "Flat buffer too small");
+                assert!(num_rows >= 2);
+                assert!(num_rows & (num_rows - 1) == 0);
+
+                if cfg!(feature = "diagnostic") {
+                    unsafe {
+                        let ptr = buffer.as_mut_ptr() as *mut u64;
+                        for i in 0..expected_len {
+                            ptr.add(i).write(u64::MAX - 1);
+                        }
+                    }
+                }
+
+                Self {
+                    buffer,
+                    num_rows,
+                    row_size,
+                    airgroup_id: Self::AIRGROUP_ID,
+                    air_id: Self::AIR_ID,
+                    commit_id: #commit_id,
+                    shared_buffer: true,
+                }
+            }
+
+            pub fn from_vec(buffer: Vec<#generics>) -> Self {
+                Self::new_from_vec(buffer)
+            }
+
             pub fn par_iter_mut_chunks(&mut self, n: usize) -> impl rayon::iter::IndexedParallelIterator<Item = &mut [#row_struct_name<#generics>]> {
                 assert!(n > 0 && (n & (n - 1)) == 0, "n must be a power of two");
                 assert!(n <= self.num_rows, "n must be less than or equal to NUM_ROWS");
                 let chunk_size = self.num_rows / n;
                 assert!(chunk_size > 0, "Chunk size must be greater than zero");
-                self.buffer.par_chunks_mut(chunk_size)
+                self.row_slice_mut().par_chunks_mut(chunk_size)
             }
 
             pub fn num_rows(&self) -> usize {
@@ -195,15 +200,30 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
 
             pub fn get_buffer(&mut self) -> Vec<#generics> {
-                let mut buffer = std::mem::take(&mut self.buffer);
+                std::mem::take(&mut self.buffer)
+            }
+
+            pub fn is_shared_buffer(&self) -> bool {
+                self.shared_buffer
+            }
+        }
+
+        impl<#generics> #trace_struct_name<#generics> {
+            pub fn row_slice(&self) -> &[#row_struct_name<#generics>] {
                 unsafe {
-                    let ptr = buffer.as_mut_ptr();
-                    let capacity = buffer.capacity() * self.row_size;
-                    let len = buffer.len() * self.row_size;
+                    std::slice::from_raw_parts(
+                        self.buffer.as_ptr() as *const #row_struct_name<#generics>,
+                        self.num_rows,
+                    )
+                }
+            }
 
-                    std::mem::forget(buffer);
-
-                    Vec::from_raw_parts(ptr.cast(), len, capacity)
+            pub fn row_slice_mut(&mut self) -> &mut [#row_struct_name<#generics>] {
+                unsafe {
+                    std::slice::from_raw_parts_mut(
+                        self.buffer.as_mut_ptr() as *mut #row_struct_name<#generics>,
+                        self.num_rows,
+                    )
                 }
             }
         }
@@ -212,13 +232,13 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             type Output = #row_struct_name<#generics>;
 
             fn index(&self, index: usize) -> &Self::Output {
-                &self.buffer[index]
+                &self.row_slice()[index]
             }
         }
 
         impl<#generics> std::ops::IndexMut<usize> for #trace_struct_name<#generics> {
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.buffer[index]
+                &mut self.row_slice_mut()[index]
             }
         }
 
@@ -244,16 +264,11 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
 
             fn get_buffer(&mut self) -> Vec<#generics> {
-                let mut buffer = std::mem::take(&mut self.buffer);
-                unsafe {
-                    let ptr = buffer.as_mut_ptr();
-                    let capacity = buffer.capacity() * self.row_size;
-                    let len = buffer.len() * self.row_size;
+                std::mem::take(&mut self.buffer)
+            }
 
-                    std::mem::forget(buffer);
-
-                    Vec::from_raw_parts(ptr.cast(), len, capacity)
-                }
+            fn is_shared_buffer(&self) -> bool {
+                self.shared_buffer
             }
         }
     };
@@ -330,9 +345,10 @@ fn calculate_field_size_literal(field_type: &syn::Type) -> Result<usize> {
     match field_type {
         // Handle arrays with multiple dimensions
         syn::Type::Array(type_array) => {
-            let len = type_array.len.to_token_stream().to_string().parse::<usize>().map_err(|e| {
-                syn::Error::new_spanned(&type_array.len, format!("Failed to parse array length: {}", e))
-            })?;
+            let len =
+                type_array.len.to_token_stream().to_string().parse::<usize>().map_err(|e| {
+                    syn::Error::new_spanned(&type_array.len, format!("Failed to parse array length: {e}"))
+                })?;
             let elem_size = calculate_field_size_literal(&type_array.elem)?;
             Ok(len * elem_size)
         }
@@ -515,9 +531,10 @@ fn calculate_field_slots(ty: &syn::Type) -> Result<usize> {
 
         // Handle `[F; N]` and `[FieldExtension<F>; N]`
         syn::Type::Array(type_array) => {
-            let len = type_array.len.to_token_stream().to_string().parse::<usize>().map_err(|e| {
-                syn::Error::new_spanned(&type_array.len, format!("Failed to parse array length: {}", e))
-            })?;
+            let len =
+                type_array.len.to_token_stream().to_string().parse::<usize>().map_err(|e| {
+                    syn::Error::new_spanned(&type_array.len, format!("Failed to parse array length: {e}"))
+                })?;
             let elem_slots = calculate_field_slots(&type_array.elem)?;
             Ok(len * elem_slots)
         }

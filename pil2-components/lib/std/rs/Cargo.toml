@@ -1,17 +1,24 @@
 [package]
 name = "pil-std-lib"
-version = "0.8.1"
-edition = "2021"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+keywords = { workspace = true }
+repository = { workspace = true }
+categories = { workspace = true }
 
 [dependencies]
 proofman-common.workspace = true
 proofman-hints.workspace = true
 proofman-util.workspace = true
-log.workspace = true
+tracing.workspace = true
 num-bigint.workspace = true
 num-traits.workspace = true
-p3-goldilocks.workspace = true
-p3-field.workspace = true
+fields.workspace = true
 rayon.workspace = true
 witness.workspace = true
 colored.workspace = true
+
+[features]
+default = []
+verify-rc-values = []
