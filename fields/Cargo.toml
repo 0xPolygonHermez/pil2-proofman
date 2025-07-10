@@ -14,3 +14,7 @@ proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 serde = { workspace = true, features = ["derive"] }
 num-bigint = { workspace = true }
 rand = { workspace = true }
+
+[features]
+default = []
+verify = []
