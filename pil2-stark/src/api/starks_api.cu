@@ -94,7 +94,7 @@ void *gen_device_buffers(void *maxSizes_, uint32_t node_rank, uint32_t node_size
     } else {
 
         if (node_size % deviceCount  != 0) {
-            zklog.error("Numer of processes per node must be divisible by device count");
+            zklog.error("Number of processes per node must be divisible by device count");
             exit(1);
         }
         
