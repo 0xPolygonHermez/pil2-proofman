@@ -328,23 +328,29 @@ pub fn stark_verify(
         .flat_map(|pol| pol.value.iter().cloned())
         .collect();
 
-    tracing::debug!("Verifying proof");
+    tracing::info!("Verifying proof");
+    tracing::debug!("Verifying fixed Merkle Tree");
     for q in 0..verifier_info.n_fri_queries as usize {
-        // 1) Fixed MT
         if !verify_mt(&verifier_info.root_c, &s0_siblings[q][0], fri_queries[q], &s0_vals[q][0], verifier_info.arity) {
             tracing::error!("Fixed MT verification failed for query {}", q);
             return false;
         }
+    }
+    tracing::debug!("Fixed Merkle Tree verification passed");
 
-        // 2) stage MTs
+    tracing::debug!("Verifying stages Merkle Trees");
+    for q in 0..verifier_info.n_fri_queries as usize {
         for (s, root) in roots.iter().enumerate().take(verifier_info.n_stages as usize + 1) {
             if !verify_mt(root, &s0_siblings[q][s + 1], fri_queries[q], &s0_vals[q][s + 1], verifier_info.arity) {
                 tracing::error!("Stage MT verification failed for query {}", q);
                 return false;
             }
         }
+    }
+    tracing::debug!("Stages Merkle Trees verification passed");
 
-        // 3) FRI step MTs
+    tracing::debug!("Verifying FRI Merkle Trees");
+    for q in 0..verifier_info.n_fri_queries as usize {
         for s in 0..(verifier_info.n_fri_steps - 1) {
             let idx = fri_queries[q] % (1 << verifier_info.fri_steps[s as usize + 1]);
             if !verify_mt(
@@ -358,8 +364,11 @@ pub fn stark_verify(
                 return false;
             }
         }
+    }
+    tracing::debug!("FRI Merkle Trees verification passed");
 
-        // 4) FRI Queries
+    tracing::debug!("Verifying FRI queries");
+    for q in 0..verifier_info.n_fri_queries as usize {
         let idx = fri_queries[q] % (1 << verifier_info.fri_steps[0]);
         let query_fri = queries_fri_verify(&challenges, &evals, &s0_vals[q], &xdivxsub[q]);
 
@@ -375,8 +384,11 @@ pub fn stark_verify(
             tracing::error!("FRI query verification failed for query {}", q);
             return false;
         }
+    }
+    tracing::debug!("FRI queries verification passed");
 
-        // 5) FRI foldings
+    tracing::debug!("Verifying FRI foldings");
+    for q in 0..verifier_info.n_fri_queries as usize {
         for s in 1..verifier_info.n_fri_steps as usize {
             let idx = fri_queries[q] % (1 << verifier_info.fri_steps[s]);
             let value = verify_fold(
@@ -405,6 +417,7 @@ pub fn stark_verify(
             }
         }
     }
+    tracing::debug!("FRI foldings verification passed");
 
     tracing::debug!("Verifying Quotient polynomial");
     let mut x_acc = CubicExtensionField { value: [Goldilocks::ONE, Goldilocks::ZERO, Goldilocks::ZERO] };
