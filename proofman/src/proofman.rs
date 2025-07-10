@@ -2064,7 +2064,7 @@ where
 
         free_memory_gpu = free_memory_gpu / (n_partitions as f64);
 
-        pctx.dctx_barrier(); // important: all processes syncronize before allocation GPU memory
+        pctx.dctx_barrier(); // important: all processes synchronize before allocation GPU memory
 
         let total_const_area = match gpu_params.preallocate {
             true => sctx.total_const_size as u64,
