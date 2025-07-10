@@ -1,3 +1,4 @@
+use crate::DEFAULT_N_PRINT_CONSTRAINTS;
 use crate::{
     AirGroupMap, AirIdMap, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
     DEFAULT_PRINT_VALS,
@@ -140,6 +141,8 @@ struct DebugJson {
     global_constraints: Option<Vec<usize>>,
     #[serde(default)]
     std_mode: Option<StdDebugMode>,
+    #[serde(default)]
+    n_print_constraints: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -267,7 +270,13 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         )
     };
 
-    DebugInfo { debug_instances: airgroup_map.clone(), debug_global_instances: global_constraints, std_mode }
+    let n_print_constraints = json.n_print_constraints.unwrap_or(DEFAULT_N_PRINT_CONSTRAINTS);
+    DebugInfo {
+        debug_instances: airgroup_map.clone(),
+        debug_global_instances: global_constraints,
+        std_mode,
+        n_print_constraints,
+    }
 }
 
 pub fn print_memory_usage() {
