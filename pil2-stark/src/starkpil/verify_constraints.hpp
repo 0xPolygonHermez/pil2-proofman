@@ -12,7 +12,8 @@ struct ConstraintInfo {
     bool imPol;
     uint64_t nrows;
     bool skip;
-    ConstraintRowInfo rows[10];
+    uint64_t n_print_constraints;
+    ConstraintRowInfo *rows;
 };
 
 std::tuple<bool, ConstraintRowInfo> checkConstraint(Goldilocks::Element* dest, ParserParams& parserParams, uint64_t row) {
@@ -63,7 +64,7 @@ void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t co
         }
     }
     
-    uint64_t invalid_num_rows_print = std::min(constraintInfo.nrows, uint64_t(10));
+    uint64_t invalid_num_rows_print = std::min(constraintInfo.nrows, uint64_t(constraintInfo.n_print_constraints));
     uint64_t num_rows = invalid_num_rows_print;
     uint64_t h = num_rows / 2;
     uint64_t count = 0;
