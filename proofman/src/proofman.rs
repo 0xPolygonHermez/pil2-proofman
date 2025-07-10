@@ -2295,7 +2295,7 @@ where
         if !verify_constraints {
             check_tree_paths(&pctx, &sctx)?;
         }
-        Self::initialize_publics(&sctx, &pctx)?;
+        Self::initialize_publics_custom_commits(&sctx, &pctx)?;
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(
             &pctx.global_info,
