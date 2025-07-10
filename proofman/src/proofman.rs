@@ -565,6 +565,7 @@ where
 
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn verify_proof_constraints(
         &self,
         witness_lib_path: PathBuf,
@@ -573,6 +574,7 @@ where
         output_dir_path: PathBuf,
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
+        test_mode: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Check witness_lib path exists
         if !witness_lib_path.exists() {
@@ -609,20 +611,25 @@ where
 
         self.register_witness(&mut *witness_lib, library);
 
-        self._verify_proof_constraints(debug_info)
+        self._verify_proof_constraints(debug_info, test_mode)
     }
 
     pub fn verify_proof_constraints_from_lib(
         &self,
         input_data_path: Option<PathBuf>,
         debug_info: &DebugInfo,
+        test_mode: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.wcm.set_input_data_path(input_data_path);
 
-        self._verify_proof_constraints(debug_info)
+        self._verify_proof_constraints(debug_info, test_mode)
     }
 
-    fn _verify_proof_constraints(&self, debug_info: &DebugInfo) -> Result<(), Box<dyn std::error::Error>> {
+    fn _verify_proof_constraints(
+        &self,
+        debug_info: &DebugInfo,
+        test_mode: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.pctx.dctx_reset();
 
         self.pctx.set_debug_info(debug_info.clone());
@@ -735,7 +742,7 @@ where
         let check_global_constraints =
             debug_info.debug_instances.is_empty() || !debug_info.debug_global_instances.is_empty();
 
-        if check_global_constraints {
+        if check_global_constraints && !test_mode {
             let airgroup_values_air_instances =
                 Arc::try_unwrap(airgroup_values_air_instances).unwrap().into_inner().unwrap();
             let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
@@ -1064,6 +1071,10 @@ where
         }
 
         self.pctx.dctx_reset();
+
+        if !options.test_mode {
+            Self::initialize_publics_custom_commits(&self.sctx, &self.pctx)?;
+        }
 
         self.wcm.execute();
 
@@ -1918,7 +1929,7 @@ where
                 let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
                 let airgroupvalues = self.pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
 
-                if self.pctx.dctx_get_rank() == 0 {
+                if !options.test_mode && self.pctx.dctx_get_rank() == 0 {
                     let valid_global_constraints =
                         verify_global_constraints_proof(&self.pctx, &self.sctx, &DebugInfo::default(), airgroupvalues);
                     if valid_global_constraints.is_err() {
@@ -2236,7 +2247,6 @@ where
         if !verify_constraints {
             check_tree_paths(&pctx, &sctx)?;
         }
-        Self::initialize_publics(&sctx, &pctx)?;
 
         let setups_vadcop = Arc::new(SetupsVadcop::new(
             &pctx.global_info,
@@ -2450,8 +2460,9 @@ where
 
         for commit_id in 0..n_custom_commits {
             if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                let custom_commit_file_path =
-                    pctx.get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name).unwrap();
+                let custom_commit_file_path = pctx
+                    .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name, true)
+                    .unwrap();
 
                 load_custom_commit_c(
                     (&setup.p_setup).into(),
@@ -2485,7 +2496,10 @@ where
         }
     }
 
-    fn initialize_publics(sctx: &SetupCtx<F>, pctx: &ProofCtx<F>) -> Result<(), Box<dyn std::error::Error>> {
+    fn initialize_publics_custom_commits(
+        sctx: &SetupCtx<F>,
+        pctx: &ProofCtx<F>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("Initializing publics custom_commits");
         for (airgroup_id, airs) in pctx.global_info.airs.iter().enumerate() {
             for (air_id, _) in airs.iter().enumerate() {
@@ -2493,7 +2507,7 @@ where
                 for custom_commit in &setup.stark_info.custom_commits {
                     if custom_commit.stage_widths[0] > 0 {
                         // Handle the possibility that this returns None
-                        let custom_file_path = pctx.get_custom_commits_fixed_buffer(&custom_commit.name)?;
+                        let custom_file_path = pctx.get_custom_commits_fixed_buffer(&custom_commit.name, true)?;
 
                         let mut file = File::open(custom_file_path)?;
                         let mut root_bytes = [0u8; 32];
