@@ -11,8 +11,6 @@ use proofman_starks_lib_c::{
     goldilocks_add_assign_ffi, goldilocks_add_ffi, goldilocks_div_assign_ffi, goldilocks_div_ffi, goldilocks_inv_ffi,
     goldilocks_mul_assign_ffi, goldilocks_mul_ffi, goldilocks_neg_ffi, goldilocks_sub_assign_ffi, goldilocks_sub_ffi,
 };
-use rand::distr::{Distribution, StandardUniform};
-use rand::Rng;
 
 use crate::{quotient_map_small_int, Field, PrimeField, PrimeField64, QuotientMap};
 
@@ -424,22 +422,25 @@ impl DivAssign for Goldilocks {
     }
 }
 
-impl Distribution<Goldilocks> for StandardUniform {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Goldilocks {
-        loop {
-            let next_u64 = rng.next_u64();
-            let is_canonical = next_u64 < Goldilocks::ORDER_U64;
-            if is_canonical {
-                return Goldilocks::from_u64(next_u64);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[allow(unused_imports)]
     use super::*;
+
+    use rand::distr::{Distribution, StandardUniform};
+    use rand::Rng;
+
+    impl Distribution<Goldilocks> for StandardUniform {
+        fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Goldilocks {
+            loop {
+                let next_u64 = rng.next_u64();
+                let is_canonical = next_u64 < Goldilocks::ORDER_U64;
+                if is_canonical {
+                    return Goldilocks::from_u64(next_u64);
+                }
+            }
+        }
+    }
 
     #[test]
     pub fn test_add_neg_sub_mul()

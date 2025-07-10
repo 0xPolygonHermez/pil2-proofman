@@ -12,8 +12,10 @@ paste = "1.0.15"
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 
 num-bigint = { workspace = true }
-rand = { workspace = true }
 
 [features]
 default = []
 verify = []
+
+[dev-dependencies]
+rand = { workspace = true }

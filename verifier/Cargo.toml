@@ -11,7 +11,6 @@ categories = { workspace = true }
 fields = { workspace = true }
 
 num-bigint = { workspace = true }
-rand = { workspace = true }
 
 [features]
 default = []

@@ -2,7 +2,7 @@ use std::ops::Add;
 
 use fields::{Field, ExtensionField, PrimeField64, Goldilocks, GoldilocksQuinticExtension};
 
-use crate::{curve::EllipticCurve};
+use crate::curve::EllipticCurve;
 
 /// The [EcGFp5](https://eprint.iacr.org/2022/274.pdf) curve is defined by the equation:
 ///         y² = x³ + Ax + B
