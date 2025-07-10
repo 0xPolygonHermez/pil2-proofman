@@ -1163,6 +1163,11 @@ pub fn check_device_memory_c() -> u64 {
 }
 
 #[cfg(not(feature = "no_lib_link"))]
+pub fn get_num_gpus_c() -> u64 {
+    unsafe { get_num_gpus() }
+}
+
+#[cfg(not(feature = "no_lib_link"))]
 pub fn free_device_buffers_c(d_buffers: *mut ::std::os::raw::c_void) {
     unsafe {
         free_device_buffers(d_buffers);
@@ -1936,6 +1941,12 @@ pub fn gen_device_streams_c(
 #[cfg(feature = "no_lib_link")]
 pub fn check_device_memory_c() -> u64 {
     trace!("{}: ··· {}", "ffi     ", "check_device_memory: This is a mock call because there is no linked library");
+    0
+}
+
+#[cfg(feature = "no_lib_link")]
+pub fn get_num_gpus_c() -> u64 {
+    trace!("{}: ··· {}", "ffi     ", "get_num_gpus: This is a mock call because there is no linked library");
     0
 }
 

@@ -784,3 +784,6 @@ uint64_t goldilocks_inv_ffi(const uint64_t *in1) {
 void register_proof_done_callback(ProofDoneCallback cb) {
     proof_done_callback = cb;
 }
+uint64_t get_num_gpus(){
+    return 0;
+}

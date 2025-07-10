@@ -572,6 +572,12 @@ uint64_t check_device_memory() {
     return freeMem;
 }
 
+uint64_t get_num_gpus() {
+    int deviceCount;
+    cudaGetDeviceCount(&deviceCount);
+    return deviceCount;
+}
+
 // Function to set the CUDA device based on the MPI rank
 void set_device_mpi(uint32_t mpi_node_rank){
     int deviceCount;

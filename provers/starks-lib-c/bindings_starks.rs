@@ -646,3 +646,8 @@ extern "C" {
     #[link_name = "\u{1}_Z15launch_callbackmPc"]
     pub fn launch_callback(instanceId: u64, proofType: *mut ::std::os::raw::c_char);
 }
+
+extern "C" {
+    #[link_name = "\u{1}_Z12get_num_gpusv"]
+    pub fn get_num_gpus() -> u64;
+}

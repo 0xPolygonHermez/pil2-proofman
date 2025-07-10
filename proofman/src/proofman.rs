@@ -11,7 +11,7 @@ use proofman_common::{
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
-use proofman_starks_lib_c::{gen_device_buffers_c, free_device_buffers_c};
+use proofman_starks_lib_c::{free_device_buffers_c, gen_device_buffers_c, get_num_gpus_c};
 use proofman_starks_lib_c::{
     save_challenges_c, save_proof_values_c, save_publics_c, check_device_memory_c, gen_device_streams_c,
     get_stream_proofs_c, get_stream_proofs_non_blocking_c, register_proof_done_callback_c,
@@ -2043,10 +2043,26 @@ where
         aggregation: bool,
         gpu_params: &ParamsGPU,
     ) -> (Arc<DeviceBuffer>, u64, u64) {
-        let free_memory_gpu = match cfg!(feature = "gpu") {
+        let mut free_memory_gpu = match cfg!(feature = "gpu") {
             true => check_device_memory_c() as f64 * 0.98,
             false => 0.0,
         };
+
+        let n_gpus = get_num_gpus_c();
+        let n_processes_node = pctx.dctx_get_node_n_processes() as u64;
+
+        let n_partitions = match cfg!(feature = "gpu") {
+            true => {
+                if n_gpus > n_processes_node {
+                    1
+                } else {
+                    (n_processes_node + n_gpus - 1) / n_gpus
+                }
+            }
+            false => 1,
+        };
+
+        free_memory_gpu = free_memory_gpu / (n_partitions as f64);
 
         pctx.dctx_barrier(); // important: all processes syncronize before allocation GPU memory
 
