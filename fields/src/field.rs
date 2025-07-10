@@ -4,8 +4,6 @@ use core::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::ops::DivAssign;
 
 use num_bigint::BigUint;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 use crate::{from_integer_types, QuotientMap};
 
@@ -30,8 +28,6 @@ pub trait Field:
     + Sync
     + Debug
     + Display
-    + Serialize
-    + DeserializeOwned
 {
     const ZERO: Self;
 

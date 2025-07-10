@@ -4,14 +4,13 @@ use std::{
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 use rand::distr::{Distribution, StandardUniform};
-use serde::{Deserialize, Serialize};
 
 use crate::{PrimeField64, Field, ExtensionField, Goldilocks};
 
 /// Field Fp⁵ = F\[X\]/(X⁵-3) with generator X + 2
 pub type GoldilocksQuinticExtension = QuinticExtension<Goldilocks>;
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct QuinticExtension<F> {
     pub(crate) value: [F; 5],
 }

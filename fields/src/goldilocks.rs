@@ -13,11 +13,10 @@ use proofman_starks_lib_c::{
 };
 use rand::distr::{Distribution, StandardUniform};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
 
 use crate::{quotient_map_small_int, Field, PrimeField, PrimeField64, QuotientMap};
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default)]
 pub struct Goldilocks(u64);
 
 #[inline(always)]
