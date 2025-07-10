@@ -1,3 +1,4 @@
 {
-    "constraints": [{ "airgroup": "FibonacciSquare", "air_ids": [ { "air": "FibonacciSquare", "instance_ids": [ { "instance_id": 0, "constraints": [0, 2, 4] },  {"instance_id": 2 }] }, { "air": "Module"}] }]
+    "constraints": [{ "airgroup": "FiboCPU", "air_ids": [ { "air": "FibonacciSquare", "instance_ids": [ { "instance_id": 0, "constraints": [0, 2, 4] },  {"instance_id": 2 }] }, { "air": "Module"}] }],
+    "n_print_constraints": 50
 }

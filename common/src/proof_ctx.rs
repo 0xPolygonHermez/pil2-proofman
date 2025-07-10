@@ -35,6 +35,8 @@ pub type AirGroupMap = HashMap<usize, AirIdMap>;
 pub type AirIdMap = HashMap<usize, InstanceMap>;
 pub type InstanceMap = HashMap<usize, Vec<usize>>;
 
+pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
+
 #[derive(Clone)]
 pub struct ProofOptions {
     pub verify_constraints: bool,
@@ -45,16 +47,33 @@ pub struct ProofOptions {
     pub output_dir_path: PathBuf,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,
     pub std_mode: StdMode,
+    pub n_print_constraints: usize,
+}
+
+impl Default for DebugInfo {
+    fn default() -> Self {
+        Self {
+            debug_instances: Default::default(),
+            debug_global_instances: Default::default(),
+            std_mode: Default::default(),
+            n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
+        }
+    }
 }
 
 impl DebugInfo {
     pub fn new_debug() -> Self {
-        Self { debug_instances: HashMap::new(), debug_global_instances: Vec::new(), std_mode: StdMode::new_debug() }
+        Self {
+            debug_instances: HashMap::new(),
+            debug_global_instances: Vec::new(),
+            std_mode: StdMode::new_debug(),
+            n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
+        }
     }
 }
 impl ProofOptions {

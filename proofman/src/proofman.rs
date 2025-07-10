@@ -787,7 +787,7 @@ where
 
         wcm.debug(&[instance_id], debug_info);
 
-        let valid = verify_constraints_proof(&pctx, &sctx, instance_id);
+        let valid = verify_constraints_proof(&pctx, &sctx, instance_id, debug_info.n_print_constraints as u64);
         if !valid {
             valid_constraints.fetch_and(valid, Ordering::Relaxed);
         }
