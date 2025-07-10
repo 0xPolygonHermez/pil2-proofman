@@ -164,6 +164,7 @@ impl ProveCmd {
                     self.output_dir.clone(),
                     &debug_info.clone(),
                     self.verbose.into(),
+                    false,
                 )?,
             };
         } else {

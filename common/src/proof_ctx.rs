@@ -44,6 +44,7 @@ pub struct ProofOptions {
     pub final_snark: bool,
     pub verify_proofs: bool,
     pub save_proofs: bool,
+    pub test_mode: bool,
     pub output_dir_path: PathBuf,
 }
 
@@ -85,7 +86,34 @@ impl ProofOptions {
         save_proofs: bool,
         output_dir_path: PathBuf,
     ) -> Self {
-        Self { verify_constraints, aggregation, final_snark, verify_proofs, save_proofs, output_dir_path }
+        Self {
+            verify_constraints,
+            aggregation,
+            final_snark,
+            verify_proofs,
+            save_proofs,
+            output_dir_path,
+            test_mode: false,
+        }
+    }
+
+    pub fn new_test(
+        verify_constraints: bool,
+        aggregation: bool,
+        final_snark: bool,
+        verify_proofs: bool,
+        save_proofs: bool,
+        output_dir_path: PathBuf,
+    ) -> Self {
+        Self {
+            verify_constraints,
+            aggregation,
+            final_snark,
+            verify_proofs,
+            save_proofs,
+            output_dir_path,
+            test_mode: true,
+        }
     }
 }
 
@@ -266,16 +294,24 @@ impl<F: PrimeField64> ProofCtx<F> {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
 
-    pub fn get_custom_commits_fixed_buffer(&self, name: &str) -> Result<&PathBuf, Box<std::io::Error>> {
+    pub fn get_custom_commits_fixed_buffer(
+        &self,
+        name: &str,
+        return_error: bool,
+    ) -> Result<PathBuf, Box<std::io::Error>> {
         let file_name = self.custom_commits_fixed.get(name);
         match file_name {
-            Some(path) => Ok(path),
+            Some(path) => Ok(path.to_path_buf()),
             None => {
-                // Return error
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Custom Commit Fixed {file_name:?} not found"),
-                )))
+                if return_error {
+                    Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Custom Commit Fixed {file_name:?} not found"),
+                    )))
+                } else {
+                    tracing::warn!("Custom Commit Fixed {file_name:?} not found");
+                    Ok(PathBuf::new())
+                }
             }
         }
     }
