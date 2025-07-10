@@ -52,31 +52,46 @@ void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t co
     uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
 
     std::vector<ConstraintRowInfo> constraintInvalidRows;
+    std::vector<bool> invalidRow(N, false);
+
 #pragma omp parallel for
     for(uint64_t i = 0; i < N; ++i) {
         auto [isValid, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], i);
         if (!isValid) {
-        #pragma omp critical
-        {
-            constraintInvalidRows.push_back(rowInfo);
+            invalidRow[i] = true;
             constraintInfo.nrows++;
         }
     }
-    }
-
-    uint64_t num_rows = std::min(constraintInfo.nrows, uint64_t(10));
+    
+    uint64_t invalid_num_rows_print = std::min(constraintInfo.nrows, uint64_t(10));
+    uint64_t num_rows = invalid_num_rows_print;
     uint64_t h = num_rows / 2;
-    for(uint64_t i = 0; i < h; ++i) {
-        constraintInfo.rows[i] = constraintInvalidRows[i];
+    uint64_t count = 0;
+    uint64_t found = 0;
+    while (num_rows > h) {
+        if (invalidRow[count]) {
+            auto [_, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], count);
+            constraintInfo.rows[found++] = rowInfo;
+            num_rows--;
+        }
+        count++;
+    }
+    
+    count = N - 1;
+    while(num_rows > 0) {
+        if (invalidRow[count]) {
+            auto [_, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], count);
+            constraintInfo.rows[found++] = rowInfo;
+            num_rows--;
+        }
+        if(count == 0) break;
+        count--;
     }
 
-    for(uint64_t i = h; i < num_rows; ++i) {
-        if(constraintInfo.nrows > num_rows) {
-            constraintInfo.rows[i] = constraintInvalidRows[constraintInvalidRows.size() - num_rows + i];
-        } else {
-            constraintInfo.rows[i] = constraintInvalidRows[i];
-        }
-    }
+    std::reverse(
+        constraintInfo.rows   + h,
+        constraintInfo.rows   + invalid_num_rows_print
+    );
 }
 
 void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *constraintsInfo) {
