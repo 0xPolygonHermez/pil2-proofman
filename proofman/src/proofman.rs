@@ -2056,13 +2056,13 @@ where
                 if n_gpus > n_processes_node {
                     1
                 } else {
-                    (n_processes_node + n_gpus - 1) / n_gpus
+                    n_processes_node.div_ceil(n_gpus)
                 }
             }
             false => 1,
         };
 
-        free_memory_gpu = free_memory_gpu / (n_partitions as f64);
+        free_memory_gpu /= n_partitions as f64;
 
         pctx.dctx_barrier(); // important: all processes synchronize before allocation GPU memory
 
