@@ -1,5 +1,5 @@
 use serde::de::DeserializeOwned;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::PathBuf;
 
@@ -21,4 +21,13 @@ pub fn load_from_json<T: Default + DeserializeOwned>(path: &Option<PathBuf>) -> 
         // Return the default value if path is None
         T::default()
     }
+}
+
+pub fn is_json_file(path: &Option<PathBuf>) -> bool {
+    if let Some(path) = path {
+        if let Ok(text) = fs::read_to_string(path) {
+            return serde_json::from_str::<serde_json::Value>(&text).is_ok();
+        }
+    }
+    false
 }

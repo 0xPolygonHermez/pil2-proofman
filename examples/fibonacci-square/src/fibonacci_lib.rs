@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use proofman_common::is_json_file;
 use proofman_common::load_from_json;
 use witness::{witness_library, WitnessLibrary, WitnessManager};
 use pil_std_lib::Std;
@@ -21,12 +22,16 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
         wcm.register_component(fibonacci.clone());
         wcm.register_component(module.clone());
 
-        let public_inputs: BuildPublics = load_from_json(&wcm.get_public_inputs_path());
-
         let mut publics = BuildPublicValues::from_vec_guard(wcm.get_pctx().get_publics());
 
-        publics.module = F::from_u64(public_inputs.module);
-        publics.in1 = F::from_u64(public_inputs.in1);
-        publics.in2 = F::from_u64(public_inputs.in2);
+        if is_json_file(&wcm.get_public_inputs_path()) {
+            let public_inputs: BuildPublics = load_from_json(&wcm.get_public_inputs_path());
+
+            publics.module = F::from_u64(public_inputs.module);
+            publics.in1 = F::from_u64(public_inputs.in1);
+            publics.in2 = F::from_u64(public_inputs.in2);
+        } else {
+            panic!("HOLA");
+        };
     }
 }
