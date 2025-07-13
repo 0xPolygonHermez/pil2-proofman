@@ -33,6 +33,7 @@ members = [
     # break and dev experience will be bad since repo
     # won't build with a fresh clone
     "examples/fibonacci-square",
+    "macros-test",
 ]
 
 resolver = "2"

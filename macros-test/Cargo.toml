@@ -1,0 +1,23 @@
+[package]
+name = "macros-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+keywords.workspace = true
+repository.workspace = true
+categories.workspace = true
+
+[dependencies]
+proofman-macros = { path = "../macros" }
+rayon = { workspace = true}
+proofman-common = { path = "../common" }
+
+
+
+proofman = { workspace = true }
+serde = { workspace = true }
+serde_arrays = "0.2"
+
+[features]
+default = []
+diagnostic = ["proofman-macros/diagnostic", "proofman/diagnostic"]

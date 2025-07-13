@@ -475,8 +475,14 @@ where
             handles.push(handle);
         }
         timer_stop_and_log_info!(CALCULATE_MAIN_WITNESS);
+
         timer_start_info!(PRE_CALCULATE_WITNESS_FAST);
-        self.wcm.pre_calculate_witness(1, &instances_mine_precalculate_fast, max_num_threads / 2);
+        self.wcm.pre_calculate_witness(
+            1,
+            &instances_mine_precalculate_fast,
+            max_num_threads / 2,
+            self.memory_handler.as_ref(),
+        );
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_FAST);
         timer_start_info!(CALCULATE_FAST_WITNESS);
         for &instance_id in instances_mine_precalculate_fast.iter() {
@@ -517,7 +523,13 @@ where
         timer_stop_and_log_info!(CALCULATE_FAST_WITNESS);
 
         timer_start_info!(PRE_CALCULATE_WITNESS_SLOW);
-        self.wcm.pre_calculate_witness(1, &instances_mine_precalculate_slow, max_num_threads / 2);
+        let memory_handler_clone = self.memory_handler.clone();
+        self.wcm.pre_calculate_witness(
+            1,
+            &instances_mine_precalculate_slow,
+            max_num_threads / 2,
+            memory_handler_clone.as_ref(),
+        );
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_SLOW);
 
         timer_start_info!(CALCULATE_SLOW_WITNESS);
@@ -666,7 +678,7 @@ where
                 continue;
             }
 
-            self.wcm.pre_calculate_witness(1, &[instance_id], max_num_threads);
+            self.wcm.pre_calculate_witness(1, &[instance_id], max_num_threads, self.memory_handler.as_ref());
             self.wcm.calculate_witness(1, &[instance_id], max_num_threads, self.memory_handler.as_ref());
 
             // Join the previous thread (if any) before starting a new one
@@ -1237,7 +1249,12 @@ where
         }
         timer_stop_and_log_info!(CALCULATE_MAIN_WITNESS);
         timer_start_info!(PRE_CALCULATE_WITNESS_FAST);
-        self.wcm.pre_calculate_witness(1, &instances_mine_precalculate_fast, max_num_threads / 2);
+        self.wcm.pre_calculate_witness(
+            1,
+            &instances_mine_precalculate_fast,
+            max_num_threads / 2,
+            self.memory_handler.as_ref(),
+        );
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_FAST);
         timer_start_info!(CALCULATE_FAST_WITNESS);
         for &instance_id in instances_mine_precalculate_fast.iter() {
@@ -1303,7 +1320,12 @@ where
         timer_stop_and_log_info!(CALCULATE_FAST_WITNESS);
 
         timer_start_info!(PRE_CALCULATE_WITNESS_SLOW);
-        self.wcm.pre_calculate_witness(1, &instances_mine_precalculate_slow, max_num_threads / 2);
+        self.wcm.pre_calculate_witness(
+            1,
+            &instances_mine_precalculate_slow,
+            max_num_threads / 2,
+            self.memory_handler.as_ref(),
+        );
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_SLOW);
 
         timer_start_info!(CALCULATE_SLOW_WITNESS);
@@ -1387,7 +1409,7 @@ where
 
         //evalutate witness for instances of type "all"
         for (instance_id, _) in instances_all.iter() {
-            self.wcm.pre_calculate_witness(1, &[*instance_id], max_num_threads);
+            self.wcm.pre_calculate_witness(1, &[*instance_id], max_num_threads, self.memory_handler.as_ref());
             self.wcm.calculate_witness(1, &[*instance_id], max_num_threads, self.memory_handler.as_ref());
         }
 
@@ -1625,7 +1647,7 @@ where
         }
 
         timer_start_info!(PRECALCULATE_WITNESS);
-        self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2);
+        self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2, self.memory_handler.as_ref());
         timer_stop_and_log_info!(PRECALCULATE_WITNESS);
 
         my_instances_sorted.sort_by_key(|&id| {
