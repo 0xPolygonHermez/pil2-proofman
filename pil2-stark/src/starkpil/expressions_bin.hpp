@@ -13,7 +13,6 @@
 #include "goldilocks_cubic_extension_avx.hpp"
 #include "goldilocks_cubic_extension_avx512.hpp"
 #include "stark_info.hpp"
-#include <immintrin.h>
 #include <cassert>
 
 const int BINARY_EXPRESSIONS_SECTION = 2;

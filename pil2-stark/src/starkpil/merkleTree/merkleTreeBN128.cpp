@@ -261,6 +261,7 @@ void MerkleTreeBN128::linearHash()
                 else
                 {
                     std::vector<RawFr::Element> elements_last(pending + 1);
+                    assert(i * nElementsGL + nElementsGL - pending < height * nElementsGL); //to avoid out of bounds access compiler warning
                     std::memcpy(&elements_last[1], &buff[i * nElementsGL + nElementsGL - pending], pending * sizeof(RawFr::Element));
                     std::memcpy(&elements_last[0], &nodes[i], sizeof(RawFr::Element));
                     p.hash(elements_last, &nodes[i]);

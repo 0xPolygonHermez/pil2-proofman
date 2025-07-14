@@ -6,13 +6,12 @@
 #include <gmpxx.h>
 #include <iostream> // string
 #include <omp.h>
+#ifdef __AVX2__ 
 #include <immintrin.h>
+#endif
 #include <cassert>
 
 #define GOLDILOCKS_DEBUG 0
-#ifndef USE_ASSEMBLY
-#define USE_ASSEMBLY 1  // Default value if not set by the Makefile
-#endif
 #define GOLDILOCKS_NUM_ROOTS 33
 #define GOLDILOCKS_PRIME 0xFFFFFFFF00000001ULL
 #define GOLDILOCKS_PRIME_NEG 0xFFFFFFFF
@@ -159,6 +158,7 @@ public:
     /*
         AVX operations
     */
+#ifdef __AVX2__
     static void set_avx(__m256i &a, const Goldilocks::Element &a3, const Goldilocks::Element &a2, const Goldilocks::Element &a1, const Goldilocks::Element &a0);
 
     static void load_avx(__m256i &a_, const Goldilocks::Element *a4);
@@ -209,7 +209,7 @@ public:
     // implementations for expressions:
     static void copy_avx(__m256i &dst_, const __m256i &src_);
     static void op_avx(uint64_t op, __m256i &c_, const __m256i &a_, const __m256i &b_);
-   
+ #endif  
     /*
         AVX512 operations
     */

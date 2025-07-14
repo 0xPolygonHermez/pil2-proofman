@@ -248,7 +248,8 @@ impl<F: PrimeField64> Setup<F> {
     }
 
     pub fn set_circom_circuit(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let rust_lib_filename = self.setup_path.display().to_string() + ".so";
+        let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
+        let rust_lib_filename = self.setup_path.display().to_string() + lib_extension;
         let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
         let dat_filename = self.setup_path.display().to_string() + ".dat";
