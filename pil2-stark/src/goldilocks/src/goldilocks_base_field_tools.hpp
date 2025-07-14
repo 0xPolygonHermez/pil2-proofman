@@ -136,12 +136,14 @@ inline void Goldilocks::toS64(int64_t &result, const Element &in1)
 inline bool Goldilocks::toS32(int32_t &result, const Element &in1)
 {
     mpz_class out(std::to_string(Goldilocks::toU64(in1)));
+    mpz_class gl(0xFFFFFFFF00000001);
+
     mpz_class maxInt(0x7FFFFFFF);
-    mpz_class minInt = mpz_class(0xFFFFFFFF00000001)- mpz_class(0x80000000);
+    mpz_class minInt = gl - mpz_class(0x80000000);
 
     if (out > maxInt)
     {
-        mpz_class onegative= mpz_class(0xFFFFFFFF00000001) - out;
+        mpz_class onegative= gl - out;
         if (out > minInt)
         {
             result = -onegative.get_si();

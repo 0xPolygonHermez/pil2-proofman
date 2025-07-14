@@ -131,11 +131,16 @@ void Poseidon2Goldilocks::merkletree_batch_seq(Goldilocks::Element *tree, Goldil
 
     if (nThreads == 0)
         nThreads = omp_get_max_threads();
+    Goldilcoks::Element **buffers = new Goldilocks::Element*[nThreads];
+    for (int i = 0; i < nThreads; ++i)
+    {
+        buffers[i] = new Goldilocks::Element[nbatches * CAPACITY];
+    }
 
 #pragma omp parallel for num_threads(nThreads)
     for (uint64_t i = 0; i < num_rows; i++)
     {
-        Goldilocks::Element *buff0 = new Goldilocks::Element[nbatches * CAPACITY];
+        Goldilocks::Element *buff0 = buffers[omp_get_thread_num()];
         for (uint64_t j = 0; j < nbatches; j++)
         {
             uint64_t nn = batch_size;
@@ -144,8 +149,12 @@ void Poseidon2Goldilocks::merkletree_batch_seq(Goldilocks::Element *tree, Goldil
             linear_hash_seq(&buff0[j * CAPACITY], &input[i * num_cols * dim + j * batch_size * dim], nn * dim);
         }
         linear_hash_seq(&cursor[i * CAPACITY], buff0, nbatches * CAPACITY);
-        delete[] buff0;
     }
+    for(int i = 0; i < nThreads; ++i)
+    {
+        delete[] buffers[i];
+    }
+    delete[] buffers;
 
     // Build the merkle tree
     uint64_t pending = num_rows;
