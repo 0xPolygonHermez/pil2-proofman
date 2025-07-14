@@ -7,7 +7,7 @@
 #include <cuda_runtime.h>
 #include "zklog.hpp"
 
-#define LOG_TIME_GPU 0
+#define LOG_TIME_GPU 1
 
 struct TimerEntry {
     cudaEvent_t start = nullptr;
