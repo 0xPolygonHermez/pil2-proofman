@@ -98,12 +98,20 @@ impl Add<&EcGFp5> for &EcGFp5 {
 
 #[cfg(test)]
 mod tests {
-    use rand::{
-        distr::{Distribution, StandardUniform},
-        rng,
-    };
+    use rand::Rng;
+    use rand::rng;
+    use fields::Goldilocks;
 
     use super::*;
+
+    fn sample_goldilocks<R: Rng + ?Sized>(rng: &mut R) -> Goldilocks {
+        loop {
+            let next_u64 = rng.next_u64();
+            if next_u64 < Goldilocks::ORDER_U64 {
+                return Goldilocks::from_u64(next_u64);
+            }
+        }
+    }
 
     #[test]
     fn test_is_on_curve() {
@@ -199,8 +207,20 @@ mod tests {
         // Random tests
         let mut rng = rng();
         for _ in 0..1000 {
-            let f0: GoldilocksQuinticExtension = StandardUniform.sample(&mut rng);
-            let f1: GoldilocksQuinticExtension = StandardUniform.sample(&mut rng);
+            let f0 = GoldilocksQuinticExtension::from_basis_coefficients_slice(&[
+                sample_goldilocks(&mut rng),
+                sample_goldilocks(&mut rng),
+                sample_goldilocks(&mut rng),
+                sample_goldilocks(&mut rng),
+                sample_goldilocks(&mut rng),
+            ]);
+            let f1 = GoldilocksQuinticExtension::from_basis_coefficients_slice(&[
+                sample_goldilocks(&mut rng),
+                sample_goldilocks(&mut rng),
+                sample_goldilocks(&mut rng),
+                sample_goldilocks(&mut rng),
+                sample_goldilocks(&mut rng),
+            ]);
             let p = EcGFp5::hash_to_curve(f0, f1);
             assert!(p.is_on_curve());
         }
