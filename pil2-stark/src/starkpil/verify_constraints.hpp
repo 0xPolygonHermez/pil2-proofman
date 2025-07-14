@@ -60,6 +60,7 @@ void verifyConstraint(SetupCtx& setupCtx, Goldilocks::Element* dest, uint64_t co
         auto [isValid, rowInfo] = checkConstraint(dest, setupCtx.expressionsBin.constraintsInfoDebug[constraintId], i);
         if (!isValid) {
             invalidRow[i] = true;
+            #pragma omp atomic
             constraintInfo.nrows++;
         }
     }
