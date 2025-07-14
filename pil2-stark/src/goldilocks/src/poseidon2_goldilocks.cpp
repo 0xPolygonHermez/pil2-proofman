@@ -131,7 +131,7 @@ void Poseidon2Goldilocks::merkletree_batch_seq(Goldilocks::Element *tree, Goldil
 
     if (nThreads == 0)
         nThreads = omp_get_max_threads();
-    Goldilcoks::Element **buffers = new Goldilocks::Element*[nThreads];
+    Goldilocks::Element **buffers = new Goldilocks::Element*[nThreads];
     for (int i = 0; i < nThreads; ++i)
     {
         buffers[i] = new Goldilocks::Element[nbatches * CAPACITY];
