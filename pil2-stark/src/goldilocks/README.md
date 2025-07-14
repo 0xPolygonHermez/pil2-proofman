@@ -18,7 +18,7 @@ sudo apt-get -y install cuda-toolkit-12-3
 ```
 For MacOS:
 
-brew install libomp gmp gmpxx googletest benchmark
+brew install libomp gmp gmpxx googletest google-benchmark
 
 ## Usage
 Compile:

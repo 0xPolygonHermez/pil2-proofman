@@ -311,10 +311,10 @@ void NTT_Goldilocks::reversePermutation(Goldilocks::Element *dst, uint64_t strid
     else
     {
         uint32_t maxth = omp_get_max_threads();
-        Goldilocks::Element **_tmp = new Goldilocks::Element*[maxth];
+        Goldilocks::Element **tmp_buffers = new Goldilocks::Element*[maxth];
         for (uint32_t i = 0; i < maxth; ++i)
         {
-            _tmp[i] = new Goldilocks::Element[ncols];
+            tmp_buffers[i] = new Goldilocks::Element[ncols];
         }
         if (extension <= 1)
         {
@@ -326,7 +326,7 @@ void NTT_Goldilocks::reversePermutation(Goldilocks::Element *dst, uint64_t strid
                 u_int64_t offset_i = i * strideDst + offsetDst;
                 if (r < i)
                 {
-                    Goldilocks::Element* tmp = _tmp[omp_get_thread_num()];
+                    Goldilocks::Element* tmp = tmp_buffers[omp_get_thread_num()];
                     std::memcpy(&tmp[0], &src[offset_r], ncols * sizeof(Goldilocks::Element));
                     std::memcpy(&dst[offset_r], &src[offset_i], ncols * sizeof(Goldilocks::Element));
                     std::memcpy(&dst[offset_i], &tmp[0], ncols * sizeof(Goldilocks::Element));
@@ -346,7 +346,7 @@ void NTT_Goldilocks::reversePermutation(Goldilocks::Element *dst, uint64_t strid
                 u_int64_t offset_i = i * strideDst + offsetDst;
                 if (r < ext_rows)
                 {
-                    Goldilocks::Element* tmp = _tmp[omp_get_thread_num()];
+                    Goldilocks::Element* tmp = tmp_buffers[omp_get_thread_num()];
                     std::memcpy(&tmp[0], &src[offset_r], ncols * sizeof(Goldilocks::Element));
                     std::memcpy(&dst[offset_r], &src[offset_i], ncols * sizeof(Goldilocks::Element));
                     std::memcpy(&dst[offset_i], &tmp[0], ncols * sizeof(Goldilocks::Element));
@@ -360,9 +360,9 @@ void NTT_Goldilocks::reversePermutation(Goldilocks::Element *dst, uint64_t strid
         }
         for (uint32_t i = 0; i < maxth; ++i)
         {
-            delete[] _tmp[i];
+            delete[] tmp_buffers[i];
         }
-        delete[] _tmp;
+        delete[] tmp_buffers;
     }
 }
 
