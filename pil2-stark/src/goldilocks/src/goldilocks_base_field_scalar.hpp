@@ -15,7 +15,7 @@ inline Goldilocks::Element Goldilocks::add(const Element &in1, const Element &in
 
 inline void Goldilocks::add(Element &result, const Element &in1, const Element &in2)
 {
-#if USE_ASSEMBLY == 1
+#ifdef __USE_ASSEMBLY__
    uint64_t in_1 = in1.fe;
    uint64_t in_2 = in2.fe;
    __asm__("xor   %%r10, %%r10\n\t"
@@ -68,7 +68,7 @@ inline Goldilocks::Element Goldilocks::sub(const Element &in1, const Element &in
 
 inline void Goldilocks::sub(Element &result, const Element &in1, const Element &in2)
 {
-#if USE_ASSEMBLY == 1
+#ifdef __USE_ASSEMBLY__
     uint64_t in_1 = in1.fe;
     uint64_t in_2 = in2.fe;
     __asm__("xor   %%r10, %%r10\n\t"
@@ -142,7 +142,7 @@ inline Goldilocks::Element Goldilocks::pow(const Element& base, uint64_t exp)
 inline void Goldilocks::mul1(Element &result, const Element &in1, const Element &in2)
 {
 
-#if USE_ASSEMBLY == 1
+#ifdef __USE_ASSEMBLY__
     __asm__("mov   %1, %0\n\t"
             "mul   %2\n\t"
             // "xor   %%rbx, %%rbx\n\t"
@@ -183,7 +183,7 @@ inline void Goldilocks::mul1(Element &result, const Element &in1, const Element 
 inline void Goldilocks::mul2(Element &result, const Element &in1, const Element &in2)
 {
 
-#if USE_ASSEMBLY == 1
+#ifdef __USE_ASSEMBLY__
     __asm__(
         "mov   %1, %%rax\n\t"
         "mul   %2\n\t"
@@ -206,7 +206,7 @@ inline void branch_hint() {
 inline void Goldilocks::add_no_double_carry(uint64_t &result, const uint64_t &in1, const uint64_t &in2)
 {
 
-#if USE_ASSEMBLY == 1
+#ifdef __USE_ASSEMBLY__
     __asm__("xor   %%r10, %%r10\n\t"
             "mov   %1, %0\n\t"
             "add   %2, %0\n\t"
@@ -243,7 +243,7 @@ inline void Goldilocks::mul(Element &result, const Element &in1, const Element &
     // aux1 <= 2^64-1
     // aux <= (2^32-1)*(2^32-1) = 2^64-2^32+1-2^32 = P-2^32
     // aux1 + aux <= 2^64-1 + P-2^32 = P+P-2=2P-2
-    #if USE_ASSEMBLY == 1   
+    #ifdef __USE_ASSEMBLY__
         add_no_double_carry(result.fe, aux1, aux);
     #else
         Goldilocks::Element aux1_, aux2_;
