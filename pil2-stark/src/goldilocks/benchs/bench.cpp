@@ -1349,7 +1349,7 @@ BENCHMARK(POSEIDON2_BENCH_FULL_AVX)
 BENCHMARK(POSEIDON2_BENCH_FULL_AVX_BATCH)
     ->Unit(benchmark::kMicrosecond)
     ->DenseRange(omp_get_max_threads() / 2, omp_get_max_threads(), omp_get_max_threads() / 2)
-    ->UseRealTime()
+    ->UseRealTime();
 #endif
 
 BENCHMARK(POSEIDON_BENCH_FULL)

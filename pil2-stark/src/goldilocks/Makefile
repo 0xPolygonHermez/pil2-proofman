@@ -14,7 +14,7 @@ ifeq ($(UNAME_S),Darwin)
     HOMEBREW_PREFIX := $(shell brew --prefix)
     CXX      = clang++
     SDKPATH  = /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-    CXXFLAGS = -std=c++17 -Wall -pthread -O3 -I./src -I$(HOMEBREW_PREFIX)/include -I$(HOMEBREW_PREFIX)/opt/libomp/include -isysroot $(SDKPATH) -Xpreprocessor -fopenmp
+    CXXFLAGS = -std=c++17 -Wall -pthread -O3 -I./src -I$(HOMEBREW_PREFIX)/include -I$(HOMEBREW_PREFIX)/opt/libomp/include -isysroot $(SDKPATH) -Xpreprocessor -fopenmp -mavx2
     CPPFLAGS = -isysroot $(SDKPATH)
     LDFLAGS  = -L$(HOMEBREW_PREFIX)/lib -L$(HOMEBREW_PREFIX)/opt/libomp/lib -L$(SDKPATH)/usr/lib
     LDLIBS   = -lomp -lbenchmark -lbenchmark_main -lgtest -lgtest_main -lgmpxx -lgmp -lpthread
@@ -22,10 +22,10 @@ endif
 
 ifeq ($(UNAME_S),Linux)
     CXX      = g++
-    CXXFLAGS = -std=c++17 -Wall -pthread -O3 -I./src -I/usr/include -I/usr/local/include -fopenmp
+    CXXFLAGS = -std=c++17 -Wall -pthread -O3 -I./src -I/usr/include -I/usr/local/include -fopenmp -mavx2
     CPPFLAGS =
     LDFLAGS  = -L/usr/lib -L/usr/local/lib
-    LDLIBS   = -lomp -lbenchmark -lbenchmark_main -lgtest -lgtest_main -lgmpxx -lgmp -lpthread -lstdc++
+    LDLIBS   = -fopenmp -lbenchmark -lbenchmark_main -lgtest -lgtest_main -lgmpxx -lgmp -lpthread -lstdc++
 
 	CXXFLAGS += -D__AVX2__
   	CXXFLAGS += -D__USE_ASSEMBLY__
@@ -45,21 +45,7 @@ ifeq ($(UNAME_S),Linux)
     CUDA_SRC_DIRS := ./src ./utils
     CUDA_INC_FLAGS := $(addprefix -I,$(CUDA_SRC_DIRS))
 
-    # CUDA object rules
-    $(BUILD_DIR_GPU)/%.cu.o: %.cu
-    	$(MKDIR_P) $(dir $@)
-    	$(NVCC) -D__USE_CUDA__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -dc $< --output-file $@
-
-    $(BUILD_DIR_GPU)/%.cpp.o: %.cpp
-    	$(MKDIR_P) $(dir $@)
-    	$(CXX) -D__USE_CUDA__ -mavx2 $(CXXFLAGS) $(CPPFLAGS) $(LDFLAGS) -c $< -o $@
-
-    # GPU test and bench targets
-    testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(BUILD_DIR)/src/goldilocks_base_field.o $(BUILD_DIR)/src/goldilocks_cubic_extension.o $(BUILD_DIR)/utils/timer_gl.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cpp.o $(BUILD_DIR)/src/poseidon_goldilocks.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cu.o $(BUILD_DIR_GPU)/utils/cuda_utils.cu.o
-    	$(NVCC) -Xcompiler -O3 -Xcompiler -fopenmp -arch=$(CUDA_ARCH) -o $@ $^ -lgtest -lgmp
-
-    benchgpu: $(BUILD_DIR_GPU)/benchs/bench.cpp.o $(BUILD_DIR)/src/goldilocks_base_field.o $(BUILD_DIR)/src/goldilocks_cubic_extension.o $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cu.o
-    	$(NVCC) -Xcompiler -O3 -Xcompiler -fopenmp -arch=$(CUDA_ARCH) -o $@ $^ -lgtest -lgmp -lbenchmark
+    
 
 endif
 
@@ -88,7 +74,7 @@ CPPFLAGS := $(INC_FLAGS) -MMD -MP
 .PHONY: all testscpu benchscpu testsgpu benchgpu clean help
 
 ifeq ($(UNAME_S),Linux)
-all: testscpu benchscpu testsgpu benchgpu
+all: testscpu benchscpu
 else
 all: testscpu benchscpu
 endif
@@ -98,6 +84,12 @@ testscpu: $(OBJS) $(BUILD_DIR)/tests/tests.o
 
 benchscpu: $(BUILD_DIR)/benchs/bench.o $(OBJS)
 	$(CXX) $(BUILD_DIR)/benchs/bench.o $(OBJS) $(LDFLAGS) $(LDLIBS) -o $@
+
+testsgpu: $(BUILD_DIR_GPU)/tests/tests.cu.o $(BUILD_DIR)/src/goldilocks_base_field.o $(BUILD_DIR)/src/goldilocks_cubic_extension.o $(BUILD_DIR)/utils/timer_gl.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cpp.o $(BUILD_DIR)/src/poseidon_goldilocks.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cu.o $(BUILD_DIR_GPU)/utils/cuda_utils.cu.o
+	$(NVCC) -Xcompiler -O3 -Xcompiler -fopenmp -arch=$(CUDA_ARCH) -o $@ $^ -lgtest -lgmp
+
+benchgpu: $(BUILD_DIR_GPU)/benchs/bench.cpp.o $(BUILD_DIR)/src/goldilocks_base_field.o $(BUILD_DIR)/src/goldilocks_cubic_extension.o $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cpp.o $(BUILD_DIR_GPU)/src/ntt_goldilocks.cu.o $(BUILD_DIR_GPU)/src/poseidon_goldilocks.cu.o
+	$(NVCC) -Xcompiler -O3 -Xcompiler -fopenmp -arch=$(CUDA_ARCH) -o $@ $^ -lgtest -lgmp -lbenchmark
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(MKDIR_P) $(dir $@)
@@ -110,6 +102,14 @@ $(BUILD_DIR)/benchs/%.o: benchs/%.cpp
 $(BUILD_DIR)/tests/%.o: $(TEST_DIR)/%.cpp
 	$(MKDIR_P) $(dir $@)
 	$(CXX) $(CXXFLAGS) $(CPPFLAGS) -c $< -o $@
+
+$(BUILD_DIR_GPU)/%.cu.o: %.cu
+	$(MKDIR_P) $(dir $@)
+	$(NVCC) -D__USE_CUDA__ $(CUDA_INC_FLAGS) -Xcompiler -O3 -Xcompiler -fopenmp -Xcompiler -fPIC -Xcompiler -mavx2 -arch=$(CUDA_ARCH) -dc $< --output-file $@
+
+$(BUILD_DIR_GPU)/%.cpp.o: %.cpp
+	$(MKDIR_P) $(dir $@)
+	$(CXX) -D__USE_CUDA__ -mavx2 $(CXXFLAGS) $(CPPFLAGS) $(LDFLAGS) -c $< -o $@
 
 # ----------------------
 # Clean target
