@@ -92,7 +92,6 @@ inline void Poseidon2Goldilocks::merkletree(Goldilocks::Element *tree, Goldilock
 //#ifdef __AVX512__
     // needs to be tested
     // merkletree_avx512(tree, input, num_cols, num_rows, nThreads, dim);
-//ifdegf __AVX2__ or ndef __AVX512__
 #if defined(__AVX2__) || defined(__AVX512__)
     merkletree_avx(tree, input, num_cols, num_rows, nThreads, dim);
 #else
