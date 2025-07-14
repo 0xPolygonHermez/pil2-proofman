@@ -61,7 +61,7 @@ void Fr_str2element(PFrElement pE, char const *s) {
     mpz_clear(mr);
 }
 
-void Fr_str2element(PFrElement pE, char const *s, uint base) {
+void Fr_str2element(PFrElement pE, char const *s, unsigned int base) {
     mpz_t mr;
     mpz_init_set_str(mr, s, base);
     mpz_fdiv_r(mr, mr, q);
@@ -75,7 +75,7 @@ char *Fr_element2str(PFrElement pE) {
     if (!(pE->type & Fr_LONG)) {
         if (pE->shortVal>=0) {
             char *r = new char[32];
-            sprintf(r, "%d", pE->shortVal);
+            snprintf(r, 32, "%d", pE->shortVal);
             return r;
         } else {
             mpz_init_set_si(r, pE->shortVal);

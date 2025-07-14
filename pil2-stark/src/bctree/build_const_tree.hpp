@@ -5,7 +5,9 @@
 #include <string>
 #include "goldilocks_base_field.hpp"
 #include "ntt_goldilocks.hpp"
+#ifndef __EXCLUDE_BN128__
 #include "merkleTreeBN128.hpp"
+#endif
 #include "merkleTreeGL.hpp"
 #include "timer.hpp"
 #include "zklog.hpp"
