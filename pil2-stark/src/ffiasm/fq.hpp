@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <string>
 #include <gmp.h>
+#include <iostream>
+#include <cassert>
 
 #define Fq_N64 4
 #define Fq_SHORT 0x00000000
@@ -16,6 +18,8 @@ typedef struct __attribute__((__packed__)) {
     FqRawElement longVal;
 } FqElement;
 typedef FqElement *PFqElement;
+
+#ifdef __USE_ASSEMBLY__
 extern FqElement Fq_q;
 extern FqElement Fq_R3;
 extern FqRawElement Fq_rawq;
@@ -64,7 +68,176 @@ extern "C" int Fq_rawIsEq(const FqRawElement pRawA, const FqRawElement pRawB);
 extern "C" int Fq_rawIsZero(const FqRawElement pRawB);
 
 extern "C" void Fq_fail();
+#else
+static FqElement Fq_q;
+static FqElement Fq_R3;
+static FqRawElement Fq_rawq;
+static FqRawElement Fq_rawR3;
 
+inline void Fq_copy(PFqElement r, PFqElement a){
+    std::cerr << "Fq_copy() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_copyn(PFqElement r, PFqElement a, int n){
+    std::cerr << "Fq_copyn() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_add(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_add() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_sub(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_sub() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_neg(PFqElement r, PFqElement a){
+    std::cerr << "Fq_neg() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_mul(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_mul() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_square(PFqElement r, PFqElement a){
+    std::cerr << "Fq_square() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_band(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_band() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_bor(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_bor() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_bxor(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_bxor() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_bnot(PFqElement r, PFqElement a){
+    std::cerr << "Fq_bnot() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_shl(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_shl() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_shr(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_shr() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_eq(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_eq() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_neq(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_neq() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_lt(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_lt() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_gt(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_gt() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_leq(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_leq() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_geq(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_geq() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_land(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_land() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_lor(PFqElement r, PFqElement a, PFqElement b){
+    std::cerr << "Fq_lor() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_lnot(PFqElement r, PFqElement a){
+    std::cerr << "Fq_lnot() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_toNormal(PFqElement r, PFqElement a){
+    std::cerr << "Fq_toNormal() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_toLongNormal(PFqElement r, PFqElement a){
+    std::cerr << "Fq_toLongNormal() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_toMontgomery(PFqElement r, PFqElement a){
+    std::cerr << "Fq_toMontgomery() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline int Fq_isTrue(PFqElement pE){
+    std::cerr << "Fq_isTrue() not implemented in C++ code." << std::endl;
+    assert(false);
+    return 0; // Placeholder return value
+}
+inline int Fq_toInt(PFqElement pE){
+    std::cerr << "Fq_toInt() not implemented in C++ code." << std::endl;
+    assert(false);
+    return 0; // Placeholder return value
+}
+inline void Fq_rawCopy(FqRawElement pRawResult, const FqRawElement pRawA){
+    std::cerr << "Fq_rawCopy() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_rawSwap(FqRawElement pRawResult, FqRawElement pRawA){
+    std::cerr << "Fq_rawSwap() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_rawAdd(FqRawElement pRawResult, const FqRawElement pRawA, const FqRawElement pRawB){
+    std::cerr << "Fq_rawAdd() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_rawSub(FqRawElement pRawResult, const FqRawElement pRawA, const FqRawElement pRawB){
+    std::cerr << "Fq_rawSub() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_rawNeg(FqRawElement pRawResult, const FqRawElement pRawA){
+    std::cerr << "Fq_rawNeg() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_rawMMul(FqRawElement pRawResult, const FqRawElement pRawA, const FqRawElement pRawB){
+    std::cerr << "Fq_rawMMul() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_rawMSquare(FqRawElement pRawResult, const FqRawElement pRawA){
+    std::cerr << "Fq_rawMSquare() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_rawMMul1(FqRawElement pRawResult, const FqRawElement pRawA, uint64_t pRawB){
+    std::cerr << "Fq_rawMMul1() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_rawToMontgomery(FqRawElement pRawResult, const FqRawElement &pRawA){
+    std::cerr << "Fq_rawToMontgomery() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline void Fq_rawFromMontgomery(FqRawElement pRawResult, const FqRawElement &pRawA){
+    std::cerr << "Fq_rawFromMontgomery() not implemented in C++ code." << std::endl;
+    assert(false);
+}
+inline int Fq_rawIsEq(const FqRawElement pRawA, const FqRawElement pRawB){
+    std::cerr << "Fq_rawIsEq() not implemented in C++ code." << std::endl;
+    assert(false);
+    return 0; // Placeholder return value
+}
+inline int Fq_rawIsZero(const FqRawElement pRawB){
+    std::cerr << "Fq_rawIsZero() not implemented in C++ code." << std::endl;
+    assert(false);
+    return 0; // Placeholder return value
+}
+#endif
+inline void Fq_fail() {
+    assert(false);
+}
 
 // Pending functions to convert
 

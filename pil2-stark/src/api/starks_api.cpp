@@ -586,17 +586,17 @@ uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t air
     Goldilocks::Element airgroupValues[FIELD_EXTENSION];
 
     StepsParams params = {
-        trace: (Goldilocks::Element *)witness,
-        aux_trace: (Goldilocks::Element *)aux_trace,
-        publicInputs : (Goldilocks::Element *)pPublicInputs,
-        proofValues: nullptr,
-        challenges : challenges,
-        airgroupValues : airgroupValues,
-        evals : evals,
-        xDivXSub : nullptr,
-        pConstPolsAddress: (Goldilocks::Element *)pConstPols,
-        pConstPolsExtendedTreeAddress: (Goldilocks::Element *)pConstTree,
-        pCustomCommitsFixed:  nullptr,
+        .trace = (Goldilocks::Element *)witness,
+        .aux_trace = (Goldilocks::Element *)aux_trace,
+        .publicInputs = (Goldilocks::Element *)pPublicInputs,
+        .proofValues = nullptr,
+        .challenges = challenges,
+        .airgroupValues = airgroupValues,
+        .evals = evals,
+        .xDivXSub = nullptr,
+        .pConstPolsAddress = (Goldilocks::Element *)pConstPols,
+        .pConstPolsExtendedTreeAddress = (Goldilocks::Element *)pConstTree,
+        .pCustomCommitsFixed = nullptr,
     };
 
     genProof(*setupCtx, airgroupId, airId, instanceId, params, nullptr, proofBuffer, string(proof_file), true);

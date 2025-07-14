@@ -4,6 +4,7 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+
         {
             "type": "lldb",
             "request": "launch",
@@ -23,6 +24,53 @@
                 "../zisk-testvectors/pessimistic-proof/inputs/pessimistic-proof.bin",
                 "--proving-key",
                 "../zisk/build/build_pre_050/provingKey"
+            ],
+            //"filter": {
+            //    "name": "proofman_cli",
+            //    "kind": "lib"
+            //}
+            //},
+            //"args": [],
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": ["rust"]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug binFile",
+            "program": "pil2-stark/build/binfile",
+            "args": [
+                "-s",
+                "examples/fibonacci-square/build/provingKey/build/FiboCPU/airs/SpecifiedRanges/air/SpecifiedRanges.starkinfo.json",
+                "-e",
+                "examples/fibonacci-square/build/provingKey/build/FiboCPU/airs/SpecifiedRanges/air/SpecifiedRanges.expressionsinfo.json",
+                "-b",
+                "examples/fibonacci-square/build/provingKey/build/FiboCPU/airs/SpecifiedRanges/air/SpecifiedRanges.bin"
+            ],
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": ["cpp"]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug RECURSION${fileBasename}",
+            "program": "target/debug/proofman-cli",
+            //"cargo": {
+            "args": [
+                //"run",
+                //"--bin",
+                //"proofman-cli",
+                "prove",
+                "--witness-lib",
+                "./target/debug/libfibonacci_square.dylib",
+                "--proving-key",
+                "examples/fibonacci-square/build/provingKey/",
+                "--public-inputs",
+                "examples/fibonacci-square/src/inputs.json",
+                "--custom-commits",
+                "rom=examples/fibonacci-square/build/rom.bin",
+                "--verify-proofs",
+                "--aggregation"
             ],
             //"filter": {
             //    "name": "proofman_cli",

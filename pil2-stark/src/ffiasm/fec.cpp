@@ -67,7 +67,7 @@ char *Fec_element2str(PFecElement pE) {
     if (!(pE->type & Fec_LONG)) {
         if (pE->shortVal>=0) {
             char *r = new char[32];
-            sprintf(r, "%d", pE->shortVal);
+            snprintf(r, 32, "%d", pE->shortVal);
             return r;
         } else {
             mpz_init_set_si(r, pE->shortVal);
@@ -162,16 +162,15 @@ void Fec_div(PFecElement r, PFecElement a, PFecElement b) {
     Fec_mul(r, a, &tmp);
 }
 
-void Fec_fail() {
-    assert(false);
-}
 
 
 RawFec::RawFec() {
+#ifdef __USE_ASSEMBLY__
     Fec_init();
     set(fZero, 0);
     set(fOne, 1);
     neg(fNegOne, fOne);
+#endif
 }
 
 RawFec::~RawFec() {
