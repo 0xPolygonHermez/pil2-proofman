@@ -4,6 +4,9 @@ template <typename ElementType>
 void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, Goldilocks::Element *witness, Goldilocks::Element *aux_trace, Goldilocks::Element *pConstPols, Goldilocks::Element *pConstTree, Goldilocks::Element *publicInputs, uint64_t *proofBuffer, std::string proofFile, bool vadcop) {
     TimerStart(STARK_PROOF);
 
+    NTT_Goldilocks ntt(1 << setupCtx.starkInfo.starkStruct.nBits);
+    NTT_Goldilocks nttExtended(1 << setupCtx.starkInfo.starkStruct.nBitsExt);
+
     ProverHelpers proverHelpers(setupCtx.starkInfo, true);
 
     FRIProof<ElementType> proof(setupCtx.starkInfo, airgroupId, airId, instanceId);
@@ -62,7 +65,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
         }
     }
     TimerStart(STARK_COMMIT_STAGE_1);
-    starks.commitStage(1, params.trace, params.aux_trace, proof);
+    starks.commitStage(1, params.trace, params.aux_trace, proof, ntt);
     TimerStopAndLog(STARK_COMMIT_STAGE_1);
     starks.addTranscript(transcript, &proof.proof.roots[0][0], nFieldElements);
     
@@ -107,7 +110,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage(2, nullptr, params.aux_trace, proof);
+    starks.commitStage(2, nullptr, params.aux_trace, proof, ntt);
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], nFieldElements);
 
@@ -127,7 +130,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
     
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
-    starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof);
+    starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended);
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], nFieldElements);
     TimerStopAndLog(STARK_STEP_Q);
@@ -153,7 +156,7 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
                 openingPoints.push_back(setupCtx.starkInfo.openingPoints[i + j]);
             }
         }
-        starks.computeLEv(xiChallenge, LEv, openingPoints);
+        starks.computeLEv(xiChallenge, LEv, openingPoints, nttExtended);
         starks.computeEvals(params ,LEv, proof, openingPoints);
     }
 
