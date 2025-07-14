@@ -3,6 +3,7 @@
 
 #include "poseidon2_goldilocks.hpp"
 #include "goldilocks_base_field.hpp"
+#ifdef __AVX2__
 #include <immintrin.h>
 
 const __m256i zero = _mm256_setzero_si256();
@@ -192,5 +193,5 @@ inline void Poseidon2Goldilocks::add_avx_small(__m256i &st0, __m256i &st1, __m25
     Goldilocks::add_avx_b_small(st1, st1, c1);
     Goldilocks::add_avx_b_small(st2, st2, c2);
 }
-
+#endif
 #endif
