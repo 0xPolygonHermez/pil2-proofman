@@ -35,7 +35,7 @@ sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohm
 
 ### Compile the PIl2 Stark C++ Library (run only once):
 ```bash
-(cd ../pil2-proofman/pil2-stark && git submodule init && git submodule update && make clean && make -j starks_lib && make -j bctree)
+(cd ../pil2-proofman/pil2-stark && make clean && make -j starks_lib && make -j bctree)
 ```
 
 ### 1.5 Install `pil2-proofman`
