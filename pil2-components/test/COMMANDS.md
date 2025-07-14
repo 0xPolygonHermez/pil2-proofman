@@ -213,6 +213,9 @@ rm -rf ./pil2-components/test/std/special/build/ \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_sums.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/intermediate_sums.pilout \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/openings.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/openings.pilout \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/table.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/table.pilout \
@@ -230,6 +233,9 @@ rm -rf ./pil2-components/test/std/special/build/ \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/intermediate_sums.pilout \
      -b ./pil2-components/test/std/special/build \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/openings.pilout \
+     -b ./pil2-components/test/std/special/build
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/table.pilout \
      -b ./pil2-components/test/std/special/build
