@@ -12,9 +12,6 @@
 #include <cassert>
 
 #define GOLDILOCKS_DEBUG 0
-#ifndef USE_ASSEMBLY
-#define USE_ASSEMBLY 1  // Default value if not set by the Makefile
-#endif
 #define GOLDILOCKS_NUM_ROOTS 33
 #define GOLDILOCKS_PRIME 0xFFFFFFFF00000001ULL
 #define GOLDILOCKS_PRIME_NEG 0xFFFFFFFF

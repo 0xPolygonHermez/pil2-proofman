@@ -27,7 +27,7 @@ ifeq ($(UNAME_S),Linux)
     LDFLAGS  = -L/usr/lib -L/usr/local/lib
     LDLIBS   = -fopenmp -lbenchmark -lbenchmark_main -lgtest -lgtest_main -lgmpxx -lgmp -lpthread -lstdc++
 
-	CXXFLAGS += -D__AVX2__
+	  CXXFLAGS += -D__AVX2__
   	CXXFLAGS += -D__USE_ASSEMBLY__
     # Auto-enable AVX512 if supported, or allow override
     ifndef USE_AVX512

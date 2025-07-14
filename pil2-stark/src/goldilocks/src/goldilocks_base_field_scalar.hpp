@@ -87,9 +87,11 @@ inline void Goldilocks::sub(Element &result, const Element &in1, const Element &
     if(in_2 >= GOLDILOCKS_PRIME){
         in_2 -= GOLDILOCKS_PRIME;
     }
-    result.fe = in1.fe - in_2;
-    if(in_2 > in1.fe){
-        result.fe += GOLDILOCKS_PRIME;
+    
+    if(in_2 <= in1.fe){
+        result.fe = in1.fe - in_2;
+    } else {
+        result.fe = GOLDILOCKS_PRIME - (in_2 - in1.fe);
     }
 #endif
 #if GOLDILOCKS_DEBUG == 1
@@ -171,12 +173,12 @@ inline void Goldilocks::mul1(Element &result, const Element &in1, const Element 
             : "=&a"(result.fe)
             : "r"(in1.fe), "r"(in2.fe), "m"(CQ), "m"(TWO32)
             : "%rbx", "%rcx", "%rdx");
+#else 
+    mul(result, in1, in2);
+#endif
 
 #if GOLDILOCKS_DEBUG == 1
     result.fe = result.fe % GOLDILOCKS_PRIME;
-#endif
-#else 
-    mul(result, in1, in2);
 #endif
 }
 
@@ -191,12 +193,12 @@ inline void Goldilocks::mul2(Element &result, const Element &in1, const Element 
         : "=&d"(result.fe)
         : "r"(in1.fe), "r"(in2.fe), "m"(Q)
         : "%rax");
+#else
+    mul(result, in1, in2);
+#endif
 
 #if GOLDILOCKS_DEBUG == 1
     result.fe = result.fe % GOLDILOCKS_PRIME;
-#endif
-#else
-    mul(result, in1, in2);
 #endif
 }
 
