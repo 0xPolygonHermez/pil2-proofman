@@ -5,16 +5,12 @@ use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use fields::PrimeField64;
 use fields::Goldilocks;
-use rand::distr::{StandardUniform, Distribution};
 
 use crate::{ProdBus, BothBuses, SumBus};
 
 witness_library!(WitnessLib, Goldilocks);
 
-impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
         Std::new(wcm.get_pctx(), wcm.get_sctx());
         let prod_bus = ProdBus::new();

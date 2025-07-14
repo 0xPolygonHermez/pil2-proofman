@@ -5,20 +5,13 @@ use witness::{define_wc_with_std, execute, WitnessComponent};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::MultiRangeCheck1Trace;
 
 define_wc_with_std!(MultiRangeCheck1, "MtRngCh1");
 
-impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1<F>
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for MultiRangeCheck1<F> {
     execute!(MultiRangeCheck1Trace, 1);
 
     fn calculate_witness(

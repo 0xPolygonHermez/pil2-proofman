@@ -4,20 +4,13 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::Lookup1Trace;
 
 define_wc!(Lookup1, "Lookup_1");
 
-impl<F: PrimeField64> WitnessComponent<F> for Lookup1
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for Lookup1 {
     execute!(Lookup1Trace, 1);
 
     fn calculate_witness(
@@ -41,7 +34,7 @@ where
             let num_lookups = trace[0].sel.len();
 
             for i in 0..num_rows {
-                let val = rng.random();
+                let val = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
                 let mut n_sel = 0;
                 for j in 0..num_lookups {
                     trace[i].f[j] = val;

@@ -5,10 +5,7 @@ use witness::{witness_library, WitnessLibrary, WitnessManager};
 
 use fields::PrimeField64;
 use fields::Goldilocks;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng,
-};
+use rand::{Rng};
 
 use proofman::register_std;
 
@@ -19,10 +16,7 @@ use crate::{
 
 witness_library!(WitnessLib, Goldilocks);
 
-impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib {
     fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
         let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
 

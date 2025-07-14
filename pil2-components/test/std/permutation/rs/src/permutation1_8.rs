@@ -4,20 +4,13 @@ use witness::{WitnessComponent, execute, define_wc};
 use proofman_common::{BufferPool, FromTrace, AirInstance, ProofCtx, SetupCtx};
 
 use fields::PrimeField64;
-use rand::{
-    distr::{StandardUniform, Distribution},
-    Rng, SeedableRng,
-    rngs::StdRng,
-};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::Permutation1_8Trace;
 
 define_wc!(Permutation1_8, "Perm1_8 ");
 
-impl<F: PrimeField64> WitnessComponent<F> for Permutation1_8
-where
-    StandardUniform: Distribution<F>,
-{
+impl<F: PrimeField64> WitnessComponent<F> for Permutation1_8 {
     execute!(Permutation1_8Trace, 1);
 
     fn calculate_witness(
@@ -42,14 +35,14 @@ where
 
             // Assumes
             for i in 0..num_rows {
-                trace[i].a1 = rng.random();
-                trace[i].b1 = rng.random();
+                trace[i].a1 = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b1 = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
 
                 trace[i].a2 = F::from_u8(200);
                 trace[i].b2 = F::from_u8(201);
 
-                trace[i].a3 = rng.random();
-                trace[i].b3 = rng.random();
+                trace[i].a3 = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
+                trace[i].b3 = F::from_u64(rng.random_range(0..=(1 << 63) - 1));
 
                 trace[i].a4 = F::from_u8(100);
                 trace[i].b4 = F::from_u8(101);
