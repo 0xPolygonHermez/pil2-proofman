@@ -1,5 +1,6 @@
 #ifndef GOLDILOCKS_AVX
 #define GOLDILOCKS_AVX
+#ifdef __AVX2__
 #include "goldilocks_base_field.hpp"
 #include <immintrin.h>
 #include <cassert>
@@ -623,4 +624,5 @@ inline void Goldilocks::op_avx(uint64_t op, __m256i &c_, const __m256i &a_, cons
         break;
     }
 };
+#endif
 #endif
