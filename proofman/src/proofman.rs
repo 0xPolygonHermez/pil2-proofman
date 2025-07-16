@@ -437,6 +437,9 @@ where
 
         let mut handles = Vec::new();
 
+        let memory_handler =
+            Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
+
         timer_start_info!(COMPUTE_WITNESS);
         timer_start_info!(CALCULATE_MAIN_WITNESS);
         for &instance_id in instances_mine_no_precalculate.iter() {
@@ -456,7 +459,7 @@ where
                 rx_threads.recv().unwrap();
             }
 
-            let memory_handler_clone = self.memory_handler.clone();
+            let memory_handler_clone = memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -507,7 +510,7 @@ where
                 rx_threads.recv().unwrap();
             }
 
-            let memory_handler_clone = self.memory_handler.clone();
+            let memory_handler_clone = memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
@@ -558,7 +561,7 @@ where
                 rx_threads.recv().unwrap();
             }
 
-            let memory_handler_clone = self.memory_handler.clone();
+            let memory_handler_clone = memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
                 timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
