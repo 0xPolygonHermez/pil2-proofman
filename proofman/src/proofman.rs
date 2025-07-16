@@ -488,7 +488,7 @@ where
             1,
             &instances_mine_precalculate_fast,
             max_num_threads / 2,
-            self.memory_handler.as_ref(),
+            memory_handler.as_ref(),
         );
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_FAST);
         timer_start_info!(CALCULATE_FAST_WITNESS);
@@ -534,12 +534,11 @@ where
         timer_stop_and_log_info!(CALCULATE_FAST_WITNESS);
 
         timer_start_info!(PRE_CALCULATE_WITNESS_SLOW);
-        let memory_handler_clone = self.memory_handler.clone();
         self.wcm.pre_calculate_witness(
             1,
             &instances_mine_precalculate_slow,
             max_num_threads / 2,
-            memory_handler_clone.as_ref(),
+            memory_handler.as_ref(),
         );
         timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_SLOW);
 
