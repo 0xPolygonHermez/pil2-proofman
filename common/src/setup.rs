@@ -18,7 +18,6 @@ use proofman_util::create_buffer_fast;
 use crate::GlobalInfo;
 use crate::ProofType;
 use crate::StarkInfo;
-use crate::load_const_pols;
 
 type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
@@ -155,7 +154,6 @@ impl<F: PrimeField64> Setup<F> {
 
             if verify_constraints {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
-                load_const_pols(&setup_path, const_pols_size, &const_pols);
                 (
                     stark_info,
                     p_stark_info,
@@ -172,7 +170,6 @@ impl<F: PrimeField64> Setup<F> {
                 )
             } else {
                 let const_pols: Vec<F> = create_buffer_fast(const_pols_size);
-                load_const_pols(&setup_path, const_pols_size, &const_pols);
                 let const_pols_tree: Vec<F> = create_buffer_fast(const_tree_size);
                 (
                     stark_info,

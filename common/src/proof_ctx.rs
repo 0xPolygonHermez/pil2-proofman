@@ -626,15 +626,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
-    pub fn get_air_instance_params(&self, sctx: &SetupCtx<F>, instance_id: usize, gen_proof: bool) -> StepsParams {
+    pub fn get_air_instance_params(&self, instance_id: usize, gen_proof: bool) -> StepsParams {
         let air_instance = self.air_instances[instance_id].read().unwrap();
-
-        let (airgroup_id, air_id) = self.dctx_get_instance_info(instance_id);
-        let setup = sctx.get_setup(airgroup_id, air_id);
 
         let challenges = if gen_proof { air_instance.get_challenges_ptr() } else { self.get_challenges_ptr() };
         let aux_trace: *mut u8 = if gen_proof { std::ptr::null_mut() } else { air_instance.get_aux_trace_ptr() };
-        let const_pols: *mut u8 = if gen_proof { std::ptr::null_mut() } else { setup.get_const_ptr() };
+        let const_pols: *mut u8 = if gen_proof { std::ptr::null_mut() } else { air_instance.get_fixed_ptr() };
 
         StepsParams {
             trace: air_instance.get_trace_ptr(),

@@ -6,8 +6,8 @@ use mpi::environment::Universe;
 use std::ops::Add;
 use std::sync::atomic::AtomicUsize;
 use proofman_common::{
-    calculate_fixed_tree, configured_num_threads, skip_prover_instance, CurveType, DebugInfo, MemoryHandler, ParamsGPU,
-    Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
+    calculate_fixed_tree, configured_num_threads, load_const_pols, skip_prover_instance, CurveType, DebugInfo,
+    MemoryHandler, ParamsGPU, Proof, ProofCtx, ProofOptions, ProofType, SetupCtx, SetupsVadcop, VerboseMode,
 };
 use colored::Colorize;
 use proofman_hints::aggregate_airgroupvals;
@@ -796,7 +796,7 @@ where
         max_num_threads: usize,
         memory_handler: Arc<MemoryHandler<F>>,
     ) {
-        Self::initialize_air_instance(&pctx, &sctx, instance_id, true);
+        Self::initialize_air_instance(&pctx, &sctx, instance_id, true, true);
 
         #[cfg(feature = "diagnostic")]
         {
@@ -929,15 +929,7 @@ where
             if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
 
         if !verify_constraints {
-            initialize_fixed_pols_tree(
-                &pctx,
-                &sctx,
-                &setups_vadcop,
-                d_buffers.clone(),
-                aggregation,
-                final_snark,
-                &gpu_params,
-            );
+            initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, d_buffers.clone(), aggregation, &gpu_params);
         }
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
@@ -1011,15 +1003,7 @@ where
             if aggregation { get_recursive_buffer_sizes(&pctx, &setups_vadcop)? } else { (0, 0) };
 
         if !verify_constraints {
-            initialize_fixed_pols_tree(
-                &pctx,
-                &sctx,
-                &setups_vadcop,
-                d_buffers.clone(),
-                aggregation,
-                final_snark,
-                &gpu_params,
-            );
+            initialize_fixed_pols_tree(&pctx, &sctx, &setups_vadcop, d_buffers.clone(), aggregation, &gpu_params);
         }
 
         let wcm = Arc::new(WitnessManager::new(pctx.clone(), sctx.clone()));
@@ -2207,21 +2191,21 @@ where
     ) {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
         timer_start_info!(GEN_PROOF, "GEN_PROOF_{} [{}:{}]", instance_id, airgroup_id, air_id);
-        Self::initialize_air_instance(&pctx, &sctx, instance_id, false);
+        Self::initialize_air_instance(&pctx, &sctx, instance_id, false, false);
 
         let setup = sctx.get_setup(airgroup_id, air_id);
         let p_setup: *mut c_void = (&setup.p_setup).into();
         let air_instance_name = &pctx.global_info.airs[airgroup_id][air_id].name;
 
-        let mut steps_params = pctx.get_air_instance_params(&sctx, instance_id, true);
+        let mut steps_params = pctx.get_air_instance_params(instance_id, true);
 
         if cfg!(not(feature = "gpu")) {
             steps_params.aux_trace = aux_trace.as_ptr() as *mut u8;
             steps_params.p_const_pols = const_pols.as_ptr() as *mut u8;
             steps_params.p_const_tree = const_tree.as_ptr() as *mut u8;
         } else if !gpu_preallocate {
-            steps_params.p_const_pols = setup.get_const_ptr();
-            steps_params.p_const_tree = setup.get_const_tree_ptr();
+            steps_params.p_const_pols = std::ptr::null_mut();
+            steps_params.p_const_tree = std::ptr::null_mut();
         }
 
         let p_steps_params: *mut u8 = (&steps_params).into();
@@ -2484,7 +2468,13 @@ where
         invalid_initialization
     }
 
-    fn initialize_air_instance(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize, init_aux_trace: bool) {
+    fn initialize_air_instance(
+        pctx: &ProofCtx<F>,
+        sctx: &SetupCtx<F>,
+        instance_id: usize,
+        init_aux_trace: bool,
+        verify_constraints: bool,
+    ) {
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
         let setup = sctx.get_setup(airgroup_id, air_id);
 
@@ -2498,6 +2488,11 @@ where
                 * 3,
         );
 
+        if verify_constraints {
+            let const_pols: Vec<F> = create_buffer_fast(setup.const_pols_size);
+            load_const_pols(&setup.setup_path, setup.const_pols_size, &const_pols);
+            air_instance.init_fixed(const_pols);
+        }
         air_instance.init_custom_commit_fixed_trace(setup.custom_commits_fixed_buffer_size as usize);
 
         let n_custom_commits = setup.stark_info.custom_commits.len();
@@ -2575,7 +2570,7 @@ where
         let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
         let setup = sctx.get_setup(airgroup_id, air_id);
 
-        let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
+        let steps_params = pctx.get_air_instance_params(instance_id, false);
 
         calculate_impols_expressions_c((&setup.p_setup).into(), stage as u64, (&steps_params).into());
     }

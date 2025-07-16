@@ -112,7 +112,7 @@ impl<'a, F> FromTrace<'a, F> {
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 #[repr(C)]
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct AirInstance<F> {
     pub airgroup_id: usize,
     pub air_id: usize,
@@ -123,6 +123,7 @@ pub struct AirInstance<F> {
     pub airvalues: Vec<F>,
     pub challenges: Vec<F>,
     pub evals: Vec<F>,
+    pub fixed: Vec<F>,
     pub shared_buffer: bool,
 }
 
@@ -146,6 +147,7 @@ impl<F: Field> AirInstance<F> {
             evals: Vec::new(),
             challenges: Vec::new(),
             shared_buffer: trace_info.shared_buffer,
+            fixed: Vec::new(),
         }
     }
 
@@ -237,6 +239,10 @@ impl<F: Field> AirInstance<F> {
         self.airvalues = vec![F::ZERO; size];
     }
 
+    pub fn init_fixed(&mut self, fixed: Vec<F>) {
+        self.fixed = fixed;
+    }
+
     pub fn init_airgroup_values(&mut self, size: usize) {
         self.airgroup_values = vec![F::ZERO; size];
     }
@@ -252,6 +258,10 @@ impl<F: Field> AirInstance<F> {
         }
     }
 
+    pub fn get_fixed_ptr(&self) -> *mut u8 {
+        self.fixed.as_ptr() as *mut u8
+    }
+
     pub fn get_custom_commits_fixed_ptr(&self) -> *mut u8 {
         self.custom_commits_fixed.as_ptr() as *mut u8
     }
@@ -261,6 +271,7 @@ impl<F: Field> AirInstance<F> {
         let shared_buffer = self.shared_buffer && !trace.is_empty();
         self.custom_commits_fixed = Vec::new();
         self.aux_trace = Vec::new();
+        self.fixed = Vec::new();
         (shared_buffer, trace)
     }
 
@@ -280,6 +291,7 @@ impl<F: Field> AirInstance<F> {
         self.airvalues = Vec::new();
         self.evals = Vec::new();
         self.challenges = Vec::new();
+        self.fixed = Vec::new();
         (shared_buffer, trace)
     }
 }

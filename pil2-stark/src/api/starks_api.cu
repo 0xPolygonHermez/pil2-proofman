@@ -272,10 +272,8 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
     }
 
     if (!air_instance_info->stored && (d_buffers->streamsData[streamId].airgroupId != airgroupId || d_buffers->streamsData[streamId].airId != airId || d_buffers->streamsData[streamId].proofType != "basic")) {
-        memcpy(d_buffers->streamsData[streamId].pinned_buffer_const, params->pConstPolsAddress, sizeConstPols);
-        memcpy(d_buffers->streamsData[streamId].pinned_buffer_const_tree, params->pConstPolsExtendedTreeAddress, sizeConstTree);
-        // loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
-        // loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
+        loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
+        loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
     }
 
     d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
@@ -446,10 +444,8 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
 
     memcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)trace, N * nCols * sizeof(Goldilocks::Element));
     if (!air_instance_info->stored && (d_buffers->streamsData[streamId].airgroupId != airgroupId || d_buffers->streamsData[streamId].airId != airId || d_buffers->streamsData[streamId].proofType != string(proofType))) {
-        memcpy(d_buffers->streamsData[streamId].pinned_buffer_const, pConstPols, sizeConstPols);
-        memcpy(d_buffers->streamsData[streamId].pinned_buffer_const_tree, pConstTree, sizeConstTree);
-        // loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
-        // loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
+        loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
+        loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
     }
 
     d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
