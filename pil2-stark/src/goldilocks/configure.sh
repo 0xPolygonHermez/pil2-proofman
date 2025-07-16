@@ -23,7 +23,7 @@ if nvcc --list-gpu-code >/dev/null 2>&1; then
     NVCC_ARCHS=$(nvcc --list-gpu-code | grep -oE "sm_[0-9]+" | sed 's/sm_//g' | sort -n -u)
 else
     # Fallback to parsing help text
-    NVCC_ARCHS=$(nvcc --help | grep -oE "sm_[0-9]+" | sort -u | sed 's/sm_//g' | sort -n)
+    NVCC_ARCHS=$(nvcc --help | grep -oE "sm_[0-9]+" | sed 's/sm_//g' | sort -n -u)
 fi
 
 SELECTED_CAP=0
