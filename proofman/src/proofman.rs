@@ -475,11 +475,7 @@ where
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
             });
-            if cfg!(not(feature = "gpu")) {
-                handle.join().unwrap();
-            } else {
-                handles.push(handle);
-            }
+            handles.push(handle);
         }
         timer_stop_and_log_info!(CALCULATE_MAIN_WITNESS);
 
@@ -525,11 +521,7 @@ where
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
             });
-            if cfg!(not(feature = "gpu")) {
-                handle.join().unwrap();
-            } else {
-                handles.push(handle);
-            }
+            handles.push(handle);
         }
         timer_stop_and_log_info!(CALCULATE_FAST_WITNESS);
 
@@ -575,13 +567,13 @@ where
                 timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
                 tx_witness_clone.send(()).unwrap();
             });
-            if cfg!(not(feature = "gpu")) {
-                handle.join().unwrap();
-            } else {
-                handles.push(handle);
-            }
+            handles.push(handle);
         }
         timer_stop_and_log_info!(CALCULATE_SLOW_WITNESS);
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
 
         // syncronize to the non-all witnesses being evaluated
         for _ in 0..instances_mine_no_all {
