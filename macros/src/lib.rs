@@ -252,7 +252,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             /// trace!(MyTrace<F> { a: F, b: [F; 2] },  0, 1, 64 );
             /// let buffer = MyTrace::new();
             /// let sizes = vec![10, 20, 30];
-            /// let (chunks, leftover) = buffer.into_splitted_buffers(&sizes);
+            /// let (chunks, leftover) = buffer.into_split_buffers(&sizes);
             /// assert_eq!(chunks.len(), 3);
             /// assert_eq!(leftover.is_some(), true);
             /// assert_eq!(chunks[0].len(), 10);
@@ -326,7 +326,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             /// # Parameters
             /// - `splits`: A `Vec` of `Vec<#row_struct_name<#generics>>` representing the original buffer split into chunks.
             ///   All chunks **must be contiguous in memory**, i.e., each chunk must directly follow the previous one.
-            /// - `leftover`: An optional final chunk representing the trailing elements of the original buffer, if `into_splitted_buffers`
+            /// - `leftover`: An optional final chunk representing the trailing elements of the original buffer, if `into_split_buffers`
             ///   was used with a total size less than `NUM_ROWS`.
             ///
             /// # Panics
@@ -337,7 +337,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             /// # Safety
             /// This function performs raw pointer arithmetic and reconstructs a single `Vec` from multiple parts.
             /// It assumes that:
-            /// - All chunks came from a prior call to `into_splitted_buffers`.
+            /// - All chunks came from a prior call to `into_split_buffers`.
             /// - None of the `Vec`s were modified or reallocated after splitting.
             /// - The memory represented by all chunks forms one continuous allocation.
             ///
@@ -349,23 +349,23 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             /// trace!(MyTrace<F> { a: F, b: [F; 2] },  0, 1, 64 );
             /// let buffer = MyTrace::new();
             /// let sizes = vec![10, 20, 30];
-            /// let (chunks, leftover) = buffer.into_splitted_buffers(&sizes);
-            /// let reconstructed = MyTrace::from_splitted_buffers(chunks, leftover);
+            /// let (chunks, leftover) = buffer.into_split_buffers(&sizes);
+            /// let reconstructed = MyTrace::from_split_buffers(chunks, leftover);
             /// assert_eq!(reconstructed.num_rows(), 64);
             /// assert_eq!(reconstructed.airgroup_id(), 0);
             /// assert_eq!(reconstructed.air_id(), 1);
             /// ```
             pub fn from_split_struct(
-                mut splitted_struct: #split_struct_name<#generics>,
+                mut split_struct: #split_struct_name<#generics>,
             ) -> Self {
                 #trace_struct_name {
-                    buffer: unsafe { splitted_struct.original_buffer },
+                    buffer: unsafe { split_struct.original_buffer },
                     num_rows: Self::NUM_ROWS,
                     row_size: #row_struct_name::<#generics>::ROW_SIZE,
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
                     commit_id: #commit_id,
-                    shared_buffer: splitted_struct.shared_buffer,
+                    shared_buffer: split_struct.shared_buffer,
                 }
             }
         }
@@ -470,7 +470,7 @@ impl Parse for ParsedTraceInput {
         let struct_name = input.parse::<Ident>()?;
         let row_struct_name = row_struct_name.unwrap_or_else(|| format_ident!("{}Row", struct_name));
 
-        let split_struct_name = format_ident!("{}Splitted", struct_name);
+        let split_struct_name = format_ident!("{}Split", struct_name);
 
         let generics: Generics = input.parse()?;
         let fields: FieldsNamed = input.parse()?;
