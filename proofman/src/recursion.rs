@@ -55,7 +55,8 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
         updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
-        let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
+        // let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
+        let circom_witness = Vec::new();
         timer_stop_and_log_info!(
             GENERATE_COMPRESSOR_WITNESS,
             "GENERATING_COMPRESSOR_WITNESS_{} [{}:{}]",
@@ -103,7 +104,8 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             add_publics_circom(&mut updated_proof, 0, pctx, &recursive2_verkey, true);
         }
 
-        let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
+        // let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
+        let circom_witness = Vec::new();
         timer_stop_and_log_info!(
             GENERATE_RECURSIVE1_WITNESS,
             "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
