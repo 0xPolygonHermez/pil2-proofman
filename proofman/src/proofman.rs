@@ -1556,22 +1556,22 @@ where
                             }
                         };
 
-                        recursive2_proof.map(|(p1, p2, p3)| {
-                            gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap()
-                        })
+                        // recursive2_proof.map(|(p1, p2, p3)| {
+                        //     gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap()
+                        // })
                     } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
                         let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
-                        Some(gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof).unwrap())
+                        // Some(gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof).unwrap())
                     } else {
                         let proof = std::mem::replace(
                             &mut *proofs_clone[id as usize].write().unwrap(),
                             Proof::<F>::default(), // You must implement or derive Default
                         );
-                        Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap())
+                        // Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap())
                     };
 
-                    if let Some(witness) = witness {
-                        proofs_pending_clone.increment();
+                    // if let Some(witness) = witness {
+                    //     proofs_pending_clone.increment();
                         // if new_proof_type == ProofType::Compressor as usize {
                         //     compressor_witness_tx_clone.send(witness).unwrap();
                         // } else if new_proof_type == ProofType::Recursive1 as usize {
@@ -1579,7 +1579,7 @@ where
                         // } else {
                         //     rec2_witness_tx_clone.send(witness).unwrap();
                         // }
-                    }
+                    // }
                     proofs_pending_clone.decrement();
                 }
             });
