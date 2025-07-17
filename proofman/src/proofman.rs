@@ -1489,9 +1489,6 @@ where
 
         let proofs_pending = Arc::new(Counter::new());
 
-        let basic_proofs_threshold = instances_mine.saturating_sub(n_streams as usize).max(0);
-        let basic_proofs_done = Arc::new(Counter::new_with_threshold(basic_proofs_threshold));
-
         let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
         register_proof_done_callback_c(recursive_tx.clone());
 
@@ -1509,7 +1506,6 @@ where
             let recursive2_proofs_clone = recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
             let proofs_pending_clone = proofs_pending.clone();
-            let basic_proofs_done_clone = basic_proofs_done.clone();
             let rec1_witness_tx_clone = rec1_witness_tx.clone();
             let rec2_witness_tx_clone = rec2_witness_tx.clone();
             let compressor_witness_tx_clone = compressor_witness_tx.clone();
@@ -1520,9 +1516,6 @@ where
                         return;
                     }
                     let p: ProofType = proof_type.parse().unwrap();
-                    if p == ProofType::Basic {
-                        basic_proofs_done_clone.increment();
-                    }
                     if !options.aggregation {
                         proofs_pending_clone.decrement();
                         continue;
@@ -1727,9 +1720,6 @@ where
                 launch_callback_c(instance_id as u64, "basic");
             }
         }
-
-        basic_proofs_done
-            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         let proofs_finished = Arc::new(AtomicBool::new(false));
         for _ in 0..n_streams {
