@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use num_traits::ToPrimitive;
 use std::sync::Arc;
 
-use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
+use proofman_common::{format_bytes, load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
 
 use std::os::raw::{c_void, c_char};
 
@@ -55,8 +55,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
         let mut updated_proof: Vec<u64> = vec![0; proof.proof.len() + publics_circom_size];
         updated_proof[publics_circom_size..].copy_from_slice(&proof.proof);
         add_publics_circom(&mut updated_proof, 0, pctx, "", false);
-        // let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
-        let circom_witness = Vec::new();
+        let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
         timer_stop_and_log_info!(
             GENERATE_COMPRESSOR_WITNESS,
             "GENERATING_COMPRESSOR_WITNESS_{} [{}:{}]",
@@ -104,8 +103,7 @@ pub fn gen_witness_recursive<F: PrimeField64>(
             add_publics_circom(&mut updated_proof, 0, pctx, &recursive2_verkey, true);
         }
 
-        // let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
-        let circom_witness = Vec::new();
+        let circom_witness = generate_witness::<F>(setup, &updated_proof)?;
         timer_stop_and_log_info!(
             GENERATE_RECURSIVE1_WITNESS,
             "GENERATING_RECURSIVE1_WITNESS_{} [{}:{}]",
@@ -653,13 +651,14 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
         None => panic!("circom_circuit is not initialized"),
     };
 
-    unsafe {
-        let library_guard = setup.circom_library.read().unwrap();
-        let library = library_guard.as_ref().ok_or("Circom library not loaded")?;
-        let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-        get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1);
-    }
+    // unsafe {
+    //     let library_guard = setup.circom_library.read().unwrap();
+    //     let library = library_guard.as_ref().ok_or("Circom library not loaded")?;
+    //     let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
+    //     get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1);
+    // }
 
+    println!("WITNESS SIZE {} {}", witness_size, format_bytes(witness_size as f64));
     Ok(witness)
 }
 
