@@ -1127,21 +1127,15 @@ where
         let roots_contributions: Arc<Vec<Mutex<[F; 4]>>> =
             Arc::new((0..instances.len()).map(|_| Mutex::new([F::default(); 4])).collect());
 
-        let aux_trace_size = match cfg!(feature = "gpu") {
-            true => 0,
-            false => self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size),
+        let (aux_trace, const_pols, const_tree) = if cfg!(feature = "gpu") {
+            (Arc::new(Vec::new()), Arc::new(Vec::new()), Arc::new(Vec::new()))
+        } else {
+            (
+                Arc::new(create_buffer_fast(self.sctx.max_prover_buffer_size.max(self.setups.max_prover_buffer_size))),
+                Arc::new(create_buffer_fast(self.sctx.max_const_size.max(self.setups.max_const_size))),
+                Arc::new(create_buffer_fast(self.sctx.max_const_tree_size.max(self.setups.max_const_tree_size))),
+            )
         };
-        let const_pols_size = match cfg!(feature = "gpu") {
-            true => 0,
-            false => self.sctx.max_const_size.max(self.setups.max_const_size),
-        };
-        let const_tree_size = match cfg!(feature = "gpu") {
-            true => 0,
-            false => self.sctx.max_const_tree_size.max(self.setups.max_const_tree_size),
-        };
-        let aux_trace: Arc<Vec<F>> = Arc::new(create_buffer_fast(aux_trace_size));
-        let const_pols: Arc<Vec<F>> = Arc::new(create_buffer_fast(const_pols_size));
-        let const_tree: Arc<Vec<F>> = Arc::new(create_buffer_fast(const_tree_size));
 
         let max_witness_stored = match cfg!(feature = "gpu") {
             true => instances_mine_no_all.min(self.gpu_params.max_witness_stored),
@@ -1549,9 +1543,9 @@ where
 
                     let witness = if new_proof_type == ProofType::Recursive2 as usize {
                         let proof = if p == ProofType::Recursive1 {
-                            recursive1_proofs_clone[id as usize].read().unwrap().as_ref().unwrap().clone()
+                            recursive1_proofs_clone[id as usize].write().unwrap().take().unwrap()
                         } else {
-                            recursive2_proofs_ongoing_clone.read().unwrap()[id as usize].as_ref().unwrap().clone()
+                            recursive2_proofs_ongoing_clone.write().unwrap()[id as usize].take().unwrap()
                         };
 
                         let recursive2_proof = {
@@ -1573,11 +1567,13 @@ where
                             gen_witness_aggregation(&pctx_clone, &setups_clone, &p1, &p2, &p3).unwrap()
                         })
                     } else if new_proof_type == ProofType::Recursive1 as usize && p == ProofType::Compressor {
-                        let guard = compressor_proofs_clone[id as usize].read().unwrap();
-                        let proof = guard.as_ref().unwrap();
-                        Some(gen_witness_recursive(&pctx_clone, &setups_clone, proof).unwrap())
+                        let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
+                        Some(gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof).unwrap())
                     } else {
-                        let proof = proofs_clone[id as usize].read().unwrap();
+                        let proof = std::mem::replace(
+                            &mut *proofs_clone[id as usize].write().unwrap(),
+                            Proof::<F>::default(), // You must implement or derive Default
+                        );
                         Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap())
                     };
 
@@ -1773,9 +1769,9 @@ where
                 let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
                 if witness.proof_type == ProofType::Recursive2 {
                     let id = {
-                        let mut proofs = recursive2_proofs_ongoing_clone.write().unwrap();
-                        let id = proofs.len();
-                        proofs.push(None);
+                        let mut rec2_proofs = recursive2_proofs_ongoing_clone.write().unwrap();
+                        let id = rec2_proofs.len();
+                        rec2_proofs.push(None);
                         id
                     };
 
@@ -1897,21 +1893,17 @@ where
 
             if options.verify_proofs {
                 timer_start_info!(VERIFYING_PROOFS);
+                let mut airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
                 for instance_id in my_instances.iter() {
-                    let valid_proof = verify_basic_proof(
-                        &self.pctx,
-                        *instance_id,
-                        &proofs[*instance_id].read().unwrap().proof.clone(),
-                    );
+                    let proof = {
+                        let mut lock = proofs[*instance_id].write().unwrap();
+                        std::mem::replace(&mut *lock, Default::default())
+                    };
+                    let valid_proof = verify_basic_proof(&self.pctx, *instance_id, &proof.proof);
                     if !valid_proof {
                         valid_proofs = false;
                     }
-                }
-                timer_stop_and_log_info!(VERIFYING_PROOFS);
 
-                let mut airgroup_values_air_instances = vec![Vec::new(); my_instances.len()];
-
-                for instance_id in my_instances.iter() {
                     let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(*instance_id);
                     let setup = self.sctx.get_setup(airgroup_id, air_id);
                     let n_airgroup_values = setup
@@ -1921,13 +1913,12 @@ where
                         .map(|map| map.iter().map(|entry| if entry.stage == 1 { 1 } else { 3 }).sum::<usize>())
                         .unwrap_or(0);
 
-                    let proof = proofs[*instance_id].read().expect("Missing proof");
-
                     let airgroup_values: Vec<F> =
                         proof.proof[0..n_airgroup_values].to_vec().iter().map(|&x| F::from_u64(x)).collect();
 
                     airgroup_values_air_instances[self.pctx.dctx_get_instance_idx(*instance_id)] = airgroup_values;
                 }
+                timer_stop_and_log_info!(VERIFYING_PROOFS);
 
                 let airgroupvalues_u64 = aggregate_airgroupvals(&self.pctx, &airgroup_values_air_instances);
                 let airgroupvalues = self.pctx.dctx_distribute_airgroupvalues(airgroupvalues_u64);
