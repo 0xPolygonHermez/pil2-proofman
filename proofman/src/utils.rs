@@ -524,28 +524,28 @@ pub fn initialize_witness_circom<F: PrimeField64>(
             if pctx.global_info.get_air_has_compressor(airgroup_id, air_id) {
                 let setup = setups.sctx_compressor.as_ref().unwrap().get_setup(airgroup_id, air_id);
                 setup.set_exec_file_data()?;
-                setup.set_circom_circuit()?;
+                setup.set_circom_lib()?;
             }
             let setup = setups.sctx_recursive1.as_ref().unwrap().get_setup(airgroup_id, air_id);
             setup.set_exec_file_data()?;
-            setup.set_circom_circuit()?;
+            setup.set_circom_lib()?;
         }
     }
 
     let n_airgroups = pctx.global_info.air_groups.len();
     for airgroup in 0..n_airgroups {
         let setup = setups.sctx_recursive2.as_ref().unwrap().get_setup(airgroup, 0);
-        setup.set_circom_circuit()?;
+        setup.set_circom_lib()?;
         setup.set_exec_file_data()?;
     }
 
     let setup_vadcop_final = setups.setup_vadcop_final.as_ref().unwrap();
-    setup_vadcop_final.set_circom_circuit()?;
+    setup_vadcop_final.set_circom_lib()?;
     setup_vadcop_final.set_exec_file_data()?;
 
     if final_snark {
         let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-        setup_recursivef.set_circom_circuit()?;
+        setup_recursivef.set_circom_lib()?;
         setup_recursivef.set_exec_file_data()?;
     }
 

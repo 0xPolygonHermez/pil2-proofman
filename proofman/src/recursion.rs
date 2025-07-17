@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use num_traits::ToPrimitive;
 use std::sync::Arc;
 
-use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
+use proofman_common::{
+    load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop,
+};
 
 use std::os::raw::{c_void, c_char};
 
@@ -15,7 +17,7 @@ use proofman_util::{timer_start_info, timer_stop_and_log_info, timer_stop_and_lo
 use crate::{add_publics_circom, add_publics_aggregation};
 
 type GetWitnessFunc =
-    unsafe extern "C" fn(zkin: *mut u64, circom_circuit: *mut c_void, witness: *mut c_void, n_mutexes: u64);
+    unsafe extern "C" fn(zkin: *mut u64, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64);
 
 type GetWitnessFinalFunc =
     unsafe extern "C" fn(zkin: *mut c_void, dat_file: *const c_char, witness: *mut c_void, n_mutexes: u64);
@@ -645,19 +647,15 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
 
     let witness: Vec<F> = vec![F::ZERO; witness_size as usize];
 
-    let circom_circuit_guard = setup.circom_circuit.read().unwrap();
-    let circom_circuit_ptr = match *circom_circuit_guard {
-        Some(ptr) => ptr,
-        None => panic!("circom_circuit is not initialized"),
-    };
-
+    let dat_filename = setup.setup_path.display().to_string() + ".dat";
+    let dat_filename_str = CString::new(dat_filename.as_str()).unwrap();
+    let dat_filename_ptr = dat_filename_str.as_ptr() as *mut std::os::raw::c_char;
     unsafe {
         let library_guard = setup.circom_library.read().unwrap();
         let library = library_guard.as_ref().ok_or("Circom library not loaded")?;
         let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-        get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1);
+        get_witness(zkin.as_ptr() as *mut u64, dat_filename_ptr, witness.as_ptr() as *mut c_void, 1);
     }
-
     Ok(witness)
 }
 
