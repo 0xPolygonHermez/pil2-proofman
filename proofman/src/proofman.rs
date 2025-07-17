@@ -1489,12 +1489,10 @@ where
 
         let proofs_pending = Arc::new(Counter::new());
 
-        let basic_proofs_threshold = instances_mine.saturating_sub(n_streams as usize).max(0);
-        let basic_proofs_done = Arc::new(Counter::new_with_threshold(basic_proofs_threshold));
-
         let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
         register_proof_done_callback_c(recursive_tx.clone());
 
+        let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
         let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
         let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
@@ -1509,7 +1507,6 @@ where
             let recursive2_proofs_clone = recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
             let proofs_pending_clone = proofs_pending.clone();
-            let basic_proofs_done_clone = basic_proofs_done.clone();
             let rec1_witness_tx_clone = rec1_witness_tx.clone();
             let rec2_witness_tx_clone = rec2_witness_tx.clone();
             let compressor_witness_tx_clone = compressor_witness_tx.clone();
@@ -1520,9 +1517,6 @@ where
                         return;
                     }
                     let p: ProofType = proof_type.parse().unwrap();
-                    if p == ProofType::Basic {
-                        basic_proofs_done_clone.increment();
-                    }
                     if !options.aggregation {
                         proofs_pending_clone.decrement();
                         continue;
@@ -1637,103 +1631,11 @@ where
             )
         });
 
-        for &instance_id in my_instances_sorted.iter() {
-            if my_instances_calculated[instance_id] {
-                continue;
-            }
-
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let d_buffers_clone = self.d_buffers.clone();
-            let aux_trace_clone = aux_trace.clone();
-            let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let wcm = self.wcm.clone();
-            let proofs_pending_clone = proofs_pending.clone();
-            let stream_clone = vec_streams.clone();
-            let proofs_clone = proofs.clone();
-            let output_dir_path_clone = options.output_dir_path.clone();
-            let is_stored =
-                self.pctx.is_air_instance_stored(instance_id) || vec_streams.contains(&Some(instance_id as u64));
-
-            let const_pols_clone = const_pols.clone();
-            let const_tree_clone = const_tree.clone();
-            my_instances_calculated[instance_id] = true;
-
-            let instance_info = &instances[instance_id];
-            let (airgroup_id, air_id, _) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-
-            let preallocate = self.gpu_params.preallocate;
-
-            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 4).max(n_threads_witness);
-
-            if !is_stored {
-                for _ in 0..threads_to_use_collect {
-                    rx_threads.recv().unwrap();
-                }
-            }
-
-            let threads_to_use_witness = threads_to_use_collect.min(n_threads_witness);
-            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
-
-            let memory_handler_clone = self.memory_handler.clone();
-
-            let handle = std::thread::spawn(move || {
-                proofs_pending_clone.increment();
-                if !is_stored {
-                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect, memory_handler_clone.as_ref());
-                    for _ in 0..threads_to_return {
-                        tx_threads_clone.send(()).unwrap();
-                    }
-                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
-                    for _ in 0..threads_to_use_witness {
-                        tx_threads_clone.send(()).unwrap();
-                    }
-                    timer_stop_and_log_info!(
-                        GENERATING_WC,
-                        "GENERATING_WC_{} [{}:{}]",
-                        instance_id,
-                        airgroup_id,
-                        air_id
-                    );
-                }
-                let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
-                Self::gen_proof(
-                    proofs_clone.clone(),
-                    pctx_clone.clone(),
-                    sctx_clone.clone(),
-                    instance_id,
-                    output_dir_path_clone.clone(),
-                    aux_trace_clone.clone(),
-                    const_pols_clone.clone(),
-                    const_tree_clone.clone(),
-                    d_buffers_clone.clone(),
-                    stream_id,
-                    options.save_proofs,
-                    preallocate,
-                );
-                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                if is_shared_buffer {
-                    memory_handler_clone.release_buffer(witness_buffer);
-                }
-            });
-            if cfg!(not(feature = "gpu")) {
-                handle.join().unwrap();
-            }
-        }
-
-        for &instance_id in my_instances_sorted.iter() {
-            if cfg!(not(feature = "gpu")) {
-                launch_callback_c(instance_id as u64, "basic");
-            }
-        }
-
-        basic_proofs_done
-            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
-
         let proofs_finished = Arc::new(AtomicBool::new(false));
         for _ in 0..n_streams {
             let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let aux_trace_clone = aux_trace.clone();
             let setups_clone = self.setups.clone();
             let d_buffers_clone = self.d_buffers.clone();
             let trace_size = self.trace_size;
@@ -1741,29 +1643,58 @@ where
             let output_dir_path_clone = options.output_dir_path.clone();
             let const_pols_clone = const_pols.clone();
             let const_tree_clone = const_tree.clone();
+            let proofs_clone = proofs.clone();
             let compressor_proofs_clone = compressor_proofs.clone();
             let recursive1_proofs_clone = recursive1_proofs.clone();
             let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
-
+            let stream_clone = vec_streams.clone();
+            let proofs_rx = proofs_rx.clone();
             let compressor_rx = compressor_witness_rx.clone();
             let rec2_rx = rec2_witness_rx.clone();
             let rec1_rx = rec1_witness_rx.clone();
+            let preallocate = self.gpu_params.preallocate;
+
+            let memory_handler_clone = self.memory_handler.clone();
 
             let proofs_finished_clone = proofs_finished.clone();
 
             let handle_recursive = std::thread::spawn(move || loop {
+                // Handle proof witnesses (Proof<F> type)
                 let witness = rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
 
-                let mut witness = match witness {
-                    Ok(w) => w,
-                    Err(_) => {
-                        if proofs_finished_clone.load(Ordering::Relaxed) {
-                            return;
+                // If not witness, check if there's a proof
+                if witness.is_err() {
+                    // Check if proof received
+                    if let Ok(instance_id) = proofs_rx.try_recv() {
+                        let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
+                        Self::gen_proof(
+                            proofs_clone.clone(),
+                            pctx_clone.clone(),
+                            sctx_clone.clone(),
+                            instance_id,
+                            output_dir_path_clone.clone(),
+                            aux_trace_clone.clone(),
+                            const_pols_clone.clone(),
+                            const_tree_clone.clone(),
+                            d_buffers_clone.clone(),
+                            stream_id,
+                            options.save_proofs,
+                            preallocate,
+                        );
+                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                        if is_shared_buffer {
+                            memory_handler_clone.release_buffer(witness_buffer);
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                        continue;
                     }
-                };
+
+                    if proofs_finished_clone.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+
+                let mut witness = witness.unwrap();
 
                 let trace: Vec<F> = create_buffer_fast(trace_size);
                 let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
@@ -1847,6 +1778,69 @@ where
                 }
             });
             handle_recursives.push(handle_recursive);
+        }
+
+        for &instance_id in my_instances_sorted.iter() {
+            if my_instances_calculated[instance_id] {
+                continue;
+            }
+
+            let tx_threads_clone: Sender<()> = tx_threads.clone();
+            let proofs_tx_clone = proofs_tx.clone();
+            let wcm = self.wcm.clone();
+            let proofs_pending_clone = proofs_pending.clone();
+            let is_stored =
+                self.pctx.is_air_instance_stored(instance_id) || vec_streams.contains(&Some(instance_id as u64));
+
+            my_instances_calculated[instance_id] = true;
+
+            let instance_info = &instances[instance_id];
+            let (airgroup_id, air_id, _) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+
+            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 4).max(n_threads_witness);
+
+            if !is_stored {
+                for _ in 0..threads_to_use_collect {
+                    rx_threads.recv().unwrap();
+                }
+            }
+
+            let threads_to_use_witness = threads_to_use_collect.min(n_threads_witness);
+            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
+
+            let memory_handler_clone = self.memory_handler.clone();
+
+            let handle = std::thread::spawn(move || {
+                proofs_pending_clone.increment();
+                if !is_stored {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect, memory_handler_clone.as_ref());
+                    for _ in 0..threads_to_return {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
+                    for _ in 0..threads_to_use_witness {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                }
+                proofs_tx_clone.send(instance_id).unwrap();
+            });
+            if cfg!(not(feature = "gpu")) {
+                handle.join().unwrap();
+            }
+        }
+
+        for &instance_id in my_instances_sorted.iter() {
+            if cfg!(not(feature = "gpu")) {
+                launch_callback_c(instance_id as u64, "basic");
+            }
         }
 
         proofs_pending.wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
