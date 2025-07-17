@@ -651,12 +651,12 @@ fn generate_witness<F: PrimeField64>(setup: &Setup<F>, zkin: &[u64]) -> Result<V
         None => panic!("circom_circuit is not initialized"),
     };
 
-    // unsafe {
-    //     let library_guard = setup.circom_library.read().unwrap();
-    //     let library = library_guard.as_ref().ok_or("Circom library not loaded")?;
-    //     let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
-    //     get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1);
-    // }
+    unsafe {
+        let library_guard = setup.circom_library.read().unwrap();
+        let library = library_guard.as_ref().ok_or("Circom library not loaded")?;
+        let get_witness: Symbol<GetWitnessFunc> = library.get(b"getWitness\0")?;
+        // get_witness(zkin.as_ptr() as *mut u64, circom_circuit_ptr, witness.as_ptr() as *mut c_void, 1);
+    }
 
     println!("WITNESS SIZE {} {}", witness_size, format_bytes(witness_size as f64));
     Ok(witness)
