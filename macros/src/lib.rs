@@ -246,20 +246,6 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             ///
             /// Each resulting `Vec` receives a unique, non-overlapping section of the original buffer's memory,
             /// and takes ownership of its slice. This allows safe and concurrent processing of chunks without lifetimes or borrowing.
-            ///
-            /// # Example
-            /// ```rust
-            /// trace!(MyTrace<F> { a: F, b: [F; 2] },  0, 1, 64 );
-            /// let buffer = MyTrace::new();
-            /// let sizes = vec![10, 20, 30];
-            /// let (chunks, leftover) = buffer.into_split_buffers(&sizes);
-            /// assert_eq!(chunks.len(), 3);
-            /// assert_eq!(leftover.is_some(), true);
-            /// assert_eq!(chunks[0].len(), 10);
-            /// assert_eq!(chunks[1].len(), 20);
-            /// assert_eq!(chunks[2].len(), 30);
-            /// assert_eq!(leftover.unwrap().len(), 4);
-            /// ```
             pub fn to_split_struct(self, sizes: &[usize]) -> #split_struct_name<#generics> {
                 assert!(!sizes.is_empty(), "Sizes cannot be empty");
                 assert!(sizes.iter().all(|&size| size > 0), "All sizes must be greater than zero");
@@ -343,18 +329,6 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             ///
             /// # Returns
             /// A fully reconstructed `Self` instance with ownership of the entire original buffer.
-            ///
-            /// # Example
-            /// ```rust
-            /// trace!(MyTrace<F> { a: F, b: [F; 2] },  0, 1, 64 );
-            /// let buffer = MyTrace::new();
-            /// let sizes = vec![10, 20, 30];
-            /// let (chunks, leftover) = buffer.into_split_buffers(&sizes);
-            /// let reconstructed = MyTrace::from_split_buffers(chunks, leftover);
-            /// assert_eq!(reconstructed.num_rows(), 64);
-            /// assert_eq!(reconstructed.airgroup_id(), 0);
-            /// assert_eq!(reconstructed.air_id(), 1);
-            /// ```
             pub fn from_split_struct(
                 mut split_struct: #split_struct_name<#generics>,
             ) -> Self {
