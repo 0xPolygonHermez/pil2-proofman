@@ -1633,24 +1633,6 @@ where
             my_instances_calculated[idx as usize] = true;
         }
 
-        let mut precalculate_instances = Vec::new();
-        for &instance_id in my_instances_sorted.iter() {
-            if my_instances_calculated[instance_id] {
-                continue;
-            }
-
-            let is_stored =
-                self.pctx.is_air_instance_stored(instance_id) || vec_streams.contains(&Some(instance_id as u64));
-
-            if !is_stored && self.pctx.dctx_instance_precalculate(instance_id) {
-                precalculate_instances.push(instance_id);
-            }
-        }
-
-        timer_start_info!(PRECALCULATE_WITNESS);
-        self.wcm.pre_calculate_witness(1, &precalculate_instances, max_num_threads / 2, self.memory_handler.as_ref());
-        timer_stop_and_log_info!(PRECALCULATE_WITNESS);
-
         my_instances_sorted.sort_by_key(|&id| {
             let (airgroup_id, air_id) = self.pctx.dctx_get_instance_info(id);
             (
@@ -1686,11 +1668,16 @@ where
 
             let preallocate = self.gpu_params.preallocate;
 
+            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 4).max(n_threads_witness);
+
             if !is_stored {
-                for _ in 0..n_threads_witness {
+                for _ in 0..threads_to_use_collect {
                     rx_threads.recv().unwrap();
                 }
             }
+
+            let threads_to_use_witness = threads_to_use_collect.min(n_threads_witness);
+            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
 
             let memory_handler_clone = self.memory_handler.clone();
 
@@ -1698,8 +1685,12 @@ where
                 proofs_pending_clone.increment();
                 if !is_stored {
                     timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect, memory_handler_clone.as_ref());
+                    for _ in 0..threads_to_return {
+                        tx_threads_clone.send(()).unwrap();
+                    }
                     wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
-                    for _ in 0..n_threads_witness {
+                    for _ in 0..threads_to_use_witness {
                         tx_threads_clone.send(()).unwrap();
                     }
                     timer_stop_and_log_info!(
