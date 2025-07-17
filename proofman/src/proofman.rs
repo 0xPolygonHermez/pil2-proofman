@@ -1572,13 +1572,13 @@ where
 
                     if let Some(witness) = witness {
                         proofs_pending_clone.increment();
-                        if new_proof_type == ProofType::Compressor as usize {
-                            compressor_witness_tx_clone.send(witness).unwrap();
-                        } else if new_proof_type == ProofType::Recursive1 as usize {
-                            rec1_witness_tx_clone.send(witness).unwrap();
-                        } else {
-                            rec2_witness_tx_clone.send(witness).unwrap();
-                        }
+                        // if new_proof_type == ProofType::Compressor as usize {
+                        //     compressor_witness_tx_clone.send(witness).unwrap();
+                        // } else if new_proof_type == ProofType::Recursive1 as usize {
+                        //     rec1_witness_tx_clone.send(witness).unwrap();
+                        // } else {
+                        //     rec2_witness_tx_clone.send(witness).unwrap();
+                        // }
                     }
                     proofs_pending_clone.decrement();
                 }
@@ -1741,6 +1741,9 @@ where
 
             let proofs_finished_clone = proofs_finished.clone();
 
+            let trace: Vec<F> = create_buffer_fast(trace_size);
+            let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
+
             let handle_recursive = std::thread::spawn(move || loop {
                 let witness = rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
 
@@ -1755,8 +1758,6 @@ where
                     }
                 };
 
-                let trace: Vec<F> = create_buffer_fast(trace_size);
-                let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
                 if witness.proof_type == ProofType::Recursive2 {
                     let id = {
                         let mut rec2_proofs = recursive2_proofs_ongoing_clone.write().unwrap();
