@@ -271,11 +271,6 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
         CHECKCUDAERR(cudaMemcpyAsync(pCustomCommitsFixed, params->pCustomCommitsFixed, setupCtx->starkInfo.mapTotalNCustomCommitsFixed * sizeof(Goldilocks::Element), cudaMemcpyHostToDevice, stream));
     }
 
-    if (!air_instance_info->stored && (d_buffers->streamsData[streamId].airgroupId != airgroupId || d_buffers->streamsData[streamId].airId != airId || d_buffers->streamsData[streamId].proofType != "basic")) {
-        loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
-        loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
-    }
-
     d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
     d_buffers->streamsData[streamId].proofBuffer = proofBuffer;
     d_buffers->streamsData[streamId].proofFile = string(proofFile);
@@ -333,12 +328,30 @@ uint64_t gen_proof(void *pSetupCtx_, uint64_t airgroupId, uint64_t airId, uint64
         d_const_pols = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_pols_offset;
         d_const_tree = d_buffers->d_constPols[gpuLocalId] + air_instance_info->const_tree_offset;
     } else {
-        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
+
         uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
-        CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetConstPols, d_buffers->streamsData[streamId].pinned_buffer_const, sizeConstPols, cudaMemcpyHostToDevice, stream));
-        CHECKCUDAERR(cudaMemcpyAsync(d_aux_trace + offsetConstTree, d_buffers->streamsData[streamId].pinned_buffer_const_tree, sizeConstTree, cudaMemcpyHostToDevice, stream));
         d_const_pols = d_aux_trace + offsetConstPols;
+        uint32_t block_size = d_buffers->streamsData[streamId].const_pinned_size;
+        uint32_t nBlocks = (sizeConstPols + block_size - 1) / block_size;
+        Goldilocks::Element *pinned_buffer_const = d_buffers->streamsData[streamId].pinned_buffer_const;
+        for(int i=0; i<nBlocks; ++i) {
+            loadFileParallel_block(pinned_buffer_const, constPolsPath, block_size, true, i);
+            uint64_t copy_size = std::min((uint64_t)block_size, sizeConstPols - (uint64_t)i * block_size);
+            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)d_const_pols + (uint64_t)i * block_size, pinned_buffer_const, copy_size, cudaMemcpyHostToDevice, stream)); 
+            cudaStreamSynchronize(stream);
+        }
+
+        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
         d_const_tree = d_aux_trace + offsetConstTree;
+
+        uint32_t nBlocksTree = (sizeConstTree + block_size - 1) / block_size;
+        for(int i=0; i<nBlocksTree; ++i) {
+            loadFileParallel_block(pinned_buffer_const, constTreePath, block_size, true, i);
+            uint64_t copy_size_tree = std::min((uint64_t)block_size, sizeConstTree - (uint64_t)i * block_size);
+            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)d_const_tree + (uint64_t)i * block_size, pinned_buffer_const, copy_size_tree, cudaMemcpyHostToDevice, stream)); 
+            cudaStreamSynchronize(stream);
+        }
+
     }
 
 
@@ -443,10 +456,6 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
     AirInstanceInfo *air_instance_info = d_buffers->air_instances[key][string(proofType)][gpuLocalId];
 
     memcpy(d_buffers->streamsData[streamId].pinned_buffer, (Goldilocks::Element *)trace, N * nCols * sizeof(Goldilocks::Element));
-    if (!air_instance_info->stored && (d_buffers->streamsData[streamId].airgroupId != airgroupId || d_buffers->streamsData[streamId].airId != airId || d_buffers->streamsData[streamId].proofType != string(proofType))) {
-        loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const, constPolsPath, sizeConstPols);
-        loadFileParallel(d_buffers->streamsData[streamId].pinned_buffer_const_tree, constTreePath, sizeConstTree);
-    }
 
     d_buffers->streamsData[streamId].pSetupCtx = pSetupCtx_;
     d_buffers->streamsData[streamId].proofBuffer = proofBuffer;
@@ -468,12 +477,27 @@ uint64_t gen_recursive_proof(void *pSetupCtx_, char *globalInfoFile, uint64_t ai
         d_const_pols = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_pols_offset;
         d_const_tree = d_buffers->d_constPolsAggregation[gpuLocalId] + air_instance_info->const_tree_offset;
     } else {
-        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
         uint64_t offsetConstPols = setupCtx->starkInfo.mapOffsets[std::make_pair("const", false)];
         d_const_pols = d_aux_trace + offsetConstPols;
+        uint32_t block_size = d_buffers->streamsData[streamId].const_pinned_size;
+        uint32_t nBlocks = (sizeConstPols + block_size - 1) / block_size;
+        Goldilocks::Element *pinned_buffer_const_rec = d_buffers->streamsData[streamId].pinned_buffer_const;
+        for(int i=0; i<nBlocks; ++i) {
+            loadFileParallel_block(pinned_buffer_const_rec, constPolsPath, block_size, true, i);
+            uint64_t copy_size = std::min((uint64_t)block_size, sizeConstPols - (uint64_t)i * block_size);
+            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)d_const_pols + (uint64_t)i * block_size, pinned_buffer_const_rec, copy_size, cudaMemcpyHostToDevice, stream)); 
+            cudaStreamSynchronize(stream);
+        }
+
+        uint64_t offsetConstTree = setupCtx->starkInfo.mapOffsets[std::make_pair("const", true)];
         d_const_tree = d_aux_trace + offsetConstTree;
-        CHECKCUDAERR(cudaMemcpyAsync(d_const_pols, d_buffers->streamsData[streamId].pinned_buffer_const, sizeConstPols, cudaMemcpyHostToDevice, stream));
-        CHECKCUDAERR(cudaMemcpyAsync(d_const_tree, d_buffers->streamsData[streamId].pinned_buffer_const_tree, sizeConstTree, cudaMemcpyHostToDevice, stream));
+        uint32_t nBlocksTree = (sizeConstTree + block_size - 1) / block_size;
+        for(int i=0; i<nBlocksTree; ++i) {
+            loadFileParallel_block(pinned_buffer_const_rec, constTreePath, block_size, true, i);
+            uint64_t copy_size_tree = std::min((uint64_t)block_size, sizeConstTree - (uint64_t)i * block_size);
+            CHECKCUDAERR(cudaMemcpyAsync((uint8_t*)d_const_tree + (uint64_t)i * block_size, pinned_buffer_const_rec, copy_size_tree, cudaMemcpyHostToDevice, stream)); 
+            cudaStreamSynchronize(stream);
+        }
     }
 
     genRecursiveProof_gpu<Goldilocks::Element>(*setupCtx, d_trace, d_aux_trace, d_const_pols, d_const_tree, streamId, d_buffers, air_instance_info, instanceId, timer, stream);

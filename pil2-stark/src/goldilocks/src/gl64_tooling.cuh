@@ -161,9 +161,10 @@ struct StreamData{
     Goldilocks::Element *pinned_buffer;
     Goldilocks::Element *pinned_buffer_proof;
     Goldilocks::Element *pinned_buffer_const;
-    Goldilocks::Element *pinned_buffer_const_tree;
     Goldilocks::Element *pinned_buffer_exps_params;
     Goldilocks::Element *pinned_buffer_exps_args;
+
+    uint64_t const_pinned_size = 512 * 1024 * 1024; //512MB, this is the size of pinned memory for consts, it can be changed if needed
 
     //runtime data
     uint32_t status; //0: unused, 1: loading, 2: full
@@ -205,8 +206,7 @@ struct StreamData{
         uint64_t constMaxSize = std::max(max_size_const, max_size_const_aggregation);
         uint64_t constMaxSizeTree = std::max(max_size_const_tree, max_size_const_tree_aggregation);
         if (constMaxSize > 0) {
-            CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_const, constMaxSize * sizeof(Goldilocks::Element)));
-            CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_const_tree, constMaxSizeTree * sizeof(Goldilocks::Element)));
+            CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_const, const_pinned_size));
         }
         root = nullptr;
         pSetupCtx = nullptr;
@@ -256,7 +256,6 @@ struct StreamData{
         cudaFreeHost(pinned_buffer_exps_args);
         cudaFreeHost(pinned_params);
         cudaFreeHost(pinned_buffer_const);
-        cudaFreeHost(pinned_buffer_const_tree);
     }
 };
 struct DeviceCommitBuffers
