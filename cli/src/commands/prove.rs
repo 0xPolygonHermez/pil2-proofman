@@ -65,6 +65,9 @@ pub struct ProveCmd {
     #[clap(short = 'r', long, default_value_t = false)]
     pub preallocate: bool,
 
+    #[clap(short = 'h', long, default_value_t = false)]
+    pub precalculate: bool,
+
     #[clap(short = 't', long)]
     pub max_streams: Option<usize>,
 
@@ -179,6 +182,7 @@ impl ProveCmd {
                         self.aggregation,
                         self.final_snark,
                         self.verify_proofs,
+                        self.precalculate,
                         self.save_proofs,
                         self.output_dir.clone(),
                     ),
