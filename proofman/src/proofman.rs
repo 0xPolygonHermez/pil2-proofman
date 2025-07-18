@@ -388,7 +388,7 @@ where
         self.wcm.execute();
 
         // create a vector of instances wc weights
-        self.pctx.dctx_assign_instances(options.precalculate);
+        self.pctx.dctx_assign_instances(options.minimal_memory);
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
@@ -446,7 +446,7 @@ where
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
 
         timer_start_info!(COMPUTE_WITNESS);
-        if options.precalculate {
+        if !options.minimal_memory {
             timer_start_info!(CALCULATE_MAIN_WITNESS);
             for &instance_id in instances_mine_no_precalculate.iter() {
                 let instances = instances.clone();
@@ -1164,7 +1164,7 @@ where
 
         self.wcm.execute();
 
-        self.pctx.dctx_assign_instances(options.precalculate);
+        self.pctx.dctx_assign_instances(options.minimal_memory);
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
@@ -1264,7 +1264,7 @@ where
         });
 
         timer_start_info!(CALCULATING_WITNESS);
-        if options.precalculate {
+        if !options.minimal_memory {
             timer_start_info!(CALCULATE_MAIN_WITNESS);
             for &instance_id in instances_mine_no_precalculate.iter() {
                 let instances = instances.clone();

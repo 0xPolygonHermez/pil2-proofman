@@ -395,9 +395,9 @@ impl DistributionCtx {
         }
     }
 
-    pub fn assign_instances(&mut self, precalculate: bool) {
+    pub fn assign_instances(&mut self, minimal_memory: bool) {
         if self.balance_distribution {
-            if precalculate {
+            if minimal_memory {
                 // Sort unassigned instances according to wc_weights
                 let mut unassigned_instances = Vec::new();
                 for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {

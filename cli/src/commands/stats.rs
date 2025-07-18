@@ -55,8 +55,8 @@ pub struct StatsCmd {
     #[clap(short = 'x', long)]
     pub max_witness_stored: Option<usize>,
 
-    #[clap(short = 'h', long, default_value_t = false)]
-    pub precalculate: bool,
+    #[clap(short = 'm', long, default_value_t = false)]
+    pub minimal_memory: bool,
 }
 
 impl StatsCmd {
@@ -122,7 +122,7 @@ impl StatsCmd {
                 self.input_data.clone(),
                 &debug_info,
                 self.verbose.into(),
-                ProofOptions::new(false, false, false, false, self.precalculate, false, PathBuf::new()),
+                ProofOptions::new(false, false, false, false, self.minimal_memory, false, PathBuf::new()),
             )?,
         };
 

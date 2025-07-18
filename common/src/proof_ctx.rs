@@ -46,7 +46,7 @@ pub struct ProofOptions {
     pub save_proofs: bool,
     pub test_mode: bool,
     pub output_dir_path: PathBuf,
-    pub precalculate: bool,
+    pub minimal_memory: bool,
 }
 
 #[derive(Clone)]
@@ -84,7 +84,7 @@ impl ProofOptions {
         aggregation: bool,
         final_snark: bool,
         verify_proofs: bool,
-        precalculate: bool,
+        minimal_memory: bool,
         save_proofs: bool,
         output_dir_path: PathBuf,
     ) -> Self {
@@ -93,7 +93,7 @@ impl ProofOptions {
             aggregation,
             final_snark,
             verify_proofs,
-            precalculate,
+            minimal_memory,
             save_proofs,
             output_dir_path,
             test_mode: false,
@@ -105,7 +105,7 @@ impl ProofOptions {
         aggregation: bool,
         final_snark: bool,
         verify_proofs: bool,
-        precalculate: bool,
+        minimal_memory: bool,
         save_proofs: bool,
         output_dir_path: PathBuf,
     ) -> Self {
@@ -115,7 +115,7 @@ impl ProofOptions {
             final_snark,
             verify_proofs,
             save_proofs,
-            precalculate,
+            minimal_memory,
             output_dir_path,
             test_mode: true,
         }
@@ -494,9 +494,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance_no_assign(airgroup_id, air_id, pre_calculate, min_threads_witness, weight)
     }
 
-    pub fn dctx_assign_instances(&self, precalculate: bool) {
+    pub fn dctx_assign_instances(&self, minimal_memory: bool) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances(precalculate);
+        dctx.assign_instances(minimal_memory);
     }
 
     pub fn dctx_load_balance_info(&self) -> (f64, u64, u64, f64) {
