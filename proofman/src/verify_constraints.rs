@@ -20,7 +20,7 @@ pub fn verify_constraints<F: PrimeField64>(
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_id);
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, global_id, false);
+    let steps_params = pctx.get_air_instance_params(global_id, false);
 
     let p_setup = (&setup.p_setup).into();
 
