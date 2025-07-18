@@ -246,7 +246,7 @@ where
 
         self.wcm.execute();
 
-        self.pctx.dctx_assign_instances();
+        self.pctx.dctx_assign_instances(false);
         self.pctx.dctx_close();
         timer_stop_and_log_info!(EXECUTE);
 
@@ -345,6 +345,7 @@ where
         input_data_path: Option<PathBuf>,
         debug_info: &DebugInfo,
         verbose_mode: VerboseMode,
+        options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
         timer_start_info!(CREATE_WITNESS_LIB);
         let library = unsafe { Library::new(&witness_lib_path)? };
@@ -358,7 +359,7 @@ where
 
         self.register_witness(&mut *witness_lib, library);
 
-        self.compute_witness_()
+        self.compute_witness_(options)
     }
 
     /// Computes only the witness without generating a proof neither verifying constraints.
@@ -367,13 +368,14 @@ where
         &self,
         input_data_path: Option<PathBuf>,
         debug_info: &DebugInfo,
+        options: ProofOptions,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.pctx.set_debug_info(debug_info.clone());
         self.wcm.set_input_data_path(input_data_path);
-        self.compute_witness_()
+        self.compute_witness_(options)
     }
 
-    pub fn compute_witness_(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn compute_witness_(&self, options: ProofOptions) -> Result<(), Box<dyn std::error::Error>> {
         timer_start_info!(EXECUTE);
 
         if !self.wcm.is_init_witness() {
@@ -386,7 +388,7 @@ where
         self.wcm.execute();
 
         // create a vector of instances wc weights
-        self.pctx.dctx_assign_instances();
+        self.pctx.dctx_assign_instances(options.minimal_memory);
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
@@ -397,6 +399,9 @@ where
         let instances_all: Vec<(usize, _)> =
             instances.iter().enumerate().filter(|(_, instance_info)| instance_info.all).collect();
         let my_instances = self.pctx.dctx_get_my_instances();
+        let mut my_instances_sorted = my_instances.clone();
+        let mut rng = StdRng::seed_from_u64(self.pctx.dctx_get_rank() as u64);
+        my_instances_sorted.shuffle(&mut rng);
 
         let instances_mine_no_precalculate = my_instances
             .iter()
@@ -441,135 +446,214 @@ where
             Arc::new(MemoryHandler::new(self.gpu_params.max_witness_stored, self.sctx.max_witness_trace_size));
 
         timer_start_info!(COMPUTE_WITNESS);
-        timer_start_info!(CALCULATE_MAIN_WITNESS);
-        for &instance_id in instances_mine_no_precalculate.iter() {
-            let instances = instances.clone();
-            let instance_info = &instances[instance_id];
-            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-            if all {
-                continue;
-            }
+        if !options.minimal_memory {
+            timer_start_info!(CALCULATE_MAIN_WITNESS);
+            for &instance_id in instances_mine_no_precalculate.iter() {
+                let instances = instances.clone();
+                let instance_info = &instances[instance_id];
+                let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+                if all {
+                    continue;
+                }
 
-            let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let tx_witness_clone = tx_witness.clone();
-            let wcm = self.wcm.clone();
-            let pctx = self.pctx.clone();
+                let tx_threads_clone: Sender<()> = tx_threads.clone();
+                let tx_witness_clone = tx_witness.clone();
+                let wcm = self.wcm.clone();
+                let pctx = self.pctx.clone();
 
-            for _ in 0..n_threads_witness {
-                rx_threads.recv().unwrap();
-            }
-
-            let memory_handler_clone = memory_handler.clone();
-
-            let handle = std::thread::spawn(move || {
-                timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
                 for _ in 0..n_threads_witness {
-                    tx_threads_clone.send(()).unwrap();
-                }
-                let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
-                if is_shared_buffer {
-                    memory_handler_clone.release_buffer(witness_buffer);
+                    rx_threads.recv().unwrap();
                 }
 
-                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                tx_witness_clone.send(()).unwrap();
-            });
-            handles.push(handle);
-        }
-        timer_stop_and_log_info!(CALCULATE_MAIN_WITNESS);
+                let memory_handler_clone = memory_handler.clone();
 
-        timer_start_info!(PRE_CALCULATE_WITNESS_FAST);
-        self.wcm.pre_calculate_witness(
-            1,
-            &instances_mine_precalculate_fast,
-            max_num_threads / 2,
-            memory_handler.as_ref(),
-        );
-        timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_FAST);
-        timer_start_info!(CALCULATE_FAST_WITNESS);
-        for &instance_id in instances_mine_precalculate_fast.iter() {
-            let instances = instances.clone();
-            let instance_info = &instances[instance_id];
-            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-            if all {
-                continue;
+                let handle = std::thread::spawn(move || {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
+                    for _ in 0..n_threads_witness {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    let (is_shared_buffer, witness_buffer) = pctx.free_instance(instance_id);
+                    if is_shared_buffer {
+                        memory_handler_clone.release_buffer(witness_buffer);
+                    }
+
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                    tx_witness_clone.send(()).unwrap();
+                });
+                handles.push(handle);
             }
+            timer_stop_and_log_info!(CALCULATE_MAIN_WITNESS);
 
-            let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let tx_witness_clone = tx_witness.clone();
-            let wcm = self.wcm.clone();
+            timer_start_info!(PRE_CALCULATE_WITNESS_FAST);
+            self.wcm.pre_calculate_witness(
+                1,
+                &instances_mine_precalculate_fast,
+                max_num_threads / 2,
+                memory_handler.as_ref(),
+            );
+            timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_FAST);
+            timer_start_info!(CALCULATE_FAST_WITNESS);
+            for &instance_id in instances_mine_precalculate_fast.iter() {
+                let instances = instances.clone();
+                let instance_info = &instances[instance_id];
+                let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+                if all {
+                    continue;
+                }
 
-            let pctx_clone = self.pctx.clone();
+                let tx_threads_clone: Sender<()> = tx_threads.clone();
+                let tx_witness_clone = tx_witness.clone();
+                let wcm = self.wcm.clone();
 
-            for _ in 0..n_threads_witness {
-                rx_threads.recv().unwrap();
-            }
+                let pctx_clone = self.pctx.clone();
 
-            let memory_handler_clone = memory_handler.clone();
-
-            let handle = std::thread::spawn(move || {
-                timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
                 for _ in 0..n_threads_witness {
-                    tx_threads_clone.send(()).unwrap();
+                    rx_threads.recv().unwrap();
                 }
-                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                if is_shared_buffer {
-                    memory_handler_clone.release_buffer(witness_buffer);
+
+                let memory_handler_clone = memory_handler.clone();
+
+                let handle = std::thread::spawn(move || {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
+                    for _ in 0..n_threads_witness {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                    if is_shared_buffer {
+                        memory_handler_clone.release_buffer(witness_buffer);
+                    }
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                    tx_witness_clone.send(()).unwrap();
+                });
+                handles.push(handle);
+            }
+            timer_stop_and_log_info!(CALCULATE_FAST_WITNESS);
+
+            timer_start_info!(PRE_CALCULATE_WITNESS_SLOW);
+            self.wcm.pre_calculate_witness(
+                1,
+                &instances_mine_precalculate_slow,
+                max_num_threads / 2,
+                memory_handler.as_ref(),
+            );
+            timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_SLOW);
+
+            timer_start_info!(CALCULATE_SLOW_WITNESS);
+            for &instance_id in instances_mine_precalculate_slow.iter() {
+                let instances = instances.clone();
+                let instance_info = &instances[instance_id];
+                let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+                if all {
+                    continue;
                 }
-                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                tx_witness_clone.send(()).unwrap();
-            });
-            handles.push(handle);
-        }
-        timer_stop_and_log_info!(CALCULATE_FAST_WITNESS);
 
-        timer_start_info!(PRE_CALCULATE_WITNESS_SLOW);
-        self.wcm.pre_calculate_witness(
-            1,
-            &instances_mine_precalculate_slow,
-            max_num_threads / 2,
-            memory_handler.as_ref(),
-        );
-        timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_SLOW);
+                let tx_threads_clone: Sender<()> = tx_threads.clone();
+                let tx_witness_clone = tx_witness.clone();
+                let wcm = self.wcm.clone();
+                let pctx_clone = self.pctx.clone();
 
-        timer_start_info!(CALCULATE_SLOW_WITNESS);
-        for &instance_id in instances_mine_precalculate_slow.iter() {
-            let instances = instances.clone();
-            let instance_info = &instances[instance_id];
-            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-            if all {
-                continue;
-            }
-
-            let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let tx_witness_clone = tx_witness.clone();
-            let wcm = self.wcm.clone();
-            let pctx_clone = self.pctx.clone();
-
-            for _ in 0..n_threads_witness {
-                rx_threads.recv().unwrap();
-            }
-
-            let memory_handler_clone = memory_handler.clone();
-
-            let handle = std::thread::spawn(move || {
-                timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
                 for _ in 0..n_threads_witness {
-                    tx_threads_clone.send(()).unwrap();
+                    rx_threads.recv().unwrap();
                 }
-                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                if is_shared_buffer {
-                    memory_handler_clone.release_buffer(witness_buffer);
+
+                let memory_handler_clone = memory_handler.clone();
+
+                let handle = std::thread::spawn(move || {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
+                    for _ in 0..n_threads_witness {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                    if is_shared_buffer {
+                        memory_handler_clone.release_buffer(witness_buffer);
+                    }
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                    tx_witness_clone.send(()).unwrap();
+                });
+
+                handles.push(handle);
+            }
+            timer_stop_and_log_info!(CALCULATE_SLOW_WITNESS);
+        } else {
+            for &instance_id in my_instances_sorted.iter() {
+                let instances = instances.clone();
+                let instance_info = instances[instance_id];
+                let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+                if all {
+                    continue;
                 }
-                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                tx_witness_clone.send(()).unwrap();
-            });
-            handles.push(handle);
+
+                let pctx_clone = self.pctx.clone();
+                let tx_threads_clone: Sender<()> = tx_threads.clone();
+                let tx_witness_clone = tx_witness.clone();
+                let wcm = self.wcm.clone();
+
+                let threads_to_use_collect =
+                    (instance_info.n_chunks / 16).min(max_num_threads / 4).max(n_threads_witness);
+
+                //wait to receive the expected threads
+                for _ in 0..threads_to_use_collect {
+                    rx_threads.recv().unwrap();
+                }
+
+                let threads_to_use_witness = threads_to_use_collect.min(n_threads_witness);
+
+                let threads_to_return = threads_to_use_collect - threads_to_use_witness;
+
+                let memory_handler_clone = self.memory_handler.clone();
+
+                let handle = std::thread::spawn(move || {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect, memory_handler_clone.as_ref());
+                    timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    for _ in 0..threads_to_return {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.calculate_witness(1, &[instance_id], threads_to_use_witness, memory_handler_clone.as_ref());
+                    timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    for _ in 0..threads_to_use_witness {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                    tx_witness_clone.send(()).unwrap();
+
+                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                    if is_shared_buffer {
+                        memory_handler_clone.release_buffer(witness_buffer);
+                    }
+                });
+                handles.push(handle);
+            }
         }
-        timer_stop_and_log_info!(CALCULATE_SLOW_WITNESS);
 
         for handle in handles {
             handle.join().unwrap();
@@ -661,7 +745,7 @@ where
         timer_stop_and_log_info!(EXECUTE);
 
         // create a vector of instances wc weights
-        self.pctx.dctx_assign_instances();
+        self.pctx.dctx_assign_instances(false);
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
@@ -1080,7 +1164,7 @@ where
 
         self.wcm.execute();
 
-        self.pctx.dctx_assign_instances();
+        self.pctx.dctx_assign_instances(options.minimal_memory);
         self.pctx.dctx_close();
 
         print_summary_info(&self.pctx, &self.sctx);
@@ -1180,211 +1264,319 @@ where
         });
 
         timer_start_info!(CALCULATING_WITNESS);
-        timer_start_info!(CALCULATE_MAIN_WITNESS);
-        for &instance_id in instances_mine_no_precalculate.iter() {
-            let instances = instances.clone();
-            let instance_info = instances[instance_id];
-            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-            if all {
-                continue;
-            }
+        if !options.minimal_memory {
+            timer_start_info!(CALCULATE_MAIN_WITNESS);
+            for &instance_id in instances_mine_no_precalculate.iter() {
+                let instances = instances.clone();
+                let instance_info = instances[instance_id];
+                let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+                if all {
+                    continue;
+                }
 
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let values_contributions_clone = values_contributions.clone();
-            let roots_contributions_clone = roots_contributions.clone();
-            let d_buffers_clone = self.d_buffers.clone();
-            let aux_trace_clone = aux_trace.clone();
-            let streams_clone = streams.clone();
-            let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let tx_witness_clone = tx_witness.clone();
-            let wcm = self.wcm.clone();
-            let witnesses_done_clone = witnesses_done.clone();
+                let pctx_clone = self.pctx.clone();
+                let sctx_clone = self.sctx.clone();
+                let values_contributions_clone = values_contributions.clone();
+                let roots_contributions_clone = roots_contributions.clone();
+                let d_buffers_clone = self.d_buffers.clone();
+                let aux_trace_clone = aux_trace.clone();
+                let streams_clone = streams.clone();
+                let tx_threads_clone: Sender<()> = tx_threads.clone();
+                let tx_witness_clone = tx_witness.clone();
+                let wcm = self.wcm.clone();
+                let witnesses_done_clone = witnesses_done.clone();
 
-            for _ in 0..n_threads_witness {
-                rx_threads.recv().unwrap();
-            }
-
-            let memory_handler_clone = self.memory_handler.clone();
-
-            let handle = std::thread::spawn(move || {
-                timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
                 for _ in 0..n_threads_witness {
-                    tx_threads_clone.send(()).unwrap();
+                    rx_threads.recv().unwrap();
                 }
 
-                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                tx_witness_clone.send(()).unwrap();
+                let memory_handler_clone = self.memory_handler.clone();
 
-                Self::get_contribution_air(
-                    &pctx_clone,
-                    &sctx_clone,
-                    roots_contributions_clone.clone(),
-                    values_contributions_clone.clone(),
-                    instance_id,
-                    aux_trace_clone.clone().as_ptr() as *mut u8,
-                    d_buffers_clone.clone(),
-                    streams_clone.clone(),
-                );
-
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
-                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                    if is_shared_buffer {
-                        memory_handler_clone.release_buffer(witness_buffer);
+                let handle = std::thread::spawn(move || {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
+                    for _ in 0..n_threads_witness {
+                        tx_threads_clone.send(()).unwrap();
                     }
+
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                    tx_witness_clone.send(()).unwrap();
+
+                    Self::get_contribution_air(
+                        &pctx_clone,
+                        &sctx_clone,
+                        roots_contributions_clone.clone(),
+                        values_contributions_clone.clone(),
+                        instance_id,
+                        aux_trace_clone.clone().as_ptr() as *mut u8,
+                        d_buffers_clone.clone(),
+                        streams_clone.clone(),
+                    );
+
+                    witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
+                    if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
+                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                        if is_shared_buffer {
+                            memory_handler_clone.release_buffer(witness_buffer);
+                        }
+                    }
+                });
+                if cfg!(not(feature = "gpu")) {
+                    handle.join().unwrap();
+                } else {
+                    handles.push(handle);
                 }
-            });
-            if cfg!(not(feature = "gpu")) {
-                handle.join().unwrap();
-            } else {
-                handles.push(handle);
+            }
+            timer_stop_and_log_info!(CALCULATE_MAIN_WITNESS);
+            timer_start_info!(PRE_CALCULATE_WITNESS_FAST);
+            self.wcm.pre_calculate_witness(
+                1,
+                &instances_mine_precalculate_fast,
+                max_num_threads / 2,
+                self.memory_handler.as_ref(),
+            );
+            timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_FAST);
+            timer_start_info!(CALCULATE_FAST_WITNESS);
+            for &instance_id in instances_mine_precalculate_fast.iter() {
+                let instances = instances.clone();
+                let instance_info = instances[instance_id];
+                let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+                if all {
+                    continue;
+                }
+
+                let pctx_clone = self.pctx.clone();
+                let sctx_clone = self.sctx.clone();
+                let values_contributions_clone = values_contributions.clone();
+                let roots_contributions_clone = roots_contributions.clone();
+                let d_buffers_clone = self.d_buffers.clone();
+                let aux_trace_clone = aux_trace.clone();
+                let streams_clone = streams.clone();
+                let tx_threads_clone: Sender<()> = tx_threads.clone();
+                let tx_witness_clone = tx_witness.clone();
+                let wcm = self.wcm.clone();
+                let witnesses_done_clone = witnesses_done.clone();
+
+                for _ in 0..n_threads_witness {
+                    rx_threads.recv().unwrap();
+                }
+
+                let memory_handler_clone = self.memory_handler.clone();
+
+                let handle = std::thread::spawn(move || {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
+                    for _ in 0..n_threads_witness {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                    tx_witness_clone.send(()).unwrap();
+
+                    Self::get_contribution_air(
+                        &pctx_clone,
+                        &sctx_clone,
+                        roots_contributions_clone.clone(),
+                        values_contributions_clone.clone(),
+                        instance_id,
+                        aux_trace_clone.clone().as_ptr() as *mut u8,
+                        d_buffers_clone.clone(),
+                        streams_clone.clone(),
+                    );
+
+                    witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
+                    if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
+                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                        if is_shared_buffer {
+                            memory_handler_clone.release_buffer(witness_buffer);
+                        }
+                    }
+                });
+                if cfg!(not(feature = "gpu")) {
+                    handle.join().unwrap();
+                } else {
+                    handles.push(handle);
+                }
+            }
+            timer_stop_and_log_info!(CALCULATE_FAST_WITNESS);
+
+            timer_start_info!(PRE_CALCULATE_WITNESS_SLOW);
+            self.wcm.pre_calculate_witness(
+                1,
+                &instances_mine_precalculate_slow,
+                max_num_threads / 2,
+                self.memory_handler.as_ref(),
+            );
+            timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_SLOW);
+
+            timer_start_info!(CALCULATE_SLOW_WITNESS);
+            for &instance_id in instances_mine_precalculate_slow.iter() {
+                let instances = instances.clone();
+                let instance_info = instances[instance_id];
+                let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+                if all {
+                    continue;
+                }
+
+                let pctx_clone = self.pctx.clone();
+                let sctx_clone = self.sctx.clone();
+                let values_contributions_clone = values_contributions.clone();
+                let roots_contributions_clone = roots_contributions.clone();
+                let d_buffers_clone = self.d_buffers.clone();
+                let aux_trace_clone = aux_trace.clone();
+                let streams_clone = streams.clone();
+                let tx_threads_clone: Sender<()> = tx_threads.clone();
+                let tx_witness_clone = tx_witness.clone();
+                let wcm = self.wcm.clone();
+                let witnesses_done_clone = witnesses_done.clone();
+
+                for _ in 0..n_threads_witness {
+                    rx_threads.recv().unwrap();
+                }
+
+                let memory_handler_clone = self.memory_handler.clone();
+
+                let handle = std::thread::spawn(move || {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
+                    for _ in 0..n_threads_witness {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                    tx_witness_clone.send(()).unwrap();
+
+                    Self::get_contribution_air(
+                        &pctx_clone,
+                        &sctx_clone,
+                        roots_contributions_clone.clone(),
+                        values_contributions_clone.clone(),
+                        instance_id,
+                        aux_trace_clone.clone().as_ptr() as *mut u8,
+                        d_buffers_clone.clone(),
+                        streams_clone.clone(),
+                    );
+
+                    witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
+                    if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
+                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                        if is_shared_buffer {
+                            memory_handler_clone.release_buffer(witness_buffer);
+                        }
+                    }
+                });
+                if cfg!(not(feature = "gpu")) {
+                    handle.join().unwrap();
+                } else {
+                    handles.push(handle);
+                }
+            }
+            timer_stop_and_log_info!(CALCULATE_SLOW_WITNESS);
+        } else {
+            for &instance_id in my_instances_sorted.iter() {
+                let instances = instances.clone();
+                let instance_info = instances[instance_id];
+                let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+                if all {
+                    continue;
+                }
+
+                let pctx_clone = self.pctx.clone();
+                let sctx_clone = self.sctx.clone();
+                let values_contributions_clone = values_contributions.clone();
+                let roots_contributions_clone = roots_contributions.clone();
+                let d_buffers_clone = self.d_buffers.clone();
+                let aux_trace_clone = aux_trace.clone();
+                let streams_clone = streams.clone();
+                let tx_threads_clone: Sender<()> = tx_threads.clone();
+                let tx_witness_clone = tx_witness.clone();
+                let wcm = self.wcm.clone();
+                let witnesses_done_clone = witnesses_done.clone();
+
+                let threads_to_use_collect = match cfg!(feature = "gpu") {
+                    true => (instance_info.n_chunks / 16).min(max_num_threads / 4).max(n_threads_witness),
+                    false => max_num_threads,
+                };
+
+                //wait to receive the expected threads
+                for _ in 0..threads_to_use_collect {
+                    rx_threads.recv().unwrap();
+                }
+
+                let threads_to_use_witness = match cfg!(feature = "gpu") {
+                    true => threads_to_use_collect.min(n_threads_witness),
+                    false => max_num_threads,
+                };
+
+                let threads_to_return = threads_to_use_collect - threads_to_use_witness;
+
+                let memory_handler_clone = self.memory_handler.clone();
+
+                let handle = std::thread::spawn(move || {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    timer_start_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect, memory_handler_clone.as_ref());
+                    timer_stop_and_log_info!(PREPARING_WC, "PREPARING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    for _ in 0..threads_to_return {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    timer_start_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.calculate_witness(1, &[instance_id], threads_to_use_witness, memory_handler_clone.as_ref());
+                    timer_stop_and_log_info!(COMPUTING_WC, "COMPUTING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    for _ in 0..threads_to_use_witness {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                    tx_witness_clone.send(()).unwrap();
+
+                    Self::get_contribution_air(
+                        &pctx_clone,
+                        &sctx_clone,
+                        roots_contributions_clone.clone(),
+                        values_contributions_clone.clone(),
+                        instance_id,
+                        aux_trace_clone.clone().as_ptr() as *mut u8,
+                        d_buffers_clone.clone(),
+                        streams_clone.clone(),
+                    );
+
+                    witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
+                    if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
+                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
+                        if is_shared_buffer {
+                            memory_handler_clone.release_buffer(witness_buffer);
+                        }
+                    }
+                });
+                if cfg!(not(feature = "gpu")) {
+                    handle.join().unwrap();
+                } else {
+                    handles.push(handle);
+                }
             }
         }
-        timer_stop_and_log_info!(CALCULATE_MAIN_WITNESS);
-        timer_start_info!(PRE_CALCULATE_WITNESS_FAST);
-        self.wcm.pre_calculate_witness(
-            1,
-            &instances_mine_precalculate_fast,
-            max_num_threads / 2,
-            self.memory_handler.as_ref(),
-        );
-        timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_FAST);
-        timer_start_info!(CALCULATE_FAST_WITNESS);
-        for &instance_id in instances_mine_precalculate_fast.iter() {
-            let instances = instances.clone();
-            let instance_info = instances[instance_id];
-            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-            if all {
-                continue;
-            }
-
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let values_contributions_clone = values_contributions.clone();
-            let roots_contributions_clone = roots_contributions.clone();
-            let d_buffers_clone = self.d_buffers.clone();
-            let aux_trace_clone = aux_trace.clone();
-            let streams_clone = streams.clone();
-            let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let tx_witness_clone = tx_witness.clone();
-            let wcm = self.wcm.clone();
-            let witnesses_done_clone = witnesses_done.clone();
-
-            for _ in 0..n_threads_witness {
-                rx_threads.recv().unwrap();
-            }
-
-            let memory_handler_clone = self.memory_handler.clone();
-
-            let handle = std::thread::spawn(move || {
-                timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
-                for _ in 0..n_threads_witness {
-                    tx_threads_clone.send(()).unwrap();
-                }
-                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                tx_witness_clone.send(()).unwrap();
-
-                Self::get_contribution_air(
-                    &pctx_clone,
-                    &sctx_clone,
-                    roots_contributions_clone.clone(),
-                    values_contributions_clone.clone(),
-                    instance_id,
-                    aux_trace_clone.clone().as_ptr() as *mut u8,
-                    d_buffers_clone.clone(),
-                    streams_clone.clone(),
-                );
-
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
-                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                    if is_shared_buffer {
-                        memory_handler_clone.release_buffer(witness_buffer);
-                    }
-                }
-            });
-            if cfg!(not(feature = "gpu")) {
-                handle.join().unwrap();
-            } else {
-                handles.push(handle);
-            }
-        }
-        timer_stop_and_log_info!(CALCULATE_FAST_WITNESS);
-
-        timer_start_info!(PRE_CALCULATE_WITNESS_SLOW);
-        self.wcm.pre_calculate_witness(
-            1,
-            &instances_mine_precalculate_slow,
-            max_num_threads / 2,
-            self.memory_handler.as_ref(),
-        );
-        timer_stop_and_log_info!(PRE_CALCULATE_WITNESS_SLOW);
-
-        timer_start_info!(CALCULATE_SLOW_WITNESS);
-        for &instance_id in instances_mine_precalculate_slow.iter() {
-            let instances = instances.clone();
-            let instance_info = instances[instance_id];
-            let (airgroup_id, air_id, all) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-            if all {
-                continue;
-            }
-
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let values_contributions_clone = values_contributions.clone();
-            let roots_contributions_clone = roots_contributions.clone();
-            let d_buffers_clone = self.d_buffers.clone();
-            let aux_trace_clone = aux_trace.clone();
-            let streams_clone = streams.clone();
-            let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let tx_witness_clone = tx_witness.clone();
-            let wcm = self.wcm.clone();
-            let witnesses_done_clone = witnesses_done.clone();
-
-            for _ in 0..n_threads_witness {
-                rx_threads.recv().unwrap();
-            }
-
-            let memory_handler_clone = self.memory_handler.clone();
-
-            let handle = std::thread::spawn(move || {
-                timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
-                for _ in 0..n_threads_witness {
-                    tx_threads_clone.send(()).unwrap();
-                }
-                timer_stop_and_log_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                tx_witness_clone.send(()).unwrap();
-
-                Self::get_contribution_air(
-                    &pctx_clone,
-                    &sctx_clone,
-                    roots_contributions_clone.clone(),
-                    values_contributions_clone.clone(),
-                    instance_id,
-                    aux_trace_clone.clone().as_ptr() as *mut u8,
-                    d_buffers_clone.clone(),
-                    streams_clone.clone(),
-                );
-
-                witnesses_done_clone.fetch_add(1, Ordering::AcqRel);
-                if (instances_mine_no_all - witnesses_done_clone.load(Ordering::Acquire)) >= max_witness_stored {
-                    let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance_traces(instance_id);
-                    if is_shared_buffer {
-                        memory_handler_clone.release_buffer(witness_buffer);
-                    }
-                }
-            });
-            if cfg!(not(feature = "gpu")) {
-                handle.join().unwrap();
-            } else {
-                handles.push(handle);
-            }
-        }
-        timer_stop_and_log_info!(CALCULATE_SLOW_WITNESS);
 
         stop_watch.store(true, Ordering::Relaxed);
         watch_contributions.join().unwrap();
@@ -1489,12 +1681,10 @@ where
 
         let proofs_pending = Arc::new(Counter::new());
 
-        let basic_proofs_threshold = instances_mine.saturating_sub(n_streams as usize).max(0);
-        let basic_proofs_done = Arc::new(Counter::new_with_threshold(basic_proofs_threshold));
-
         let (recursive_tx, recursive_rx) = unbounded::<(u64, String)>();
         register_proof_done_callback_c(recursive_tx.clone());
 
+        let (proofs_tx, proofs_rx): (Sender<usize>, Receiver<usize>) = unbounded();
         let (compressor_witness_tx, compressor_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
         let (rec1_witness_tx, rec1_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
         let (rec2_witness_tx, rec2_witness_rx): (Sender<Proof<F>>, Receiver<Proof<F>>) = unbounded();
@@ -1509,7 +1699,6 @@ where
             let recursive2_proofs_clone = recursive2_proofs.clone();
             let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
             let proofs_pending_clone = proofs_pending.clone();
-            let basic_proofs_done_clone = basic_proofs_done.clone();
             let rec1_witness_tx_clone = rec1_witness_tx.clone();
             let rec2_witness_tx_clone = rec2_witness_tx.clone();
             let compressor_witness_tx_clone = compressor_witness_tx.clone();
@@ -1520,9 +1709,6 @@ where
                         return;
                     }
                     let p: ProofType = proof_type.parse().unwrap();
-                    if p == ProofType::Basic {
-                        basic_proofs_done_clone.increment();
-                    }
                     if !options.aggregation {
                         proofs_pending_clone.decrement();
                         continue;
@@ -1570,10 +1756,7 @@ where
                         let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
                         Some(gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof).unwrap())
                     } else {
-                        let proof = std::mem::replace(
-                            &mut *proofs_clone[id as usize].write().unwrap(),
-                            Proof::<F>::default(), // You must implement or derive Default
-                        );
+                        let proof = std::mem::take(&mut *proofs_clone[id as usize].write().unwrap());
                         Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap())
                     };
 
@@ -1637,103 +1820,11 @@ where
             )
         });
 
-        for &instance_id in my_instances_sorted.iter() {
-            if my_instances_calculated[instance_id] {
-                continue;
-            }
-
-            let pctx_clone = self.pctx.clone();
-            let sctx_clone = self.sctx.clone();
-            let d_buffers_clone = self.d_buffers.clone();
-            let aux_trace_clone = aux_trace.clone();
-            let tx_threads_clone: Sender<()> = tx_threads.clone();
-            let wcm = self.wcm.clone();
-            let proofs_pending_clone = proofs_pending.clone();
-            let stream_clone = vec_streams.clone();
-            let proofs_clone = proofs.clone();
-            let output_dir_path_clone = options.output_dir_path.clone();
-            let is_stored =
-                self.pctx.is_air_instance_stored(instance_id) || vec_streams.contains(&Some(instance_id as u64));
-
-            let const_pols_clone = const_pols.clone();
-            let const_tree_clone = const_tree.clone();
-            my_instances_calculated[instance_id] = true;
-
-            let instance_info = &instances[instance_id];
-            let (airgroup_id, air_id, _) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
-
-            let preallocate = self.gpu_params.preallocate;
-
-            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 4).max(n_threads_witness);
-
-            if !is_stored {
-                for _ in 0..threads_to_use_collect {
-                    rx_threads.recv().unwrap();
-                }
-            }
-
-            let threads_to_use_witness = threads_to_use_collect.min(n_threads_witness);
-            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
-
-            let memory_handler_clone = self.memory_handler.clone();
-
-            let handle = std::thread::spawn(move || {
-                proofs_pending_clone.increment();
-                if !is_stored {
-                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
-                    wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect, memory_handler_clone.as_ref());
-                    for _ in 0..threads_to_return {
-                        tx_threads_clone.send(()).unwrap();
-                    }
-                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
-                    for _ in 0..threads_to_use_witness {
-                        tx_threads_clone.send(()).unwrap();
-                    }
-                    timer_stop_and_log_info!(
-                        GENERATING_WC,
-                        "GENERATING_WC_{} [{}:{}]",
-                        instance_id,
-                        airgroup_id,
-                        air_id
-                    );
-                }
-                let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
-                Self::gen_proof(
-                    proofs_clone.clone(),
-                    pctx_clone.clone(),
-                    sctx_clone.clone(),
-                    instance_id,
-                    output_dir_path_clone.clone(),
-                    aux_trace_clone.clone(),
-                    const_pols_clone.clone(),
-                    const_tree_clone.clone(),
-                    d_buffers_clone.clone(),
-                    stream_id,
-                    options.save_proofs,
-                    preallocate,
-                );
-                let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
-                if is_shared_buffer {
-                    memory_handler_clone.release_buffer(witness_buffer);
-                }
-            });
-            if cfg!(not(feature = "gpu")) {
-                handle.join().unwrap();
-            }
-        }
-
-        for &instance_id in my_instances_sorted.iter() {
-            if cfg!(not(feature = "gpu")) {
-                launch_callback_c(instance_id as u64, "basic");
-            }
-        }
-
-        basic_proofs_done
-            .wait_until_threshold_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
-
         let proofs_finished = Arc::new(AtomicBool::new(false));
         for _ in 0..n_streams {
             let pctx_clone = self.pctx.clone();
+            let sctx_clone = self.sctx.clone();
+            let aux_trace_clone = aux_trace.clone();
             let setups_clone = self.setups.clone();
             let d_buffers_clone = self.d_buffers.clone();
             let trace_size = self.trace_size;
@@ -1741,29 +1832,58 @@ where
             let output_dir_path_clone = options.output_dir_path.clone();
             let const_pols_clone = const_pols.clone();
             let const_tree_clone = const_tree.clone();
+            let proofs_clone = proofs.clone();
             let compressor_proofs_clone = compressor_proofs.clone();
             let recursive1_proofs_clone = recursive1_proofs.clone();
             let recursive2_proofs_ongoing_clone = recursive2_proofs_ongoing.clone();
-
+            let stream_clone = vec_streams.clone();
+            let proofs_rx = proofs_rx.clone();
             let compressor_rx = compressor_witness_rx.clone();
             let rec2_rx = rec2_witness_rx.clone();
             let rec1_rx = rec1_witness_rx.clone();
+            let preallocate = self.gpu_params.preallocate;
+
+            let memory_handler_clone = self.memory_handler.clone();
 
             let proofs_finished_clone = proofs_finished.clone();
 
             let handle_recursive = std::thread::spawn(move || loop {
+                // Handle proof witnesses (Proof<F> type)
                 let witness = rec2_rx.try_recv().or_else(|_| compressor_rx.try_recv()).or_else(|_| rec1_rx.try_recv());
 
-                let mut witness = match witness {
-                    Ok(w) => w,
-                    Err(_) => {
-                        if proofs_finished_clone.load(Ordering::Relaxed) {
-                            return;
+                // If not witness, check if there's a proof
+                if witness.is_err() {
+                    // Check if proof received
+                    if let Ok(instance_id) = proofs_rx.try_recv() {
+                        let stream_id = stream_clone.iter().position(|&stream| stream == Some(instance_id as u64));
+                        Self::gen_proof(
+                            proofs_clone.clone(),
+                            pctx_clone.clone(),
+                            sctx_clone.clone(),
+                            instance_id,
+                            output_dir_path_clone.clone(),
+                            aux_trace_clone.clone(),
+                            const_pols_clone.clone(),
+                            const_tree_clone.clone(),
+                            d_buffers_clone.clone(),
+                            stream_id,
+                            options.save_proofs,
+                            preallocate,
+                        );
+                        let (is_shared_buffer, witness_buffer) = pctx_clone.free_instance(instance_id);
+                        if is_shared_buffer {
+                            memory_handler_clone.release_buffer(witness_buffer);
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                        continue;
                     }
-                };
+
+                    if proofs_finished_clone.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+
+                let mut witness = witness.unwrap();
 
                 let trace: Vec<F> = create_buffer_fast(trace_size);
                 let prover_buffer: Vec<F> = create_buffer_fast(prover_buffer_size);
@@ -1849,6 +1969,69 @@ where
             handle_recursives.push(handle_recursive);
         }
 
+        for &instance_id in my_instances_sorted.iter() {
+            if my_instances_calculated[instance_id] {
+                continue;
+            }
+
+            let tx_threads_clone: Sender<()> = tx_threads.clone();
+            let proofs_tx_clone = proofs_tx.clone();
+            let wcm = self.wcm.clone();
+            let proofs_pending_clone = proofs_pending.clone();
+            let is_stored =
+                self.pctx.is_air_instance_stored(instance_id) || vec_streams.contains(&Some(instance_id as u64));
+
+            my_instances_calculated[instance_id] = true;
+
+            let instance_info = &instances[instance_id];
+            let (airgroup_id, air_id, _) = (instance_info.airgroup_id, instance_info.air_id, instance_info.all);
+
+            let threads_to_use_collect = (instance_info.n_chunks / 16).min(max_num_threads / 4).max(n_threads_witness);
+
+            if !is_stored {
+                for _ in 0..threads_to_use_collect {
+                    rx_threads.recv().unwrap();
+                }
+            }
+
+            let threads_to_use_witness = threads_to_use_collect.min(n_threads_witness);
+            let threads_to_return = threads_to_use_collect - threads_to_use_witness;
+
+            let memory_handler_clone = self.memory_handler.clone();
+
+            let handle = std::thread::spawn(move || {
+                proofs_pending_clone.increment();
+                if !is_stored {
+                    timer_start_info!(GENERATING_WC, "GENERATING_WC_{} [{}:{}]", instance_id, airgroup_id, air_id);
+                    wcm.pre_calculate_witness(1, &[instance_id], threads_to_use_collect, memory_handler_clone.as_ref());
+                    for _ in 0..threads_to_return {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    wcm.calculate_witness(1, &[instance_id], n_threads_witness, memory_handler_clone.as_ref());
+                    for _ in 0..threads_to_use_witness {
+                        tx_threads_clone.send(()).unwrap();
+                    }
+                    timer_stop_and_log_info!(
+                        GENERATING_WC,
+                        "GENERATING_WC_{} [{}:{}]",
+                        instance_id,
+                        airgroup_id,
+                        air_id
+                    );
+                }
+                proofs_tx_clone.send(instance_id).unwrap();
+            });
+            if cfg!(not(feature = "gpu")) {
+                handle.join().unwrap();
+            }
+        }
+
+        for &instance_id in my_instances_sorted.iter() {
+            if cfg!(not(feature = "gpu")) {
+                launch_callback_c(instance_id as u64, "basic");
+            }
+        }
+
         proofs_pending.wait_until_zero_and_check_streams(|| get_stream_proofs_non_blocking_c(self.d_buffers.get_ptr()));
 
         get_stream_proofs_c(self.d_buffers.get_ptr());
@@ -1897,7 +2080,7 @@ where
                 for instance_id in my_instances.iter() {
                     let proof = {
                         let mut lock = proofs[*instance_id].write().unwrap();
-                        std::mem::replace(&mut *lock, Default::default())
+                        std::mem::take(&mut *lock)
                     };
                     let valid_proof = verify_basic_proof(&self.pctx, *instance_id, &proof.proof);
                     if !valid_proof {
