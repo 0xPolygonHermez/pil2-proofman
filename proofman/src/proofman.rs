@@ -1756,10 +1756,7 @@ where
                         let compressor_proof = compressor_proofs_clone[id as usize].write().unwrap().take().unwrap();
                         Some(gen_witness_recursive(&pctx_clone, &setups_clone, &compressor_proof).unwrap())
                     } else {
-                        let proof = std::mem::replace(
-                            &mut *proofs_clone[id as usize].write().unwrap(),
-                            Proof::<F>::default(), // You must implement or derive Default
-                        );
+                        let proof = std::mem::take(&mut *proofs_clone[id as usize].write().unwrap());
                         Some(gen_witness_recursive(&pctx_clone, &setups_clone, &proof).unwrap())
                     };
 
@@ -2083,7 +2080,7 @@ where
                 for instance_id in my_instances.iter() {
                     let proof = {
                         let mut lock = proofs[*instance_id].write().unwrap();
-                        std::mem::replace(&mut *lock, Default::default())
+                        std::mem::take(&mut *lock)
                     };
                     let valid_proof = verify_basic_proof(&self.pctx, *instance_id, &proof.proof);
                     if !valid_proof {
