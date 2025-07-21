@@ -36,26 +36,20 @@ ASFLAGS := -felf64
 # Check if AVX-512 is supported
 AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
 ifneq ($(AVX512_SUPPORTED),)
-    CXXFLAGS += -mavx512f -D__AVX512__
+    CXXFLAGS += -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
     $(info AVX-512 is supported by the CPU)
-    USE_ASSEMBLY := 1
 else
     $(info AVX-512 is not supported by the CPU)
     
     # Check if AVX2 is supported
     AVX2_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx2' -m 1)
     ifneq ($(AVX2_SUPPORTED),)
-        CXXFLAGS += -mavx2 -D__AVX2__
+        CXXFLAGS += -mavx2 -D__AVX2__ -D__USE_ASSEMBLY__
         $(info AVX2 is supported by the CPU)
-        USE_ASSEMBLY := 1
     else
         $(info AVX2 is not supported by the CPU)
-        USE_ASSEMBLY := 0  # Neither AVX-512 nor AVX2 is supported
     endif
 endif
-
-# Add USE_ASSEMBLY to CXXFLAGS
-CXXFLAGS += -DUSE_ASSEMBLY=$(USE_ASSEMBLY)
 
 # Debug build flags
 ifeq ($(dbg),1)
