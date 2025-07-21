@@ -616,20 +616,14 @@ extern "C" {
     );
 }
 extern "C" {
-    #[link_name = "\u{1}_Z18gen_device_streamsPvmmmmmmmmmmm"]
+    #[link_name = "\u{1}_Z18gen_device_streamsPvmmmmm"]
     pub fn gen_device_streams(
-        d_buffers: *mut ::std::os::raw::c_void,
-        maxSizeTrace: u64,
-        maxSizeContribution: u64,
-        maxSizeThread: u64,
-        maxSizeConst: u64,
-        maxSizeConstTree: u64,
-        maxSizeTraceAggregation: u64,
+        d_buffers_: *mut ::std::os::raw::c_void,
+        maxSizeProverBuffer: u64,
         maxSizeProverBufferAggregation: u64,
-        maxSizeConstAggregation: u64,
-        maxSizeConstTreeAggregation: u64,
         maxProofSize: u64,
-        maxProofPerGPU: u64,
+        maxProofsPerGPU: u64,
+        maxRecursiveProofsPerGPU: u64,
     ) -> u64;
 }
 extern "C" {

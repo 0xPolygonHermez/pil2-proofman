@@ -187,13 +187,18 @@ struct StreamData{
     uint64_t instanceId;
     string proofType;
     
-    void initialize( uint64_t max_size_trace, uint64_t max_size_proof, uint64_t max_size_const, uint64_t max_size_const_aggregation, uint64_t max_size_const_tree, uint64_t max_size_const_tree_aggregation, uint32_t gpuId_, uint32_t slotId_){
+    uint64_t offset;
+    
+    bool recursive;
+
+    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint64_t offset_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
         gpuId = gpuId_;
-        slotId = slotId_;
+        offset = offset_;
+        recursive = recursive_;
         cudaEventCreate(&end_event);
         status = 0;
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer, pinned_size));
@@ -258,22 +263,12 @@ struct DeviceCommitBuffers
     gl64_t **d_constPolsAggregation;
     gl64_t **d_aux_trace;
     bool recursive;
-    uint64_t max_size_prover_buffer;
-    uint64_t max_size_trace;
-    uint64_t max_size_contribution;
     uint64_t max_size_proof;
-    uint64_t max_size_const;
-    uint64_t max_size_const_tree;
-    uint64_t max_size_trace_aggregation;
-    uint64_t max_size_prover_buffer_aggregation;
-    uint64_t max_size_const_aggregation;
-    uint64_t max_size_const_tree_aggregation;
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
     uint32_t* gpus_g2l; 
-    uint32_t  n_streams;
-    uint32_t  n_streams_per_gpu;
+    uint32_t n_total_streams;
     std::mutex mutex_slot_selection;
     StreamData *streamsData;
 

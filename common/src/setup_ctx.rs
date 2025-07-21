@@ -19,6 +19,7 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_const_tree_size: usize,
     pub max_prover_trace_size: usize,
     pub max_prover_buffer_size: usize,
+    pub max_prover_recursive_buffer_size: usize,
     pub max_proof_size: usize,
     pub total_const_size: usize,
 }
@@ -76,6 +77,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_prover_buffer_size)
                 .max(sctx_recursive2.max_prover_buffer_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize);
+
+            let max_prover_recursive_buffer_size = (sctx_recursive1.max_prover_buffer_size
+                + sctx_recursive1.max_prover_trace_size)
+                .max(sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size);
+
             let max_proof_size = sctx_compressor
                 .max_proof_size
                 .max(sctx_recursive1.max_proof_size)
@@ -91,6 +97,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_const_size,
                 max_prover_trace_size,
                 max_prover_buffer_size,
+                max_prover_recursive_buffer_size,
                 max_proof_size,
                 total_const_size,
             }
@@ -106,6 +113,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_const_size: 0,
                 max_prover_trace_size: 0,
                 max_prover_buffer_size: 0,
+                max_prover_recursive_buffer_size: 0,
                 max_proof_size: 0,
             }
         }
