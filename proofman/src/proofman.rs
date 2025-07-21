@@ -2285,7 +2285,24 @@ where
             false => 1,
         };
 
-        let max_aux_trace_area = (n_streams_per_gpu * sctx.max_prover_buffer_size) as u64;
+        let mut gpu_available_memory = match cfg!(feature = "gpu") {
+            true => max_size_buffer as i64 - (n_streams_per_gpu * sctx.max_prover_buffer_size) as i64,
+            false => 0,
+        };
+        let mut n_recursive_streams_per_gpu = 0;
+        if aggregation {
+            while gpu_available_memory > 0 {
+                gpu_available_memory -= setups_vadcop.max_prover_recursive_buffer_size as i64;
+                if gpu_available_memory < 0 {
+                    break;
+                }
+                n_recursive_streams_per_gpu += 1;
+            }
+        }
+
+        let max_aux_trace_area = (n_streams_per_gpu * sctx.max_prover_buffer_size
+            + n_recursive_streams_per_gpu * setups_vadcop.max_prover_recursive_buffer_size)
+            as u64;
 
         let max_sizes = MaxSizes { total_const_area, max_aux_trace_area, total_const_area_aggregation };
 
@@ -2296,26 +2313,6 @@ where
             pctx.dctx_get_node_n_processes() as u32,
         )));
 
-        let max_size_const = match !gpu_params.preallocate {
-            true => sctx.max_const_size as u64,
-            false => 0,
-        };
-
-        let max_size_const_tree = match !gpu_params.preallocate {
-            true => sctx.max_const_tree_size as u64,
-            false => 0,
-        };
-
-        let max_size_const_aggregation = match aggregation && !gpu_params.preallocate {
-            true => setups_vadcop.max_const_size as u64,
-            false => 0,
-        };
-
-        let max_size_const_tree_aggregation = match aggregation && !gpu_params.preallocate {
-            true => setups_vadcop.max_const_tree_size as u64,
-            false => 0,
-        };
-
         let max_proof_size = match aggregation {
             true => sctx.max_proof_size.max(setups_vadcop.max_proof_size) as u64,
             false => sctx.max_proof_size as u64,
@@ -2323,17 +2320,11 @@ where
 
         let n_gpus: u64 = gen_device_streams_c(
             d_buffers.get_ptr(),
-            sctx.max_prover_trace_size as u64,
-            sctx.max_prover_contribution_area as u64,
             sctx.max_prover_buffer_size as u64,
-            max_size_const,
-            max_size_const_tree,
-            setups_vadcop.max_prover_trace_size as u64,
-            setups_vadcop.max_prover_buffer_size as u64,
-            max_size_const_aggregation,
-            max_size_const_tree_aggregation,
+            setups_vadcop.max_prover_recursive_buffer_size as u64,
             max_proof_size,
             n_streams_per_gpu as u64,
+            n_recursive_streams_per_gpu as u64,
         );
 
         (d_buffers, n_streams_per_gpu as u64, n_gpus)

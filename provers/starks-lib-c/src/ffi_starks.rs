@@ -1127,32 +1127,20 @@ pub fn gen_device_buffers_c(
 #[allow(clippy::too_many_arguments)]
 pub fn gen_device_streams_c(
     d_buffers: *mut ::std::os::raw::c_void,
-    max_size_trace: u64,
-    max_size_contribution: u64,
     max_size_buffer: u64,
-    max_size_const: u64,
-    max_size_const_tree: u64,
-    max_size_trace_aggregation: u64,
     max_size_buffer_aggregation: u64,
-    max_size_const_aggregation: u64,
-    max_size_const_tree_aggregation: u64,
     max_proof_size: u64,
     max_number_proofs_per_gpu: u64,
+    max_number_recursive_proofs_per_gpu: u64,
 ) -> u64 {
     unsafe {
         gen_device_streams(
             d_buffers,
-            max_size_trace,
-            max_size_contribution,
             max_size_buffer,
-            max_size_const,
-            max_size_const_tree,
-            max_size_trace_aggregation,
             max_size_buffer_aggregation,
-            max_size_const_aggregation,
-            max_size_const_tree_aggregation,
             max_proof_size,
             max_number_proofs_per_gpu,
+            max_number_recursive_proofs_per_gpu,
         )
     }
 }
@@ -1922,17 +1910,11 @@ pub fn gen_device_buffers_c(
 #[allow(clippy::too_many_arguments)]
 pub fn gen_device_streams_c(
     _d_buffers: *mut ::std::os::raw::c_void,
-    _max_size_trace: u64,
-    _max_size_contribution: u64,
     _max_size_buffer: u64,
-    _max_size_const: u64,
-    _max_size_const_tree: u64,
-    _max_size_trace_aggregation: u64,
     _max_size_buffer_aggregation: u64,
-    _max_size_const_aggregation: u64,
-    _max_size_const_tree_aggregation: u64,
     _max_proof_size: u64,
     _max_number_proofs_per_gpu: u64,
+    _max_number_recursive_proofs_per_gpu: u64,
 ) -> u64 {
     trace!("{}: ··· {}", "ffi     ", "set_max_size_thread: This is a mock call because there is no linked library");
     0
