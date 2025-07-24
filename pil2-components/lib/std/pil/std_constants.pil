@@ -128,6 +128,7 @@ switch (ACTIVE_FIELD) {
 }
 
 // Set the blowup factor across the library
+// The blowup factor is defined as the ratio between the size of the evaluation domain and the trace evaluation domain
 int BLOWUP_FACTOR = 2;
 
 function set_blowup_factor(const int factor) {
