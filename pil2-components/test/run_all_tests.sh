@@ -18,7 +18,7 @@ test_pipeline() {
     LIB="./target/debug/lib${SO_NAME}.so"
     LOG="$BUILD/$NAME.log"
 
-    echo "  [$NAME] Starting..."
+    echo "  [$SO_NAME] Starting..."
 
     # Start clean
     if [ "$SETUP_ONLY" != "true" ]; then
@@ -35,20 +35,20 @@ test_pipeline() {
             --builddir "$BUILD"
 
         if [ "$SETUP_ONLY" != "true" ]; then
-            cargo run  --bin proofman-cli check-setup \
-                --proving-key "$PROVING_KEY" \
+            cargo run --bin proofman-cli check-setup \
+                --proving-key "$PROVING_KEY"
 
-            cargo run  --bin proofman-cli pil-helpers \
+            cargo run --bin proofman-cli pil-helpers \
                 --pilout "$PILOUT_FILE" \
                 --path "$SRC" -o
 
             cargo build 
 
-            cargo run  --bin proofman-cli verify-constraints \
+            cargo run --bin proofman-cli verify-constraints \
                 --witness-lib "$LIB" \
                 --proving-key "$PROVING_KEY"
 
-            cargo run  --bin proofman-cli prove \
+            cargo run --bin proofman-cli prove \
                 --witness-lib "$LIB" \
                 --proving-key "$PROVING_KEY" \
                 --output-dir "$BUILD/proofs"

@@ -30,7 +30,6 @@ pub const SUM_BUS_AIR_IDS: &[usize] = &[1];
 
 pub const BOTH_BUSES_AIR_IDS: &[usize] = &[2];
 
-  
 trace!(ProdBusFixed<F> {
  __L1__: F,
 },  0, 0, 16 );

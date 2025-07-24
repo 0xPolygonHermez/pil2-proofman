@@ -11,8 +11,8 @@ use proofman_util::{timer_start_info, timer_stop_and_log_info};
 use witness::WitnessComponent;
 use proofman_common::{skip_prover_instance, BufferPool, DebugInfo, ModeName, ProofCtx, SetupCtx};
 use proofman_hints::{
-    get_hint_field_gc_constant_a, get_hint_field, get_hint_field_a, acc_mul_hint_fields, update_airgroupvalue,
-    get_hint_ids_by_name, HintFieldOptions, HintFieldValue, HintFieldValuesVec,
+    acc_mul_hint_fields, get_hint_field, get_hint_field_a, get_hint_field_gc_constant_a, get_hint_ids_by_name,
+    mul_hint_fields, update_airgroupvalue, HintFieldOptions, HintFieldValue, HintFieldValuesVec,
 };
 
 use crate::{
@@ -276,7 +276,25 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
 
                     tracing::debug!("··· Computing witness for AIR '{}' at stage {}", air_name, stage);
 
+                    let im_hints = get_hint_ids_by_name(p_expressions_bin, "im_col");
                     let gprod_hints = get_hint_ids_by_name(p_expressions_bin, "gprod_col");
+
+                    let n_im_hints = im_hints.len();
+
+                    if !im_hints.is_empty() {
+                        mul_hint_fields(
+                            &sctx,
+                            &pctx,
+                            *instance_id,
+                            n_im_hints as u64,
+                            im_hints,
+                            vec!["reference"; n_im_hints],
+                            vec!["numerator"; n_im_hints],
+                            vec![HintFieldOptions::default(); n_im_hints],
+                            vec!["denominator"; n_im_hints],
+                            vec![HintFieldOptions::inverse(); n_im_hints],
+                        );
+                    }
 
                     // We know that at most one product hint exists
                     let gprod_hint = if gprod_hints.len() > 1 {

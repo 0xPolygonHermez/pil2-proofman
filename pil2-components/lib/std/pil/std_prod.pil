@@ -428,7 +428,7 @@ private function piop_gprod_air() {
                     const expr rhs = (s * (e + std_gamma - 1) + 1);
 
                     // Check the correctness of the intermediate
-                    @im_col{reference: im_high[idx], expression: rhs};
+                    @im_col{reference: im_high[idx], numerator: rhs, denominator: 1};
                     im_high[idx] === rhs;
 
                     // Update the low-degree terms
@@ -449,7 +449,7 @@ private function piop_gprod_air() {
                     const expr rhs1 = (s * (s + 1) * two_inv * (e + std_gamma - 1) + 1);
 
                     // Check the correctness of the intermediates
-                    @im_col{reference: im_high[idx], expression: rhs1};
+                    @im_col{reference: im_high[idx], numerator: rhs1, denominator: 1};
                     im_high[idx] === rhs1;
 
                     // Update the low-degree terms
@@ -463,7 +463,7 @@ private function piop_gprod_air() {
                     const expr rhs2 = (s * (s - 1) * two_inv * (e + std_gamma - 1) + 1);
 
                     // Check the correctness of the intermediate
-                    @im_col{reference: im_high[idx], expression: rhs2};
+                    @im_col{reference: im_high[idx], numerator: rhs2, denominator: 1};
                     im_high[idx] === rhs2;
 
                     // Update the low-degree terms
@@ -732,7 +732,7 @@ private function piop_gprod_air() {
                 col witness stage(2) im_num_extra;
 
                 // Check the correctness of the intermediate
-                @im_col_extra{reference: im_num_extra, numerator: lhs, denominator: 1};
+                @im_col{reference: im_num_extra, numerator: numerator, denominator: 1};
                 im_num_extra === numerator;
 
                 numerator = im_num_extra;
@@ -755,7 +755,7 @@ private function piop_gprod_air() {
                 col witness stage(2) im_den_extra;
 
                 // Check the correctness of the intermediate
-                @im_col_extra{reference: im_den_extra, numerator: denominator, denominator: 1};
+                @im_col{reference: im_den_extra, numerator: denominator, denominator: 1};
                 im_den_extra === denominator;
 
                 denominator = im_den_extra;
