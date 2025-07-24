@@ -16,6 +16,7 @@ use std::sync::atomic::Ordering;
 
 use fields::PrimeField64;
 
+use crate::ExtensionField;
 use crate::GlobalInfo;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -529,7 +530,7 @@ impl DistributionCtx {
             let pos_buffer = self.roots_gatherv_displ[self.instances_owner[idx].0 as usize] as usize
                 + self.instances_owner[idx].1 * 10;
             #[cfg(not(distributed))]
-            let pos_buffer = idx * 10;
+            let pos_buffer = self.instances_owner[idx].1 * 10;
             group_indices.entry(instance_info.airgroup_id).or_default().push(pos_buffer);
         }
 
@@ -620,12 +621,24 @@ impl DistributionCtx {
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] +=
                                 F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         } else {
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] *=
-                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] *=
-                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] *=
-                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                            let mut acc = ExtensionField {
+                                value: [
+                                    airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION],
+                                    airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1],
+                                    airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2],
+                                ],
+                            };
+                            let val = ExtensionField {
+                                value: [
+                                    F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]),
+                                    F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]),
+                                    F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]),
+                                ],
+                            };
+                            acc *= val;
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] = acc.value[0];
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] = acc.value[1];
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] = acc.value[2];
                         }
                         pos += FIELD_EXTENSION;
                     }
