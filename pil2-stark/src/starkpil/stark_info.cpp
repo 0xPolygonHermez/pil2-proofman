@@ -448,7 +448,7 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    if(!gpu || recursive) {
+    if(!gpu) {
         for(uint64_t stage = 1; stage <= nStages + 1; stage++) {
             mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapOffsets[std::make_pair("cm" + to_string(stage), true)];
         }
@@ -467,20 +467,20 @@ void StarkInfo::setMapOffsets() {
         mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
     }
 
-    if(recursive) {
-        uint64_t maxSizeHelper = 0;
-        if(gpu) {
-            maxSizeHelper = (boundaries.size() + 1) * NExtended;
-            mapOffsets[std::make_pair("zi", true)] = mapTotalN;
-            mapOffsets[std::make_pair("x_n", false)] = mapTotalN;
-            mapOffsets[std::make_pair("x", true)] = mapTotalN + boundaries.size() * NExtended;
-            mapTotalN += maxSizeHelper;
-        }
-        mapOffsets[std::make_pair("f", true)] = mapTotalN;
-        mapOffsets[std::make_pair("q", true)] = mapTotalN;
-        mapTotalN += NExtended * FIELD_EXTENSION;
-        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
-    } else {
+    // if(recursive) {
+    //     uint64_t maxSizeHelper = 0;
+    //     if(gpu) {
+    //         maxSizeHelper = (boundaries.size() + 1) * NExtended;
+    //         mapOffsets[std::make_pair("zi", true)] = mapTotalN;
+    //         mapOffsets[std::make_pair("x_n", false)] = mapTotalN;
+    //         mapOffsets[std::make_pair("x", true)] = mapTotalN + boundaries.size() * NExtended;
+    //         mapTotalN += maxSizeHelper;
+    //     }
+    //     mapOffsets[std::make_pair("f", true)] = mapTotalN;
+    //     mapOffsets[std::make_pair("q", true)] = mapTotalN;
+    //     mapTotalN += NExtended * FIELD_EXTENSION;
+    //     mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
+    // } else {
         mapOffsets[std::make_pair("f", true)] = mapTotalN;
         mapOffsets[std::make_pair("q", true)] = mapTotalN;
         mapTotalN += NExtended * FIELD_EXTENSION;
@@ -493,8 +493,8 @@ void StarkInfo::setMapOffsets() {
         }
         
         maxTotalN = std::max(maxTotalN, mapTotalN + maxSizeHelper);
-        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN + maxSizeHelper;
-    }
+        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN + maxSizeHelper;   
+    // }  
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("lev", false)] = LEvSize;

@@ -580,7 +580,26 @@ uint64_t gen_recursive_proof(void *pSetupCtx, char* globalInfoFile, uint64_t air
     d_buffers->airId = airId;
     d_buffers->proofType = string(proofType);
 
-    genRecursiveProof<Goldilocks::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness,  (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, proofBuffer, string(proof_file), vadcop);
+
+    Goldilocks::Element evals[setupCtx->starkInfo.evMap.size() * FIELD_EXTENSION];
+    Goldilocks::Element challenges[setupCtx->starkInfo.challengesMap.size() * FIELD_EXTENSION];
+    Goldilocks::Element airgroupValues[FIELD_EXTENSION];
+
+    StepsParams params = {
+        trace: (Goldilocks::Element *)witness,
+        aux_trace: (Goldilocks::Element *)aux_trace,
+        publicInputs : (Goldilocks::Element *)pPublicInputs,
+        proofValues: nullptr,
+        challenges : challenges,
+        airgroupValues : airgroupValues,
+        evals : evals,
+        xDivXSub : nullptr,
+        pConstPolsAddress: (Goldilocks::Element *)pConstPols,
+        pConstPolsExtendedTreeAddress: (Goldilocks::Element *)pConstTree,
+        pCustomCommitsFixed:  nullptr,
+    };
+
+    genProof(*setupCtx, airgroupId, airId, instanceId, params, nullptr, proofBuffer, string(proof_file), true);
     
     return 0;
 }
@@ -607,7 +626,7 @@ void *gen_recursive_proof_final(void *pSetupCtx, char* globalInfoFile, uint64_t 
     json globalInfo;
     file2json(globalInfoFile, globalInfo);
 
-    return genRecursiveProof<RawFr::Element>(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file), false);
+    return genRecursiveProofBN128(*(SetupCtx *)pSetupCtx, globalInfo, airgroupId, airId, instanceId, (Goldilocks::Element *)witness, (Goldilocks::Element *)aux_trace, (Goldilocks::Element *)pConstPols, (Goldilocks::Element *)pConstTree, (Goldilocks::Element *)pPublicInputs, nullptr, string(proof_file));
 }
 
 void read_exec_file(uint64_t *exec_data, char *exec_file, uint64_t nCommitedPols) {

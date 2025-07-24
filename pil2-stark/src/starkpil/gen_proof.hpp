@@ -43,7 +43,7 @@ void calculateWitnessSTD(SetupCtx& setupCtx, StepsParams& params, ExpressionsCtx
     updateAirgroupValue(setupCtx, params, hint[0], hintFieldNameAirgroupVal, "numerator_direct", "denominator_direct", options1, options2, !prod);
 }
 
-void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile) {
+void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t instanceId, StepsParams& params, Goldilocks::Element *globalChallenge, uint64_t *proofBuffer, std::string proofFile, bool recursive = false) {
     TimerStart(STARK_PROOF);
 
     NTT_Goldilocks ntt(1 << setupCtx.starkInfo.starkStruct.nBits);
@@ -66,13 +66,34 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             starks.treesGL[pos]->getRoot(&proof.proof.roots[pos - 1][0]);
         }
     }
+
+    if(recursive) {
+        Goldilocks::Element verkey[HASH_SIZE];
+        starks.treesGL[setupCtx.starkInfo.nStages + 1]->getRoot(verkey);
+        starks.addTranscript(transcript, &verkey[0], HASH_SIZE);
+        if(setupCtx.starkInfo.nPublics > 0) {
+            if(!setupCtx.starkInfo.starkStruct.hashCommits) {
+                starks.addTranscriptGL(transcript, &params.publicInputs[0], setupCtx.starkInfo.nPublics);
+            } else {
+                Goldilocks::Element hash[HASH_SIZE];
+                starks.calculateHash(hash, &params.publicInputs[0], setupCtx.starkInfo.nPublics);
+                starks.addTranscript(transcript, hash, HASH_SIZE);
+            }
+        }
+    } else {
+        starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
+    }
+
     TimerStopAndLog(STARK_STEP_0);
 
     TimerStart(STARK_STEP_1);
-    starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_1", false)]]);
+    if(recursive) {
+        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt);
+        starks.addTranscript(transcript, &proof.proof.roots[0][0], HASH_SIZE);
+    } else {
+        starks.commitStage(1, params.trace, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_1", false)]]);
+    }
     TimerStopAndLog(STARK_STEP_1);
-
-    starks.addTranscript(transcript, globalChallenge, FIELD_EXTENSION);
 
     TimerStart(STARK_STEP_2);
     TimerStart(STARK_CALCULATE_WITNESS_STD);
@@ -91,7 +112,11 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStopAndLog(CALCULATE_IM_POLS);
 
     TimerStart(STARK_COMMIT_STAGE_2);
-    starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_2", false)]]);
+    if (recursive) {
+        starks.commitStage(2, nullptr, params.aux_trace, proof, ntt);
+    } else {
+        starks.commitStage(2, nullptr, params.aux_trace, proof, ntt, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_2", false)]]);
+    }
     TimerStopAndLog(STARK_COMMIT_STAGE_2);
     starks.addTranscript(transcript, &proof.proof.roots[1][0], HASH_SIZE);
 
@@ -103,8 +128,6 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
             a += 3;
         }
     }
-
-    // TODO: ADD PROOF VALUES ???
 
     TimerStopAndLog(STARK_STEP_2);
 
@@ -122,7 +145,11 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     TimerStopAndLog(STARK_CALCULATE_QUOTIENT_POLYNOMIAL);
 
     TimerStart(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
-    starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_3", false)]]);
+    if (recursive) {
+        starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended);
+    } else {
+        starks.commitStage(setupCtx.starkInfo.nStages + 1, nullptr, params.aux_trace, proof, nttExtended, &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("buff_helper_fft_3", false)]]);
+    }
     TimerStopAndLog(STARK_COMMIT_QUOTIENT_POLYNOMIAL);
     starks.addTranscript(transcript, &proof.proof.roots[setupCtx.starkInfo.nStages][0], HASH_SIZE);
     TimerStopAndLog(STARK_STEP_Q);
@@ -238,34 +265,6 @@ void genProof(SetupCtx& setupCtx, uint64_t airgroupId, uint64_t airId, uint64_t 
     if(!proofFile.empty()) {
         json2file(pointer2json(proofBuffer, setupCtx.starkInfo), proofFile);
     }
-
-    // nlohmann::json zkin = proof.proof.proof2json();
-    // for (uint64_t i = 0; i < setupCtx.starkInfo.nPublics; i++)
-    // {
-    //     zkin["publics"][i] = Goldilocks::toString(params.publicInputs[i]);
-    // }
-
-    // uint64_t p = 0;
-    // for (uint64_t i = 0; i < setupCtx.starkInfo.proofValuesMap.size(); i++)
-    // {
-    //     if(setupCtx.starkInfo.proofValuesMap[i].stage == 1) {
-    //         zkin["proofValues"][i][0] = Goldilocks::toString(params.proofValues[p++]);
-    //         zkin["proofValues"][i][1] = "0";
-    //         zkin["proofValues"][i][2] = "0";
-    //     } else {
-    //         zkin["proofValues"][i][0] = Goldilocks::toString(params.proofValues[p++]);
-    //         zkin["proofValues"][i][1] = Goldilocks::toString(params.proofValues[p++]);
-    //         zkin["proofValues"][i][2] = Goldilocks::toString(params.proofValues[p++]);
-    //     }
-    // }
-
-    // for(uint64_t k = 0; k < FIELD_EXTENSION; ++k) {
-    //     zkin["globalChallenge"][k] = Goldilocks::toString(globalChallenge[k]);
-    // }
-
-    // if(!proofFile.empty()) {
-    //     json2file(zkin, proofFile);
-    // }
 
     TimerStopAndLog(STARK_PROOF);    
 }

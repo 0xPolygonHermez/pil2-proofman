@@ -205,7 +205,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     const_pols: Arc<Vec<F>>,
     save_proofs: bool,
 ) -> u64 {
-    timer_start_info!(GEN_RECURSIVE_PROOF, "GEN_RECURSIVE_PROOF_{:?}", witness.proof_type);
+    timer_start_info!(GEN_RECURSIVE_PROOF, "GEN_RECURSIVE_PROOF_{:?} [{}:{}]", witness.proof_type, witness.airgroup_id, witness.air_id);
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
     let global_info_file: &str = global_info_path.to_str().unwrap();
 
@@ -298,7 +298,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
         proof_type,
     );
 
-    timer_stop_and_log_info!(GEN_RECURSIVE_PROOF, "GEN_RECURSIVE_PROOF_{:?}", witness.proof_type);
+    timer_stop_and_log_info!(GEN_RECURSIVE_PROOF, "GEN_RECURSIVE_PROOF_{:?} [{}:{}]", witness.proof_type, witness.airgroup_id, witness.air_id);
     stream_id
 }
 
