@@ -1,5 +1,5 @@
 [package]
-name = "fields"
+name = "proofman-verifier"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
@@ -8,14 +8,11 @@ repository = { workspace = true }
 categories = { workspace = true }
 
 [dependencies]
-paste = "1.0.15"
-proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
+fields = { workspace = true }
 
+tracing = { workspace = true }
 num-bigint = { workspace = true }
 
 [features]
 default = []
 verify = []
-
-[dev-dependencies]
-rand = { workspace = true }

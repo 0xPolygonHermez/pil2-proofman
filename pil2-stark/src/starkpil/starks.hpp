@@ -33,7 +33,7 @@ public:
     MerkleTreeType **treesFRI;
 
 public:
-    Starks(SetupCtx& setupCtx_,Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr, bool initializeTrees = false) : setupCtx(setupCtx_)                    
+    Starks(SetupCtx& setupCtx_,Goldilocks::Element *pConstPolsExtendedTreeAddress, Goldilocks::Element *pConstPolsCustomCommitsTree = nullptr, bool initializeTrees = false) : setupCtx(setupCtx_), ntt(1 << setupCtx.starkInfo.starkStruct.nBits), nttExtended(1 << setupCtx.starkInfo.starkStruct.nBitsExt)                     
     {
 
         uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
@@ -86,11 +86,11 @@ public:
         delete[] treesFRI;
     };
     
-    void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper, NTT_Goldilocks &ntt);
-    void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, NTT_Goldilocks &ntt, Goldilocks::Element* pBuffHelper = nullptr);
+    void extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper);
+    void extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
 
-    void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, NTT_Goldilocks &ntt, Goldilocks::Element* pBuffHelper = nullptr);
-    void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, NTT_Goldilocks &nttExtended, Goldilocks::Element* pBuffHelper = nullptr);
+    void commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
+    void computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper = nullptr);
     
     void calculateImPolsExpressions(uint64_t step, StepsParams& params, ExpressionsCtx& expressionsCtx);
     void calculateQuotientPolynomial(StepsParams& params, ExpressionsCtx& expressionsCtx);

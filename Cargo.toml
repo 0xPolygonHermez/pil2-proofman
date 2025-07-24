@@ -12,6 +12,7 @@ members = [
     "curves",
     "common",
     "fields",
+    "verifier",
     "hints",
     "pilout",
     "proofman",
@@ -49,6 +50,7 @@ pil-std-lib = { path = "pil2-components/lib/std/rs" }
 witness = { path = "witness" }
 pilout = { path = "pilout" }
 fields = { path = "fields"}
+verifier = { path = "verifier" }
 log = { version = "0.4", default-features = false }
 env_logger = "0.11"
 bytes = "1.7"

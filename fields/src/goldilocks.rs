@@ -6,18 +6,15 @@ use std::ops::DivAssign;
 
 use num_bigint::BigUint;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
 use proofman_starks_lib_c::{
     goldilocks_add_assign_ffi, goldilocks_add_ffi, goldilocks_div_assign_ffi, goldilocks_div_ffi, goldilocks_inv_ffi,
     goldilocks_mul_assign_ffi, goldilocks_mul_ffi, goldilocks_neg_ffi, goldilocks_sub_assign_ffi, goldilocks_sub_ffi,
 };
-use rand::distr::{Distribution, StandardUniform};
-use rand::Rng;
-use serde::{Deserialize, Serialize};
 
 use crate::{quotient_map_small_int, Field, PrimeField, PrimeField64, QuotientMap};
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize)]
+#[derive(Copy, Clone, Default)]
 pub struct Goldilocks(u64);
 
 #[inline(always)]
@@ -253,12 +250,12 @@ impl Field for Goldilocks {
             return None;
         }
 
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             Some(unsafe { Self::new(goldilocks_inv_ffi(&self.0)) })
         }
 
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             Some(Self::new(self.inverse().0))
         }
@@ -289,12 +286,12 @@ impl Add for Goldilocks {
 
     #[inline(always)]
     fn add(self, rhs: Self) -> Self {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             Self(unsafe { goldilocks_add_ffi(&self.0, &rhs.0) })
         }
 
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             Self(Self::add_internal(self.0, rhs.0))
         }
@@ -304,11 +301,11 @@ impl Add for Goldilocks {
 impl AddAssign for Goldilocks {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             unsafe { goldilocks_add_assign_ffi(&mut self.0, &self.0, &rhs.0) }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             self.0 = Self::add_internal(self.0, rhs.0);
         }
@@ -320,12 +317,12 @@ impl Sub for Goldilocks {
 
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             Self(unsafe { goldilocks_sub_ffi(&self.0, &rhs.0) })
         }
 
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             Self(Self::sub_internal(self.0, rhs.0))
         }
@@ -335,11 +332,11 @@ impl Sub for Goldilocks {
 impl SubAssign for Goldilocks {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             unsafe { goldilocks_sub_assign_ffi(&mut self.0, &self.0, &rhs.0) }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             self.0 = Self::sub_internal(self.0, rhs.0);
         }
@@ -351,11 +348,11 @@ impl Neg for Goldilocks {
 
     #[inline]
     fn neg(self) -> Self::Output {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             Self(unsafe { goldilocks_neg_ffi(&self.0) })
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             Self(Self::neg_internal(self.0))
         }
@@ -367,12 +364,12 @@ impl Mul for Goldilocks {
 
     #[inline]
     fn mul(self, rhs: Self) -> Self {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             Self(unsafe { goldilocks_mul_ffi(&self.0, &rhs.0) })
         }
 
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             Self(Self::mul_internal(self.0, rhs.0))
         }
@@ -382,12 +379,12 @@ impl Mul for Goldilocks {
 impl MulAssign for Goldilocks {
     #[inline]
     fn mul_assign(&mut self, rhs: Self) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             unsafe { goldilocks_mul_assign_ffi(&mut self.0, &self.0, &rhs.0) }
         }
 
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             self.0 = Self::mul_internal(self.0, rhs.0)
         }
@@ -399,12 +396,12 @@ impl Div for Goldilocks {
 
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn div(self, rhs: Self) -> Self {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             Self(unsafe { goldilocks_div_ffi(&self.0, &rhs.0) })
         }
 
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             Self(Self::mul_internal(self.0, rhs.inverse().0))
         }
@@ -414,25 +411,13 @@ impl Div for Goldilocks {
 impl DivAssign for Goldilocks {
     #[allow(clippy::suspicious_arithmetic_impl)]
     fn div_assign(&mut self, rhs: Self) {
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(feature = "verify")))]
         {
             unsafe { goldilocks_div_assign_ffi(&mut self.0, &self.0, &rhs.0) }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(any(not(target_arch = "x86_64"), feature = "verify"))]
         {
             self.0 = Self::mul_internal(self.0, rhs.inverse().0)
-        }
-    }
-}
-
-impl Distribution<Goldilocks> for StandardUniform {
-    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Goldilocks {
-        loop {
-            let next_u64 = rng.next_u64();
-            let is_canonical = next_u64 < Goldilocks::ORDER_U64;
-            if is_canonical {
-                return Goldilocks::from_u64(next_u64);
-            }
         }
     }
 }
@@ -441,6 +426,21 @@ impl Distribution<Goldilocks> for StandardUniform {
 mod tests {
     #[allow(unused_imports)]
     use super::*;
+
+    use rand::distr::{Distribution, StandardUniform};
+    use rand::Rng;
+
+    impl Distribution<Goldilocks> for StandardUniform {
+        fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Goldilocks {
+            loop {
+                let next_u64 = rng.next_u64();
+                let is_canonical = next_u64 < Goldilocks::ORDER_U64;
+                if is_canonical {
+                    return Goldilocks::from_u64(next_u64);
+                }
+            }
+        }
+    }
 
     #[test]
     pub fn test_add_neg_sub_mul()

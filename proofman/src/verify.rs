@@ -8,6 +8,7 @@ use proofman_starks_lib_c::{
 use colored::*;
 
 use proofman_common::{ProofCtx, ProofType};
+use proofman_util::{timer_start_info, timer_stop_and_log_info};
 
 use std::os::raw::c_void;
 
@@ -17,6 +18,7 @@ pub fn verify_final_proof(
     expressions_bin_path: String,
     verkey_path: String,
 ) -> bool {
+    timer_start_info!(VERIFY_FINAL_PROOF);
     let p_stark_info = stark_info_new_c(stark_info_path.as_str(), false, false, true, false, false);
     let p_expressions_bin = expressions_bin_new_c(expressions_bin_path.as_str(), false, true);
 
@@ -28,7 +30,7 @@ pub fn verify_final_proof(
     let proof = &proof[1..];
     let (publics, vadcop_proof) = proof.split_at(n_publics as usize);
 
-    stark_verify_c(
+    let valid = stark_verify_c(
         &verkey_path,
         vadcop_proof.as_ptr() as *mut u64,
         p_stark_info,
@@ -36,7 +38,9 @@ pub fn verify_final_proof(
         publics.as_ptr() as *mut u8,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
-    )
+    );
+    timer_stop_and_log_info!(VERIFY_FINAL_PROOF);
+    valid
 }
 
 pub fn verify_proof_from_file<F: PrimeField64>(

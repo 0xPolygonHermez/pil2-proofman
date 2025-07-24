@@ -26,7 +26,7 @@ pub struct ConstraintInfo {
     pub rows: Vec<ConstraintRowInfo>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 #[repr(C)]
 pub struct ConstraintInfoC {
     pub id: u64,
