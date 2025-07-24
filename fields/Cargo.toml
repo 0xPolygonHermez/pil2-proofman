@@ -11,11 +11,6 @@ categories = { workspace = true }
 paste = "1.0.15"
 proofman-starks-lib-c = { path = "../provers/starks-lib-c" }
 
+serde = { workspace = true, features = ["derive"] }
 num-bigint = { workspace = true }
-
-[features]
-default = []
-verify = []
-
-[dev-dependencies]
 rand = { workspace = true }

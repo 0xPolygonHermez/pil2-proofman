@@ -3,13 +3,15 @@ use std::{
     fmt::{Display, Formatter, Result},
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
+use rand::distr::{Distribution, StandardUniform};
+use serde::{Deserialize, Serialize};
 
 use crate::{PrimeField64, Field, ExtensionField, Goldilocks};
 
 /// Field Fp⁵ = F\[X\]/(X⁵-3) with generator X + 2
 pub type GoldilocksQuinticExtension = QuinticExtension<Goldilocks>;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct QuinticExtension<F> {
     pub(crate) value: [F; 5],
 }
@@ -475,22 +477,22 @@ impl<F: Field> CipollaExtension<F> {
     }
 }
 
+impl<F: PrimeField64> Distribution<QuinticExtension<F>> for StandardUniform
+where
+    StandardUniform: Distribution<F>,
+{
+    #[inline]
+    fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> QuinticExtension<F> {
+        QuinticExtension::new(array::from_fn(|_| self.sample(rng)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rand::{
         distr::{Distribution, StandardUniform},
         rng,
     };
-
-    impl<F: PrimeField64> Distribution<QuinticExtension<F>> for StandardUniform
-    where
-        StandardUniform: Distribution<F>,
-    {
-        #[inline]
-        fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> QuinticExtension<F> {
-            QuinticExtension::new(array::from_fn(|_| self.sample(rng)))
-        }
-    }
 
     use super::*;
 

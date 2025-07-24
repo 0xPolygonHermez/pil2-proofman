@@ -601,4 +601,3 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     return isValid;
 }
 
-

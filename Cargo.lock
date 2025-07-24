@@ -397,6 +397,7 @@ dependencies = [
  "paste",
  "proofman-starks-lib-c",
  "rand",
+ "serde",
 ]
 
 [[package]]
@@ -917,15 +918,6 @@ dependencies = [
  "colored",
  "fields",
  "sysinfo",
- "tracing",
-]
-
-[[package]]
-name = "proofman-verifier"
-version = "0.9.0"
-dependencies = [
- "fields",
- "num-bigint",
  "tracing",
 ]
 
