@@ -17,7 +17,7 @@ rm -rf ./pil2-components/test/simple/build/ \
 && cargo run --features disable_distributed --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/simple/build/build.pilout \
      --path ./pil2-components/test/simple/rs/src -o \
-&& cargo build \
+&& cargo build --features disable_distributed \
 && cargo run --features disable_distributed --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libsimple.so \
      --proving-key ./pil2-components/test/simple/build/provingKey \
@@ -45,7 +45,7 @@ rm -rf ./pil2-components/test/std/connection/build/ \
 && cargo run --features disable_distributed --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/std/connection/build/build.pilout \
      --path ./pil2-components/test/std/connection/rs/src -o \
-&& cargo build \
+&& cargo build --features disable_distributed \
 && cargo run --features disable_distributed --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libconnection.so \
      --proving-key ./pil2-components/test/std/connection/build/provingKey \
@@ -73,7 +73,7 @@ rm -rf ./pil2-components/test/std/diff_buses/build/ \
 && cargo run --features disable_distributed --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/std/diff_buses/build/diff_buses.pilout \
      --path ./pil2-components/test/std/diff_buses/rs/src -o \
-&& cargo build \
+&& cargo build --features disable_distributed \
 && cargo run --features disable_distributed --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libdiff_buses.so \
      --proving-key ./pil2-components/test/std/diff_buses/build/provingKey \
@@ -101,7 +101,7 @@ rm -rf ./pil2-components/test/std/direct_update/build/ \
 && cargo run --features disable_distributed --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/std/direct_update/build/direct_update.pilout \
      --path ./pil2-components/test/std/direct_update/rs/src -o \
-&& cargo build \
+&& cargo build --features disable_distributed \
 && cargo run --features disable_distributed --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libdirect_update.so \
      --proving-key ./pil2-components/test/std/direct_update/build/provingKey \
@@ -128,7 +128,7 @@ rm -rf ./pil2-components/test/std/lookup/build/ \
 && cargo run --features disable_distributed --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/std/lookup/build/build.pilout \
      --path ./pil2-components/test/std/lookup/rs/src -o \
-&& cargo build \
+&& cargo build --features disable_distributed \
 && cargo run --features disable_distributed --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/liblookup.so \
      --proving-key ./pil2-components/test/std/lookup/build/provingKey \
@@ -156,7 +156,7 @@ rm -rf ./pil2-components/test/std/permutation/build/ \
 && cargo run --features disable_distributed --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/std/permutation/build/build.pilout \
      --path ./pil2-components/test/std/permutation/rs/src -o \
-&& cargo build \
+&& cargo build --features disable_distributed \
 && cargo run --features disable_distributed --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/libpermutation.so \
      --proving-key ./pil2-components/test/std/permutation/build/provingKey \
@@ -184,7 +184,7 @@ rm -rf ./pil2-components/test/std/range_check/build/ \
 && cargo run --features disable_distributed --bin proofman-cli pil-helpers \
      --pilout ./pil2-components/test/std/range_check/build/build.pilout \
      --path ./pil2-components/test/std/range_check/rs/src -o \
-&& cargo build \
+&& cargo build --features disable_distributed \
 && cargo run --features disable_distributed --bin proofman-cli verify-constraints \
      --witness-lib ./target/debug/librange_check.so \
      --proving-key ./pil2-components/test/std/range_check/build/provingKey \
