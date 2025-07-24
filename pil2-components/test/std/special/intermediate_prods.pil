@@ -13,7 +13,7 @@ require "std_prod.pil";
 
     To generate stats:
     node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_prods.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/special/build/intermediate_prods.pilout
-    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_prods.pilout -o pil2-components/test/std/special/build/intermediate_prods.stats
+    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_prods.pilout -s pil2-components/test/std/special/intermediate_prods.config.json -o pil2-components/test/std/special/build/intermediate_prods.stats
 */
 
 airtemplate ImDummy(const int N = 2**8, const int deg_sel_a, const int deg_expr_a, const int M_a, 

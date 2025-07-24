@@ -127,8 +127,8 @@ switch (ACTIVE_FIELD) {
         error("Unknown field");
 }
 
-// Set the blowup factor across the library
-// The blowup factor is defined as the exponent of the ratio between the size of the
+// Blowup factor
+// The blowup factor is the exponent of the ratio between the size of the
 // evaluation domain and the size of the trace evaluation domain
 int BLOWUP_FACTOR = 1;
 
@@ -137,10 +137,15 @@ function set_blowup_factor(const int factor) {
         error(`Blowup factor must be at least 1 but got ${factor}`);
     }
 
+    // Update the blowup factor
     BLOWUP_FACTOR = factor;
+
+    // Update the maximum constraint degree
+    MAX_CONSTRAINT_DEGREE = 2**BLOWUP_FACTOR + 1;
 }
 
-const int MAX_CONSTRAINT_DEGREE = 2**BLOWUP_FACTOR + 1;
+// Maximum constraint degree
+int MAX_CONSTRAINT_DEGREE = 2**BLOWUP_FACTOR + 1;
 
 // Powers of 2
 const int P2_1 = 2**1;
