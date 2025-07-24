@@ -162,9 +162,6 @@ void Fec_div(PFecElement r, PFecElement a, PFecElement b) {
     Fec_mul(r, a, &tmp);
 }
 
-void Fec_fail() {
-    assert(false);
-}
 
 
 RawFec::RawFec() {

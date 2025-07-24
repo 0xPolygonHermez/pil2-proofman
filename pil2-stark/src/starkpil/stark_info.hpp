@@ -9,7 +9,6 @@
 #include "merklehash_goldilocks.hpp"
 #include "zklog.hpp"
 #include "exit_process.hpp"
-#include "fr.hpp"
 
 using json = nlohmann::json;
 using namespace std;

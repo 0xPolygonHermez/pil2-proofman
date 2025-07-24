@@ -162,9 +162,6 @@ void Fnec_div(PFnecElement r, PFnecElement a, PFnecElement b) {
     Fnec_mul(r, a, &tmp);
 }
 
-void Fnec_fail() {
-    assert(false);
-}
 
 
 RawFnec::RawFnec() {

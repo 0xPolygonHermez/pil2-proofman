@@ -32,9 +32,6 @@ NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH
 # Debugging flags
 # NVCCFLAGS += -G -lineinfo -Xptxas=-v
 
-
-
-# Define include directories first
 INC_DIRS := $(shell find $(SRC_DIRS) -type d)
 INC_FLAGS := $(addprefix -I,$(INC_DIRS))
 
@@ -43,7 +40,7 @@ ifeq ($(UNAME_S),Darwin)
     CXX      = clang++
     SDKPATH  = /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
     CPPFLAGS = -isysroot $(SDKPATH) -I$(HOMEBREW_PREFIX)/include -I$(HOMEBREW_PREFIX)/opt/libomp/include \
-        -I$(HOMEBREW_PREFIX)/opt/libsodium/include -D__EXCLUDE_BN128__ -MMD -MP $(INC_FLAGS)
+        -I$(HOMEBREW_PREFIX)/opt/libsodium/include -MMD -MP $(INC_FLAGS)
     CXXFLAGS = -std=c++17 -Wall -pthread -Wno-unused-label -Wno-vla-cxx-extension -fPIC \
         -Xpreprocessor -fopenmp
     LDFLAGS  = -rdynamic -L$(HOMEBREW_PREFIX)/lib -L$(HOMEBREW_PREFIX)/opt/libomp/lib \
@@ -64,7 +61,7 @@ else ifeq ($(UNAME_S),Linux)
     # AVX512/AVX2 detection
     AVX512_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx512' -m 1)
     ifneq ($(AVX512_SUPPORTED),)
-        CXXFLAGS += -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
+        CXXFLAGS += -mavx2 -D__AVX2__ -mavx512f -D__AVX512__ -D__USE_ASSEMBLY__
         $(info AVX-512 is supported by the CPU)
     else
         AVX2_SUPPORTED := $(shell cat /proc/cpuinfo | grep -E 'avx2' -m 1)
@@ -87,13 +84,12 @@ endif
 
 # Define source files based on platform
 ifeq ($(UNAME_S),Darwin)
-    # macOS - exclude poseidon_opt, rapidsnark, and ffiasm
-    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/utils -name *.cpp -or -name *.c -or -name  -or -name *.cc)
+    # macOS - exclude assembly files (.asm)
+    SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/poseidon_opt ./src/rapidsnark/* ./src/ffiasm ./src/utils -name *.cpp -or -name *.c -or -name *.cc)
 else
-    # Linux - include all directories
+    # Linux - include all files including assembly
     SRCS_STARKS_LIB := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/config ./src/starkpil ./src/XKCP ./src/poseidon_opt ./src/rapidsnark/*  ./src/ffiasm ./src/utils -name *.cpp -or -name *.c -or -name *.asm -or -name *.cc)
 endif
-
 SRCS_STARKS_LIB_GPU := $(shell find ./src/api/starks_api.* ./src/goldilocks/src ./src/goldilocks/utils ./src/config ./src/starkpil ./src/XKCP ./src/poseidon_opt ./src/rapidsnark/*  ./src/ffiasm ./src/utils -name *.cpp -or -name *.c -or -name *.asm -or -name *.cc -or -name *.cu)
 OBJS_STARKS_LIB := $(SRCS_STARKS_LIB:%=$(BUILD_DIR)/%.o)
 OBJS_STARKS_LIB_GPU := $(SRCS_STARKS_LIB_GPU:%=$(BUILD_DIR_GPU)/%.o)
@@ -102,10 +98,10 @@ DEPS_STARKS_LIB_GPU := $(OBJS_STARKS_LIB_GPU:.o=.d)
 
 # Define BCT source files based on platform
 ifeq ($(UNAME_S),Darwin)
-    # macOS - exclude merkleTreeBN128.cpp, poseidon_opt, and ffiasm but include logger
-    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/utils/* -name *.cpp -or -name *.c -or -name *.cc)
+    # macOS - exclude assembly files and merkleTreeBN128.cpp
+    SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.* ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name *.cpp -or -name *.c -or -name *.cc)
 else
-    # Linux - include all files
+    # Linux - include all files including assembly
     SRCS_BCT := $(shell find ./src/bctree/build_const_tree.cpp ./src/bctree/main.cpp ./src/goldilocks/src ./src/starkpil/merkleTree/merkleTreeBN128.cpp ./src/starkpil/merkleTree/merkleTreeGL.cpp ./src/rapidsnark/logger.*  ./src/poseidon_opt/poseidon_opt.cpp ./src/ffiasm ./src/utils/* -name *.cpp -or -name *.c -or -name *.asm -or -name *.cc)
 endif
 OBJS_BCT := $(SRCS_BCT:%=$(BUILD_DIR)/%.o)

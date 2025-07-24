@@ -53,6 +53,8 @@ public:
 
     BaseField &F;
 
+    Curve(BaseField &aF): F(aF) { 
+    }
     Curve(BaseField &aF, typename BaseField::Element &aa, typename BaseField::Element &ab, typename BaseField::Element &agx, typename BaseField::Element &agy);
     Curve(BaseField &aF, std::string as, std::string bs, std::string gxx, std::string gys);
 

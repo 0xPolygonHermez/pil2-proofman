@@ -72,7 +72,6 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
         TimerStopAndLog(GENERATING_FILES);
 
     }
-#ifndef __EXCLUDE_BN128__  
     else if(verificationHashType == "BN128"){
         TimerStart(MERKELIZE_CONST_TREE);
         RawFr::Element rootC;
@@ -102,7 +101,6 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
         }
         TimerStopAndLog(GENERATING_FILES);
     } 
-#endif    
     else {
         cerr << "Invalid Hash Type: " << verificationHashType << endl;
         exit(-1);

@@ -170,16 +170,15 @@ void Fr_div(PFrElement r, PFrElement a, PFrElement b) {
     Fr_mul(r, a, &tmp);
 }
 
-void Fr_fail() {
-    assert(false);
-}
 
 
 RawFr::RawFr() {
+#ifdef __USE_ASSEMBLY__
     Fr_init();
     set(fZero, 0);
     set(fOne, 1);
     neg(fNegOne, fOne);
+#endif
 }
 
 RawFr::~RawFr() {
