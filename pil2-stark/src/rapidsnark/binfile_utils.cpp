@@ -13,9 +13,15 @@
 
 namespace BinFileUtils
 {
-    BinFile::BinFile(void *data, uint64_t size, std::string _type, uint32_t maxVersion)
+    BinFile::BinFile(void *data, uint64_t _size, std::string _type, uint32_t maxVersion)
+        : addr(nullptr), size(0), pos(0), version(0), readingSection(nullptr)
     {
+        size = _size;
         addr = malloc(size);
+        if (addr == nullptr) {
+            throw std::bad_alloc();
+        }
+        
         int nThreads = omp_get_max_threads() / 2;
         ThreadUtils::parcpy(addr, data, size, nThreads);
         
@@ -24,13 +30,13 @@ namespace BinFileUtils
 
         if (type != _type)
         {
-            throw new std::invalid_argument("Invalid file type. It should be " + _type + " and it us " + type);
+            throw std::invalid_argument("Invalid file type. It should be " + _type + " and it us " + type);
         }
 
         version = readU32LE();
         if (version > maxVersion)
         {
-            throw new std::invalid_argument("Invalid version. It should be <=" + std::to_string(maxVersion) + " and it us " + std::to_string(version));
+            throw std::invalid_argument("Invalid version. It should be <=" + std::to_string(maxVersion) + " and it us " + std::to_string(version));
         }
 
         u_int32_t nSections = readU32LE();
@@ -51,10 +57,11 @@ namespace BinFileUtils
         }
 
         pos = 0;
-        readingSection = NULL;
+        readingSection = nullptr;
     }
 
     BinFile::BinFile(std::string fileName, std::string _type, uint32_t maxVersion)
+        : addr(nullptr), size(0), pos(0), version(0), readingSection(nullptr)
     {
         
         int fd;
@@ -69,11 +76,21 @@ namespace BinFileUtils
 
         size = sb.st_size + sizeof(u_int32_t) + sizeof(u_int64_t);
         void *addrmm = mmap(NULL, size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
+        if (addrmm == MAP_FAILED) {
+            close(fd);
+            throw std::system_error(errno, std::generic_category(), "mmap");
+        }
+        
         addr = malloc(size);
+        if (addr == nullptr) {
+            munmap(addrmm, size);
+            close(fd);
+            throw std::bad_alloc();
+        }
         
         // int nThreads = omp_get_max_threads() / 2;
         // ThreadUtils::parcpy(addr, addrmm, size, nThreads);
-        memcpy(addr, addrmm, sb.st_size);
+        memcpy(addr, addrmm, size);
 
         munmap(addrmm, size);
         close(fd);
@@ -83,13 +100,13 @@ namespace BinFileUtils
 
         if (type != _type)
         {
-            throw new std::invalid_argument("Invalid file type. It should be " + _type + " and it us " + type);
+            throw std::invalid_argument("Invalid file type. It should be " + _type + " and it us " + type);
         }
 
         version = readU32LE();
         if (version > maxVersion)
         {
-            throw new std::invalid_argument("Invalid version. It should be <=" + std::to_string(maxVersion) + " and it us " + std::to_string(version));
+            throw std::invalid_argument("Invalid version. It should be <=" + std::to_string(maxVersion) + " and it us " + std::to_string(version));
         }
 
         u_int32_t nSections = readU32LE();
@@ -110,7 +127,7 @@ namespace BinFileUtils
         }
 
         pos = 0;
-        readingSection = NULL;
+        readingSection = nullptr;
     }
 
     BinFile::~BinFile()
@@ -122,17 +139,17 @@ namespace BinFileUtils
     {
         if (sections.find(sectionId) == sections.end())
         {
-            throw new std::range_error("Section does not exist: " + std::to_string(sectionId));
+            throw std::range_error("Section does not exist: " + std::to_string(sectionId));
         }
 
         if (sectionPos >= sections[sectionId].size())
         {
-            throw new std::range_error("Section pos too big. There are " + std::to_string(sections[sectionId].size()) + " and it's trying to access section: " + std::to_string(sectionPos));
+            throw std::range_error("Section pos too big. There are " + std::to_string(sections[sectionId].size()) + " and it's trying to access section: " + std::to_string(sectionPos));
         }
 
-        if (readingSection != NULL)
+        if (readingSection != nullptr)
         {
-            throw new std::range_error("Already reading a section");
+            throw std::range_error("Already reading a section");
         }
 
         pos = (u_int64_t)(sections[sectionId][sectionPos].start) - (u_int64_t)addr;
@@ -146,10 +163,10 @@ namespace BinFileUtils
         {
             if ((u_int64_t)addr + pos - (u_int64_t)(readingSection->start) != readingSection->size)
             {
-                throw new std::range_error("Invalid section size");
+                throw std::range_error("Invalid section size");
             }
         }
-        readingSection = NULL;
+        readingSection = nullptr;
     }
 
     void *BinFile::getSectionData(u_int32_t sectionId, u_int32_t sectionPos)
@@ -157,12 +174,12 @@ namespace BinFileUtils
 
         if (sections.find(sectionId) == sections.end())
         {
-            throw new std::range_error("Section does not exist: " + std::to_string(sectionId));
+            throw std::range_error("Section does not exist: " + std::to_string(sectionId));
         }
 
         if (sectionPos >= sections[sectionId].size())
         {
-            throw new std::range_error("Section pos too big. There are " + std::to_string(sections[sectionId].size()) + " and it's trying to access section: " + std::to_string(sectionPos));
+            throw std::range_error("Section pos too big. There are " + std::to_string(sections[sectionId].size()) + " and it's trying to access section: " + std::to_string(sectionPos));
         }
 
         return sections[sectionId][sectionPos].start;
@@ -173,12 +190,12 @@ namespace BinFileUtils
 
         if (sections.find(sectionId) == sections.end())
         {
-            throw new std::range_error("Section does not exist: " + std::to_string(sectionId));
+            throw std::range_error("Section does not exist: " + std::to_string(sectionId));
         }
 
         if (sectionPos >= sections[sectionId].size())
         {
-            throw new std::range_error("Section pos too big. There are " + std::to_string(sections[sectionId].size()) + " and it's trying to access section: " + std::to_string(sectionPos));
+            throw std::range_error("Section pos too big. There are " + std::to_string(sections[sectionId].size()) + " and it's trying to access section: " + std::to_string(sectionPos));
         }
 
         return sections[sectionId][sectionPos].size;
@@ -232,6 +249,9 @@ namespace BinFileUtils
 
     void *BinFile::read(u_int64_t len)
     {
+        if (pos + len > size) {
+            throw std::out_of_range("Attempting to read beyond buffer bounds in read()");
+        }
         void *res = (void *)((u_int64_t)addr + pos);
         pos += len;
         return res;

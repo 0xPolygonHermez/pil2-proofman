@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 
 use fields::PrimeField64;
-use proofman_starks_lib_c::{expressions_bin_new_c, get_tree_size_c};
+use proofman_starks_lib_c::{expressions_bin_new_c, get_tree_size_c, expressions_bin_free_c};
 
 use crate::load_const_pols;
 use crate::GlobalInfo;
@@ -129,24 +129,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             _ => panic!("Invalid setup type"),
         }
     }
-
-    pub fn free(&self) {
-        if self.sctx_compressor.is_some() {
-            self.sctx_compressor.as_ref().unwrap().free();
-        }
-        if self.sctx_recursive1.is_some() {
-            self.sctx_recursive1.as_ref().unwrap().free();
-        }
-        if self.sctx_recursive2.is_some() {
-            self.sctx_recursive2.as_ref().unwrap().free();
-        }
-        if self.setup_vadcop_final.is_some() {
-            self.setup_vadcop_final.as_ref().unwrap().free();
-        }
-        if self.setup_recursivef.is_some() {
-            self.setup_recursivef.as_ref().unwrap().free();
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -166,6 +148,14 @@ pub struct SetupRepository<F: PrimeField64> {
 
 unsafe impl<F: PrimeField64> Send for SetupRepository<F> {}
 unsafe impl<F: PrimeField64> Sync for SetupRepository<F> {}
+
+impl<F: PrimeField64> Drop for SetupRepository<F> {
+    fn drop(&mut self) {
+        if let Some(global_bin_ptr) = self.global_bin {
+            expressions_bin_free_c(global_bin_ptr);
+        }
+    }
+}
 
 impl<F: PrimeField64> SetupRepository<F> {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool, preallocate: bool) -> Self {
@@ -252,13 +242,8 @@ impl<F: PrimeField64> SetupRepository<F> {
             total_const_size,
         }
     }
-
-    pub fn free(&self) {
-        for setup in self.setups.values() {
-            setup.free();
-        }
-    }
 }
+
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 pub struct SetupCtx<F: PrimeField64> {
@@ -337,9 +322,5 @@ impl<F: PrimeField64> SetupCtx<F> {
 
     pub fn get_global_info_file(&self) -> String {
         self.setup_repository.global_info_file.clone()
-    }
-
-    pub fn free(&self) {
-        self.setup_repository.free();
     }
 }
