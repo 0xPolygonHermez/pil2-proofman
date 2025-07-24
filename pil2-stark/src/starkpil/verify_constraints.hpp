@@ -100,11 +100,6 @@ void verifyConstraints(SetupCtx& setupCtx, StepsParams &params, ConstraintInfo *
     
     uint64_t N = (1 << setupCtx.starkInfo.starkStruct.nBits);
 
-    uint64_t nPols = 0;
-    for(uint64_t stage = 1; stage <= setupCtx.starkInfo.nStages; stage++) {
-        nPols += setupCtx.starkInfo.mapSectionsN["cm" + to_string(stage)];
-    }
-
     Goldilocks::Element* pBuffer = &params.aux_trace[setupCtx.starkInfo.mapOffsets[std::make_pair("q", true)]];
 
     ProverHelpers proverHelpers;

@@ -2,6 +2,10 @@
 #define LIB_API_H
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
     // Save Proof
     // ========================================================================================
     void save_challenges(void *pChallenges, char *globalInfoFile, char *fileDir);
@@ -158,5 +162,9 @@
     
     void register_proof_done_callback(ProofDoneCallback cb);
     void launch_callback(uint64_t instanceId, char *proofType);
-    
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif

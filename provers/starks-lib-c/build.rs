@@ -5,10 +5,6 @@ use std::process::Command;
 use std::time::UNIX_EPOCH;
 
 fn main() {
-    if cfg!(target_os = "macos") {
-        println!("cargo:rustc-cfg=feature=\"no_lib_link\"");
-        return;
-    }
 
     // **Check if the `no_lib_link` feature is enabled**
     if env::var("CARGO_FEATURE_NO_LIB_LINK").is_ok() {
@@ -62,6 +58,30 @@ fn main() {
     // Ensure Rust triggers a rebuild if the C++ source code changes
     track_file_changes(&pil2_stark_path);
 
+    // Add platform-specific library search paths
+    if cfg!(target_os = "macos") {
+        // Get Homebrew prefix for macOS
+        let homebrew_prefix = Command::new("brew")
+            .arg("--prefix")
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .unwrap_or_else(|_| "/opt/homebrew".to_string()); // Default for Apple Silicon
+
+        println!("cargo:rustc-link-search=native={}/lib", homebrew_prefix);
+        println!("cargo:rustc-link-search=native={}/opt/libomp/lib", homebrew_prefix);
+        println!("cargo:rustc-link-search=native={}/opt/libsodium/lib", homebrew_prefix);
+        println!("cargo:rustc-link-search=native={}/opt/gmp/lib", homebrew_prefix);
+        println!("cargo:rustc-link-search=native={}/opt/openssl/lib", homebrew_prefix);
+        
+        // Also add system paths
+        println!("cargo:rustc-link-search=native=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib");
+    } else if cfg!(target_os = "linux") {
+        // Standard Linux library paths
+        println!("cargo:rustc-link-search=native=/usr/lib");
+        println!("cargo:rustc-link-search=native=/usr/local/lib");
+        println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
+    }
+
     // Link the static library
     println!("cargo:rustc-link-search=native={}", abs_lib_path.display());
     println!("cargo:rustc-link-lib=static={library_name}");
@@ -75,9 +95,17 @@ fn main() {
         println!("cargo:rustc-env=CUDA_ARCH=sm_75"); // Adjust the architecture as needed
     }
 
-    // Link required libraries
-    for lib in &["sodium", "pthread", "gmp", "stdc++", "gmpxx", "crypto", "iomp5"] {
-        println!("cargo:rustc-link-lib={lib}");
+    // Link required libraries with platform-specific handling
+    if cfg!(target_os = "macos") {
+        // macOS library linking (matches Makefile LDFLAGS)
+        for lib in &["sodium", "pthread", "gmp", "gmpxx", "c++", "omp"] {
+            println!("cargo:rustc-link-lib={lib}");
+        }
+    } else {
+        // Linux library linking
+        for lib in &["sodium", "pthread", "gmp", "stdc++", "gmpxx", "crypto", "iomp5"] {
+            println!("cargo:rustc-link-lib={lib}");
+        }
     }
 }
 

@@ -25,17 +25,17 @@ void *genRecursiveProof(SetupCtx& setupCtx, json& globalInfo, uint64_t airgroupI
     Goldilocks::Element challenges[setupCtx.starkInfo.challengesMap.size() * FIELD_EXTENSION];
     
     StepsParams params = {
-        trace: witness,
-        aux_trace,
-        publicInputs : publicInputs,
-        proofValues: nullptr,
-        challenges : challenges,
-        airgroupValues : nullptr,
-        evals : evals,
-        xDivXSub : nullptr,
-        pConstPolsAddress: pConstPols,
-        pConstPolsExtendedTreeAddress: pConstTree,
-        pCustomCommitsFixed:  nullptr,
+        .trace = witness,
+        .aux_trace = aux_trace,
+        .publicInputs = publicInputs,
+        .proofValues = nullptr,
+        .challenges = challenges,
+        .airgroupValues = nullptr,
+        .evals = evals,
+        .xDivXSub = nullptr,
+        .pConstPolsAddress = pConstPols,
+        .pConstPolsExtendedTreeAddress = pConstTree,
+        .pCustomCommitsFixed = nullptr,
     };
 
     //--------------------------------

@@ -1,5 +1,6 @@
 #ifndef GOLDILOCKS_CUBIC_EXTENSION_AVX
 #define GOLDILOCKS_CUBIC_EXTENSION_AVX
+#ifdef __AVX2__
 #include "goldilocks_base_field.hpp"
 #include "goldilocks_cubic_extension.hpp"
 #include <cassert>
@@ -133,4 +134,5 @@ inline void Goldilocks3::op_31_avx(uint64_t op, Element_avx &c_, const Element_a
         break;
     }
 }
+#endif
 #endif

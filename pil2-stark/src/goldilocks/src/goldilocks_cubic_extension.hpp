@@ -3,7 +3,9 @@
 
 #include <stdint.h> // for uint64_t
 #include "goldilocks_base_field.hpp"
+#ifdef __AVX2__
 #include <immintrin.h>
+#endif
 #include <cassert>
 #include <vector>
 
@@ -19,8 +21,12 @@ class Goldilocks3
 {
 public:
     typedef Goldilocks::Element Element[FIELD_EXTENSION];
+#ifdef __AVX2__
     typedef __m256i Element_avx[FIELD_EXTENSION];
+#endif
+#ifdef __AVX512__
     typedef __m512i Element_avx512[FIELD_EXTENSION];
+#endif   
 
 private:
     static const Element ZERO;
@@ -351,6 +357,7 @@ public:
     static void op_31_pack( uint64_t nrowsPack, uint64_t op, Goldilocks::Element *c, const Goldilocks::Element *a, const bool const_a, const Goldilocks::Element *b, const bool const_b);
 
     /* AVX operations */
+#ifdef __AVX2__
     static void copy_avx(Element_avx c_, const Element_avx a_);
     static void add_avx(Element_avx c_, const Element_avx a_, const Element_avx b_);
     static void sub_avx(Element_avx &c_, const Element_avx a_, const Element_avx b_);
@@ -359,7 +366,7 @@ public:
     
     static void op_avx(uint64_t op, Element_avx &c_, const Element_avx &a_, const Element_avx &b_);
     static void op_31_avx(uint64_t op, Element_avx &c_, const Element_avx &a_, const __m256i &b_);
-    
+#endif    
 #ifdef __AVX512__
 
     /* AVX512 operations */

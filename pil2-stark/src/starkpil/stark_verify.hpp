@@ -275,18 +275,18 @@ bool starkVerify(json jproof, StarkInfo& starkInfo, ExpressionsBin& expressionsB
     }
 
     StepsParams params = {
-        trace : trace,
-        aux_trace: aux_trace,
-        publicInputs : publics,
-        proofValues: proofValues,
-        challenges : challenges,
-        airgroupValues : airgroupValues,
-        airValues : airValues,
-        evals : evals,
-        xDivXSub : xDivXSub,
-        pConstPolsAddress: constPolsVals,
-        pConstPolsExtendedTreeAddress: nullptr,
-        pCustomCommitsFixed: trace_custom_commits_fixed,
+        .trace = trace,
+        .aux_trace = aux_trace,
+        .publicInputs = publics,
+        .proofValues = proofValues,
+        .challenges = challenges,
+        .airgroupValues = airgroupValues,
+        .airValues = airValues,
+        .evals = evals,
+        .xDivXSub = xDivXSub,
+        .pConstPolsAddress = constPolsVals,
+        .pConstPolsExtendedTreeAddress = nullptr,
+        .pCustomCommitsFixed = trace_custom_commits_fixed,
     };
 
     bool isValid = true;

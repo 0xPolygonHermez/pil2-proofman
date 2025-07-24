@@ -1,3 +1,5 @@
+#ifndef FINAL_SNARK_PROOF_HPP
+#define FINAL_SNARK_PROOF_HPP
 #include "timer.hpp"
 #include <nlohmann/json.hpp>
 #include "fflonk_prover.hpp"
@@ -43,4 +45,5 @@ void genFinalSnarkProof(void *circomWitnessFinal, std::string zkeyFile, std::str
 
     TimerStopAndLog(PROVER_FINAL_SNARK_PROOF);
 }
+#endif // FINAL_SNARK_PROOF_HPP
     
