@@ -284,9 +284,9 @@ pub fn print_memory_usage() {
     system.refresh_all();
 
     if let Some(process) = system.process(sysinfo::get_current_pid().unwrap()) {
-        let memory_kb = process.memory();
-        let memory_gb = memory_kb as f64 / 1_048_576.0; // 1 GB = 1,048,576 KB
-        println!("Memory used by the process: {:.2} {:.2} GB", system.used_memory(), memory_gb);
+        let memory_bytes = process.memory();
+        let memory_mb = memory_bytes as f64 / 1_048_576.0; // 1 MB = 1,048,576 B
+        println!("Memory used by the process: {memory_mb:.2} MB");
     } else {
         println!("Could not get process information.");
     }

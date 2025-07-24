@@ -760,7 +760,7 @@ pub fn mul_hint_fields<F: PrimeField64>(
 
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
+    let steps_params = pctx.get_air_instance_params(instance_id, false);
 
     let mut hint_options1: Vec<*mut u8> = options1.iter_mut().map(|s| s as *mut HintFieldOptions as *mut u8).collect();
 
@@ -793,7 +793,7 @@ pub fn acc_hint_field<F: PrimeField64>(
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
+    let steps_params = pctx.get_air_instance_params(instance_id, false);
 
     acc_hint_field_c(
         (&setup.p_setup).into(),
@@ -828,7 +828,7 @@ pub fn acc_mul_hint_fields<F: PrimeField64>(
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
+    let steps_params = pctx.get_air_instance_params(instance_id, false);
 
     acc_mul_hint_fields_c(
         (&setup.p_setup).into(),
@@ -865,7 +865,7 @@ pub fn update_airgroupvalue<F: PrimeField64>(
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
+    let steps_params = pctx.get_air_instance_params(instance_id, false);
 
     update_airgroupvalue_c(
         (&setup.p_setup).into(),
@@ -894,7 +894,7 @@ fn get_hint_f<F: PrimeField64>(
     let setup = sctx.get_setup(airgroup_id, air_id);
 
     let steps_params = if let Some(instance_id) = instance_id {
-        pctx.unwrap().get_air_instance_params(sctx, instance_id, false)
+        pctx.unwrap().get_air_instance_params(instance_id, false)
     } else {
         StepsParams::default()
     };
@@ -1112,7 +1112,7 @@ pub fn set_hint_field<F: PrimeField64>(
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
+    let steps_params = pctx.get_air_instance_params(instance_id, false);
 
     let values_ptr: *mut u8 = match values {
         HintFieldValue::Column(vec) => vec.as_ptr() as *mut u8,
@@ -1134,7 +1134,7 @@ pub fn set_hint_field_val<F: PrimeField64>(
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, instance_id, false);
+    let steps_params = pctx.get_air_instance_params(instance_id, false);
 
     let mut value_array = Vec::new();
 
