@@ -210,6 +210,9 @@ rm -rf ./pil2-components/test/std/special/build/ \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/expr_optimizations.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/expr_optimizations.pilout \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_prods.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/special/build/intermediate_prods.pilout \
 && node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_sums.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./pil2-components/test/std/special/build/intermediate_sums.pilout \
@@ -226,6 +229,9 @@ rm -rf ./pil2-components/test/std/special/build/ \
      -t ./pil2-stark/build/bctree \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/expr_optimizations.pilout \
+     -b ./pil2-components/test/std/special/build \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/special/build/intermediate_prods.pilout \
      -b ./pil2-components/test/std/special/build \
 && node ../pil2-proofman-js/src/main_setup.js \
      -a ./pil2-components/test/std/special/build/intermediate_sums.pilout \
