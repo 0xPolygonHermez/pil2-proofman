@@ -88,7 +88,7 @@ inline void Goldilocks::sub(Element &result, const Element &in1, const Element &
         in_2 -= GOLDILOCKS_PRIME;
     }
     
-    if(in_2 <= in1.fe){
+    if (in_2 <= in1.fe){
         result.fe = in1.fe - in_2;
     } else {
         result.fe = GOLDILOCKS_PRIME - (in_2 - in1.fe);
