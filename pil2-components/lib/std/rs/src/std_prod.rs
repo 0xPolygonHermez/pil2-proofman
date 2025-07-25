@@ -307,7 +307,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                     let result = match std_mode {
                         STD_MODE_DEFAULT => Some("result"),
                         STD_MODE_ONE_INSTANCE => None,
-                        _ => panic!("Invalid std_mode: {}", std_mode),
+                        _ => panic!("Invalid std_mode: {std_mode}"),
                     };
                     // This call calculates "numerator" / "denominator" and accumulates it into "reference". Its last value is stored into "result"
                     // Alternatively, this could be done using get_hint_field and set_hint_field methods and calculating the operations in Rust

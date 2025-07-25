@@ -324,7 +324,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                     let result = match std_mode {
                         STD_MODE_DEFAULT => Some("result"),
                         STD_MODE_ONE_INSTANCE => None,
-                        _ => panic!("Invalid std_mode: {}", std_mode),
+                        _ => panic!("Invalid std_mode: {std_mode}"),
                     };
                     // This call accumulates "expression" into "reference" expression and stores its last value to "result"
                     // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust
