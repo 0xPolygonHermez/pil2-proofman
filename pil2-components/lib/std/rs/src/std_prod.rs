@@ -310,7 +310,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         _ => panic!("Invalid std_mode: {}", std_mode),
                     };
                     // This call calculates "numerator" / "denominator" and accumulates it into "reference". Its last value is stored into "result"
-                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and calculating the operations in Rust,
+                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and calculating the operations in Rust
                     acc_mul_hint_fields(
                         &sctx,
                         &pctx,
@@ -325,20 +325,18 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         false,
                     );
 
-                    if let Some(result) = result {
-                        update_airgroupvalue(
-                            &sctx,
-                            &pctx,
-                            *instance_id,
-                            gprod_hint,
-                            result,
-                            "numerator_direct",
-                            "denominator_direct",
-                            HintFieldOptions::default(),
-                            HintFieldOptions::inverse(),
-                            false,
-                        );
-                    }
+                    update_airgroupvalue(
+                        &sctx,
+                        &pctx,
+                        *instance_id,
+                        gprod_hint,
+                        result,
+                        "numerator_direct",
+                        "denominator_direct",
+                        HintFieldOptions::default(),
+                        HintFieldOptions::inverse(),
+                        false,
+                    );
                 }
             }
 
@@ -385,7 +383,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
             }
 
             if fast_mode {
-                // Process each sum check user
+                // Process each product check user
                 let debugs_data_fasts: Vec<HashMap<F, SharedDataFast>> = global_instance_ids
                     .par_iter()
                     .map(|&global_instance_id| {
@@ -412,7 +410,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                     self.debug_data_fast.write().unwrap().push(debug_data_fast.clone());
                 }
             } else {
-                // Process each sum check user
+                // Process each product check user
                 for global_instance_id in global_instance_ids {
                     self.debug_mode(&pctx, &sctx, *global_instance_id, &mut debug_data, &mut HashMap::new(), false);
                 }

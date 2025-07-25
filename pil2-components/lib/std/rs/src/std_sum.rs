@@ -327,7 +327,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         _ => panic!("Invalid std_mode: {}", std_mode),
                     };
                     // This call accumulates "expression" into "reference" expression and stores its last value to "result"
-                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust,
+                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust
                     acc_mul_hint_fields(
                         &sctx,
                         &pctx,
@@ -342,20 +342,18 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         true,
                     );
 
-                    if let Some(result) = result {
-                        update_airgroupvalue(
-                            &sctx,
-                            &pctx,
-                            *instance_id,
-                            gsum_hint,
-                            result,
-                            "numerator_direct",
-                            "denominator_direct",
-                            HintFieldOptions::default(),
-                            HintFieldOptions::inverse(),
-                            true,
-                        );
-                    }
+                    update_airgroupvalue(
+                        &sctx,
+                        &pctx,
+                        *instance_id,
+                        gsum_hint,
+                        result,
+                        "numerator_direct",
+                        "denominator_direct",
+                        HintFieldOptions::default(),
+                        HintFieldOptions::inverse(),
+                        true,
+                    );
                 }
             }
 
