@@ -100,6 +100,10 @@ private function update_piop_sum(const int name, const int type, const int opids
 
     switch (direct_type) {
         case PIOP_DIRECT_TYPE_GLOBAL:
+            if (STD_MODE == STD_MODE_ONE_INSTANCE) {
+                error("Updating the global constraint is not allowed in one instance mode");
+            }
+
             gsum_update_global_constraint_data(type, sel, exprs_compressed);
         case PIOP_DIRECT_TYPE_AIR, PIOP_DIRECT_TYPE_DEFAULT:
             gsum_update_air_constraint_data(type, sel, exprs_compressed, direct_type);
@@ -107,14 +111,18 @@ private function update_piop_sum(const int name, const int type, const int opids
             // Update constraints at the air level
             on final air piop_gsum_air();
 
-            // Update constraints at the airgroup level
-            on final airgroup piop_gsum_airgroup();
+            // Update the constraints at the airgroup level
+            if (STD_MODE != STD_MODE_ONE_INSTANCE) {
+                on final airgroup piop_gsum_airgroup();
+            }
         default:
             error(`Invalid direct_type: ${direct_type}`);
     }
 
     // Update the constraints at the proof level
-    on final proof piop_gsum_proof();
+    if (STD_MODE != STD_MODE_ONE_INSTANCE) {
+        on final proof piop_gsum_proof();
+    }
 
     // At the end, check consistency of all the opids
     on final proof check_opids_were_completed_sum();
@@ -143,6 +151,7 @@ private function init_proof_containers_sum(const int name, const int opids[]) {
         int air_count = 0;
         int airgroup_ids[ARRAY_SIZE];
         int air_ids[ARRAY_SIZE];
+        int std_mode[ARRAY_SIZE];
     }
 
     // Opid-specific data
@@ -241,6 +250,7 @@ private function gsum_update_air_constraint_data(const int type, const expr sel,
 }
 
 // Deferred functions
+expr gsum_result = 0;
 private function piop_gsum_air() {
     use air.std.gsum;
 
@@ -248,7 +258,10 @@ private function piop_gsum_air() {
 
     col witness stage(2) gsum;
 
-    airgroupval aggregate(sum) default(0) gsum_result;
+    if (STD_MODE != STD_MODE_ONE_INSTANCE) {
+        airgroupval aggregate(sum) default(0) _gsum_result;
+        gsum_result = _gsum_result;
+    }
 
     /*
                                           selᵢ
@@ -538,6 +551,7 @@ private function piop_gsum_air() {
     // Store the airgroup and air ids for global hints
     proof.std.gsum.airgroup_ids[proof.std.gsum.air_count] = AIRGROUP_ID;
     proof.std.gsum.air_ids[proof.std.gsum.air_count] = AIR_ID;
+    proof.std.gsum.std_mode[proof.std.gsum.air_count] = STD_MODE;
     proof.std.gsum.air_count++;
 }
 
@@ -605,5 +619,5 @@ private function check_opids_were_completed_sum() {
 
 private function piop_gsum_issue_global_hints() {
     use proof.std.gsum;
-    @std_sum_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids, stage_wc: 2};
+    @std_sum_users{num_users: air_count, std_mode: std_mode, airgroup_ids: airgroup_ids, air_ids: air_ids, stage_wc: 2};
 }

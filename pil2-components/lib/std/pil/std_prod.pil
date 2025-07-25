@@ -81,6 +81,10 @@ private function update_piop_prod(const int name, const int type, const int opid
 
     switch (direct_type) {
         case PIOP_DIRECT_TYPE_GLOBAL:
+            if (STD_MODE == STD_MODE_ONE_INSTANCE) {
+                error("Updating the global constraint is not allowed in one instance mode");
+            }
+
             gprod_update_global_constraint_data(type, sel, exprs_compressed);
         case PIOP_DIRECT_TYPE_AIR, PIOP_DIRECT_TYPE_DEFAULT:
             gprod_update_air_constraint_data(type, sel, exprs_compressed, direct_type);
@@ -89,13 +93,17 @@ private function update_piop_prod(const int name, const int type, const int opid
             on final air piop_gprod_air();
 
             // Update the constraints at the airgroup level
-            on final airgroup piop_gprod_airgroup();
+            if (STD_MODE != STD_MODE_ONE_INSTANCE) {
+                on final airgroup piop_gprod_airgroup();
+            }
         default:
             error(`Invalid direct_type: ${direct_type}`);
     }
 
     // Update the constraints at the proof level
-    on final proof piop_gprod_proof();
+    if (STD_MODE != STD_MODE_ONE_INSTANCE) {
+        on final proof piop_gprod_proof();
+    }
 
     // At the end, check consistency of all the opids
     on final proof check_opids_were_completed_prod();
@@ -125,6 +133,7 @@ private function init_proof_containers_prod(const int name, const int opid) {
         int air_count = 0;
         int airgroup_ids[ARRAY_SIZE];
         int air_ids[ARRAY_SIZE];
+        int std_mode[ARRAY_SIZE];
     }
 
     // Opid-specific data
@@ -213,6 +222,7 @@ private function gprod_update_air_constraint_data(const int type, const expr sel
 }
 
 // Deferred functions
+expr gprod_result = 1;
 private function piop_gprod_air() {
     use air.std.gprod;
 
@@ -220,7 +230,10 @@ private function piop_gprod_air() {
 
     col witness stage(2) gprod;
 
-    airgroupval aggregate(prod) default(1) gprod_result;
+    if (STD_MODE != STD_MODE_ONE_INSTANCE) {
+        airgroupval aggregate(prod) default(1) _gprod_result;
+        gprod_result = _gprod_result;
+    }
 
     /*
     We need to check the constraint:
@@ -810,6 +823,7 @@ private function piop_gprod_air() {
     // Store the airgroup and air ids for global hints
     proof.std.gprod.airgroup_ids[proof.std.gprod.air_count] = AIRGROUP_ID;
     proof.std.gprod.air_ids[proof.std.gprod.air_count] = AIR_ID;
+    proof.std.gprod.std_mode[proof.std.gprod.air_count] = STD_MODE;
     proof.std.gprod.air_count++;
 }
 
@@ -883,5 +897,5 @@ private function check_opids_were_completed_prod() {
 
 private function piop_gprod_issue_global_hints() {
     use proof.std.gprod;
-    @std_prod_users{num_users: air_count, airgroup_ids: airgroup_ids, air_ids: air_ids, stage_wc: 2};
+    @std_prod_users{num_users: air_count, std_mode: std_mode, airgroup_ids: airgroup_ids, air_ids: air_ids, stage_wc: 2};
 }

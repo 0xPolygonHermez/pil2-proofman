@@ -157,12 +157,12 @@ airgroup Intermediates {
     ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImDummyAP_24;
     ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImCustomAP_24;
 
-    // Test with different blowup factors
-    set_blowup_factor(2);
-    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImDummyAP_24_2;
-    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImCustomAP_24_2;
+    // Test with different max constraint degrees
+    set_max_constraint_degree(5);
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImDummyAP_24_5;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImCustomAP_24_5;
 
-    set_blowup_factor(3);
-    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImDummyAP_24_3;
-    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImCustomAP_24_3;
+    set_max_constraint_degree(9);
+    ImDummy(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImDummyAP_24_9;
+    ImCustom(deg_sel_a: 1, deg_expr_a: 1, M_a: 24, deg_sel_p: 1, deg_expr_p: 1, M_p: 24) alias ImCustomAP_24_9;
 }
