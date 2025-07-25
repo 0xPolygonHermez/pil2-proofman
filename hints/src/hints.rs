@@ -818,7 +818,7 @@ pub fn acc_mul_hint_fields<F: PrimeField64>(
     instance_id: usize,
     hint_id: usize,
     hint_field_dest: &str,
-    hint_field_airgroupvalue: &str,
+    hint_field_airgroupvalue: Option<&str>,
     hint_field_name1: &str,
     hint_field_name2: &str,
     options1: HintFieldOptions,
@@ -830,12 +830,14 @@ pub fn acc_mul_hint_fields<F: PrimeField64>(
 
     let steps_params = pctx.get_air_instance_params(instance_id, false);
 
+    let field_airgroupvalue = hint_field_airgroupvalue.unwrap_or("");
+
     acc_mul_hint_fields_c(
         (&setup.p_setup).into(),
         (&steps_params).into(),
         hint_id as u64,
         hint_field_dest,
-        hint_field_airgroupvalue,
+        field_airgroupvalue,
         hint_field_name1,
         hint_field_name2,
         (&options1).into(),
@@ -843,10 +845,14 @@ pub fn acc_mul_hint_fields<F: PrimeField64>(
         add,
     );
 
-    let dest_id = get_hint_field_id_c((&setup.p_setup).into(), hint_id as u64, hint_field_dest);
-    let airgroup_value_id = get_hint_field_id_c((&setup.p_setup).into(), hint_id as u64, hint_field_airgroupvalue);
+    if let Some(hint_field_airgroupvalue) = hint_field_airgroupvalue {
+        let dest_id = get_hint_field_id_c((&setup.p_setup).into(), hint_id as u64, hint_field_dest);
+        let airgroup_value_id = get_hint_field_id_c((&setup.p_setup).into(), hint_id as u64, hint_field_airgroupvalue);
 
-    (dest_id, airgroup_value_id)
+        (dest_id, airgroup_value_id)
+    } else {
+        (0, 0)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -855,7 +861,7 @@ pub fn update_airgroupvalue<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     instance_id: usize,
     hint_id: usize,
-    hint_field_airgroupvalue: &str,
+    hint_field_airgroupvalue: Option<&str>,
     hint_field_name1: &str,
     hint_field_name2: &str,
     options1: HintFieldOptions,
@@ -867,11 +873,13 @@ pub fn update_airgroupvalue<F: PrimeField64>(
 
     let steps_params = pctx.get_air_instance_params(instance_id, false);
 
+    let field_airgroupvalue = hint_field_airgroupvalue.unwrap_or("");
+
     update_airgroupvalue_c(
         (&setup.p_setup).into(),
         (&steps_params).into(),
         hint_id as u64,
-        hint_field_airgroupvalue,
+        field_airgroupvalue,
         hint_field_name1,
         hint_field_name2,
         (&options1).into(),

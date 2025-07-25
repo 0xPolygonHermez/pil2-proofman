@@ -103,52 +103,44 @@ void *stark_info_new(char *filename, bool recursive, bool verify_constraints, bo
 }
 
 uint64_t get_proof_size(void *pStarkInfo) {
-    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
-    return starkInfo->proofSize;
+    return ((StarkInfo *)pStarkInfo)->proofSize;
 }
 
 void set_memory_expressions(void *pStarkInfo, uint64_t nTmp1, uint64_t nTmp3) {
-    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
-    starkInfo->setMemoryExpressions(nTmp1, nTmp3);
+    ((StarkInfo *)pStarkInfo)->setMemoryExpressions(nTmp1, nTmp3);
 }
 
 uint64_t get_const_pols_offset(void *pStarkInfo) {
-    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
-    return starkInfo->mapOffsets[std::make_pair("const", false)];
+    return ((StarkInfo *)pStarkInfo)->mapOffsets[std::make_pair("const", false)];
 }
 
 uint64_t get_map_total_n(void *pStarkInfo)
 {
-    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
-    return starkInfo->mapTotalN;
+    return ((StarkInfo *)pStarkInfo)->mapTotalN;
 }
 
 uint64_t get_tree_size(void *pStarkInfo)
 {
-    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
-    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements((1 << starkInfo->starkStruct.nBitsExt), 3);
+    uint64_t tree_size = MerklehashGoldilocks::getTreeNumElements((1 << ((StarkInfo *)pStarkInfo)->starkStruct.nBitsExt), 3);
     return tree_size;
 
 }
 
 uint64_t get_map_total_n_custom_commits_fixed(void *pStarkInfo)
 {
-    StarkInfo *starkInfo = (StarkInfo *)pStarkInfo;
-    return starkInfo->mapTotalNCustomCommitsFixed;
+    return ((StarkInfo *)pStarkInfo)->mapTotalNCustomCommitsFixed;
 }
 
 void stark_info_free(void *pStarkInfo)
 {
-    auto starkInfo = (StarkInfo *)pStarkInfo;
-    delete starkInfo;
+    delete ((StarkInfo *)pStarkInfo);
 }
 
 // Const Pols
 // ========================================================================================
 bool load_const_tree(void *pStarkInfo, void *pConstTree, char *treeFilename, uint64_t constTreeSize, char* verkeyFilename) {
     ConstTree constTree;
-    auto starkInfo = *(StarkInfo *)pStarkInfo;
-    return constTree.loadConstTree(starkInfo, pConstTree, treeFilename, constTreeSize, verkeyFilename);
+    return constTree.loadConstTree((*(StarkInfo *)pStarkInfo), pConstTree, treeFilename, constTreeSize, verkeyFilename);
 };
 
 void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize) {
@@ -158,26 +150,23 @@ void load_const_pols(void *pConstPols, char *constFilename, uint64_t constSize) 
 
 uint64_t get_const_tree_size(void *pStarkInfo) {
     ConstTree constTree;
-    auto starkInfo = *(StarkInfo *)pStarkInfo;
-    if(starkInfo.starkStruct.verificationHashType == "GL") {
-        return constTree.getConstTreeSizeGL(starkInfo);
+    if(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "GL") {
+        return constTree.getConstTreeSizeGL(*(StarkInfo *)pStarkInfo);
     } else {
-        return constTree.getConstTreeSizeBN128(starkInfo);
+        return constTree.getConstTreeSizeBN128(*(StarkInfo *)pStarkInfo);
     }
     
 };
 
 uint64_t get_const_size(void *pStarkInfo) {
-    auto starkInfo = *(StarkInfo *)pStarkInfo;
-    uint64_t N = 1 << starkInfo.starkStruct.nBits;
-    return N * starkInfo.nConstants;
+    uint64_t N = 1 << (*(StarkInfo *)pStarkInfo).starkStruct.nBits;
+    return N * (*(StarkInfo *)pStarkInfo).nConstants;
 }
 
 
 void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pConstTreeAddress) {
     ConstTree constTree;
-    auto starkInfo = *(StarkInfo *)pStarkInfo;
-    if(starkInfo.starkStruct.verificationHashType == "GL") {
+    if(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "GL") {
         constTree.calculateConstTreeGL(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
     } else {
         constTree.calculateConstTreeBN128(*(StarkInfo *)pStarkInfo, (Goldilocks::Element *)pConstPolsAddress, pConstTreeAddress);
@@ -186,8 +175,7 @@ void calculate_const_tree(void *pStarkInfo, void *pConstPolsAddress, void *pCons
 
 void write_const_tree(void *pStarkInfo, void *pConstTreeAddress, char *treeFilename) {
     ConstTree constTree;
-    auto starkInfo = *(StarkInfo *)pStarkInfo;
-    if(starkInfo.starkStruct.verificationHashType == "GL") {
+    if(((StarkInfo *)pStarkInfo)->starkStruct.verificationHashType == "GL") {
         constTree.writeConstTreeFileGL(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
     } else {
         constTree.writeConstTreeFileBN128(*(StarkInfo *)pStarkInfo, pConstTreeAddress, treeFilename);
@@ -566,7 +554,7 @@ uint64_t get_num_gpus(){ return 0;}
 
 void free_device_buffers(void *d_buffers_) {
     DeviceCommitBuffersCPU *d_buffers = (DeviceCommitBuffersCPU *)d_buffers_;
-    free(d_buffers);
+    delete d_buffers;
 }
 
 void load_device_setup(uint64_t airgroupId, uint64_t airId, char *proofType, void *pSetupCtx_, void *d_buffers_, void *verkeyRoot_) {}

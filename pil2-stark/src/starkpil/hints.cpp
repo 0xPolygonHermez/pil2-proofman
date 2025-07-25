@@ -577,6 +577,8 @@ uint64_t getHintId(SetupCtx& setupCtx, uint64_t hintId, std::string name) {
 
 void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &expressionsCtx, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
     
+    if (hintFieldNameAirgroupVal == "") return;
+
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -621,6 +623,8 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
 
 uint64_t updateAirgroupValue(SetupCtx& setupCtx, StepsParams &params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add) {
     
+    if (hintFieldNameAirgroupVal == "") return 0;
+
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
     auto hintFieldAirgroup = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldNameAirgroupVal](const HintField& hintField) {

@@ -23,7 +23,9 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
-#[derive(Debug, Clone)]
+type FreeCircomCircuitFunc = unsafe extern "C" fn(circuit: *mut c_void);
+
+#[derive(Debug)]
 #[repr(C)]
 pub struct SetupC {
     pub p_stark_info: *mut c_void,
@@ -36,6 +38,13 @@ unsafe impl Sync for SetupC {}
 impl From<&SetupC> for *mut c_void {
     fn from(setup: &SetupC) -> *mut c_void {
         setup as *const SetupC as *mut c_void
+    }
+}
+
+impl Drop for SetupC {
+    fn drop(&mut self) {
+        stark_info_free_c(self.p_stark_info);
+        expressions_bin_free_c(self.p_expressions_bin);
     }
 }
 
@@ -63,6 +72,27 @@ pub struct Setup<F: PrimeField64> {
     pub verkey: Vec<F>,
     pub exec_data: RwLock<Option<Vec<u64>>>,
     pub n_cols: u64,
+}
+
+impl<F: PrimeField64> Drop for Setup<F> {
+    fn drop(&mut self) {
+        let mut circom_circuit_guard = self.circom_circuit.write().unwrap();
+
+        if circom_circuit_guard.is_some() {
+            let circom_circuit = circom_circuit_guard.take().unwrap();
+
+            let circom_library_guard = self.circom_library.read().unwrap();
+
+            if let Some(circom_library) = circom_library_guard.as_ref() {
+                unsafe {
+                    let free_circom_circuit: Symbol<FreeCircomCircuitFunc> =
+                        circom_library.get(b"freeCircuit\0").expect("Failed to get freeCircuit symbol");
+
+                    free_circom_circuit(circom_circuit);
+                }
+            }
+        }
+    }
 }
 
 impl<F: PrimeField64> Setup<F> {
@@ -210,11 +240,6 @@ impl<F: PrimeField64> Setup<F> {
             air_name: global_info.airs[airgroup_id][air_id].name.clone(),
             n_cols,
         }
-    }
-
-    pub fn free(&self) {
-        stark_info_free_c(self.p_setup.p_stark_info);
-        expressions_bin_free_c(self.p_setup.p_expressions_bin);
     }
 
     pub fn load_const_pols(&self) {
