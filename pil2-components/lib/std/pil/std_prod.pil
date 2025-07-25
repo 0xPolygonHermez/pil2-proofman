@@ -491,7 +491,6 @@ private function piop_gprod_air() {
 
                 // If the max constraint degree is not passed for the last terms, we can break
                 if ((k > 0) && (offset_num == low_degree_len_numerator) && (offset_den == low_degree_len_denominator)) {
-                    println(acc_degree_num, acc_degree_den);
                     if ((acc_degree_num < MAX_CONSTRAINT_DEGREE) && (acc_degree_den < MAX_CONSTRAINT_DEGREE)) {
                         break;
                     }

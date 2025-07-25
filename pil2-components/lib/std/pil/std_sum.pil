@@ -66,7 +66,7 @@ private function update_piop_sum(const int name, const int type, const int opids
     const string name_str = get_piop_name(name);
     const int exprs_num = length(expressions);
     if (exprs_num < 1) {
-        error(`The number of expressions of ${name_str} #${opid} must be at least 1`);
+        error(`The number of expressions of ${name_str} #${opids} must be at least 1`);
     }
 
     init_proof_containers_sum(name, opids);
