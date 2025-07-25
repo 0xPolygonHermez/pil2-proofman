@@ -275,6 +275,29 @@ private function piop_gsum_air() {
         challenge stage(2) std_gamma;
     }
 
+    // Generate hints for the optimizer
+    string constraint = "LHS === RHS1 + ";
+    for (int i = 0; i < gsum_nargs; i++) {
+        if (i == gsum_nargs - 1) {
+            constraint += `frac[${i}]`;
+        } else {
+            constraint += `frac[${i}] + `;
+        }
+    }
+    @sum_optimizer{name: "constraint", expression: constraint};
+
+    @sum_optimizer{name: "LHS", expression: gsum};
+
+    const expr rhs1 = 'gsum * (1 - L1);
+    @sum_optimizer{name: "RHS1", expression: rhs1};
+
+    for (int i = 0; i < gsum_nargs; i++) {
+        const expr numerator = gsum_s[i];
+        const expr denominator = gsum_e[i] + std_gamma;
+        @sum_optimizer{name: `frac[${i}]`, numerator: numerator, denominator: denominator};
+    }
+
+    // Start with the reduction
     expr num = 0;
     expr den = 1;
     expr sum_ims = 0;
