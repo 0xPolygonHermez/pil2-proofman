@@ -815,7 +815,7 @@ private function piop_gprod_air() {
 
     expr result;
     if (STD_MODE == STD_MODE_ONE_INSTANCE) {
-        result = 0;
+        result = 1;
     } else {
         result = gprod_result;
     }
