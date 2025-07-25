@@ -16,6 +16,7 @@ use std::sync::atomic::Ordering;
 
 use fields::PrimeField64;
 
+use crate::ExtensionField;
 use crate::GlobalInfo;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -395,32 +396,33 @@ impl DistributionCtx {
         }
     }
 
-    pub fn assign_instances(&mut self) {
+    pub fn assign_instances(&mut self, minimal_memory: bool) {
         if self.balance_distribution {
-            /*  temporally unused balance by chunk execution requirements
-            // Sort unassigned instances according to wc_weights
-            let mut unassigned_instances = Vec::new();
-            for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
-                if owner == -1 {
-                    unassigned_instances.push((idx, self.instances[idx].n_chunks));
+            if minimal_memory {
+                // Sort unassigned instances according to wc_weights
+                let mut unassigned_instances = Vec::new();
+                for (idx, &(owner, _, _)) in self.instances_owner.iter().enumerate() {
+                    if owner == -1 {
+                        unassigned_instances.push((idx, self.instances[idx].n_chunks));
+                    }
+                }
+
+                // Sort the unassigned instances by weight
+                unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
+
+                // Assign half of the unassigned instances in round-robin fashion
+                let mut owner_idx = 0;
+                for (idx, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
+                    self.instances_owner[*idx].0 = owner_idx as i32;
+                    self.instances_owner[*idx].1 = self.owners_count[owner_idx] as usize;
+                    self.owners_count[owner_idx] += 1;
+                    self.owners_weight[owner_idx] += self.instances_owner[*idx].2;
+                    if owner_idx == self.rank as usize {
+                        self.my_instances.push(*idx);
+                    }
+                    owner_idx = (owner_idx + 1) % self.n_processes as usize;
                 }
             }
-
-            // Sort the unassigned instances by weight
-            unassigned_instances.sort_by(|a, b| b.1.cmp(&a.1));
-
-            // Assign half of the unassigned instances in round-robin fashion
-            let mut owner_idx = 0;
-            for (idx, _) in unassigned_instances.iter().take(unassigned_instances.len() / 2) {
-                self.instances_owner[*idx].0 = owner_idx as i32;
-                self.instances_owner[*idx].1 = self.owners_count[owner_idx] as usize;
-                self.owners_count[owner_idx] += 1;
-                self.owners_weight[owner_idx] += self.instances_owner[*idx].2;
-                if owner_idx == self.rank as usize {
-                    self.my_instances.push(*idx);
-                }
-                owner_idx = (owner_idx + 1) % self.n_processes as usize;
-            }*/
 
             // Sort the unassigned instances by proof weight
             let mut unassigned_instances = Vec::new();
@@ -528,7 +530,7 @@ impl DistributionCtx {
             let pos_buffer = self.roots_gatherv_displ[self.instances_owner[idx].0 as usize] as usize
                 + self.instances_owner[idx].1 * 10;
             #[cfg(not(distributed))]
-            let pos_buffer = idx * 10;
+            let pos_buffer = self.instances_owner[idx].1 * 10;
             group_indices.entry(instance_info.airgroup_id).or_default().push(pos_buffer);
         }
 
@@ -619,12 +621,24 @@ impl DistributionCtx {
                             airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] +=
                                 F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
                         } else {
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] *=
-                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]);
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] *=
-                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]);
-                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] *=
-                                F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]);
+                            let mut acc = ExtensionField {
+                                value: [
+                                    airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION],
+                                    airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1],
+                                    airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2],
+                                ],
+                            };
+                            let val = ExtensionField {
+                                value: [
+                                    F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos]),
+                                    F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 1]),
+                                    F::from_u64(gathered_data[airgroupvalues_flatten.len() * p + pos + 2]),
+                                ],
+                            };
+                            acc *= val;
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION] = acc.value[0];
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 1] = acc.value[1];
+                            airgroupvalues_full[airgroup_id][idx * FIELD_EXTENSION + 2] = acc.value[2];
                         }
                         pos += FIELD_EXTENSION;
                     }

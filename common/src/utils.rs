@@ -1,3 +1,4 @@
+use crate::DEFAULT_N_PRINT_CONSTRAINTS;
 use crate::{
     AirGroupMap, AirIdMap, DebugInfo, GlobalInfo, InstanceMap, ModeName, ProofCtx, StdMode, VerboseMode,
     DEFAULT_PRINT_VALS,
@@ -140,6 +141,8 @@ struct DebugJson {
     global_constraints: Option<Vec<usize>>,
     #[serde(default)]
     std_mode: Option<StdDebugMode>,
+    #[serde(default)]
+    n_print_constraints: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -267,7 +270,13 @@ pub fn json_to_debug_instances_map(proving_key_path: PathBuf, json_path: String)
         )
     };
 
-    DebugInfo { debug_instances: airgroup_map.clone(), debug_global_instances: global_constraints, std_mode }
+    let n_print_constraints = json.n_print_constraints.unwrap_or(DEFAULT_N_PRINT_CONSTRAINTS);
+    DebugInfo {
+        debug_instances: airgroup_map.clone(),
+        debug_global_instances: global_constraints,
+        std_mode,
+        n_print_constraints,
+    }
 }
 
 pub fn print_memory_usage() {
@@ -275,9 +284,9 @@ pub fn print_memory_usage() {
     system.refresh_all();
 
     if let Some(process) = system.process(sysinfo::get_current_pid().unwrap()) {
-        let memory_kb = process.memory();
-        let memory_gb = memory_kb as f64 / 1_048_576.0; // 1 GB = 1,048,576 KB
-        println!("Memory used by the process: {:.2} {:.2} GB", system.used_memory(), memory_gb);
+        let memory_bytes = process.memory();
+        let memory_mb = memory_bytes as f64 / 1_048_576.0; // 1 MB = 1,048,576 B
+        println!("Memory used by the process: {memory_mb:.2} MB");
     } else {
         println!("Could not get process information.");
     }

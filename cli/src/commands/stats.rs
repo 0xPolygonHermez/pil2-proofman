@@ -1,6 +1,6 @@
 // extern crate env_logger;
 use clap::Parser;
-use proofman_common::{json_to_debug_instances_map, DebugInfo};
+use proofman_common::{json_to_debug_instances_map, DebugInfo, ProofOptions};
 use std::{collections::HashMap, path::PathBuf};
 use colored::Colorize;
 use crate::commands::field::Field;
@@ -54,6 +54,9 @@ pub struct StatsCmd {
 
     #[clap(short = 'x', long)]
     pub max_witness_stored: Option<usize>,
+
+    #[clap(short = 'm', long, default_value_t = false)]
+    pub minimal_memory: bool,
 }
 
 impl StatsCmd {
@@ -119,6 +122,7 @@ impl StatsCmd {
                 self.input_data.clone(),
                 &debug_info,
                 self.verbose.into(),
+                ProofOptions::new(false, false, false, false, self.minimal_memory, false, PathBuf::new()),
             )?,
         };
 

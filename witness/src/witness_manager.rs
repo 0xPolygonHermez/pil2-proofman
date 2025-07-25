@@ -102,7 +102,13 @@ impl<F: PrimeField64> WitnessManager<F> {
         }
     }
 
-    pub fn pre_calculate_witness(&self, stage: u32, instance_ids: &[usize], n_cores: usize) {
+    pub fn pre_calculate_witness(
+        &self,
+        stage: u32,
+        instance_ids: &[usize],
+        n_cores: usize,
+        buffer_pool: &dyn BufferPool<F>,
+    ) {
         for (idx, component) in self.components.read().unwrap().iter().enumerate() {
             let ids_hash_set: HashSet<_> = instance_ids.iter().collect();
 
@@ -123,12 +129,20 @@ impl<F: PrimeField64> WitnessManager<F> {
                     self.sctx.clone(),
                     &instance_ids_filtered,
                     n_cores,
+                    buffer_pool,
                 );
             }
         }
 
         for component in self.components_std.read().unwrap().iter() {
-            component.pre_calculate_witness(stage, self.pctx.clone(), self.sctx.clone(), instance_ids, n_cores);
+            component.pre_calculate_witness(
+                stage,
+                self.pctx.clone(),
+                self.sctx.clone(),
+                instance_ids,
+                n_cores,
+                buffer_pool,
+            );
         }
     }
 

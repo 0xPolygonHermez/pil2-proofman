@@ -273,7 +273,7 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     }
 
     let (const_pols_ptr, const_tree_ptr) = if cfg!(feature = "gpu") {
-        (setup.get_const_ptr(), setup.get_const_tree_ptr())
+        (std::ptr::null_mut(), std::ptr::null_mut())
     } else {
         (const_pols.as_ptr() as *mut u8, const_tree.as_ptr() as *mut u8)
     };

@@ -14,7 +14,7 @@ pub struct ConstraintRowInfo {
     pub value: [u64; 3usize],
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone)]
 #[repr(C)]
 pub struct ConstraintInfo {
     pub id: u64,
@@ -22,7 +22,30 @@ pub struct ConstraintInfo {
     pub im_pol: bool,
     pub n_rows: u64,
     pub skip: bool,
-    pub rows: [ConstraintRowInfo; 10usize],
+    pub n_print_constraints: u64,
+    pub rows: Vec<ConstraintRowInfo>,
+}
+
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct ConstraintInfoC {
+    pub id: u64,
+    pub stage: u64,
+    pub im_pol: bool,
+    pub n_rows: u64,
+    pub skip: bool,
+    pub n_print_constraints: u64,
+    pub rows: *mut ConstraintRowInfo,
+}
+
+impl ConstraintInfo {
+    pub fn new(n_print_constraints: u64) -> Self {
+        Self {
+            rows: vec![ConstraintRowInfo::default(); n_print_constraints as usize],
+            n_print_constraints,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy)]

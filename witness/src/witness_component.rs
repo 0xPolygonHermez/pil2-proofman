@@ -29,6 +29,7 @@ pub trait WitnessComponent<F: PrimeField64>: Send + Sync {
         _sctx: Arc<SetupCtx<F>>,
         _instance_ids: &[usize],
         _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
     ) {
     }
 

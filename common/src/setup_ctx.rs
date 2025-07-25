@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 
 use fields::PrimeField64;
-use proofman_starks_lib_c::{expressions_bin_new_c, get_tree_size_c};
+use proofman_starks_lib_c::{expressions_bin_new_c, get_tree_size_c, expressions_bin_free_c};
 
 use crate::load_const_pols;
 use crate::GlobalInfo;
@@ -19,6 +19,7 @@ pub struct SetupsVadcop<F: PrimeField64> {
     pub max_const_tree_size: usize,
     pub max_prover_trace_size: usize,
     pub max_prover_buffer_size: usize,
+    pub max_prover_recursive_buffer_size: usize,
     pub max_proof_size: usize,
     pub total_const_size: usize,
 }
@@ -76,6 +77,11 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 .max(sctx_recursive1.max_prover_buffer_size)
                 .max(sctx_recursive2.max_prover_buffer_size)
                 .max(setup_vadcop_final.prover_buffer_size as usize);
+
+            let max_prover_recursive_buffer_size = (sctx_recursive1.max_prover_buffer_size
+                + sctx_recursive1.max_prover_trace_size)
+                .max(sctx_recursive2.max_prover_buffer_size + sctx_recursive2.max_prover_trace_size);
+
             let max_proof_size = sctx_compressor
                 .max_proof_size
                 .max(sctx_recursive1.max_proof_size)
@@ -91,6 +97,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_const_size,
                 max_prover_trace_size,
                 max_prover_buffer_size,
+                max_prover_recursive_buffer_size,
                 max_proof_size,
                 total_const_size,
             }
@@ -106,6 +113,7 @@ impl<F: PrimeField64> SetupsVadcop<F> {
                 max_const_size: 0,
                 max_prover_trace_size: 0,
                 max_prover_buffer_size: 0,
+                max_prover_recursive_buffer_size: 0,
                 max_proof_size: 0,
             }
         }
@@ -119,24 +127,6 @@ impl<F: PrimeField64> SetupsVadcop<F> {
             ProofType::VadcopFinal => self.setup_vadcop_final.as_ref().unwrap(),
             ProofType::RecursiveF => self.setup_recursivef.as_ref().unwrap(),
             _ => panic!("Invalid setup type"),
-        }
-    }
-
-    pub fn free(&self) {
-        if self.sctx_compressor.is_some() {
-            self.sctx_compressor.as_ref().unwrap().free();
-        }
-        if self.sctx_recursive1.is_some() {
-            self.sctx_recursive1.as_ref().unwrap().free();
-        }
-        if self.sctx_recursive2.is_some() {
-            self.sctx_recursive2.as_ref().unwrap().free();
-        }
-        if self.setup_vadcop_final.is_some() {
-            self.setup_vadcop_final.as_ref().unwrap().free();
-        }
-        if self.setup_recursivef.is_some() {
-            self.setup_recursivef.as_ref().unwrap().free();
         }
     }
 }
@@ -158,6 +148,14 @@ pub struct SetupRepository<F: PrimeField64> {
 
 unsafe impl<F: PrimeField64> Send for SetupRepository<F> {}
 unsafe impl<F: PrimeField64> Sync for SetupRepository<F> {}
+
+impl<F: PrimeField64> Drop for SetupRepository<F> {
+    fn drop(&mut self) {
+        if let Some(global_bin_ptr) = self.global_bin {
+            expressions_bin_free_c(global_bin_ptr);
+        }
+    }
+}
 
 impl<F: PrimeField64> SetupRepository<F> {
     pub fn new(global_info: &GlobalInfo, setup_type: &ProofType, verify_constraints: bool, preallocate: bool) -> Self {
@@ -244,13 +242,8 @@ impl<F: PrimeField64> SetupRepository<F> {
             total_const_size,
         }
     }
-
-    pub fn free(&self) {
-        for setup in self.setups.values() {
-            setup.free();
-        }
-    }
 }
+
 /// Air instance context for managing air instances (traces)
 #[allow(dead_code)]
 pub struct SetupCtx<F: PrimeField64> {
@@ -329,9 +322,5 @@ impl<F: PrimeField64> SetupCtx<F> {
 
     pub fn get_global_info_file(&self) -> String {
         self.setup_repository.global_info_file.clone()
-    }
-
-    pub fn free(&self) {
-        self.setup_repository.free();
     }
 }

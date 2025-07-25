@@ -253,6 +253,58 @@ bool loadFileParallel(void* buffer, const string &fileName, uint64_t size, bool 
     return true;
 }
 
+bool loadFileParallel_block(void* buffer, const string &fileName, uint64_t block_size, bool exit, uint32_t skip_blocks) {
+
+    // Check file size
+    struct stat sb;
+    if (lstat(fileName.c_str(), &sb) == -1) {
+        zklog.error("loadFileParallel_block() failed calling lstat() of file " + fileName);
+        if(exit) exitProcess();
+        return false;
+    }
+
+    // Validate that the file is large enough for the requested block start
+    uint64_t block_start_offset = (uint64_t)skip_blocks * block_size;
+    if ((uint64_t)sb.st_size <= block_start_offset) {
+        zklog.error("loadFileParallel_block() file " + fileName + " size " + to_string(sb.st_size) + 
+                   " is smaller than block start offset " + to_string(block_start_offset) + " bytes");
+        if(exit) exitProcess();
+        return false;
+    }
+
+    // Calculate actual block size (might be smaller for the last block)
+    uint64_t actual_block_size = std::min(block_size, (uint64_t)sb.st_size - block_start_offset);
+
+    // Determine the number of chunks and the size of each chunk
+    size_t numChunks = 4; 
+    if(numChunks == 0 ) numChunks = 1;
+    size_t chunkSize = actual_block_size / numChunks;
+    size_t remainder = actual_block_size - numChunks*chunkSize;
+    
+    #pragma omp parallel for num_threads(numChunks)
+    for(size_t i=0; i<numChunks; i++){
+        // Open the file
+        FILE* file = fopen(fileName.c_str(), "rb");
+        if(file == NULL){
+            zklog.error("loadFileParallel_block() failed to open the file");
+            if(exit) exitProcess();
+        }
+        size_t chunkSize_ = i == numChunks -1 ? chunkSize + remainder : chunkSize;
+        size_t offset = block_start_offset + i * chunkSize;
+        fseek(file, offset, SEEK_SET);
+        size_t readed = fread((uint8_t*)buffer + i * chunkSize, 1, chunkSize_, file);
+        if(readed != chunkSize_){
+            zklog.error("loadFileParallel_block() failed to read the file, expected " + 
+                       to_string(chunkSize_) + " bytes, got " + to_string(readed));
+            fclose(file);
+            if(exit) exitProcess();
+        }
+        fclose(file);
+    }
+
+    return true;
+}
+
 void* loadFileParallel(const string &fileName, uint64_t size) {
 
     // Check file size
