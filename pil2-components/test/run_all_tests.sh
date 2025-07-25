@@ -54,7 +54,7 @@ test_pipeline() {
                 --output-dir "$BUILD/proofs"
         fi
 
-    } >"$LOG" 2>&1 && echo "  [$NAME] ✅" || echo "  [$NAME] ❌ (see $LOG)"
+    } >"$LOG" 2>&1 && echo "  [$SO_NAME] ✅" || echo "  [$SO_NAME] ❌ (see $LOG)"
 }
 
 # Run tests
