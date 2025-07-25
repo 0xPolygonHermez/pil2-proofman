@@ -8,6 +8,9 @@ use proofman_hints::{
     HintFieldValue,
 };
 
+pub const STD_MODE_DEFAULT: usize = 0;
+pub const STD_MODE_ONE_INSTANCE: usize = 1;
+
 pub trait AirComponent<F: PrimeField64> {
     fn new(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, airgroup_id: Option<usize>, air_id: Option<usize>) -> Arc<Self>;
 }

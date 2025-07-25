@@ -16,7 +16,7 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "195e9941f621373d4709ff0b10209b5043bfeb820cc0e0d7677c258bb2f6cc28";
+pub const PILOUT_HASH: &str = "5de7f7107139c37848fac68774fbd216551dbf11a3dc49f23775493b86c291a4";
 
 //AIRGROUP CONSTANTS
 
@@ -166,49 +166,49 @@ trace!(SpecifiedRangesTrace<F> {
 },  10, 0, 32768 );
 
 values!(RangeCheck3AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(RangeCheck2AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(RangeCheck1AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(RangeCheck4AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(U16AirAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(MultiRangeCheck1AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(MultiRangeCheck2AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(RangeCheckDynamic1AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(RangeCheckDynamic2AirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(RangeCheckMixAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(U8AirAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });
 
 values!(SpecifiedRangesAirGroupValues<F> {
- gsum_result: FieldExtension<F>,
+ _gsum_result: FieldExtension<F>,
 });

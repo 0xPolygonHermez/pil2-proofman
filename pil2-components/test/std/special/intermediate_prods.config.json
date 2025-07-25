@@ -1,8 +1,8 @@
 {
     "Intermediates": {
-        "ImDummyAP_24_2": { "blowupFactor": 2 },
-        "ImCustomAP_24_2": { "blowupFactor": 2 },
-        "ImDummyAP_24_3": { "blowupFactor": 3 },
-        "ImCustomAP_24_3": { "blowupFactor": 3 }
+        "ImDummyAP_24_5": { "blowupFactor": 2 },
+        "ImCustomAP_24_5": { "blowupFactor": 2 },
+        "ImDummyAP_24_9": { "blowupFactor": 3 },
+        "ImCustomAP_24_9": { "blowupFactor": 3 }
     }
 }

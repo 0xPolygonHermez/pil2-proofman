@@ -19,7 +19,7 @@ use crate::{
     check_invalid_opids, extract_field_element_as_usize, get_global_hint_field_constant_as,
     get_hint_field_constant_a_as_string, get_hint_field_constant_as_field, get_hint_field_constant_as_string,
     get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, DebugData, DebugDataFast,
-    SharedDataFast,
+    SharedDataFast, STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE,
 };
 
 pub struct StdProd<F: PrimeField64> {
@@ -250,11 +250,11 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
             let std_prod_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_prod_users")[0];
 
             let num_users = get_global_hint_field_constant_as(&sctx, std_prod_users, "num_users");
+            let std_mode = get_hint_field_gc_constant_a(&sctx, std_prod_users, "std_mode", false);
             let airgroup_ids = get_hint_field_gc_constant_a(&sctx, std_prod_users, "airgroup_ids", false);
             let air_ids = get_hint_field_gc_constant_a(&sctx, std_prod_users, "air_ids", false);
 
             let instances = pctx.dctx_get_instances();
-
             // Process each product check user
             for i in 0..num_users {
                 let airgroup_id = extract_field_element_as_usize(&airgroup_ids.values[i], "airgroup_id");
@@ -303,15 +303,21 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         gprod_hints[0] as usize
                     };
 
+                    let std_mode = extract_field_element_as_usize(&std_mode.values[i], "std_mode");
+                    let result = match std_mode {
+                        STD_MODE_DEFAULT => Some("result"),
+                        STD_MODE_ONE_INSTANCE => None,
+                        _ => panic!("Invalid std_mode: {std_mode}"),
+                    };
                     // This call calculates "numerator" / "denominator" and accumulates it into "reference". Its last value is stored into "result"
-                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and calculating the operations in Rust,
+                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and calculating the operations in Rust
                     acc_mul_hint_fields(
                         &sctx,
                         &pctx,
                         *instance_id,
                         gprod_hint,
                         "reference",
-                        Some("result"),
+                        result,
                         "numerator_air",
                         "denominator_air",
                         HintFieldOptions::default(),
@@ -324,7 +330,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                         &pctx,
                         *instance_id,
                         gprod_hint,
-                        Some("result"),
+                        result,
                         "numerator_direct",
                         "denominator_direct",
                         HintFieldOptions::default(),
@@ -377,7 +383,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
             }
 
             if fast_mode {
-                // Process each sum check user
+                // Process each product check user
                 let debugs_data_fasts: Vec<HashMap<F, SharedDataFast>> = global_instance_ids
                     .par_iter()
                     .map(|&global_instance_id| {
@@ -404,7 +410,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdProd<F> {
                     self.debug_data_fast.write().unwrap().push(debug_data_fast.clone());
                 }
             } else {
-                // Process each sum check user
+                // Process each product check user
                 for global_instance_id in global_instance_ids {
                     self.debug_mode(&pctx, &sctx, *global_instance_id, &mut debug_data, &mut HashMap::new(), false);
                 }
