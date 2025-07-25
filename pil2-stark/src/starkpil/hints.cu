@@ -164,6 +164,8 @@ void multiplyHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParam
 }
 
 void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params, uint64_t hintId, std::string hintFieldNameDest, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
+    if (hintFieldNameAirgroupVal == "") return;
+
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
@@ -193,7 +195,8 @@ void accMulHintFieldsGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams 
 }
 
 uint64_t updateAirgroupValueGPU(SetupCtx& setupCtx, StepsParams &h_params, StepsParams *d_params, uint64_t hintId, std::string hintFieldNameAirgroupVal, std::string hintFieldName1, std::string hintFieldName2, HintFieldOptions &hintOptions1, HintFieldOptions &hintOptions2, bool add, void* GPUExpressionsCtx, ExpsArguments *d_expsArgs, DestParamsGPU *d_destParams, Goldilocks::Element *pinned_exps_params, Goldilocks::Element *pinned_exps_args, uint64_t& countId, TimerGPU &timer, cudaStream_t stream) {
-    
+    if (hintFieldNameAirgroupVal == "") return 0;
+
     Hint hint = setupCtx.expressionsBin.hints[hintId];
 
     auto hintFieldAirgroup = std::find_if(hint.fields.begin(), hint.fields.end(), [hintFieldNameAirgroupVal](const HintField& hintField) {
