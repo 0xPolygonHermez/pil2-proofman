@@ -51,6 +51,7 @@ test_pipeline() {
             cargo run --bin proofman-cli prove \
                 --witness-lib "$LIB" \
                 --proving-key "$PROVING_KEY" \
+                --verify-proofs \
                 --output-dir "$BUILD/proofs"
         fi
 
