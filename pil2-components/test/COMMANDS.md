@@ -140,6 +140,34 @@ rm -rf ./pil2-components/test/std/lookup/build/ \
 ```
 
 ------------------------------------
+ONE INSTANCE
+
+```bash
+rm -rf ./pil2-components/test/std/one_instance/build/ \
+&& mkdir -p ./pil2-components/test/std/one_instance/build/ \
+&& node ../pil2-compiler/src/pil.js ./pil2-components/test/std/one_instance/one_instance.pil \
+     -I ./pil2-components/lib/std/pil \
+     -o ./pil2-components/test/std/one_instance/build/build.pilout \
+&& node ../pil2-proofman-js/src/main_setup.js \
+     -a ./pil2-components/test/std/one_instance/build/build.pilout \
+     -b ./pil2-components/test/std/one_instance/build \
+&& cargo run  --bin proofman-cli check-setup \
+     --proving-key ./pil2-components/test/std/one_instance/build/provingKey \
+&& cargo run  --bin proofman-cli pil-helpers \
+     --pilout ./pil2-components/test/std/one_instance/build/build.pilout \
+     --path ./pil2-components/test/std/one_instance/rs/src -o \
+&& cargo build  \
+&& cargo run  --bin proofman-cli verify-constraints \
+     --witness-lib ./target/debug/libone_instance.so \
+     --proving-key ./pil2-components/test/std/one_instance/build/provingKey \
+&& cargo run  --bin proofman-cli prove \
+     --witness-lib ./target/debug/libone_instance.so \
+     --proving-key ./pil2-components/test/std/one_instance/build/provingKey \
+     --verify-proofs \
+     --output-dir ./pil2-components/test/std/one_instance/build/proofs
+```
+
+------------------------------------
 PERMUTATION
 
 ```bash
