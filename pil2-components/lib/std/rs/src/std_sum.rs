@@ -19,7 +19,7 @@ use crate::{
     check_invalid_opids, extract_field_element_as_usize, get_global_hint_field_constant_as,
     get_hint_field_constant_a_as_string, get_hint_field_constant_as_field, get_hint_field_constant_as_string,
     get_row_field_value, print_debug_info, update_debug_data, update_debug_data_fast, DebugData, DebugDataFast,
-    SharedDataFast,
+    SharedDataFast, STD_MODE_DEFAULT, STD_MODE_ONE_INSTANCE,
 };
 
 pub struct StdSum<F: PrimeField64> {
@@ -263,6 +263,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
             let std_sum_users = get_hint_ids_by_name(sctx.get_global_bin(), "std_sum_users")[0];
 
             let num_users = get_global_hint_field_constant_as(&sctx, std_sum_users, "num_users");
+            let std_mode = get_hint_field_gc_constant_a(&sctx, std_sum_users, "std_mode", false);
             let airgroup_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "airgroup_ids", false);
             let air_ids = get_hint_field_gc_constant_a(&sctx, std_sum_users, "air_ids", false);
 
@@ -319,15 +320,21 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         gsum_hints[0] as usize
                     };
 
+                    let std_mode = extract_field_element_as_usize(&std_mode.values[i], "std_mode");
+                    let result = match std_mode {
+                        STD_MODE_DEFAULT => Some("result"),
+                        STD_MODE_ONE_INSTANCE => None,
+                        _ => panic!("Invalid std_mode: {std_mode}"),
+                    };
                     // This call accumulates "expression" into "reference" expression and stores its last value to "result"
-                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust,
+                    // Alternatively, this could be done using get_hint_field and set_hint_field methods and doing the accumulation in Rust
                     acc_mul_hint_fields(
                         &sctx,
                         &pctx,
                         *instance_id,
                         gsum_hint,
                         "reference",
-                        Some("result"),
+                        result,
                         "numerator_air",
                         "denominator_air",
                         HintFieldOptions::default(),
@@ -340,7 +347,7 @@ impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
                         &pctx,
                         *instance_id,
                         gsum_hint,
-                        Some("result"),
+                        result,
                         "numerator_direct",
                         "denominator_direct",
                         HintFieldOptions::default(),
