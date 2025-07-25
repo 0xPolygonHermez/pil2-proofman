@@ -16,12 +16,12 @@
 #include <immintrin.h>
 #include <cassert>
 
-const int BINARY_EXPRESSIONS_SECTION = 2;
-const int BINARY_CONSTRAINTS_SECTION = 3;
-const int BINARY_HINTS_SECTION = 4;
+const int BINARY_EXPRESSIONS_SECTION = 1;
+const int BINARY_CONSTRAINTS_SECTION = 2;
+const int BINARY_HINTS_SECTION = 3;
 
-const int GLOBAL_CONSTRAINTS_SECTION = 2;
-const int GLOBAL_HINTS_SECTION = 3;
+const int GLOBAL_CONSTRAINTS_SECTION = 1;
+const int GLOBAL_HINTS_SECTION = 2;
 
 struct HintFieldValue {
     opType operand;
@@ -56,20 +56,6 @@ struct ParserParams
     uint32_t opsOffset = 0;
     uint32_t nArgs = 0;
     uint32_t argsOffset = 0;
-    uint32_t nConstPolsUsed = 0;
-    uint32_t constPolsOffset = 0;
-    uint32_t nCmPolsUsed = 0;
-    uint32_t cmPolsOffset = 0;
-    uint32_t nChallengesUsed = 0;
-    uint32_t challengesOffset = 0;
-    uint32_t nPublicsUsed = 0;
-    uint32_t publicsOffset = 0;
-    uint32_t nAirgroupValuesUsed = 0;
-    uint32_t airgroupValuesOffset = 0;
-    uint32_t nAirValuesUsed = 0;
-    uint32_t airValuesOffset = 0;
-    std::vector<uint32_t> nCustomCommitsPolsUsed;
-    std::vector<uint32_t> customCommitsOffset;
     uint32_t firstRow = 0;
     uint32_t lastRow = 0;
     uint32_t destDim = 0;
@@ -83,13 +69,6 @@ struct ParserArgs
     uint8_t* ops = nullptr;
     uint16_t* args = nullptr;
     Goldilocks::Element* numbers = nullptr;
-    uint16_t* constPolsIds = nullptr;
-    uint16_t* cmPolsIds = nullptr;
-    uint16_t* challengesIds = nullptr;
-    uint16_t* publicsIds = nullptr;
-    uint16_t* airgroupValuesIds = nullptr;
-    uint16_t* airValuesIds = nullptr;
-    uint16_t* customCommitsPolsIds = nullptr;
     uint64_t nNumbers = 0;
 };
 
@@ -120,24 +99,10 @@ public:
         if (expressionsBinArgsExpressions.ops) delete[] expressionsBinArgsExpressions.ops;
         if (expressionsBinArgsExpressions.args) delete[] expressionsBinArgsExpressions.args;
         if (expressionsBinArgsExpressions.numbers) delete[] expressionsBinArgsExpressions.numbers;
-        if (expressionsBinArgsExpressions.constPolsIds) delete[] expressionsBinArgsExpressions.constPolsIds;
-        if (expressionsBinArgsExpressions.cmPolsIds) delete[] expressionsBinArgsExpressions.cmPolsIds;
-        if (expressionsBinArgsExpressions.challengesIds) delete[] expressionsBinArgsExpressions.challengesIds;
-        if (expressionsBinArgsExpressions.publicsIds) delete[] expressionsBinArgsExpressions.publicsIds;
-        if (expressionsBinArgsExpressions.airgroupValuesIds) delete[] expressionsBinArgsExpressions.airgroupValuesIds;
-        if (expressionsBinArgsExpressions.airValuesIds) delete[] expressionsBinArgsExpressions.airValuesIds;
-        if (expressionsBinArgsExpressions.customCommitsPolsIds) delete[] expressionsBinArgsExpressions.customCommitsPolsIds;
 
         if (expressionsBinArgsConstraints.ops) delete[] expressionsBinArgsConstraints.ops;
         if (expressionsBinArgsConstraints.args) delete[] expressionsBinArgsConstraints.args;
         if (expressionsBinArgsConstraints.numbers) delete[] expressionsBinArgsConstraints.numbers;
-        if (expressionsBinArgsConstraints.constPolsIds) delete[] expressionsBinArgsConstraints.constPolsIds;
-        if (expressionsBinArgsConstraints.cmPolsIds) delete[] expressionsBinArgsConstraints.cmPolsIds;
-        if (expressionsBinArgsConstraints.challengesIds) delete[] expressionsBinArgsConstraints.challengesIds;
-        if (expressionsBinArgsConstraints.publicsIds) delete[] expressionsBinArgsConstraints.publicsIds;
-        if (expressionsBinArgsConstraints.airgroupValuesIds) delete[] expressionsBinArgsConstraints.airgroupValuesIds;
-        if (expressionsBinArgsConstraints.airValuesIds) delete[] expressionsBinArgsConstraints.airValuesIds;
-        if (expressionsBinArgsConstraints.customCommitsPolsIds) delete[] expressionsBinArgsConstraints.customCommitsPolsIds;
     };
 
     /* Constructor */
