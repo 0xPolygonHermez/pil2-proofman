@@ -319,6 +319,10 @@ jobs:
         run: |
           sed -i 's/# *"pil2-components\/test\/std\/range_check\/rs"/"pil2-components\/test\/std\/range_check\/rs"/' ./Cargo.toml
 
+      - name: Modify Cargo.toml std one-instance
+        run: |
+          sed -i 's/# *"pil2-components\/test\/std\/one_instance\/rs"/"pil2-components\/test\/std\/one_instance\/rs"/' ./Cargo.toml
+
       - name: Modify Cargo.toml std simple
         run: |
           sed -i 's/# *"pil2-components\/test\/simple\/rs"/"pil2-components\/test\/simple\/rs"/' ./Cargo.toml
@@ -419,6 +423,22 @@ jobs:
         run: |
           cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/range_check/build/build.pilout --path ./pil2-components/test/std/range_check/rs/src -o
 
+      - name: Create dir build one-instance
+        run: |
+          mkdir -p ./pil2-components/test/std/one_instance/build/
+
+      - name: Compile PIL one-instance
+        run: |
+          node pil2-compiler/src/pil.js ./pil2-components/test/std/one_instance/build.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/one_instance/build/build.pilout
+
+      - name: Generate setup one-instance
+        run: |
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/one_instance/build/build.pilout -b ./pil2-components/test/std/one_instance/build
+
+      - name: Generate PIL Helpers one-instance
+        run: |
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/one_instance/build/build.pilout --path ./pil2-components/test/std/one_instance/rs/src -o
+
       - name: Create dir build simple
         run: |
           mkdir -p ./pil2-components/test/simple/build/
@@ -453,12 +473,14 @@ jobs:
       - name: Cargo check-setup range-check
         run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/range_check/build/provingKey
 
+      - name: Cargo check-setup one-instance
+        run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/one_instance/build/provingKey
+
       - name: Cargo check-setup simple
         run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/simple/build/provingKey
 
       - name: Cargo check-setup diff_buses
         run: cargo run  --bin proofman-cli check-setup --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
-
 
       - name: Verify constraints Lookup
         run: |
@@ -500,6 +522,14 @@ jobs:
         run: |
           cargo run  --bin proofman-cli prove --witness-lib ./target/debug/librange_check.so --proving-key ./pil2-components/test/std/range_check/build/provingKey --output-dir ./pil2-components/test/std/range_check/build -y
 
+      - name: Verify constraints one-instance
+        run: |
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libone_instance.so --proving-key ./pil2-components/test/std/one_instance/build/provingKey
+
+      - name: Generate proof one-instance
+        run: |
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libone_instance.so --proving-key ./pil2-components/test/std/one_instance/build/provingKey --output-dir ./pil2-components/test/std/one_instance/build -y
+
       - name: Verify constraints simple
         run: |
           cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build/provingKey
@@ -508,10 +538,10 @@ jobs:
         run: |
           cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libsimple.so --proving-key ./pil2-components/test/simple/build/provingKey --output-dir ./pil2-components/test/simple/build
        
-      # - name: Verify constraints diff_buses
-      #   run: |
-      #     cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
+      - name: Verify constraints diff_buses
+        run: |
+          cargo run  --bin proofman-cli verify-constraints --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey
 
-      # - name: Generate proof diff_buses
-      #   run: |
-      #     cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey --output-dir ./pil2-components/test/std/diff_buses/build
+      - name: Generate proof diff_buses
+        run: |
+          cargo run  --bin proofman-cli prove --witness-lib ./target/debug/libdiff_buses.so --proving-key ./pil2-components/test/std/diff_buses/build/provingKey --output-dir ./pil2-components/test/std/diff_buses/build

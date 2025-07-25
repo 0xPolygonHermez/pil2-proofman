@@ -16,15 +16,19 @@ use rayon::prelude::*;
 #[allow(dead_code)]
 type FieldExtension<F> = [F; 3];
 
-pub const PILOUT_HASH: &str = "59791b815207dec00694edb9a8e42a211e0c434a45c3123b3fae4dd7ef3e4ed0";
+pub const PILOUT_HASH: &str = "52bcfaa4c6ef17a5d21a05c8b316dd128c6a3d60dad00f0add31ac4e9e9a29c5";
 
 //AIRGROUP CONSTANTS
 
 pub const ONE_INSTANCE_PROD_AIRGROUP_ID: usize = 0;
 
+pub const ONE_INSTANCE_SUM_AIRGROUP_ID: usize = 1;
+
 //AIR CONSTANTS
 
 pub const AIR_PROD_AIR_IDS: &[usize] = &[0];
+
+pub const AIR_SUM_AIR_IDS: &[usize] = &[0];
 
   
 trace!(AirProdFixed<F> {
@@ -34,3 +38,11 @@ trace!(AirProdFixed<F> {
 trace!(AirProdTrace<F> {
  a: F, b: F, c: F,
 },  0, 0, 256 );
+
+trace!(AirSumFixed<F> {
+ __L1__: F,
+},  1, 0, 256 );
+
+trace!(AirSumTrace<F> {
+ a: F, b: F, c: F,
+},  1, 0, 256 );
