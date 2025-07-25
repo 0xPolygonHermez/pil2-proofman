@@ -598,7 +598,8 @@ pub fn generate_fflonk_snark_proof<F: PrimeField64>(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let setup_path = pctx.global_info.get_setup_path("final");
 
-    let rust_lib_filename = setup_path.display().to_string() + ".so";
+    let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
+    let rust_lib_filename = setup_path.display().to_string() + lib_extension;
     let rust_lib_path = Path::new(rust_lib_filename.as_str());
 
     if !rust_lib_path.exists() {
