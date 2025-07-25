@@ -429,15 +429,15 @@ jobs:
 
       - name: Compile PIL one-instance
         run: |
-          node pil2-compiler/src/pil.js ./pil2-components/test/std/one_instance/build.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/one_instance/build/build.pilout
+          node pil2-compiler/src/pil.js ./pil2-components/test/std/one_instance/one_instance.pil  -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/one_instance/build/one_instance.pilout
 
       - name: Generate setup one-instance
         run: |
-          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/one_instance/build/build.pilout -b ./pil2-components/test/std/one_instance/build
+          node pil2-proofman-js/src/main_setup.js -a ./pil2-components/test/std/one_instance/build/one_instance.pilout -b ./pil2-components/test/std/one_instance/build
 
       - name: Generate PIL Helpers one-instance
         run: |
-          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/one_instance/build/build.pilout --path ./pil2-components/test/std/one_instance/rs/src -o
+          cargo run  --bin proofman-cli pil-helpers --pilout ./pil2-components/test/std/one_instance/build/one_instance.pilout --path ./pil2-components/test/std/one_instance/rs/src -o
 
       - name: Create dir build simple
         run: |
