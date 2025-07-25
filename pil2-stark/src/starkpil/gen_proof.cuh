@@ -143,8 +143,8 @@ void genProof_gpu(SetupCtx& setupCtx, gl64_t *d_aux_trace, gl64_t *d_const_pols,
             }
             else
             {
-                calculateHash(d_transcript_helper, challenge_gpu, setupCtx, h_params.publicInputs, setupCtx.starkInfo.nPublics, stream);
-                d_transcript->put(challenge_gpu, HASH_SIZE, stream);
+                calculateHash(d_transcript_helper, h_params.challenges, setupCtx, h_params.publicInputs, setupCtx.starkInfo.nPublics, stream);
+                d_transcript->put(h_params.challenges, HASH_SIZE, stream);
             }
         }
     } else {
