@@ -1,8 +1,8 @@
 use fields::PrimeField64;
 
 use proofman_starks_lib_c::{
-    stark_info_new_c, expressions_bin_new_c, stark_verify_c, stark_verify_bn128_c, stark_verify_from_file_c,
-    get_max_n_tmp1_c, get_max_n_tmp3_c, set_memory_expressions_c,
+    expressions_bin_free_c, expressions_bin_new_c, get_max_n_tmp1_c, get_max_n_tmp3_c, set_memory_expressions_c,
+    stark_info_free_c, stark_info_new_c, stark_verify_bn128_c, stark_verify_c, stark_verify_from_file_c,
 };
 
 use colored::*;
@@ -28,7 +28,7 @@ pub fn verify_final_proof(
     let proof = &proof[1..];
     let (publics, vadcop_proof) = proof.split_at(n_publics as usize);
 
-    stark_verify_c(
+    let result = stark_verify_c(
         &verkey_path,
         vadcop_proof.as_ptr() as *mut u64,
         p_stark_info,
@@ -36,7 +36,13 @@ pub fn verify_final_proof(
         publics.as_ptr() as *mut u8,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
-    )
+    );
+
+    // Clean up allocated resources
+    expressions_bin_free_c(p_expressions_bin);
+    stark_info_free_c(p_stark_info);
+
+    result
 }
 
 pub fn verify_proof_from_file<F: PrimeField64>(
@@ -70,7 +76,7 @@ pub fn verify_proof_from_file<F: PrimeField64>(
         None => std::ptr::null_mut(),
     };
 
-    stark_verify_from_file_c(
+    let result = stark_verify_from_file_c(
         &verkey_path,
         &proof_file,
         p_stark_info,
@@ -78,7 +84,13 @@ pub fn verify_proof_from_file<F: PrimeField64>(
         publics_ptr,
         proof_values_ptr,
         proof_challenges_ptr,
-    )
+    );
+
+    // Clean up allocated resources
+    expressions_bin_free_c(p_expressions_bin);
+    stark_info_free_c(p_stark_info);
+
+    result
 }
 
 pub fn verify_proof<F: PrimeField64>(
@@ -112,7 +124,7 @@ pub fn verify_proof<F: PrimeField64>(
         None => std::ptr::null_mut(),
     };
 
-    stark_verify_c(
+    let result = stark_verify_c(
         &verkey_path,
         p_proof,
         p_stark_info,
@@ -120,7 +132,13 @@ pub fn verify_proof<F: PrimeField64>(
         publics_ptr,
         proof_values_ptr,
         global_challenge_ptr,
-    )
+    );
+
+    // Clean up allocated resources
+    expressions_bin_free_c(p_expressions_bin);
+    stark_info_free_c(p_stark_info);
+
+    result
 }
 
 pub fn verify_proof_bn128<F: PrimeField64>(
@@ -142,7 +160,13 @@ pub fn verify_proof_bn128<F: PrimeField64>(
         None => std::ptr::null_mut(),
     };
 
-    stark_verify_bn128_c(&verkey_path, p_proof, p_stark_info, p_expressions_bin, publics_ptr)
+    let result = stark_verify_bn128_c(&verkey_path, p_proof, p_stark_info, p_expressions_bin, publics_ptr);
+
+    // Clean up allocated resources
+    expressions_bin_free_c(p_expressions_bin);
+    stark_info_free_c(p_stark_info);
+
+    result
 }
 
 pub fn verify_basic_proof<F: PrimeField64>(pctx: &ProofCtx<F>, instance_id: usize, proof: &[u64]) -> bool {
