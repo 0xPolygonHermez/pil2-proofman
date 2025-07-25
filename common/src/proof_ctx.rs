@@ -35,6 +35,8 @@ pub type AirGroupMap = HashMap<usize, AirIdMap>;
 pub type AirIdMap = HashMap<usize, InstanceMap>;
 pub type InstanceMap = HashMap<usize, Vec<usize>>;
 
+pub const DEFAULT_N_PRINT_CONSTRAINTS: usize = 10;
+
 #[derive(Clone)]
 pub struct ProofOptions {
     pub verify_constraints: bool,
@@ -42,19 +44,38 @@ pub struct ProofOptions {
     pub final_snark: bool,
     pub verify_proofs: bool,
     pub save_proofs: bool,
+    pub test_mode: bool,
     pub output_dir_path: PathBuf,
+    pub minimal_memory: bool,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct DebugInfo {
     pub debug_instances: AirGroupMap,
     pub debug_global_instances: Vec<usize>,
     pub std_mode: StdMode,
+    pub n_print_constraints: usize,
+}
+
+impl Default for DebugInfo {
+    fn default() -> Self {
+        Self {
+            debug_instances: Default::default(),
+            debug_global_instances: Default::default(),
+            std_mode: Default::default(),
+            n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
+        }
+    }
 }
 
 impl DebugInfo {
     pub fn new_debug() -> Self {
-        Self { debug_instances: HashMap::new(), debug_global_instances: Vec::new(), std_mode: StdMode::new_debug() }
+        Self {
+            debug_instances: HashMap::new(),
+            debug_global_instances: Vec::new(),
+            std_mode: StdMode::new_debug(),
+            n_print_constraints: DEFAULT_N_PRINT_CONSTRAINTS,
+        }
     }
 }
 impl ProofOptions {
@@ -63,10 +84,41 @@ impl ProofOptions {
         aggregation: bool,
         final_snark: bool,
         verify_proofs: bool,
+        minimal_memory: bool,
         save_proofs: bool,
         output_dir_path: PathBuf,
     ) -> Self {
-        Self { verify_constraints, aggregation, final_snark, verify_proofs, save_proofs, output_dir_path }
+        Self {
+            verify_constraints,
+            aggregation,
+            final_snark,
+            verify_proofs,
+            minimal_memory,
+            save_proofs,
+            output_dir_path,
+            test_mode: false,
+        }
+    }
+
+    pub fn new_test(
+        verify_constraints: bool,
+        aggregation: bool,
+        final_snark: bool,
+        verify_proofs: bool,
+        minimal_memory: bool,
+        save_proofs: bool,
+        output_dir_path: PathBuf,
+    ) -> Self {
+        Self {
+            verify_constraints,
+            aggregation,
+            final_snark,
+            verify_proofs,
+            save_proofs,
+            minimal_memory,
+            output_dir_path,
+            test_mode: true,
+        }
     }
 }
 
@@ -247,16 +299,24 @@ impl<F: PrimeField64> ProofCtx<F> {
         *self.weights.get(&(airgroup_id, air_id)).unwrap()
     }
 
-    pub fn get_custom_commits_fixed_buffer(&self, name: &str) -> Result<&PathBuf, Box<std::io::Error>> {
+    pub fn get_custom_commits_fixed_buffer(
+        &self,
+        name: &str,
+        return_error: bool,
+    ) -> Result<PathBuf, Box<std::io::Error>> {
         let file_name = self.custom_commits_fixed.get(name);
         match file_name {
-            Some(path) => Ok(path),
+            Some(path) => Ok(path.to_path_buf()),
             None => {
-                // Return error
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Custom Commit Fixed {file_name:?} not found"),
-                )))
+                if return_error {
+                    Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("Custom Commit Fixed {file_name:?} not found"),
+                    )))
+                } else {
+                    tracing::warn!("Custom Commit Fixed {file_name:?} not found");
+                    Ok(PathBuf::new())
+                }
             }
         }
     }
@@ -434,9 +494,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.add_instance_no_assign(airgroup_id, air_id, pre_calculate, min_threads_witness, weight)
     }
 
-    pub fn dctx_assign_instances(&self) {
+    pub fn dctx_assign_instances(&self, minimal_memory: bool) {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.assign_instances();
+        dctx.assign_instances(minimal_memory);
     }
 
     pub fn dctx_load_balance_info(&self) -> (f64, u64, u64, f64) {
@@ -571,15 +631,12 @@ impl<F: PrimeField64> ProofCtx<F> {
         guard.as_ptr() as *mut u8
     }
 
-    pub fn get_air_instance_params(&self, sctx: &SetupCtx<F>, instance_id: usize, gen_proof: bool) -> StepsParams {
+    pub fn get_air_instance_params(&self, instance_id: usize, gen_proof: bool) -> StepsParams {
         let air_instance = self.air_instances[instance_id].read().unwrap();
-
-        let (airgroup_id, air_id) = self.dctx_get_instance_info(instance_id);
-        let setup = sctx.get_setup(airgroup_id, air_id);
 
         let challenges = if gen_proof { air_instance.get_challenges_ptr() } else { self.get_challenges_ptr() };
         let aux_trace: *mut u8 = if gen_proof { std::ptr::null_mut() } else { air_instance.get_aux_trace_ptr() };
-        let const_pols: *mut u8 = if gen_proof { std::ptr::null_mut() } else { setup.get_const_ptr() };
+        let const_pols: *mut u8 = if gen_proof { std::ptr::null_mut() } else { air_instance.get_fixed_ptr() };
 
         StepsParams {
             trace: air_instance.get_trace_ptr(),

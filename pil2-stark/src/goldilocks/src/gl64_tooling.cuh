@@ -160,10 +160,10 @@ struct StreamData{
     StepsParams *pinned_params;
     Goldilocks::Element *pinned_buffer;
     Goldilocks::Element *pinned_buffer_proof;
-    Goldilocks::Element *pinned_buffer_const;
-    Goldilocks::Element *pinned_buffer_const_tree;
     Goldilocks::Element *pinned_buffer_exps_params;
     Goldilocks::Element *pinned_buffer_exps_args;
+
+    uint64_t pinned_size = 256 * 1024 * 1024; //256MB, this is the size of pinned memory for consts, it can be changed if needed
 
     //runtime data
     uint32_t status; //0: unused, 1: loading, 2: full
@@ -187,27 +187,27 @@ struct StreamData{
     uint64_t instanceId;
     string proofType;
     
-    void initialize( uint64_t max_size_trace, uint64_t max_size_proof, uint64_t max_size_const, uint64_t max_size_const_aggregation, uint64_t max_size_const_tree, uint64_t max_size_const_tree_aggregation, uint32_t gpuId_, uint32_t slotId_){
+    uint64_t offset;
+    
+    bool recursive;
+
+    void initialize(uint64_t max_size_proof, uint32_t gpuId_, uint64_t offset_, bool recursive_){
         uint64_t maxExps = 1000; // TODO: CALCULATE IT PROPERLY!
         cudaSetDevice(gpuId_);
         CHECKCUDAERR(cudaStreamCreate(&stream));
         timer.init(stream);
         gpuId = gpuId_;
-        slotId = slotId_;
+        offset = offset_;
+        recursive = recursive_;
         cudaEventCreate(&end_event);
         status = 0;
-        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer, max_size_trace * sizeof(Goldilocks::Element)));
+        CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer, pinned_size));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_proof, max_size_proof * sizeof(Goldilocks::Element)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_params, maxExps * 2 * sizeof(DestParamsGPU)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_exps_args, maxExps * sizeof(ExpsArguments)));
         CHECKCUDAERR(cudaMallocHost((void **)&pinned_params, sizeof(StepsParams)));
 
-        uint64_t constMaxSize = std::max(max_size_const, max_size_const_aggregation);
-        uint64_t constMaxSizeTree = std::max(max_size_const_tree, max_size_const_tree_aggregation);
-        if (constMaxSize > 0) {
-            CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_const, constMaxSize * sizeof(Goldilocks::Element)));
-            CHECKCUDAERR(cudaMallocHost((void **)&pinned_buffer_const_tree, constMaxSizeTree * sizeof(Goldilocks::Element)));
-        }
+       
         root = nullptr;
         pSetupCtx = nullptr;
         proofBuffer = nullptr;
@@ -255,8 +255,6 @@ struct StreamData{
         cudaFreeHost(pinned_buffer_exps_params);
         cudaFreeHost(pinned_buffer_exps_args);
         cudaFreeHost(pinned_params);
-        cudaFreeHost(pinned_buffer_const);
-        cudaFreeHost(pinned_buffer_const_tree);
     }
 };
 struct DeviceCommitBuffers
@@ -265,22 +263,12 @@ struct DeviceCommitBuffers
     gl64_t **d_constPolsAggregation;
     gl64_t **d_aux_trace;
     bool recursive;
-    uint64_t max_size_prover_buffer;
-    uint64_t max_size_trace;
-    uint64_t max_size_contribution;
     uint64_t max_size_proof;
-    uint64_t max_size_const;
-    uint64_t max_size_const_tree;
-    uint64_t max_size_trace_aggregation;
-    uint64_t max_size_prover_buffer_aggregation;
-    uint64_t max_size_const_aggregation;
-    uint64_t max_size_const_tree_aggregation;
 
     uint32_t  n_gpus;
     uint32_t* my_gpu_ids;
     uint32_t* gpus_g2l; 
-    uint32_t  n_streams;
-    uint32_t  n_streams_per_gpu;
+    uint32_t n_total_streams;
     std::mutex mutex_slot_selection;
     StreamData *streamsData;
 

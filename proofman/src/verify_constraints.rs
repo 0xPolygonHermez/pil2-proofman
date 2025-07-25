@@ -4,8 +4,8 @@ use proofman_starks_lib_c::{
 };
 use std::cmp;
 use proofman_common::{
-    get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, ConstraintInfo,
-    GlobalConstraintInfo, ProofCtx, SetupCtx, DebugInfo,
+    get_constraints_lines_str, get_global_constraints_lines_str, skip_prover_instance, ConstraintInfo, ConstraintInfoC,
+    DebugInfo, GlobalConstraintInfo, ProofCtx, SetupCtx,
 };
 
 use std::os::raw::c_void;
@@ -15,17 +15,18 @@ pub fn verify_constraints<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     global_id: usize,
+    n_print_constraints: u64,
 ) -> Vec<ConstraintInfo> {
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(global_id);
     let setup = sctx.get_setup(airgroup_id, air_id);
 
-    let steps_params = pctx.get_air_instance_params(sctx, global_id, false);
+    let steps_params = pctx.get_air_instance_params(global_id, false);
 
     let p_setup = (&setup.p_setup).into();
 
     let n_constraints = get_n_constraints_c(p_setup);
 
-    let mut constraints_info = vec![ConstraintInfo::default(); n_constraints as usize];
+    let mut constraints_info = vec![ConstraintInfo::new(n_print_constraints); n_constraints as usize];
 
     let (skip, constraints_skip) = skip_prover_instance(pctx, global_id);
 
@@ -37,7 +38,30 @@ pub fn verify_constraints<F: PrimeField64>(
             }
         }
 
-        verify_constraints_c(p_setup, (&steps_params).into(), constraints_info.as_mut_ptr() as *mut c_void);
+        let mut constraints_info_c: Vec<ConstraintInfoC> = constraints_info
+            .iter_mut()
+            .map(|info| ConstraintInfoC {
+                id: info.id,
+                stage: info.stage,
+                im_pol: info.im_pol,
+                n_rows: info.n_rows,
+                skip: info.skip,
+                n_print_constraints: info.n_print_constraints,
+                // point at the inside of the rows Vec
+                rows: info.rows.as_mut_ptr(),
+            })
+            .collect();
+
+        verify_constraints_c(p_setup, (&steps_params).into(), constraints_info_c.as_mut_ptr() as *mut c_void);
+
+        for (info_c, info_rust) in constraints_info_c.iter().zip(constraints_info.iter_mut()) {
+            info_rust.id = info_c.id;
+            info_rust.stage = info_c.stage;
+            info_rust.im_pol = info_c.im_pol;
+            info_rust.n_rows = info_c.n_rows;
+            info_rust.skip = info_c.skip;
+            info_rust.n_print_constraints = info_c.n_print_constraints;
+        }
     }
 
     constraints_info
@@ -119,8 +143,13 @@ pub fn verify_global_constraints_proof<F: PrimeField64>(
     }
 }
 
-pub fn verify_constraints_proof<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>, instance_id: usize) -> bool {
-    let constraints = verify_constraints(pctx, sctx, instance_id);
+pub fn verify_constraints_proof<F: PrimeField64>(
+    pctx: &ProofCtx<F>,
+    sctx: &SetupCtx<F>,
+    instance_id: usize,
+    n_print_constraints: u64,
+) -> bool {
+    let constraints = verify_constraints(pctx, sctx, instance_id, n_print_constraints);
 
     let (airgroup_id, air_id) = pctx.dctx_get_instance_info(instance_id);
     let air_name = &pctx.global_info.airs[airgroup_id][air_id].name;
@@ -197,7 +226,7 @@ pub fn verify_constraints_proof<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &Setu
         if constraint.n_rows > 0 {
             valid_constraints_instance = false;
         }
-        let n_rows = cmp::min(constraint.n_rows, 10);
+        let n_rows = cmp::min(constraint.n_rows, constraint.n_print_constraints);
         for i in 0..n_rows {
             let row = constraint.rows[i as usize];
             if row.dim == 1 {
