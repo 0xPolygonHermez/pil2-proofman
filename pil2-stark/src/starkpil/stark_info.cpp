@@ -448,53 +448,32 @@ void StarkInfo::setMapOffsets() {
         }
     }
 
-    if(!gpu) {
-        for(uint64_t stage = 1; stage <= nStages + 1; stage++) {
-            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = mapOffsets[std::make_pair("cm" + to_string(stage), true)];
-        }
-    } else {
-        uint64_t offsetTraces = mapOffsets[std::make_pair("cm2", true)];
-        for(uint64_t stage = nStages; stage >= 1; stage--) {
-            mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
-            offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
-        }
-
-        mapTotalN = std::max(mapTotalN, offsetTraces);
+    uint64_t offsetTraces = mapOffsets[std::make_pair("cm2", true)];
+    for(uint64_t stage = nStages; stage >= 1; stage--) {
+        mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
+        offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
     }
+
+    mapTotalN = std::max(mapTotalN, offsetTraces);
 
     if(!gpu) {
         mapOffsets[std::make_pair("evals", true)] = mapTotalN;
         mapTotalN += evMap.size() * omp_get_max_threads() * FIELD_EXTENSION;
     }
 
-    // if(recursive) {
-    //     uint64_t maxSizeHelper = 0;
-    //     if(gpu) {
-    //         maxSizeHelper = (boundaries.size() + 1) * NExtended;
-    //         mapOffsets[std::make_pair("zi", true)] = mapTotalN;
-    //         mapOffsets[std::make_pair("x_n", false)] = mapTotalN;
-    //         mapOffsets[std::make_pair("x", true)] = mapTotalN + boundaries.size() * NExtended;
-    //         mapTotalN += maxSizeHelper;
-    //     }
-    //     mapOffsets[std::make_pair("f", true)] = mapTotalN;
-    //     mapOffsets[std::make_pair("q", true)] = mapTotalN;
-    //     mapTotalN += NExtended * FIELD_EXTENSION;
-    //     mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN;
-    // } else {
-        mapOffsets[std::make_pair("f", true)] = mapTotalN;
-        mapOffsets[std::make_pair("q", true)] = mapTotalN;
-        mapTotalN += NExtended * FIELD_EXTENSION;
+    mapOffsets[std::make_pair("f", true)] = mapTotalN;
+    mapOffsets[std::make_pair("q", true)] = mapTotalN;
+    mapTotalN += NExtended * FIELD_EXTENSION;
 
-        uint64_t maxSizeHelper = 0;
-        if(gpu) {
-            maxSizeHelper += boundaries.size() * NExtended;
-            mapOffsets[std::make_pair("zi", true)] = mapTotalN;
-            mapOffsets[std::make_pair("x", true)] = mapTotalN;
-        }
-        
-        maxTotalN = std::max(maxTotalN, mapTotalN + maxSizeHelper);
-        mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN + maxSizeHelper;   
-    // }  
+    uint64_t maxSizeHelper = 0;
+    if(gpu) {
+        maxSizeHelper += boundaries.size() * NExtended;
+        mapOffsets[std::make_pair("zi", true)] = mapTotalN;
+        mapOffsets[std::make_pair("x", true)] = mapTotalN;
+    }
+    
+    maxTotalN = std::max(maxTotalN, mapTotalN + maxSizeHelper);
+    mapOffsets[std::make_pair("mem_exps", false)] = mapTotalN + maxSizeHelper;   
 
     uint64_t LEvSize = mapOffsets[std::make_pair("f", true)];
     mapOffsets[std::make_pair("lev", false)] = LEvSize;

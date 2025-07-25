@@ -6,7 +6,7 @@ After compiling the PIL files, generate the setup:
 
 ```bash
 node ../pil2-proofman-js/src/main_setup_recursive.js \
-     -b ./examples/test-recursive-c36/build -c ./examples/test-recursive-c36/test.circom -n test
+     -b ./examples/test-recursive-c36/build -c ./examples/test-recursive-c36/test.circom -n test -t pil2-components/lib/std/pil
 ```
 
 To run the aggregated proof, need to add -r to the previous command
