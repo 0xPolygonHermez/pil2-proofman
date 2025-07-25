@@ -90,7 +90,7 @@ namespace BinFileUtils
         
         // int nThreads = omp_get_max_threads() / 2;
         // ThreadUtils::parcpy(addr, addrmm, size, nThreads);
-        memcpy(addr, addrmm, size);
+        memcpy(addr, addrmm, sb.st_size);
 
         munmap(addrmm, size);
         close(fd);
