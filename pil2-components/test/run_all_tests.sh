@@ -18,7 +18,7 @@ test_pipeline() {
     LIB="./target/debug/lib${SO_NAME}.so"
     LOG="$BUILD/$NAME.log"
 
-    echo "  [$NAME] Starting..."
+    echo "  [$SO_NAME] Starting..."
 
     # Start clean
     if [ "$SETUP_ONLY" != "true" ]; then
@@ -35,26 +35,26 @@ test_pipeline() {
             --builddir "$BUILD"
 
         if [ "$SETUP_ONLY" != "true" ]; then
-            cargo run  --bin proofman-cli check-setup \
-                --proving-key "$PROVING_KEY" \
+            cargo run --bin proofman-cli check-setup \
+                --proving-key "$PROVING_KEY"
 
-            cargo run  --bin proofman-cli pil-helpers \
+            cargo run --bin proofman-cli pil-helpers \
                 --pilout "$PILOUT_FILE" \
                 --path "$SRC" -o
 
             cargo build 
 
-            cargo run  --bin proofman-cli verify-constraints \
+            cargo run --bin proofman-cli verify-constraints \
                 --witness-lib "$LIB" \
                 --proving-key "$PROVING_KEY"
 
-            cargo run  --bin proofman-cli prove \
+            cargo run --bin proofman-cli prove \
                 --witness-lib "$LIB" \
                 --proving-key "$PROVING_KEY" \
                 --output-dir "$BUILD/proofs"
         fi
 
-    } >"$LOG" 2>&1 && echo "  [$NAME] ✅" || echo "  [$NAME] ❌ (see $LOG)"
+    } >"$LOG" 2>&1 && echo "  [$SO_NAME] ✅" || echo "  [$SO_NAME] ❌ (see $LOG)"
 }
 
 # Run tests
@@ -63,12 +63,14 @@ test_pipeline "connection" "./pil2-components/test/std/connection" "connection"
 test_pipeline "diff_buses" "./pil2-components/test/std/diff_buses" "diff_buses"
 test_pipeline "direct_update" "./pil2-components/test/std/direct_update" "direct_update"
 test_pipeline "lookup" "./pil2-components/test/std/lookup" "lookup"
+test_pipeline "one_instance" "./pil2-components/test/std/one_instance" "one_instance"
 test_pipeline "permutation" "./pil2-components/test/std/permutation" "permutation"
 test_pipeline "build" "./pil2-components/test/std/range_check" "range_check"
 
 test_pipeline "array_size" "./pil2-components/test/std/special" "array_size" "true"
 test_pipeline "direct_optimizations" "./pil2-components/test/std/special" "direct_optimizations" "true"
 test_pipeline "expr_optimizations" "./pil2-components/test/std/special" "expr_optimizations" "true"
+test_pipeline "intermediate_prods" "./pil2-components/test/std/special" "intermediate_prods" "true"
 test_pipeline "intermediate_sums" "./pil2-components/test/std/special" "intermediate_sums" "true"
 test_pipeline "table" "./pil2-components/test/std/special" "table" "true"
 
