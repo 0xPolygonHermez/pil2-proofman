@@ -1,7 +1,7 @@
 require "std_direct.pil"
 
-set_airvals_im_non_reduced(3);
-set_airvals_im_reduce_factor(3);
+sum_set_airvals_im_non_reduced(3);
+sum_set_airvals_im_reduce_factor(3);
 
 public inputs[64];
 
