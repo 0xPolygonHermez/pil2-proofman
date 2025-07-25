@@ -188,7 +188,7 @@ void Poseidon2Goldilocks::merkletree_batch_seq(Goldilocks::Element *tree, Goldil
 
 #ifdef __AVX2__
 
-void Poseidon2Goldilocks::hash_full_result_batch(Goldilocks::Element *state, const Goldilocks::Element *input) {
+void Poseidon2Goldilocks::hash_full_result_batch_avx(Goldilocks::Element *state, const Goldilocks::Element *input) {
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, 4 * length);
     __m256i st[SPONGE_WIDTH];
@@ -237,7 +237,7 @@ void Poseidon2Goldilocks::hash_full_result_batch(Goldilocks::Element *state, con
     }
 }
 
-void Poseidon2Goldilocks::hash_full_result(Goldilocks::Element *state, const Goldilocks::Element *input)
+void Poseidon2Goldilocks::hash_full_result_avx(Goldilocks::Element *state, const Goldilocks::Element *input)
 {
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
@@ -307,7 +307,7 @@ void Poseidon2Goldilocks::hash_full_result(Goldilocks::Element *state, const Gol
     Goldilocks::store_avx(&(state[8]), st2);
 }
 
-void Poseidon2Goldilocks::linear_hash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
+void Poseidon2Goldilocks::linear_hash_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
 {
     uint64_t remaining = size;
     Goldilocks::Element state[SPONGE_WIDTH];
@@ -345,7 +345,7 @@ void Poseidon2Goldilocks::linear_hash(Goldilocks::Element *output, Goldilocks::E
     }
 }
 
-void Poseidon2Goldilocks::linear_hash_batch(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
+void Poseidon2Goldilocks::linear_hash_batch_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
 {
     uint64_t remaining = size;
     Goldilocks::Element state[4*SPONGE_WIDTH];
@@ -379,7 +379,7 @@ void Poseidon2Goldilocks::linear_hash_batch(Goldilocks::Element *output, Goldilo
             memset(&state[i*SPONGE_WIDTH + n], 0, (RATE - n) * sizeof(Goldilocks::Element));
             std::memcpy(&state[i * SPONGE_WIDTH], &input[i*size + (size - remaining)], n * sizeof(Goldilocks::Element));
         }
-        hash_full_result_batch(state, state);
+        hash_full_result_batch_avx(state, state);
         remaining -= n;
     }
     if (size > 0)
@@ -454,7 +454,7 @@ void Poseidon2Goldilocks::merkletree_batch_avx(Goldilocks::Element *tree, Goldil
 #pragma omp parallel for num_threads(nThreads)
     for (uint64_t i = 0; i < num_rows; i+=4)
     {
-        linear_hash_batch(&cursor[i * CAPACITY], &input[i * num_cols * dim], num_cols * dim);
+        linear_hash_batch_avx(&cursor[i * CAPACITY], &input[i * num_cols * dim], num_cols * dim);
     }
     
     // Build the merkle tree
@@ -488,7 +488,7 @@ void Poseidon2Goldilocks::merkletree_batch_avx(Goldilocks::Element *tree, Goldil
                 {
                     std::memcpy(pol_input + j*SPONGE_WIDTH, &cursor[nextIndex + (i+j) * SPONGE_WIDTH], SPONGE_WIDTH * sizeof(Goldilocks::Element));
                 }
-                hash_batch((Goldilocks::Element(&)[4 * CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
+                hash_batch_avx((Goldilocks::Element(&)[4 * CAPACITY])cursor[nextIndex + (pending + extraZeros + i) * CAPACITY], pol_input);
             }
         }
 

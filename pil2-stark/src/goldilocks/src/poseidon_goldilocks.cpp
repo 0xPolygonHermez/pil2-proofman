@@ -174,7 +174,7 @@ void PoseidonGoldilocks::merkletree_batch_seq(Goldilocks::Element *tree, Goldilo
     }
 }
 #ifdef __AVX2__
-void PoseidonGoldilocks::hash_full_result(Goldilocks::Element *state, const Goldilocks::Element *input)
+void PoseidonGoldilocks::hash_full_result_avx(Goldilocks::Element *state, const Goldilocks::Element *input)
 {
     const int length = SPONGE_WIDTH * sizeof(Goldilocks::Element);
     std::memcpy(state, input, length);
@@ -237,7 +237,7 @@ void PoseidonGoldilocks::hash_full_result(Goldilocks::Element *state, const Gold
     Goldilocks::store_avx(&(state[4]), st1);
     Goldilocks::store_avx(&(state[8]), st2);
 }
-void PoseidonGoldilocks::linear_hash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
+void PoseidonGoldilocks::linear_hash_avx(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
 {
     uint64_t remaining = size;
     Goldilocks::Element state[SPONGE_WIDTH];

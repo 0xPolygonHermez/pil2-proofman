@@ -24,6 +24,7 @@ WITNESS_LIB := ./witness_lib
 
 CXX := g++
 AS := nasm
+ASFLAGS := -f elf64
 NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED
 
 # Use the following flag to solve amxtileintrin.h incompatibility

@@ -8,17 +8,17 @@
 
 const __m256i zero = _mm256_setzero_si256();
 
-inline void Poseidon2Goldilocks::hash(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
+inline void Poseidon2Goldilocks::hash_avx(Goldilocks::Element (&state)[CAPACITY], Goldilocks::Element const (&input)[SPONGE_WIDTH])
 {
     Goldilocks::Element aux[SPONGE_WIDTH];
-    hash_full_result(aux, input);
+    hash_full_result_avx(aux, input);
     std::memcpy(state, aux, CAPACITY * sizeof(Goldilocks::Element));
 }
 
-inline void Poseidon2Goldilocks::hash_batch(Goldilocks::Element (&state)[4 * CAPACITY], Goldilocks::Element const (&input)[4 * SPONGE_WIDTH])
+inline void Poseidon2Goldilocks::hash_batch_avx(Goldilocks::Element (&state)[4 * CAPACITY], Goldilocks::Element const (&input)[4 * SPONGE_WIDTH])
 {
     Goldilocks::Element aux[4 * SPONGE_WIDTH];
-    hash_full_result_batch(aux, input);
+    hash_full_result_batch_avx(aux, input);
     std::memcpy(state, aux, CAPACITY * sizeof(Goldilocks::Element));
     std::memcpy(&state[4], &aux[SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
     std::memcpy(&state[8], &aux[2*SPONGE_WIDTH], CAPACITY * sizeof(Goldilocks::Element));
