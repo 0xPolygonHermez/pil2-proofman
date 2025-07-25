@@ -613,7 +613,7 @@ void accMulHintFields(SetupCtx& setupCtx, StepsParams &params, ExpressionsCtx &e
     }
     setHintField(setupCtx, params, vals, hintId, hintFieldNameDest);
     if (hintFieldNameAirgroupVal != "") {
-    setHintField(setupCtx, params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
+        setHintField(setupCtx, params, &vals[(N - 1)*FIELD_EXTENSION], hintId, hintFieldNameAirgroupVal);
     }
 
     if(setupCtx.starkInfo.verify_constraints) {
