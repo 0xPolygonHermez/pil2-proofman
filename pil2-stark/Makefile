@@ -20,9 +20,13 @@ WITNESS_LIB := ./witness_lib
 CXX := g++
 AS := nasm
 CXXFLAGS := -std=c++17 -Wall -pthread -flarge-source-files -Wno-unused-label -rdynamic -fPIC
-NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED
+NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED 
 
-# -G -lineinfo -Xptxas=-v
+# Use the following flag to solve amxtileintrin.h incompatibility
+# NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
+
+# Debugging flags
+# NVCCFLAGS += -G -lineinfo -Xptxas=-v
 
 LDFLAGS_GPU := -lcudart -lsodium -lpthread -lgmp -lstdc++
 LDFLAGS := -fopenmp -lsodium -lpthread -lgmp -lstdc++

@@ -232,8 +232,9 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
 
             for commit_id in 0..n_custom_commits {
                 if setup.stark_info.custom_commits[commit_id].stage_widths[0] > 0 {
-                    let custom_commit_file_path =
-                        pctx.get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name).unwrap();
+                    let custom_commit_file_path = pctx
+                        .get_custom_commits_fixed_buffer(&setup.stark_info.custom_commits[commit_id].name, false)
+                        .unwrap();
 
                     if !PathBuf::from(&custom_commit_file_path).exists() {
                         let error_message = format!(
@@ -243,7 +244,8 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
                             setup.stark_info.custom_commits[commit_id].name,
                             custom_commit_file_path.display(),
                         );
-                        return Err(error_message.into());
+                        tracing::warn!(error_message);
+                        return Ok(());
                     }
 
                     let error_message = format!(
@@ -260,15 +262,17 @@ pub fn check_tree_paths<F: PrimeField64>(pctx: &ProofCtx<F>, sctx: &SetupCtx<F>)
                         Ok(metadata) => {
                             let actual_size = metadata.len() as usize;
                             if actual_size != (size + 4) * 8 {
-                                return Err(error_message.into());
+                                tracing::warn!(error_message);
+                                return Ok(());
                             }
                         }
                         Err(err) => {
-                            return Err(format!(
+                            tracing::warn!(
                                 "Failed to get metadata for {} for custom_commit {}: {}",
-                                setup.air_name, setup.stark_info.custom_commits[commit_id].name, err
-                            )
-                            .into());
+                                setup.air_name,
+                                setup.stark_info.custom_commits[commit_id].name,
+                                err
+                            );
                         }
                     }
                 }
@@ -325,7 +329,6 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     setups: &SetupsVadcop<F>,
     d_buffers: Arc<DeviceBuffer>,
     aggregation: bool,
-    final_snark: bool,
     gpu_params: &ParamsGPU,
 ) {
     let gpu = cfg!(feature = "gpu");
@@ -361,9 +364,6 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     );
                     offset += setup.const_pols_size as u64;
                     offset += setup.const_tree_size as u64;
-                } else {
-                    setup.load_const_pols();
-                    setup.load_const_pols_tree();
                 }
             }
         }
@@ -403,9 +403,6 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                             );
                             _offset_aggregation += setup.const_pols_size as u64;
                             _offset_aggregation += setup.const_tree_size as u64;
-                        } else {
-                            setup.load_const_pols();
-                            setup.load_const_pols_tree();
                         }
                     }
                 }
@@ -443,9 +440,6 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                         );
                         _offset_aggregation += setup.const_pols_size as u64;
                         _offset_aggregation += setup.const_tree_size as u64;
-                    } else {
-                        setup.load_const_pols();
-                        setup.load_const_pols_tree();
                     }
                 }
             }
@@ -482,9 +476,6 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                     );
                     _offset_aggregation += setup.const_pols_size as u64;
                     _offset_aggregation += setup.const_tree_size as u64;
-                } else {
-                    setup.load_const_pols();
-                    setup.load_const_pols_tree();
                 }
             }
         }
@@ -518,16 +509,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
                 );
                 _offset_aggregation += setup_vadcop_final.const_pols_size as u64;
                 _offset_aggregation += setup_vadcop_final.const_tree_size as u64;
-            } else {
-                setup_vadcop_final.load_const_pols();
-                setup_vadcop_final.load_const_pols_tree();
             }
-        }
-
-        if final_snark {
-            let setup_recursivef = setups.setup_recursivef.as_ref().unwrap();
-            setup_recursivef.load_const_pols();
-            setup_recursivef.load_const_pols_tree();
         }
     }
 }

@@ -4,7 +4,7 @@
 #include "exit_process.hpp"
 
 template <typename ElementType>
-void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
+void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper, NTT_Goldilocks &ntt)
 {   
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -32,7 +32,7 @@ void Starks<ElementType>::extendAndMerkelizeCustomCommit(uint64_t commitId, uint
 }
 
 template <typename ElementType>
-void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *aux_trace, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
+void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *aux_trace, FRIProof<ElementType> &proof, NTT_Goldilocks &ntt, Goldilocks::Element *pBuffHelper)
 {   
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -61,21 +61,21 @@ void Starks<ElementType>::extendAndMerkelize(uint64_t step, Goldilocks::Element 
 }
 
 template <typename ElementType>
-void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *aux_trace, FRIProof<ElementType> &proof, Goldilocks::Element* pBuffHelper)
+void Starks<ElementType>::commitStage(uint64_t step, Goldilocks::Element *trace, Goldilocks::Element *aux_trace, FRIProof<ElementType> &proof,  NTT_Goldilocks &ntt, Goldilocks::Element* pBuffHelper)
 {  
 
     if (step <= setupCtx.starkInfo.nStages)
     {
-        extendAndMerkelize(step, trace, aux_trace, proof, pBuffHelper);
+        extendAndMerkelize(step, trace, aux_trace, proof, ntt, pBuffHelper);
     }
     else
     {
-        computeQ(step, aux_trace, proof, pBuffHelper);
+        computeQ(step, aux_trace, proof, ntt, pBuffHelper);
     }
 }
 
 template <typename ElementType>
-void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, Goldilocks::Element *pBuffHelper)
+void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, FRIProof<ElementType> &proof, NTT_Goldilocks &nttExtended, Goldilocks::Element *pBuffHelper)
 {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
     uint64_t NExtended = 1 << setupCtx.starkInfo.starkStruct.nBitsExt;
@@ -131,7 +131,7 @@ void Starks<ElementType>::computeQ(uint64_t step, Goldilocks::Element *buffer, F
 
 
 template <typename ElementType>
-void Starks<ElementType>::computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv, std::vector<int64_t> &openingPoints) {
+void Starks<ElementType>::computeLEv(Goldilocks::Element *xiChallenge, Goldilocks::Element *LEv, std::vector<int64_t> &openingPoints, NTT_Goldilocks &ntt) {
     uint64_t N = 1 << setupCtx.starkInfo.starkStruct.nBits;
         
     Goldilocks::Element xis[openingPoints.size() * FIELD_EXTENSION];
