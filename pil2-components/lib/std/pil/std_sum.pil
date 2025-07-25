@@ -250,7 +250,6 @@ private function gsum_update_air_constraint_data(const int type, const expr sel,
 }
 
 // Deferred functions
-expr gsum_result = 0;
 private function piop_gsum_air() {
     use air.std.gsum;
 
@@ -259,8 +258,7 @@ private function piop_gsum_air() {
     col witness stage(2) gsum;
 
     if (STD_MODE != STD_MODE_ONE_INSTANCE) {
-        airgroupval aggregate(sum) default(0) _gsum_result;
-        gsum_result = _gsum_result;
+        airgroupval aggregate(sum) default(0) gsum_result;
     }
 
     /*
@@ -544,9 +542,15 @@ private function piop_gsum_air() {
         }
     }
 
+    expr result;
+    if (STD_MODE == STD_MODE_ONE_INSTANCE) {
+        result = 0;
+    } else {
+        result = gsum_result;
+    }
     @gsum_col{reference: gsum, numerator_air: sum_ims * den + num, denominator_air: den, 
-                               numerator_direct: direct_sum_ims * direct_den + direct_num, denominator_direct: direct_den, result: gsum_result};
-    L1' * ((gsum_result - gsum - direct_sum_ims) * direct_den - direct_num) === 0;
+                               numerator_direct: direct_sum_ims * direct_den + direct_num, denominator_direct: direct_den, result: result};
+    L1' * ((result - gsum - direct_sum_ims) * direct_den - direct_num) === 0;
 
     // Store the airgroup and air ids for global hints
     proof.std.gsum.airgroup_ids[proof.std.gsum.air_count] = AIRGROUP_ID;

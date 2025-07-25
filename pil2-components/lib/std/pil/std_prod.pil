@@ -222,7 +222,6 @@ private function gprod_update_air_constraint_data(const int type, const expr sel
 }
 
 // Deferred functions
-expr gprod_result = 1;
 private function piop_gprod_air() {
     use air.std.gprod;
 
@@ -231,8 +230,7 @@ private function piop_gprod_air() {
     col witness stage(2) gprod;
 
     if (STD_MODE != STD_MODE_ONE_INSTANCE) {
-        airgroupval aggregate(prod) default(1) _gprod_result;
-        gprod_result = _gprod_result;
+        airgroupval aggregate(prod) default(1) gprod_result;
     }
 
     /*
@@ -815,10 +813,16 @@ private function piop_gprod_air() {
         }
     }
 
+    expr result;
+    if (STD_MODE == STD_MODE_ONE_INSTANCE) {
+        result = 0;
+    } else {
+        result = gprod_result;
+    }
     @gprod_col{reference: gprod, numerator_air: numerator, denominator_air: denominator, 
                numerator_direct: direct_gprod_num, denominator_direct: direct_gprod_den,
-               result: gprod_result};
-    L1' * (gprod_result * direct_gprod_den - gprod * direct_gprod_num) === 0;
+               result: result};
+    L1' * (result * direct_gprod_den - gprod * direct_gprod_num) === 0;
 
     // Store the airgroup and air ids for global hints
     proof.std.gprod.airgroup_ids[proof.std.gprod.air_count] = AIRGROUP_ID;
