@@ -73,6 +73,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
         pub struct #trace_struct_name<#generics> {
             pub buffer: Vec<#generics>,
+            pub row_slice_mut: std::mem::ManuallyDrop<Vec<#row_struct_name<#generics>>>,
             pub num_rows: usize,
             pub row_size: usize,
             pub airgroup_id: usize,
@@ -98,8 +99,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
                 let buffer: Vec<#generics> = vec![#generics::default(); num_rows * #row_struct_name::<#generics>::ROW_SIZE];
 
+                let ptr = buffer.as_ptr() as *mut #row_struct_name<#generics>;
                 #trace_struct_name {
                     buffer,
+                    row_slice_mut: unsafe { std::mem::ManuallyDrop::new(Vec::from_raw_parts(ptr, num_rows, num_rows)) },
                     num_rows,
                     row_size: #row_struct_name::<#generics>::ROW_SIZE,
                     airgroup_id: Self::AIRGROUP_ID,
@@ -115,7 +118,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
                 // Allocate uninitialized memory for performance
                 let mut vec: Vec<std::mem::MaybeUninit<#generics>> = Vec::with_capacity(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
-                let buffer = unsafe {
+                let buffer: Vec<#generics> = unsafe {
                     vec.set_len(num_rows * #row_struct_name::<#generics>::ROW_SIZE);
                     std::mem::transmute(vec)
                 };
@@ -129,8 +132,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     }
                 }
 
+                let ptr = buffer.as_ptr() as *mut #row_struct_name<#generics>;
                 #trace_struct_name {
                     buffer,
+                    row_slice_mut: unsafe { std::mem::ManuallyDrop::new(Vec::from_raw_parts(ptr, num_rows, num_rows)) },
                     num_rows,
                     row_size: #row_struct_name::<#generics>::ROW_SIZE,
                     airgroup_id: Self::AIRGROUP_ID,
@@ -178,9 +183,11 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     }
                 }
 
+                let ptr = buffer.as_ptr() as *mut #row_struct_name<#generics>;
                 Self {
                     buffer,
-                    num_rows,
+                    row_slice_mut: unsafe { std::mem::ManuallyDrop::new(Vec::from_raw_parts(ptr, num_rows, num_rows)) },
+                    num_rows: Self::NUM_ROWS,
                     row_size,
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
@@ -358,8 +365,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             pub fn from_split_struct(
                 mut splitted_struct: #split_struct_name<#generics>,
             ) -> Self {
+                let ptr = split_struct.original_buffer.as_ptr() as *mut #row_struct_name<#generics>;
                 #trace_struct_name {
-                    buffer: unsafe { splitted_struct.original_buffer },
+                    buffer: unsafe { split_struct.original_buffer },
+                    row_slice_mut: unsafe { std::mem::ManuallyDrop::new(Vec::from_raw_parts(ptr, Self::NUM_ROWS, Self::NUM_ROWS)) },
                     num_rows: Self::NUM_ROWS,
                     row_size: #row_struct_name::<#generics>::ROW_SIZE,
                     airgroup_id: Self::AIRGROUP_ID,
@@ -393,14 +402,16 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
         impl<#generics> std::ops::Index<usize> for #trace_struct_name<#generics> {
             type Output = #row_struct_name<#generics>;
 
+            #[inline]
             fn index(&self, index: usize) -> &Self::Output {
-                &self.row_slice()[index]
+                &self.row_slice_mut[index]
             }
         }
 
         impl<#generics> std::ops::IndexMut<usize> for #trace_struct_name<#generics> {
+            #[inline]
             fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-                &mut self.row_slice_mut()[index]
+                &mut self.row_slice_mut[index]
             }
         }
 
