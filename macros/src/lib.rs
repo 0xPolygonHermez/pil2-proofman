@@ -229,15 +229,16 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             }
 
             /// Splits the internal buffer into multiple disjoint owned chunks according to the specified sizes,
-            /// returning the resulting chunks and optionally a remainder chunk if the buffer has leftover elements.
+            /// returning a `#split_struct_name` containing these chunks and any leftover elements.
             ///
             /// # Arguments
             /// * `sizes` - A slice of sizes, where each value specifies the number of elements for the corresponding chunk.
             ///
             /// # Returns
-            /// A tuple containing:
-            /// - `Vec<Vec<RowStruct<...>>>`: A vector of disjoint `Vec`s created from the original buffer, one for each size in `sizes`.
-            /// - `Option<Vec<RowStruct<...>>>`: A final `Vec` containing any remaining elements of the buffer not accounted for in `sizes`, or `None` if the sizes consumed the entire buffer.
+            /// A `#split_struct_name<#generics>` containing:
+            /// - `original_buffer`: The original buffer that was split.
+            /// - `chunks`: A vector of `Vec<#row_struct_name<#generics>>` representing the split chunks.
+            /// - `leftover`: An optional `Vec<#row_struct_name<#generics>>` containing any remaining elements after the splits.
             ///
             /// # Panics
             /// This function will panic if:
@@ -247,26 +248,10 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
             /// - The internal buffer's length does not match its capacity (i.e., buffer must be fully initialized).
             ///
             /// # Safety
-            /// This function performs unsafe operations to split the buffer:
-            /// - It reinterprets disjoint segments of the internal buffer as new `Vec`s using `Vec::from_raw_parts`.
-            /// - The original buffer is `mem::forget`-ted to avoid double-free.
-            ///
-            /// Each resulting `Vec` receives a unique, non-overlapping section of the original buffer's memory,
-            /// and takes ownership of its slice. This allows safe and concurrent processing of chunks without lifetimes or borrowing.
-            ///
-            /// # Example
-            /// ```rust
-            /// trace!(MyTrace<F> { a: F, b: [F; 2] },  0, 1, 64 );
-            /// let buffer = MyTrace::new();
-            /// let sizes = vec![10, 20, 30];
-            /// let (chunks, leftover) = buffer.into_splitted_buffers(&sizes);
-            /// assert_eq!(chunks.len(), 3);
-            /// assert_eq!(leftover.is_some(), true);
-            /// assert_eq!(chunks[0].len(), 10);
-            /// assert_eq!(chunks[1].len(), 20);
-            /// assert_eq!(chunks[2].len(), 30);
-            /// assert_eq!(leftover.unwrap().len(), 4);
-            /// ```
+            /// This function performs unsafe operations to split the buffer. The chunks are expected to be contiguous in memory.
+            /// The original buffer  is not dropped, is stored in `original_buffer`, and will not be deallocated until
+            /// the `#split_struct_name` is dropped.
+            /// The split chunks are manually dropped to prevent double deallocation.
             pub fn to_split_struct(self, sizes: &[usize]) -> #split_struct_name<#generics> {
                 assert!(!sizes.is_empty(), "Sizes cannot be empty");
                 assert!(sizes.iter().all(|&size| size > 0), "All sizes must be greater than zero");
@@ -312,9 +297,6 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     None
                 };
 
-                // Prevent original Vec from dropping its buffer
-                // std::mem::forget(self.buffer);
-
                 debug_assert_eq!(offset + leftover.as_ref().map_or(0, |v| v.len()), Self::NUM_ROWS);
 
                 #split_struct_name {
@@ -327,43 +309,16 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
 
             /// Reconstructs a trace buffer from contiguous, previously split chunks.
             ///
-            /// This function takes a vector of contiguous `Vec`s and an optional leftover buffer,
-            /// and reconstructs the original trace buffer without reallocating or copying memory.
+            /// This function takes a `#split_struct_name<#generics>` and reconstructs the original
+            /// `#trace_struct_name<#generics>` instance that owns the entire original buffer.
             ///
             /// # Parameters
-            /// - `splits`: A `Vec` of `Vec<#row_struct_name<#generics>>` representing the original buffer split into chunks.
-            ///   All chunks **must be contiguous in memory**, i.e., each chunk must directly follow the previous one.
-            /// - `leftover`: An optional final chunk representing the trailing elements of the original buffer, if `into_splitted_buffers`
-            ///   was used with a total size less than `NUM_ROWS`.
-            ///
-            /// # Panics
-            /// - If `splits` is empty.
-            /// - If the total combined length of all chunks does not equal `Self::NUM_ROWS`.
-            /// - If the chunks are not contiguous in memory (i.e., `prev_end != curr_start`).
-            ///
-            /// # Safety
-            /// This function performs raw pointer arithmetic and reconstructs a single `Vec` from multiple parts.
-            /// It assumes that:
-            /// - All chunks came from a prior call to `into_splitted_buffers`.
-            /// - None of the `Vec`s were modified or reallocated after splitting.
-            /// - The memory represented by all chunks forms one continuous allocation.
+            /// * `split_struct` - A `#split_struct_name<#generics>` containing the split chunks and the original buffer.
             ///
             /// # Returns
-            /// A fully reconstructed `Self` instance with ownership of the entire original buffer.
-            ///
-            /// # Example
-            /// ```rust
-            /// trace!(MyTrace<F> { a: F, b: [F; 2] },  0, 1, 64 );
-            /// let buffer = MyTrace::new();
-            /// let sizes = vec![10, 20, 30];
-            /// let (chunks, leftover) = buffer.into_splitted_buffers(&sizes);
-            /// let reconstructed = MyTrace::from_splitted_buffers(chunks, leftover);
-            /// assert_eq!(reconstructed.num_rows(), 64);
-            /// assert_eq!(reconstructed.airgroup_id(), 0);
-            /// assert_eq!(reconstructed.air_id(), 1);
-            /// ```
+            /// The original `#trace_struct_name<#generics>` instance that owns the buffer.
             pub fn from_split_struct(
-                mut splitted_struct: #split_struct_name<#generics>,
+                mut split_struct: #split_struct_name<#generics>,
             ) -> Self {
                 let ptr = split_struct.original_buffer.as_ptr() as *mut #row_struct_name<#generics>;
                 #trace_struct_name {
@@ -374,7 +329,7 @@ fn trace_impl(input: TokenStream2) -> Result<TokenStream2> {
                     airgroup_id: Self::AIRGROUP_ID,
                     air_id: Self::AIR_ID,
                     commit_id: #commit_id,
-                    shared_buffer: splitted_struct.shared_buffer,
+                    shared_buffer: split_struct.shared_buffer,
                 }
             }
         }
@@ -481,7 +436,7 @@ impl Parse for ParsedTraceInput {
         let struct_name = input.parse::<Ident>()?;
         let row_struct_name = row_struct_name.unwrap_or_else(|| format_ident!("{}Row", struct_name));
 
-        let split_struct_name = format_ident!("{}Splitted", struct_name);
+        let split_struct_name = format_ident!("{}Split", struct_name);
 
         let generics: Generics = input.parse()?;
         let fields: FieldsNamed = input.parse()?;
