@@ -12,8 +12,6 @@ proofman-macros = { path = "../macros" }
 rayon = { workspace = true}
 proofman-common = { path = "../common" }
 
-
-
 proofman = { workspace = true }
 serde = { workspace = true }
 serde_arrays = "0.2"
