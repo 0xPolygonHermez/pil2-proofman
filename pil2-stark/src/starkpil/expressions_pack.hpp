@@ -428,17 +428,6 @@ public:
                 for (uint64_t kk = 0; kk < parserParams[k].nOps; ++kk) {
                     // if(i == 0) cout << kk << "of " << parserParams[k].nOps << " is " << uint64_t(ops[kk]) << endl;
                     switch (ops[kk]) {
-                        case 0: {
-                            // COPY dim1 to dim1
-                            Goldilocks::Element* a = load(nrowsPack, valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 1, i, 1, domainSize, domainExtended, isCyclic, debug);
-                            bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
-                            Goldilocks::Element* res = kk == parserParams[k].nOps - 1 ? &values[k*FIELD_EXTENSION*nrowsPack] : &expressions_params[bufferCommitsSize][args[i_args] * nrowsPack];
-                            printArguments(nrowsPack, a, 1, isConstant,  NULL, 0, true, i, 4, kk, parserParams[k].nOps, debug);
-                            Goldilocks::copy_pack(nrowsPack, res, a, isConstant);
-                            printRes(nrowsPack, res, 1, i, debug);
-                            i_args += 4;
-                            break;
-                        }
                         case 1: {
                             // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
                             Goldilocks::Element* a = load(nrowsPack, valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 2, i, 1, domainSize, domainExtended, isCyclic, debug);
@@ -485,18 +474,6 @@ public:
                             printRes(nrowsPack, res, 3, i, debug);
                             // if(i == 0) printTmp3(nrowsPack, i, res, false);
                             i_args += 8;
-                            break;
-                        }
-                        case 4: {
-                            // COPY dim3 to dim3
-                            Goldilocks::Element* a = load(nrowsPack, valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 1, i, 3, domainSize, domainExtended, isCyclic, debug);
-                            bool isConstant = args[i_args + 1] > bufferCommitsSize + 1 ? true : false;
-                            Goldilocks::Element *res = kk == parserParams[k].nOps - 1 ? &values[k*FIELD_EXTENSION*nrowsPack] : &expressions_params[bufferCommitsSize + 1][args[i_args] * nrowsPack];
-                            // if(i == 0) printTmp3(nrowsPack, i, a, isConstant);
-                            printArguments(nrowsPack, a, 3, isConstant, NULL, 0, true, i, 4, kk, parserParams[k].nOps, debug);
-                            Goldilocks3::copy_pack(nrowsPack, res, a, isConstant);
-                            printRes(nrowsPack, res, 3, i, debug);
-                            i_args += 4;
                             break;
                         }
                         default: {

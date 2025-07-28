@@ -543,14 +543,8 @@ void StarkInfo::setMemoryExpressions(uint64_t nTmp1, uint64_t nTmp3) {
             nrowsPack = NROWS_PACK;
             maxNBlocks = omp_get_max_threads();
         } else {
-            // TODO: SHOULD NOT BE HARDCODED
-            if(recursive) {
-                nrowsPack = 64;
-                maxNBlocks = 4096;
-            } else {
-                nrowsPack = 128;
-                maxNBlocks = 2048;
-            }
+            nrowsPack = 256;
+            maxNBlocks = 1024;
         }
     }
     
