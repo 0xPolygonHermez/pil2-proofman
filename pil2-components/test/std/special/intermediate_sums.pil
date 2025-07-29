@@ -11,9 +11,10 @@ require "std_sum.pil";
         · NUMᵢ and DENᵢ are expressions, not necessarily equal, of any degree greater or equal than 0.
 
     To audit and generate stats:
+    rm -rf ./pil2-components/test/std/special/build/ && mkdir -p ./pil2-components/test/std/special/build/
     node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_sums.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/special/build/intermediate_sums.pilout
     node --max-old-space-size=131072 ../pil2-compiler/tools/audit.js pil2-components/test/std/special/build/intermediate_sums.pilout
-    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_sums.pilout -o pil2-components/test/std/special/build/intermediate_sums.stats
+    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_sums.pilout -o pil2-components/test/std/special/build/intermediate_sums.stats -s pil2-components/test/std/special/config.json
 */
 
 airtemplate ImDummy(const int N = 2**8, const int degs_num[], const int degs_den[]) {
@@ -113,10 +114,10 @@ function increase_degree(const expr exps[], const int deg[], const int type): ex
 }
 
 airgroup Intermediates {
-    ImDummy(degs_num: [1, 0], degs_den: [0, 1]) alias ImDummy_1;
+    // ImDummy(degs_num: [1, 0], degs_den: [0, 1]) alias ImDummy_1;
     ImCustom(degs_num: [1, 0], degs_den: [0, 1]) alias ImCustom_1;
 
-    ImDummy(degs_num: [1, 1, 1, 1], degs_den: [1, 1, 1, 1]) alias ImDummy_2;
+    // ImDummy(degs_num: [1, 1, 1, 1], degs_den: [1, 1, 1, 1]) alias ImDummy_2;
     ImCustom(degs_num: [1, 1, 1, 1], degs_den: [1, 1, 1, 1]) alias ImCustom_2;
 
     int degs_den[8];
@@ -125,7 +126,7 @@ airgroup Intermediates {
         degs_num[i] = 1;
         degs_den[i] = 1;
     }
-    ImDummy(degs_num: degs_num, degs_den: degs_den) alias ImDummy_3;
+    // ImDummy(degs_num: degs_num, degs_den: degs_den) alias ImDummy_3;
     ImCustom(degs_num: degs_num, degs_den: degs_den) alias ImCustom_3;
 
     ImDummy(degs_num: [4, 2, 2, 5, 3, 2, 2, 1], degs_den: [0, 3, 1, 1, 0, 1, 2, 3]) alias ImDummy_4;
