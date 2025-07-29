@@ -30,7 +30,6 @@ type GetSizeWitnessFunc = unsafe extern "C" fn() -> u64;
 
 type GetCircomCircuitFunc = unsafe extern "C" fn(dat_file: *const c_char) -> *mut c_void;
 
-
 impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
     fn execute(&self, pctx: Arc<ProofCtx<F>>, _input_data_path: Option<PathBuf>) -> Vec<usize> {
         pctx.add_instance(0, 0, PreCalculate::None, 1);
@@ -47,8 +46,9 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
         _buffer_pool: &dyn BufferPool<F>,
     ) {
         if stage == 1 {
-            let setup = sctx.get_setup(0,0);
-            let current_dir = env::current_dir().expect("Failed to get current directory").join("examples/test-recursive-c36");
+            let setup = sctx.get_setup(0, 0);
+            let current_dir =
+                env::current_dir().expect("Failed to get current directory").join("examples/test-recursive-c36");
             let proof_path = current_dir.join("proof.bin");
 
             let mut file = File::open(proof_path).unwrap();
@@ -69,7 +69,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
             let exec_filename_str = CString::new(exec_filename.clone()).unwrap();
             let exec_filename_ptr = exec_filename_str.as_ptr() as *mut std::os::raw::c_char;
 
-            let mut file = File::open(&exec_filename.clone()).unwrap();
+            let mut file = File::open(exec_filename.clone()).unwrap();
 
             let mut bytes = [0u8; 8];
 
@@ -78,7 +78,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
 
             file.read_exact(&mut bytes).unwrap();
             let n_smap = u64::from_le_bytes(bytes);
-            
+
             let n_cols = 36;
 
             let exec_data_size = 2 + n_adds * 4 + n_smap * n_cols;
@@ -108,7 +108,7 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
 
             let publics = vec![F::ZERO; setup.stark_info.n_publics as usize];
             let trace = vec![F::ZERO; n_cols as usize * (1 << setup.stark_info.stark_struct.n_bits) as usize];
-            
+
             get_committed_pols_c(
                 witness.as_ptr() as *mut u8,
                 exec_file_data.as_mut_ptr(),
@@ -127,6 +127,5 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
             let air_instance = AirInstance::new(TraceInfo::new(0, 0, trace, false));
             pctx.add_air_instance(air_instance, 0);
         }
-        
     }
 }
