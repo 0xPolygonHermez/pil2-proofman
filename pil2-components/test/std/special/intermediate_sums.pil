@@ -3,83 +3,132 @@ require "std_sum.pil";
 
 /*
     Constraint to optimize:
-                                   NUMi
-                GL === GR + ∑ᵢ ----------
-                                 DENi + ɣ
+                               NUMᵢ
+                L === R + ∑ᵢ ------
+                               DENᵢ
     Where:
-        · GL is an expression of degree 1.
-        · GR is an expression of degree 2.
-        · ɣ is a challenge added to make the denominator an extension-field expression.
+        · L is an expression of degree 1 and R is an expression of degree 2.
+        · NUMᵢ and DENᵢ are expressions, not necessarily equal, of any degree greater or equal than 0.
 
-    To generate stats:
+    To audit and generate stats:
+    rm -rf ./pil2-components/test/std/special/build/ && mkdir -p ./pil2-components/test/std/special/build/
     node ../pil2-compiler/src/pil.js ./pil2-components/test/std/special/intermediate_sums.pil -I ./pil2-components/lib/std/pil -o ./pil2-components/test/std/special/build/intermediate_sums.pilout
-    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_sums.pilout -o pil2-components/test/std/special/build/intermediate_sums.stats
+    node --max-old-space-size=131072 ../pil2-compiler/tools/audit.js pil2-components/test/std/special/build/intermediate_sums.pilout
+    node --max-old-space-size=131072 ../pil2-proofman-js/src/main_stats.js -a pil2-components/test/std/special/build/intermediate_sums.pilout -o pil2-components/test/std/special/build/intermediate_sums.stats -s pil2-components/test/std/special/config.json
 */
 
-airtemplate ImDummy(const int N = 2**8, const int deg_num = 1, const int deg_den = 1, const int M = 6) {
-    assert(M > 0);
+airtemplate ImDummy(const int N = 2**8, const int degs_num[], const int degs_den[]) {
+    const int M = length(degs_num);
+    assert((M > 0) && (M == length(degs_den)));
+    int deg_num_sum = 0;
+    int deg_den_sum = 0;
+    for (int i = 0; i < M; i++) {
+        deg_num_sum += degs_num[i];
+        deg_den_sum += degs_den[i];
+    }
+    assert((deg_num_sum > 0) || (deg_den_sum > 0));
 
     sum_set_expressions_im_non_reduced(-1); // Don't apply any reduction
 
     // Enlarge the degree of the numerator
     col witness num[M];
-    expr NUM[M] = increase_degree(num, deg_num);
+    expr NUM[M] = increase_degree(num, degs_num, 0);
 
     // Enlarge the degree of the denominator
     col witness den[M];
-    expr DEN[M] = increase_degree(den, deg_den);
+    expr DEN[M] = increase_degree(den, degs_den, 1);
 
+    string description = "Degrees Visualization: ";
     for (int i = 0; i < M; i++) {
-        sum_assumes(PIOP_NAME_ISOLATED, [0], 0, [DEN[i]], NUM[i])
+        if (i == M-1) {
+            description += `${degree(NUM[i])}/${degree(DEN[i])}`;
+        } else {
+            description += `${degree(NUM[i])}/${degree(DEN[i])} + `;
+        }
+        sum(PIOP_NAME_ISOLATED, SUM_TYPE_FREE, [0], 0, [DEN[i]], NUM[i])
     }
+    println(description);
 }
 
-airtemplate ImCustom(const int N = 2**8, const int deg_num = 1, const int deg_den = 1, const int M = 6) {
-    assert(M > 0);
+airtemplate ImCustom(const int N = 2**8, const int degs_num[], const int degs_den[]) {
+    const int M = length(degs_num);
+    assert((M > 0) && (M == length(degs_den)));
+    int deg_num_sum = 0;
+    int deg_den_sum = 0;
+    for (int i = 0; i < M; i++) {
+        deg_num_sum += degs_num[i];
+        deg_den_sum += degs_den[i];
+    }
+    assert((deg_num_sum > 0) || (deg_den_sum > 0));
 
     sum_set_expressions_im_non_reduced(0); // Apply all the reductions
 
     // Enlarge the degree of the numerator
     col witness num[M];
-    expr NUM[M] = increase_degree(num, deg_num);
+    expr NUM[M] = increase_degree(num, degs_num, 0);
 
     // Enlarge the degree of the denominator
     col witness den[M];
-    expr DEN[M] = increase_degree(den, deg_den);
+    expr DEN[M] = increase_degree(den, degs_den, 1);
 
+    string description = "Degrees Visualization: ";
     for (int i = 0; i < M; i++) {
-        sum_proves(PIOP_NAME_ISOLATED, [0], 0, [DEN[i]], NUM[i])
+        if (i == M-1) {
+            description += `${degree(NUM[i])}/${degree(DEN[i])}`;
+        } else {
+            description += `${degree(NUM[i])}/${degree(DEN[i])} + `;
+        }
+        sum(PIOP_NAME_ISOLATED, SUM_TYPE_FREE, [0], 0, [DEN[i]], NUM[i])
     }
+    println(description);
 }
 
-function increase_degree(expr exps[], const int deg): expr[] {
+function increase_degree(const expr exps[], const int deg[], const int type): expr[] {
     const int M = length(exps);
     expr result[M];
     for (int i = 0; i < M; i++) {
-        result[i] = exps[i];
-        for (int j = 1; j < deg; j++) {
-            col witness _exp;
-            result[i] *= _exp;
+        const int d = deg[i];
+        if (d == 0) {
+            result[i] = 1;
+        } else if (d == 1) {
+            result[i] = exps[i];
+        } else {
+            result[i] = exps[i];
+            const int num_extra = d-1;
+            if (type == 0) {
+                col witness extra_num[num_extra];
+                for (int j = 0; j < num_extra; j++) {
+                    result[i] *= extra_num[j];
+                }
+            } else {
+                col witness extra_den[num_extra];
+                for (int j = 0; j < num_extra; j++) {
+                    result[i] *= extra_den[j];
+                }
+            }
         }
-        assert(degree(result[i]) == deg);
+        assert(degree(result[i]) == d);
     }
 
     return result;
 }
 
 airgroup Intermediates {
-    ImDummy(deg_num: 1, deg_den: 1, M: 1) alias ImDummy_1;
-    ImCustom(deg_num: 1, deg_den: 1, M: 1) alias ImCustom_1;
+    // ImDummy(degs_num: [1, 0], degs_den: [0, 1]) alias ImDummy_1;
+    ImCustom(degs_num: [1, 0], degs_den: [0, 1]) alias ImCustom_1;
 
-    ImDummy(deg_num: 1, deg_den: 1, M: 2) alias ImDummy_2;
-    ImCustom(deg_num: 1, deg_den: 1, M: 2) alias ImCustom_2;
+    // ImDummy(degs_num: [1, 1, 1, 1], degs_den: [1, 1, 1, 1]) alias ImDummy_2;
+    ImCustom(degs_num: [1, 1, 1, 1], degs_den: [1, 1, 1, 1]) alias ImCustom_2;
 
-    ImDummy(deg_num: 1, deg_den: 1, M: 4) alias ImDummy_4;
-    ImCustom(deg_num: 1, deg_den: 1, M: 4) alias ImCustom_4;
+    int degs_den[8];
+    int degs_num[8];
+    for (int i = 0; i < 8; i++) {
+        degs_num[i] = 1;
+        degs_den[i] = 1;
+    }
+    // ImDummy(degs_num: degs_num, degs_den: degs_den) alias ImDummy_3;
+    ImCustom(degs_num: degs_num, degs_den: degs_den) alias ImCustom_3;
 
-    ImDummy(deg_num: 1, deg_den: 1, M: 8) alias ImDummy_8;
-    ImCustom(deg_num: 1, deg_den: 1, M: 8) alias ImCustom_8;
-
-    ImDummy(deg_num: 1, deg_den: 1, M: 16) alias ImDummy_16;
-    ImCustom(deg_num: 1, deg_den: 1, M: 16) alias ImCustom_16;
+    ImDummy(degs_num: [4, 2, 2, 5, 3, 2, 2, 1], degs_den: [0, 3, 1, 1, 0, 1, 2, 3]) alias ImDummy_4;
+    ImCustom(degs_num: [4, 2, 2, 5, 3, 2, 2, 1], degs_den: [0, 3, 1, 1, 0, 1, 2, 3]) alias ImCustom_4;
 }

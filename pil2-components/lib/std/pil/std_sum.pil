@@ -262,19 +262,41 @@ private function piop_gsum_air() {
     }
 
     /*
+    The constraint is:
                                           selᵢ
         gsum === 'gsum * (1 - L1) + ∑ᵢ --------
                                          fᵢ + ɣ
-
-        We transform some of the rational constraint to a polynomial one by 
-        substituting all the rational terms by individual terms (except for one to optimize):
-            gsum === 'gsum * (1 - L1) + ∑ⱼ imⱼ + num / den
     */
 
     if (!defined(std_gamma)) {
         challenge stage(2) std_gamma;
     }
 
+    // Generate hints for the optimizer
+    string constraint = "exp[0] === exp[1] + ";
+    for (int i = 0; i < gsum_nargs; i++) {
+        if (i == gsum_nargs - 1) {
+            constraint += `frac[${i}]`;
+        } else {
+            constraint += `frac[${i}] + `;
+        }
+    }
+    @sum_optimizer{constraint: constraint};
+
+    @sum_optimizer{name: "exp", id: 0, expression: gsum};
+
+    const expr rhs1 = 'gsum * (1 - L1);
+    @sum_optimizer{name: "exp", id: 1, expression: rhs1};
+
+    for (int i = 0; i < gsum_nargs; i++) {
+        const expr numerator = gsum_s[i];
+        const expr denominator = gsum_e[i] + std_gamma;
+        @sum_optimizer{name: "frac", id: i, numerator: numerator, denominator: denominator};
+    }
+
+    // We transform some of the rational constraint to a polynomial one by 
+    // substituting all the rational terms by individual terms (except for one to optimize):
+    //     gsum === 'gsum * (1 - L1) + ∑ⱼ imⱼ + num / den
     expr num = 0;
     expr den = 1;
     expr sum_ims = 0;
