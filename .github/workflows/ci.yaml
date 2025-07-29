@@ -306,7 +306,7 @@ jobs:
 
       - name: Compile PIL C36
         run: |
-          node ../pil2-proofman-js/src/main_setup_recursive.js -b ./examples/test-recursive-c36/build -c ./examples/test-recursive-c36/test.circom -n test -t pil2-components/lib/std/pil
+          node pil2-proofman-js/src/main_setup_recursive.js -b ./examples/test-recursive-c36/build -c ./examples/test-recursive-c36/test.circom -n test -t ./pil2-components/lib/std/pil
 
       - name: Cargo build
         run: RUST_BACKTRACE=1 cargo build -v
