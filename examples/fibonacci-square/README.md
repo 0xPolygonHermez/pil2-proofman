@@ -141,7 +141,7 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
      -o ./examples/fibonacci-square/pil/build.pilout \
 && node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build \
+     -b ./examples/fibonacci-square/build -t pil2-components/lib/std/pil \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
@@ -172,7 +172,7 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
      -o ./examples/fibonacci-square/pil/build.pilout \
 && node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build \
+     -b ./examples/fibonacci-square/build -t pil2-components/lib/std/pil \
      -r \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \

@@ -15,7 +15,6 @@
 #include <cassert>
 
 const int FIXED_POLS_SECTION = 1;
-const int N_SECTIONS = 1;
 
 struct FixedPolsInfo {
     uint64_t name_size;
@@ -26,7 +25,7 @@ struct FixedPolsInfo {
 };
 
 void writeFixedColsBin(string binFileName, string airgroupName, string airName, uint64_t N, uint64_t nFixedPols, FixedPolsInfo* fixedPolsInfo) {
-    BinFileUtils::BinFileWriter binFile(binFileName, "cnst", 1, N_SECTIONS);
+    BinFileUtils::BinFileWriter binFile(binFileName, "cnst", 1, 1);
 
     binFile.startWriteSection(FIXED_POLS_SECTION);
 

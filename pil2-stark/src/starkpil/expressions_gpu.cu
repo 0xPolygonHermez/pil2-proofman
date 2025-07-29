@@ -573,7 +573,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
 
                 switch (ops[kk])
                 {
-                case 1:
+                case 0:
                 {
                     // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
                     gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 1, isCyclic, debug);
@@ -591,7 +591,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                     i_args += 8;
                     break;
                 }
-                case 2:
+                case 1:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
                     gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug);
@@ -609,7 +609,7 @@ __global__  void computeExpressions_(StepsParams *d_params, DeviceArguments *d_d
                     i_args += 8;
                     break;
                 }
-                case 3:
+                case 2:
                 {
                     // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
                     gl64_t* a = (gl64_t*)load__(d_deviceArgs, d_expsArgs, valueA, d_params, expressions_params, args[i_args + 2], args[i_args + 3], args[i_args + 4], i, 3, isCyclic, debug);

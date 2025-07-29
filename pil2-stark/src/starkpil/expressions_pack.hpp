@@ -428,7 +428,7 @@ public:
                 for (uint64_t kk = 0; kk < parserParams[k].nOps; ++kk) {
                     // if(i == 0) cout << kk << "of " << parserParams[k].nOps << " is " << uint64_t(ops[kk]) << endl;
                     switch (ops[kk]) {
-                        case 1: {
+                        case 0: {
                             // OPERATION WITH DEST: dim1 - SRC0: dim1 - SRC1: dim1
                             Goldilocks::Element* a = load(nrowsPack, valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 2, i, 1, domainSize, domainExtended, isCyclic, debug);
                             Goldilocks::Element* b = load(nrowsPack, valueB, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 5, i, 1, domainSize, domainExtended, isCyclic, debug);
@@ -444,7 +444,7 @@ public:
                             i_args += 8;
                             break;
                         }
-                        case 2: {
+                        case 1: {
                             // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim1
                             Goldilocks::Element* a = load(nrowsPack, valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 2, i, 3, domainSize, domainExtended, isCyclic, debug);
                             Goldilocks::Element* b = load(nrowsPack, valueB, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 5, i, 1, domainSize, domainExtended, isCyclic, debug);
@@ -460,7 +460,7 @@ public:
                             i_args += 8;
                             break;
                         }
-                        case 3: {
+                        case 2: {
                             // OPERATION WITH DEST: dim3 - SRC0: dim3 - SRC1: dim3
                             Goldilocks::Element* a = load(nrowsPack, valueA, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 2, i, 3, domainSize, domainExtended, isCyclic, debug);
                             Goldilocks::Element* b = load(nrowsPack, valueB, params, expressions_params, args, mapOffsetsExps, mapOffsetsCustomExps, nextStridesExps, i_args + 5, i, 3, domainSize, domainExtended, isCyclic, debug);
