@@ -59,7 +59,7 @@ To begin, compile the PIL files:
 ```bash
 node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
-     -o ./examples/fibonacci-square/pil/build.pilout
+     -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed -O fixed-to-file
 ```
 
 ### 2.2 Generate Setup
@@ -68,8 +68,8 @@ After compiling the PIL files, generate the setup:
 
 ```bash
 node ../pil2-proofman-js/src/main_setup.js \
-     -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build
+     -a ./examples/fibonacci-square/pil/build.pilout -t ./pil2-components/lib/std/pil \
+     -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
 ```
 
 To run the aggregated proof, need to add -r to the previous command
