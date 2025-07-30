@@ -37,7 +37,10 @@ use proofman_starks_lib_c::{
     clear_proof_done_callback_c, launch_callback_c,
 };
 
-use std::{path::{PathBuf, Path}, sync::Arc};
+use std::{
+    path::{PathBuf, Path},
+    sync::Arc,
+};
 
 use transcript::FFITranscript;
 
