@@ -16,9 +16,9 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
 where
     StandardUniform: Distribution<F>,
 {
-    fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
-        register_std(&wcm, &std);
+        register_std(wcm, &std);
         wcm.register_component(Permutation1_6::new());
         wcm.register_component(Permutation1_7::new());
         wcm.register_component(Permutation1_8::new());

@@ -2,7 +2,6 @@ use fields::PrimeField64;
 use num_traits::ToPrimitive;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
-use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf};
 
 use colored::*;
@@ -327,7 +326,7 @@ pub fn initialize_fixed_pols_tree<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     sctx: &SetupCtx<F>,
     setups: &SetupsVadcop<F>,
-    d_buffers: Arc<DeviceBuffer>,
+    d_buffers: &DeviceBuffer,
     aggregation: bool,
     gpu_params: &ParamsGPU,
 ) {

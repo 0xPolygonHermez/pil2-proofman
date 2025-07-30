@@ -90,6 +90,16 @@ namespace BinFileUtils
         writingSection = NULL;
     }
 
+    void BinFileWriter::writeU8LE(u_int8_t value)
+    {
+        file.write(reinterpret_cast<char *>(&value), sizeof(value));
+    }
+
+    void BinFileWriter::writeU16LE(u_int16_t value)
+    {
+        file.write(reinterpret_cast<char *>(&value), sizeof(value));
+    }
+
     void BinFileWriter::writeU32LE(u_int32_t value)
     {
         file.write(reinterpret_cast<char *>(&value), sizeof(value));
@@ -107,7 +117,14 @@ namespace BinFileUtils
 
     void BinFileWriter::writeString(const std::string &str)
     {
-        file.write(str.c_str(), str.length());
-        file.write("\0", 1);
+        std::vector<uint8_t> buffer(str.length() + 1);
+        for (size_t i = 0; i < str.length(); ++i)
+        {
+            buffer[i] = static_cast<uint8_t>(str[i]);
+        }
+
+        buffer[str.length()] = 0;
+
+        file.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
     }
 }

@@ -40,6 +40,12 @@ typedef enum
     airvalue = 8,
     proofvalue = 9,
     custom = 10,
+    x = 11,
+    Zi = 12,
+    eval = 13,
+    xDivXSubXi = 14,
+    q = 15,
+    f = 16,
 } opType;
 
 
@@ -79,6 +85,7 @@ public:
 };
 
 opType string2opType (const string s);
+string opType2string (const opType op);
 
 class PolMap
 {
@@ -187,7 +194,8 @@ public:
 
     /* Constructor */
     StarkInfo(string file, bool recursive = false, bool verify_constraints = false, bool verify = false, bool gpu = false, bool preallocate = false);
-
+    StarkInfo() {};
+    
     /* Loads data from a json object */
     void load (json j);
 

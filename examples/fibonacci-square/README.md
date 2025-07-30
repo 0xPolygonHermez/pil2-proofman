@@ -59,7 +59,7 @@ To begin, compile the PIL files:
 ```bash
 node ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
-     -o ./examples/fibonacci-square/pil/build.pilout
+     -o ./examples/fibonacci-square/pil/build.pilout -u ./examples/fibonacci-square/build/fixed -O fixed-to-file
 ```
 
 ### 2.2 Generate Setup
@@ -68,8 +68,8 @@ After compiling the PIL files, generate the setup:
 
 ```bash
 node ../pil2-proofman-js/src/main_setup.js \
-     -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build
+     -a ./examples/fibonacci-square/pil/build.pilout -t ./pil2-components/lib/std/pil \
+     -b ./examples/fibonacci-square/build -r -u ./examples/fibonacci-square/build/fixed
 ```
 
 To run the aggregated proof, need to add -r to the previous command
@@ -141,7 +141,7 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
      -o ./examples/fibonacci-square/pil/build.pilout \
 && node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build \
+     -b ./examples/fibonacci-square/build -t pil2-components/lib/std/pil \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \
      --path ./examples/fibonacci-square/src -o \
@@ -172,7 +172,7 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
      -o ./examples/fibonacci-square/pil/build.pilout \
 && node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
      -a ./examples/fibonacci-square/pil/build.pilout \
-     -b ./examples/fibonacci-square/build \
+     -b ./examples/fibonacci-square/build -t pil2-components/lib/std/pil \
      -r \
 && cargo run --bin proofman-cli pil-helpers \
      --pilout ./examples/fibonacci-square/pil/build.pilout \

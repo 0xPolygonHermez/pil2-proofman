@@ -1,4 +1,4 @@
-use std::{any::Any, error::Error, sync::Arc};
+use std::{any::Any, error::Error};
 
 use crate::WitnessManager;
 use fields::PrimeField64;
@@ -8,7 +8,7 @@ use proofman_common::{ProofCtx, VerboseMode};
 pub type WitnessLibInitFn<F> = fn(VerboseMode, Option<i32>) -> Result<Box<dyn WitnessLibrary<F>>, Box<dyn Error>>;
 
 pub trait WitnessLibrary<F: PrimeField64> {
-    fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>);
+    fn register_witness(&mut self, wcm: &WitnessManager<F>);
 
     /// Returns the weight indicating the complexity of the witness computation.
     ///
