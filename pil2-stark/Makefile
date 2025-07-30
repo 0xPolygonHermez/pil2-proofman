@@ -24,7 +24,7 @@ CXXFLAGS := -std=c++17 -Wall -pthread -flarge-source-files -Wno-unused-label -rd
 NVCCFLAGS := -std=c++17 -Xcompiler -fPIC -Xcompiler -mavx2 -O3 -arch=$(CUDA_ARCH) -DGL64_PARTIALLY_REDUCED 
 
 # Use the following flag to solve amxtileintrin.h incompatibility
-NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
+# NVCCFLAGS += --compiler-bindir=/usr/bin/g++-10
 
 # Debugging flags
 # NVCCFLAGS += -G -lineinfo -Xptxas=-v
