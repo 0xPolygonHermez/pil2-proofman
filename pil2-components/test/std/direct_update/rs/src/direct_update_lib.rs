@@ -18,7 +18,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
 where
     StandardUniform: Distribution<F>,
 {
-    fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         // let seed = if cfg!(feature = "debug") { 0 } else { rand::rng().random::<u64>() };
         let seed = 0;
 
@@ -28,7 +28,7 @@ where
         let direct_update_sum_local = DirectUpdateSumLocal::new();
         let direct_update_sum_global = DirectUpdateSumGlobal::new();
 
-        register_std(&wcm, &std);
+        register_std(wcm, &std);
         direct_update_prod_local.set_seed(seed);
         direct_update_prod_global.set_seed(seed);
         direct_update_sum_local.set_seed(seed);

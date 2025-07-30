@@ -16,7 +16,7 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
 where
     StandardUniform: Distribution<F>,
 {
-    fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
         let lookup0 = Lookup0::new();
         let lookup1 = Lookup1::new();
@@ -25,7 +25,7 @@ where
         let lookup2_15 = Lookup2_15::new();
         let lookup3 = Lookup3::new();
 
-        register_std(&wcm, &std);
+        register_std(wcm, &std);
 
         wcm.register_component(lookup0.clone());
         wcm.register_component(lookup1.clone());

@@ -16,13 +16,13 @@ impl<F: PrimeField64> WitnessLibrary<F> for WitnessLib
 where
     StandardUniform: Distribution<F>,
 {
-    fn register_witness(&mut self, wcm: Arc<WitnessManager<F>>) {
+    fn register_witness(&mut self, wcm: &WitnessManager<F>) {
         let std = Std::new(wcm.get_pctx(), wcm.get_sctx());
         let connection1 = Connection1::new();
         let connection2 = Connection2::new();
         let connection_new = ConnectionNew::new();
 
-        register_std(&wcm, &std);
+        register_std(wcm, &std);
         wcm.register_component(connection1.clone());
         wcm.register_component(connection2.clone());
         wcm.register_component(connection_new.clone());

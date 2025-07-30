@@ -88,7 +88,7 @@ impl GenCustomCommitsFixedCmd {
 
         let witness_lib: Symbol<WitnessLibInitFn<Goldilocks>> = unsafe { library.get(b"init_library")? };
         let mut witness_lib = witness_lib(self.verbose.into(), None)?;
-        witness_lib.register_witness(wcm.clone());
+        witness_lib.register_witness(&wcm);
 
         wcm.gen_custom_commits_fixed(self.check)
     }

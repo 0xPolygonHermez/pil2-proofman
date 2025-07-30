@@ -2,9 +2,8 @@ use libloading::{Library, Symbol};
 use fields::PrimeField64;
 use std::ffi::CString;
 use proofman_starks_lib_c::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use num_traits::ToPrimitive;
-use std::sync::Arc;
 
 use proofman_common::{load_const_pols, load_const_pols_tree, Proof, ProofCtx, ProofType, Setup, SetupsVadcop};
 
@@ -201,8 +200,8 @@ pub fn generate_recursive_proof<F: PrimeField64>(
     prover_buffer: &[F],
     output_dir_path: &Path,
     d_buffers: *mut c_void,
-    const_tree: Arc<Vec<F>>,
-    const_pols: Arc<Vec<F>>,
+    const_tree: &[F],
+    const_pols: &[F],
     save_proofs: bool,
 ) -> u64 {
     timer_start_info!(
@@ -318,12 +317,12 @@ pub fn generate_recursive_proof<F: PrimeField64>(
 pub fn aggregate_recursive2_proofs<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     setups: &SetupsVadcop<F>,
-    proofs: &[Vec<Proof<F>>],
+    proofs: Vec<Vec<Proof<F>>>,
     trace: &[F],
     prover_buffer: &[F],
-    const_pols: Arc<Vec<F>>,
-    const_tree: Arc<Vec<F>>,
-    output_dir_path: PathBuf,
+    const_pols: &[F],
+    const_tree: &[F],
+    output_dir_path: &Path,
     d_buffers: *mut c_void,
     save_proofs: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
@@ -417,10 +416,10 @@ pub fn aggregate_recursive2_proofs<F: PrimeField64>(
                             &recursive2_proof,
                             trace,
                             prover_buffer,
-                            &output_dir_path,
+                            output_dir_path,
                             d_buffers,
-                            const_tree.clone(),
-                            const_pols.clone(),
+                            const_tree,
+                            const_pols,
                             save_proofs,
                         );
 
@@ -485,9 +484,9 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
     proof: &Proof<F>,
     trace: &[F],
     prover_buffer: &[F],
-    output_dir_path: PathBuf,
-    const_pols: Arc<Vec<F>>,
-    const_tree: Arc<Vec<F>>,
+    output_dir_path: &Path,
+    const_pols: &[F],
+    const_tree: &[F],
     d_buffers: *mut c_void,
     save_proof: bool,
 ) -> Result<Proof<F>, Box<dyn std::error::Error>> {
@@ -505,7 +504,7 @@ pub fn generate_vadcop_final_proof<F: PrimeField64>(
         &final_proof,
         trace,
         prover_buffer,
-        &output_dir_path,
+        output_dir_path,
         d_buffers,
         const_tree,
         const_pols,
@@ -533,7 +532,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
     proof: &[u64],
     trace: &[F],
     prover_buffer: &[F],
-    output_dir_path: PathBuf,
+    output_dir_path: &Path,
     save_proofs: bool,
 ) -> Result<*mut c_void, Box<dyn std::error::Error>> {
     let global_info_path = pctx.global_info.get_proving_key_path().join("pilout.globalInfo.json");
@@ -606,7 +605,7 @@ pub fn generate_recursivef_proof<F: PrimeField64>(
 pub fn generate_fflonk_snark_proof<F: PrimeField64>(
     pctx: &ProofCtx<F>,
     proof: *mut c_void,
-    output_dir_path: PathBuf,
+    output_dir_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let setup_path = pctx.global_info.get_setup_path("final");
 

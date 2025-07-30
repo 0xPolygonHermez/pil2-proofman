@@ -266,9 +266,9 @@ impl<F: PrimeField64> ProofCtx<F> {
         }
     }
 
-    pub fn set_debug_info(&self, debug_info: DebugInfo) {
+    pub fn set_debug_info(&self, debug_info: &DebugInfo) {
         let mut debug_info_guard = self.debug_info.write().unwrap();
-        *debug_info_guard = debug_info;
+        *debug_info_guard = debug_info.clone();
     }
 
     pub fn dctx_reset(&self) {
