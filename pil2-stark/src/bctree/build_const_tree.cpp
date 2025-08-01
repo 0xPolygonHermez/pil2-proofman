@@ -71,8 +71,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
 
         TimerStopAndLog(GENERATING_FILES);
 
-    }
-    else if(verificationHashType == "BN128"){
+    } else if(verificationHashType == "BN128"){
         TimerStart(MERKELIZE_CONST_TREE);
         RawFr::Element rootC;
         uint64_t merkleTreeArity = starkInfoJson["starkStruct"].contains("merkleTreeArity") ? starkInfoJson["starkStruct"]["merkleTreeArity"].get<uint64_t>() : 16;
@@ -100,8 +99,7 @@ void buildConstTree(const string constFile, const string starkInfoFile, const st
             mt.writeFile(constTreeFile);
         }
         TimerStopAndLog(GENERATING_FILES);
-    } 
-    else {
+    } else {
         cerr << "Invalid Hash Type: " << verificationHashType << endl;
         exit(-1);
     }
