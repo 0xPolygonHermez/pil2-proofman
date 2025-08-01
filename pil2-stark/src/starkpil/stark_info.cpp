@@ -482,6 +482,11 @@ void StarkInfo::setMapOffsets() {
         mapOffsets[std::make_pair("cm" + to_string(stage), false)] = offsetTraces;
         offsetTraces += N * mapSectionsN["cm" + to_string(stage)]; 
     }
+    
+    if(!preallocate && gpu) {
+        mapOffsets[std::make_pair("const", false)] = offsetTraces;
+        offsetTraces += N * nConstants;
+    }
 
     mapTotalN = std::max(mapTotalN, offsetTraces);
 
@@ -654,8 +659,6 @@ opType string2opType(const string s)
         return airvalue;
     if(s == "custom") 
         return custom;
-    if(s == "x")
-        return x;
     if(s == "Zi")
         return Zi;
     if(s == "eval")
@@ -696,8 +699,6 @@ string opType2string(const opType op)
         return "airvalue";
     if(op == opType::custom) 
         return "custom";
-     if(op == opType::x)
-        return "x";
     if(op == opType::Zi)
         return "Zi";
     if(op == opType::eval)
