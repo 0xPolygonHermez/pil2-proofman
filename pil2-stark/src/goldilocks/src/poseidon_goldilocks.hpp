@@ -41,6 +41,8 @@ private:
     inline void static add_avx512_small(__m512i &st0, __m512i &st1, __m512i &st2, const Goldilocks::Element C[SPONGE_WIDTH]);
 #endif
 
+public:
+
     // Non-vectorized:
     void static hash_full_result_seq(Goldilocks::Element *, const Goldilocks::Element *);
     void static linear_hash_seq(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
@@ -48,7 +50,6 @@ private:
     void static hash_seq(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]);
     void static merkletree_batch_seq(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 
-public:
     // Vectorized AVX:
     // Note, the functions that do not have the _avx suffix are the default ones to
     // be used in the prover, they implement avx vectorixation though.
