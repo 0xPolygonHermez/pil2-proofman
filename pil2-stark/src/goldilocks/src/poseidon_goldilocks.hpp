@@ -71,9 +71,6 @@ public:
 #endif
 
     // Wrappes:
-    inline void static hash_full_result(Goldilocks::Element *, const Goldilocks::Element *);
-    inline void static linear_hash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size);
-    inline void static hash(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]);
     inline void static merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, int nThreads = 0, uint64_t dim = 1);
     inline void static merkletree_batch(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, uint64_t batch_size, int nThreads = 0, uint64_t dim = 1);
 
@@ -86,36 +83,6 @@ public:
 };
 
 // WRAPPERS
-
-inline void PoseidonGoldilocks::hash_full_result(Goldilocks::Element *output, const Goldilocks::Element *input)
-{
-#ifdef __AVX512__
-    hash_full_result_avx512(output, input);
-#elif defined(__AVX2__)
-    hash_full_result_avx(output, input);
-#else
-    hash_full_result_seq(output, input);
-#endif
-}
-inline void PoseidonGoldilocks::linear_hash(Goldilocks::Element *output, Goldilocks::Element *input, uint64_t size)
-{
-#ifdef __AVX512__
-    linear_hash_avx512(output, input, size);
-#elif defined(__AVX2__)
-    linear_hash_avx(output, input, size);
-#else
-    linear_hash_seq(output, input, size);
-#endif
-}
-inline void PoseidonGoldilocks::hash(Goldilocks::Element (&state)[CAPACITY], const Goldilocks::Element (&input)[SPONGE_WIDTH]){
-#ifdef __AVX512__
-    hash_avx512(state, input);
-#elif defined(__AVX2__)
-    hash_avx(state, input);
-#else   
-    hash_seq(state, input);
-#endif
-}   
 
 inline void PoseidonGoldilocks::merkletree(Goldilocks::Element *tree, Goldilocks::Element *input, uint64_t num_cols, uint64_t num_rows, int nThreads, uint64_t dim)
 {
