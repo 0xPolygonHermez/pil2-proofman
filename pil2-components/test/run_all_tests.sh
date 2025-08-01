@@ -74,5 +74,6 @@ test_pipeline "expr_optimizations" "./pil2-components/test/std/special" "expr_op
 test_pipeline "intermediate_prods" "./pil2-components/test/std/special" "intermediate_prods" "true"
 test_pipeline "intermediate_sums" "./pil2-components/test/std/special" "intermediate_sums" "true"
 test_pipeline "table" "./pil2-components/test/std/special" "table" "true"
+test_pipeline "virtual_tables" "./pil2-components/test/std/special" "virtual_tables" "true"
 
 echo "✅ All tests completed."

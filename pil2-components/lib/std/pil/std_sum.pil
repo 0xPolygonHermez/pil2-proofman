@@ -7,8 +7,9 @@ const int SUM_TYPE_ASSUMES = 0;
 const int SUM_TYPE_PROVES = 1;
 const int SUM_TYPE_FREE = 2;
 
-const int SUM_UPDATE_TYPE_LOCAL = 0;
-const int SUM_UPDATE_TYPE_GLOBAL = 1;
+const int SUM_UPDATE_TYPE_LOCAL_DEFAULT = 0;
+const int SUM_UPDATE_TYPE_LOCAL_AIRVAL = 1;
+const int SUM_UPDATE_TYPE_GLOBAL = 2;
 
 // Control how the expressions are grouped
 int SUM_EXPRESSIONS_IM_NON_REDUCED = 0; // Set to -1 to non-reduce all the terms
@@ -41,9 +42,13 @@ function sum_set_airvals_im_reduce_factor(const int factor) {
     SUM_AIRVALS_IM_REDUCE_FACTOR = factor;
 }
 
-function sum(const int name, const int surname, const int type, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int update_type = SUM_UPDATE_TYPE_LOCAL) {
+function sum(const int name, const int surname, const int type, const int opids[], const expr busid, const expr expressions[], const expr mul = 1, const int update_type = SUM_UPDATE_TYPE_LOCAL_DEFAULT) {
+    if (VIRTUAL == 1) {
+        error("Cannot use the sum bus in a virtual table context.");
+    }
+
     assert(type == SUM_TYPE_ASSUMES || type == SUM_TYPE_PROVES || type == SUM_TYPE_FREE);
-    assert(update_type == SUM_UPDATE_TYPE_LOCAL || update_type == SUM_UPDATE_TYPE_GLOBAL);
+    assert(update_type == SUM_UPDATE_TYPE_LOCAL_DEFAULT || update_type == SUM_UPDATE_TYPE_LOCAL_AIRVAL || update_type == SUM_UPDATE_TYPE_GLOBAL);
     update_piop_sum(name, surname, type, opids, busid, mul, expressions, update_type);
 }
 
@@ -57,7 +62,7 @@ function sum(const int name, const int surname, const int type, const int opids[
  * @param busid       The ID that uniquely identifies the PIOP in the bus
  * @param sel         The selector of the PIOP
  * @param expressions The vector of expressions of the PIOP
- * @param update_type Defines wheter the update has to be done at the global, air or default level
+ * @param update_type Defines wheter the update has to be done at the air cols, air vals or global vals
  */
 private function update_piop_sum(const int name, const int surname, const int type, const int opids[], const expr busid, const expr sel, const expr expressions[], const int update_type) {
     const string name_str = get_piop_name(name);
@@ -69,7 +74,7 @@ private function update_piop_sum(const int name, const int surname, const int ty
 
     init_proof_containers_sum(name, surname, opids);
 
-    if (update_type == SUM_UPDATE_TYPE_LOCAL) {
+    if (update_type == SUM_UPDATE_TYPE_LOCAL_DEFAULT || update_type == SUM_UPDATE_TYPE_LOCAL_AIRVAL) {
         init_air_containers_sum();
     }
 
@@ -91,7 +96,7 @@ private function update_piop_sum(const int name, const int surname, const int ty
     @gsum_debug_data{name_piop: name_str, name_expr: name_expr, busid: busid, is_global: update_type == SUM_UPDATE_TYPE_GLOBAL,
                           type: type_hint, selector: sel, expressions: expressions, deg_expr: degree(sum_expr), deg_sel: degree(sel)};
 
-    initial_checks_sum(name, surname, type, opids, exprs_num, update_type);
+    initial_checks_sum(name, surname, type, opids, exprs_num);
 
     // selected vector to simple expression reduction
     expr exprs_compressed = compress_exprs(busid, expressions);
@@ -103,7 +108,7 @@ private function update_piop_sum(const int name, const int surname, const int ty
             }
 
             gsum_update_global_constraint_data(type, sel, exprs_compressed);
-        case SUM_UPDATE_TYPE_LOCAL:
+        case SUM_UPDATE_TYPE_LOCAL_DEFAULT, SUM_UPDATE_TYPE_LOCAL_AIRVAL:
             gsum_update_air_constraint_data(type, sel, exprs_compressed, update_type);
 
             // Update constraints at the air level
@@ -179,7 +184,7 @@ private function init_air_containers_sum() {
     }
 }
 
-private function initial_checks_sum(const int name, const int surname, const int type, const int opids[], const int exprs_num, const int update_type) {
+private function initial_checks_sum(const int name, const int surname, const int type, const int opids[], const int exprs_num) {
     for (int i = 0; i < length(opids); i++) {
         // First time we see an opid
         if (proof.std.gsum.`id${opids[i]}`.expressions == 0) {
@@ -231,7 +236,7 @@ private function gsum_update_global_constraint_data(const int type, const expr s
 private function gsum_update_air_constraint_data(const int type, const expr sel, const expr exprs, const int update_type) {
     use air.std.gsum;
 
-    if (update_type == SUM_UPDATE_TYPE_LOCAL) {
+    if (update_type == SUM_UPDATE_TYPE_LOCAL_AIRVAL) {
         if ((type == SUM_TYPE_PROVES) || (type == SUM_TYPE_FREE)) {
             direct_gsum_s[direct_gsum_nargs] = sel;
         } else {

@@ -48,12 +48,38 @@ require "std_lookup.pil";
 
 const int MAX_RANGE_LEN = (PRIME - 1) / 2;
 
+int U8_TABLE_VIRTUAL = 0;
+int U16_TABLE_VIRTUAL = 0;
+int SPECIFIED_TABLE_VIRTUAL = 0;
+
+function set_u8_table_virtual() {
+    U8_TABLE_VIRTUAL = 1;
+}
+
+function set_u16_table_virtual() {
+    U16_TABLE_VIRTUAL = 1;
+}
+
+function set_specified_table_virtual() {
+    SPECIFIED_TABLE_VIRTUAL = 1;
+}
+
+function set_range_check_tables_virtual() {
+    set_u8_table_virtual();
+    set_u16_table_virtual();
+    set_specified_table_virtual();
+}
+
 int MAX_U8_BITS = 8;
 int MAX_U16_BITS = 16;
 int MAX_SPECIFIED_BITS = -1; // -1 indicates that the bits is specified on demand
                              // and is set to be the maximum of all specified ranges
 
 function set_max_u8_bits(const int bits) {
+    if (U8_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_u8_bits() has no effect when the U8 table has been set virtual.");
+    }
+
     if (bits < 0 || bits > 8) {
         error(`The u8 bits should be between 0 and 8, got ${bits} instead`);
     }
@@ -62,6 +88,10 @@ function set_max_u8_bits(const int bits) {
 }
 
 function set_max_u16_bits(const int bits) {
+    if (U16_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_u16_bits() has no effect when the U16 table has been set virtual.");
+    }
+
     if (bits < 0 || bits > 16) {
         error(`The u16 bits should be between 0 and 16, got ${bits} instead`);
     }
@@ -70,6 +100,10 @@ function set_max_u16_bits(const int bits) {
 }
 
 function set_max_specified_bits(const int bits) {
+    if (SPECIFIED_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_specified_bits() has no effect when the specified table has been set virtual.");
+    }
+
     if (bits < 0) {
         error(`The specified bits should be greater than or equal to 0, got ${bits} instead`);
     }
@@ -78,6 +112,18 @@ function set_max_specified_bits(const int bits) {
 }
 
 function set_max_std_tables_bits(const int bits) {
+    if (U8_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_std_tables_bits() has no effect on the U8 table since it has been set virtual.");
+    }
+
+    if (U16_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_std_tables_bits() has no effect on the U16 table since it has been set virtual.");
+    }
+
+    if (SPECIFIED_TABLE_VIRTUAL == 1) {
+        println("[Warning] set_max_std_tables_bits() has no effect on the specified table since it has been set virtual.");
+    }
+
     if (bits < 0) {
         error(`The input bits should be greater than or equal to 0, got ${bits} instead`);
     }
@@ -90,7 +136,7 @@ function set_max_std_tables_bits(const int bits) {
 const int U8AIR_OPID = 100;
 const int U16AIR_OPID = 101;
 
-int last_assigned_opid = 101;
+int last_assigned_opid = U16AIR_OPID;
 private function next_available_opid(): int {
     last_assigned_opid++;
     return last_assigned_opid;
@@ -608,7 +654,7 @@ private function define_proves(const int absorb) {
             }
         }
 
-        on final airgroup declare_predefined_airs();
+        on final(2) airgroup declare_predefined_airs();
         on final proof create_predefined_metadata();
     } else {
         // If the specified range is used, update the max airgroup id
@@ -616,7 +662,7 @@ private function define_proves(const int absorb) {
             proof.std.rc.max_spec_airgroup_id = AIRGROUP_ID;
         }
 
-        on final airgroup declare_specified_air();
+        on final(2) airgroup declare_specified_air();
         on final proof create_specified_metadata();
     }
 }
@@ -655,11 +701,20 @@ private function declare_predefined_airs() {
 
         if (num_u8_airgroup == 1){
             // If the U8Air is needed only once, we instantiate it in the (single) callable airgroup
-            U8Air(N: u8_air_n);
+            if (U8_TABLE_VIRTUAL == 1) {
+                virtual U8Air(N: u8_air_n);
+            } else {
+                U8Air(N: u8_air_n);
+            }
         } else {
+            // TODO: Discuss if this makes sense
             // If the U8Air is needed more than once, we instantiate it in its own airgroup
             airgroup U8Air {
-                U8Air(N: u8_air_n);
+                if (U8_TABLE_VIRTUAL == 1) {
+                    virtual U8Air(N: u8_air_n);
+                } else {
+                    U8Air(N: u8_air_n);
+                }
             }
         }
     }
@@ -679,11 +734,20 @@ private function declare_predefined_airs() {
 
         if (num_u16_airgroup == 1){
             // If the U16Air is needed only once, we instantiate it in the (single) callable airgroup
-            U16Air(N: u16_air_n);
+            if (U16_TABLE_VIRTUAL == 1) {
+                virtual U16Air(N: u16_air_n);
+            }
+            else {
+                U16Air(N: u16_air_n);
+            }
         } else {
             // If the U16Air is needed more than once, we instantiate it in its own airgroup
             airgroup U16Air {
-                U16Air(N: u16_air_n);
+                if (U16_TABLE_VIRTUAL == 1) {
+                    virtual U16Air(N: u16_air_n);
+                } else {
+                    U16Air(N: u16_air_n);
+                }
             }
         }
     }
@@ -721,11 +785,21 @@ private function declare_specified_air() {
 
     if (num_spec_airgroup == 1) {
         // If the SpecifiedRanges is needed only once, we instantiate it in the (single) callable airgroup
-        SpecifiedRanges(next_pow2, opids, opids_count, mins, maxs);
+        if (SPECIFIED_TABLE_VIRTUAL == 1) {
+            virtual SpecifiedRanges(next_pow2, opids, opids_count, mins, maxs);
+        }
+        else {
+            SpecifiedRanges(next_pow2, opids, opids_count, mins, maxs);
+        }
     } else {
         // If the SpecifiedRanges is needed more than once, we instantiate it in its own airgroup
         airgroup SpecifiedRanges {
-            SpecifiedRanges(next_pow2, opids, opids_count, mins, maxs);
+            if (SPECIFIED_TABLE_VIRTUAL == 1) {
+                virtual SpecifiedRanges(next_pow2, opids, opids_count, mins, maxs);
+            }
+            else {
+                SpecifiedRanges(next_pow2, opids, opids_count, mins, maxs);
+            }
         }
     }
 }

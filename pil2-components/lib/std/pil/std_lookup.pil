@@ -1,5 +1,6 @@
 require "std_constants.pil";
 require "std_sum.pil";
+require "std_virtual_table.pil";
 
 /*
  * Module for performing selected vector lookup checks using a sum check via the logup protocol https://eprint.iacr.org/2022/1530.
@@ -62,7 +63,11 @@ function lookup_proves(const int opid, const expr expressions[], const expr mul 
     if (name == PIOP_NAME_DEFAULT) name = DEFAULT_LOOKUP_NAME;
     if (surname == PIOP_SURNAME_DEFAULT) surname = DEFAULT_LOOKUP_SURNAME;
 
-    sum(name, surname, SUM_TYPE_PROVES, [opid], opid, expressions, mul);
+    if (VIRTUAL == 1) {
+        collect_virtual_table(opid, expressions);
+    } else {
+        sum(name, surname, SUM_TYPE_PROVES, [opid], opid, expressions, mul);
+    }
 }
 
 /**
