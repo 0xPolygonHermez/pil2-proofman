@@ -436,7 +436,7 @@ CodeOperation getOperation(CodeOperation &r) {
 
 void ExpressionsInfo::pushArgs(vector<uint64_t> &args, CodeType &r, vector<int64_t> &ID1D, vector<int64_t> &ID3D, vector<uint64_t> &numbers, bool dest, bool global) {
     if(dest && r.type != opType::tmp && r.type != opType::cm) {
-        zklog.error("Invalid dest type=" + r.type);
+        zklog.error("Invalid dest type=" + opType2string(r.type));
         exitProcess();
         exit(-1);
     }
@@ -583,16 +583,13 @@ void ExpressionsInfo::pushArgs(vector<uint64_t> &args, CodeType &r, vector<int64
         args.push_back(0);
     } 
     else {
-        throw std::invalid_argument("Unknown type " + r.type);
+        throw std::invalid_argument("Unknown type " + opType2string(r.type));
     }
 
 }
 
 ExpInfoBin ExpressionsInfo::getParserArgs(std::vector<CodeOperation> &code, uint64_t nTmpUsed, std::vector<uint64_t> &numbers, bool global) {
     ExpInfoBin expInfoBin;
-
-    uint64_t nStages = starkInfo.nStages + 2;
-    if(!global) nStages += starkInfo.customCommits.size();
 
     uint64_t maxid = nTmpUsed;
     std::vector<int64_t> ID1D(maxid, -1);

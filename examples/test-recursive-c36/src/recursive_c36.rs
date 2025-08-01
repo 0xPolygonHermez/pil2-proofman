@@ -58,7 +58,8 @@ impl<F: PrimeField64> WitnessComponent<F> for RecursiveC36 {
             let proof_slice: &[u64] = cast_slice(&buffer);
             let proof: Vec<u64> = proof_slice.to_vec();
 
-            let rust_lib_filename = setup.setup_path.display().to_string() + ".so";
+            let lib_extension = if cfg!(target_os = "macos") { ".dylib" } else { ".so" };
+            let rust_lib_filename = setup.setup_path.display().to_string() + lib_extension;
             let rust_lib_path = Path::new(&rust_lib_filename);
 
             let dat_filename = setup.setup_path.display().to_string() + ".dat";

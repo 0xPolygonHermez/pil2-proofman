@@ -1,7 +1,7 @@
 #include "alt_bn128.hpp"
 
 namespace AltBn128 {
-
+#ifdef __USE_ASSEMBLY__
 RawFq F1;
 F2Field<RawFq> F2("-1");
 RawFr Fr;
@@ -15,5 +15,16 @@ Curve< F2Field<RawFq> > G2(
 );
 
 Engine Engine::engine;
+
+#else
+
+RawFq F1;
+F2Field<RawFq> F2;
+RawFr Fr;
+Curve<RawFq> G1(F1);  
+Curve< F2Field<RawFq> > G2(F2); 
+Engine Engine::engine;
+
+#endif
 
 } // namespace

@@ -2,6 +2,14 @@
 
 This guide provides step-by-step instructions for setting up the necessary repositories and executing the Fibonacci square example using the Polygon Hermez zkEVM prover.
 
+## 0. Platform Compatibility
+
+Detect your platform and set the appropriate library extension:
+
+```bash
+export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi)
+```
+
 ## 1. Download and Set Up Required Repositories
 
 ### 1.2 Install `pil2-compiler`
@@ -33,9 +41,12 @@ cd ..
 sudo apt update
 sudo apt install -y build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev nasm libsodium-dev cmake
 
-### Compile the PIl2 Stark C++ Library (run only once):
+### 1.4 Compile the PIL2 Stark C++ Library
+
+Compile the PIL2 Stark C++ Library (run only once):
+
 ```bash
-(cd ../pil2-proofman/pil2-stark && git submodule init && git submodule update && make clean && make -j starks_lib && make -j bctree)
+(cd ../pil2-proofman/pil2-stark && make clean && make -j starks_lib && make -j bctree)
 ```
 
 ### 1.5 Install `pil2-proofman`
@@ -99,7 +110,7 @@ Verify the constraints by executing this command:
 
 ```bash
 cargo run --bin proofman-cli verify-constraints \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json
 ```
@@ -110,21 +121,21 @@ Finally, generate the proof using the following command:
 
 ```bash
 cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs
 ```
 
 
-### 2.6 Generate VadcopFinal Proof
+### 2.7 Generate VadcopFinal Proof
 
-This will only work if setup is generated with -r
-Finally, generate the final proof using the following command:
+This will only work if setup is generated with `-r` flag.
+Generate the final proof using the following command:
 
 ```bash
 cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs \
@@ -133,10 +144,11 @@ cargo run --bin proofman-cli prove \
 
 ### 2.9 All at once
 
-Without recursion:
+**Without recursion:**
 
 ```bash
-node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
+export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
+&& node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./examples/fibonacci-square/pil/build.pilout \
 && node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
@@ -148,26 +160,27 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
 && cargo build \
 && cargo run --bin proofman-cli check-setup --proving-key examples/fibonacci-square/build/provingKey/ \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli verify-constraints \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --output-dir examples/fibonacci-square/build/proofs \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin -y
 ```
 
-With recursion:
+**With recursion:**
 
 ```bash
-node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
+export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi) \
+&& node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci-square/pil/build.pil \
      -I ./pil2-components/lib/std/pil \
      -o ./examples/fibonacci-square/pil/build.pilout \
 && node --max-old-space-size=65536 ../pil2-proofman-js/src/main_setup.js \
@@ -182,16 +195,16 @@ node --max-old-space-size=65536 ../pil2-compiler/src/pil.js ./examples/fibonacci
      --proving-key examples/fibonacci-square/build/provingKey/ \
      -a \
 && cargo run --bin proofman-cli gen-custom-commits-fixed \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli stats \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \
 && cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libfibonacci_square.so \
+     --witness-lib ./target/debug/libfibonacci_square${PIL2_PROOFMAN_EXT} \
      --proving-key examples/fibonacci-square/build/provingKey/ \
      --public-inputs examples/fibonacci-square/src/inputs.json \
      --custom-commits rom=examples/fibonacci-square/build/rom.bin \

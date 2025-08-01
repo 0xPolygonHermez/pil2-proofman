@@ -1,5 +1,13 @@
 ## Execute the Recursive C36 Example
 
+
+## Platform Compatibility
+
+Detect your platform and set the appropriate library extension:
+
+```bash
+export PIL2_PROOFMAN_EXT=$(if [[ "$(uname -s)" == "Darwin" ]]; then echo ".dylib"; else echo ".so"; fi)
+```
 ### Generate Setup
 
 After compiling the PIL files, generate the setup:
@@ -25,7 +33,7 @@ Verify the constraints by executing this command:
 
 ```bash
 cargo run --bin proofman-cli verify-constraints \
-     --witness-lib ./target/debug/libtest_c36.so \
+     --witness-lib ./target/debug/libtest_c36${PIL2_PROOFMAN_EXT} \
      --proving-key examples/test-recursive-c36/build/provingKey/
 ```
 
@@ -41,7 +49,7 @@ Finally, generate the proof using the following command:
 
 ```bash
      cargo run --bin proofman-cli prove \
-     --witness-lib ./target/debug/libtest_c36.so \
+     --witness-lib ./target/debug/libtest_c36${PIL2_PROOFMAN_EXT}\
      --proving-key examples/test-recursive-c36/build/provingKey/ \
      --output-dir examples/test-recursive-c36/build/proofs -y -vv
 ```
