@@ -20,31 +20,18 @@ use crate::ExtensionField;
 use crate::GlobalInfo;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum PreCalculate {
-    None,
-    Fast,
-    Slow,
-}
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct InstanceInfo {
     pub airgroup_id: usize,
     pub air_id: usize,
     pub all: bool,
-    pub pre_calculate: PreCalculate,
     pub min_threads_witness: usize,
     pub n_chunks: usize,
     pub range: (usize, usize),
 }
 
 impl InstanceInfo {
-    pub fn new(
-        airgroup_id: usize,
-        air_id: usize,
-        all: bool,
-        pre_calculate: PreCalculate,
-        min_threads_witness: usize,
-    ) -> Self {
-        Self { airgroup_id, air_id, all, pre_calculate, min_threads_witness, n_chunks: 1, range: (0, 0) }
+    pub fn new(airgroup_id: usize, air_id: usize, all: bool, min_threads_witness: usize) -> Self {
+        Self { airgroup_id, air_id, all, min_threads_witness, n_chunks: 1, range: (0, 0) }
     }
 }
 
@@ -325,12 +312,11 @@ impl DistributionCtx {
         &mut self,
         airgroup_id: usize,
         air_id: usize,
-        pre_calculate: PreCalculate,
         min_threads_witness: usize,
         weight: u64,
     ) -> usize {
         let idx = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, pre_calculate, min_threads_witness));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, min_threads_witness));
         self.n_instances += 1;
         let new_owner = (idx % self.n_processes as usize) as i32;
         let count = self.owners_count[new_owner as usize] as usize;
@@ -349,12 +335,11 @@ impl DistributionCtx {
         airgroup_id: usize,
         air_id: usize,
         owner_idx: usize,
-        pre_calculate: PreCalculate,
         min_threads_witness: usize,
         weight: u64,
     ) -> usize {
         let idx = self.instances.len();
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, pre_calculate, min_threads_witness));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, min_threads_witness));
         self.n_instances += 1;
         let count = self.owners_count[owner_idx] as usize;
         self.instances_owner.push((owner_idx as i32, count, weight));
@@ -371,18 +356,17 @@ impl DistributionCtx {
         &mut self,
         airgroup_id: usize,
         air_id: usize,
-        pre_calculate: PreCalculate,
         min_threads_witness: usize,
         weight: u64,
     ) -> usize {
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, pre_calculate, min_threads_witness));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, false, min_threads_witness));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
     }
 
     pub fn add_instance_no_assign_all(&mut self, airgroup_id: usize, air_id: usize, weight: u64) -> usize {
-        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, PreCalculate::None, 1));
+        self.instances.push(InstanceInfo::new(airgroup_id, air_id, true, 1));
         self.instances_owner.push((-1, 0, weight));
         self.n_instances += 1;
         self.n_instances - 1
