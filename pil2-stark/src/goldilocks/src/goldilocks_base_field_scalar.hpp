@@ -88,6 +88,9 @@ inline void Goldilocks::sub(Element &result, const Element &in1, const Element &
         in_2 -= GOLDILOCKS_PRIME;
     }
     
+    // The condition `in_2 <= in1.fe` ensures correct modular subtraction.
+    // This logic handles cases where `in_2` is greater than or equal to `GOLDILOCKS_PRIME`
+    // and adjusts `in_2` accordingly to maintain modular arithmetic properties.
     if (in_2 <= in1.fe){
         result.fe = in1.fe - in_2;
     } else {
