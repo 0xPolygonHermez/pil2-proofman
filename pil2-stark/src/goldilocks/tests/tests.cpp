@@ -1531,7 +1531,7 @@ TEST(GOLDILOCKS_TEST, poseidon2_avx_batch)
         x[i + 3*SPONGE_WIDTH] = Goldilocks::fromU64(i);
     }
 
-    Poseidon2Goldilocks::hash_batch(result, x);
+    Poseidon2Goldilocks::hash_batch_avx(result, x);
 
     ASSERT_EQ(Goldilocks::toU64(result[0]), 0X1EAEF96BDF1C0C1 );
     ASSERT_EQ(Goldilocks::toU64(result[1]), 0X1F0D2CC525B2540C);
