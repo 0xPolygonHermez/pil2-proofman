@@ -238,10 +238,11 @@ typedef FnecElement *PFnecElement;
         assert(true);
         return 0;
     }
+    inline void Fnec_fail() {
+        assert(true);
+    }
 #endif
-inline void Fnec_fail() {
-    assert(true);
-}
+
 
 
 // Pending functions to convert

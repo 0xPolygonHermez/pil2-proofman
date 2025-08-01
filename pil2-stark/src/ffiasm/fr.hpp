@@ -252,11 +252,13 @@ inline int Fr_rawIsZero(const FrRawElement pRawB) {
     return 0;
 }
 
-#endif // __USE_ASSEMBLY__
-
 inline void Fr_fail() {
     assert(false);
 }
+
+#endif // __USE_ASSEMBLY__
+
+
 // Pending functions to convert
 
 void Fr_str2element(PFrElement pE, char const*s);

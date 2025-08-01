@@ -234,10 +234,12 @@ inline int Fq_rawIsZero(const FqRawElement pRawB){
     assert(false);
     return 0; // Placeholder return value
 }
-#endif
+
 inline void Fq_fail() {
     assert(false);
 }
+#endif
+
 
 // Pending functions to convert
 

@@ -238,11 +238,12 @@ inline int Fec_rawIsZero(const FecRawElement pRawB) {
    assert(false);
     return 0; // Placeholder return value
 }
-#endif
-
 inline void Fec_fail() {
    assert(false);
 }
+#endif
+
+
 
 
 

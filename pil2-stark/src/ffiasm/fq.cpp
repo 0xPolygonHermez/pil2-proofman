@@ -162,6 +162,9 @@ void Fq_div(PFqElement r, PFqElement a, PFqElement b) {
     Fq_mul(r, a, &tmp);
 }
 
+void Fq_fail() {
+    assert(false);
+}
 
 
 RawFq::RawFq() {
