@@ -146,7 +146,7 @@ where
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
-            return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
+            return Err(format!("Proving key folder not found at path: {proving_key_path:?}").into());
         }
 
         let pctx = ProofCtx::<F>::create_ctx(proving_key_path, HashMap::new(), aggregation, final_snark, verbose_mode);
@@ -1045,12 +1045,12 @@ where
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Check proving_key_path exists
         if !proving_key_path.exists() {
-            return Err(format!("Proving key folder not found at path: {:?}", proving_key_path).into());
+            return Err(format!("Proving key folder not found at path: {proving_key_path:?}").into());
         }
 
         // Check proving_key_path is a folder
         if !proving_key_path.is_dir() {
-            return Err(format!("Proving key parameter must be a folder: {:?}", proving_key_path).into());
+            return Err(format!("Proving key parameter must be a folder: {proving_key_path:?}").into());
         }
 
         let (pctx, sctx, setups_vadcop) = Self::initialize_proofman(

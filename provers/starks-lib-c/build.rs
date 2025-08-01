@@ -5,7 +5,6 @@ use std::process::Command;
 use std::time::UNIX_EPOCH;
 
 fn main() {
-
     // **Check if the `no_lib_link` feature is enabled**
     if env::var("CARGO_FEATURE_NO_LIB_LINK").is_ok() {
         println!("Skipping linking because `no_lib_link` feature is enabled.");
@@ -67,12 +66,12 @@ fn main() {
             .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
             .unwrap_or_else(|_| "/opt/homebrew".to_string()); // Default for Apple Silicon
 
-        println!("cargo:rustc-link-search=native={}/lib", homebrew_prefix);
-        println!("cargo:rustc-link-search=native={}/opt/libomp/lib", homebrew_prefix);
-        println!("cargo:rustc-link-search=native={}/opt/libsodium/lib", homebrew_prefix);
-        println!("cargo:rustc-link-search=native={}/opt/gmp/lib", homebrew_prefix);
-        println!("cargo:rustc-link-search=native={}/opt/openssl/lib", homebrew_prefix);
-        
+        println!("cargo:rustc-link-search=native={homebrew_prefix}/lib");
+        println!("cargo:rustc-link-search=native={homebrew_prefix}/opt/libomp/lib");
+        println!("cargo:rustc-link-search=native={homebrew_prefix}/opt/libsodium/lib");
+        println!("cargo:rustc-link-search=native={homebrew_prefix}/opt/gmp/lib");
+        println!("cargo:rustc-link-search=native={homebrew_prefix}/opt/openssl/lib");
+
         // Also add system paths
         println!("cargo:rustc-link-search=native=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib");
     } else if cfg!(target_os = "linux") {
