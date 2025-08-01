@@ -162,10 +162,11 @@ void Fec_div(PFecElement r, PFecElement a, PFecElement b) {
     Fec_mul(r, a, &tmp);
 }
 
+#ifdef __USE_ASSEMBLY__
 void Fec_fail() {
     assert(false);
 }
-
+#endif
 
 RawFec::RawFec() {
 #ifdef __USE_ASSEMBLY__

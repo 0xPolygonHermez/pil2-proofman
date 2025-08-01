@@ -162,10 +162,11 @@ void Fnec_div(PFnecElement r, PFnecElement a, PFnecElement b) {
     Fnec_mul(r, a, &tmp);
 }
 
+#ifdef __USE_ASSEMBLY__
 void Fnec_fail() {
     assert(false);
 }
-
+#endif
 
 RawFnec::RawFnec() {
 #ifdef __USE_ASSEMBLY__

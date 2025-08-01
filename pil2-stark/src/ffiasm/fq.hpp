@@ -234,7 +234,6 @@ inline int Fq_rawIsZero(const FqRawElement pRawB){
     assert(false);
     return 0; // Placeholder return value
 }
-
 inline void Fq_fail() {
     assert(false);
 }

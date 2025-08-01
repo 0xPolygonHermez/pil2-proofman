@@ -162,10 +162,11 @@ void Fq_div(PFqElement r, PFqElement a, PFqElement b) {
     Fq_mul(r, a, &tmp);
 }
 
+#ifdef __USE_ASSEMBLY__
 void Fq_fail() {
     assert(false);
 }
-
+#endif
 
 RawFq::RawFq() {
 #ifdef __USE_ASSEMBLY__
