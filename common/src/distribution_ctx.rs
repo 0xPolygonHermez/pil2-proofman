@@ -15,6 +15,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use fields::PrimeField64;
+#[cfg(distributed)]
 use crate::ExtensionField;
 use crate::GlobalInfo;
 
