@@ -28,7 +28,15 @@ require "std_prod.pil";
 
 const int DEFAULT_PERMUTATION_NAME = PIOP_NAME_PERMUTATION;
 const int DEFAULT_PERMUTATION_SURNAME = PIOP_SURNAME_DEFAULT;
-const int DEFAULT_PERMUTATION_BUS_TYPE = PIOP_BUS_SUM;
+int DEFAULT_PERMUTATION_BUS_TYPE = PIOP_BUS_SUM;
+
+function set_permutation_bus_type(const int bus_type) {
+    if (bus_type != PIOP_BUS_SUM && bus_type != PIOP_BUS_PROD) {
+        error(`Unknown bus type: ${bus_type}`);
+    }
+
+    DEFAULT_PERMUTATION_BUS_TYPE = bus_type;
+}
 
 /**
  * Performs the "assumes" part of a permutation check.

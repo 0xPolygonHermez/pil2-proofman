@@ -103,23 +103,15 @@ const int PIOP_BUS_DEFAULT = 0;
 const int PIOP_BUS_SUM = 1;
 const int PIOP_BUS_PROD = 2;
 
-private function validate_bus_type(const int bus_type) {
+int PIOP_BUS_TYPE = PIOP_BUS_DEFAULT;
+
+function set_std_bus_type(const int bus_type) {
     if (bus_type != PIOP_BUS_SUM && bus_type != PIOP_BUS_PROD) {
         error(`Unknown bus type: ${bus_type}`);
     }
-}
 
-function set_std_bus_type(const int bus_type) {
-    validate_bus_type(bus_type);
-
-    // Set the bus type for the std components that allow for different bus types
-    set_permutation_bus_type(bus_type);
-}
-
-function set_permutation_bus_type(const int bus_type) {
-    validate_bus_type(bus_type);
-
-    DEFAULT_PERMUTATION_BUS_TYPE = bus_type;
+    // Set the bus type
+    PIOP_BUS_TYPE = bus_type;
 }
 
 // FIX: dynamic arrays not ready yet

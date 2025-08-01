@@ -101,9 +101,9 @@ private function direct_to_bus(const int opid, const expr expressions[], const e
         case PIOP_BUS_SUM:
             int update_type;
             if (direct_type == DIRECT_TYPE_AIR) {
-                update_type = SUM_TYPE_DIRECT_AIR;
+                update_type = SUM_UPDATE_TYPE_LOCAL_AIRVAL;
             } else if (direct_type == DIRECT_TYPE_GLOBAL) {
-                update_type = SUM_TYPE_DIRECT_GLOBAL;
+                update_type = SUM_UPDATE_TYPE_GLOBAL;
             }
 
             if (proves) {
@@ -114,9 +114,9 @@ private function direct_to_bus(const int opid, const expr expressions[], const e
         case PIOP_BUS_PROD:
             int update_type;
             if (direct_type == DIRECT_TYPE_AIR) {
-                update_type = PROD_TYPE_DIRECT_AIR;
+                update_type = PROD_UPDATE_TYPE_LOCAL_AIRVAL;
             } else if (direct_type == DIRECT_TYPE_GLOBAL) {
-                update_type = PROD_TYPE_DIRECT_GLOBAL;
+                update_type = PROD_UPDATE_TYPE_GLOBAL;
             }
 
             if (proves) {
