@@ -242,6 +242,17 @@ impl<F: PrimeField64> StdSum<F> {
 }
 
 impl<F: PrimeField64> WitnessComponent<F> for StdSum<F> {
+    fn pre_calculate_witness(
+        &self,
+        _stage: u32,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
+    }
+
     fn calculate_witness(
         &self,
         stage: u32,

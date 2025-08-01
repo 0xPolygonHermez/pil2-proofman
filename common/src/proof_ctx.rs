@@ -10,8 +10,8 @@ use transcript::FFITranscript;
 use mpi::environment::Universe;
 
 use crate::{
-    initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, PreCalculate, SetupCtx, StdMode,
-    StepsParams, VerboseMode,
+    initialize_logger, AirInstance, DistributionCtx, GlobalInfo, InstanceInfo, SetupCtx, StdMode, StepsParams,
+    VerboseMode,
 };
 
 #[derive(Debug)]
@@ -172,6 +172,8 @@ pub struct ProofCtx<F: PrimeField64> {
     pub debug_info: RwLock<DebugInfo>,
     pub aggregation: bool,
     pub final_snark: bool,
+    pub proof_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
+    pub witness_tx: RwLock<Option<crossbeam_channel::Sender<usize>>>,
 }
 
 pub const MAX_INSTANCES: u64 = 10000;
@@ -219,6 +221,8 @@ impl<F: PrimeField64> ProofCtx<F> {
             weights,
             aggregation,
             final_snark,
+            witness_tx: RwLock::new(None),
+            proof_tx: RwLock::new(None),
         }
     }
 
@@ -263,6 +267,8 @@ impl<F: PrimeField64> ProofCtx<F> {
             weights,
             aggregation,
             final_snark,
+            witness_tx: RwLock::new(None),
+            proof_tx: RwLock::new(None),
         }
     }
 
@@ -274,6 +280,20 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_reset(&self) {
         let mut dctx = self.dctx.write().unwrap();
         dctx.reset();
+    }
+
+    pub fn set_proof_tx(&self, proof_tx: Option<crossbeam_channel::Sender<usize>>) {
+        *self.proof_tx.write().unwrap() = proof_tx;
+    }
+
+    pub fn set_witness_tx(&self, witness_tx: Option<crossbeam_channel::Sender<usize>>) {
+        *self.witness_tx.write().unwrap() = witness_tx;
+    }
+
+    pub fn set_witness_ready(&self, global_id: usize) {
+        if let Some(witness_tx) = &*self.witness_tx.read().unwrap() {
+            witness_tx.send(global_id).unwrap();
+        }
     }
 
     pub fn set_weights(&mut self, sctx: &SetupCtx<F>) {
@@ -323,6 +343,9 @@ impl<F: PrimeField64> ProofCtx<F> {
 
     pub fn add_air_instance(&self, air_instance: AirInstance<F>, global_idx: usize) {
         *self.air_instances[global_idx].write().unwrap() = air_instance;
+        if let Some(proof_tx) = &*self.proof_tx.read().unwrap() {
+            proof_tx.send(global_idx).unwrap();
+        }
     }
 
     pub fn is_air_instance_stored(&self, global_idx: usize) -> bool {
@@ -399,21 +422,6 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.instances[global_idx].all
     }
 
-    pub fn dctx_instance_precalculate(&self, global_idx: usize) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances[global_idx].pre_calculate != PreCalculate::None
-    }
-
-    pub fn dctx_instance_precalculate_slow(&self, global_idx: usize) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances[global_idx].pre_calculate == PreCalculate::Slow
-    }
-
-    pub fn dctx_instance_precalculate_fast(&self, global_idx: usize) -> bool {
-        let dctx = self.dctx.read().unwrap();
-        dctx.instances[global_idx].pre_calculate == PreCalculate::Fast
-    }
-
     pub fn dctx_find_air_instance_id(&self, global_idx: usize) -> usize {
         let dctx = self.dctx.read().unwrap();
         dctx.find_air_instance_id(global_idx)
@@ -429,16 +437,10 @@ impl<F: PrimeField64> ProofCtx<F> {
         dctx.set_chunks(global_idx, chunks);
     }
 
-    pub fn add_instance_assign(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-        pre_calculate: PreCalculate,
-        min_threads_witness: usize,
-    ) -> usize {
+    pub fn add_instance_assign(&self, airgroup_id: usize, air_id: usize, min_threads_witness: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance(airgroup_id, air_id, pre_calculate, min_threads_witness, weight)
+        dctx.add_instance(airgroup_id, air_id, min_threads_witness, weight)
     }
 
     pub fn add_instance_rank(
@@ -446,24 +448,17 @@ impl<F: PrimeField64> ProofCtx<F> {
         airgroup_id: usize,
         air_id: usize,
         owner_idx: usize,
-        pre_calculate: PreCalculate,
         min_threads_witness: usize,
     ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_assign_rank(airgroup_id, air_id, owner_idx, pre_calculate, min_threads_witness, weight)
+        dctx.add_instance_assign_rank(airgroup_id, air_id, owner_idx, min_threads_witness, weight)
     }
 
-    pub fn add_instance(
-        &self,
-        airgroup_id: usize,
-        air_id: usize,
-        pre_calculate: PreCalculate,
-        min_threads_witness: usize,
-    ) -> usize {
+    pub fn add_instance(&self, airgroup_id: usize, air_id: usize, min_threads_witness: usize) -> usize {
         let mut dctx = self.dctx.write().unwrap();
         let weight = self.get_weight(airgroup_id, air_id);
-        dctx.add_instance_no_assign(airgroup_id, air_id, pre_calculate, min_threads_witness, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, min_threads_witness, weight)
     }
 
     pub fn add_instance_all(&self, airgroup_id: usize, air_id: usize) -> usize {
@@ -486,12 +481,11 @@ impl<F: PrimeField64> ProofCtx<F> {
         &self,
         airgroup_id: usize,
         air_id: usize,
-        pre_calculate: PreCalculate,
         min_threads_witness: usize,
         weight: u64,
     ) -> usize {
         let mut dctx = self.dctx.write().unwrap();
-        dctx.add_instance_no_assign(airgroup_id, air_id, pre_calculate, min_threads_witness, weight)
+        dctx.add_instance_no_assign(airgroup_id, air_id, min_threads_witness, weight)
     }
 
     pub fn dctx_assign_instances(&self, minimal_memory: bool) {
