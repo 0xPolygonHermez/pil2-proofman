@@ -27,12 +27,6 @@ impl<F: Send + Sync + 'static> MemoryHandler<F> {
     pub fn get_n_buffers(&self) -> usize {
         self.receiver.len()
     }
-
-    pub fn wait_for_available_buffers(&self) {
-        while self.get_n_buffers() == 0 {
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-    }
 }
 
 pub trait BufferPool<F>: Send + Sync
