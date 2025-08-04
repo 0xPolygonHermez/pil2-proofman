@@ -136,7 +136,7 @@ impl Default for ParamsGPU {
             preallocate: false,
             max_number_streams: usize::MAX,
             number_threads_pools_witness: 4,
-            max_witness_stored: 32,
+            max_witness_stored: 4,
         }
     }
 }
@@ -405,6 +405,11 @@ impl<F: PrimeField64> ProofCtx<F> {
     pub fn dctx_get_instance_info(&self, global_idx: usize) -> (usize, usize) {
         let dctx = self.dctx.read().unwrap();
         dctx.get_instance_info(global_idx)
+    }
+
+    pub fn dctx_get_instance_chunks(&self, global_idx: usize) -> usize {
+        let dctx = self.dctx.read().unwrap();
+        dctx.get_instance_chunks(global_idx)
     }
 
     pub fn dctx_get_instance_idx(&self, global_idx: usize) -> usize {
