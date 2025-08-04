@@ -232,6 +232,11 @@ impl DistributionCtx {
     }
 
     #[inline]
+    pub fn get_instance_chunks(&self, global_idx: usize) -> usize {
+        self.instances[global_idx].n_chunks
+    }
+
+    #[inline]
     pub fn set_balance_distribution(&mut self, balance: bool) {
         self.balance_distribution = balance;
     }

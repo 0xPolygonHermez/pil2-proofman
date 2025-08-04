@@ -4,7 +4,7 @@ use std::{fmt::Debug, sync::Arc};
 use fields::PrimeField64;
 
 use witness::WitnessComponent;
-use proofman_common::{ProofCtx, SetupCtx};
+use proofman_common::{BufferPool, ProofCtx, SetupCtx};
 use proofman_hints::{
     get_hint_field_gc_constant_a, get_hint_field_constant, get_hint_ids_by_name, HintFieldOptions, HintFieldValue,
 };
@@ -338,4 +338,15 @@ impl<F: PrimeField64> StdRangeCheck<F> {
     }
 }
 
-impl<F: PrimeField64> WitnessComponent<F> for StdRangeCheck<F> {}
+impl<F: PrimeField64> WitnessComponent<F> for StdRangeCheck<F> {
+    fn pre_calculate_witness(
+        &self,
+        _stage: u32,
+        _pctx: Arc<ProofCtx<F>>,
+        _sctx: Arc<SetupCtx<F>>,
+        _instance_ids: &[usize],
+        _n_cores: usize,
+        _buffer_pool: &dyn BufferPool<F>,
+    ) {
+    }
+}
