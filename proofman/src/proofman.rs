@@ -1465,8 +1465,6 @@ where
             let threads_to_use_witness = threads_to_use_collect.min(n_threads_witness);
             let threads_to_return = threads_to_use_collect - threads_to_use_witness;
 
-            self.memory_handler.wait_for_available_buffers();
-
             let memory_handler_clone = self.memory_handler.clone();
 
             let handle = std::thread::spawn(move || {
@@ -1727,8 +1725,6 @@ where
                 let tx_threads_clone: Sender<()> = tx_threads_clone.clone();
                 let wcm = wcm_clone.clone();
                 let memory_handler_clone = memory_handler_clone.clone();
-
-                memory_handler_clone.wait_for_available_buffers();
 
                 let witness_done_clone = witness_done_clone.clone();
                 if !minimal_memory {
